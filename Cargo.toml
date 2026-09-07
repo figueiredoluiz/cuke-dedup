@@ -18,6 +18,9 @@ include = [
     "/Cargo.lock",
     "/README.md",
     "/LICENSE",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/THIRD-PARTY-LICENSES.md",
 ]
 
 [lib]

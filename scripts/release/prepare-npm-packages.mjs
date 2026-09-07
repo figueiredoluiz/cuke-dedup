@@ -1,4 +1,5 @@
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
+import assert from "node:assert/strict";
 import { join } from "node:path";
 
 const artifacts = process.argv[2];
@@ -10,12 +11,20 @@ const manifest = JSON.parse(
   await readFile(new URL("../../npm/prebuilt-targets.json", import.meta.url), "utf8"),
 );
 
-for (const target of artifacts === "--check" ? [] : Object.values(manifest.targets)) {
+for (const target of Object.values(manifest.targets)) {
   const { rustTarget, packageDirectory, binaryName } = target;
+  const packageRoot = join("npm", "platforms", packageDirectory);
+  const packageManifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  assert.deepEqual(
+    packageManifest.files,
+    [`bin/${binaryName}`, "LICENSE", "THIRD-PARTY-LICENSES.md"],
+    `${packageManifest.name} must publish its binary and legal notices`,
+  );
+  if (artifacts === "--check") {
+    continue;
+  }
   const destinationDirectory = join(
-    "npm",
-    "platforms",
-    packageDirectory,
+    packageRoot,
     "bin",
   );
   const destination = join(destinationDirectory, binaryName);
@@ -24,4 +33,6 @@ for (const target of artifacts === "--check" ? [] : Object.values(manifest.targe
   if (binaryName !== "cuke-dedup.exe") {
     await chmod(destination, 0o755);
   }
+  await copyFile("LICENSE", join(packageRoot, "LICENSE"));
+  await copyFile("THIRD-PARTY-LICENSES.md", join(packageRoot, "THIRD-PARTY-LICENSES.md"));
 }

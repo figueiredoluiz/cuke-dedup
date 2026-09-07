@@ -13,24 +13,23 @@ Current support includes:
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.
 - Threshold, baseline, changed-file, suppression, and ignore-file workflows.
 
-## Quick start
+## Install
 
-No package has been published yet. Build the current source with Rust 1.90 or newer:
-
-```sh
-cargo build --release
-./target/release/cuke-dedup .
-```
-
-After the first release, the planned installation commands are:
+Install the native CLI through Cargo:
 
 ```sh
 cargo install cuke-dedup
+```
 
-# Or, in a JavaScript project:
+Or install the native launcher in a JavaScript project:
+
+```sh
 npm install --save-dev cuke-dedup
 npx cuke-dedup .
 ```
+
+To build from source, clone the repository with Rust 1.90 or newer and run
+`cargo build --release --locked`.
 
 ## Usage
 
@@ -257,7 +256,7 @@ Install it from a local checkout:
 npx skills add ./skills --skill cuke-dedup
 ```
 
-After the repository becomes public, install it directly from GitHub:
+Install it directly from GitHub:
 
 ```sh
 npx skills add figueiredoluiz/cuke-dedup --skill cuke-dedup
@@ -267,7 +266,7 @@ The installer can target supported coding agents or install globally; consult `n
 
 ## GitHub Action
 
-After the first release is available, CukeDedup can run as a native, checksum-verified GitHub Action without compiling Rust in the consumer repository:
+CukeDedup can run as a native, checksum- and provenance-verified GitHub Action without compiling Rust in the consumer repository:
 
 ```yaml
 permissions:
@@ -278,7 +277,7 @@ steps:
     with:
       fetch-depth: 0
       persist-credentials: false
-  - uses: figueiredoluiz/cuke-dedup@v1
+  - uses: figueiredoluiz/cuke-dedup@v0.1.0
     id: cuke-dedup
     with:
       path: .
@@ -297,9 +296,9 @@ steps:
       path: reports/cuke-dedup/
 ```
 
-The Action adds JSON internally when needed so its outputs are always available: `exit-code`, `duplicate-rate`, `duplicate-definitions`, `total-definitions`, `json-report`, `html-report`, and `sarif-report`. Omitted threshold, reporter, and output inputs retain the resolved project configuration; explicitly supplied Action inputs override it. Set `reporters: jsonl` when an agent-oriented workflow should receive the stream in the step log; the Action also creates its internal JSON report for outputs. Its optional `baseline` and `fail-on-new` inputs expose the semantic new-finding gate to pull-request workflows. Inputs are passed directly to the native process as an argument array. The `version` input selects one exact compatible release; downloads fail closed when the archive or adjacent SHA-256 checksum is missing or invalid.
+The Action adds JSON internally when needed so its outputs are always available: `exit-code`, `duplicate-rate`, `duplicate-definitions`, `total-definitions`, `json-report`, `html-report`, and `sarif-report`. Omitted threshold, reporter, and output inputs retain the resolved project configuration; explicitly supplied Action inputs override it. Set `reporters: jsonl` when an agent-oriented workflow should receive the stream in the step log; the Action also creates its internal JSON report for outputs. Its optional `baseline` and `fail-on-new` inputs expose the semantic new-finding gate to pull-request workflows. Inputs are passed directly to the native process as an argument array. The `version` input selects one exact compatible release. Downloads fail closed when the archive, adjacent SHA-256 checksum, provenance bundle, or exact archive contents are missing or invalid. Provenance verification uses the GitHub CLI available on GitHub-hosted runners; self-hosted runners must provide `gh` on `PATH`.
 
-For security-sensitive workflows, pin CukeDedup to a complete commit SHA rather than the convenient moving `v1` compatibility tag. Exit codes retain the CLI contract; use `continue-on-error` only when a later workflow step intentionally evaluates the `exit-code` output.
+For security-sensitive workflows, pin CukeDedup to the release tag's complete commit SHA. Exit codes retain the CLI contract; use `continue-on-error` only when a later workflow step intentionally evaluates the `exit-code` output.
 
 ## Incremental CI adoption
 
@@ -355,7 +354,7 @@ CukeDedup is an independent project. It is not affiliated with or endorsed by th
 
 ## Support
 
-Use the repository issue templates for reproducible bugs and focused feature requests. Include a minimal sanitized fixture and remove application-specific names, credentials, and source code. Security-reporting instructions will be added before the repository becomes public.
+Use the repository issue templates for reproducible bugs and focused feature requests. Include a minimal sanitized fixture and remove application-specific names, credentials, and source code. Report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
 
 ## Development
 
@@ -370,9 +369,17 @@ scripts/check/check.sh
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, focused commands, corpus and benchmark guidance, pull-request expectations, and the project decision process. Public Rust items carry rustdoc, and CI treats missing API documentation as an error.
 
-## Distribution status
+## Releases and verification
 
-No Cargo crate, npm package, native binary, or Action release has been published yet. The prepared release workflow remains non-publishing by default. Until the first release is approved and verified, use the source-build instructions above; release-specific verification and support guidance will be documented with the actual artifacts.
+Release notes and native archives are published on [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases). Each archive has an adjacent SHA-256 checksum, a keyless Sigstore bundle, and GitHub build provenance. Verify provenance with:
+
+```sh
+gh attestation verify <archive> \
+  --repo figueiredoluiz/cuke-dedup \
+  --signer-workflow figueiredoluiz/cuke-dedup/.github/workflows/release.yml
+```
+
+Cargo, npm, the Git tag, and the GitHub release use the same version. See [CHANGELOG.md](CHANGELOG.md) for release history and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for the runtime dependency license inventory.
 
 ## License
 

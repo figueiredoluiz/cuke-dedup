@@ -21,6 +21,7 @@ npm run skills:check
 npm run check:versions
 npm run pack:check
 node scripts/release/prepare-npm-packages.mjs --check
+python3 scripts/release/generate-third-party-licenses.py --check
 python3 -m unittest discover -s scripts/release -p 'test_*.py'
 
 git diff --check

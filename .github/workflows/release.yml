@@ -44,10 +44,12 @@ jobs:
     outputs:
       msrv: ${{ steps.metadata.outputs.msrv }}
       matrix: ${{ steps.metadata.outputs.matrix }}
+      release_sha: ${{ steps.metadata.outputs.release_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.BUILD_REF }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate inputs and load checked-in metadata
         id: metadata
@@ -61,6 +63,17 @@ jobs:
             echo "ref must equal release_tag when publishing" >&2
             exit 2
           fi
+          if [[ "$PUBLISH_RELEASE" == "true" ]] && ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "release_tag must name an existing tag" >&2
+            exit 2
+          fi
+          release_sha=$(git rev-parse HEAD)
+          if ! [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "failed to resolve an immutable release commit" >&2
+            exit 1
+          fi
+          EXPECTED_VERSION="$PACKAGE_VERSION" RELEASE_TAG="$RELEASE_TAG" \
+            node scripts/check/check-release-version.mjs
           msrv=$(sed -nE 's/^rust-version = "([0-9.]+)"$/\1/p' Cargo.toml | head -1)
           test -n "$msrv" || { echo "rust-version is missing from Cargo.toml" >&2; exit 1; }
           matrix=$(node -e '
@@ -75,8 +88,11 @@ jobs:
             }));
             process.stdout.write(JSON.stringify({ include }));
           ')
-          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          {
+            echo "msrv=$msrv"
+            echo "matrix=$matrix"
+            echo "release_sha=$release_sha"
+          } >> "$GITHUB_OUTPUT"
 
   build-native:
     name: Build ${{ matrix.target }}
@@ -90,7 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.BUILD_REF }}
+          ref: ${{ needs.metadata.outputs.release_sha }}
           persist-credentials: false
       - run: rustup toolchain install ${{ needs.metadata.outputs.msrv }} --profile minimal --target ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -146,6 +162,7 @@ jobs:
     if: inputs.publish_release
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: github-release
     permissions:
       contents: write
       id-token: write
@@ -193,7 +210,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.metadata.outputs.release_sha }}
           persist-credentials: false
       - run: rustup toolchain install ${{ needs.metadata.outputs.msrv }} --profile minimal
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -206,7 +223,7 @@ jobs:
 
   publish-npm:
     name: Publish npm packages
-    needs: [build-native, github-release]
+    needs: [metadata, build-native, github-release]
     if: inputs.publish_release && vars.PUBLISH_NPM == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -217,7 +234,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.metadata.outputs.release_sha }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:

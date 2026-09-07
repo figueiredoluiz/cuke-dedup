@@ -12,34 +12,46 @@ import tarfile
 import zipfile
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LEGAL_FILES = [PROJECT_ROOT / "LICENSE", PROJECT_ROOT / "THIRD-PARTY-LICENSES.md"]
+
+
+def archive_entries(binary: Path, binary_name: str) -> list[tuple[str, bytes, int]]:
+    entries = [(binary_name, binary.read_bytes(), 0o755)]
+    entries.extend((path.name, path.read_bytes(), 0o644) for path in LEGAL_FILES)
+    return entries
+
+
 def package_release(binary: Path, target: str, version: str, output: Path) -> tuple[Path, Path]:
-    data = binary.read_bytes()
     output.mkdir(parents=True, exist_ok=True)
     version = version.removeprefix("v")
     stem = f"cuke-dedup-v{version}-{target}"
     binary_name = "cuke-dedup.exe" if "windows" in target else "cuke-dedup"
+    entries = archive_entries(binary, binary_name)
 
     if "windows" in target:
         archive = output / f"{stem}.zip"
-        info = zipfile.ZipInfo(binary_name, date_time=(1980, 1, 1, 0, 0, 0))
-        info.create_system = 3
-        info.external_attr = 0o755 << 16
-        info.compress_type = zipfile.ZIP_DEFLATED
         with zipfile.ZipFile(archive, "w") as package:
-            package.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+            for name, data, mode in entries:
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.create_system = 3
+                info.external_attr = mode << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                package.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
     else:
         archive = output / f"{stem}.tar.gz"
         tar_buffer = io.BytesIO()
-        info = tarfile.TarInfo(binary_name)
-        info.size = len(data)
-        info.mode = 0o755
-        info.mtime = 0
-        info.uid = 0
-        info.gid = 0
-        info.uname = ""
-        info.gname = ""
         with tarfile.open(fileobj=tar_buffer, mode="w", format=tarfile.USTAR_FORMAT) as package:
-            package.addfile(info, io.BytesIO(data))
+            for name, data, mode in entries:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                info.mode = mode
+                info.mtime = 0
+                info.uid = 0
+                info.gid = 0
+                info.uname = ""
+                info.gname = ""
+                package.addfile(info, io.BytesIO(data))
         with archive.open("wb") as destination:
             with gzip.GzipFile(fileobj=destination, mode="wb", filename="", mtime=0, compresslevel=9) as compressed:
                 compressed.write(tar_buffer.getvalue())

@@ -194,6 +194,7 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - run: node scripts/release/prepare-npm-packages.mjs --check
+      - run: python3 scripts/release/generate-third-party-licenses.py --check
       - run: cargo +stable package --locked
       - name: Clean-room Cargo installation
         run: |

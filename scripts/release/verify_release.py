@@ -12,6 +12,9 @@ import tempfile
 import zipfile
 
 
+LEGAL_FILES = ["LICENSE", "THIRD-PARTY-LICENSES.md"]
+
+
 def verify_and_extract(archive: Path, checksum: Path, destination: Path) -> Path:
     fields = checksum.read_text(encoding="utf-8").strip().split()
     if len(fields) != 2 or fields[1] != archive.name:
@@ -26,17 +29,20 @@ def verify_and_extract(archive: Path, checksum: Path, destination: Path) -> Path
     binary_name = "cuke-dedup.exe" if archive.suffix == ".zip" else "cuke-dedup"
     destination.mkdir(parents=True, exist_ok=True)
     binary = destination / binary_name
+    expected_names = [binary_name, *LEGAL_FILES]
 
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as package:
             names = package.namelist()
-            if names != [binary_name]:
+            if names != expected_names:
                 raise ValueError(f"unexpected ZIP members: {names}")
             binary.write_bytes(package.read(binary_name))
     else:
         with tarfile.open(archive, "r:gz") as package:
             members = package.getmembers()
-            if len(members) != 1 or members[0].name != binary_name or not members[0].isfile():
+            if [member.name for member in members] != expected_names or not all(
+                member.isfile() for member in members
+            ):
                 raise ValueError(
                     f"unexpected tar members: {[member.name for member in members]}"
                 )

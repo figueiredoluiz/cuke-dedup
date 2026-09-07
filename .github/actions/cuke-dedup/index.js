@@ -3,6 +3,7 @@ import {
   chmodSync,
   createWriteStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
 } from "node:fs";
@@ -212,31 +213,76 @@ async function installRelease(rawVersion, env) {
     "cuke-dedup-action",
     version,
     target.rustTarget,
+    randomUUID(),
   );
   const binary = join(installDirectory, target.binaryName);
-  if (existsSync(binary)) {
-    return binary;
-  }
   mkdirSync(installDirectory, { recursive: true });
   const archive = join(installDirectory, assetName);
   const checksum = `${archive}.sha256`;
+  const provenance = join(installDirectory, "cuke-dedup.intoto.jsonl");
   const base = `https://github.com/figueiredoluiz/cuke-dedup/releases/download/v${version}`;
   await download(`${base}/${assetName}`, archive);
   await download(`${base}/${assetName}.sha256`, checksum);
+  await download(`${base}/cuke-dedup.intoto.jsonl`, provenance);
   verifyChecksum(archive, checksum);
+  verifyProvenance(archive, provenance, version);
+  validateArchiveMembers(archive, target.binaryName);
   const extracted = spawnSync("tar", ["-xf", archive, "-C", installDirectory], {
     stdio: "inherit",
   });
   if (extracted.status !== 0 || extracted.error) {
     throw new Error(`failed to extract ${basename(archive)}`);
   }
-  if (!existsSync(binary)) {
-    throw new Error(`release archive did not contain ${target.binaryName}`);
+  for (const name of [target.binaryName, "LICENSE", "THIRD-PARTY-LICENSES.md"]) {
+    const extractedPath = join(installDirectory, name);
+    if (!existsSync(extractedPath) || !lstatSync(extractedPath).isFile()) {
+      throw new Error(`release archive did not contain a regular ${name} file`);
+    }
   }
   if (target.platform !== "win32") {
     chmodSync(binary, 0o755);
   }
   return binary;
+}
+
+export function validateArchiveMemberNames(output, binaryName) {
+  const members = output.split(/\r?\n/).filter(Boolean);
+  const expected = [binaryName, "LICENSE", "THIRD-PARTY-LICENSES.md"];
+  if (members.length !== expected.length || members.some((name, index) => name !== expected[index])) {
+    throw new Error(`unexpected release archive members: ${members.join(", ")}`);
+  }
+}
+
+function validateArchiveMembers(archive, binaryName) {
+  const listed = spawnSync("tar", ["-tf", archive], { encoding: "utf8" });
+  if (listed.status !== 0 || listed.error) {
+    throw new Error(`failed to inspect ${basename(archive)}`);
+  }
+  validateArchiveMemberNames(listed.stdout, binaryName);
+}
+
+function verifyProvenance(archive, provenance, version) {
+  const verified = spawnSync(
+    "gh",
+    [
+      "attestation",
+      "verify",
+      archive,
+      "--repo",
+      "figueiredoluiz/cuke-dedup",
+      "--bundle",
+      provenance,
+      "--signer-workflow",
+      "figueiredoluiz/cuke-dedup/.github/workflows/release.yml",
+      "--source-ref",
+      `refs/tags/v${version}`,
+      "--deny-self-hosted-runners",
+    ],
+    { stdio: "inherit" },
+  );
+  if (verified.status !== 0 || verified.error) {
+    throw new Error(`failed to verify provenance for ${basename(archive)}`);
+  }
 }
 
 async function download(url, destination) {

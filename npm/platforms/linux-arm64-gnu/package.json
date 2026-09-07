@@ -5,7 +5,7 @@
   "os": ["linux"],
   "cpu": ["arm64"],
   "libc": ["glibc"],
-  "files": ["bin/cuke-dedup"],
+  "files": ["bin/cuke-dedup", "LICENSE", "THIRD-PARTY-LICENSES.md"],
   "repository": "https://github.com/figueiredoluiz/cuke-dedup",
   "license": "MIT"
 }

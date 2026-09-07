@@ -4,7 +4,7 @@
   "description": "macOS x64 native binary for cuke-dedup",
   "os": ["darwin"],
   "cpu": ["x64"],
-  "files": ["bin/cuke-dedup"],
+  "files": ["bin/cuke-dedup", "LICENSE", "THIRD-PARTY-LICENSES.md"],
   "repository": "https://github.com/figueiredoluiz/cuke-dedup",
   "license": "MIT"
 }

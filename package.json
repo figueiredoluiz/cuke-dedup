@@ -11,7 +11,10 @@
     "npm/lib/",
     "npm/prebuilt-targets.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "THIRD-PARTY-LICENSES.md"
   ],
   "scripts": {
     "test": "node --test npm/test/*.test.mjs",
