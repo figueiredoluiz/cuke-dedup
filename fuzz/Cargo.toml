@@ -10,7 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-cuke-dedup = { path = "..", version = "=0.1.0" }
+cuke-dedup = { path = "..", version = "=0.1.1" }
 
 [[bin]]
 name = "parsers"
