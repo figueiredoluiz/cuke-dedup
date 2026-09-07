@@ -77,7 +77,7 @@ regenerated whenever `Cargo.lock` changes.
 | thiserror-impl | 2.0.20 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/thiserror |
 | tinyvec | 1.12.0 | Zlib OR Apache-2.0 OR MIT | Lokathor <zefria@gmail.com> | https://github.com/Lokathor/tinyvec |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | Soveu <marx.tomasz@gmail.com> | https://github.com/Soveu/tinyvec_macros |
-| tree-sitter | 0.26.13 | MIT | Max Brunsfeld <maxbrunsfeld@gmail.com>, Amaan Qureshi <amaanq12@gmail.com> | https://github.com/tree-sitter/tree-sitter |
+| tree-sitter | 0.27.0 | MIT | Max Brunsfeld <maxbrunsfeld@gmail.com>, Amaan Qureshi <amaanq12@gmail.com> | https://github.com/tree-sitter/tree-sitter |
 | tree-sitter-javascript | 0.25.0 | MIT | Max Brunsfeld <maxbrunsfeld@gmail.com>, Amaan Qureshi <amaanq12@gmail.com> | https://github.com/tree-sitter/tree-sitter-javascript |
 | tree-sitter-language | 0.1.8 | MIT | Max Brunsfeld <maxbrunsfeld@gmail.com>, Amaan Qureshi <amaanq12@gmail.com> | https://github.com/tree-sitter/tree-sitter |
 | tree-sitter-typescript | 0.23.2 | MIT | Max Brunsfeld <maxbrunsfeld@gmail.com>, Amaan Qureshi <amaanq12@gmail.com> | https://github.com/tree-sitter/tree-sitter-typescript |
