@@ -249,10 +249,6 @@ jobs:
       - run: node scripts/release/prepare-npm-packages.mjs native
       - run: npm ci --ignore-scripts --force
       - name: Publish platform packages, then launcher
-        run: |
-          for package_directory in npm/platforms/*; do
-            npm publish "$package_directory" --access public --provenance
-          done
-          npm publish --workspaces=false --access public --provenance
+        run: node scripts/release/publish-npm-packages.mjs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
