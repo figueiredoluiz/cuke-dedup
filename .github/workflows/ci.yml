@@ -315,3 +315,37 @@ jobs:
           name: cuke-dedup-action-reports
           path: action-report/
           if-no-files-found: error
+
+  required:
+    name: CI required
+    if: always()
+    needs:
+      - metadata
+      - rust-msrv
+      - rust-quality
+      - rust-stable-platforms
+      - coverage
+      - npm
+      - release-packaging
+      - supply-chain
+      - secret-scan
+      - fuzz-build
+      - corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify every CI job passed
+        env:
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node <<'NODE'
+          const jobs = JSON.parse(process.env.CI_JOB_RESULTS);
+          const unsuccessful = Object.entries(jobs)
+            .filter(([, job]) => job.result !== "success")
+            .map(([name, job]) => `${name}: ${job.result}`);
+          if (unsuccessful.length > 0) {
+            console.error(`Required CI jobs did not pass:\n${unsuccessful.join("\n")}`);
+            process.exit(1);
+          }
+          console.log(`All ${Object.keys(jobs).length} required CI jobs passed.`);
+          NODE
