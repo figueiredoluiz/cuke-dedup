@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { renderPlatformReadme } from "../../scripts/release/npm-platform-readme.mjs";
+
 const rootPackage = JSON.parse(
   await readFile(new URL("../../package.json", import.meta.url), "utf8"),
 );
@@ -35,7 +37,13 @@ test("prebuilt manifest, platform packages, and optional dependencies do not dri
     }
     assert.deepEqual(
       platformPackage.files,
-      [`bin/${target.binaryName}`, "LICENSE", "THIRD-PARTY-LICENSES.md"],
+      [`bin/${target.binaryName}`, "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
     );
+
+    const readme = renderPlatformReadme(platformPackage);
+    assert.match(readme, new RegExp(`^# ${platformPackage.name}$`, "m"));
+    assert.match(readme, /Do not install this package directly/);
+    assert.match(readme, /npm install --save-dev cuke-dedup/);
+    assert.match(readme, /npm audit signatures/);
   }
 });

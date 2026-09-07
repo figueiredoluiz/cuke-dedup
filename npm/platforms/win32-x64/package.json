@@ -4,7 +4,7 @@
   "description": "Windows x64 native binary for cuke-dedup",
   "os": ["win32"],
   "cpu": ["x64"],
-  "files": ["bin/cuke-dedup.exe", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+  "files": ["bin/cuke-dedup.exe", "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/figueiredoluiz/cuke-dedup.git"

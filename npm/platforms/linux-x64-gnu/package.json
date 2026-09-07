@@ -5,7 +5,7 @@
   "os": ["linux"],
   "cpu": ["x64"],
   "libc": ["glibc"],
-  "files": ["bin/cuke-dedup", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+  "files": ["bin/cuke-dedup", "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/figueiredoluiz/cuke-dedup.git"
