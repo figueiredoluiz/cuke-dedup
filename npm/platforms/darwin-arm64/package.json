@@ -1,10 +1,10 @@
 {
   "name": "cuke-dedup-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "macOS arm64 native binary for cuke-dedup",
   "os": ["darwin"],
   "cpu": ["arm64"],
-  "files": ["bin/cuke-dedup", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+  "files": ["bin/cuke-dedup", "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/figueiredoluiz/cuke-dedup.git"

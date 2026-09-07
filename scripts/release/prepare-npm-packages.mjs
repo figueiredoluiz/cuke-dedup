@@ -1,6 +1,8 @@
-import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { join } from "node:path";
+
+import { renderPlatformReadme } from "./npm-platform-readme.mjs";
 
 const artifacts = process.argv[2];
 if (!artifacts) {
@@ -17,8 +19,8 @@ for (const target of Object.values(manifest.targets)) {
   const packageManifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   assert.deepEqual(
     packageManifest.files,
-    [`bin/${binaryName}`, "LICENSE", "THIRD-PARTY-LICENSES.md"],
-    `${packageManifest.name} must publish its binary and legal notices`,
+    [`bin/${binaryName}`, "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+    `${packageManifest.name} must publish its binary, README, and legal notices`,
   );
   if (artifacts === "--check") {
     continue;
@@ -35,4 +37,5 @@ for (const target of Object.values(manifest.targets)) {
   }
   await copyFile("LICENSE", join(packageRoot, "LICENSE"));
   await copyFile("THIRD-PARTY-LICENSES.md", join(packageRoot, "THIRD-PARTY-LICENSES.md"));
+  await writeFile(join(packageRoot, "README.md"), renderPlatformReadme(packageManifest));
 }
