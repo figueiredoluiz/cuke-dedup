@@ -1,0 +1,10 @@
+{
+  "name": "cuke-dedup-win32-x64",
+  "version": "0.1.0",
+  "description": "Windows x64 native binary for cuke-dedup",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/cuke-dedup.exe"],
+  "repository": "https://github.com/figueiredoluiz/cuke-dedup",
+  "license": "MIT"
+}

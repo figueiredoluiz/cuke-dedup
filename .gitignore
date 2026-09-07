@@ -1,0 +1,11 @@
+/target/
+/reports/
+/node_modules/
+/dist/
+npm/platforms/*/bin/
+__pycache__/
+*.pyc
+*.tmp
+fuzz/artifacts/
+fuzz/coverage/
+fuzz/target/

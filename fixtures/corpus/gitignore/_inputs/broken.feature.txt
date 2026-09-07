@@ -1,0 +1,2 @@
+Scenario: This invalid feature must never be parsed
+  Given visible step

@@ -1,0 +1,51 @@
+[package]
+name = "cuke-dedup"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Static analysis for duplicate and reusable Cucumber step definitions"
+license = "MIT"
+repository = "https://github.com/figueiredoluiz/cuke-dedup"
+homepage = "https://github.com/figueiredoluiz/cuke-dedup"
+readme = "README.md"
+keywords = ["cucumber", "gherkin", "lint", "testing", "cli"]
+categories = ["command-line-utilities", "development-tools::testing"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/fixtures/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+]
+
+[lib]
+name = "cuke_dedup"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cuke-dedup"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+cucumber-expressions = { version = "0.5", features = ["into-regex"] }
+globset = "0.4"
+gherkin = "0.16"
+ignore = "0.4"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strsim = "0.11"
+tree-sitter = "0.26"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+unicode-normalization = "0.1"
+yaml_serde = "0.10"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.15"

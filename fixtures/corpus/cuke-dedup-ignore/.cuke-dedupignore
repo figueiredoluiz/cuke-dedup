@@ -1,0 +1,5 @@
+# CukeDedup-specific rules use gitignore syntax.
+ignored/
+included/*.ts
+!included/steps.ts
+**/*.generated.ts

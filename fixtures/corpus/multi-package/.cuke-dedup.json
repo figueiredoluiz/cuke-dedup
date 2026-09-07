@@ -1,0 +1,5 @@
+{
+  "definitions": ["packages/**/*.ts"],
+  "features": ["packages/**/*.feature"],
+  "threshold": 100
+}

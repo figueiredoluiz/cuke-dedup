@@ -1,0 +1,60 @@
+name: Scheduled parser fuzzing
+
+on:
+  schedule:
+    - cron: "29 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: scheduled-parser-fuzzing
+  cancel-in-progress: true
+
+jobs:
+  parsers:
+    name: Gherkin and TypeScript parser fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Restore the latest generated parser corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          previous_run=$(gh run list --workflow fuzz.yml --limit 10 --json databaseId,status --jq '[.[] | select(.status == "completed")][0].databaseId // empty' 2>/dev/null || true)
+          if [[ -n "$previous_run" ]]; then
+            restored="$RUNNER_TEMP/parser-fuzz-corpus"
+            if gh run download "$previous_run" --name parser-fuzz-corpus --dir "$restored"; then
+              cp -R "$restored"/. fuzz/corpus/parsers/
+            fi
+          fi
+      - run: rustup toolchain install nightly-2026-08-01 --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: parser-fuzzing
+          workspaces: fuzz -> target
+      - name: Install cargo-fuzz reproducibly
+        run: cargo +nightly-2026-08-01 install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz public parser entrypoints
+        run: cargo +nightly-2026-08-01 fuzz run parsers -- -max_total_time=300 -max_len=16384 -timeout=10
+      - name: Preserve generated parser corpus
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parser-fuzz-corpus
+          path: fuzz/corpus/parsers/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: failure()
+        with:
+          name: parser-fuzz-artifacts-${{ github.run_id }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

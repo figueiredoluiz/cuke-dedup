@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "darwin-arm64": {
+      "rustTarget": "aarch64-apple-darwin",
+      "packageName": "cuke-dedup-darwin-arm64",
+      "packageDirectory": "darwin-arm64",
+      "platform": "darwin",
+      "arch": "arm64",
+      "runner": "macos-15",
+      "binaryName": "cuke-dedup"
+    },
+    "darwin-x64": {
+      "rustTarget": "x86_64-apple-darwin",
+      "packageName": "cuke-dedup-darwin-x64",
+      "packageDirectory": "darwin-x64",
+      "platform": "darwin",
+      "arch": "x64",
+      "runner": "macos-15-intel",
+      "binaryName": "cuke-dedup"
+    },
+    "linux-arm64-gnu": {
+      "rustTarget": "aarch64-unknown-linux-gnu",
+      "packageName": "cuke-dedup-linux-arm64-gnu",
+      "packageDirectory": "linux-arm64-gnu",
+      "platform": "linux",
+      "arch": "arm64",
+      "libc": "gnu",
+      "runner": "ubuntu-22.04-arm",
+      "binaryName": "cuke-dedup"
+    },
+    "linux-arm64-musl": {
+      "rustTarget": "aarch64-unknown-linux-musl",
+      "packageName": "cuke-dedup-linux-arm64-musl",
+      "packageDirectory": "linux-arm64-musl",
+      "platform": "linux",
+      "arch": "arm64",
+      "libc": "musl",
+      "runner": "ubuntu-22.04-arm",
+      "binaryName": "cuke-dedup"
+    },
+    "linux-x64-gnu": {
+      "rustTarget": "x86_64-unknown-linux-gnu",
+      "packageName": "cuke-dedup-linux-x64-gnu",
+      "packageDirectory": "linux-x64-gnu",
+      "platform": "linux",
+      "arch": "x64",
+      "libc": "gnu",
+      "runner": "ubuntu-22.04",
+      "binaryName": "cuke-dedup"
+    },
+    "linux-x64-musl": {
+      "rustTarget": "x86_64-unknown-linux-musl",
+      "packageName": "cuke-dedup-linux-x64-musl",
+      "packageDirectory": "linux-x64-musl",
+      "platform": "linux",
+      "arch": "x64",
+      "libc": "musl",
+      "runner": "ubuntu-22.04",
+      "binaryName": "cuke-dedup"
+    },
+    "win32-arm64": {
+      "rustTarget": "aarch64-pc-windows-msvc",
+      "packageName": "cuke-dedup-win32-arm64",
+      "packageDirectory": "win32-arm64",
+      "platform": "win32",
+      "arch": "arm64",
+      "runner": "windows-11-arm",
+      "binaryName": "cuke-dedup.exe"
+    },
+    "win32-x64": {
+      "rustTarget": "x86_64-pc-windows-msvc",
+      "packageName": "cuke-dedup-win32-x64",
+      "packageDirectory": "win32-x64",
+      "platform": "win32",
+      "arch": "x64",
+      "runner": "windows-latest",
+      "binaryName": "cuke-dedup.exe"
+    }
+  }
+}

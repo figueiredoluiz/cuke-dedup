@@ -1,0 +1,58 @@
+name: CukeDedup
+description: Detect duplicate and reusable Cucumber step definitions
+author: figueiredoluiz
+branding:
+  icon: copy
+  color: purple
+inputs:
+  config:
+    description: Explicit CukeDedup JSON configuration file
+    default: ""
+  path:
+    description: Repository-relative directory to analyze
+    default: .
+  threshold:
+    description: Maximum duplicated-definition percentage allowed
+    default: ""
+  exclude:
+    description: Newline- or comma-separated exclusion globs
+    default: ""
+  reporters:
+    description: Comma-separated reporters (terminal, json, jsonl, html, sarif); terminal and jsonl are mutually exclusive
+    default: ""
+  output:
+    description: Directory for generated reports
+    default: ""
+  changed-since:
+    description: Optional Git revision used for changed-file analysis
+    default: ""
+  baseline:
+    description: Optional semantic finding baseline
+    default: ""
+  fail-on-new:
+    description: Maximum findings allowed beyond the semantic baseline
+    default: ""
+  no-metrics:
+    description: Omit runtime metrics for reproducible machine reports
+    default: "false"
+  version:
+    description: Exact CukeDedup release version; defaults to the Action commit's package version
+    default: ""
+outputs:
+  exit-code:
+    description: Native CukeDedup exit code (0, 1, or 2)
+  duplicate-rate:
+    description: Unrounded duplicated-definition percentage
+  duplicate-definitions:
+    description: Unique definitions contributing to the duplication threshold
+  total-definitions:
+    description: Total analyzed definitions
+  json-report:
+    description: Path to the JSON report
+  html-report:
+    description: Path to the HTML report when requested
+  sarif-report:
+    description: Path to the SARIF report when requested
+runs:
+  using: node24
+  main: .github/actions/cuke-dedup/index.js

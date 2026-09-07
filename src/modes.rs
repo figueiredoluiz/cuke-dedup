@@ -1,0 +1,408 @@
+//! Changed-files and existing-findings baseline modes for incremental CI adoption.
+
+use crate::config::normalize_platform_path;
+use crate::model::{stable_fingerprint, DefinitionComparison, Finding, Suppression};
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Returns tracked changes since `base` plus untracked files beneath `root`.
+pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
+    let base_oid = resolve_commit(root, base)?;
+    let tracked = git_paths(
+        root,
+        &[
+            "diff",
+            "--relative",
+            "--name-only",
+            "--diff-filter=ACMR",
+            &base_oid,
+            "--",
+        ],
+        &format!("git diff against `{base}` failed"),
+    )?;
+    let untracked = git_paths(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "--"],
+        "git untracked-file discovery failed",
+    )?;
+    Ok(tracked
+        .into_iter()
+        .chain(untracked)
+        .map(|path| root.join(path))
+        .collect())
+}
+
+fn resolve_commit(root: &Path, base: &str) -> Result<String> {
+    if base.trim().is_empty() || base.starts_with('-') {
+        bail!("invalid --changed-since revision `{base}`");
+    }
+    let revision = format!("{base}^{{commit}}");
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", "--end-of-options"])
+        .arg(&revision)
+        .output()
+        .with_context(|| "failed to resolve the --changed-since revision")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        bail!("could not resolve --changed-since revision `{base}`: {stderr}");
+    }
+    let oid = String::from_utf8(output.stdout)
+        .context("git returned a non-UTF-8 commit object id")?
+        .trim()
+        .to_owned();
+    if oid.is_empty() || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("git returned an invalid commit object id for `{base}`");
+    }
+    Ok(oid)
+}
+
+/// Rejects changed-file mode when the analyzed root itself is excluded by Git.
+pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
+    let repository = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .with_context(|| "failed to locate the Git repository for changed-files mode")?;
+    if !repository.status.success() {
+        bail!(
+            "changed-files mode requires a Git repository: {}",
+            String::from_utf8_lossy(&repository.stderr).trim()
+        );
+    }
+    let repository = normalize_platform_path(
+        PathBuf::from(
+            String::from_utf8(repository.stdout)
+                .context("git returned a non-UTF-8 repository path")?
+                .trim(),
+        )
+        .canonicalize()
+        .with_context(|| "failed to canonicalize the Git repository root")?,
+    );
+    if root == repository {
+        return Ok(());
+    }
+    let relative = root.strip_prefix(&repository).with_context(|| {
+        format!(
+            "target {} is outside Git repository {}",
+            root.display(),
+            repository.display()
+        )
+    })?;
+    let ignored = Command::new("git")
+        .arg("-C")
+        .arg(&repository)
+        .args(["check-ignore", "--quiet", "--"])
+        .arg(relative)
+        .status()
+        .with_context(|| "failed to check whether the changed-files target is ignored")?;
+    match ignored.code() {
+        Some(0) => bail!(
+            "changed-files target {} is ignored by Git and cannot be analyzed incrementally",
+            root.display()
+        ),
+        Some(1) => Ok(()),
+        _ => bail!("git check-ignore failed for target {}", root.display()),
+    }
+}
+
+fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .output()
+        .with_context(|| "failed to run git for changed-files mode")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        bail!("{failure}: {stderr}");
+    }
+    let stdout = String::from_utf8(output.stdout).context("git returned non-UTF-8 file names")?;
+    Ok(stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| PathBuf::from(line.trim()))
+        .collect())
+}
+
+/// Retains findings whose primary or related location belongs to `changed`.
+pub fn retain_changed_findings(findings: &mut Vec<Finding>, changed: &BTreeSet<PathBuf>) {
+    findings.retain(|finding| {
+        changed.contains(&finding.primary.path)
+            || finding
+                .related
+                .iter()
+                .any(|location| changed.contains(&location.path))
+    });
+}
+
+/// Schema version of the compact, reviewable baseline format.
+pub const BASELINE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Accepted semantic finding fingerprints and their multiplicities.
+pub struct BaselineFile {
+    /// Baseline format version.
+    pub schema_version: u32,
+    /// Stable fingerprint counts, sorted for deterministic pull-request diffs.
+    pub fingerprints: BTreeMap<String, usize>,
+}
+
+impl BaselineFile {
+    fn empty() -> Self {
+        Self {
+            schema_version: BASELINE_SCHEMA_VERSION,
+            fingerprints: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Effect of applying or rewriting a baseline.
+pub struct BaselineOutcome {
+    /// Findings matched and suppressed by the baseline.
+    pub suppressed: usize,
+    /// Active findings beyond the baseline's recorded multiplicities.
+    pub new_findings: usize,
+    /// Fingerprint instances added while updating.
+    pub added: usize,
+    /// Fingerprint instances removed while updating.
+    pub removed: usize,
+}
+
+/// Suppresses findings found in a schema-compatible semantic baseline.
+///
+/// Multiplicity is consumed in finding order, so adding another instance of accepted
+/// duplication remains visible even when its content fingerprint is already present.
+pub fn apply_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
+    let baseline = load_baseline(baseline_path)?;
+    apply_loaded_baseline(findings, baseline_path, &baseline)
+}
+
+/// Rewrites a baseline from the current active findings and suppresses those findings.
+pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
+    let previous = if baseline_path.is_file() {
+        load_baseline(baseline_path)?
+    } else {
+        BaselineFile::empty()
+    };
+    let current = build_baseline(findings);
+    let added = count_added(&previous.fingerprints, &current.fingerprints);
+    let removed = count_added(&current.fingerprints, &previous.fingerprints);
+    save_baseline(baseline_path, &current)?;
+    let mut outcome = apply_loaded_baseline(findings, baseline_path, &current)?;
+    outcome.added = added;
+    outcome.removed = removed;
+    Ok(outcome)
+}
+
+fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
+    let text = fs::read_to_string(baseline_path)
+        .with_context(|| format!("failed to read baseline {}", baseline_path.display()))?;
+    let baseline: BaselineFile = serde_json::from_str(&text)
+        .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))?;
+    if baseline.schema_version != BASELINE_SCHEMA_VERSION {
+        bail!(
+            "unsupported baseline schema version `{}` (expected `{}`); regenerate it with --update-baseline",
+            baseline.schema_version,
+            BASELINE_SCHEMA_VERSION
+        );
+    }
+    Ok(baseline)
+}
+
+fn save_baseline(path: &Path, baseline: &BaselineFile) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create baseline directory {}", parent.display()))?;
+    }
+    let text = serde_json::to_string_pretty(baseline).context("failed to serialize baseline")?;
+    fs::write(path, format!("{text}\n"))
+        .with_context(|| format!("failed to write baseline {}", path.display()))
+}
+
+fn build_baseline(findings: &[Finding]) -> BaselineFile {
+    let mut baseline = BaselineFile::empty();
+    for finding in findings.iter().filter(|finding| finding.is_active()) {
+        *baseline
+            .fingerprints
+            .entry(finding_fingerprint(finding))
+            .or_default() += 1;
+    }
+    baseline
+}
+
+fn apply_loaded_baseline(
+    findings: &mut [Finding],
+    baseline_path: &Path,
+    baseline: &BaselineFile,
+) -> Result<BaselineOutcome> {
+    let mut allowance = baseline.fingerprints.clone();
+    let mut outcome = BaselineOutcome::default();
+    for finding in findings {
+        if !finding.is_active() {
+            continue;
+        }
+        let fingerprint = finding_fingerprint(finding);
+        match allowance.get_mut(&fingerprint) {
+            Some(remaining) if *remaining > 0 => {
+                *remaining -= 1;
+                finding.suppression = Some(Suppression {
+                    reason: format!("present in baseline {}", baseline_path.display()),
+                });
+                outcome.suppressed += 1;
+            }
+            _ => outcome.new_findings += 1,
+        }
+    }
+    Ok(outcome)
+}
+
+/// Returns a location-independent fingerprint for baseline comparison.
+pub fn finding_fingerprint(finding: &Finding) -> String {
+    let semantic = finding
+        .evidence
+        .comparison
+        .as_ref()
+        .map(comparison_fingerprint_input)
+        .unwrap_or_else(|| {
+            format!(
+                "{}\u{0}{}\u{0}{}",
+                finding.message,
+                finding.evidence.matcher_difference,
+                finding.evidence.handler_evidence
+            )
+        });
+    stable_fingerprint(&format!("{}\u{0}{semantic}", finding.rule))
+}
+
+fn comparison_fingerprint_input(comparison: &DefinitionComparison) -> String {
+    let mut sides = [
+        comparison.left_fingerprint.clone(),
+        comparison.right_fingerprint.clone(),
+    ];
+    sides.sort();
+    sides.join("\u{0}")
+}
+
+fn count_added(previous: &BTreeMap<String, usize>, current: &BTreeMap<String, usize>) -> usize {
+    current
+        .iter()
+        .map(|(fingerprint, count)| {
+            count.saturating_sub(previous.get(fingerprint).copied().unwrap_or_default())
+        })
+        .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{FindingEvidence, Rule, Severity, SourceLocation};
+
+    fn finding(root: &Path, file: &str) -> Finding {
+        Finding {
+            rule: Rule::DuplicateMatcher,
+            severity: Severity::Error,
+            message: "duplicate".to_owned(),
+            primary: SourceLocation::new(root.join(file), 2, 1, 2, 10),
+            related: vec![SourceLocation::new(
+                root.join("steps/shared.ts"),
+                4,
+                1,
+                4,
+                10,
+            )],
+            evidence: FindingEvidence {
+                matcher_similarity: Some(1.0),
+                handler_similarity: Some(0.5),
+                matcher_difference: "same".to_owned(),
+                handler_evidence: "different".to_owned(),
+                comparison: None,
+            },
+            suggested_action: "consolidate".to_owned(),
+            suppression: None,
+        }
+    }
+
+    #[test]
+    fn changed_mode_keeps_findings_related_to_a_changed_file() {
+        let root = Path::new("/repo");
+        let mut findings = vec![
+            finding(root, "steps/changed.ts"),
+            finding(root, "steps/old.ts"),
+        ];
+        let changed = BTreeSet::from([root.join("steps/changed.ts")]);
+        retain_changed_findings(&mut findings, &changed);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].primary.path.ends_with("changed.ts"));
+    }
+
+    #[test]
+    fn changed_files_are_relative_to_a_subdirectory_and_include_untracked_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir_all(root.join("packages/e2e/steps")).unwrap();
+        fs::write(root.join("packages/e2e/steps/tracked.ts"), "before").unwrap();
+        for arguments in [
+            ["init", "-q"].as_slice(),
+            ["config", "user.email", "test@example.com"].as_slice(),
+            ["config", "user.name", "Test"].as_slice(),
+            ["add", "."].as_slice(),
+            ["commit", "-qm", "initial"].as_slice(),
+        ] {
+            assert!(Command::new("git")
+                .args(arguments)
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        fs::write(root.join("packages/e2e/steps/tracked.ts"), "after").unwrap();
+        fs::write(root.join("packages/e2e/steps/new.ts"), "new").unwrap();
+
+        let subdirectory = root.join("packages/e2e");
+        let changed = git_changed_files(&subdirectory, "HEAD").unwrap();
+        assert_eq!(
+            changed,
+            BTreeSet::from([
+                subdirectory.join("steps/new.ts"),
+                subdirectory.join("steps/tracked.ts"),
+            ])
+        );
+    }
+
+    #[test]
+    fn semantic_baseline_survives_location_changes_and_enforces_multiplicity() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let baseline_path = root.join("baseline.json");
+        let mut accepted = vec![finding(root, "steps/original.ts")];
+        let update = update_baseline(&mut accepted, &baseline_path).unwrap();
+        assert_eq!(update.added, 1);
+        assert_eq!(update.removed, 0);
+        assert_eq!(update.suppressed, 1);
+
+        let mut current = vec![
+            finding(root, "moved/renamed.ts"),
+            finding(root, "steps/third-copy.ts"),
+        ];
+        current[0].primary.line = 200;
+        let outcome = apply_baseline(&mut current, &baseline_path).unwrap();
+        assert_eq!(outcome.suppressed, 1);
+        assert_eq!(outcome.new_findings, 1);
+        assert!(!current[0].is_active());
+        assert!(current[1].is_active());
+
+        let baseline: BaselineFile =
+            serde_json::from_str(&fs::read_to_string(&baseline_path).unwrap()).unwrap();
+        assert_eq!(baseline.schema_version, BASELINE_SCHEMA_VERSION);
+        assert_eq!(baseline.fingerprints.values().sum::<usize>(), 1);
+    }
+}

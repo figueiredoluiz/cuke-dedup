@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a rule, adapter, reporter, or workflow improvement
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What repository pattern or workflow should CukeDedup support?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include representative sanitized input and expected output when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe current workarounds and why they are insufficient.
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Interface and compatibility considerations
+      description: Suggest CLI flags, configuration keys, report fields, or migration behavior when relevant.

@@ -1,0 +1,11 @@
+{
+  "name": "cuke-dedup-linux-x64-musl",
+  "version": "0.1.0",
+  "description": "Linux x64 musl native binary for cuke-dedup",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["musl"],
+  "files": ["bin/cuke-dedup"],
+  "repository": "https://github.com/figueiredoluiz/cuke-dedup",
+  "license": "MIT"
+}

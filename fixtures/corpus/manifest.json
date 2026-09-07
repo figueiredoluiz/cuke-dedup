@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "configured-threshold-at-limit",
+      "path": "threshold-group",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 5,
+        "featureSteps": 0,
+        "duplicatedDefinitions": 3,
+        "percentage": 60.0,
+        "threshold": 60.0,
+        "passed": true,
+        "byRule": {"duplicate-matcher": 2}
+      }
+    },
+    {
+      "name": "threshold-over-limit",
+      "path": "threshold-group",
+      "arguments": ["--threshold", "59.99"],
+      "expectedExit": 1,
+      "expected": {
+        "definitions": 5,
+        "featureSteps": 0,
+        "duplicatedDefinitions": 3,
+        "percentage": 60.0,
+        "threshold": 59.99,
+        "passed": false,
+        "byRule": {"duplicate-matcher": 2}
+      }
+    },
+    {
+      "name": "explicit-exclusion-patterns",
+      "path": "exclusions",
+      "arguments": [
+        "--exclude",
+        "ignored-file.ts",
+        "--exclude",
+        "ignored-directory",
+        "--exclude",
+        "generated/**/*.ts"
+      ],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "comma-separated-exclusion-patterns",
+      "path": "exclusions",
+      "arguments": [
+        "--exclude",
+        "ignored-file.ts,ignored-directory,generated/**/*.ts"
+      ],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "gitignore-exclusion",
+      "path": "gitignore",
+      "arguments": [],
+      "materialize": [
+        {
+          "source": "_inputs/ignored-steps.ts.txt",
+          "destination": "ignored/steps.ts"
+        },
+        {
+          "source": "_inputs/broken.feature.txt",
+          "destination": "ignored/broken.feature"
+        }
+      ],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "nested-root-directory-exclusion",
+      "path": "nested-root/packages/e2e",
+      "arguments": ["--exclude", "ignored"],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "gherkin-markdown-default-discovery",
+      "path": "gherkin-markdown",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "playwright-bdd-framework-discovery",
+      "path": "framework-config",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "cypress-cucumber-framework-discovery",
+      "path": "cypress-config",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "cuke-dedup-ignore-file",
+      "path": "cuke-dedup-ignore",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "multi-package-cross-package-detection",
+      "path": "multi-package",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 0,
+        "duplicatedDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 100.0,
+        "passed": true,
+        "byRule": {"duplicate-matcher": 1, "unused-definition": 2}
+      }
+    },
+    {
+      "name": "adversarial-parser-and-handler-behavior",
+      "path": "adversarial",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 5,
+        "featureSteps": 4,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {"unused-definition": 1}
+      }
+    },
+    {
+      "name": "parser-and-analysis-regressions",
+      "path": "parser-regressions",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 6,
+        "featureSteps": 6,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "all-registered-source-adapters",
+      "path": "mixed-source-adapters",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 8,
+        "featureSteps": 8,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "localized-unicode-gherkin",
+      "path": "localized-unicode",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 2,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "malformed-matcher-keeps-valid-definitions",
+      "path": "malformed-matcher",
+      "arguments": [],
+      "expectedExit": 2,
+      "stderrIncludes": [
+        "regular expression uses syntax unsupported by static usage analysis",
+        "invalid JavaScript escape sequence in step matcher"
+      ],
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "hidden-and-default-exclusion-overrides",
+      "path": "discovery-overrides",
+      "arguments": ["--include-hidden", "--no-default-excludes"],
+      "materialize": [
+        {
+          "source": "_inputs/vendored-steps.ts.txt",
+          "destination": "node_modules/example-package/steps.ts"
+        }
+      ],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 2,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    }
+  ]
+}

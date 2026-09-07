@@ -1,0 +1,316 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    name: Project metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      msrv: ${{ steps.rust.outputs.msrv }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Read declared Rust MSRV
+        id: rust
+        shell: bash
+        run: |
+          msrv=$(sed -nE 's/^rust-version = "([0-9.]+)"$/\1/p' Cargo.toml | head -1)
+          test -n "$msrv" || { echo "rust-version is missing from Cargo.toml" >&2; exit 1; }
+          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
+
+  rust-msrv:
+    name: Rust ${{ needs.metadata.outputs.msrv }} tests (${{ matrix.os }})
+    needs: metadata
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install ${{ needs.metadata.outputs.msrv }} --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: msrv-${{ needs.metadata.outputs.msrv }}-${{ matrix.os }}
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
+        with:
+          tool: nextest
+      - run: cargo +${{ needs.metadata.outputs.msrv }} nextest run --all-features --locked --profile ci
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-test-results-${{ matrix.os }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: error
+      - name: Publish test report
+        if: always()
+        continue-on-error: true
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
+        with:
+          name: Rust tests (${{ matrix.os }})
+          path: target/nextest/ci/junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+  rust-quality:
+    name: Rust stable quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo +stable fmt --all -- --check
+      - run: cargo +stable clippy --all-targets --all-features --locked -- -D warnings
+      - run: RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features --locked
+      - name: Install checksum-verified actionlint
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          mkdir -p "$RUNNER_TEMP/actionlint-bin"
+          install "$RUNNER_TEMP/actionlint" "$RUNNER_TEMP/actionlint-bin/actionlint"
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
+      - run: actionlint .github/workflows/*.yml
+
+  rust-stable-platforms:
+    name: Rust stable tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: stable-tests-${{ matrix.os }}
+      - run: cargo +stable test --all-features --all-targets --locked
+
+  coverage:
+    name: Rust coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --component llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: coverage-cargo-llvm-cov-0.9.0
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
+        with:
+          tool: cargo-llvm-cov@0.9.0
+      - name: Measure test coverage
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo +stable llvm-cov --all-features --all-targets --locked --no-report
+          cargo +stable llvm-cov report --summary-only --fail-under-lines 90 | tee coverage-summary.txt
+          cargo +stable llvm-cov report --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage
+          path: |
+            coverage-summary.txt
+            lcov.info
+          if-no-files-found: error
+
+  npm:
+    name: npm launcher (${{ matrix.os }}, Node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: "20"
+          - os: ubuntu-latest
+            node: "24"
+          - os: macos-latest
+            node: "24"
+          - os: windows-latest
+            node: "24"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm test
+      - run: npm run check:versions
+      - run: npm run skills:check
+      - run: npm run pack:check
+
+  release-packaging:
+    name: Release packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-packaging
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: node scripts/release/prepare-npm-packages.mjs --check
+      - run: cargo +stable package --locked
+      - name: Clean-room Cargo installation
+        run: |
+          version=$(sed -nE 's/^version = "([0-9.]+)"$/\1/p' Cargo.toml | head -1)
+          package_path="target/package/cuke-dedup-$version"
+          test -d "$package_path"
+          cargo +stable install \
+            --path "$package_path" \
+            --root "$RUNNER_TEMP/cuke-dedup-cargo" \
+            --locked
+          "$RUNNER_TEMP/cuke-dedup-cargo/bin/cuke-dedup" --version
+      - name: Clean-room npm launcher installation
+        run: |
+          package=$(npm pack --silent --workspaces=false --pack-destination "$RUNNER_TEMP")
+          npm install --prefix "$RUNNER_TEMP/cuke-dedup-npm" --omit=optional "$RUNNER_TEMP/$package"
+          CUKE_DEDUP_BINARY="$RUNNER_TEMP/cuke-dedup-cargo/bin/cuke-dedup" \
+            "$RUNNER_TEMP/cuke-dedup-npm/node_modules/.bin/cuke-dedup" --version
+
+  supply-chain:
+    name: Rust dependency policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
+        with:
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
+          fallback: none
+      - run: cargo audit --deny warnings
+      - run: cargo audit --deny warnings --file fuzz/Cargo.lock
+      - run: cargo deny check advisories bans licenses sources
+      - run: cargo deny --manifest-path fuzz/Cargo.toml check advisories bans licenses sources
+
+  secret-scan:
+    name: Secret history scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  fuzz-build:
+    name: Parser fuzz target
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: parser-fuzzing
+          workspaces: fuzz -> target
+      - run: cargo +nightly-2026-08-01 fmt --manifest-path fuzz/Cargo.toml -- --check
+      - name: Install cargo-fuzz reproducibly
+        run: cargo +nightly-2026-08-01 install cargo-fuzz --version 0.13.2 --locked
+      - name: Exercise parser fuzz target
+        run: cargo +nightly-2026-08-01 fuzz run parsers -- -runs=1000 -max_len=16384 -timeout=10
+
+  corpus:
+    name: Release binary corpus and Action smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: corpus-release
+      - run: cargo +stable build --release --locked
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Smoke-test built binary through npm launcher
+        run: CUKE_DEDUP_BINARY="$PWD/target/release/cuke-dedup" node npm/bin/cuke-dedup.js --version
+      - name: Smoke-test benchmark metrics
+        run: CUKE_DEDUP_BENCH_SMOKE=1 CUKE_DEDUP_BENCH_REPEATS=1 npm run --silent benchmark > /dev/null
+      - name: Validate versioned corpus and reporter parity
+        run: node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+      - name: Smoke-test the local GitHub Action
+        id: cuke-dedup
+        uses: ./
+        env:
+          CUKE_DEDUP_BINARY: ${{ github.workspace }}/target/release/cuke-dedup
+        with:
+          path: fixtures/corpus/threshold-group
+          threshold: 60
+          reporters: terminal,json,html,sarif
+          output: ${{ github.workspace }}/action-report
+      - name: Assert Action outputs
+        env:
+          EXIT_CODE: ${{ steps.cuke-dedup.outputs.exit-code }}
+          DUPLICATE_RATE: ${{ steps.cuke-dedup.outputs.duplicate-rate }}
+          JSON_REPORT: ${{ steps.cuke-dedup.outputs.json-report }}
+          HTML_REPORT: ${{ steps.cuke-dedup.outputs.html-report }}
+          SARIF_REPORT: ${{ steps.cuke-dedup.outputs.sarif-report }}
+        run: |
+          test "$EXIT_CODE" = "0"
+          test "$DUPLICATE_RATE" = "60"
+          test -s "$JSON_REPORT"
+          test -s "$HTML_REPORT"
+          test -s "$SARIF_REPORT"
+      - name: Upload Action reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cuke-dedup-action-reports
+          path: action-report/
+          if-no-files-found: error

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CukeDedup report</title>
+<script>
+try {const storedTheme=localStorage.getItem('cuke-dedup-theme');if(storedTheme==='light'||storedTheme==='dark')document.documentElement.dataset.theme=storedTheme;} catch {}
+</script>
+<style>
+:root { color-scheme:light dark; font-family:ui-sans-serif,system-ui,sans-serif; --page:#fff; --surface:#fff; --text:#202124; --muted:#666; --border:#aaa; --field:#fff; --code:#8881; --error:#c62828; --warning:#b26a00; }
+:root[data-theme=light] { color-scheme:light; }
+:root[data-theme=dark] { color-scheme:dark; --page:#0d1117; --surface:#161b22; --text:#e6edf3; --muted:#9da7b3; --border:#59616d; --field:#21262d; --code:#ffffff0d; --error:#ff7b72; --warning:#f0b429; }
+@media (prefers-color-scheme:dark) { :root:not([data-theme]) { --page:#0d1117; --surface:#161b22; --text:#e6edf3; --muted:#9da7b3; --border:#59616d; --field:#21262d; --code:#ffffff0d; --error:#ff7b72; --warning:#f0b429; } }
+body { max-width:1100px; margin:0 auto; padding:2rem; background:var(--page); color:var(--text); }
+.report-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem }
+h1 { margin:.1rem 0 .25rem } .summary { color:var(--muted); margin-top:0 }
+.threshold-status { font-weight:700; margin:.5rem 0 0 } .threshold-status.pass { color:#16803c } .threshold-status.fail { color:var(--error) }
+.controls { display:flex; gap:.75rem; flex-wrap:wrap; margin:1.5rem 0 }
+input,select,button { font:inherit; color:inherit }
+input,select { padding:.55rem .7rem; border:1px solid var(--border); border-radius:.35rem; background:var(--field) }
+input { min-width:20rem; flex:1 }
+.theme-toggle { display:inline-flex; align-items:center; gap:.45rem; padding:.5rem .7rem; border:1px solid var(--border); border-radius:999px; background:var(--surface); cursor:pointer; white-space:nowrap }
+.theme-toggle:hover { border-color:var(--text) } .theme-toggle:focus-visible { outline:2px solid var(--text); outline-offset:2px }
+.theme-icon { width:1.1em; text-align:center }
+.rule-summary { display:flex; flex-wrap:wrap; gap:.5rem; list-style:none; padding:0; margin:.75rem 0 0 }
+.rule-summary li { display:flex; gap:.45rem; padding:.3rem .55rem; border:1px solid var(--border); border-radius:999px; background:var(--surface) }
+.finding { border:1px solid var(--border); border-left-width:.35rem; border-radius:.4rem; padding:1rem; margin:1rem 0; background:var(--surface) }
+.finding[data-severity=error] { border-left-color:var(--error) } .finding[data-severity=warning] { border-left-color:var(--warning) }
+.finding header { display:flex; gap:.7rem; align-items:center } .finding h2 { font-size:1.05rem }
+.severity { font-weight:700; text-transform:uppercase; font-size:.75rem } .severity.error { color:var(--error) } .severity.warning { color:var(--warning) }
+.location,.related { font-family:ui-monospace,monospace } .related { margin-top:-.5rem } .empty { padding:2rem; text-align:center }
+.truncation-notice { padding:.75rem 1rem; border:1px solid var(--warning); border-radius:.4rem; color:var(--warning); }
+.comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0 }
+.comparison section { min-width:0; border:1px solid var(--border); border-radius:.35rem; padding:.75rem }
+.comparison h3 { margin:.1rem 0 .6rem; font-size:.9rem } .matcher { overflow-wrap:anywhere }
+.comparison pre { margin:.75rem 0 0; padding:.75rem; overflow:auto; background:var(--code); border-radius:.3rem; white-space:pre-wrap }
+mark { background:#ffd54f; color:#111; padding:0 .08rem }
+@media (max-width:700px) { body { padding:1rem } .report-header { align-items:center } .comparison { grid-template-columns:1fr } input { min-width:100% } }
+</style>
+</head>
+<body>
+<div class="report-header"><div><h1>CukeDedup report</h1><p class="summary">{{DEFINITIONS}} · {{FEATURE_STEPS}} · {{ERRORS}} · {{WARNINGS}} · {{SUPPRESSED}} suppressed</p></div><button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Switch color theme"><span id="theme-icon" class="theme-icon" aria-hidden="true">◐</span><span id="theme-label">System</span></button></div>
+<p class="threshold-status {{THRESHOLD_CLASS}}">Duplication: {{DUPLICATED_DEFINITIONS}} of {{TOTAL_DEFINITIONS}} definitions ({{DUPLICATION_PERCENTAGE}}%) · threshold {{DUPLICATION_THRESHOLD}}% · {{THRESHOLD_STATUS}}</p>
+{{CONTRIBUTING_RULES}}
+{{RULE_SUMMARY}}
+{{TRUNCATION_NOTICE}}
+<div class="controls"><input id="search" type="search" placeholder="Search findings" aria-label="Search findings"><select id="severity" aria-label="Filter by severity"><option value="">All severities</option><option value="error">Errors</option><option value="warning">Warnings</option></select><select id="rule" aria-label="Filter by rule"><option value="">All rules</option></select></div>
+<main id="findings">{{CARDS}}</main>
+<script type="application/json" id="report-data">{{REPORT_JSON}}</script>
+<script>
+const cards=[...document.querySelectorAll('.finding')], search=document.querySelector('#search'), severity=document.querySelector('#severity'), rule=document.querySelector('#rule'), themeToggle=document.querySelector('#theme-toggle'), themeIcon=document.querySelector('#theme-icon'), themeLabel=document.querySelector('#theme-label'), themePreference=window.matchMedia('(prefers-color-scheme: dark)');
+[...new Set(cards.map(card=>card.dataset.rule))].sort().forEach(value=>rule.add(new Option(value,value)));
+function filter(){const query=search.value.toLowerCase();cards.forEach(card=>{card.hidden=!!((severity.value&&card.dataset.severity!==severity.value)||(rule.value&&card.dataset.rule!==rule.value)||(query&&!card.textContent.toLowerCase().includes(query)));})}
+function currentTheme(){return document.documentElement.dataset.theme||(themePreference.matches?'dark':'light');}
+function updateThemeToggle(){const theme=currentTheme(), isDark=theme==='dark';themeToggle.setAttribute('aria-pressed',String(isDark));themeToggle.setAttribute('aria-label','Switch to '+(isDark?'light':'dark')+' theme');themeIcon.textContent=isDark?'☾':'☀';themeLabel.textContent=isDark?'Dark':'Light';}
+search.addEventListener('input',filter); severity.addEventListener('change',filter); rule.addEventListener('change',filter);
+themeToggle.addEventListener('click',()=>{const theme=currentTheme()==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;try {localStorage.setItem('cuke-dedup-theme',theme);} catch {}updateThemeToggle();});
+themePreference.addEventListener?.('change',()=>{if(!document.documentElement.dataset.theme)updateThemeToggle();});
+updateThemeToggle();
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "@badeball/cypress-cucumber-preprocessor": "1.0.0"
+  }
+}

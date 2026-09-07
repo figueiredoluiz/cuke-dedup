@@ -1,0 +1,23 @@
+[package]
+name = "cuke-dedup-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cuke-dedup = { path = "..", version = "=0.1.0" }
+
+[[bin]]
+name = "parsers"
+path = "fuzz_targets/parsers.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

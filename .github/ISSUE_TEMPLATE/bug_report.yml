@@ -1,0 +1,64 @@
+name: Bug report
+description: Report incorrect findings, missed findings, crashes, or CLI behavior
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting a problem. Sanitized minimal reproductions help us validate parser and platform-specific behavior.
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - npm or npx
+        - cargo install
+        - GitHub Action
+        - Downloaded binary
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CukeDedup version or commit
+      placeholder: cuke-dedup 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and architecture
+      placeholder: Ubuntu 24.04 x64, macOS 15 arm64, or Windows 11 x64
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and configuration
+      description: Include the exact command and relevant .cuke-dedup.json or package.json configuration.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide sanitized feature and step-definition samples plus the exact command.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the complete error or report output after removing secrets and proprietary content.
+      render: text
+    validations:
+      required: true
