@@ -35,7 +35,7 @@ test("prebuilt manifest, platform packages, and optional dependencies do not dri
     }
     assert.deepEqual(
       platformPackage.files,
-      [`bin/${target.binaryName}`],
+      [`bin/${target.binaryName}`, "LICENSE", "THIRD-PARTY-LICENSES.md"],
     );
   }
 });

@@ -10,6 +10,7 @@ import {
   releaseTarget,
   reportOutputs,
   resolveReportDirectory,
+  validateArchiveMemberNames,
   verifyChecksum,
 } from "../../.github/actions/cuke-dedup/index.js";
 
@@ -172,4 +173,19 @@ test("action fails closed on a mismatched release checksum", async () => {
   await writeFile(archive, "release bytes");
   await writeFile(checksum, `${"0".repeat(64)}  release.tar.gz\n`);
   assert.throws(() => verifyChecksum(archive, checksum), /checksum mismatch/);
+});
+
+test("action accepts only the exact release archive structure", () => {
+  validateArchiveMemberNames(
+    "cuke-dedup\nLICENSE\nTHIRD-PARTY-LICENSES.md\n",
+    "cuke-dedup",
+  );
+  assert.throws(
+    () => validateArchiveMemberNames("../../cuke-dedup\nLICENSE\nTHIRD-PARTY-LICENSES.md\n", "cuke-dedup"),
+    /unexpected release archive members/,
+  );
+  assert.throws(
+    () => validateArchiveMemberNames("cuke-dedup\nLICENSE\n", "cuke-dedup"),
+    /unexpected release archive members/,
+  );
 });
