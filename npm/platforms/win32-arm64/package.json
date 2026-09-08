@@ -1,7 +1,7 @@
 {
-  "name": "cuke-dedup-win32-arm64",
+  "name": "cuke-dedup-windows-arm64-msvc",
   "version": "0.1.1",
-  "description": "Windows arm64 native binary for cuke-dedup",
+  "description": "Windows arm64 MSVC native binary for cuke-dedup",
   "os": ["win32"],
   "cpu": ["arm64"],
   "files": ["bin/cuke-dedup.exe", "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],

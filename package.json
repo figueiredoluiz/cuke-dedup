@@ -51,7 +51,7 @@
     "cuke-dedup-linux-arm64-musl": "0.1.1",
     "cuke-dedup-linux-x64-gnu": "0.1.1",
     "cuke-dedup-linux-x64-musl": "0.1.1",
-    "cuke-dedup-win32-arm64": "0.1.1",
-    "cuke-dedup-win32-x64": "0.1.1"
+    "cuke-dedup-windows-arm64-msvc": "0.1.1",
+    "cuke-dedup-windows-x64-msvc": "0.1.1"
   }
 }
