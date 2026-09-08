@@ -81,7 +81,8 @@ export async function publishNpmPackages({ root = defaultRoot, runNpm = runNpmCo
 }
 
 export function runNpmCommand(arguments_, { capture, root }) {
-  return spawnSync("npm", arguments_, {
+  const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+  return spawnSync(npmExecutable, arguments_, {
     cwd: root,
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
