@@ -80,7 +80,7 @@ export async function publishNpmPackages({ root = defaultRoot, runNpm = runNpmCo
   }
 }
 
-function runNpm(arguments_, { capture, root }) {
+export function runNpmCommand(arguments_, { capture, root }) {
   return spawnSync("npm", arguments_, {
     cwd: root,
     encoding: "utf8",
