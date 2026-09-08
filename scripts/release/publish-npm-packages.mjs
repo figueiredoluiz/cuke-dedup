@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -80,12 +80,27 @@ export async function publishNpmPackages({ root = defaultRoot, runNpm = runNpmCo
   }
 }
 
-function runNpm(arguments_, { capture, root }) {
-  return spawnSync("npm", arguments_, {
+export function runNpmCommand(arguments_, { capture, root }) {
+  const { executable, prefixArguments } = npmInvocation();
+  return spawnSync(executable, [...prefixArguments, ...arguments_], {
     cwd: root,
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
+}
+
+export function npmInvocation({
+  platform = process.platform,
+  nodeExecutable = process.execPath,
+  npmExecutablePath = process.env.npm_execpath,
+} = {}) {
+  if (platform !== "win32") {
+    return { executable: "npm", prefixArguments: [] };
+  }
+
+  const npmCli = npmExecutablePath
+    ?? resolve(dirname(nodeExecutable), "node_modules/npm/bin/npm-cli.js");
+  return { executable: nodeExecutable, prefixArguments: [npmCli] };
 }
 
 const invokedModule = process.argv[1]

@@ -22,6 +22,11 @@ on:
         description: Existing version tag; required only when publishing
         required: false
         type: string
+      publish_npm_only:
+        description: Recover npm publishing without recreating the GitHub release or crate
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -159,7 +164,7 @@ jobs:
   github-release:
     name: Publish GitHub release
     needs: build-native
-    if: inputs.publish_release
+    if: inputs.publish_release && !inputs.publish_npm_only
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: github-release
@@ -200,7 +205,7 @@ jobs:
   publish-crate:
     name: Publish crate
     needs: [metadata, build-native, github-release]
-    if: inputs.publish_release && vars.PUBLISH_CRATES == 'true'
+    if: inputs.publish_release && !inputs.publish_npm_only && vars.PUBLISH_CRATES == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: crates-io
@@ -224,7 +229,15 @@ jobs:
   publish-npm:
     name: Publish npm packages
     needs: [metadata, build-native, github-release]
-    if: inputs.publish_release && vars.PUBLISH_NPM == 'true'
+    if: >-
+      ${{
+        always() &&
+        inputs.publish_release &&
+        vars.PUBLISH_NPM == 'true' &&
+        needs.metadata.result == 'success' &&
+        needs.build-native.result == 'success' &&
+        (inputs.publish_npm_only || needs.github-release.result == 'success')
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
@@ -234,7 +247,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
+          ref: ${{ inputs.publish_npm_only && github.sha || needs.metadata.outputs.release_sha }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
