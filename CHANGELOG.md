@@ -12,6 +12,7 @@ All notable changes to CukeDedup are documented in this file. The project follow
 ### Fixed
 
 - Added package-specific READMEs to native npm distributions.
+- Adopted conventional `windows-*-msvc` names for the Windows npm packages.
 - Made npm publication safe to retry after a partial release.
 
 ## [0.1.0] - 2026-09-07

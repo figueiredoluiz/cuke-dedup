@@ -36,8 +36,12 @@ test("maps every supported platform to its native package", () => {
     "cuke-dedup.exe",
   );
   assert.equal(
+    targetFor("win32", "x64").packageName,
+    "cuke-dedup-windows-x64-msvc",
+  );
+  assert.equal(
     targetFor("win32", "arm64").packageName,
-    "cuke-dedup-win32-arm64",
+    "cuke-dedup-windows-arm64-msvc",
   );
 });
 

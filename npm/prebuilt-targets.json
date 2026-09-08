@@ -61,7 +61,7 @@
     },
     "win32-arm64": {
       "rustTarget": "aarch64-pc-windows-msvc",
-      "packageName": "cuke-dedup-win32-arm64",
+      "packageName": "cuke-dedup-windows-arm64-msvc",
       "packageDirectory": "win32-arm64",
       "platform": "win32",
       "arch": "arm64",
@@ -70,7 +70,7 @@
     },
     "win32-x64": {
       "rustTarget": "x86_64-pc-windows-msvc",
-      "packageName": "cuke-dedup-win32-x64",
+      "packageName": "cuke-dedup-windows-x64-msvc",
       "packageDirectory": "win32-x64",
       "platform": "win32",
       "arch": "x64",
