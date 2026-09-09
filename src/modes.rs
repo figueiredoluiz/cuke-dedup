@@ -18,6 +18,7 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
             "diff",
             "--relative",
             "--name-only",
+            "-z",
             "--diff-filter=ACMR",
             &base_oid,
             "--",
@@ -26,7 +27,7 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
     )?;
     let untracked = git_paths(
         root,
-        &["ls-files", "--others", "--exclude-standard", "--"],
+        &["ls-files", "--others", "--exclude-standard", "-z", "--"],
         "git untracked-file discovery failed",
     )?;
     Ok(tracked
@@ -116,6 +117,7 @@ fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathB
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
+        .args(["-c", "core.quotePath=false"])
         .args(arguments)
         .output()
         .with_context(|| "failed to run git for changed-files mode")?;
@@ -123,12 +125,27 @@ fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathB
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         bail!("{failure}: {stderr}");
     }
-    let stdout = String::from_utf8(output.stdout).context("git returned non-UTF-8 file names")?;
-    Ok(stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| PathBuf::from(line.trim()))
-        .collect())
+    output
+        .stdout
+        .split(|byte| *byte == b'\0')
+        .filter(|path| !path.is_empty())
+        .map(path_from_git_bytes)
+        .collect()
+}
+
+#[cfg(unix)]
+fn path_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    Ok(PathBuf::from(OsStr::from_bytes(bytes)))
+}
+
+#[cfg(not(unix))]
+fn path_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        std::str::from_utf8(bytes).context("git returned a non-UTF-8 file name")?,
+    ))
 }
 
 /// Retains findings whose primary or related location belongs to `changed`.
@@ -306,6 +323,23 @@ mod tests {
     use super::*;
     use crate::model::{FindingEvidence, Rule, Severity, SourceLocation};
 
+    fn initialize_repository(root: &Path) {
+        for arguments in [
+            ["init", "-q"].as_slice(),
+            ["config", "user.email", "test@example.com"].as_slice(),
+            ["config", "user.name", "Test"].as_slice(),
+            ["add", "."].as_slice(),
+            ["commit", "-qm", "initial"].as_slice(),
+        ] {
+            assert!(Command::new("git")
+                .args(arguments)
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+
     fn finding(root: &Path, file: &str) -> Finding {
         Finding {
             rule: Rule::DuplicateMatcher,
@@ -349,33 +383,67 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
         fs::create_dir_all(root.join("packages/e2e/steps")).unwrap();
-        fs::write(root.join("packages/e2e/steps/tracked.ts"), "before").unwrap();
-        for arguments in [
-            ["init", "-q"].as_slice(),
-            ["config", "user.email", "test@example.com"].as_slice(),
-            ["config", "user.name", "Test"].as_slice(),
-            ["add", "."].as_slice(),
-            ["commit", "-qm", "initial"].as_slice(),
-        ] {
-            assert!(Command::new("git")
-                .args(arguments)
-                .current_dir(root)
-                .status()
-                .unwrap()
-                .success());
-        }
-        fs::write(root.join("packages/e2e/steps/tracked.ts"), "after").unwrap();
-        fs::write(root.join("packages/e2e/steps/new.ts"), "new").unwrap();
+        fs::write(root.join("packages/e2e/steps/träcked.ts"), "before").unwrap();
+        initialize_repository(root);
+        fs::write(root.join("packages/e2e/steps/träcked.ts"), "after").unwrap();
+        fs::write(root.join("packages/e2e/steps/ new step.ts"), "new").unwrap();
+        fs::write(root.join("packages/e2e/steps/trailing step.ts "), "new").unwrap();
 
         let subdirectory = root.join("packages/e2e");
         let changed = git_changed_files(&subdirectory, "HEAD").unwrap();
         assert_eq!(
             changed,
             BTreeSet::from([
-                subdirectory.join("steps/new.ts"),
-                subdirectory.join("steps/tracked.ts"),
+                subdirectory.join("steps/ new step.ts"),
+                subdirectory.join("steps/träcked.ts"),
+                subdirectory.join("steps/trailing step.ts "),
             ])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_files_preserve_newlines_in_unix_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let steps = root.join("steps");
+        fs::create_dir_all(&steps).unwrap();
+        let newline = steps.join("line\nbreak.ts");
+        fs::write(&newline, "before").unwrap();
+        initialize_repository(root);
+        fs::write(&newline, "after").unwrap();
+
+        let changed = git_changed_files(root, "HEAD").unwrap();
+        assert_eq!(changed, BTreeSet::from([newline]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_path_decoder_preserves_non_utf8_unix_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = b"steps/non-utf8-\xff.ts";
+        let path = path_from_git_bytes(bytes).unwrap();
+        assert_eq!(path.as_os_str().as_bytes(), bytes);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn changed_files_preserve_non_utf8_linux_names() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let steps = root.join("steps");
+        fs::create_dir_all(&steps).unwrap();
+        let non_utf8 = steps.join(OsString::from_vec(b"non-utf8-\xff.ts".to_vec()));
+        fs::write(&non_utf8, "before").unwrap();
+        initialize_repository(root);
+        fs::write(&non_utf8, "after").unwrap();
+
+        let changed = git_changed_files(root, "HEAD").unwrap();
+        assert_eq!(changed, BTreeSet::from([non_utf8]));
     }
 
     #[test]
