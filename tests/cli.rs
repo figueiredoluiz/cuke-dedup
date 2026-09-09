@@ -777,7 +777,7 @@ fn reporter_flag_does_not_swallow_the_target_and_announces_file_output() {
 }
 
 #[test]
-fn changed_since_compares_changed_sources_against_the_full_corpus() {
+fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
@@ -800,11 +800,11 @@ fn changed_since_compares_changed_sources_against_the_full_corpus() {
     }
     write(
         directory.path(),
-        "steps/changed.ts",
+        "steps/café changed.ts",
         "Given('shared step', () => { changed(); });\n",
     );
     assert!(ProcessCommand::new("git")
-        .args(["add", "steps/changed.ts"])
+        .args(["add", "steps/café changed.ts"])
         .current_dir(directory.path())
         .status()
         .unwrap()
@@ -817,7 +817,7 @@ fn changed_since_compares_changed_sources_against_the_full_corpus() {
         .assert()
         .code(1)
         .stdout(predicate::str::contains("duplicate-matcher"))
-        .stdout(predicate::str::contains("steps/changed.ts"));
+        .stdout(predicate::str::contains("steps/café changed.ts"));
 
     let mut tolerated = Command::cargo_bin("cuke-dedup").unwrap();
     tolerated
@@ -864,7 +864,7 @@ fn changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate() {
 }
 
 #[test]
-fn changed_since_handles_an_untracked_file_from_a_repo_subdirectory() {
+fn changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory() {
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
@@ -887,7 +887,7 @@ fn changed_since_handles_an_untracked_file_from_a_repo_subdirectory() {
     }
     write(
         directory.path(),
-        "packages/e2e/steps/new.ts",
+        "packages/e2e/steps/café step.ts",
         "Given('shared step', () => { changed(); });\n",
     );
 
@@ -898,7 +898,86 @@ fn changed_since_handles_an_untracked_file_from_a_repo_subdirectory() {
         .assert()
         .code(1)
         .stdout(predicate::str::contains("duplicate-matcher"))
-        .stdout(predicate::str::contains("steps/new.ts"));
+        .stdout(predicate::str::contains("steps/café step.ts"));
+}
+
+#[cfg(unix)]
+#[test]
+fn changed_since_handles_an_untracked_file_with_a_newline() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps/existing.ts",
+        "Given('shared step', () => { existing(); });\n",
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(
+        directory.path(),
+        "steps/line\nbreak.ts",
+        "Given('shared step', () => { changed(); });\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("duplicate-matcher"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn changed_since_handles_an_untracked_non_utf8_file() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps/existing.ts",
+        "Given('shared step', () => { existing(); });\n",
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    let path = directory
+        .path()
+        .join("steps")
+        .join(OsString::from_vec(b"non-utf8-\xff.ts".to_vec()));
+    fs::write(path, "Given('shared step', () => { changed(); });\n").unwrap();
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
 #[test]
