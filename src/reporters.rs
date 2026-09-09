@@ -8,7 +8,7 @@ mod sarif;
 mod shared;
 mod terminal;
 
-pub(crate) use context::CorpusCensus;
+pub(crate) use context::{CliReportMetadata, CorpusCensus};
 pub use context::{ExecutionMetrics, ReportContext, Summary};
 pub use html::{render_html, render_html_with_threshold};
 pub use json::{render_json, render_json_with_threshold};
@@ -62,20 +62,20 @@ pub(crate) fn write_cli_reports(
     result: &AnalysisResult,
     config: &Config,
     metrics: Option<&ExecutionMetrics>,
-    corpus: &CorpusCensus,
+    metadata: &CliReportMetadata<'_>,
     terminal: &mut dyn Write,
 ) -> Result<Vec<std::path::PathBuf>> {
     let context = metrics.map_or_else(
         || ReportContext::new(result, &config.root, config.threshold),
         |metrics| ReportContext::with_metrics(result, &config.root, config.threshold, metrics),
     );
-    write_reports_context(&context, config, Some(corpus), terminal)
+    write_reports_context(&context, config, Some(metadata), terminal)
 }
 
 fn write_reports_context(
     context: &ReportContext<'_>,
     config: &Config,
-    corpus: Option<&CorpusCensus>,
+    metadata: Option<&CliReportMetadata<'_>>,
     terminal: &mut dyn Write,
 ) -> Result<Vec<std::path::PathBuf>> {
     let mut written = Vec::new();
@@ -91,18 +91,18 @@ fn write_reports_context(
                 ensure_parent(&path)?;
                 fs::write(
                     &path,
-                    json::render_json_context_with_census(context, corpus)?,
+                    json::render_json_context_with_metadata(context, metadata)?,
                 )
                 .with_context(|| format!("failed to write JSON report {}", path.display()))?;
                 written.push(path);
             }
-            ReporterKind::Jsonl => jsonl::write_jsonl_context(context, corpus, terminal)?,
+            ReporterKind::Jsonl => jsonl::write_jsonl_context(context, metadata, terminal)?,
             ReporterKind::Html => {
                 let path = config.output_path("cuke-dedup.html");
                 ensure_parent(&path)?;
                 fs::write(
                     &path,
-                    html::render_html_context_with_census(context, corpus)?,
+                    html::render_html_context_with_metadata(context, metadata)?,
                 )
                 .with_context(|| format!("failed to write HTML report {}", path.display()))?;
                 written.push(path);
@@ -112,7 +112,7 @@ fn write_reports_context(
                 ensure_parent(&path)?;
                 fs::write(
                     &path,
-                    sarif::render_sarif_context_with_census(context, corpus)?,
+                    sarif::render_sarif_context_with_metadata(context, metadata)?,
                 )
                 .with_context(|| format!("failed to write SARIF report {}", path.display()))?;
                 written.push(path);

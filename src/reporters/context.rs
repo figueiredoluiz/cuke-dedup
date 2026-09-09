@@ -1,3 +1,4 @@
+use crate::analysis::AnalysisCensus;
 use crate::model::{AnalysisResult, DuplicationThreshold, Severity};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -35,6 +36,12 @@ pub(crate) struct CorpusCensus {
     pub(crate) feature_files: usize,
     /// Number of selected feature files parsed successfully.
     pub(crate) feature_files_parsed: usize,
+}
+
+pub(crate) struct CliReportMetadata<'a> {
+    pub(crate) corpus: &'a CorpusCensus,
+    pub(crate) analysis: &'a AnalysisCensus,
+    pub(crate) execution_successful: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

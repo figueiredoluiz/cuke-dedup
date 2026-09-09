@@ -1,23 +1,30 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::similarity::{handler_similarity, is_near_matcher, matcher_similarity, round_score};
 use super::suppression::find_suppression;
+use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
-use crate::model::{Finding, FindingEvidence, MatcherKind, Rule, Severity, StepDefinition};
-use anyhow::{bail, Result};
-use std::collections::{BTreeSet, HashMap};
+use crate::model::{
+    Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation, StepDefinition,
+};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-#[cfg(not(test))]
-const MAX_DEFINITION_PAIR_CANDIDATES: usize = 2_000_000;
-#[cfg(test)]
-const MAX_DEFINITION_PAIR_CANDIDATES: usize = 10_000;
+const NORMALIZED_MATCHER_SOURCE: &str = "normalizedMatcher";
+const IDENTICAL_HANDLER_SOURCE: &str = "identicalHandler";
+const STRUCTURAL_HANDLER_SOURCE: &str = "structuralHandler";
+
+pub(super) struct PairAnalysis {
+    pub(super) census: AnalysisCensus,
+    pub(super) operational_error: Option<String>,
+}
 
 pub(super) fn analyze_definition_pairs(
     definitions: &[StepDefinition],
     config: &Config,
     findings: &mut Vec<Finding>,
-) -> Result<()> {
+) -> PairAnalysis {
+    let generated = definition_pair_candidates(definitions, config);
     let mut forests = FindingForests::new(definitions.len());
-    for (left_index, right_index) in definition_pair_candidates(definitions)? {
+    for &(left_index, right_index) in &generated.candidates {
         let left = &definitions[left_index];
         let right = &definitions[right_index];
         let exact_matcher = left.matcher_kind == right.matcher_kind
@@ -141,12 +148,17 @@ pub(super) fn analyze_definition_pairs(
             );
         }
     }
-    Ok(())
+    let operational_error = generated.operational_error(config);
+    PairAnalysis {
+        census: generated.census,
+        operational_error,
+    }
 }
 
 pub(super) fn definition_pair_candidates(
     definitions: &[StepDefinition],
-) -> Result<BTreeSet<(usize, usize)>> {
+    config: &Config,
+) -> CandidateGeneration {
     let mut normalized_matchers: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
     let mut handlers: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
@@ -171,55 +183,126 @@ pub(super) fn definition_pair_candidates(
         }
     }
 
-    let mut candidates = BTreeSet::new();
-    for group in normalized_matchers.values() {
+    let mut builder = CandidateBuilder::new(config.max_candidate_comparisons);
+    for group in sorted_groups(normalized_matchers) {
         let mut exact_groups: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
         for index in group {
-            let definition = &definitions[*index];
+            let definition = &definitions[index];
             exact_groups
                 .entry((&definition.matcher, &definition.matcher_flags))
                 .or_default()
-                .push(*index);
+                .push(index);
         }
         let exact_groups = sorted_groups(exact_groups);
         for exact_group in &exact_groups {
-            insert_spanning(exact_group, &mut candidates)?;
+            insert_spanning(exact_group, NORMALIZED_MATCHER_SOURCE, &mut builder);
         }
-        insert_multipartite_spanning(&exact_groups, &mut candidates)?;
+        insert_multipartite_spanning(&exact_groups, NORMALIZED_MATCHER_SOURCE, &mut builder);
     }
 
-    for group in handlers.values() {
+    for group in sorted_groups(handlers) {
         let mut matcher_groups: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
         for index in group {
-            let definition = &definitions[*index];
+            let definition = &definitions[index];
             matcher_groups
                 .entry((definition.matcher_kind, &definition.normalized_matcher))
                 .or_default()
-                .push(*index);
+                .push(index);
         }
-        insert_multipartite_spanning(&sorted_groups(matcher_groups), &mut candidates)?;
+        insert_multipartite_spanning(
+            &sorted_groups(matcher_groups),
+            IDENTICAL_HANDLER_SOURCE,
+            &mut builder,
+        );
     }
 
-    for group in structures.values() {
+    let mut structural_classes = Vec::new();
+    let mut structural_class_by_definition = vec![None; definitions.len()];
+    let mut handler_group_by_definition = vec![0_usize; definitions.len()];
+    for (class_index, group) in sorted_groups(structures).into_iter().enumerate() {
         let mut handler_groups: HashMap<&str, Vec<usize>> = HashMap::new();
-        for index in group {
+        for &index in &group {
             handler_groups
-                .entry(&definitions[*index].handler.alpha_normalized)
+                .entry(&definitions[index].handler.alpha_normalized)
                 .or_default()
-                .push(*index);
+                .push(index);
         }
         let handler_groups = sorted_groups(handler_groups);
-        for left_group in 0..handler_groups.len() {
-            for right_group in left_group + 1..handler_groups.len() {
-                for left in &handler_groups[left_group] {
-                    for right in &handler_groups[right_group] {
-                        insert_candidate(*left, *right, &mut candidates)?;
+        for (handler_group, indexes) in handler_groups.iter().enumerate() {
+            for &index in indexes {
+                structural_class_by_definition[index] = Some(class_index);
+                handler_group_by_definition[index] = handler_group;
+            }
+        }
+        structural_classes.push(StructuralClass {
+            anchor: definitions[group[0]].location.clone(),
+            unique_proposals: multipartite_pair_count(&handler_groups),
+            handler_groups,
+        });
+    }
+    for &(left, right) in &builder.proposals {
+        let Some(class_index) = structural_class_by_definition[left] else {
+            continue;
+        };
+        if structural_class_by_definition[right] == Some(class_index)
+            && handler_group_by_definition[left] != handler_group_by_definition[right]
+        {
+            structural_classes[class_index].unique_proposals = structural_classes[class_index]
+                .unique_proposals
+                .saturating_sub(1);
+        }
+    }
+
+    let mut truncated_structural_classes = Vec::new();
+    for structural_class in structural_classes {
+        let mut inserted = 0_u64;
+        let per_class_limit =
+            u64::try_from(config.max_structural_class_comparisons).unwrap_or(u64::MAX);
+        'groups: for left_group in 0..structural_class.handler_groups.len() {
+            for right_group in left_group + 1..structural_class.handler_groups.len() {
+                for left in &structural_class.handler_groups[left_group] {
+                    for right in &structural_class.handler_groups[right_group] {
+                        if inserted >= per_class_limit {
+                            let remaining =
+                                structural_class.unique_proposals.saturating_sub(inserted);
+                            if remaining > 0 {
+                                builder.skip(STRUCTURAL_HANDLER_SOURCE, remaining);
+                                truncated_structural_classes.push(structural_class.anchor.clone());
+                            }
+                            break 'groups;
+                        }
+                        match builder.insert(STRUCTURAL_HANDLER_SOURCE, *left, *right) {
+                            InsertOutcome::Inserted => inserted = inserted.saturating_add(1),
+                            InsertOutcome::Existing => {}
+                            InsertOutcome::Limit => {
+                                builder.skip(
+                                    STRUCTURAL_HANDLER_SOURCE,
+                                    structural_class
+                                        .unique_proposals
+                                        .saturating_sub(inserted)
+                                        .saturating_sub(1),
+                                );
+                                truncated_structural_classes.push(structural_class.anchor.clone());
+                                break 'groups;
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    Ok(candidates)
+    let census = builder.census(truncated_structural_classes.len());
+    CandidateGeneration {
+        candidates: builder.candidates,
+        census,
+        truncated_structural_classes,
+    }
+}
+
+struct StructuralClass {
+    anchor: SourceLocation,
+    unique_proposals: u64,
+    handler_groups: Vec<Vec<usize>>,
 }
 
 fn sorted_groups<K>(groups: HashMap<K, Vec<usize>>) -> Vec<Vec<usize>> {
@@ -228,50 +311,148 @@ fn sorted_groups<K>(groups: HashMap<K, Vec<usize>>) -> Vec<Vec<usize>> {
     groups
 }
 
-fn insert_spanning(group: &[usize], candidates: &mut BTreeSet<(usize, usize)>) -> Result<()> {
+fn insert_spanning(group: &[usize], source: &'static str, builder: &mut CandidateBuilder) {
     for pair in group.windows(2) {
-        insert_candidate(pair[0], pair[1], candidates)?;
+        builder.insert(source, pair[0], pair[1]);
     }
-    Ok(())
 }
 
 fn insert_multipartite_spanning(
     groups: &[Vec<usize>],
-    candidates: &mut BTreeSet<(usize, usize)>,
-) -> Result<()> {
+    source: &'static str,
+    builder: &mut CandidateBuilder,
+) {
     if groups.len() < 2 {
-        return Ok(());
+        return;
     }
     let first_anchor = groups[0][0];
     let second_anchor = groups[1][0];
     for group in &groups[1..] {
         for index in group {
-            insert_candidate(first_anchor, *index, candidates)?;
+            builder.insert(source, first_anchor, *index);
         }
     }
     for index in &groups[0][1..] {
-        insert_candidate(second_anchor, *index, candidates)?;
+        builder.insert(source, second_anchor, *index);
     }
-    Ok(())
 }
 
-fn insert_candidate(
-    left: usize,
-    right: usize,
-    candidates: &mut BTreeSet<(usize, usize)>,
-) -> Result<()> {
-    let pair = if left < right {
-        (left, right)
-    } else {
-        (right, left)
-    };
-    candidates.insert(pair);
-    if candidates.len() > MAX_DEFINITION_PAIR_CANDIDATES {
-        bail!(
-            "analysis requires more than {MAX_DEFINITION_PAIR_CANDIDATES} candidate definition comparisons; split independent suites or narrow the analysis root"
-        );
+fn multipartite_pair_count(groups: &[Vec<usize>]) -> u64 {
+    let mut prior = 0_u64;
+    let mut total = 0_u64;
+    for group in groups {
+        let size = u64::try_from(group.len()).unwrap_or(u64::MAX);
+        total = total.saturating_add(prior.saturating_mul(size));
+        prior = prior.saturating_add(size);
     }
-    Ok(())
+    total
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InsertOutcome {
+    Existing,
+    Inserted,
+    Limit,
+}
+
+struct CandidateBuilder {
+    candidates: BTreeSet<(usize, usize)>,
+    proposals: BTreeSet<(usize, usize)>,
+    limit: usize,
+    sources: BTreeMap<&'static str, CandidateSourceCensus>,
+}
+
+impl CandidateBuilder {
+    fn new(limit: usize) -> Self {
+        Self {
+            candidates: BTreeSet::new(),
+            proposals: BTreeSet::new(),
+            limit,
+            sources: [
+                (NORMALIZED_MATCHER_SOURCE, CandidateSourceCensus::default()),
+                (IDENTICAL_HANDLER_SOURCE, CandidateSourceCensus::default()),
+                (STRUCTURAL_HANDLER_SOURCE, CandidateSourceCensus::default()),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    fn insert(&mut self, source: &'static str, left: usize, right: usize) -> InsertOutcome {
+        let pair = candidate_pair(left, right);
+        if !self.proposals.insert(pair) {
+            return InsertOutcome::Existing;
+        }
+        if self.candidates.len() >= self.limit {
+            self.skip(source, 1);
+            return InsertOutcome::Limit;
+        }
+        self.candidates.insert(pair);
+        self.sources.entry(source).or_default().evaluated += 1;
+        InsertOutcome::Inserted
+    }
+
+    fn skip(&mut self, source: &'static str, count: u64) {
+        let metrics = self.sources.entry(source).or_default();
+        metrics.skipped = metrics.skipped.saturating_add(count);
+    }
+
+    fn census(&self, truncated_structural_classes: usize) -> AnalysisCensus {
+        let skipped_candidate_comparisons = self
+            .sources
+            .values()
+            .fold(0_u64, |total, source| total.saturating_add(source.skipped));
+        AnalysisCensus {
+            truncated: skipped_candidate_comparisons > 0,
+            candidate_comparisons_evaluated: self.candidates.len(),
+            skipped_candidate_comparisons,
+            truncated_structural_classes,
+            candidate_sources: self
+                .sources
+                .iter()
+                .map(|(name, census)| ((*name).to_owned(), census.clone()))
+                .collect(),
+        }
+    }
+}
+
+fn candidate_pair(left: usize, right: usize) -> (usize, usize) {
+    (left.min(right), left.max(right))
+}
+
+pub(super) struct CandidateGeneration {
+    pub(super) candidates: BTreeSet<(usize, usize)>,
+    pub(super) census: AnalysisCensus,
+    truncated_structural_classes: Vec<SourceLocation>,
+}
+
+impl CandidateGeneration {
+    fn operational_error(&self, config: &Config) -> Option<String> {
+        self.census.truncated.then(|| {
+            let mut affected = self
+                .truncated_structural_classes
+                .iter()
+                .take(3)
+                .map(|location| location.display(&config.root))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let additional = self.truncated_structural_classes.len().saturating_sub(3);
+            if additional > 0 {
+                affected.push_str(&format!(", and {additional} more"));
+            }
+            let class_detail = if affected.is_empty() {
+                String::new()
+            } else {
+                format!("; affected structural classes start at {affected}")
+            };
+            format!(
+                "analysis is incomplete: evaluated {} candidate definition comparisons and skipped {} after configured limits{}; partial findings are available",
+                self.census.candidate_comparisons_evaluated,
+                self.census.skipped_candidate_comparisons,
+                class_detail
+            )
+        })
+    }
 }
 
 struct FindingForests {

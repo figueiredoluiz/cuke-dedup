@@ -1,5 +1,8 @@
 use super::shared::{convert_location, report_safe, ReportLocation};
-use super::{CorpusCensus, ExecutionMetrics, ReportContext, Summary, JSONL_SCHEMA_VERSION};
+use super::{
+    CliReportMetadata, CorpusCensus, ExecutionMetrics, ReportContext, Summary, JSONL_SCHEMA_VERSION,
+};
+use crate::analysis::AnalysisCensus;
 use crate::model::{AnalysisResult, Finding, Rule, Severity};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -77,7 +80,9 @@ struct JsonlSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     metrics: Option<&'a ExecutionMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    corpus: Option<&'a CorpusCensus>,
+    corpus: Option<CorpusCensus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analysis: Option<AnalysisCensus>,
     record_count: usize,
     truncated: bool,
 }
@@ -102,7 +107,7 @@ pub fn render_jsonl_with_threshold(
 
 pub(super) fn write_jsonl_context(
     context: &ReportContext<'_>,
-    corpus: Option<&CorpusCensus>,
+    metadata: Option<&CliReportMetadata<'_>>,
     writer: &mut dyn Write,
 ) -> Result<()> {
     let mut writer = BufWriter::new(writer);
@@ -118,7 +123,8 @@ pub(super) fn write_jsonl_context(
         tool_version: context.tool_version,
         summary: &context.summary,
         metrics: context.metrics,
-        corpus,
+        corpus: metadata.map(|metadata| metadata.corpus.clone()),
+        analysis: metadata.map(|metadata| metadata.analysis.clone()),
         record_count: context.result.findings.len() + 1,
         truncated: false,
     };
@@ -145,6 +151,7 @@ fn render_jsonl_context(context: &ReportContext<'_>) -> Result<String> {
         summary: &context.summary,
         metrics: context.metrics,
         corpus: None,
+        analysis: None,
         record_count: context.result.findings.len() + 1,
         truncated: false,
     };

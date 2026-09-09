@@ -1,7 +1,7 @@
 //! Command-line parsing and analysis orchestration.
 
 use crate::analysis;
-use crate::config::{Config, ConfigOverrides, ReporterKind};
+use crate::config::{CliConfigOverrides, Config, ConfigOverrides, ReporterKind};
 use crate::discovery;
 use crate::model::{DuplicationThreshold, Rule, Severity};
 use crate::source_adapter::ExtractionDiagnosticLevel;
@@ -72,6 +72,14 @@ struct CheckOptions {
     /// Fail with exit code 2 when no step definitions are extracted.
     #[arg(long, global = true)]
     require_definitions: bool,
+
+    /// Maximum unique definition pairs retained for analysis.
+    #[arg(long, global = true, value_name = "COUNT", value_parser = parse_positive_usize)]
+    max_candidate_comparisons: Option<usize>,
+
+    /// Maximum structural candidate proposals considered per handler class.
+    #[arg(long, global = true, value_name = "COUNT", value_parser = parse_positive_usize)]
+    max_structural_class_comparisons: Option<usize>,
 
     /// Glob patterns selecting step-definition source files.
     #[arg(long, global = true, value_delimiter = ',')]
@@ -166,10 +174,15 @@ fn execute(cli: Cli) -> Result<i32> {
         no_metrics: cli.options.no_metrics.then_some(true),
         rules: cli.options.rules.into_iter().collect::<BTreeMap<_, _>>(),
     };
-    let mut config = Config::load(&root, overrides)?;
-    if cli.options.require_definitions {
-        config.require_definitions = true;
-    }
+    let config = Config::load_for_cli(
+        &root,
+        overrides,
+        CliConfigOverrides {
+            require_definitions: cli.options.require_definitions.then_some(true),
+            max_candidate_comparisons: cli.options.max_candidate_comparisons,
+            max_structural_class_comparisons: cli.options.max_structural_class_comparisons,
+        },
+    )?;
     if cli.options.print_config {
         println!(
             "{}",
@@ -339,7 +352,8 @@ fn execute(cli: Cli) -> Result<i32> {
     let parsing_ms = elapsed_ms(parsing_started);
 
     let analysis_started = Instant::now();
-    let analysis = analysis::analyze_with_diagnostics(definitions, feature_steps, &config)?;
+    let (analysis, analysis_census) =
+        analysis::analyze_for_cli(definitions, feature_steps, &config)?;
     operational_errors.extend(analysis.operational_errors);
     let mut result = analysis.result;
     let analysis_ms = elapsed_ms(analysis_started);
@@ -358,21 +372,28 @@ fn execute(cli: Cli) -> Result<i32> {
         } else {
             config.root.join(path)
         };
-        let outcome = if cli.options.update_baseline {
-            modes::update_baseline(&mut result.findings, &path)?
-        } else {
-            modes::apply_baseline(&mut result.findings, &path)?
-        };
-        if cli.options.update_baseline {
+        if cli.options.update_baseline && !operational_errors.is_empty() {
             operational_warnings.push(format!(
-                "updated baseline {}: {} added, {} removed, {} total",
-                path.display(),
-                outcome.added,
-                outcome.removed,
-                outcome.suppressed
+                "baseline {} was not updated because analysis is incomplete",
+                path.display()
             ));
+        } else {
+            let outcome = if cli.options.update_baseline {
+                modes::update_baseline(&mut result.findings, &path)?
+            } else {
+                modes::apply_baseline(&mut result.findings, &path)?
+            };
+            if cli.options.update_baseline {
+                operational_warnings.push(format!(
+                    "updated baseline {}: {} added, {} removed, {} total",
+                    path.display(),
+                    outcome.added,
+                    outcome.removed,
+                    outcome.suppressed
+                ));
+            }
+            baseline_outcome = Some(outcome);
         }
-        baseline_outcome = Some(outcome);
     }
     let corpus = reporters::CorpusCensus {
         definition_files: files.definitions.len(),
@@ -389,12 +410,17 @@ fn execute(cli: Cli) -> Result<i32> {
         parsing_ms,
         analysis_ms,
     };
+    let report_metadata = reporters::CliReportMetadata {
+        corpus: &corpus,
+        analysis: &analysis_census,
+        execution_successful: operational_errors.is_empty(),
+    };
     let mut stdout = io::stdout().lock();
     reporters::write_cli_reports(
         &result,
         &config,
         (!config.no_metrics).then_some(&metrics),
-        &corpus,
+        &report_metadata,
         &mut stdout,
     )?;
     if cli.options.explain_discovery
@@ -460,6 +486,14 @@ fn parse_rule_override(value: &str) -> std::result::Result<(Rule, Severity), Str
     Ok((rule.parse()?, severity.parse()?))
 }
 
+fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "expected an integer greater than zero".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +505,14 @@ mod tests {
             Ok((Rule::DuplicateMatcher, Severity::Warning))
         );
         assert!(parse_rule_override("unknown=error").is_err());
+    }
+
+    #[test]
+    fn candidate_limit_cli_values_must_be_positive() {
+        assert_eq!(parse_positive_usize("7"), Ok(7));
+        assert!(parse_positive_usize("0").is_err());
+        assert!(parse_positive_usize("-1").is_err());
+        assert!(parse_positive_usize("many").is_err());
     }
 
     #[test]

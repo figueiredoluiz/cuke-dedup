@@ -52,26 +52,257 @@ fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
         ));
     }
     let unrelated = definitions(&unrelated_source);
-    assert!(definition_pair_candidates(&unrelated).unwrap().is_empty());
+    let (_directory, config) = config();
+    assert!(definition_pair_candidates(&unrelated, &config)
+        .candidates
+        .is_empty());
 
     let exact = definitions(
         "Given('same', () => one());\nGiven('same', () => two());\nGiven('same', () => three());",
     );
-    assert_eq!(definition_pair_candidates(&exact).unwrap().len(), 2);
+    assert_eq!(
+        definition_pair_candidates(&exact, &config).candidates.len(),
+        2
+    );
 }
 
 #[test]
-fn candidate_limit_fails_closed_before_pathological_pair_expansion() {
+fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
     let mut source = String::new();
     for index in 0..143 {
         source.push_str(&format!(
             "Given('operation label {index}', () => perform({index}));\n"
         ));
     }
-    let error = definition_pair_candidates(&definitions(&source)).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("candidate definition comparisons"));
+    let class_definitions = definitions(&source);
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 100;
+    config.max_structural_class_comparisons = 20;
+
+    let generated = definition_pair_candidates(&class_definitions, &config);
+    assert!(generated.census.truncated);
+    assert!(generated.candidates.len() <= 100);
+    assert_eq!(generated.census.truncated_structural_classes, 1);
+    assert!(generated.census.skipped_candidate_comparisons > 0);
+    assert!(generated.census.candidate_sources["structuralHandler"].skipped > 0);
+
+    let (outcome, census) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
+    assert!(!outcome.result.findings.is_empty());
+    assert_eq!(outcome.operational_errors.len(), 1);
+    assert!(outcome.operational_errors[0].contains("partial findings are available"));
+    assert_eq!(census, generated.census);
+}
+
+#[test]
+fn structural_class_limit_preserves_work_from_later_classes() {
+    let mut source = String::new();
+    for prefix in ["account", "invoice"] {
+        for index in 0..6 {
+            source.push_str(&format!(
+                "Given('{prefix} operation {index}', () => {prefix}Action({index}));\n"
+            ));
+        }
+    }
+    let class_definitions = definitions(&source);
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 100;
+    config.max_structural_class_comparisons = 2;
+
+    let generated = definition_pair_candidates(&class_definitions, &config);
+    assert_eq!(generated.census.truncated_structural_classes, 2);
+    assert_eq!(
+        generated.census.candidate_sources["structuralHandler"].evaluated,
+        4
+    );
+    assert!(generated
+        .candidates
+        .iter()
+        .any(|(left, right)| *left < 6 && *right < 6));
+    assert!(generated
+        .candidates
+        .iter()
+        .any(|(left, right)| *left >= 6 && *right >= 6));
+}
+
+#[test]
+fn global_candidate_limit_reports_the_source_that_was_truncated() {
+    let definitions = definitions(
+        "Given('same', () => one());\nGiven('same', () => two());\nGiven('same', () => three());\nGiven('same', () => four());\nGiven('same', () => five());",
+    );
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 2;
+    config.max_structural_class_comparisons = 100;
+
+    let generated = definition_pair_candidates(&definitions, &config);
+    assert_eq!(generated.candidates.len(), 2);
+    assert!(generated.census.truncated);
+    assert_eq!(
+        generated.census.candidate_sources["normalizedMatcher"].skipped,
+        2
+    );
+    assert_eq!(
+        generated
+            .census
+            .candidate_sources
+            .values()
+            .map(|source| source.evaluated)
+            .sum::<usize>(),
+        generated.candidates.len()
+    );
+}
+
+#[test]
+fn candidate_limits_are_inclusive_at_the_exact_boundary() {
+    let structural = definitions(
+        "Given('operation one', () => perform(1));\nGiven('operation two', () => perform(2));\nGiven('operation three', () => perform(3));",
+    );
+    let exact = definitions(
+        "Given('same', () => one());\nGiven('same', () => two());\nGiven('same', () => three());",
+    );
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 3;
+    config.max_structural_class_comparisons = 3;
+
+    let structural = definition_pair_candidates(&structural, &config);
+    assert_eq!(structural.candidates.len(), 3);
+    assert!(!structural.census.truncated);
+    assert_eq!(structural.census.skipped_candidate_comparisons, 0);
+    assert_eq!(structural.census.truncated_structural_classes, 0);
+
+    config.max_candidate_comparisons = 2;
+    let exact = definition_pair_candidates(&exact, &config);
+    assert_eq!(exact.candidates.len(), 2);
+    assert!(!exact.census.truncated);
+    assert_eq!(exact.census.skipped_candidate_comparisons, 0);
+}
+
+#[test]
+fn skipped_count_deduplicates_rejected_pairs_across_candidate_sources() {
+    let definitions = definitions(
+        "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));",
+    );
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 1;
+    config.max_structural_class_comparisons = 10;
+
+    let generated = definition_pair_candidates(&definitions, &config);
+    assert!(generated.census.truncated);
+    assert_eq!(generated.candidates.len(), 1);
+    assert_eq!(generated.census.skipped_candidate_comparisons, 2);
+    assert_eq!(
+        generated.census.candidate_sources["normalizedMatcher"].skipped,
+        1
+    );
+    assert_eq!(
+        generated.census.candidate_sources["structuralHandler"].skipped,
+        1
+    );
+}
+
+#[test]
+fn structural_limits_count_only_pairs_not_already_scheduled_by_other_sources() {
+    let definitions = definitions(
+        "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));",
+    );
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 3;
+    config.max_structural_class_comparisons = 1;
+
+    let generated = definition_pair_candidates(&definitions, &config);
+    assert_eq!(generated.candidates.len(), 3);
+    assert!(!generated.census.truncated);
+    assert_eq!(generated.census.skipped_candidate_comparisons, 0);
+    assert_eq!(generated.census.truncated_structural_classes, 0);
+    assert_eq!(
+        generated.census.candidate_sources["normalizedMatcher"].evaluated,
+        2
+    );
+    assert_eq!(
+        generated.census.candidate_sources["structuralHandler"].evaluated,
+        1
+    );
+}
+
+#[test]
+fn structural_skipped_count_excludes_cross_source_candidates_exactly() {
+    let definitions = definitions(
+        "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));\nGiven('same', () => action(4));",
+    );
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 10;
+    config.max_structural_class_comparisons = 1;
+
+    let generated = definition_pair_candidates(&definitions, &config);
+    assert!(generated.census.truncated);
+    assert_eq!(generated.census.skipped_candidate_comparisons, 2);
+    assert_eq!(
+        generated.census.candidate_sources["normalizedMatcher"].evaluated,
+        3
+    );
+    assert_eq!(
+        generated.census.candidate_sources["structuralHandler"].evaluated,
+        1
+    );
+}
+
+#[test]
+fn structural_overlap_ignores_existing_pairs_within_one_handler_group() {
+    let definitions = definitions(
+        "Given('first', () => action('same'));\nGiven('second', () => action('same'));\nGiven('third', () => action('third'));\nGiven('fourth', () => action('fourth'));",
+    );
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 10;
+    config.max_structural_class_comparisons = 1;
+
+    let generated = definition_pair_candidates(&definitions, &config);
+    assert!(generated.census.truncated);
+    assert_eq!(generated.census.skipped_candidate_comparisons, 4);
+    assert_eq!(
+        generated.census.candidate_sources["identicalHandler"].evaluated,
+        1
+    );
+}
+
+#[test]
+fn trivial_and_unresolved_handlers_do_not_consume_candidate_budgets() {
+    for definitions in [
+        definitions("Given('one', () => {});\nGiven('two', () => {});"),
+        definitions("Given('one', importedHandler);\nGiven('two', anotherImportedHandler);"),
+    ] {
+        let (_directory, config) = config();
+        let generated = definition_pair_candidates(&definitions, &config);
+        assert!(generated.candidates.is_empty());
+        assert_eq!(generated.census.candidate_comparisons_evaluated, 0);
+        assert!(!generated.census.truncated);
+    }
+}
+
+#[test]
+fn candidate_limit_diagnostic_bounds_affected_class_locations() {
+    let mut source = String::new();
+    for class in 0..5 {
+        for index in 0..3 {
+            source.push_str(&format!(
+                "Given('class {class} operation {index}', () => action{class}({index}));\n"
+            ));
+        }
+    }
+    let class_definitions = definitions(&source);
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 100;
+    config.max_structural_class_comparisons = 1;
+
+    let (outcome, census) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
+    assert_eq!(census.truncated_structural_classes, 5);
+    assert_eq!(outcome.operational_errors.len(), 1);
+    assert!(outcome.operational_errors[0].contains("and 2 more"));
+
+    let definitions = definitions(
+        "Given('one', () => action(1));\nGiven('two', () => action(2));\nGiven('three', () => action(3));",
+    );
+    let (outcome, census) = analyze_for_cli(definitions, Vec::new(), &config).unwrap();
+    assert_eq!(census.truncated_structural_classes, 1);
+    assert!(!outcome.operational_errors[0].contains("and 0 more"));
 }
 
 #[test]
@@ -158,7 +389,13 @@ fn homogeneous_handler_groups_generate_linear_candidates() {
         ));
     }
     let definitions = definitions(&source);
-    assert!(definition_pair_candidates(&definitions).unwrap().len() <= definitions.len() * 2);
+    let (_directory, config) = config();
+    assert!(
+        definition_pair_candidates(&definitions, &config)
+            .candidates
+            .len()
+            <= definitions.len() * 2
+    );
 }
 
 #[test]

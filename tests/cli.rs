@@ -198,7 +198,7 @@ fn print_config_reports_merged_values_without_running_discovery() {
     write(
         directory.path(),
         ".cuke-dedup.json",
-        r#"{"threshold":4,"exclude":["generated/**"],"reporters":["json"]}"#,
+        r#"{"threshold":4,"exclude":["generated/**"],"reporters":["json"],"maxCandidateComparisons":0,"maxStructuralClassComparisons":0}"#,
     );
 
     let output = Command::cargo_bin("cuke-dedup")
@@ -210,6 +210,10 @@ fn print_config_reports_merged_values_without_running_discovery() {
             "--threshold",
             "7",
             "--require-definitions",
+            "--max-candidate-comparisons",
+            "42",
+            "--max-structural-class-comparisons",
+            "7",
         ])
         .output()
         .unwrap();
@@ -220,6 +224,8 @@ fn print_config_reports_merged_values_without_running_discovery() {
     assert_eq!(config["configSource"], ".cuke-dedup.json");
     assert_eq!(config["reporters"], serde_json::json!(["json"]));
     assert_eq!(config["requireDefinitions"], true);
+    assert_eq!(config["maxCandidateComparisons"], 42);
+    assert_eq!(config["maxStructuralClassComparisons"], 7);
     assert!(config["exclude"]
         .as_array()
         .unwrap()
@@ -289,6 +295,10 @@ Then('the receipt is visible', async () => { await expect(otherReceipt).toBeVisi
         sarif["runs"][0]["invocations"][0]["properties"]["corpus"]
             ["definitionFilesWithDefinitions"],
         1
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+        true
     );
 }
 
@@ -539,6 +549,111 @@ fn empty_definition_extraction_can_be_required_and_still_writes_reports() {
         .path()
         .join("configured-report/cuke-dedup.json")
         .is_file());
+}
+
+#[test]
+fn candidate_limits_write_incomplete_reports_before_exit_two() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut source = String::new();
+    for index in 0..10 {
+        source.push_str(&format!(
+            "Given('operation label {index}', () => perform({index}));\n"
+        ));
+    }
+    write(directory.path(), "steps.ts", &source);
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{
+          "reporters": ["json", "html", "sarif"],
+          "output": "reports",
+          "noMetrics": true,
+          "maxCandidateComparisons": 100,
+          "maxStructuralClassComparisons": 2
+        }"#,
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "analysis is incomplete: evaluated 2 candidate definition comparisons",
+        ))
+        .stderr(predicate::str::contains(
+            "affected structural classes start at steps.ts:1:1",
+        ));
+
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(report.get("metrics").is_none());
+    assert_eq!(report["analysis"]["truncated"], true);
+    assert_eq!(report["analysis"]["candidateComparisonsEvaluated"], 2);
+    assert_eq!(report["analysis"]["skippedCandidateComparisons"], 43);
+    assert_eq!(report["analysis"]["truncatedStructuralClasses"], 1);
+    assert_eq!(
+        report["analysis"]["candidateSources"]["structuralHandler"]["evaluated"],
+        2
+    );
+    assert!(!report["findings"].as_array().unwrap().is_empty());
+
+    let html = fs::read_to_string(directory.path().join("reports/cuke-dedup.html")).unwrap();
+    assert!(html.contains("Analysis is incomplete: 2 candidate comparisons were evaluated"));
+    assert!(html.contains(r#"class="truncation-notice" role="alert""#));
+    let sarif: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup.sarif")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["analysis"]["truncated"],
+        true
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+        false
+    );
+
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--reporters", "jsonl"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let summary: Value = serde_json::from_slice(
+        output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .rfind(|line| !line.is_empty())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["type"], "summary");
+    assert_eq!(summary["analysis"]["truncated"], true);
+    assert!(summary.get("metrics").is_none());
+
+    let baseline_path = directory.path().join("incomplete-baseline.json");
+    let mut update = Command::cargo_bin("cuke-dedup").unwrap();
+    update
+        .current_dir(directory.path())
+        .args([
+            ".",
+            "--baseline",
+            "incomplete-baseline.json",
+            "--update-baseline",
+            "--reporters",
+            "json",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "was not updated because analysis is incomplete",
+        ));
+    assert!(!baseline_path.exists());
 }
 
 #[test]
