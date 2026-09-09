@@ -46,5 +46,6 @@ pub mod gherkin;
 pub mod model;
 pub mod modes;
 pub mod reporters;
+mod resource_limits;
 pub mod source_adapter;
 pub mod typescript;

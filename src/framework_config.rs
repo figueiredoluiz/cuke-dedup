@@ -1,8 +1,8 @@
 //! Safe, static feature-path discovery from supported framework configuration files.
 
+use crate::resource_limits::{read_utf8, MAX_CONFIG_INPUT_BYTES};
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
-use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 use yaml_serde::Value as YamlValue;
@@ -88,8 +88,7 @@ pub(crate) fn detect(
 }
 
 fn cypress_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("failed to read framework config {}", path.display()))?;
+    let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -121,8 +120,7 @@ fn cypress_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
 }
 
 fn cucumber_config(path: &Path) -> Result<FrameworkFeatures> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("failed to read framework config {}", path.display()))?;
+    let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -158,8 +156,7 @@ fn cucumber_config(path: &Path) -> Result<FrameworkFeatures> {
 }
 
 fn playwright_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("failed to read framework config {}", path.display()))?;
+    let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
     if !text.contains("defineBddConfig") {
         return Ok(None);
     }

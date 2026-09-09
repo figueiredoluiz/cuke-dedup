@@ -175,6 +175,8 @@ Use `--explain-discovery` to print the effective pattern origin, selected parser
 
 Malformed discovered JavaScript or TypeScript remains a fail-closed operational error because partial extraction could make a duplication gate pass incorrectly. Fix the syntax, use a `.tsx` extension for JSX-bearing TypeScript, or narrow `definitions` to the actual step-definition sources.
 
+Files that participate in analysis are read with fixed resource limits: definition sources, feature files, imported registration modules, and baselines may each be at most 8 MiB; package, CukeDedup, and framework configuration files may each be at most 1 MiB. Across one analysis run, registration imports may read at most 1,024 distinct modules and 64 MiB in aggregate, and may evaluate at most 16,384 memoized path/depth states—one state for every module at each of the 16 supported depths. The shared resolver confines relative imports to the canonical analysis root and reuses results across importing files. Matcher patterns and compiled programs are limited to 1 MiB, with a 2 MiB lazy-DFA cache per matcher. Gherkin Markdown conversion collects at most 10,000 ambiguous candidates, performs at most 128 parser probes, and parses at most 64 MiB of cumulative synthesized probe input. The 10,000-candidate value is a collection bound, not a guarantee that every candidate-heavy document fits the lower probe limits. Default-English step bullets are filtered by exact Gherkin keywords and receive one whole-document parser probe charged by its actual synthesized size. For dialect-dependent candidates, a whole-document retry is attempted only when `synthesized bytes × candidate count` is at most 64 MiB; larger candidate sets use bounded 32-item restoration batches. Exceeding a limit is an operational failure (exit code `2`) rather than a successful partial analysis. Discovery exclusions keep selected definition and feature files outside the corpus, but an included definition may still cause an explicitly imported registration module to be read. Configuration and baseline inputs must be reduced below their limits.
+
 Use `--print-config` to serialize the fully merged and validated configuration as JSON and exit without discovery. The output includes the selected CukeDedup configuration source, framework-derived feature-pattern origin, CLI overrides, effective default exclusions, rule severities, and configuration warnings.
 
 ## Rules
@@ -327,7 +329,7 @@ cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new 3
 
 Changed-file mode still analyzes the complete discovered corpus so a changed definition can be compared with unchanged definitions. It filters the reported findings to those touching a changed file, while summary definition counts and the duplication-threshold denominator remain the complete corpus.
 
-An empty changed-file set emits a warning so an ignored target cannot look indistinguishable from a clean incremental run. Parse errors in unchanged files do not fail changed-file mode.
+An empty changed-file set emits a warning so an ignored target cannot look indistinguishable from a clean incremental run. Definition read or extraction failures and feature read or parse failures remain fatal even when the affected file is unchanged, because those files can still determine findings involving a changed definition.
 
 ## Exit codes
 

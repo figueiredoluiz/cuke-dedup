@@ -1,6 +1,7 @@
-use super::module_resolver::registration_exports;
+use super::module_resolver::RegistrationResolver;
 use super::node_text;
 use crate::model::Framework;
+use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use tree_sitter::Node;
@@ -101,7 +102,8 @@ pub(super) fn detect_registrations(
     source: &[u8],
     framework: Framework,
     file_path: &Path,
-) -> RegistrationNames {
+    resolver: &mut RegistrationResolver,
+) -> Result<RegistrationNames> {
     let mut discovered = RegistrationDiscovery::default();
     let mut stack = vec![root];
 
@@ -109,15 +111,15 @@ pub(super) fn detect_registrations(
         match node.kind() {
             "import_statement" => {
                 let module = import_module(node, source);
-                let exports = module.and_then(|module| {
-                    if is_supported_module(module) {
+                let exports = match module {
+                    Some(module) if is_supported_module(module) => {
                         Some(default_registration_exports())
-                    } else if is_relative_module(module) {
-                        registration_exports(file_path, module)
-                    } else {
-                        None
                     }
-                });
+                    Some(module) if is_relative_module(module) => {
+                        resolver.registration_exports(file_path, module)?
+                    }
+                    _ => None,
+                };
                 if !is_type_only_import(node, source)
                     && exports.as_ref().is_some_and(|exports| !exports.is_empty())
                 {
@@ -179,10 +181,10 @@ pub(super) fn detect_registrations(
         }
     }
 
-    RegistrationNames {
+    Ok(RegistrationNames {
         aliases: discovered.aliases,
         namespaces: discovered.namespaces,
-    }
+    })
 }
 
 fn collect_imports(

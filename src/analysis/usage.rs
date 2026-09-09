@@ -3,6 +3,8 @@ use crate::config::Config;
 use crate::model::{
     FeatureStep, Finding, FindingEvidence, MatcherKind, Rule, Severity, StepDefinition,
 };
+use crate::resource_limits::{compile_regex, MAX_REGEX_PATTERN_BYTES};
+use cucumber_expressions::expand::IntoRegexCharIter;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
@@ -15,13 +17,26 @@ struct CompiledMatcher {
     authoritative: bool,
 }
 
+enum CucumberRegexExpression {
+    Compiled(String),
+    Unsupported,
+    ResourceLimit,
+}
+
+pub(super) struct FeatureUsageOutcome {
+    pub(super) used: BTreeSet<usize>,
+    pub(super) operational_errors: Vec<String>,
+}
+
 pub(super) fn analyze_feature_usage(
     definitions: &[StepDefinition],
     steps: &[FeatureStep],
     config: &Config,
     findings: &mut Vec<Finding>,
-) -> BTreeSet<usize> {
-    let compiled: Vec<_> = definitions.iter().map(compile_matcher).collect();
+) -> FeatureUsageOutcome {
+    let (compiled, operational_errors): (Vec<_>, Vec<_>) =
+        definitions.iter().map(compile_matcher).unzip();
+    let operational_errors = operational_errors.into_iter().flatten().collect();
     // Definitions with syntax unsupported by Rust's regex engine cannot be proven unused.
     // Treat them as indeterminate instead of emitting a guaranteed false positive.
     let mut used: BTreeSet<_> = compiled
@@ -107,7 +122,10 @@ pub(super) fn analyze_feature_usage(
             });
         }
     }
-    used
+    FeatureUsageOutcome {
+        used,
+        operational_errors,
+    }
 }
 
 pub(super) fn analyze_unused(
@@ -146,9 +164,18 @@ pub(super) fn analyze_unused(
     }
 }
 
-fn compile_matcher(definition: &StepDefinition) -> CompiledMatcher {
+fn compile_matcher(definition: &StepDefinition) -> (CompiledMatcher, Option<String>) {
     match definition.matcher_kind {
         MatcherKind::RegularExpression => {
+            if definition.matcher.len() > MAX_REGEX_PATTERN_BYTES {
+                return (
+                    CompiledMatcher {
+                        regex: None,
+                        authoritative: true,
+                    },
+                    Some(regex_limit_message(definition)),
+                );
+            }
             let flags: String = definition
                 .matcher_flags
                 .chars()
@@ -159,29 +186,98 @@ fn compile_matcher(definition: &StepDefinition) -> CompiledMatcher {
             } else {
                 format!("(?{flags}:{})", definition.matcher)
             };
-            CompiledMatcher {
-                regex: Regex::new(&expression).ok(),
-                authoritative: true,
-            }
+            let (regex, error) = compile_definition_regex(&expression, definition);
+            (
+                CompiledMatcher {
+                    regex,
+                    authoritative: true,
+                },
+                error,
+            )
         }
         MatcherKind::CucumberExpression => {
-            if let Ok(regex) = cucumber_expressions::Expression::regex(&definition.matcher) {
-                CompiledMatcher {
-                    regex: Some(regex),
-                    authoritative: true,
+            match cucumber_regex_expression(&definition.matcher) {
+                CucumberRegexExpression::Compiled(expression) => {
+                    let (regex, error) = compile_definition_regex(&expression, definition);
+                    (
+                        CompiledMatcher {
+                            regex,
+                            authoritative: true,
+                        },
+                        error,
+                    )
                 }
-            } else {
-                // Unknown project-defined parameter types cannot be resolved without loading
-                // runtime code. The permissive fallback is useful for avoiding false unused
-                // reports, but cannot prove runtime ambiguity.
-                CompiledMatcher {
-                    regex: Regex::new(&fallback_cucumber_expression_regex(&definition.matcher))
-                        .ok(),
-                    authoritative: false,
+                CucumberRegexExpression::ResourceLimit => (
+                    CompiledMatcher {
+                        regex: None,
+                        authoritative: true,
+                    },
+                    Some(regex_limit_message(definition)),
+                ),
+                CucumberRegexExpression::Unsupported => {
+                    // Unknown project-defined parameter types cannot be resolved without loading
+                    // runtime code. The permissive fallback is useful for avoiding false unused
+                    // reports, but cannot prove runtime ambiguity. Oversized input has already
+                    // returned ResourceLimit above, so fallback construction remains bounded.
+                    let (regex, error) = compile_definition_regex(
+                        &fallback_cucumber_expression_regex(&definition.matcher),
+                        definition,
+                    );
+                    (
+                        CompiledMatcher {
+                            regex,
+                            authoritative: false,
+                        },
+                        error,
+                    )
                 }
             }
         }
     }
+}
+
+fn cucumber_regex_expression(matcher: &str) -> CucumberRegexExpression {
+    if matcher.len() > MAX_REGEX_PATTERN_BYTES {
+        return CucumberRegexExpression::ResourceLimit;
+    }
+    let Ok(expression) = cucumber_expressions::Expression::parse(matcher) else {
+        return CucumberRegexExpression::Unsupported;
+    };
+    let mut expanded = String::with_capacity(matcher.len().min(MAX_REGEX_PATTERN_BYTES));
+    for character in expression.into_regex_char_iter() {
+        let Ok(character) = character else {
+            return CucumberRegexExpression::Unsupported;
+        };
+        if expanded.len().saturating_add(character.len_utf8()) > MAX_REGEX_PATTERN_BYTES {
+            return CucumberRegexExpression::ResourceLimit;
+        }
+        expanded.push(character);
+    }
+    CucumberRegexExpression::Compiled(expanded)
+}
+
+fn compile_definition_regex(
+    expression: &str,
+    definition: &StepDefinition,
+) -> (Option<Regex>, Option<String>) {
+    if expression.len() > MAX_REGEX_PATTERN_BYTES {
+        return (None, Some(regex_limit_message(definition)));
+    }
+    match compile_regex(expression) {
+        Ok(regex) => (Some(regex), None),
+        Err(regex::Error::CompiledTooBig(_)) => (None, Some(regex_limit_message(definition))),
+        Err(_) => (None, None),
+    }
+}
+
+fn regex_limit_message(definition: &StepDefinition) -> String {
+    format!(
+        "step matcher at {}:{}:{} exceeds the {}-byte regex resource limit; simplify the matcher or remove its source from definition discovery",
+        definition.location.path.display(),
+        definition.location.line,
+        definition.location.column,
+        MAX_REGEX_PATTERN_BYTES
+    )
 }
 
 fn fallback_cucumber_expression_regex(expression: &str) -> String {
@@ -275,4 +371,41 @@ fn fallback_cucumber_token_regex(token: &str) -> String {
         ));
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::{SourceFile, SourceLanguage};
+    use std::path::PathBuf;
+
+    #[test]
+    fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
+        let matcher = ".".repeat(600_000);
+        assert!(matches!(
+            cucumber_regex_expression(&matcher),
+            CucumberRegexExpression::ResourceLimit
+        ));
+    }
+
+    #[test]
+    fn regex_pattern_limit_is_inclusive() {
+        let mut definition = crate::typescript::extract(
+            "Given(/x/, () => work());",
+            &SourceFile {
+                path: PathBuf::from("steps.ts"),
+                language: SourceLanguage::TypeScript,
+            },
+        )
+        .unwrap()
+        .remove(0);
+        definition.matcher = format!(
+            "(?x){}",
+            " ".repeat(MAX_REGEX_PATTERN_BYTES.saturating_sub(4))
+        );
+
+        let (compiled, error) = compile_matcher(&definition);
+        assert!(error.is_none());
+        assert!(compiled.regex.is_some());
+    }
 }

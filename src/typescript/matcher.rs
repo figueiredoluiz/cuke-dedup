@@ -1,5 +1,6 @@
 use super::node_text;
 use crate::model::MatcherKind;
+use crate::resource_limits::compile_regex;
 use regex::Regex;
 use std::sync::LazyLock;
 use tree_sitter::Node;
@@ -100,7 +101,14 @@ fn decode_hex_value(chars: &mut std::str::Chars<'_>, length: usize) -> Option<u3
         .flatten()
 }
 
-pub(super) fn rust_regex_supported(matcher: &str, flags: &str) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RegexSupport {
+    Supported,
+    Unsupported,
+    ResourceLimit,
+}
+
+pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
     let flags: String = flags
         .chars()
         .filter(|flag| matches!(flag, 'i' | 'm' | 's' | 'u'))
@@ -110,7 +118,11 @@ pub(super) fn rust_regex_supported(matcher: &str, flags: &str) -> bool {
     } else {
         format!("(?{flags}:{matcher})")
     };
-    Regex::new(&expression).is_ok()
+    match compile_regex(&expression) {
+        Ok(_) => RegexSupport::Supported,
+        Err(regex::Error::CompiledTooBig(_)) => RegexSupport::ResourceLimit,
+        Err(_) => RegexSupport::Unsupported,
+    }
 }
 
 /// Canonicalizes matcher text for stable equivalence comparisons.

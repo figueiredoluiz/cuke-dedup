@@ -2,11 +2,11 @@
 
 use crate::framework_config;
 use crate::model::{Rule, Severity};
+use crate::resource_limits::{is_input_limit_error, read_utf8, MAX_CONFIG_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
 use globset::Glob;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
@@ -186,8 +186,12 @@ impl Config {
 
         let package_path = root.join("package.json");
         let (package_config, package_json) = if package_path.is_file() {
-            let text = fs::read_to_string(&package_path)
-                .with_context(|| format!("failed to read {}", package_path.display()))?;
+            let text = read_utf8(
+                &package_path,
+                "package configuration",
+                MAX_CONFIG_INPUT_BYTES,
+            )?;
+            // serde_json's default recursion limit remains enabled for untrusted config input.
             let value = serde_json::from_str::<serde_json::Value>(&text)
                 .with_context(|| format!("failed to parse {}", package_path.display()))?;
             let package = serde_json::from_value::<PackageJson>(value.clone())
@@ -208,7 +212,7 @@ impl Config {
         let (standalone_config, standalone_path) = if let Some(path) = explicit_config {
             (Some(read_raw_config(&path)?), Some(path))
         } else {
-            discover_config_file(&root, &mut config_warnings)
+            discover_config_file(&root, &mut config_warnings)?
         };
 
         let package_config = if standalone_config.is_none() {
@@ -242,6 +246,7 @@ impl Config {
                     config.config_warnings.extend(framework.warnings);
                 }
                 Ok(None) => {}
+                Err(error) if is_input_limit_error(&error) => return Err(error),
                 Err(error) => config.config_warnings.push(format!(
                     "could not inspect framework configuration ({error:#}); using built-in feature patterns"
                 )),
@@ -510,8 +515,8 @@ pub(crate) fn normalize_platform_path(path: PathBuf) -> PathBuf {
 }
 
 fn read_raw_config(path: &Path) -> Result<RawConfig> {
-    let text =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let text = read_utf8(path, "CukeDedup configuration", MAX_CONFIG_INPUT_BYTES)?;
+    // serde_json's default recursion limit remains enabled for untrusted config input.
     serde_json::from_str::<RawConfig>(&text)
         .with_context(|| format!("failed to parse {}", path.display()))
 }
@@ -519,7 +524,7 @@ fn read_raw_config(path: &Path) -> Result<RawConfig> {
 fn discover_config_file(
     root: &Path,
     warnings: &mut Vec<String>,
-) -> (Option<RawConfig>, Option<PathBuf>) {
+) -> Result<(Option<RawConfig>, Option<PathBuf>)> {
     const CANDIDATES: [&str; 4] = [
         ".cuke-dedup.json",
         ".config/cuke-dedup.json",
@@ -532,14 +537,15 @@ fn discover_config_file(
             continue;
         }
         match read_raw_config(&path) {
-            Ok(config) => return (Some(config), Some(path)),
+            Ok(config) => return Ok((Some(config), Some(path))),
+            Err(error) if is_input_limit_error(&error) => return Err(error),
             Err(error) => warnings.push(format!(
                 "could not load auto-discovered config {} ({error:#}); trying the next configuration source",
                 path.display()
             )),
         }
     }
-    (None, None)
+    Ok((None, None))
 }
 
 fn config_source_name(path: &Path, root: &Path) -> String {
