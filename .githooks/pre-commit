@@ -13,4 +13,4 @@ fi
 git -C "$project_root" diff --cached --binary --no-ext-diff \
   | gitleaks stdin --redact --no-banner
 
-exec "$project_root/scripts/check/check.sh"
+exec "$project_root/scripts/check/check.sh" --quick

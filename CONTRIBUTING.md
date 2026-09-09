@@ -4,12 +4,14 @@ Thanks for helping improve CukeDedup. Bug reports should include a small `.featu
 
 ## Development setup
 
-Install Rust through rustup, Node.js 20 or newer, npm, Python 3, and Gitleaks. The repository pins Rust 1.90 for compatibility tests, while the local quality gate also checks the current stable toolchain. Prepare both toolchains and the coverage command once:
+Install Rust through rustup, Node.js 20 or newer, npm, Python 3, Gitleaks, actionlint, cargo-audit, and cargo-deny. The repository pins Rust 1.90 for compatibility tests, while the local quality gate also checks the current stable toolchain. Prepare the Rust tools once:
 
 ```sh
 rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt,llvm-tools-preview
 rustup toolchain install stable --profile minimal --component clippy,rustfmt
 cargo install cargo-llvm-cov --locked
+cargo install cargo-audit --version 0.22.2 --locked
+cargo install cargo-deny --version 0.20.2 --locked
 ```
 
 Enable the repository's pre-commit hook:
@@ -18,9 +20,10 @@ Enable the repository's pre-commit hook:
 git config core.hooksPath .githooks
 ```
 
-The hook scans the staged patch for secrets before running the compliance gate. Run the same gate directly at any time:
+The pre-commit hook scans the staged patch for secrets and runs the quick development gate. The pre-push hook requires a clean checkout at the pushed commit, derives conditional checks from the outgoing changes, and runs the complete release-grade gate. This keeps iterative commits fast without testing a different tree from the one leaving the clone. Run either gate directly at any time:
 
 ```sh
+scripts/check/check.sh --quick
 scripts/check/check.sh
 ```
 
@@ -32,7 +35,7 @@ cargo llvm-cov --all-features --all-targets --locked --fail-under-lines 90
 
 The npm launcher currently has no third-party development dependencies, so contributor and CI checks run directly without an install step. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 90% Rust line-coverage floor.
 
-Install `actionlint` when changing `action.yml` or workflow files. Install `cargo-audit` and `cargo-deny` when changing Rust dependencies, then run:
+The full local gate always runs `actionlint`, `cargo-audit`, and `cargo-deny`. The quick gate runs them only when the staged patch changes or deletes the corresponding Action, manifest, lock, or policy files. The dependency commands are:
 
 ```sh
 cargo audit --deny warnings
@@ -41,7 +44,7 @@ cargo deny check advisories bans licenses sources
 cargo deny --manifest-path fuzz/Cargo.toml check advisories bans licenses sources
 ```
 
-The dependency policy is maintained in `deny.toml`: known security advisories, unknown registries or Git sources, wildcard version requirements, and dependencies outside the approved SPDX license list fail CI. The pre-commit gate runs the standard checks and rejects secrets in staged changes; CI additionally scans the full Git history. Before submitting a pull request, run `scripts/check/check.sh` explicitly if the hook was bypassed.
+The dependency policy is maintained in `deny.toml`: known security advisories, unknown registries or Git sources, wildcard version requirements, and dependencies outside the approved SPDX license list fail CI. The pre-commit hook checks staged dependency changes before they are recorded, while a direct full gate checks policies unconditionally. CI additionally scans the full Git history. Before submitting a pull request, run `scripts/check/check.sh` explicitly if the pre-push hook was bypassed.
 
 ## Changes
 
