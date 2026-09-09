@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import Mock
 import zipfile
 
 from package_release import package_release
 from verify_release import archive_in, verify_and_extract
+from verify_npm_binaries import validated_targets, verify_npm_binaries
 
 
 class PackageReleaseTests(unittest.TestCase):
@@ -74,6 +77,64 @@ class PackageReleaseTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "checksum mismatch"):
                 verify_and_extract(archive, checksum, root / "extracted")
+
+    def test_npm_binary_must_match_the_checksummed_release_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binaries = root / "binaries"
+            archives = root / "archives"
+            manifest = json.loads(
+                (Path(__file__).resolve().parents[2] / "npm" / "prebuilt-targets.json").read_text()
+            )
+            for target in manifest["targets"].values():
+                rust_target = target["rustTarget"]
+                binary_name = target["binaryName"]
+                source = binaries / f"binary-{rust_target}" / binary_name
+                source.parent.mkdir(parents=True)
+                source.write_bytes(f"native executable for {rust_target}".encode())
+                package_release(
+                    source,
+                    rust_target,
+                    "1.2.3",
+                    archives / f"release-{rust_target}",
+                )
+
+            verify_npm_binaries(binaries, archives)
+
+            first = next(iter(manifest["targets"].values()))
+            changed = binaries / f"binary-{first['rustTarget']}" / first["binaryName"]
+            changed.write_bytes(b"different executable")
+            with self.assertRaisesRegex(ValueError, "differs from checksummed release archive"):
+                verify_npm_binaries(binaries, archives)
+
+    def test_npm_binary_verifier_rejects_unvalidated_target_output(self) -> None:
+        cases = (
+            Mock(returncode=1, stdout="", stderr="validation failed"),
+            Mock(returncode=0, stdout="not json", stderr=""),
+            Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    {"include": [{"target": "../outside", "binary": "cuke-dedup"}]}
+                ),
+                stderr="",
+            ),
+            Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "include": [
+                            {"target": "safe-target", "binary": "cuke-dedup"},
+                            {"target": "safe-target", "binary": "cuke-dedup"},
+                        ]
+                    }
+                ),
+                stderr="",
+            ),
+        )
+        for completed in cases:
+            with self.subTest(stdout=completed.stdout, returncode=completed.returncode):
+                with self.assertRaisesRegex(ValueError, "validate|validator"):
+                    validated_targets(run=Mock(return_value=completed))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
+import { TARGETS } from "../../npm/lib/targets.mjs";
 import { renderPlatformReadme } from "./npm-platform-readme.mjs";
 
 const artifacts = process.argv[2];
@@ -9,11 +10,7 @@ if (!artifacts) {
   throw new Error("usage: node scripts/release/prepare-npm-packages.mjs ARTIFACTS_DIR|--check");
 }
 
-const manifest = JSON.parse(
-  await readFile(new URL("../../npm/prebuilt-targets.json", import.meta.url), "utf8"),
-);
-
-for (const target of Object.values(manifest.targets)) {
+for (const target of Object.values(TARGETS)) {
   const { rustTarget, packageDirectory, binaryName } = target;
   const packageRoot = join("npm", "platforms", packageDirectory);
   const packageManifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
