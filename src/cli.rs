@@ -215,41 +215,42 @@ fn execute(cli: Cli) -> Result<i32> {
                 .to_owned(),
         );
     }
+    let mut extraction_session = source_adapter::SourceExtractionSession::new(&config.root);
     for file in &files.definitions {
         let adapter = source_adapter::adapter_for_language(file.language);
         match adapter
-            .extract_file(file)
+            .extract_file_with_session(file, &mut extraction_session)
             .with_context(|| format!("failed to analyze {}", file.path.display()))
         {
             Ok(extracted) => {
                 definitions.extend(extracted.definitions);
-                if changed_files
+                let changed_or_full_run = changed_files
                     .as_ref()
-                    .is_none_or(|changed| changed.contains(&file.path))
-                {
-                    for diagnostic in extracted.diagnostics {
-                        let message = format!(
-                            "{}: {}",
-                            diagnostic.location.display(&config.root),
-                            diagnostic.message
-                        );
-                        match diagnostic.level {
-                            ExtractionDiagnosticLevel::Warning => {
-                                operational_warnings.push(message)
-                            }
-                            ExtractionDiagnosticLevel::Error => operational_errors.push(message),
+                    .is_none_or(|changed| changed.contains(&file.path));
+                for diagnostic in extracted.diagnostics {
+                    let message = format!(
+                        "{}: {}",
+                        diagnostic.location.display(&config.root),
+                        diagnostic.message
+                    );
+                    match diagnostic.level {
+                        ExtractionDiagnosticLevel::Warning if changed_or_full_run => {
+                            operational_warnings.push(message)
                         }
+                        ExtractionDiagnosticLevel::Warning => {}
+                        // Extraction errors can mean definitions were omitted. They remain fatal
+                        // for unchanged files because those definitions still participate in
+                        // comparisons involving changed files.
+                        ExtractionDiagnosticLevel::Error => operational_errors.push(message),
                     }
                 }
             }
-            Err(error)
-                if changed_files
-                    .as_ref()
-                    .is_none_or(|changed| changed.contains(&file.path)) =>
-            {
+            // Every discovered source contributes to cross-file definition comparisons, even
+            // when changed mode later filters the findings. Skipping any unreadable source could
+            // therefore turn an incomplete run into a false pass.
+            Err(error) => {
                 operational_errors.push(format!("{error:#}"));
             }
-            Err(_) => {}
         }
     }
     definitions.sort_by(|left, right| {
@@ -276,14 +277,11 @@ fn execute(cli: Cli) -> Result<i32> {
                 parsed_feature_files += 1;
                 feature_steps.extend(extracted);
             }
-            Err(error)
-                if changed_files
-                    .as_ref()
-                    .is_none_or(|changed| changed.contains(&file.path)) =>
-            {
+            // Changed definitions are still compared against the complete feature corpus. Any
+            // skipped feature can hide usage or ambiguity involving those definitions.
+            Err(error) => {
                 operational_errors.push(format!("{error:#}"));
             }
-            Err(_) => {}
         }
     }
     if !files.features.is_empty() && parsed_feature_files < files.features.len() {
@@ -311,7 +309,9 @@ fn execute(cli: Cli) -> Result<i32> {
     let parsing_ms = elapsed_ms(parsing_started);
 
     let analysis_started = Instant::now();
-    let mut result = analysis::analyze(definitions, feature_steps, &config)?;
+    let analysis = analysis::analyze_with_diagnostics(definitions, feature_steps, &config)?;
+    operational_errors.extend(analysis.operational_errors);
+    let mut result = analysis.result;
     let analysis_ms = elapsed_ms(analysis_started);
     if parsed_feature_files < files.features.len() || files.features.is_empty() {
         result

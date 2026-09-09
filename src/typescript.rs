@@ -14,13 +14,16 @@ use self::handler::{bounded_source_snippet, MAX_HANDLER_SNIPPET_CHARS};
 pub use self::matcher::normalize_matcher;
 #[cfg(test)]
 use self::matcher::normalize_regular_expression;
-use self::matcher::{matcher_value, normalize_matcher_with_flags, rust_regex_supported};
+use self::matcher::{
+    matcher_value, normalize_matcher_with_flags, rust_regex_support, RegexSupport,
+};
+use self::module_resolver::RegistrationResolver;
 use self::registrations::{
     detect_framework, detect_registrations, registration_name, RegistrationNames,
 };
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
-use crate::source_adapter::{adapter_for_language, SourceAdapter};
+use crate::source_adapter::{adapter_for_language, SourceAdapter, SourceExtractionSession};
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
@@ -46,6 +49,19 @@ pub(crate) static TSX_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter
     language: SourceLanguage::Tsx,
 };
 
+#[derive(Default)]
+pub(crate) struct TypeScriptExtractionSession {
+    resolver: RegistrationResolver,
+}
+
+impl TypeScriptExtractionSession {
+    pub(crate) fn for_root(root: &std::path::Path) -> Self {
+        Self {
+            resolver: RegistrationResolver::for_root(root),
+        }
+    }
+}
+
 impl SourceAdapter for TreeSitterSourceAdapter {
     fn name(&self) -> &'static str {
         self.name
@@ -56,6 +72,16 @@ impl SourceAdapter for TreeSitterSourceAdapter {
     }
 
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction> {
+        let mut session = SourceExtractionSession::default();
+        self.extract_with_session(source, file, &mut session)
+    }
+
+    fn extract_with_session(
+        &self,
+        source: &str,
+        file: &SourceFile,
+        session: &mut SourceExtractionSession,
+    ) -> Result<Extraction> {
         if file.language != self.language {
             anyhow::bail!(
                 "{} adapter cannot parse {:?} source {}",
@@ -64,7 +90,7 @@ impl SourceAdapter for TreeSitterSourceAdapter {
                 file.path.display()
             );
         }
-        extract_detailed_impl(source, file)
+        extract_detailed_impl(source, file, &mut session.typescript)
     }
 }
 
@@ -97,7 +123,11 @@ pub fn extract_detailed(source: &str, file: &SourceFile) -> Result<Extraction> {
     adapter_for_language(file.language).extract(source, file)
 }
 
-fn extract_detailed_impl(source: &str, file: &SourceFile) -> Result<Extraction> {
+fn extract_detailed_impl(
+    source: &str,
+    file: &SourceFile,
+    session: &mut TypeScriptExtractionSession,
+) -> Result<Extraction> {
     let mut parser = Parser::new();
     let language = match file.language {
         SourceLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
@@ -115,7 +145,13 @@ fn extract_detailed_impl(source: &str, file: &SourceFile) -> Result<Extraction> 
     let source_bytes = source.as_bytes();
     let source_lines: Vec<_> = source.lines().collect();
     let framework = detect_framework(root, source_bytes);
-    let registrations = detect_registrations(root, source_bytes, framework, &file.path);
+    let registrations = detect_registrations(
+        root,
+        source_bytes,
+        framework,
+        &file.path,
+        &mut session.resolver,
+    )?;
     let mut handler_bindings = BTreeMap::new();
     collect_handler_bindings(root, source_bytes, &mut handler_bindings);
     let context = AdapterContext {
@@ -203,14 +239,16 @@ fn extract_call<'tree>(
             return None;
         }
     };
-    if matcher_kind == MatcherKind::RegularExpression
-        && !rust_regex_supported(&matcher, &matcher_flags)
-    {
-        diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(context.file, matcher_node, source),
-            message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
-        });
+    if matcher_kind == MatcherKind::RegularExpression {
+        match rust_regex_support(&matcher, &matcher_flags) {
+            RegexSupport::Unsupported => diagnostics.push(ExtractionDiagnostic {
+                level: ExtractionDiagnosticLevel::Warning,
+                location: node_location(context.file, matcher_node, source),
+                message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
+            }),
+            // The analysis phase emits one run-level operational error after reports are written.
+            RegexSupport::ResourceLimit | RegexSupport::Supported => {}
+        }
     }
     let handler = arguments.iter().rev().copied().find(|node| {
         matches!(

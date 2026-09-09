@@ -4,11 +4,14 @@
 //! Cucumber's upstream dialect data, including translated structural and step keywords.
 
 use crate::model::{FeatureStep, SourceLocation};
-use anyhow::{Context, Result};
+use crate::resource_limits::{
+    read_utf8, GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE, MAX_GHERKIN_MARKDOWN_CANDIDATES,
+    MAX_GHERKIN_MARKDOWN_PROBES, MAX_GHERKIN_MARKDOWN_PROBE_BYTES, MAX_PROJECT_INPUT_BYTES,
+};
+use anyhow::{bail, Context, Result};
 use gherkin::{Background, Feature, GherkinEnv, Scenario, Step};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,19 +54,8 @@ pub fn extract_file(path: &Path) -> Result<Vec<FeatureStep>> {
 
 /// Parses a feature file with an explicitly selected source format.
 pub fn extract_file_with_format(path: &Path, format: FeatureFormat) -> Result<Vec<FeatureStep>> {
-    match format {
-        FeatureFormat::Gherkin => {
-            let feature = Feature::parse_path(path, GherkinEnv::default())
-                .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
-            Ok(extract_feature(&feature, path))
-        }
-        FeatureFormat::GherkinMarkdown => {
-            let source = fs::read_to_string(path).with_context(|| {
-                format!("failed to read Gherkin Markdown feature {}", path.display())
-            })?;
-            extract_with_format(&source, path, format)
-        }
-    }
+    let source = read_utf8(path, "feature file", MAX_PROJECT_INPUT_BYTES)?;
+    extract_with_format(&source, path, format)
 }
 
 /// Parses in-memory Gherkin source, using `path` for locations and diagnostics.
@@ -79,14 +71,14 @@ pub fn extract_with_format(
 ) -> Result<Vec<FeatureStep>> {
     let parsed_source = match format {
         FeatureFormat::Gherkin => source.to_owned(),
-        FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source),
+        FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source)?,
     };
     let feature = Feature::parse(&parsed_source, GherkinEnv::default())
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     Ok(extract_feature(&feature, path))
 }
 
-fn markdown_to_gherkin(source: &str) -> String {
+fn markdown_to_gherkin(source: &str) -> Result<String> {
     let mut output = Vec::new();
     let mut dialect_heading_candidates = Vec::new();
     let mut step_candidates = Vec::new();
@@ -95,6 +87,7 @@ fn markdown_to_gherkin(source: &str) -> String {
     let mut allow_table = false;
     let mut doc_string_fence: Option<String> = None;
     let mut declared_dialect = false;
+    let mut default_dialect = true;
 
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -126,6 +119,9 @@ fn markdown_to_gherkin(source: &str) -> String {
 
         if trimmed.starts_with("# language:") {
             declared_dialect = true;
+            default_dialect = trimmed
+                .strip_prefix("# language:")
+                .is_some_and(|language| language.trim() == "en");
             output.push(line.to_owned());
             continue;
         }
@@ -149,13 +145,16 @@ fn markdown_to_gherkin(source: &str) -> String {
                 // unknown colon headings as candidates and restore only the smallest set that
                 // makes the complete synthesized document valid in its declared dialect.
                 saw_step = false;
-                if output.iter().all(|line| line.trim().is_empty())
-                    && !declared_dialect
+                if !declared_dialect
                     && !saw_feature
+                    && output.iter().all(|line| line.trim().is_empty())
                 {
                     saw_feature = true;
                     output.push(format!("Feature: {heading}"));
                 } else {
+                    ensure_markdown_candidate_capacity(
+                        dialect_heading_candidates.len() + step_candidates.len(),
+                    )?;
                     dialect_heading_candidates.push((output.len(), format!("{indent}{heading}")));
                     output.push(String::new());
                 }
@@ -182,6 +181,9 @@ fn markdown_to_gherkin(source: &str) -> String {
         if let Some(step) = markdown_list_item(trimmed) {
             saw_step = true;
             allow_table = true;
+            ensure_markdown_candidate_capacity(
+                dialect_heading_candidates.len() + step_candidates.len(),
+            )?;
             step_candidates.push((output.len(), format!("{indent}  {step}")));
             output.push(String::new());
             continue;
@@ -202,17 +204,132 @@ fn markdown_to_gherkin(source: &str) -> String {
 
     // The Gherkin parser treats an unterminated final Markdown list item inconsistently.
     // Synthesized Gherkin is internal, so always terminate it without changing source locations.
-    let restored = restore_dialect_headings(output, &dialect_heading_candidates, true);
-    restore_markdown_steps(restored, &step_candidates, true)
+    let mut probe_budget = MarkdownProbeBudget::default();
+    let restored =
+        restore_dialect_headings(output, &dialect_heading_candidates, true, &mut probe_budget)?;
+    restore_markdown_steps(
+        restored,
+        &step_candidates,
+        default_dialect,
+        true,
+        &mut probe_budget,
+    )
+}
+
+fn ensure_markdown_candidate_capacity(current: usize) -> Result<()> {
+    if current >= MAX_GHERKIN_MARKDOWN_CANDIDATES {
+        bail!(
+            "Gherkin Markdown exceeds the {}-candidate conversion limit; reduce prose-like headings or list items",
+            MAX_GHERKIN_MARKDOWN_CANDIDATES
+        );
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct MarkdownProbeBudget {
+    parsed_bytes: usize,
+    probes: usize,
+}
+
+impl MarkdownProbeBudget {
+    fn parse(&mut self, source: &str) -> Result<bool> {
+        if self.probes >= MAX_GHERKIN_MARKDOWN_PROBES {
+            bail!(
+                "Gherkin Markdown conversion exceeds the {}-probe parser limit; reduce ambiguous headings or list items",
+                MAX_GHERKIN_MARKDOWN_PROBES
+            );
+        }
+        let parsed_bytes = self.parsed_bytes.saturating_add(source.len());
+        if parsed_bytes > MAX_GHERKIN_MARKDOWN_PROBE_BYTES {
+            bail!(
+                "Gherkin Markdown conversion exceeds the {}-byte parser-probe budget; reduce ambiguous headings or list items",
+                MAX_GHERKIN_MARKDOWN_PROBE_BYTES
+            );
+        }
+        self.parsed_bytes = parsed_bytes;
+        self.probes += 1;
+        Ok(Feature::parse(source, GherkinEnv::default()).is_ok())
+    }
+}
+
+fn whole_document_retry_is_bounded(probe_bytes: usize, candidates: usize) -> bool {
+    probe_bytes.saturating_mul(candidates) <= MAX_GHERKIN_MARKDOWN_PROBE_BYTES
+}
+
+fn restore_candidate_group<F>(
+    lines: &mut [String],
+    candidates: &[(usize, String)],
+    render: &F,
+    probe_budget: &mut MarkdownProbeBudget,
+) -> Result<()>
+where
+    F: Fn(&[String]) -> String,
+{
+    let mut previous = Vec::with_capacity(candidates.len());
+    for (line, replacement) in candidates {
+        if *line < lines.len() {
+            previous.push((
+                *line,
+                std::mem::replace(&mut lines[*line], replacement.clone()),
+            ));
+        }
+    }
+    if previous.is_empty() {
+        return Ok(());
+    }
+    if probe_budget.parse(&render(lines))? {
+        return Ok(());
+    }
+    for (line, original) in previous {
+        lines[line] = original;
+    }
+    if candidates.len() == 1 {
+        return Ok(());
+    }
+    let midpoint = candidates.len() / 2;
+    restore_candidate_group(lines, &candidates[..midpoint], render, probe_budget)?;
+    restore_candidate_group(lines, &candidates[midpoint..], render, probe_budget)
+}
+
+fn restore_candidate_batches<F>(
+    lines: &mut [String],
+    candidates: &[(usize, String)],
+    render: &F,
+    probe_budget: &mut MarkdownProbeBudget,
+) -> Result<()>
+where
+    F: Fn(&[String]) -> String,
+{
+    for batch in candidates.chunks(GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE) {
+        restore_candidate_group(lines, batch, render, probe_budget)?;
+    }
+    Ok(())
 }
 
 fn restore_markdown_steps(
     source: String,
     candidates: &[(usize, String)],
+    default_dialect: bool,
     trailing_newline: bool,
-) -> String {
+    probe_budget: &mut MarkdownProbeBudget,
+) -> Result<String> {
     if candidates.is_empty() {
-        return source;
+        return Ok(source);
+    }
+    let default_candidates;
+    let candidates = if default_dialect {
+        default_candidates = candidates
+            .iter()
+            .filter(|(_, step)| is_default_dialect_step(step.trim_start()))
+            .cloned()
+            .collect::<Vec<_>>();
+        default_candidates.as_slice()
+    } else {
+        candidates
+    };
+    if candidates.is_empty() {
+        return Ok(source);
     }
     let mut lines: Vec<String> = source.lines().map(str::to_owned).collect();
     let render = |lines: &[String]| {
@@ -223,37 +340,42 @@ fn restore_markdown_steps(
             joined
         }
     };
-
     let mut all = lines.clone();
     for (line, step) in candidates {
         if *line < all.len() {
             all[*line] = step.clone();
         }
     }
-    if Feature::parse(render(&all), GherkinEnv::default()).is_ok() {
-        return render(&all);
+    let all_source = render(&all);
+    // Default-English candidates were already restricted to exact Gherkin step keywords, so a
+    // single whole-document parse is both authoritative and charged by its actual byte size.
+    // Keep the conservative projected-work guard for dialect-dependent candidates: malformed
+    // localized input can otherwise make this speculative parse path disproportionately costly.
+    if (default_dialect || whole_document_retry_is_bounded(all_source.len(), candidates.len()))
+        && probe_budget.parse(&all_source)?
+    {
+        return Ok(all_source);
     }
 
-    // Probe each Markdown list item against the complete document. The Gherkin parser owns
-    // the dialect keyword table, so it is the authority for whether a bullet is a step rather
-    // than prose. Accepted candidates remain in place for subsequent probes.
-    for (line, step) in candidates {
-        if *line >= lines.len() {
-            continue;
-        }
-        let previous = std::mem::replace(&mut lines[*line], step.clone());
-        if Feature::parse(render(&lines), GherkinEnv::default()).is_err() {
-            lines[*line] = previous;
-        }
-    }
-    render(&lines)
+    // Probe bounded groups, splitting only groups that make the synthesized document invalid.
+    // This keeps the parser authoritative for every dialect without reparsing once per bullet
+    // when most candidates are valid steps.
+    restore_candidate_batches(&mut lines, candidates, &render, probe_budget)?;
+    Ok(render(&lines))
+}
+
+fn is_default_dialect_step(step: &str) -> bool {
+    ["Given ", "When ", "Then ", "And ", "But ", "* "]
+        .into_iter()
+        .any(|keyword| step.starts_with(keyword))
 }
 
 fn restore_dialect_headings(
     base: Vec<String>,
     candidates: &[(usize, String)],
     trailing_newline: bool,
-) -> String {
+    probe_budget: &mut MarkdownProbeBudget,
+) -> Result<String> {
     let render = |lines: &[String]| {
         let joined = lines.join("\n");
         if trailing_newline {
@@ -263,33 +385,32 @@ fn restore_dialect_headings(
         }
     };
     let base_source = render(&base);
-    if candidates.is_empty() || Feature::parse(&base_source, GherkinEnv::default()).is_ok() {
-        return base_source;
+    if candidates.is_empty() {
+        return Ok(base_source);
     }
-
+    if probe_budget.parse(&base_source)? {
+        return Ok(base_source);
+    }
     let mut all = base.clone();
     for (line, heading) in candidates {
         all[*line] = heading.clone();
     }
     let all_source = render(&all);
-    if Feature::parse(&all_source, GherkinEnv::default()).is_ok() {
-        return all_source;
+    if whole_document_retry_is_bounded(all_source.len(), candidates.len())
+        && probe_budget.parse(&all_source)?
+    {
+        return Ok(all_source);
     }
 
-    // Restore only candidates that preserve a valid document. This is linear in the number of
-    // headings (with one bounded parse per heading), unlike an exhaustive subset search.
+    // Restore only bounded groups that preserve a valid document. Invalid groups are split so
+    // unrelated localized headings can still be recovered without exhaustive subset search.
     let mut accepted = base;
-    for (line, heading) in candidates {
-        let previous = std::mem::replace(&mut accepted[*line], heading.clone());
-        if Feature::parse(render(&accepted), GherkinEnv::default()).is_err() {
-            accepted[*line] = previous;
-        }
-    }
+    restore_candidate_batches(&mut accepted, candidates, &render, probe_budget)?;
     let accepted_source = render(&accepted);
-    if Feature::parse(&accepted_source, GherkinEnv::default()).is_ok() {
-        return accepted_source;
+    if probe_budget.parse(&accepted_source)? {
+        return Ok(accepted_source);
     }
-    base_source
+    Ok(base_source)
 }
 
 fn markdown_heading(line: &str) -> Option<&str> {
@@ -806,5 +927,211 @@ not a doc string
         .unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].text, "value one");
+    }
+
+    #[test]
+    fn gherkin_markdown_rejects_candidate_storms_before_repeated_parsing() {
+        let source = format!(
+            "# Feature: Limits\n\n## Scenario: prose\n\n{}",
+            "- prose item\n".repeat(MAX_GHERKIN_MARKDOWN_CANDIDATES + 1)
+        );
+        let error = extract_with_format(
+            &source,
+            Path::new("candidate-storm.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("candidate conversion limit"));
+    }
+
+    #[test]
+    fn gherkin_markdown_counts_heading_and_step_candidates_together() {
+        let source = format!(
+            "# Feature: Limits\n\n## Scenario: prose\n\n{}\n## Note: one\n## Note: two\n",
+            "- prose item\n".repeat(MAX_GHERKIN_MARKDOWN_CANDIDATES - 1)
+        );
+        let error = extract_with_format(
+            &source,
+            Path::new("mixed-candidate-storm.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("candidate conversion limit"));
+    }
+
+    #[test]
+    fn a_tag_before_an_unknown_colon_heading_does_not_create_an_implicit_feature() {
+        let source = "`@smoke`\n\n# Documentation: overview\n";
+        let error = extract_with_format(
+            source,
+            Path::new("tagged-prose.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("failed to parse Gherkin feature"));
+    }
+
+    #[test]
+    fn valid_base_documents_do_not_restore_speculative_dialect_headings() {
+        let base = vec!["Feature: base".to_owned(), String::new()];
+        let candidates = vec![(1, "Scenario: speculative".to_owned())];
+        let mut probe_budget = MarkdownProbeBudget::default();
+        let restored =
+            restore_dialect_headings(base, &candidates, true, &mut probe_budget).unwrap();
+        assert_eq!(restored, "Feature: base\n\n");
+    }
+
+    #[test]
+    fn parser_probe_and_retry_budgets_include_the_exact_ceiling() {
+        let mut probe_budget = MarkdownProbeBudget {
+            parsed_bytes: MAX_GHERKIN_MARKDOWN_PROBE_BYTES,
+            probes: 0,
+        };
+        assert!(probe_budget.parse("").is_ok());
+        assert!(probe_budget.parse("xx").is_err());
+
+        assert!(whole_document_retry_is_bounded(
+            MAX_GHERKIN_MARKDOWN_PROBE_BYTES,
+            1
+        ));
+        assert!(!whole_document_retry_is_bounded(
+            MAX_GHERKIN_MARKDOWN_PROBE_BYTES / 2 + 1,
+            2
+        ));
+
+        let mut probe_budget = MarkdownProbeBudget {
+            parsed_bytes: 0,
+            probes: MAX_GHERKIN_MARKDOWN_PROBES,
+        };
+        assert!(probe_budget.parse("").is_err());
+    }
+
+    #[test]
+    fn out_of_range_step_candidates_are_ignored_defensively() {
+        let source = "Feature: base\n".to_owned();
+        let candidates = vec![(1, "  Given unreachable".to_owned())];
+        let mut probe_budget = MarkdownProbeBudget::default();
+        let restored =
+            restore_markdown_steps(source, &candidates, true, true, &mut probe_budget).unwrap();
+        assert_eq!(restored, "Feature: base\n");
+    }
+
+    #[test]
+    fn dialect_restoration_retains_only_candidates_that_make_the_document_valid() {
+        let base = vec![
+            String::new(),
+            String::new(),
+            "  Scenario: behavior".to_owned(),
+        ];
+        let candidates = vec![
+            (0, "# language: not-a-dialect".to_owned()),
+            (1, "Feature: first".to_owned()),
+        ];
+        let mut probe_budget = MarkdownProbeBudget::default();
+        let restored =
+            restore_dialect_headings(base, &candidates, true, &mut probe_budget).unwrap();
+        assert!(restored.contains("Feature: first"));
+        assert!(!restored.contains("not-a-dialect"));
+    }
+
+    #[test]
+    fn prose_size_does_not_consume_budget_for_synthesized_parser_probes() {
+        let prose = format!("{}\n", "x".repeat(100)).repeat(5_000);
+        let source = format!(
+            "# Feature: Limits\n\n{prose}\n## Scenario: behavior\n\n{}",
+            "- Given a valid step\n".repeat(150)
+        );
+        let steps = extract_with_format(
+            &source,
+            Path::new("prose-heavy.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap();
+        assert_eq!(steps.len(), 150);
+    }
+
+    #[test]
+    fn realistic_large_markdown_with_mixed_lists_stays_within_the_probe_budget() {
+        let prose = format!("{}\n", "documentation ".repeat(8)).repeat(2_000);
+        let items = (0..400)
+            .map(|index| {
+                if index % 20 == 0 {
+                    format!("- implementation note {index}\n")
+                } else {
+                    format!("- Given documented behavior {index}\n")
+                }
+            })
+            .collect::<String>();
+        let source = format!(
+            "# Feature: Large living documentation\n\n{prose}\n## Scenario: behavior\n\n{items}"
+        );
+
+        assert!(source.len() > 200 * 1024);
+        let steps = extract_with_format(
+            &source,
+            Path::new("large-documentation.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap();
+        assert_eq!(steps.len(), 380);
+    }
+
+    #[test]
+    fn thousands_of_default_dialect_steps_use_one_bounded_whole_document_probe() {
+        let items = (0..4_200)
+            .map(|index| {
+                format!(
+                    "- Given documented behavior {index} has supporting context {}\n",
+                    "x".repeat(24)
+                )
+            })
+            .collect::<String>();
+        let source =
+            format!("# Feature: Large default-English corpus\n\n## Scenario: behavior\n\n{items}");
+
+        assert!(source.len() > 200 * 1024);
+        let steps = extract_with_format(
+            &source,
+            Path::new("many-default-steps.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap();
+        assert_eq!(steps.len(), 4_200);
+    }
+
+    #[test]
+    fn default_dialect_whole_document_probe_is_charged_to_the_budget() {
+        let source = "Feature: accounting\n  Scenario: behavior\n\n".to_owned();
+        let candidates = vec![(2, "    Given a charged probe".to_owned())];
+        let mut probe_budget = MarkdownProbeBudget::default();
+
+        let restored =
+            restore_markdown_steps(source, &candidates, true, true, &mut probe_budget).unwrap();
+
+        assert!(restored.contains("Given a charged probe"));
+        assert_eq!(probe_budget.probes, 1);
+        assert_eq!(probe_budget.parsed_bytes, restored.len());
+    }
+
+    #[test]
+    fn gherkin_markdown_bounds_ambiguous_parser_probe_work() {
+        let items = (0..800)
+            .map(|index| format!("- Dado passo válido {index}\n- prosa {}\n", "x".repeat(96)))
+            .collect::<String>();
+        let source = format!(
+            "# language: pt\n\n# Funcionalidade: Limites\n\n## Cenário: prosa\n\n{}",
+            items
+        );
+        let error = extract_with_format(
+            &source,
+            Path::new("probe-budget.feature.md"),
+            FeatureFormat::GherkinMarkdown,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Gherkin Markdown conversion exceeds"));
     }
 }

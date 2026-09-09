@@ -2,6 +2,7 @@
 
 use crate::config::normalize_platform_path;
 use crate::model::{stable_fingerprint, DefinitionComparison, Finding, Suppression};
+use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -221,8 +222,8 @@ pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result
 }
 
 fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
-    let text = fs::read_to_string(baseline_path)
-        .with_context(|| format!("failed to read baseline {}", baseline_path.display()))?;
+    let text = read_utf8(baseline_path, "baseline", MAX_BASELINE_INPUT_BYTES)?;
+    // serde_json's default recursion limit remains enabled for untrusted baseline input.
     let baseline: BaselineFile = serde_json::from_str(&text)
         .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))?;
     if baseline.schema_version != BASELINE_SCHEMA_VERSION {

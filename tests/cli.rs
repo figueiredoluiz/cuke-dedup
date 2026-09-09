@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
@@ -9,6 +9,19 @@ fn write(root: &Path, relative: &str, contents: &str) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, contents).unwrap();
+}
+
+fn write_sized(root: &Path, relative: &str, bytes: u64) {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .unwrap()
+        .set_len(bytes)
+        .unwrap();
 }
 
 fn copy_tree(source: &Path, destination: &Path) {
@@ -507,6 +520,423 @@ fn local_barrel_reexports_are_recognized_as_registration_sources() {
         .success()
         .stdout(predicate::str::contains("duplicate-matcher"))
         .stdout(predicate::str::contains("Analyzed 2 definitions"));
+}
+
+#[test]
+fn oversized_registration_modules_cannot_silently_remove_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.ts"]}"#,
+    );
+    write_sized(directory.path(), "support/world.ts", 8 * 1024 * 1024 + 1);
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from './support/world';\nGiven('hidden by barrel', () => work());\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("registration module"))
+        .stderr(predicate::str::contains("8388608-byte input limit"));
+}
+
+#[test]
+fn registration_module_budget_is_shared_across_definition_files() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps-a.ts","steps-b.ts"]}"#,
+    );
+    for group in ['a', 'b'] {
+        let mut imports = String::new();
+        for index in 0..520 {
+            write(
+                directory.path(),
+                &format!("support/{group}-{index}.ts"),
+                "export { Given } from '@cucumber/cucumber';\n",
+            );
+            imports.push_str(&format!(
+                "import {{ Given as G{index} }} from './support/{group}-{index}';\n"
+            ));
+        }
+        write(directory.path(), &format!("steps-{group}.ts"), &imports);
+    }
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "registration module graph exceeds the 1024-module resolution limit",
+        ));
+}
+
+#[test]
+fn type_only_and_over_depth_barrels_do_not_create_runtime_registrations() {
+    for setup in ["type-only", "over-depth"] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            ".cuke-dedup.json",
+            r#"{"definitions":["steps.ts"]}"#,
+        );
+        write(
+            directory.path(),
+            "steps.ts",
+            "import { Given } from './support/0';\nGiven('not registered', () => work());\n",
+        );
+        if setup == "type-only" {
+            write(
+                directory.path(),
+                "support/0.ts",
+                "export type { Given } from '@cucumber/cucumber';\n",
+            );
+        } else {
+            for depth in 0..16 {
+                write(
+                    directory.path(),
+                    &format!("support/{depth}.ts"),
+                    &format!("export {{ Given }} from './{}';\n", depth + 1),
+                );
+            }
+            write(
+                directory.path(),
+                "support/16.ts",
+                "export { Given } from '@cucumber/cucumber';\n",
+            );
+        }
+
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .current_dir(directory.path())
+            .args([".", "--threshold", "100"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Analyzed 0 definitions"));
+    }
+}
+
+#[test]
+fn oversized_config_and_baseline_inputs_are_fatal() {
+    let cases = [
+        (
+            "package.json",
+            1024 * 1024 + 1,
+            Vec::new(),
+            "package configuration",
+        ),
+        (
+            ".cuke-dedup.json",
+            1024 * 1024 + 1,
+            Vec::new(),
+            "CukeDedup configuration",
+        ),
+        (
+            "playwright.config.ts",
+            1024 * 1024 + 1,
+            Vec::new(),
+            "framework configuration",
+        ),
+        (
+            "baseline.json",
+            8 * 1024 * 1024 + 1,
+            vec!["--baseline", "baseline.json"],
+            "baseline",
+        ),
+    ];
+
+    for (relative, bytes, arguments, kind) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        write_sized(directory.path(), relative, bytes);
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .current_dir(directory.path())
+            .arg(".")
+            .args(arguments)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(kind))
+            .stderr(predicate::str::contains("input limit"));
+    }
+}
+
+#[test]
+fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
+    let directory = tempfile::tempdir().unwrap();
+    write_sized(directory.path(), "steps.ts", 8 * 1024 * 1024 + 1);
+    write_sized(
+        directory.path(),
+        "features/example.feature",
+        8 * 1024 * 1024 + 1,
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("definition source"))
+        .stderr(predicate::str::contains("feature file"));
+}
+
+#[test]
+fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
+    let directory = tempfile::tempdir().unwrap();
+    write_sized(
+        directory.path(),
+        "features/example.feature",
+        8 * 1024 * 1024 + 1,
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("feature file"))
+        .stderr(predicate::str::contains("input limit"));
+}
+
+#[test]
+fn an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("steps.ts"), [0xff]).unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("not valid UTF-8"));
+}
+
+#[test]
+fn a_malformed_unchanged_definition_cannot_make_changed_analysis_pass() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('broken step', () => {\n",
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "source contains JavaScript/TypeScript syntax errors",
+        ));
+}
+
+#[test]
+fn changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given(/foo(?=bar)/, () => work());\n",
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD", "--threshold", "100"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unsupported by static usage analysis").not());
+}
+
+#[test]
+fn oversized_source_exit_behavior_is_reporter_independent() {
+    let directory = tempfile::tempdir().unwrap();
+    write_sized(directory.path(), "steps.ts", 8 * 1024 * 1024 + 1);
+
+    for reporter in ["terminal", "json", "jsonl", "html", "sarif"] {
+        let output = tempfile::tempdir().unwrap();
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .current_dir(directory.path())
+            .args([".", "--reporters", reporter, "--output"])
+            .arg(output.path())
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("definition source"))
+            .stderr(predicate::str::contains("input limit"));
+    }
+}
+
+#[test]
+fn explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"exclude":["generated/**"]}"#,
+    );
+    write_sized(
+        directory.path(),
+        "generated/oversized.ts",
+        8 * 1024 * 1024 + 1,
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('included step', () => work());\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--threshold", "100"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Analyzed 1 definition"))
+        .stderr(predicate::str::contains("input limit").not());
+}
+
+#[test]
+fn pathological_matcher_programs_fail_with_an_actionable_resource_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given(/a{1000000}/, () => work());\n",
+    );
+    write(
+        directory.path(),
+        "broken.feature",
+        "Scenario: Missing feature\n  Given a step\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json", "--output"])
+        .arg(output.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("regex resource limit"))
+        .stderr(predicate::str::contains("simplify the matcher"))
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
+    let report: Value =
+        serde_json::from_str(&fs::read_to_string(output.path().join("cuke-dedup.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
+}
+
+#[test]
+fn oversized_cucumber_expression_fails_closed_and_still_writes_a_report() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        &format!("Given('{}', () => work());\n", "a".repeat(1024 * 1024 + 1)),
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json", "--output"])
+        .arg(output.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("regex resource limit"));
+    let report: Value =
+        serde_json::from_str(&fs::read_to_string(output.path().join("cuke-dedup.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
 }
 
 #[test]
@@ -1014,7 +1444,7 @@ fn changed_since_rejects_a_gitignored_analysis_root() {
 }
 
 #[test]
-fn changed_since_disables_unused_findings_when_no_feature_parses() {
+fn changed_since_disables_unused_findings_but_fails_when_no_feature_parses() {
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
@@ -1052,11 +1482,12 @@ fn changed_since_disables_unused_findings_when_no_feature_parses() {
             "unused-definition=error",
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("unused-definition").not())
         .stderr(predicate::str::contains(
             "no discovered feature file was parsed successfully",
-        ));
+        ))
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
 }
 
 #[cfg(unix)]
@@ -1262,7 +1693,7 @@ fn jsonl_report_streams_only_machine_records_to_stdout() {
 }
 
 #[test]
-fn changed_since_warns_on_an_empty_set_and_ignores_unchanged_parse_errors() {
+fn changed_since_fails_closed_on_unchanged_feature_parse_errors() {
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
@@ -1289,10 +1720,11 @@ fn changed_since_warns_on_an_empty_set_and_ignores_unchanged_parse_errors() {
         .current_dir(directory.path())
         .args([".", "--changed-since", "HEAD"])
         .assert()
-        .success()
+        .code(2)
         .stderr(predicate::str::contains(
             "found no tracked or untracked files",
-        ));
+        ))
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
 }
 
 #[test]

@@ -75,6 +75,19 @@ fn candidate_limit_fails_closed_before_pathological_pair_expansion() {
 }
 
 #[test]
+fn regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers() {
+    let definitions = definitions("Given(/a{1000000}/, () => work());");
+    let (_directory, config) = config();
+
+    let error = analyze(definitions.clone(), Vec::new(), &config).unwrap_err();
+    assert!(error.to_string().contains("regex resource limit"));
+
+    let outcome = analyze_with_diagnostics(definitions, Vec::new(), &config).unwrap();
+    assert_eq!(outcome.result.definitions.len(), 1);
+    assert_eq!(outcome.operational_errors.len(), 1);
+}
+
+#[test]
 fn equivalence_classes_report_a_spanning_set_instead_of_every_pair() {
     let definitions = definitions(
         "Given('same', () => one());\nGiven('same', () => two());\nGiven('same', () => three());\nGiven('same', () => four());",

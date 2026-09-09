@@ -1,8 +1,8 @@
 //! Definition-source adapter contracts and extension-based routing.
 
 use crate::model::{SourceLocation, StepDefinition};
-use anyhow::{Context, Result};
-use std::fs;
+use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Parser language selected for a definition source.
@@ -54,6 +54,24 @@ pub struct Extraction {
     pub diagnostics: Vec<ExtractionDiagnostic>,
 }
 
+/// Reusable state for extracting multiple definition sources in one analysis run.
+///
+/// Reusing a session shares bounded parser and module-resolution work across files. Create one
+/// session per analysis root rather than sharing it between unrelated repositories.
+#[derive(Default)]
+pub struct SourceExtractionSession {
+    pub(crate) typescript: crate::typescript::TypeScriptExtractionSession,
+}
+
+impl SourceExtractionSession {
+    /// Creates an extraction session whose imported modules must remain inside `root`.
+    pub fn new(root: &Path) -> Self {
+        Self {
+            typescript: crate::typescript::TypeScriptExtractionSession::for_root(root),
+        }
+    }
+}
+
 /// Converts one supported definition-source language into the shared definition IR.
 pub trait SourceAdapter: Sync {
     /// Stable adapter name used in diagnostics and registry inspection.
@@ -65,11 +83,30 @@ pub trait SourceAdapter: Sync {
     /// Extracts definitions from in-memory source using `file` for source locations.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction>;
 
+    /// Extracts definitions while sharing bounded state with other files in the same run.
+    fn extract_with_session(
+        &self,
+        source: &str,
+        file: &SourceFile,
+        _session: &mut SourceExtractionSession,
+    ) -> Result<Extraction> {
+        self.extract(source, file)
+    }
+
     /// Reads and extracts one source file.
     fn extract_file(&self, file: &SourceFile) -> Result<Extraction> {
-        let source = fs::read_to_string(&file.path)
-            .with_context(|| format!("failed to read source file {}", file.path.display()))?;
+        let source = read_utf8(&file.path, "definition source", MAX_PROJECT_INPUT_BYTES)?;
         self.extract(&source, file)
+    }
+
+    /// Reads and extracts one source file using shared run state.
+    fn extract_file_with_session(
+        &self,
+        file: &SourceFile,
+        session: &mut SourceExtractionSession,
+    ) -> Result<Extraction> {
+        let source = read_utf8(&file.path, "definition source", MAX_PROJECT_INPUT_BYTES)?;
+        self.extract_with_session(&source, file, session)
     }
 }
 
@@ -161,6 +198,22 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    struct DefaultSessionAdapter;
+
+    impl SourceAdapter for DefaultSessionAdapter {
+        fn name(&self) -> &'static str {
+            "default-session-test"
+        }
+
+        fn language(&self) -> SourceLanguage {
+            SourceLanguage::JavaScript
+        }
+
+        fn extract(&self, _source: &str, _file: &SourceFile) -> Result<Extraction> {
+            anyhow::bail!("default extract delegation reached")
+        }
+    }
+
     #[test]
     fn registry_routes_supported_suffixes() {
         let cases = [
@@ -210,5 +263,21 @@ mod tests {
         ] {
             assert!(adapter_for_path(Path::new(path)).is_none(), "{path}");
         }
+    }
+
+    #[test]
+    fn adapter_session_default_preserves_existing_extract_implementations() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = SourceFile {
+            path: directory.path().join("steps.js"),
+            language: SourceLanguage::JavaScript,
+        };
+        let mut session = SourceExtractionSession::new(directory.path());
+
+        let error = DefaultSessionAdapter
+            .extract_with_session("", &file, &mut session)
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "default extract delegation reached");
     }
 }

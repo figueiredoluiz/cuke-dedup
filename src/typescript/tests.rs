@@ -466,6 +466,21 @@ Given('valid step', () => valid());
 }
 
 #[test]
+fn supported_regexes_remain_authoritative_under_resource_limits() {
+    for (matcher, flags) in [
+        (r"^the user exists$", ""),
+        (r"^the USER exists$", "i"),
+        (r"^(?:one|two|three) users$", "u"),
+    ] {
+        assert_eq!(
+            rust_regex_support(matcher, flags),
+            RegexSupport::Supported,
+            "{matcher}/{flags}"
+        );
+    }
+}
+
+#[test]
 fn deeply_nested_handlers_do_not_use_the_process_stack() {
     let depth = 8_000;
     let source = format!(
