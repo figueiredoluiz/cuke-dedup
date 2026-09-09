@@ -1,5 +1,5 @@
-use super::shared::{bounded_findings, count_label, report_safe, report_value};
-use super::ReportContext;
+use super::shared::{bounded_findings, count_label, report_safe, report_value_with_census};
+use super::{CorpusCensus, ReportContext};
 use crate::model::{AnalysisResult, DefinitionComparison, MatcherDiff};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -21,6 +21,13 @@ pub fn render_html_with_threshold(
 }
 
 pub(super) fn render_html_context(context: &ReportContext<'_>) -> Result<String> {
+    render_html_context_with_census(context, None)
+}
+
+pub(super) fn render_html_context_with_census(
+    context: &ReportContext<'_>,
+    corpus: Option<&CorpusCensus>,
+) -> Result<String> {
     let result = context.result;
     let root = context.root;
     let summary = &context.summary;
@@ -54,7 +61,7 @@ pub(super) fn render_html_context(context: &ReportContext<'_>) -> Result<String>
         )
     };
     let report_json = json_for_html(
-        &serde_json::to_string(&report_value(context))
+        &serde_json::to_string(&report_value_with_census(context, corpus))
             .context("failed to serialize HTML report data")?,
     );
     let mut cards = String::new();

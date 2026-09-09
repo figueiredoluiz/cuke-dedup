@@ -1,4 +1,4 @@
-use super::{ReportContext, Summary, JSON_SCHEMA_VERSION};
+use super::{CorpusCensus, ReportContext, Summary, JSON_SCHEMA_VERSION};
 use crate::model::{
     AnalysisResult, Finding, FindingEvidence, Rule, Severity, SourceLocation, Suppression,
 };
@@ -19,6 +19,8 @@ pub(super) struct JsonReport<'a> {
     summary: Summary,
     #[serde(skip_serializing_if = "Option::is_none")]
     metrics: Option<&'a super::ExecutionMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    corpus: Option<&'a CorpusCensus>,
     findings: Vec<ReportFinding>,
     findings_truncated: usize,
 }
@@ -84,11 +86,19 @@ fn finding_priority(finding: &Finding) -> u8 {
 }
 
 pub(super) fn report_value<'a>(context: &ReportContext<'a>) -> JsonReport<'a> {
+    report_value_with_census(context, None)
+}
+
+pub(super) fn report_value_with_census<'a>(
+    context: &ReportContext<'a>,
+    corpus: Option<&'a CorpusCensus>,
+) -> JsonReport<'a> {
     let selected = bounded_findings(context.result, false);
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
         summary: context.summary.clone(),
         metrics: context.metrics,
+        corpus,
         findings: selected
             .findings
             .into_iter()

@@ -5,6 +5,9 @@ use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
+pub(crate) const UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX: &str =
+    "unresolved step-registration calls:";
+
 /// Parser language selected for a definition source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceLanguage {
@@ -43,6 +46,12 @@ pub struct ExtractionDiagnostic {
     pub location: SourceLocation,
     /// Human-readable explanation.
     pub message: String,
+}
+
+pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> bool {
+    diagnostic
+        .message
+        .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)
 }
 
 /// Definitions and non-fatal diagnostics extracted from one source.

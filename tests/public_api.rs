@@ -1,7 +1,10 @@
 use cuke_dedup::analysis::{analyze, analyze_with_diagnostics};
-use cuke_dedup::config::{Config, ConfigOverrides};
+use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+use cuke_dedup::model::{Rule, Severity};
+use cuke_dedup::reporters::ExecutionMetrics;
 use cuke_dedup::typescript;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -52,4 +55,33 @@ fn sessionless_file_extraction_uses_the_nearest_package_boundary() {
 
     assert_eq!(definitions.len(), 1);
     assert_eq!(definitions[0].matcher, "nested public API step");
+}
+
+#[test]
+fn completeness_reporting_preserves_existing_public_struct_construction() {
+    let overrides = ConfigOverrides {
+        config_file: None,
+        definitions: None,
+        features: None,
+        exclude: None,
+        exclude_defaults: None,
+        include_hidden: None,
+        reporters: Some(vec![ReporterKind::Json]),
+        output: None,
+        threshold: None,
+        require_features: None,
+        no_metrics: None,
+        rules: BTreeMap::<Rule, Severity>::new(),
+    };
+    assert_eq!(overrides.reporters, Some(vec![ReporterKind::Json]));
+
+    let metrics = ExecutionMetrics {
+        definition_files: 1,
+        feature_files: 2,
+        files_discovered: 3,
+        discovery_ms: 1.0,
+        parsing_ms: 2.0,
+        analysis_ms: 3.0,
+    };
+    assert_eq!(metrics.files_discovered, 3);
 }

@@ -69,6 +69,10 @@ struct CheckOptions {
     #[arg(long, global = true)]
     require_features: bool,
 
+    /// Fail with exit code 2 when no step definitions are extracted.
+    #[arg(long, global = true)]
+    require_definitions: bool,
+
     /// Glob patterns selecting step-definition source files.
     #[arg(long, global = true, value_delimiter = ',')]
     definitions: Option<Vec<String>>,
@@ -162,7 +166,10 @@ fn execute(cli: Cli) -> Result<i32> {
         no_metrics: cli.options.no_metrics.then_some(true),
         rules: cli.options.rules.into_iter().collect::<BTreeMap<_, _>>(),
     };
-    let config = Config::load(&root, overrides)?;
+    let mut config = Config::load(&root, overrides)?;
+    if cli.options.require_definitions {
+        config.require_definitions = true;
+    }
     if cli.options.print_config {
         println!(
             "{}",
@@ -183,6 +190,7 @@ fn execute(cli: Cli) -> Result<i32> {
 
     let parsing_started = Instant::now();
     let mut definitions = Vec::new();
+    let mut definition_files_with_definitions = 0_usize;
     let mut operational_errors = files.errors.clone();
     let mut operational_warnings = config.config_warnings.clone();
     for pattern in &files.unmatched_feature_patterns {
@@ -223,6 +231,9 @@ fn execute(cli: Cli) -> Result<i32> {
             .with_context(|| format!("failed to analyze {}", file.path.display()))
         {
             Ok(extracted) => {
+                if !extracted.definitions.is_empty() {
+                    definition_files_with_definitions += 1;
+                }
                 definitions.extend(extracted.definitions);
                 let changed_or_full_run = changed_files
                     .as_ref()
@@ -234,7 +245,10 @@ fn execute(cli: Cli) -> Result<i32> {
                         diagnostic.message
                     );
                     match diagnostic.level {
-                        ExtractionDiagnosticLevel::Warning if changed_or_full_run => {
+                        ExtractionDiagnosticLevel::Warning
+                            if changed_or_full_run
+                                || source_adapter::is_completeness_diagnostic(&diagnostic) =>
+                        {
                             operational_warnings.push(message)
                         }
                         ExtractionDiagnosticLevel::Warning => {}
@@ -260,6 +274,22 @@ fn execute(cli: Cli) -> Result<i32> {
             .then(left.location.line.cmp(&right.location.line))
             .then(left.location.column.cmp(&right.location.column))
     });
+    if definitions.is_empty() {
+        let message = if files.definitions.is_empty() {
+            "no step definitions were extracted because no definition source files were discovered"
+                .to_owned()
+        } else {
+            format!(
+                "definition extraction produced 0 definitions from {} discovered definition source file(s)",
+                files.definitions.len()
+            )
+        };
+        if config.require_definitions {
+            operational_errors.push(message);
+        } else if !files.definitions.is_empty() {
+            operational_warnings.push(message);
+        }
+    }
     for index in analysis::unmatched_suppressions(&config, &definitions) {
         let suppression = &config.suppressions[index];
         operational_warnings.push(format!(
@@ -344,6 +374,13 @@ fn execute(cli: Cli) -> Result<i32> {
         }
         baseline_outcome = Some(outcome);
     }
+    let corpus = reporters::CorpusCensus {
+        definition_files: files.definitions.len(),
+        definition_files_with_definitions,
+        definitions_extracted: result.definitions.len(),
+        feature_files: files.features.len(),
+        feature_files_parsed: parsed_feature_files,
+    };
     let metrics = reporters::ExecutionMetrics {
         definition_files: files.definitions.len(),
         feature_files: files.features.len(),
@@ -353,11 +390,13 @@ fn execute(cli: Cli) -> Result<i32> {
         analysis_ms,
     };
     let mut stdout = io::stdout().lock();
-    if config.no_metrics {
-        reporters::write_reports(&result, &config, &mut stdout)?;
-    } else {
-        reporters::write_reports_with_metrics(&result, &config, &metrics, &mut stdout)?;
-    }
+    reporters::write_cli_reports(
+        &result,
+        &config,
+        (!config.no_metrics).then_some(&metrics),
+        &corpus,
+        &mut stdout,
+    )?;
     if cli.options.explain_discovery
         || !operational_warnings.is_empty()
         || !operational_errors.is_empty()

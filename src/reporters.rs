@@ -8,6 +8,7 @@ mod sarif;
 mod shared;
 mod terminal;
 
+pub(crate) use context::CorpusCensus;
 pub use context::{ExecutionMetrics, ReportContext, Summary};
 pub use html::{render_html, render_html_with_threshold};
 pub use json::{render_json, render_json_with_threshold};
@@ -37,6 +38,7 @@ pub fn write_reports(
     write_reports_context(
         &ReportContext::new(result, &config.root, config.threshold),
         config,
+        None,
         terminal,
     )
 }
@@ -51,13 +53,29 @@ pub fn write_reports_with_metrics(
     write_reports_context(
         &ReportContext::with_metrics(result, &config.root, config.threshold, metrics),
         config,
+        None,
         terminal,
     )
+}
+
+pub(crate) fn write_cli_reports(
+    result: &AnalysisResult,
+    config: &Config,
+    metrics: Option<&ExecutionMetrics>,
+    corpus: &CorpusCensus,
+    terminal: &mut dyn Write,
+) -> Result<Vec<std::path::PathBuf>> {
+    let context = metrics.map_or_else(
+        || ReportContext::new(result, &config.root, config.threshold),
+        |metrics| ReportContext::with_metrics(result, &config.root, config.threshold, metrics),
+    );
+    write_reports_context(&context, config, Some(corpus), terminal)
 }
 
 fn write_reports_context(
     context: &ReportContext<'_>,
     config: &Config,
+    corpus: Option<&CorpusCensus>,
     terminal: &mut dyn Write,
 ) -> Result<Vec<std::path::PathBuf>> {
     let mut written = Vec::new();
@@ -71,23 +89,32 @@ fn write_reports_context(
             ReporterKind::Json => {
                 let path = config.output_path("cuke-dedup.json");
                 ensure_parent(&path)?;
-                fs::write(&path, json::render_json_context(context)?)
-                    .with_context(|| format!("failed to write JSON report {}", path.display()))?;
+                fs::write(
+                    &path,
+                    json::render_json_context_with_census(context, corpus)?,
+                )
+                .with_context(|| format!("failed to write JSON report {}", path.display()))?;
                 written.push(path);
             }
-            ReporterKind::Jsonl => jsonl::write_jsonl_context(context, terminal)?,
+            ReporterKind::Jsonl => jsonl::write_jsonl_context(context, corpus, terminal)?,
             ReporterKind::Html => {
                 let path = config.output_path("cuke-dedup.html");
                 ensure_parent(&path)?;
-                fs::write(&path, html::render_html_context(context)?)
-                    .with_context(|| format!("failed to write HTML report {}", path.display()))?;
+                fs::write(
+                    &path,
+                    html::render_html_context_with_census(context, corpus)?,
+                )
+                .with_context(|| format!("failed to write HTML report {}", path.display()))?;
                 written.push(path);
             }
             ReporterKind::Sarif => {
                 let path = config.output_path("cuke-dedup.sarif");
                 ensure_parent(&path)?;
-                fs::write(&path, sarif::render_sarif_context(context)?)
-                    .with_context(|| format!("failed to write SARIF report {}", path.display()))?;
+                fs::write(
+                    &path,
+                    sarif::render_sarif_context_with_census(context, corpus)?,
+                )
+                .with_context(|| format!("failed to write SARIF report {}", path.display()))?;
                 written.push(path);
             }
         }

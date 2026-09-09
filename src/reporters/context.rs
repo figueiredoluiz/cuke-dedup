@@ -21,6 +21,22 @@ pub struct ExecutionMetrics {
     pub analysis_ms: f64,
 }
 
+/// Deterministic input and extraction counts for one CLI run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CorpusCensus {
+    /// Number of definition source files selected by discovery.
+    pub(crate) definition_files: usize,
+    /// Number of selected definition files that yielded at least one definition.
+    pub(crate) definition_files_with_definitions: usize,
+    /// Number of step definitions extracted before analysis and mode filtering.
+    pub(crate) definitions_extracted: usize,
+    /// Number of feature files selected by discovery.
+    pub(crate) feature_files: usize,
+    /// Number of selected feature files parsed successfully.
+    pub(crate) feature_files_parsed: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// Aggregate counts shared by every report format.
