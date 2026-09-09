@@ -12,6 +12,7 @@ import {
   resolveReportDirectory,
   validateArchiveMemberNames,
   verifyChecksum,
+  verifyProvenance,
 } from "../../.github/actions/cuke-dedup/index.js";
 
 test("action maps all eight release targets", () => {
@@ -23,6 +24,44 @@ test("action maps all eight release targets", () => {
   assert.equal(releaseTarget("darwin", "arm64").rustTarget, "aarch64-apple-darwin");
   assert.equal(releaseTarget("win32", "x64").rustTarget, "x86_64-pc-windows-msvc");
   assert.equal(releaseTarget("win32", "arm64").rustTarget, "aarch64-pc-windows-msvc");
+});
+
+test("action rejects malformed release target metadata", () => {
+  const valid = { ...releaseTarget("linux", "x64", "gnu") };
+  assert.equal(
+    releaseTarget("linux", "x64", "gnu", { "linux-x64-gnu": valid }),
+    valid,
+  );
+  assert.throws(
+    () => releaseTarget("linux", "x64", "gnu", {
+      "linux-x64-gnu": { ...valid, binaryName: undefined },
+    }),
+    /invalid release target metadata/,
+  );
+  for (const override of [
+    { platform: undefined },
+    { platform: "win32" },
+    { arch: undefined },
+    { arch: "arm64" },
+    { libc: "musl" },
+    { binaryName: "../cuke-dedup" },
+    { rustTarget: undefined },
+    { rustTarget: 42 },
+    { rustTarget: "" },
+    { rustTarget: "../../other-release" },
+    { rustTarget: "x86_64/other-release" },
+  ]) {
+    assert.throws(
+      () => releaseTarget("linux", "x64", "gnu", {
+        "linux-x64-gnu": { ...valid, ...override },
+      }),
+      /invalid release target metadata/,
+    );
+  }
+  assert.throws(
+    () => releaseTarget("freebsd", "x64", undefined, {}),
+    /unsupported platform freebsd-x64/,
+  );
 });
 
 test("action resolves relative reports from the analyzed root", () => {
@@ -166,13 +205,44 @@ test("action exposes threshold metrics and requested report paths", async () => 
   });
 });
 
-test("action fails closed on a mismatched release checksum", async () => {
+test("action validates release checksums and fails closed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-dedup-checksum-"));
   const archive = join(directory, "release.tar.gz");
   const checksum = `${archive}.sha256`;
   await writeFile(archive, "release bytes");
+  const digest = "ff7a5e6429d2c8511521e4abf41cd54a3e525ef4a1f24f8d1c67ede9d17874dd";
+  await writeFile(checksum, `${digest}  release.tar.gz\n`);
+  verifyChecksum(archive, checksum);
+  await writeFile(checksum, "not-a-digest  release.tar.gz\n");
+  assert.throws(() => verifyChecksum(archive, checksum), /invalid checksum file/);
   await writeFile(checksum, `${"0".repeat(64)}  release.tar.gz\n`);
   assert.throws(() => verifyChecksum(archive, checksum), /checksum mismatch/);
+});
+
+test("action pins provenance verification to the tagged hosted build", () => {
+  let invocation;
+  verifyProvenance("release.tar.gz", "release.intoto.jsonl", "1.2.3", (...args) => {
+    invocation = args;
+    return { status: 0 };
+  });
+  assert.deepEqual(invocation, [
+    "gh",
+    [
+      "attestation",
+      "verify",
+      "release.tar.gz",
+      "--repo",
+      "figueiredoluiz/cuke-dedup",
+      "--bundle",
+      "release.intoto.jsonl",
+      "--signer-workflow",
+      "figueiredoluiz/cuke-dedup/.github/workflows/release.yml",
+      "--source-ref",
+      "refs/tags/v1.2.3",
+      "--deny-self-hosted-runners",
+    ],
+    { stdio: "inherit" },
+  ]);
 });
 
 test("action accepts only the exact release archive structure", () => {
@@ -186,6 +256,17 @@ test("action accepts only the exact release archive structure", () => {
   );
   assert.throws(
     () => validateArchiveMemberNames("cuke-dedup\nLICENSE\n", "cuke-dedup"),
+    /unexpected release archive members/,
+  );
+  assert.throws(
+    () => validateArchiveMemberNames("LICENSE\ncuke-dedup\nTHIRD-PARTY-LICENSES.md\n", "cuke-dedup"),
+    /unexpected release archive members/,
+  );
+  assert.throws(
+    () => validateArchiveMemberNames(
+      "cuke-dedup\nLICENSE\nTHIRD-PARTY-LICENSES.md\nextra\n",
+      "cuke-dedup",
+    ),
     /unexpected release archive members/,
   );
 });

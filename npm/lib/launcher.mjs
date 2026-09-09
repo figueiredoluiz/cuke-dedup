@@ -1,16 +1,13 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { constants as osConstants } from "node:os";
+import { TARGETS, targetFor as validatedTargetFor } from "./targets.mjs";
 
 const require = createRequire(import.meta.url);
 
-const targetManifest = JSON.parse(
-  readFileSync(new URL("../prebuilt-targets.json", import.meta.url), "utf8"),
-);
-
-export const TARGETS = Object.freeze(targetManifest.targets);
+export { TARGETS };
 
 export function detectLibc(report = process.report) {
   try {
@@ -25,14 +22,7 @@ export function targetFor(
   arch = process.arch,
   libc = platform === "linux" ? detectLibc() : undefined,
 ) {
-  const key = platform === "linux" ? `${platform}-${arch}-${libc}` : `${platform}-${arch}`;
-  const target = TARGETS[key];
-  if (!target) {
-    throw new Error(
-      `unsupported platform ${key}; supported platforms: ${Object.keys(TARGETS).join(", ")}`,
-    );
-  }
-  return target;
+  return validatedTargetFor(platform, arch, libc);
 }
 
 export function resolveBinary({

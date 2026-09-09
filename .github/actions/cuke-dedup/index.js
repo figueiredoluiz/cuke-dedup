@@ -12,10 +12,8 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { TARGETS, targetFor } from "../../../npm/lib/targets.mjs";
 
-const manifest = JSON.parse(
-  readFileSync(new URL("../../../npm/prebuilt-targets.json", import.meta.url), "utf8"),
-);
 const actionPackage = JSON.parse(
   readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
 );
@@ -32,13 +30,9 @@ export function releaseTarget(
   platform = process.platform,
   arch = process.arch,
   libc = platform === "linux" ? detectLibc() : undefined,
+  targets = TARGETS,
 ) {
-  const key = platform === "linux" ? `${platform}-${arch}-${libc}` : `${platform}-${arch}`;
-  const target = manifest.targets[key];
-  if (!target) {
-    throw new Error(`unsupported runner ${key}`);
-  }
-  return target;
+  return targetFor(platform, arch, libc, targets);
 }
 
 export function buildArguments(inputs, effectiveConfig = {}) {
@@ -261,8 +255,8 @@ function validateArchiveMembers(archive, binaryName) {
   validateArchiveMemberNames(listed.stdout, binaryName);
 }
 
-function verifyProvenance(archive, provenance, version) {
-  const verified = spawnSync(
+export function verifyProvenance(archive, provenance, version, spawn = spawnSync) {
+  const verified = spawn(
     "gh",
     [
       "attestation",

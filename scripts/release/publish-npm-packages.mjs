@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { TARGETS } from "../../npm/lib/targets.mjs";
+
 const defaultRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 export function registryVersionState(result, expectedVersion) {
@@ -43,10 +45,7 @@ export function npmPublishArguments(packageDirectory) {
 }
 
 export async function publishNpmPackages({ root = defaultRoot, runNpm = runNpmCommand } = {}) {
-  const targetManifest = JSON.parse(
-    await readFile(resolve(root, "npm/prebuilt-targets.json"), "utf8"),
-  );
-  const packageDirectories = Object.values(targetManifest.targets).map(
+  const packageDirectories = Object.values(TARGETS).map(
     ({ packageDirectory }) => `npm/platforms/${packageDirectory}`,
   );
   packageDirectories.push(".");

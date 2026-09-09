@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { renderPlatformReadme } from "../../scripts/release/npm-platform-readme.mjs";
+import { TARGETS, validateTarget, validateTargets } from "../lib/targets.mjs";
 
 const rootPackage = JSON.parse(
   await readFile(new URL("../../package.json", import.meta.url), "utf8"),
@@ -12,6 +13,8 @@ const prebuilt = JSON.parse(
 );
 
 test("prebuilt manifest, platform packages, and optional dependencies do not drift", async () => {
+  assert.equal(validateTargets(prebuilt.targets), prebuilt.targets);
+  assert.deepEqual(TARGETS, prebuilt.targets);
   assert.equal(prebuilt.schemaVersion, 1);
   const targets = Object.values(prebuilt.targets);
   assert.equal(targets.length, 8);
@@ -46,4 +49,21 @@ test("prebuilt manifest, platform packages, and optional dependencies do not dri
     assert.match(readme, /npm install --save-dev cuke-dedup/);
     assert.match(readme, /npm audit signatures/);
   }
+});
+
+test("prebuilt target validation rejects changed fields and target sets", () => {
+  assert.throws(
+    () => validateTarget("linux-x64-gnu", {
+      ...prebuilt.targets["linux-x64-gnu"],
+      runner: "self-hosted",
+    }),
+    /invalid release target metadata/,
+  );
+  assert.throws(
+    () => validateTargets({
+      ...prebuilt.targets,
+      "unknown-x64": prebuilt.targets["linux-x64-gnu"],
+    }),
+    /target keys do not match/,
+  );
 });
