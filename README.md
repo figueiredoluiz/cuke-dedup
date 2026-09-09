@@ -368,10 +368,11 @@ Use the repository issue templates for reproducible bugs and focused feature req
 
 The minimum supported Rust version is 1.90. The repository pins and tests that toolchain and also runs its quality checks on current stable Rust.
 
-Enable the tracked pre-commit hook once per clone and run the same compliance gate directly when needed:
+Enable the tracked hooks once per clone. Pre-commit runs the quick development checks; pre-push requires a clean checkout at the pushed commit and runs the complete release-grade gate. Run either directly when needed:
 
 ```sh
 git config core.hooksPath .githooks
+scripts/check/check.sh --quick
 scripts/check/check.sh
 ```
 

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+project_root="$(git rev-parse --show-toplevel)"
+head_commit="$(git -C "$project_root" rev-parse HEAD)"
+check_actions=0
+check_dependencies=0
+has_updates=0
+
+inspect_paths() {
+  local path
+  while IFS= read -r -d '' path; do
+    if [[ "$path" =~ ^(action\.ya?ml|\.github/(actions|workflows)/) ]]; then
+      check_actions=1
+    fi
+    if [[ "$path" =~ (^|/)(Cargo\.toml|Cargo\.lock|deny\.toml)$ ]]; then
+      check_dependencies=1
+    fi
+  done
+}
+
+while IFS=' ' read -r local_ref local_oid remote_ref remote_oid; do
+  if [[ "$local_oid" =~ ^0+$ ]]; then
+    continue
+  fi
+  has_updates=1
+
+  if ! local_commit="$(git -C "$project_root" rev-parse "${local_oid}^{commit}" 2>/dev/null)"; then
+    echo "pre-push: $local_ref does not resolve to a commit and cannot be validated." >&2
+    exit 1
+  fi
+  if [[ "$local_commit" != "$head_commit" ]]; then
+    echo "pre-push: refusing to test $local_ref because it does not point to the checked-out HEAD." >&2
+    echo "Check out the commit being pushed, ensure the worktree is clean, and push again." >&2
+    exit 1
+  fi
+
+  if [[ "$remote_oid" =~ ^0+$ ]]; then
+    inspect_paths < <(git -C "$project_root" ls-tree -r --name-only -z "$local_commit")
+  elif remote_commit="$(git -C "$project_root" rev-parse "${remote_oid}^{commit}" 2>/dev/null)"; then
+    inspect_paths < <(
+      git -C "$project_root" diff --name-only --diff-filter=ACMRD -z \
+        "$remote_commit" "$local_commit"
+    )
+  else
+    # If the remote object is unavailable locally, run both conditional gates.
+    check_actions=1
+    check_dependencies=1
+  fi
+
+  : "$remote_ref"
+done
+
+if (( has_updates == 0 )); then
+  exit 0
+fi
+
+if [[ -n "$(git -C "$project_root" status --porcelain --untracked-files=normal)" ]]; then
+  echo "pre-push: the worktree must be clean so the tested tree matches the pushed commit." >&2
+  exit 1
+fi
+
+CUKE_DEDUP_CHECK_ACTIONS="$check_actions" \
+CUKE_DEDUP_CHECK_DEPENDENCIES="$check_dependencies" \
+  exec "$project_root/scripts/check/check.sh" --full
