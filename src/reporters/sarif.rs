@@ -1,5 +1,5 @@
 use super::shared::{bounded_findings, convert_location, report_safe};
-use super::ReportContext;
+use super::{CorpusCensus, ReportContext};
 use crate::model::{stable_fingerprint, AnalysisResult, Severity, SourceLocation};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -19,6 +19,13 @@ pub fn render_sarif_with_threshold(
 }
 
 pub(super) fn render_sarif_context(context: &ReportContext<'_>) -> Result<String> {
+    render_sarif_context_with_census(context, None)
+}
+
+pub(super) fn render_sarif_context_with_census(
+    context: &ReportContext<'_>,
+    corpus: Option<&CorpusCensus>,
+) -> Result<String> {
     let result = context.result;
     let root = context.root;
     let selected = bounded_findings(result, true);
@@ -79,7 +86,7 @@ pub(super) fn render_sarif_context(context: &ReportContext<'_>) -> Result<String
         })
         .collect::<Vec<_>>();
     let retained_findings = findings.len();
-    let sarif = serde_json::json!({
+    let mut sarif = serde_json::json!({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{
@@ -111,6 +118,10 @@ pub(super) fn render_sarif_context(context: &ReportContext<'_>) -> Result<String
             "results": findings,
         }]
     });
+    if let Some(corpus) = corpus {
+        sarif["runs"][0]["invocations"][0]["properties"]["corpus"] =
+            serde_json::to_value(corpus).context("failed to serialize SARIF corpus census")?;
+    }
     serde_json::to_string_pretty(&sarif).context("failed to serialize SARIF report")
 }
 

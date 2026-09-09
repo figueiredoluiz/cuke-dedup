@@ -81,6 +81,7 @@ An explicit `--config` path bypasses automatic discovery and is a fatal configur
   "excludeDefaults": true,
   "includeHidden": false,
   "threshold": 5,
+  "requireDefinitions": true,
   "requireFeatures": true,
   "noMetrics": false,
   "reporters": ["terminal", "json", "html", "sarif"],
@@ -166,12 +167,15 @@ cuke-dedup . \
   --exclude 'vendor' \
   --exclude 'dist/**/*.ts' \
   --threshold 5 \
+  --require-definitions \
   --rule duplicate-matcher=warning
 ```
 
 `--exclude` may be repeated or receive comma-separated patterns. Patterns are resolved relative to the analyzed root. The CLI equivalents for the discovery escape hatches are `--no-default-excludes` and `--include-hidden`. Explicit definition globs do not implicitly weaken either safety default.
 
-Use `--explain-discovery` to print the effective pattern origin, selected parser, matching pattern, and definition inputs without changing report output. Unmatched feature patterns are warnings. If definitions exist but no feature files match, CukeDedup warns and disables `unused-definition` findings rather than presenting an incomplete corpus as proof that every definition is unused. Set `requireFeatures: true` or pass `--require-features` to make that condition an operational failure (exit code `2`).
+Use `--explain-discovery` to print the effective pattern origin, selected parser, matching pattern, and definition inputs without changing report output. Unmatched feature patterns are warnings. A definition file warns when its AST contains unresolved call sites shaped like known step registrations; ordinary helper calls do not. CLI-generated machine reports include a deterministic `corpus` census with the number of discovered definition files, files yielding definitions, extracted definitions, discovered feature files, and successfully parsed feature files. Set `requireDefinitions: true` or pass `--require-definitions` to make an empty extracted definition corpus an operational failure (exit code `2`).
+
+If definitions exist but no feature files match, CukeDedup warns and disables `unused-definition` findings rather than presenting an incomplete corpus as proof that every definition is unused. Set `requireFeatures: true` or pass `--require-features` to make that condition an operational failure (exit code `2`).
 
 Malformed discovered JavaScript or TypeScript remains a fail-closed operational error because partial extraction could make a duplication gate pass incorrectly. Fix the syntax, use a `.tsx` extension for JSX-bearing TypeScript, or narrow `definitions` to the actual step-definition sources.
 
@@ -225,9 +229,9 @@ JSON, HTML, and SARIF reports default to `reports/cuke-dedup/` and can be redire
 
 ### JSON and HTML
 
-The JSON report uses schema version `1`. It includes relative source spans, severity, suppressions, similarity scores, suggested actions, structured matcher/handler evidence, threshold calculations, input counts, and execution metrics. The self-contained HTML report presents the same result with search, severity and rule filters, a light/dark theme switch, matcher differences, and side-by-side handler snippets.
+The JSON report uses schema version `1`. It includes relative source spans, severity, suppressions, similarity scores, suggested actions, structured matcher/handler evidence, threshold calculations, an extraction-completeness census, input counts, and execution metrics. The self-contained HTML report presents the same result with search, severity and rule filters, a light/dark theme switch, matcher differences, and side-by-side handler snippets.
 
-Set `noMetrics: true`, pass `--no-metrics`, or use the Action's `no-metrics: true` input to omit timing data when byte-reproducible artifacts matter.
+Set `noMetrics: true`, pass `--no-metrics`, or use the Action's `no-metrics: true` input to omit timing data when byte-reproducible artifacts matter. The deterministic top-level `corpus` census remains present.
 
 ### JSON Lines
 

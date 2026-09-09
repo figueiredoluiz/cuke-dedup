@@ -71,6 +71,8 @@ struct RawConfig {
     #[serde(default)]
     require_features: Option<bool>,
     #[serde(default)]
+    require_definitions: Option<bool>,
+    #[serde(default)]
     no_metrics: Option<bool>,
     #[serde(default)]
     rules: Option<BTreeMap<String, Severity>>,
@@ -160,6 +162,8 @@ pub struct Config {
     pub threshold: f64,
     /// Whether finding no feature files is an operational failure.
     pub require_features: bool,
+    /// Whether extracting no step definitions is an operational failure.
+    pub require_definitions: bool,
     /// Whether machine reports omit runtime measurements for reproducibility.
     pub no_metrics: bool,
     /// Effective severity for each analysis rule.
@@ -306,6 +310,7 @@ impl Config {
             output: PathBuf::from("reports/cuke-dedup"),
             threshold: 0.0,
             require_features: false,
+            require_definitions: false,
             no_metrics: false,
             rules,
             suppressions: Vec::new(),
@@ -343,6 +348,9 @@ impl Config {
         }
         if let Some(value) = raw.require_features {
             self.require_features = value;
+        }
+        if let Some(value) = raw.require_definitions {
+            self.require_definitions = value;
         }
         if let Some(value) = raw.no_metrics {
             self.no_metrics = value;
@@ -627,6 +635,18 @@ mod tests {
         )
         .unwrap();
         assert!(!overridden.no_metrics);
+    }
+
+    #[test]
+    fn require_definitions_is_available_from_project_config() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(".cuke-dedup.json"),
+            r#"{"requireDefinitions":true}"#,
+        )
+        .unwrap();
+        let configured = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        assert!(configured.require_definitions);
     }
 
     #[test]

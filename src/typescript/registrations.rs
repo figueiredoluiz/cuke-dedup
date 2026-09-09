@@ -1,7 +1,9 @@
+use super::matcher::decode_js_string;
 use super::module_resolver::RegistrationResolver;
 use super::node_text;
 use crate::model::Framework;
 use anyhow::Result;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use tree_sitter::Node;
@@ -25,6 +27,14 @@ pub(super) struct RegistrationNames {
     namespaces: BTreeMap<String, BTreeMap<String, String>>,
 }
 
+pub(super) enum RegistrationCallee<'tree, 'source> {
+    Identifier(&'source str),
+    Property {
+        object: Node<'tree>,
+        name: Cow<'source, str>,
+    },
+}
+
 #[derive(Default)]
 struct RegistrationDiscovery<'tree> {
     aliases: BTreeMap<String, String>,
@@ -39,26 +49,59 @@ pub(super) fn registration_name(
     source: &[u8],
     registrations: &RegistrationNames,
 ) -> Option<(String, String)> {
-    match function.kind() {
-        "identifier" => {
-            let callee = node_text(function, source).to_owned();
-            registrations
-                .aliases
-                .get(&callee)
-                .cloned()
-                .map(|registration| (callee, registration))
-        }
-        "member_expression" => {
-            let object = function.child_by_field_name("object")?;
+    match registration_callee(function, source)? {
+        RegistrationCallee::Identifier(name) => registrations
+            .aliases
+            .get(name)
+            .cloned()
+            .map(|registration| (node_text(function, source).to_owned(), registration)),
+        RegistrationCallee::Property { object, name } => {
             let exports = registrations.namespaces.get(node_text(object, source))?;
-            let property = function.child_by_field_name("property")?;
-            let name = node_text(property, source);
             exports
-                .get(name)
+                .get(name.as_ref())
                 .cloned()
                 .map(|registration| (node_text(function, source).to_owned(), registration))
         }
+    }
+}
+
+pub(super) fn registration_callee<'tree, 'source>(
+    function: Node<'tree>,
+    source: &'source [u8],
+) -> Option<RegistrationCallee<'tree, 'source>> {
+    let function = unwrap_registration_callee(function)?;
+    match function.kind() {
+        "identifier" => Some(RegistrationCallee::Identifier(node_text(function, source))),
+        "member_expression" => Some(RegistrationCallee::Property {
+            object: unwrap_registration_callee(function.child_by_field_name("object")?)?,
+            name: Cow::Borrowed(node_text(function.child_by_field_name("property")?, source)),
+        }),
+        "subscript_expression" => Some(RegistrationCallee::Property {
+            object: unwrap_registration_callee(function.child_by_field_name("object")?)?,
+            name: Cow::Owned(decode_js_string(node_text(
+                function.child_by_field_name("index")?,
+                source,
+            ))?),
+        }),
         _ => None,
+    }
+}
+
+fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<'_>> {
+    loop {
+        function = match function.kind() {
+            "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression" => function.named_child(0)?,
+            "type_assertion" => {
+                let last_child =
+                    u32::try_from(function.named_child_count().checked_sub(1)?).ok()?;
+                function.named_child(last_child)?
+            }
+            "instantiation_expression" => function.named_child(0)?,
+            _ => return Some(function),
+        };
     }
 }
 

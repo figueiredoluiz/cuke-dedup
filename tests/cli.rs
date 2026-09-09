@@ -204,7 +204,13 @@ fn print_config_reports_merged_values_without_running_discovery() {
     let output = Command::cargo_bin("cuke-dedup")
         .unwrap()
         .current_dir(directory.path())
-        .args([".", "--print-config", "--threshold", "7"])
+        .args([
+            ".",
+            "--print-config",
+            "--threshold",
+            "7",
+            "--require-definitions",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -213,6 +219,7 @@ fn print_config_reports_merged_values_without_running_discovery() {
     assert_eq!(config["threshold"], 7.0);
     assert_eq!(config["configSource"], ".cuke-dedup.json");
     assert_eq!(config["reporters"], serde_json::json!(["json"]));
+    assert_eq!(config["requireDefinitions"], true);
     assert!(config["exclude"]
         .as_array()
         .unwrap()
@@ -242,7 +249,7 @@ Then('the receipt is visible', async () => { await expect(otherReceipt).toBeVisi
     command
         .current_dir(directory.path())
         .arg(".")
-        .args(["--reporters", "terminal,json,html"])
+        .args(["--reporters", "terminal,json,html,sarif"])
         .args(["--output", "artifacts"])
         .assert()
         .code(1)
@@ -256,7 +263,12 @@ Then('the receipt is visible', async () => { await expect(otherReceipt).toBeVisi
     assert_eq!(report["schemaVersion"], "1");
     assert_eq!(report["summary"]["errors"], 2); // duplicate matcher + ambiguity
     assert_eq!(report["metrics"]["definitionFiles"], 1);
+    assert_eq!(report["corpus"]["definitionFiles"], 1);
+    assert_eq!(report["corpus"]["definitionFilesWithDefinitions"], 1);
+    assert_eq!(report["corpus"]["definitionsExtracted"], 2);
     assert_eq!(report["metrics"]["featureFiles"], 1);
+    assert_eq!(report["corpus"]["featureFiles"], 1);
+    assert_eq!(report["corpus"]["featureFilesParsed"], 1);
     assert_eq!(report["metrics"]["filesDiscovered"], 2);
     for phase in ["discoveryMs", "parsingMs", "analysisMs"] {
         assert!(
@@ -267,6 +279,17 @@ Then('the receipt is visible', async () => { await expect(otherReceipt).toBeVisi
         );
     }
     assert!(directory.path().join("artifacts/cuke-dedup.html").is_file());
+    let html = fs::read_to_string(directory.path().join("artifacts/cuke-dedup.html")).unwrap();
+    assert!(html.contains("\"definitionFilesWithDefinitions\":1"));
+    let sarif: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("artifacts/cuke-dedup.sarif")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["corpus"]
+            ["definitionFilesWithDefinitions"],
+        1
+    );
 }
 
 #[test]
@@ -288,6 +311,28 @@ fn no_metrics_produces_reproducible_machine_report_content() {
     )
     .unwrap();
     assert!(report.get("metrics").is_none());
+    assert_eq!(report["corpus"]["definitionFiles"], 1);
+    assert_eq!(report["corpus"]["definitionFilesWithDefinitions"], 1);
+    assert_eq!(report["corpus"]["definitionsExtracted"], 1);
+
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--reporters", "jsonl", "--no-metrics"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let summary: Value = serde_json::from_slice(
+        output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .find(|line| !line.is_empty())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["type"], "summary");
+    assert!(summary.get("metrics").is_none());
+    assert_eq!(summary["corpus"]["definitionsExtracted"], 1);
 }
 
 #[test]
@@ -310,6 +355,7 @@ fn project_config_can_disable_metrics() {
     )
     .unwrap();
     assert!(report.get("metrics").is_none());
+    assert_eq!(report["corpus"]["definitionsExtracted"], 1);
 }
 
 #[test]
@@ -329,6 +375,170 @@ fn empty_default_definition_discovery_is_visible() {
         .stderr(predicate::str::contains(
             "automatic discovery found no supported step-definition source files",
         ));
+
+    let mut required = Command::cargo_bin("cuke-dedup").unwrap();
+    required
+        .current_dir(directory.path())
+        .args([".", "--require-definitions"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "no step definitions were extracted because no definition source files were discovered",
+        ));
+}
+
+#[test]
+fn unresolved_registration_calls_warn_and_expose_the_corpus_census() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@company/bdd';\nGiven('invisible step', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "example.feature",
+        "Feature: Completeness\n  Scenario: Missing\n    Given invisible step\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "steps.ts:2:1: unresolved step-registration calls: 1 call(s)",
+        ))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions from 1 discovered definition source file(s)",
+        ));
+
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["corpus"]["definitionFiles"], 1);
+    assert_eq!(report["corpus"]["definitionFilesWithDefinitions"], 0);
+    assert_eq!(report["corpus"]["definitionsExtracted"], 0);
+    assert_eq!(report["corpus"]["featureFiles"], 1);
+    assert_eq!(report["corpus"]["featureFilesParsed"], 1);
+}
+
+#[test]
+fn partial_definition_extraction_is_visible_in_the_corpus_census() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "resolved.ts",
+        "Given('visible step', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "unresolved.ts",
+        "import { Then } from '@company/bdd';\nThen('invisible step', () => work());\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "unresolved.ts:2:1: unresolved step-registration calls",
+        ));
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["corpus"]["definitionFiles"], 2);
+    assert_eq!(report["corpus"]["definitionFilesWithDefinitions"], 1);
+    assert_eq!(report["corpus"]["definitionsExtracted"], 1);
+}
+
+#[test]
+fn unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@company/bdd';\nGiven('invisible step', () => work());\n",
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "steps.ts:2:1: unresolved step-registration calls",
+        ));
+}
+
+#[test]
+fn empty_definition_extraction_can_be_required_and_still_writes_reports() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "export const helper = true;\n",
+    );
+    write(
+        directory.path(),
+        "example.feature",
+        "Feature: Completeness\n  Scenario: Missing\n    Given invisible step\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([
+            ".",
+            "--require-definitions",
+            "--reporters",
+            "json",
+            "--output",
+            "reports",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions from 1 discovered definition source file(s)",
+        ));
+    assert!(directory.path().join("reports/cuke-dedup.json").is_file());
+
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"requireDefinitions":true,"reporters":["json"],"output":"configured-report"}"#,
+    );
+    let mut configured = Command::cargo_bin("cuke-dedup").unwrap();
+    configured
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2);
+    assert!(directory
+        .path()
+        .join("configured-report/cuke-dedup.json")
+        .is_file());
 }
 
 #[test]
@@ -1689,6 +1899,12 @@ fn jsonl_report_streams_only_machine_records_to_stdout() {
     assert!(records.last().unwrap()["metrics"]["filesDiscovered"]
         .as_u64()
         .is_some_and(|count| count == 2));
+    assert_eq!(
+        records.last().unwrap()["corpus"]["definitionFilesWithDefinitions"],
+        1
+    );
+    assert_eq!(records.last().unwrap()["corpus"]["definitionsExtracted"], 2);
+    assert_eq!(records.last().unwrap()["corpus"]["featureFilesParsed"], 1);
     assert!(!stdout.contains("Reports written to:"));
 }
 

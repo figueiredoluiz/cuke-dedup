@@ -19,10 +19,12 @@ use self::matcher::{
 };
 use self::module_resolver::RegistrationResolver;
 use self::registrations::{
-    detect_framework, detect_registrations, registration_name, RegistrationNames,
+    detect_framework, detect_registrations, registration_callee, registration_name,
+    RegistrationCallee, RegistrationNames,
 };
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
+use crate::source_adapter::UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX;
 use crate::source_adapter::{adapter_for_language, SourceAdapter, SourceExtractionSession};
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
@@ -103,6 +105,19 @@ struct AdapterContext<'source, 'tree> {
     handler_bindings: &'source BTreeMap<String, Vec<HandlerBinding<'tree>>>,
 }
 
+#[derive(Default)]
+struct UnresolvedRegistrationCalls {
+    count: usize,
+    first_location: Option<SourceLocation>,
+}
+
+impl UnresolvedRegistrationCalls {
+    fn record(&mut self, location: SourceLocation) {
+        self.count = self.count.saturating_add(1);
+        self.first_location.get_or_insert(location);
+    }
+}
+
 /// Reads and extracts step definitions from a discovered JavaScript or TypeScript file.
 pub fn extract_file(file: &SourceFile) -> Result<Vec<StepDefinition>> {
     Ok(extract_file_detailed(file)?.definitions)
@@ -164,6 +179,7 @@ fn extract_detailed_impl(
     };
     let mut definitions = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut unresolved_registration_calls = UnresolvedRegistrationCalls::default();
     if root.has_error() {
         let syntax_node = first_syntax_error(root).unwrap_or(root);
         diagnostics.push(ExtractionDiagnostic {
@@ -172,7 +188,23 @@ fn extract_detailed_impl(
             message: "source contains JavaScript/TypeScript syntax errors, so analysis is incomplete; fix the syntax, use a .tsx extension for JSX, or narrow definition discovery".to_owned(),
         });
     }
-    collect_calls(root, &context, &mut definitions, &mut diagnostics);
+    collect_calls(
+        root,
+        &context,
+        &mut definitions,
+        &mut diagnostics,
+        &mut unresolved_registration_calls,
+    );
+    if let Some(location) = unresolved_registration_calls.first_location {
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location,
+            message: format!(
+                "{UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX} {} call(s) look like step registrations but could not be resolved to a supported registration import or global; definitions may be missing",
+                unresolved_registration_calls.count
+            ),
+        });
+    }
     definitions.sort_by(|left, right| {
         left.location
             .line
@@ -190,10 +222,18 @@ fn collect_calls<'tree>(
     context: &AdapterContext<'_, 'tree>,
     definitions: &mut Vec<StepDefinition>,
     diagnostics: &mut Vec<ExtractionDiagnostic>,
+    unresolved_registration_calls: &mut UnresolvedRegistrationCalls,
 ) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         if node.kind() == "call_expression" {
+            if is_unresolved_registration_call(node, context) {
+                unresolved_registration_calls.record(node_location(
+                    context.file,
+                    node,
+                    context.source,
+                ));
+            }
             if let Some(definition) = extract_call(node, context, diagnostics) {
                 definitions.push(definition);
             }
@@ -201,6 +241,37 @@ fn collect_calls<'tree>(
         let mut cursor = node.walk();
         let children: Vec<_> = node.named_children(&mut cursor).collect();
         stack.extend(children.into_iter().rev());
+    }
+}
+
+fn is_unresolved_registration_call(call: Node<'_>, context: &AdapterContext<'_, '_>) -> bool {
+    let Some(function) = call.child_by_field_name("function") else {
+        return false;
+    };
+    if registration_name(function, context.source, context.registrations).is_some() {
+        return false;
+    }
+    match registration_callee(function, context.source) {
+        Some(RegistrationCallee::Identifier(name)) => matches!(
+            name,
+            "Given"
+                | "When"
+                | "Then"
+                | "And"
+                | "But"
+                | "Step"
+                | "defineStep"
+                | "given"
+                | "when"
+                | "then"
+        ),
+        // Lowercase `.then()` is ordinary Promise usage, not registration evidence. Member
+        // expressions intentionally use only the distinctive registration-style properties.
+        Some(RegistrationCallee::Property { name, .. }) => matches!(
+            name.as_ref(),
+            "Given" | "When" | "Then" | "And" | "But" | "Step" | "defineStep"
+        ),
+        _ => false,
     }
 }
 

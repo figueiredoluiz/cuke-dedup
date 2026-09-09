@@ -532,3 +532,172 @@ fn dynamic_matchers_and_handlers_emit_diagnostics_instead_of_disappearing() {
         .iter()
         .any(|diagnostic| diagnostic.message.contains("step handler")));
 }
+
+#[test]
+fn unresolved_registration_shaped_calls_are_visible_without_flagging_helpers() {
+    let cases = [
+        (
+            "import { Given } from '@company/bdd';\nGiven('missing', () => work());",
+            1,
+        ),
+        ("const bdd = {}; bdd.Then('missing', () => work());", 1),
+        (
+            "Step('missing', () => work()); And('also missing', () => work());",
+            2,
+        ),
+        ("helper('ordinary call', () => work());", 0),
+        ("load().then(() => work());", 0),
+    ];
+
+    for (source, expected_calls) in cases {
+        let extracted = extract_detailed(source, &file(SourceLanguage::TypeScript)).unwrap();
+        assert!(extracted.definitions.is_empty(), "{source}");
+        let completeness = extracted
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+            .collect::<Vec<_>>();
+        if expected_calls == 0 {
+            assert!(completeness.is_empty(), "{source}");
+        } else {
+            assert_eq!(completeness.len(), 1, "{source}");
+            assert!(
+                completeness[0]
+                    .message
+                    .contains(&format!("{expected_calls} call(s)")),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved() {
+    let extracted = extract_detailed(
+        "Given(dynamicMatcher, () => work());",
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+
+    assert!(extracted.definitions.is_empty());
+    assert!(extracted
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("step matcher")));
+    assert!(!extracted
+        .diagnostics
+        .iter()
+        .any(crate::source_adapter::is_completeness_diagnostic));
+}
+
+#[test]
+fn unresolved_calls_remain_visible_when_the_same_file_yields_definitions() {
+    let extracted = extract_detailed(
+        r#"
+import { Given } from '@cucumber/cucumber';
+import { Then } from '@company/bdd';
+Given('visible step', () => visible());
+Then('invisible step', () => invisible());
+"#,
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+
+    assert_eq!(extracted.definitions.len(), 1);
+    let completeness = extracted
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+        .collect::<Vec<_>>();
+    assert_eq!(completeness.len(), 1);
+    assert_eq!(completeness[0].location.line, 5);
+    assert!(completeness[0].message.contains("1 call(s)"));
+}
+
+#[test]
+fn extracts_registrations_through_transparent_wrappers_and_static_subscripts() {
+    let extracted = extract_detailed(
+        r#"
+import { Given } from '@cucumber/cucumber';
+import * as bdd from '@cucumber/cucumber';
+(Given)('parenthesized', () => first());
+(Given as typeof Given)('asserted', () => second());
+(Given satisfies typeof Given)('satisfied', () => third());
+Given!('non-null', () => fourth());
+(<typeof Given>Given)('type-asserted', () => fifth());
+(Given<string>)('instantiated', () => sixth());
+bdd['Then']('subscripted', () => seventh());
+bdd['Th\u0065n']('escaped subscript', () => eighth());
+(bdd as typeof bdd).When('wrapped namespace', () => ninth());
+"#,
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+
+    assert_eq!(extracted.definitions.len(), 9);
+    assert_eq!(extracted.definitions[0].matcher, "parenthesized");
+    assert_eq!(extracted.definitions[1].matcher, "asserted");
+    assert_eq!(extracted.definitions[2].matcher, "satisfied");
+    assert_eq!(extracted.definitions[3].matcher, "non-null");
+    assert_eq!(extracted.definitions[4].matcher, "type-asserted");
+    assert_eq!(extracted.definitions[5].matcher, "instantiated");
+    assert_eq!(extracted.definitions[6].registration, "Then");
+    assert_eq!(extracted.definitions[7].matcher, "escaped subscript");
+    assert_eq!(extracted.definitions[8].matcher, "wrapped namespace");
+    assert!(!extracted
+        .diagnostics
+        .iter()
+        .any(crate::source_adapter::is_completeness_diagnostic));
+}
+
+#[test]
+fn static_subscript_registrations_are_included_in_completeness_diagnostics() {
+    let extracted = extract_detailed(
+        r#"
+import { Given } from '@cucumber/cucumber';
+import * as custom from '@company/bdd';
+Given('visible step', () => visible());
+custom['Then']('invisible step', () => invisible());
+"#,
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+
+    assert_eq!(extracted.definitions.len(), 1);
+    let completeness = extracted
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+        .collect::<Vec<_>>();
+    assert_eq!(completeness.len(), 1);
+    assert_eq!(completeness[0].location.line, 5);
+}
+
+#[test]
+fn computed_subscripts_and_lowercase_then_calls_are_not_registration_evidence() {
+    let extracted = extract_detailed(
+        "const property = 'Then'; custom[property]('dynamic', handler); promise['then'](handler);",
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+
+    assert!(extracted.definitions.is_empty());
+    assert!(!extracted
+        .diagnostics
+        .iter()
+        .any(crate::source_adapter::is_completeness_diagnostic));
+}
+
+#[test]
+fn deeply_parenthesized_registration_callees_are_unwrapped_iteratively() {
+    let depth = 1_000;
+    let source = format!(
+        "{}Given{}('deep', () => work());",
+        "(".repeat(depth),
+        ")".repeat(depth)
+    );
+    let extracted = extract_detailed(&source, &file(SourceLanguage::TypeScript)).unwrap();
+
+    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(extracted.definitions[0].matcher, "deep");
+}

@@ -35,7 +35,7 @@ pub(super) fn matcher_value(
     }
 }
 
-fn decode_js_string(text: &str) -> Option<String> {
+pub(super) fn decode_js_string(text: &str) -> Option<String> {
     let quote = text.chars().next()?;
     if text.chars().last()? != quote || !matches!(quote, '\'' | '"') {
         return None;
