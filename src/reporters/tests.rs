@@ -238,6 +238,30 @@ fn buffered_reports_cap_findings_and_signal_truncation() {
         super::shared::MAX_BUFFERED_REPORT_FINDINGS
     );
     assert!(html.contains("1 additional findings"));
+    assert!(html.contains(r#"class="truncation-notice" role="status""#));
+
+    let corpus = CorpusCensus {
+        definition_files: 1,
+        definition_files_with_definitions: 1,
+        definitions_extracted: analysis.definitions.len(),
+        feature_files: 0,
+        feature_files_parsed: 0,
+    };
+    let incomplete = crate::analysis::AnalysisCensus {
+        truncated: true,
+        candidate_comparisons_evaluated: 1,
+        skipped_candidate_comparisons: 1,
+        ..crate::analysis::AnalysisCensus::default()
+    };
+    let metadata = CliReportMetadata {
+        corpus: &corpus,
+        analysis: &incomplete,
+        execution_successful: false,
+    };
+    let context = ReportContext::new(&analysis, &root, 0.0);
+    let combined = html::render_html_context_with_metadata(&context, Some(&metadata)).unwrap();
+    assert!(combined.contains(r#"class="truncation-notice" role="alert""#));
+    assert!(combined.contains(r#"class="truncation-notice" role="status""#));
 
     let sarif: serde_json::Value =
         serde_json::from_str(&render_sarif(&analysis, &root).unwrap()).unwrap();

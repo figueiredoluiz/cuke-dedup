@@ -1,5 +1,5 @@
 use super::shared::{bounded_findings, convert_location, report_safe};
-use super::{CorpusCensus, ReportContext};
+use super::{CliReportMetadata, ReportContext};
 use crate::model::{stable_fingerprint, AnalysisResult, Severity, SourceLocation};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -19,12 +19,12 @@ pub fn render_sarif_with_threshold(
 }
 
 pub(super) fn render_sarif_context(context: &ReportContext<'_>) -> Result<String> {
-    render_sarif_context_with_census(context, None)
+    render_sarif_context_with_metadata(context, None)
 }
 
-pub(super) fn render_sarif_context_with_census(
+pub(super) fn render_sarif_context_with_metadata(
     context: &ReportContext<'_>,
-    corpus: Option<&CorpusCensus>,
+    metadata: Option<&CliReportMetadata<'_>>,
 ) -> Result<String> {
     let result = context.result;
     let root = context.root;
@@ -101,7 +101,7 @@ pub(super) fn render_sarif_context_with_census(
                 }
             },
             "invocations": [{
-                "executionSuccessful": true,
+                "executionSuccessful": metadata.is_none_or(|metadata| metadata.execution_successful),
                 "properties": {
                     "threshold": context.threshold,
                     "duplicatedDefinitions": context.summary.duplication.duplicated_definitions,
@@ -118,9 +118,13 @@ pub(super) fn render_sarif_context_with_census(
             "results": findings,
         }]
     });
-    if let Some(corpus) = corpus {
+    if let Some(metadata) = metadata {
         sarif["runs"][0]["invocations"][0]["properties"]["corpus"] =
-            serde_json::to_value(corpus).context("failed to serialize SARIF corpus census")?;
+            serde_json::to_value(metadata.corpus)
+                .context("failed to serialize SARIF corpus census")?;
+        sarif["runs"][0]["invocations"][0]["properties"]["analysis"] =
+            serde_json::to_value(metadata.analysis)
+                .context("failed to serialize SARIF analysis census")?;
     }
     serde_json::to_string_pretty(&sarif).context("failed to serialize SARIF report")
 }

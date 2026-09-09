@@ -1,5 +1,5 @@
-use super::shared::{bounded_findings, count_label, report_safe, report_value_with_census};
-use super::{CorpusCensus, ReportContext};
+use super::shared::{bounded_findings, count_label, report_safe, report_value_with_metadata};
+use super::{CliReportMetadata, ReportContext};
 use crate::model::{AnalysisResult, DefinitionComparison, MatcherDiff};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -21,12 +21,12 @@ pub fn render_html_with_threshold(
 }
 
 pub(super) fn render_html_context(context: &ReportContext<'_>) -> Result<String> {
-    render_html_context_with_census(context, None)
+    render_html_context_with_metadata(context, None)
 }
 
-pub(super) fn render_html_context_with_census(
+pub(super) fn render_html_context_with_metadata(
     context: &ReportContext<'_>,
-    corpus: Option<&CorpusCensus>,
+    metadata: Option<&CliReportMetadata<'_>>,
 ) -> Result<String> {
     let result = context.result;
     let root = context.root;
@@ -61,7 +61,7 @@ pub(super) fn render_html_context_with_census(
         )
     };
     let report_json = json_for_html(
-        &serde_json::to_string(&report_value_with_census(context, corpus))
+        &serde_json::to_string(&report_value_with_metadata(context, metadata))
             .context("failed to serialize HTML report data")?,
     );
     let mut cards = String::new();
@@ -114,13 +114,28 @@ pub(super) fn render_html_context_with_census(
     if cards.is_empty() {
         cards.push_str("<p class=empty>No active findings.</p>");
     }
-    let truncation_notice = if truncated == 0 {
-        String::new()
-    } else {
-        format!(
-            r#"<p class="truncation-notice" role="status">Showing the highest-severity active findings; {truncated} additional findings are available in the summary and streaming JSONL report.</p>"#
-        )
-    };
+    let incomplete_analysis = metadata
+        .map(|metadata| metadata.analysis)
+        .filter(|analysis| analysis.truncated);
+    let mut truncation_notice = String::new();
+    if let Some(analysis) = incomplete_analysis {
+        truncation_notice.push_str(&format!(
+            r#"<p class="truncation-notice" role="alert">{}</p>"#,
+            html_escape(&format!(
+                "Analysis is incomplete: {} candidate comparisons were evaluated and {} were skipped after configured limits.",
+                analysis.candidate_comparisons_evaluated,
+                analysis.skipped_candidate_comparisons
+            ))
+        ));
+    }
+    if truncated > 0 {
+        truncation_notice.push_str(&format!(
+            r#"<p class="truncation-notice" role="status">{}</p>"#,
+            html_escape(&format!(
+                "Showing the highest-severity active findings; {truncated} additional findings are available in the summary and streaming JSONL report."
+            ))
+        ));
+    }
 
     let replacements = [
         (

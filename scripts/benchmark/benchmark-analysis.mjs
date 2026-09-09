@@ -16,12 +16,14 @@ const profiles = smoke
       { name: "shared-structure", sizes: [10], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [20], sharedHandler: true },
       { name: "repository-scale", sizes: [20], repositoryShape: true },
+      { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
     ]
   : [
       { name: "unrelated", sizes: [250, 500, 1000, 2000], sharedStructure: false },
       { name: "shared-structure", sizes: [250, 500], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [1000, 2000], sharedHandler: true },
       { name: "repository-scale", sizes: [2000], repositoryShape: true },
+      { name: "candidate-limit", sizes: [10000], sharedStructure: true, candidateLimit: 1000 },
     ];
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-benchmark-"));
 const results = [];
@@ -34,17 +36,12 @@ try {
       await mkdir(root, { recursive: true });
       const generated = profile.repositoryShape
         ? await writeRepositoryScale(root, definitions)
-        : await writeSingleFileProfile(
-            root,
-            definitions,
-            profile.sharedStructure,
-            profile.sharedHandler,
-          );
+        : await writeSingleFileProfile(root, definitions, profile);
 
-      run(root, output); // Warm filesystem and process-launch paths before recording.
+      run(root, output, generated.exitCode); // Warm filesystem and process-launch paths before recording.
       const samples = [];
       for (let attempt = 0; attempt < repeats; attempt += 1) {
-        samples.push(run(root, output));
+        samples.push(run(root, output, generated.exitCode));
       }
       const reference = samples[0];
       assert.equal(reference.definitionsAnalyzed, generated.definitions);
@@ -52,6 +49,7 @@ try {
       assert.equal(reference.definitionFiles, generated.definitionFiles);
       assert.equal(reference.featureFiles, generated.featureFiles);
       assert.equal(reference.findingCount, generated.findingCount);
+      assert.equal(reference.analysisTruncated, generated.analysisTruncated);
       for (const sample of samples.slice(1)) {
         assert.equal(sample.definitionsAnalyzed, reference.definitionsAnalyzed);
         assert.equal(sample.featureStepsAnalyzed, reference.featureStepsAnalyzed);
@@ -59,6 +57,9 @@ try {
         assert.equal(sample.featureFiles, reference.featureFiles);
         assert.equal(sample.fileCount, reference.fileCount);
         assert.equal(sample.findingCount, reference.findingCount);
+        assert.equal(sample.analysisTruncated, reference.analysisTruncated);
+        assert.equal(sample.candidateComparisonsEvaluated, reference.candidateComparisonsEvaluated);
+        assert.equal(sample.skippedCandidateComparisons, reference.skippedCandidateComparisons);
       }
       const wallSamples = samples.map((sample) => sample.wallMs);
       results.push({
@@ -71,6 +72,9 @@ try {
         featureFiles: reference.featureFiles,
         fileCount: reference.fileCount,
         findingCount: reference.findingCount,
+        analysisTruncated: reference.analysisTruncated,
+        candidateComparisonsEvaluated: reference.candidateComparisonsEvaluated,
+        skippedCandidateComparisons: reference.skippedCandidateComparisons,
         medianMs: median(wallSamples),
         discoveryMedianMs: median(samples.map((sample) => sample.discoveryMs)),
         parsingMedianMs: median(samples.map((sample) => sample.parsingMs)),
@@ -92,7 +96,7 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
-function run(root, output) {
+function run(root, output, expectedExitCode) {
   const binaryArguments = [".", "--reporters", "json", "--output", output];
   const memoryFile = join(root, ".cuke-dedup-benchmark-memory");
   let command = binary;
@@ -114,7 +118,7 @@ function run(root, output) {
     encoding: "utf8",
   });
   const wallMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.status, expectedExitCode, result.stderr || result.stdout);
   const report = JSON.parse(readFileSync(join(output, "cuke-dedup.json"), "utf8"));
   assert.ok(report.metrics, "JSON report is missing execution metrics");
   const peakMemoryBytes = readPeakMemory(memoryFormat, memoryFile, result.stderr);
@@ -130,6 +134,9 @@ function run(root, output) {
     discoveryMs: report.metrics.discoveryMs,
     parsingMs: report.metrics.parsingMs,
     analysisMs: report.metrics.analysisMs,
+    analysisTruncated: report.analysis.truncated,
+    candidateComparisonsEvaluated: report.analysis.candidateComparisonsEvaluated,
+    skippedCandidateComparisons: report.analysis.skippedCandidateComparisons,
   };
 }
 
@@ -174,16 +181,24 @@ function source(count, sharedStructure, sharedHandler) {
   return `${lines.join("\n")}\n`;
 }
 
-async function writeSingleFileProfile(root, definitions, sharedStructure, sharedHandler) {
+async function writeSingleFileProfile(root, definitions, profile) {
+  const { sharedStructure, sharedHandler, candidateLimit } = profile;
   await writeFile(
     join(root, "steps.ts"),
     source(definitions, sharedStructure, sharedHandler),
   );
   await writeFile(join(root, "suite.feature"), "Feature: Benchmark\n  Scenario: Corpus\n");
-  if (sharedHandler) {
+  if (sharedHandler || candidateLimit) {
+    const rules = {};
+    if (sharedHandler) rules["near-duplicate-step"] = "off";
+    if (candidateLimit) rules["unused-definition"] = "off";
     await writeFile(
       join(root, ".cuke-dedup.json"),
-      `${JSON.stringify({ threshold: 100, rules: { "near-duplicate-step": "off" } }, null, 2)}\n`,
+      `${JSON.stringify({
+        threshold: 100,
+        ...(candidateLimit ? { maxStructuralClassComparisons: candidateLimit } : {}),
+        rules,
+      }, null, 2)}\n`,
     );
   }
   return {
@@ -197,7 +212,11 @@ async function writeSingleFileProfile(root, definitions, sharedStructure, shared
       : sharedStructure
         ? (definitions * (definitions - 1)) / 2
         : 0,
-    findingCount: definitions + (sharedStructure || sharedHandler ? definitions - 1 : 0),
+    findingCount: candidateLimit
+      ? candidateLimit
+      : definitions + (sharedStructure || sharedHandler ? definitions - 1 : 0),
+    exitCode: candidateLimit ? 2 : 0,
+    analysisTruncated: Boolean(candidateLimit),
   };
 }
 
@@ -260,5 +279,7 @@ async function writeRepositoryScale(root, definitions) {
     featureFiles,
     candidatePairs: (layout.packages * (layout.packages - 1)) / 2,
     findingCount: layout.packages + (layout.packages - 1),
+    exitCode: 0,
+    analysisTruncated: false,
   };
 }

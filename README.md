@@ -83,6 +83,8 @@ An explicit `--config` path bypasses automatic discovery and is a fatal configur
   "threshold": 5,
   "requireDefinitions": true,
   "requireFeatures": true,
+  "maxCandidateComparisons": 2000000,
+  "maxStructuralClassComparisons": 250000,
   "noMetrics": false,
   "reporters": ["terminal", "json", "html", "sarif"],
   "output": "reports/cuke-dedup",
@@ -179,7 +181,7 @@ If definitions exist but no feature files match, CukeDedup warns and disables `u
 
 Malformed discovered JavaScript or TypeScript remains a fail-closed operational error because partial extraction could make a duplication gate pass incorrectly. Fix the syntax, use a `.tsx` extension for JSX-bearing TypeScript, or narrow `definitions` to the actual step-definition sources.
 
-Files that participate in analysis are read with fixed resource limits: definition sources, feature files, imported registration modules, and baselines may each be at most 8 MiB; package, CukeDedup, and framework configuration files may each be at most 1 MiB. Across one analysis run, registration imports may read at most 1,024 distinct modules and 64 MiB in aggregate, and may evaluate at most 16,384 memoized path/depth states—one state for every module at each of the 16 supported depths. The shared resolver confines relative imports to the canonical analysis root and reuses results across importing files. Matcher patterns and compiled programs are limited to 1 MiB, with a 2 MiB lazy-DFA cache per matcher. Gherkin Markdown conversion collects at most 10,000 ambiguous candidates, performs at most 128 parser probes, and parses at most 64 MiB of cumulative synthesized probe input. The 10,000-candidate value is a collection bound, not a guarantee that every candidate-heavy document fits the lower probe limits. Default-English step bullets are filtered by exact Gherkin keywords and receive one whole-document parser probe charged by its actual synthesized size. For dialect-dependent candidates, a whole-document retry is attempted only when `synthesized bytes × candidate count` is at most 64 MiB; larger candidate sets use bounded 32-item restoration batches. Exceeding a limit is an operational failure (exit code `2`) rather than a successful partial analysis. Discovery exclusions keep selected definition and feature files outside the corpus, but an included definition may still cause an explicitly imported registration module to be read. Configuration and baseline inputs must be reduced below their limits.
+Files that participate in analysis are read with fixed resource limits: definition sources, feature files, imported registration modules, and baselines may each be at most 8 MiB; package, CukeDedup, and framework configuration files may each be at most 1 MiB. Across one analysis run, registration imports may read at most 1,024 distinct modules and 64 MiB in aggregate, and may evaluate at most 16,384 memoized path/depth states—one state for every module at each of the 16 supported depths. The shared resolver confines relative imports to the canonical analysis root and reuses results across importing files. Matcher patterns and compiled programs are limited to 1 MiB, with a 2 MiB lazy-DFA cache per matcher. Gherkin Markdown conversion collects at most 10,000 ambiguous candidates, performs at most 128 parser probes, and parses at most 64 MiB of cumulative synthesized probe input. The 10,000-candidate value is a collection bound, not a guarantee that every candidate-heavy document fits the lower probe limits. Default-English step bullets are filtered by exact Gherkin keywords and receive one whole-document parser probe charged by its actual synthesized size. For dialect-dependent candidates, a whole-document retry is attempted only when `synthesized bytes × candidate count` is at most 64 MiB; larger candidate sets use bounded 32-item restoration batches. Candidate comparison generation retains at most 2,000,000 unique pairs globally and considers at most 250,000 structural proposals per handler class by default; configure `maxCandidateComparisons` / `--max-candidate-comparisons` and `maxStructuralClassComparisons` / `--max-structural-class-comparisons` with positive integers. Reaching either candidate limit preserves partial findings, writes reports with `analysis.truncated: true` and skipped counts, and returns operational exit code `2`; other exceeded analysis limits fail before an incomplete result can be mistaken for success. Discovery exclusions keep selected definition and feature files outside the corpus, but an included definition may still cause an explicitly imported registration module to be read. Configuration and baseline inputs must be reduced below their limits.
 
 Use `--print-config` to serialize the fully merged and validated configuration as JSON and exit without discovery. The output includes the selected CukeDedup configuration source, framework-derived feature-pattern origin, CLI overrides, effective default exclusions, rule severities, and configuration warnings.
 
@@ -229,7 +231,7 @@ JSON, HTML, and SARIF reports default to `reports/cuke-dedup/` and can be redire
 
 ### JSON and HTML
 
-The JSON report uses schema version `1`. It includes relative source spans, severity, suppressions, similarity scores, suggested actions, structured matcher/handler evidence, threshold calculations, an extraction-completeness census, input counts, and execution metrics. The self-contained HTML report presents the same result with search, severity and rule filters, a light/dark theme switch, matcher differences, and side-by-side handler snippets.
+The JSON report uses schema version `1`. It includes relative source spans, severity, suppressions, similarity scores, suggested actions, structured matcher/handler evidence, threshold calculations, an extraction-completeness census, candidate-source counts and truncation status, input counts, and execution metrics. The self-contained HTML report presents the same result with search, severity and rule filters, a light/dark theme switch, matcher differences, side-by-side handler snippets, and a visible incomplete-analysis alert.
 
 Set `noMetrics: true`, pass `--no-metrics`, or use the Action's `no-metrics: true` input to omit timing data when byte-reproducible artifacts matter. The deterministic top-level `corpus` census remains present.
 
@@ -244,7 +246,7 @@ cuke-dedup . --reporters jsonl \
 
 Each finding record is self-contained and carries a location-independent semantic fingerprint, active/suppressed state, threshold contribution, relative source spans, suggested action, and structured evidence. Free-text fields are capped at 2,000 Unicode characters; `truncatedFields` names every shortened field.
 
-The final `type: "summary"` record declares `recordCount` and `truncated: false`, and includes aggregate counts, threshold outcome, and execution metrics. Operational warnings and errors remain on stderr, so stdout can be parsed incrementally.
+The final `type: "summary"` record declares `recordCount` and stream-level `truncated: false`, and includes aggregate counts, threshold outcome, the deterministic `analysis` status, and optional execution metrics. Operational warnings and errors remain on stderr, so stdout can be parsed incrementally.
 
 ### SARIF, safety, and scale
 
@@ -329,7 +331,7 @@ cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new
 cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new 3
 ```
 
-`--fail-on-new` defaults to zero when no count is supplied. `--update-baseline` and `--fail-on-new` require `--baseline`; they cannot be combined. Baseline updates also reject `--changed-since`, preventing a partial scan from erasing accepted findings outside the changed-file set. The sorted, versioned baseline records one semantic fingerprint per line with a multiplicity count for reviewable diffs.
+`--fail-on-new` defaults to zero when no count is supplied. `--update-baseline` and `--fail-on-new` require `--baseline`; they cannot be combined. Baseline updates reject `--changed-since` and are skipped whenever analysis has an operational error, preventing a partial scan from erasing accepted findings. The sorted, versioned baseline records one semantic fingerprint per line with a multiplicity count for reviewable diffs.
 
 Changed-file mode still analyzes the complete discovered corpus so a changed definition can be compared with unchanged definitions. It filters the reported findings to those touching a changed file, while summary definition counts and the duplication-threshold denominator remain the complete corpus.
 
@@ -353,7 +355,7 @@ Warnings do not produce exit code `1`.
 - Named handlers declared in the same source file are resolved to their bodies. Imported or unresolved handler references remain available for matcher and usage rules but are not compared by identifier text.
 - Malformed JavaScript or TypeScript fails closed. Unsupported regular-expression constructs emit a warning; malformed matcher escapes are operational errors.
 - One analysis root is one comparison corpus. Run independent monorepo packages separately when their step registries are unrelated.
-- Exact matcher and handler equivalence groups produce a linear spanning set of findings. Fuzzy structural comparisons are bounded at two million candidates and fail closed with exit code `2`; split independent suites or narrow the root if that limit is reached.
+- Exact matcher and handler equivalence groups produce a linear spanning set of findings. Fuzzy structural comparisons have configurable global and per-class bounds. A limit preserves the findings evaluated so far, explicitly marks every machine report incomplete, and fails closed with exit code `2`; split independent suites, narrow the root, or deliberately raise a measured limit.
 - Before version 1.0, configuration and machine-report schemas may evolve between minor releases. Schema changes will be explicit and versioned.
 
 CukeDedup is an independent project. It is not affiliated with or endorsed by the Cucumber project or its maintainers.

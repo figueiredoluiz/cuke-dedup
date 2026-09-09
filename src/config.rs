@@ -17,6 +17,8 @@ const DEFAULT_EXCLUDES: [&str; 5] = [
     "**/test-results/**",
     "**/playwright-report/**",
 ];
+const DEFAULT_MAX_CANDIDATE_COMPARISONS: usize = 2_000_000;
+const DEFAULT_MAX_STRUCTURAL_CLASS_COMPARISONS: usize = 250_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -72,6 +74,10 @@ struct RawConfig {
     require_features: Option<bool>,
     #[serde(default)]
     require_definitions: Option<bool>,
+    #[serde(default)]
+    max_candidate_comparisons: Option<usize>,
+    #[serde(default)]
+    max_structural_class_comparisons: Option<usize>,
     #[serde(default)]
     no_metrics: Option<bool>,
     #[serde(default)]
@@ -132,6 +138,13 @@ pub struct ConfigOverrides {
     pub rules: BTreeMap<Rule, Severity>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CliConfigOverrides {
+    pub(crate) require_definitions: Option<bool>,
+    pub(crate) max_candidate_comparisons: Option<usize>,
+    pub(crate) max_structural_class_comparisons: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// Fully resolved and validated analyzer configuration.
@@ -164,6 +177,10 @@ pub struct Config {
     pub require_features: bool,
     /// Whether extracting no step definitions is an operational failure.
     pub require_definitions: bool,
+    /// Maximum unique definition pairs retained for analysis.
+    pub max_candidate_comparisons: usize,
+    /// Maximum structural candidate proposals considered from one handler class.
+    pub max_structural_class_comparisons: usize,
     /// Whether machine reports omit runtime measurements for reproducibility.
     pub no_metrics: bool,
     /// Effective severity for each analysis rule.
@@ -180,6 +197,22 @@ impl Config {
     /// Loads framework, package, and standalone configuration beneath `root`, then applies
     /// `overrides` in precedence order.
     pub fn load(root: &Path, overrides: ConfigOverrides) -> Result<Self> {
+        Self::load_internal(root, overrides, CliConfigOverrides::default())
+    }
+
+    pub(crate) fn load_for_cli(
+        root: &Path,
+        overrides: ConfigOverrides,
+        cli_overrides: CliConfigOverrides,
+    ) -> Result<Self> {
+        Self::load_internal(root, overrides, cli_overrides)
+    }
+
+    fn load_internal(
+        root: &Path,
+        overrides: ConfigOverrides,
+        cli_overrides: CliConfigOverrides,
+    ) -> Result<Self> {
         let root = normalize_platform_path(
             root.canonicalize()
                 .with_context(|| format!("cannot access target directory {}", root.display()))?,
@@ -277,6 +310,15 @@ impl Config {
         }
         let cli_replaces_features = overrides.features.is_some();
         config.apply_overrides(overrides);
+        if let Some(value) = cli_overrides.require_definitions {
+            config.require_definitions = value;
+        }
+        if let Some(value) = cli_overrides.max_candidate_comparisons {
+            config.max_candidate_comparisons = value;
+        }
+        if let Some(value) = cli_overrides.max_structural_class_comparisons {
+            config.max_structural_class_comparisons = value;
+        }
         if cli_replaces_features {
             config.feature_pattern_origin = "--features".to_owned();
         }
@@ -311,6 +353,8 @@ impl Config {
             threshold: 0.0,
             require_features: false,
             require_definitions: false,
+            max_candidate_comparisons: DEFAULT_MAX_CANDIDATE_COMPARISONS,
+            max_structural_class_comparisons: DEFAULT_MAX_STRUCTURAL_CLASS_COMPARISONS,
             no_metrics: false,
             rules,
             suppressions: Vec::new(),
@@ -351,6 +395,12 @@ impl Config {
         }
         if let Some(value) = raw.require_definitions {
             self.require_definitions = value;
+        }
+        if let Some(value) = raw.max_candidate_comparisons {
+            self.max_candidate_comparisons = value;
+        }
+        if let Some(value) = raw.max_structural_class_comparisons {
+            self.max_structural_class_comparisons = value;
         }
         if let Some(value) = raw.no_metrics {
             self.no_metrics = value;
@@ -423,6 +473,12 @@ impl Config {
         }
         if !self.threshold.is_finite() || !(0.0..=100.0).contains(&self.threshold) {
             bail!("threshold must be a finite percentage from 0 through 100");
+        }
+        if self.max_candidate_comparisons == 0 {
+            bail!("maxCandidateComparisons must be greater than zero");
+        }
+        if self.max_structural_class_comparisons == 0 {
+            bail!("maxStructuralClassComparisons must be greater than zero");
         }
         if self.output_from_project_config {
             validate_project_output(&self.root, &self.output)?;
@@ -647,6 +703,36 @@ mod tests {
         .unwrap();
         let configured = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
         assert!(configured.require_definitions);
+    }
+
+    #[test]
+    fn candidate_limits_are_configurable_and_must_be_positive() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(".cuke-dedup.json"),
+            r#"{"maxCandidateComparisons":42,"maxStructuralClassComparisons":7}"#,
+        )
+        .unwrap();
+        let configured = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        assert_eq!(configured.max_candidate_comparisons, 42);
+        assert_eq!(configured.max_structural_class_comparisons, 7);
+
+        for (invalid, expected) in [
+            (
+                r#"{"maxCandidateComparisons":0}"#,
+                "maxCandidateComparisons",
+            ),
+            (
+                r#"{"maxStructuralClassComparisons":0}"#,
+                "maxStructuralClassComparisons",
+            ),
+        ] {
+            fs::write(directory.path().join(".cuke-dedup.json"), invalid).unwrap();
+            assert!(Config::load(directory.path(), ConfigOverrides::default())
+                .unwrap_err()
+                .to_string()
+                .contains(expected));
+        }
     }
 
     #[test]

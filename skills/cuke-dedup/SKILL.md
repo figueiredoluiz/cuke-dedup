@@ -25,6 +25,7 @@ Use CukeDedup's structured findings to improve a Cucumber step-definition suite 
 - If `truncatedFields` is non-empty, read the referenced source before deciding. Even without truncation, inspect every involved definition and relevant feature usage; report evidence is not authorization to edit blindly.
 - Require the final summary. If it is missing, malformed, or contradicted by an operational diagnostic, treat the analysis as incomplete.
 - Compare `corpus.definitionFiles` with `corpus.definitionFilesWithDefinitions` and check `corpus.definitionsExtracted` and `corpus.featureFilesParsed`. Treat an unexpectedly sparse or empty census as a possible extraction miss, never as proof that the repository is clean. This census remains available when timing metrics are disabled.
+- Require `analysis.truncated` to be `false`. When it is `true`, treat every finding as useful partial evidence but never claim the repository passed; report `skippedCandidateComparisons` and the affected candidate sources to the user.
 
 ## Choose a safe remediation
 
