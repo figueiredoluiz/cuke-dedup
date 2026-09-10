@@ -19,6 +19,15 @@ pub enum SourceLanguage {
     Tsx,
 }
 
+/// Returns the tree-sitter grammar registered for a definition-source language.
+pub(crate) fn grammar_for_language(language: SourceLanguage) -> tree_sitter::Language {
+    match language {
+        SourceLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+        SourceLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        SourceLanguage::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+    }
+}
+
 /// A discovered definition source and the language used to parse it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
@@ -252,6 +261,24 @@ mod tests {
             assert!(!adapter.name().is_empty());
         }
         assert_eq!(registered_suffixes().len(), cases.len());
+    }
+
+    #[test]
+    fn source_languages_select_their_registered_tree_sitter_grammar() {
+        let cases = [
+            (SourceLanguage::JavaScript, "const value = 1;"),
+            (SourceLanguage::TypeScript, "const value: number = 1;"),
+            (SourceLanguage::Tsx, "const value = <div />;"),
+        ];
+
+        for (language, source) in cases {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&grammar_for_language(language))
+                .unwrap();
+            let tree = parser.parse(source, None).unwrap();
+            assert!(!tree.root_node().has_error(), "{language:?}");
+        }
     }
 
     #[test]

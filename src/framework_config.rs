@@ -1,6 +1,7 @@
 //! Safe, static feature-path discovery from supported framework configuration files.
 
 use crate::resource_limits::{read_utf8, MAX_CONFIG_INPUT_BYTES};
+use crate::source_adapter::{grammar_for_language, SourceLanguage};
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
@@ -398,12 +399,12 @@ fn static_object_property_path(
 fn parse_config_source(source: &str, extension: &str) -> Result<tree_sitter::Tree> {
     let mut parser = Parser::new();
     let language = if matches!(extension, "ts" | "mts" | "cts") {
-        tree_sitter_typescript::LANGUAGE_TYPESCRIPT
+        SourceLanguage::TypeScript
     } else {
-        tree_sitter_javascript::LANGUAGE
+        SourceLanguage::JavaScript
     };
     parser
-        .set_language(&language.into())
+        .set_language(&grammar_for_language(language))
         .context("failed to initialize framework config parser")?;
     let tree = parser
         .parse(source, None)

@@ -9,7 +9,7 @@ use crate::resource_limits::{
     read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
     MAX_REGISTRATION_RESOLUTION_STATES,
 };
-use crate::source_adapter::language_for_path;
+use crate::source_adapter::{grammar_for_language, language_for_path};
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -297,17 +297,8 @@ fn project_boundary(importer: &Path) -> Option<PathBuf> {
 
 fn parse_module(source: &str, path: &Path) -> Option<tree_sitter::Tree> {
     let language = language_for_path(path)?;
-    let grammar = match language {
-        crate::source_adapter::SourceLanguage::JavaScript => {
-            tree_sitter_javascript::LANGUAGE.into()
-        }
-        crate::source_adapter::SourceLanguage::TypeScript => {
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
-        }
-        crate::source_adapter::SourceLanguage::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
-    };
     let mut parser = Parser::new();
-    parser.set_language(&grammar).ok()?;
+    parser.set_language(&grammar_for_language(language)).ok()?;
     parser.parse(source, None)
 }
 
