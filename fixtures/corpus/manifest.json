@@ -142,6 +142,21 @@
       }
     },
     {
+      "name": "playwright-bdd-local-fixture-duplicate-handler",
+      "path": "playwright-bdd-local-fixture",
+      "arguments": [],
+      "expectedExit": 1,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 2,
+        "duplicatedDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 0.0,
+        "passed": false,
+        "byRule": {"duplicate-handler": 1}
+      }
+    },
+    {
       "name": "cypress-cucumber-framework-discovery",
       "path": "cypress-config",
       "arguments": [],
