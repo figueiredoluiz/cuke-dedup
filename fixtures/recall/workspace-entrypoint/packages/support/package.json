@@ -1,0 +1,7 @@
+{
+  "name": "@example/support",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

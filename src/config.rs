@@ -77,6 +77,12 @@ struct RawConfig {
     #[serde(default)]
     require_definitions: Option<bool>,
     #[serde(default)]
+    fail_on_incomplete: Option<bool>,
+    #[serde(default)]
+    registrations: Option<Vec<String>>,
+    #[serde(default)]
+    parameter_types: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     max_candidate_comparisons: Option<usize>,
     #[serde(default)]
     max_structural_class_comparisons: Option<usize>,
@@ -143,6 +149,8 @@ pub struct ConfigOverrides {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CliConfigOverrides {
     pub(crate) require_definitions: Option<bool>,
+    /// Whether bounded or incomplete analysis is an operational failure.
+    pub(crate) fail_on_incomplete: Option<bool>,
     pub(crate) max_candidate_comparisons: Option<usize>,
     pub(crate) max_structural_class_comparisons: Option<usize>,
 }
@@ -179,6 +187,12 @@ pub struct Config {
     pub require_features: bool,
     /// Whether extracting no step definitions is an operational failure.
     pub require_definitions: bool,
+    /// Whether an incomplete corpus or truncated analysis is an operational failure.
+    pub fail_on_incomplete: bool,
+    /// Additional local function names that register step definitions.
+    pub registrations: Vec<String>,
+    /// Project-defined Cucumber Expression parameter types and their regular expressions.
+    pub parameter_types: BTreeMap<String, String>,
     /// Maximum unique definition pairs retained for analysis.
     pub max_candidate_comparisons: usize,
     /// Maximum structural candidate proposals considered from one handler class.
@@ -315,6 +329,9 @@ impl Config {
         if let Some(value) = cli_overrides.require_definitions {
             config.require_definitions = value;
         }
+        if let Some(value) = cli_overrides.fail_on_incomplete {
+            config.fail_on_incomplete = value;
+        }
         if let Some(value) = cli_overrides.max_candidate_comparisons {
             config.max_candidate_comparisons = value;
         }
@@ -333,6 +350,7 @@ impl Config {
             (Rule::DuplicateMatcher, Severity::Error),
             (Rule::NormalizedMatcher, Severity::Error),
             (Rule::AmbiguousStep, Severity::Error),
+            (Rule::OverlappingMatcher, Severity::Warning),
             (Rule::DuplicateHandler, Severity::Error),
             (Rule::NearDuplicateStep, Severity::Warning),
             (Rule::ParameterizationCandidate, Severity::Warning),
@@ -355,6 +373,9 @@ impl Config {
             threshold: 0.0,
             require_features: false,
             require_definitions: false,
+            fail_on_incomplete: false,
+            registrations: Vec::new(),
+            parameter_types: BTreeMap::new(),
             max_candidate_comparisons: DEFAULT_MAX_CANDIDATE_COMPARISONS,
             max_structural_class_comparisons: DEFAULT_MAX_STRUCTURAL_CLASS_COMPARISONS,
             no_metrics: false,
@@ -397,6 +418,15 @@ impl Config {
         }
         if let Some(value) = raw.require_definitions {
             self.require_definitions = value;
+        }
+        if let Some(value) = raw.fail_on_incomplete {
+            self.fail_on_incomplete = value;
+        }
+        if let Some(value) = raw.registrations {
+            self.registrations = value;
+        }
+        if let Some(value) = raw.parameter_types {
+            self.parameter_types = value;
         }
         if let Some(value) = raw.max_candidate_comparisons {
             self.max_candidate_comparisons = value;
@@ -475,6 +505,24 @@ impl Config {
         }
         if !self.threshold.is_finite() || !(0.0..=100.0).contains(&self.threshold) {
             bail!("threshold must be a finite percentage from 0 through 100");
+        }
+        for (name, pattern) in &self.parameter_types {
+            if name.is_empty() || name.contains(['{', '}']) {
+                bail!("parameter type `{name}` must not be empty or contain braces");
+            }
+            crate::resource_limits::compile_regex(pattern).with_context(|| {
+                format!("invalid regular expression for parameter type `{name}`")
+            })?;
+        }
+        for name in &self.registrations {
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
+                || name.starts_with(|character: char| character.is_ascii_digit())
+            {
+                bail!("registration `{name}` must be a JavaScript identifier");
+            }
         }
         if self.max_candidate_comparisons == 0 {
             bail!("maxCandidateComparisons must be greater than zero");

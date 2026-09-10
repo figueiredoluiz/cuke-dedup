@@ -261,7 +261,11 @@ jobs:
       - name: Install cargo-fuzz reproducibly
         run: cargo +nightly-2026-08-01 install cargo-fuzz --version 0.13.2 --locked
       - name: Exercise parser fuzz target
-        run: cargo +nightly-2026-08-01 fuzz run parsers -- -runs=1000 -max_len=16384 -timeout=10
+        run: |
+          for target in parsers inputs; do
+            cargo +nightly-2026-08-01 fuzz run "$target" -- \
+              -runs=1000 -max_len=16384 -timeout=10 -rss_limit_mb=1024 -verbosity=0
+          done
 
   corpus:
     name: Release binary corpus and Action smoke test

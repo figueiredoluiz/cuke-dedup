@@ -23,8 +23,8 @@ fn external_callers_can_preserve_partial_results_and_operational_diagnostics() {
 
     let outcome = analyze_with_diagnostics(definitions.clone(), Vec::new(), &config).unwrap();
     assert_eq!(outcome.result.definitions.len(), 1);
-    assert_eq!(outcome.operational_errors.len(), 1);
-    assert!(outcome.operational_errors[0].contains("regex resource limit"));
+    assert_eq!(outcome.incomplete.len(), 1);
+    assert!(outcome.incomplete[0].contains("regex resource limit"));
 
     let error = analyze(definitions, Vec::new(), &config).unwrap_err();
     assert!(error.to_string().contains("regex resource limit"));

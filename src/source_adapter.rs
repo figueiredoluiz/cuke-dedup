@@ -75,8 +75,19 @@ pub struct SourceExtractionSession {
 impl SourceExtractionSession {
     /// Creates an extraction session whose imported modules must remain inside `root`.
     pub fn new(root: &Path) -> Self {
+        Self::with_registrations(root, &[])
+    }
+
+    /// Creates a session that also treats `registrations` as step-registration function names.
+    ///
+    /// Use this for project-declared wrappers that static inference cannot recognize, such as a
+    /// helper that builds its registration call dynamically.
+    pub fn with_registrations(root: &Path, registrations: &[String]) -> Self {
         Self {
-            typescript: crate::typescript::TypeScriptExtractionSession::for_root(root),
+            typescript: crate::typescript::TypeScriptExtractionSession::for_root(
+                root,
+                registrations,
+            ),
         }
     }
 }

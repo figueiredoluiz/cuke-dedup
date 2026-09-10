@@ -138,6 +138,29 @@ test("action exposes deterministic report generation", () => {
   );
 });
 
+test("action can require complete analysis coverage", () => {
+  assert.deepEqual(
+    buildArguments({
+      path: ".",
+      reporters: "json",
+      output: "reports",
+      failOnIncomplete: "true",
+    }),
+    [
+      ".",
+      "--reporters", "json",
+      "--output", "reports",
+      "--fail-on-incomplete",
+    ],
+  );
+  assert.ok(
+    !buildArguments({ path: ".", reporters: "json", output: "reports" }).includes(
+      "--fail-on-incomplete",
+    ),
+    "incomplete coverage stays non-fatal unless the input opts in",
+  );
+});
+
 test("action preserves resolved project config when inputs are omitted", () => {
   assert.deepEqual(
     buildArguments(

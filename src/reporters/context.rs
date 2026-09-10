@@ -36,6 +36,12 @@ pub(crate) struct CorpusCensus {
     pub(crate) feature_files: usize,
     /// Number of selected feature files parsed successfully.
     pub(crate) feature_files_parsed: usize,
+    /// Whether definitions are known to be missing from the extracted corpus.
+    ///
+    /// Set when a source imported a known registration through a module that could not be
+    /// resolved statically. Those definitions are absent from every rule, so the corpus — not
+    /// just the comparison set — is a subset of what a complete run would analyze.
+    pub(crate) incomplete: bool,
 }
 
 pub(crate) struct CliReportMetadata<'a> {

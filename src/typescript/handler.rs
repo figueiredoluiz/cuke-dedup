@@ -1,3 +1,4 @@
+use super::ast::push_named_children_reverse;
 use super::node_text;
 use crate::model::{stable_fingerprint, HandlerFingerprint};
 use std::collections::{BTreeMap, BTreeSet};
@@ -547,10 +548,4 @@ fn static_call_receiver(node: Node<'_>, source: &[u8]) -> Option<String> {
         }
         _ => None,
     }
-}
-
-fn push_named_children_reverse<'tree>(node: Node<'tree>, stack: &mut Vec<Node<'tree>>) {
-    let mut cursor = node.walk();
-    let children: Vec<_> = node.named_children(&mut cursor).collect();
-    stack.extend(children.into_iter().rev());
 }

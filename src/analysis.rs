@@ -30,15 +30,18 @@ pub(crate) struct AnalysisCensus {
 }
 
 #[derive(Debug)]
-/// Analysis data plus operational diagnostics that make the result incomplete.
+/// Analysis data plus diagnostics describing how complete the result is.
 ///
 /// Callers that need to render partial results before failing should use
 /// [`analyze_with_diagnostics`]. Callers that only accept complete analysis can use [`analyze`].
 pub struct AnalysisOutcome {
-    /// Findings and analyzed inputs available before operational failure handling.
+    /// Findings and analyzed inputs available before completeness handling.
     pub result: AnalysisResult,
-    /// Diagnostics that require the run to be treated as an operational failure.
-    pub operational_errors: Vec<String>,
+    /// Diagnostics describing analysis that was bounded before it could finish.
+    ///
+    /// A non-empty list means findings are a subset of what a complete run would report, so the
+    /// absence of a finding proves nothing. Findings that are present remain valid.
+    pub incomplete: Vec<String>,
 }
 
 /// Evaluates every configured rule against extracted definitions and feature steps.
@@ -48,18 +51,18 @@ pub fn analyze(
     config: &Config,
 ) -> Result<AnalysisResult> {
     let outcome = analyze_with_diagnostics(definitions, feature_steps, config)?;
-    if !outcome.operational_errors.is_empty() {
-        bail!(outcome.operational_errors.join("; "));
+    if !outcome.incomplete.is_empty() {
+        bail!(outcome.incomplete.join("; "));
     }
     Ok(outcome.result)
 }
 
 /// Runs analysis while preserving partial results when bounded work cannot complete.
 ///
-/// A non-empty [`AnalysisOutcome::operational_errors`] means the result is incomplete and must
-/// not be treated as a passing gate. This form lets CLI and library consumers write diagnostic
-/// reports before returning their operational-failure status. Candidate-generation truncation and
-/// matcher compilation limits are both surfaced through `operational_errors`.
+/// A non-empty [`AnalysisOutcome::incomplete`] means findings are a subset of a complete run, so
+/// the absence of a finding proves nothing. This form lets CLI and library consumers write
+/// diagnostic reports and decide their own severity. Candidate-generation truncation and matcher
+/// compilation limits are both surfaced through `incomplete`.
 pub fn analyze_with_diagnostics(
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
@@ -94,12 +97,16 @@ fn analyze_internal(
     let suppressions = suppression::SuppressionIndex::new(config, &definitions);
     let pair_analysis =
         pairs::analyze_definition_pairs(&definitions, config, &suppressions, &mut findings);
+    let overlap_budget = config
+        .max_candidate_comparisons
+        .saturating_sub(pair_analysis.census.candidate_comparisons_evaluated);
     let usage = usage::analyze_feature_usage(
         &definitions,
         &feature_steps,
         config,
         &suppressions,
         &mut findings,
+        overlap_budget,
     );
     usage::analyze_unused(
         &definitions,
@@ -121,8 +128,19 @@ fn analyze_internal(
             .then(left.primary.column.cmp(&right.primary.column))
             .then(left.rule.cmp(&right.rule))
     });
-    let mut operational_errors = usage.operational_errors;
-    operational_errors.extend(pair_analysis.operational_error);
+    let mut census = pair_analysis.census;
+    census.candidate_comparisons_evaluated = census
+        .candidate_comparisons_evaluated
+        .saturating_add(usage.overlap_census.evaluated);
+    census.skipped_candidate_comparisons = census
+        .skipped_candidate_comparisons
+        .saturating_add(usage.overlap_census.skipped);
+    census.truncated |= usage.overlap_census.skipped > 0;
+    census
+        .candidate_sources
+        .insert("matcherOverlap".to_owned(), usage.overlap_census);
+    let mut incomplete = usage.incomplete;
+    incomplete.extend(pair_analysis.incomplete);
     Ok((
         AnalysisOutcome {
             result: AnalysisResult {
@@ -130,9 +148,9 @@ fn analyze_internal(
                 feature_steps,
                 findings,
             },
-            operational_errors,
+            incomplete,
         },
-        pair_analysis.census,
+        census,
         unmatched_suppressions,
     ))
 }

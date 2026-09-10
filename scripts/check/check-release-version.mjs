@@ -11,6 +11,7 @@ const manifests = [
 const packages = await Promise.all(
   manifests.map(async (path) => [path, JSON.parse(await readFile(path, "utf8"))]),
 );
+const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const cargo = await readFile("Cargo.toml", "utf8");
 let inPackageSection = false;
 let cargoVersion;
@@ -34,6 +35,31 @@ for (const [path, manifest] of packages) {
 const root = packages[0][1];
 for (const [name, version] of Object.entries(root.optionalDependencies)) {
   assert.equal(version, cargoVersion, `${name} dependency version differs from Cargo.toml`);
+}
+assert.equal(lock.version, cargoVersion, "package-lock.json version differs from Cargo.toml");
+assert.equal(lock.name, root.name, "package-lock.json name differs from package.json");
+assert.equal(
+  lock.packages?.[""]?.version,
+  cargoVersion,
+  'package-lock.json packages[""] version differs from Cargo.toml',
+);
+assert.deepEqual(
+  lock.packages?.[""]?.optionalDependencies,
+  root.optionalDependencies,
+  'package-lock.json packages[""] optional dependencies differ from package.json',
+);
+for (const [path, manifest] of packages.slice(1)) {
+  const lockPath = path.replace(/\/package\.json$/, "");
+  assert.equal(
+    lock.packages?.[lockPath]?.name,
+    manifest.name,
+    `package-lock.json ${lockPath} name differs from its manifest`,
+  );
+  assert.equal(
+    lock.packages?.[lockPath]?.version,
+    cargoVersion,
+    `package-lock.json ${lockPath} version differs from Cargo.toml`,
+  );
 }
 
 const expectedVersion = process.env.EXPECTED_VERSION;

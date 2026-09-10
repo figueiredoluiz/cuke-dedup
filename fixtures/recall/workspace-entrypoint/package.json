@@ -1,0 +1,5 @@
+{
+  "name": "workspace-entrypoint-recall",
+  "private": true,
+  "workspaces": ["packages/*"]
+}

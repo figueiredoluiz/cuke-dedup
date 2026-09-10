@@ -552,7 +552,7 @@ fn empty_definition_extraction_can_be_required_and_still_writes_reports() {
 }
 
 #[test]
-fn candidate_limits_write_incomplete_reports_before_exit_two() {
+fn candidate_limits_warn_and_still_report_without_failing_the_run() {
     let directory = tempfile::tempdir().unwrap();
     let mut source = String::new();
     for index in 0..10 {
@@ -578,9 +578,9 @@ fn candidate_limits_write_incomplete_reports_before_exit_two() {
         .current_dir(directory.path())
         .arg(".")
         .assert()
-        .code(2)
+        .code(0)
         .stderr(predicate::str::contains(
-            "analysis is incomplete: evaluated 2 candidate definition comparisons",
+            "warning: analysis is incomplete: evaluated 2 candidate definition comparisons",
         ))
         .stderr(predicate::str::contains(
             "affected structural classes start at steps.ts:1:1",
@@ -612,6 +612,8 @@ fn candidate_limits_write_incomplete_reports_before_exit_two() {
         sarif["runs"][0]["invocations"][0]["properties"]["analysis"]["truncated"],
         true
     );
+    // Incomplete coverage is an unsuccessful invocation for SARIF consumers, even though the
+    // findings it did produce are valid and the CLI does not fail by default.
     assert_eq!(
         sarif["runs"][0]["invocations"][0]["executionSuccessful"],
         false
@@ -623,7 +625,7 @@ fn candidate_limits_write_incomplete_reports_before_exit_two() {
         .args([".", "--reporters", "jsonl"])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(0));
     let summary: Value = serde_json::from_slice(
         output
             .stdout
@@ -649,11 +651,22 @@ fn candidate_limits_write_incomplete_reports_before_exit_two() {
             "json",
         ])
         .assert()
-        .code(2)
+        .code(0)
         .stderr(predicate::str::contains(
             "was not updated because analysis is incomplete",
         ));
     assert!(!baseline_path.exists());
+
+    // Gates that must refuse partial coverage opt in explicitly.
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "cuke-dedup: analysis is incomplete: evaluated 2 candidate definition comparisons",
+        ));
 }
 
 #[test]
@@ -848,6 +861,205 @@ fn local_barrel_reexports_are_recognized_as_registration_sources() {
 }
 
 #[test]
+fn project_config_extends_cycles_and_excessive_depth_never_resolve() {
+    let cycle = tempfile::tempdir().unwrap();
+    write(
+        cycle.path(),
+        "tsconfig.json",
+        r#"{"extends":"./config/base.json"}"#,
+    );
+    write(
+        cycle.path(),
+        "config/base.json",
+        r#"{"extends":"../tsconfig.json","compilerOptions":{"paths":{"@support/*":["../support/*"]}}}"#,
+    );
+    write(
+        cycle.path(),
+        "steps.ts",
+        "import { Given as G } from '@support/world';\nG('cycle must not hide this definition', () => work());\n",
+    );
+
+    let mut cycle_command = Command::cargo_bin("cuke-dedup").unwrap();
+    cycle_command
+        .current_dir(cycle.path())
+        .args([".", "--definitions", "steps.ts"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("project config extends cycle"))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
+        ));
+
+    let depth = tempfile::tempdir().unwrap();
+    write(
+        depth.path(),
+        "tsconfig.json",
+        r#"{"extends":"./config/0.json"}"#,
+    );
+    for index in 0..65 {
+        let contents = if index == 64 {
+            r#"{"compilerOptions":{"paths":{"@support/*":["../support/*"]}}}"#.to_owned()
+        } else {
+            format!(r#"{{"extends":"./{}.json"}}"#, index + 1)
+        };
+        write(depth.path(), &format!("config/{index}.json"), &contents);
+    }
+    write(
+        depth.path(),
+        "steps.ts",
+        "import { Given as G } from '@support/world';\nG('depth must not hide this definition', () => work());\n",
+    );
+
+    let mut depth_command = Command::cargo_bin("cuke-dedup").unwrap();
+    depth_command
+        .current_dir(depth.path())
+        .args([".", "--definitions", "steps.ts"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "project config extends exceeds the 16-file depth limit",
+        ))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
+        ));
+}
+
+#[test]
+fn path_alias_targets_cannot_escape_the_analysis_root() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join("root");
+    write(
+        &root,
+        "tsconfig.json",
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@support/*":["../outside/*"]}}}"#,
+    );
+    write(
+        &root,
+        "steps.ts",
+        "import { Given as G } from '@support/world';\nG('escaped aliases are unsafe', () => work());\n",
+    );
+    write(
+        sandbox.path(),
+        "outside/world.ts",
+        "export { Given } from '@cucumber/cucumber';\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(&root)
+        .args([".", "--definitions", "steps.ts"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "resolves outside package or analysis root",
+        ))
+        .stderr(predicate::str::contains("warning: steps.ts:"))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_path_alias_targets_cannot_escape_the_analysis_root() {
+    use std::os::unix::fs::symlink;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join("root");
+    let outside = sandbox.path().join("outside");
+    fs::create_dir_all(&root).unwrap();
+    write(
+        &root,
+        "tsconfig.json",
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@support/*":["escape/*"]}}}"#,
+    );
+    write(
+        &root,
+        "steps.ts",
+        "import { Given as G } from '@support/world';\nG('symlink escapes are unsafe', () => work());\n",
+    );
+    write(
+        &outside,
+        "world.ts",
+        "export { Given } from '@cucumber/cucumber';\n",
+    );
+    symlink(&outside, root.join("escape")).unwrap();
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(&root)
+        .args([".", "--definitions", "steps.ts"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "resolves outside package or analysis root",
+        ))
+        .stderr(predicate::str::contains("warning: steps.ts:"))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
+        ));
+}
+
+#[test]
+fn static_project_config_errors_survive_changed_mode_and_every_reporter() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "tsconfig.json",
+        r#"{"extends":"./execute-config.js"}"#,
+    );
+    write(
+        directory.path(),
+        "execute-config.js",
+        "require('node:fs').writeFileSync('executed.txt', 'unsafe');\nmodule.exports = {};\n",
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given as G } from '@support/world';\nG('static configuration only', () => work());\n",
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(ProcessCommand::new("git")
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(directory.path(), "changed.txt", "changed\n");
+
+    for reporter in ["terminal", "json", "jsonl", "html", "sarif"] {
+        let output = tempfile::tempdir().unwrap();
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .current_dir(directory.path())
+            .args([
+                ".",
+                "--definitions",
+                "steps.ts",
+                "--changed-since",
+                "HEAD",
+                "--reporters",
+                reporter,
+                "--output",
+            ])
+            .arg(output.path())
+            .assert()
+            .code(0)
+            .stderr(predicate::str::contains(
+                "project config extends only supports static JSON",
+            ));
+    }
+    assert!(!directory.path().join("executed.txt").exists());
+}
+
+#[test]
 fn oversized_registration_modules_cannot_silently_remove_definitions() {
     let directory = tempfile::tempdir().unwrap();
     write(
@@ -867,9 +1079,305 @@ fn oversized_registration_modules_cannot_silently_remove_definitions() {
         .current_dir(directory.path())
         .arg(".")
         .assert()
-        .code(2)
+        .code(0)
         .stderr(predicate::str::contains("registration module"))
-        .stderr(predicate::str::contains("8388608-byte input limit"));
+        .stderr(predicate::str::contains("8388608-byte input limit"))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
+        ));
+}
+
+#[test]
+fn matcher_overlap_is_reported_without_a_feature_corpus() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given, When } from '@cucumber/cucumber';\n\
+Given(/^I have (\\d+) items$/, async () => { await a(); });\n\
+Given('I have {int} items', async () => { await b(); });\n\
+When('I open the cart', async () => { await c(); });\n\
+When('I close the cart', async () => { await d(); });\n",
+    );
+
+    // No feature file exists, so `ambiguous-step` has nothing to prove the overlap with.
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("overlapping-matcher"))
+        .stdout(predicate::str::contains(
+            "both accept the step `I have 1 items`",
+        ))
+        // Distinct matchers must not be flagged.
+        .stdout(predicate::str::contains("I open the cart").not());
+
+    // Once a feature proves the ambiguity, the stronger rule reports it and overlap steps aside.
+    write(
+        directory.path(),
+        "x.feature",
+        "Feature: F\n  Scenario: S\n    Given I have 3 items\n",
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("ambiguous-step"))
+        .stdout(predicate::str::contains("overlapping-matcher").not());
+}
+
+#[test]
+fn matcher_overlap_limit_is_machine_visible_and_can_fail_closed() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('value {first}', () => {});\n\
+         Given('value {second}', () => {});\n\
+         Given('value {third}', () => {});\n",
+    );
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{
+          "threshold": 100,
+          "reporters": ["json"],
+          "output": "reports",
+          "noMetrics": true,
+          "maxCandidateComparisons": 1,
+          "parameterTypes": {
+            "first": "red|green",
+            "second": "red|green",
+            "third": "red|green"
+          }
+        }"#,
+    );
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "matcher-overlap analysis is incomplete",
+        ));
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.path().join("reports/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["analysis"]["truncated"], true);
+    assert_eq!(
+        report["analysis"]["candidateSources"]["matcherOverlap"]["evaluated"],
+        1
+    );
+    assert_eq!(
+        report["analysis"]["candidateSources"]["matcherOverlap"]["skipped"],
+        1
+    );
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "matcher-overlap analysis is incomplete",
+        ));
+}
+
+#[test]
+fn declared_parameter_types_make_usage_analysis_exact() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\n\
+Given('the {colour} light is on', async () => { await a(); });\n\
+Given(/^the (red|green) light is on$/, async () => { await b(); });\n",
+    );
+    write(
+        directory.path(),
+        "x.feature",
+        "Feature: F\n  Scenario: S\n    Given the bright blue light is on\n",
+    );
+
+    // Undeclared, `{colour}` degrades to a permissive pattern: it swallows `bright blue`, so the
+    // definition looks used, and it is not authoritative enough to prove the overlap.
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("ambiguous-step").not())
+        .stdout(predicate::str::contains("the {colour} light is on` is not used").not());
+
+    // Declared, the same matcher is exact: `bright blue` no longer matches, and the genuine
+    // overlap with the regular expression becomes provable.
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"parameterTypes":{"colour":"red|green|amber"}}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains(
+            "Step definition `the {colour} light is on` is not used",
+        ))
+        .stdout(predicate::str::contains("overlapping-matcher"));
+
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"parameterTypes":{"colour":"red("}}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid regular expression for parameter type `colour`",
+        ));
+}
+
+#[test]
+fn an_unresolved_registration_import_marks_the_whole_run_incomplete() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.ts"],"reporters":["json","html","sarif"],"output":"reports","noMetrics":true}"#,
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@absent/world';\nGiven('hidden by an unresolved alias', () => work());\n",
+    );
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "unresolved step-registration calls",
+        ));
+
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["corpus"]["incomplete"], true);
+
+    let html = fs::read_to_string(directory.path().join("reports/cuke-dedup.html")).unwrap();
+    assert!(html.contains("Corpus is incomplete"), "{html}");
+
+    let sarif: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup.sarif")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+        false
+    );
+
+    // An incomplete corpus must not be recorded as an accepted baseline.
+    let baseline_path = directory.path().join("corpus-baseline.json");
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([
+            ".",
+            "--baseline",
+            "corpus-baseline.json",
+            "--update-baseline",
+            "--reporters",
+            "json",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "was not updated because analysis is incomplete",
+        ));
+    assert!(!baseline_path.exists());
+
+    // Both the flag and its project-configuration equivalent turn it into a failure.
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "could not resolve every registration import",
+        ));
+
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.ts"],"reporters":["json"],"output":"reports","failOnIncomplete":true}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "could not resolve every registration import",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_registration_modules_remain_operational_failures() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.ts"]}"#,
+    );
+    write(
+        directory.path(),
+        "support/world.ts",
+        "export { Given } from '@cucumber/cucumber';\n",
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from './support/world';\nGiven('hidden by an unreadable barrel', () => work());\n",
+    );
+    let barrel = directory.path().join("support/world.ts");
+    fs::set_permissions(&barrel, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let assertion = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert();
+    fs::set_permissions(&barrel, fs::Permissions::from_mode(0o644)).unwrap();
+
+    // A module the filesystem refuses is a read failure, not a static-resolution limitation, so
+    // it must stay fatal rather than degrade to an "unresolved module" warning.
+    assertion
+        .code(2)
+        .stderr(predicate::str::contains("failed to read"))
+        .stderr(predicate::str::contains("support/world.ts"));
 }
 
 #[test]
@@ -900,9 +1408,12 @@ fn registration_module_budget_is_shared_across_definition_files() {
         .current_dir(directory.path())
         .arg(".")
         .assert()
-        .code(2)
+        .code(0)
         .stderr(predicate::str::contains(
             "registration module graph exceeds the 1024-module resolution limit",
+        ))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
         ));
 }
 
@@ -1256,7 +1767,8 @@ fn oversized_cucumber_expression_fails_closed_and_still_writes_a_report() {
         .args([".", "--reporters", "json", "--output"])
         .arg(output.path())
         .assert()
-        .code(2)
+        .code(0)
+        .stderr(predicate::str::contains("warning: step matcher at"))
         .stderr(predicate::str::contains("regex resource limit"));
     let report: Value =
         serde_json::from_str(&fs::read_to_string(output.path().join("cuke-dedup.json")).unwrap())

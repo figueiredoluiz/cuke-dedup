@@ -108,16 +108,25 @@ pub(super) enum RegexSupport {
     ResourceLimit,
 }
 
-pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
+/// Builds the Rust regular expression for a JavaScript matcher and its flags.
+///
+/// Extraction and usage analysis must agree on this text exactly: extraction uses it to decide
+/// whether a definition is analyzable, and usage analysis uses it to match feature steps. Two
+/// copies could drift and report a limitation the analyzer did not actually hit.
+pub(crate) fn rust_regex_expression(matcher: &str, flags: &str) -> String {
     let flags: String = flags
         .chars()
         .filter(|flag| matches!(flag, 'i' | 'm' | 's' | 'u'))
         .collect();
-    let expression = if flags.is_empty() {
+    if flags.is_empty() {
         matcher.to_owned()
     } else {
         format!("(?{flags}:{matcher})")
-    };
+    }
+}
+
+pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
+    let expression = rust_regex_expression(matcher, flags);
     match compile_regex(&expression) {
         Ok(_) => RegexSupport::Supported,
         Err(regex::Error::CompiledTooBig(_)) => RegexSupport::ResourceLimit,

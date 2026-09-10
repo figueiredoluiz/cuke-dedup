@@ -69,6 +69,9 @@ export function buildArguments(inputs, effectiveConfig = {}) {
   if (String(inputs.noMetrics).toLowerCase() === "true") {
     args.push("--no-metrics");
   }
+  if (String(inputs.failOnIncomplete).toLowerCase() === "true") {
+    args.push("--fail-on-incomplete");
+  }
   return args;
 }
 
@@ -108,6 +111,7 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     baseline: readInput(env, "baseline", ""),
     failOnNew: readInput(env, "fail-on-new", ""),
     noMetrics: readInput(env, "no-metrics", "false"),
+    failOnIncomplete: readInput(env, "fail-on-incomplete", "false"),
     version: readInput(env, "version", "") || actionPackage.version,
   };
   const binary = env.CUKE_DEDUP_BINARY

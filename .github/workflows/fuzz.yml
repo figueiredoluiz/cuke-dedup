@@ -32,7 +32,7 @@ jobs:
           if [[ -n "$previous_run" ]]; then
             restored="$RUNNER_TEMP/parser-fuzz-corpus"
             if gh run download "$previous_run" --name parser-fuzz-corpus --dir "$restored"; then
-              cp -R "$restored"/. fuzz/corpus/parsers/
+              cp -R "$restored"/. fuzz/corpus/
             fi
           fi
       - run: rustup toolchain install nightly-2026-08-01 --profile minimal
@@ -42,14 +42,18 @@ jobs:
           workspaces: fuzz -> target
       - name: Install cargo-fuzz reproducibly
         run: cargo +nightly-2026-08-01 install cargo-fuzz --version 0.13.2 --locked
-      - name: Fuzz public parser entrypoints
-        run: cargo +nightly-2026-08-01 fuzz run parsers -- -max_total_time=300 -max_len=16384 -timeout=10
+      - name: Fuzz public parser and input entrypoints
+        run: |
+          for target in parsers inputs; do
+            cargo +nightly-2026-08-01 fuzz run "$target" -- \
+              -max_total_time=150 -max_len=16384 -timeout=10 -rss_limit_mb=1024 -verbosity=0
+          done
       - name: Preserve generated parser corpus
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: parser-fuzz-corpus
-          path: fuzz/corpus/parsers/
+          path: fuzz/corpus/
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
