@@ -13,6 +13,8 @@ const packages = await Promise.all(
 );
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const cargo = await readFile("Cargo.toml", "utf8");
+const action = await readFile("action.yml", "utf8");
+const releaseWorkflow = await readFile(".github/workflows/release.yml", "utf8");
 let inPackageSection = false;
 let cargoVersion;
 for (const line of cargo.split(/\r?\n/)) {
@@ -28,6 +30,18 @@ for (const line of cargo.split(/\r?\n/)) {
   }
 }
 assert(cargoVersion, "Cargo.toml package version was not found");
+
+const actionVersion = action.match(
+  /^  version:\r?\n(?: {4}.*\r?\n)*? {4}default: "([^"]+)"\s*$/m,
+)?.[1];
+assert(actionVersion, "action.yml version input default was not found");
+assert.equal(actionVersion, cargoVersion, "action.yml version differs from Cargo.toml");
+
+const releaseVersion = releaseWorkflow.match(
+  /^      version:\r?\n(?: {8}.*\r?\n)*? {8}default: ([^\s#]+)\s*$/m,
+)?.[1];
+assert(releaseVersion, "release.yml version input default was not found");
+assert.equal(releaseVersion, cargoVersion, "release.yml version differs from Cargo.toml");
 
 for (const [path, manifest] of packages) {
   assert.equal(manifest.version, cargoVersion, `${path} version differs from Cargo.toml`);

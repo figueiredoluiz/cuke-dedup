@@ -14,10 +14,6 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { TARGETS, targetFor } from "../../../npm/lib/targets.mjs";
 
-const actionPackage = JSON.parse(
-  readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
-);
-
 export function detectLibc(report = process.report) {
   try {
     return report?.getReport()?.header?.glibcVersionRuntime ? "gnu" : "musl";
@@ -112,7 +108,7 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     failOnNew: readInput(env, "fail-on-new", ""),
     noMetrics: readInput(env, "no-metrics", "false"),
     failOnIncomplete: readInput(env, "fail-on-incomplete", "false"),
-    version: readInput(env, "version", "") || actionPackage.version,
+    version: readInput(env, "version", ""),
   };
   const binary = env.CUKE_DEDUP_BINARY
     ? resolve(env.CUKE_DEDUP_BINARY)
