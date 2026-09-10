@@ -9,6 +9,7 @@ use crate::model::{
     Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation, StepDefinition,
     Suppression,
 };
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
@@ -291,17 +292,20 @@ pub(super) fn analyze_definition_pairs(
                 &mut forests,
                 config,
                 suppressions,
-                Rule::DuplicateMatcher,
-                left_index,
-                right_index,
-                left,
-                right,
-                "Two step definitions use the same effective matcher",
-                matcher_similarity,
-                handler_similarity,
-                "Matchers are textually identical",
-                handler_evidence(left, right),
-                "Keep one definition or make the matchers intentionally distinct",
+                PairFindingDescriptor {
+                    rule: Rule::DuplicateMatcher,
+                    left_index,
+                    right_index,
+                    left,
+                    right,
+                    message: "Two step definitions use the same effective matcher",
+                    matcher_similarity,
+                    handler_similarity,
+                    matcher_difference: Cow::Borrowed("Matchers are textually identical"),
+                    handler_evidence: Cow::Owned(handler_evidence(left, right)),
+                    suggested_action:
+                        "Keep one definition or make the matchers intentionally distinct",
+                },
             );
         } else if normalized_finding == Some(Rule::NormalizedMatcher) {
             push_pair_finding(
@@ -309,20 +313,23 @@ pub(super) fn analyze_definition_pairs(
                 &mut forests,
                 config,
                 suppressions,
-                Rule::NormalizedMatcher,
-                left_index,
-                right_index,
-                left,
-                right,
-                "Two matchers are equivalent after normalization",
-                matcher_similarity,
-                handler_similarity,
-                format!(
-                    "`{}` normalizes to `{}`",
-                    right.matcher, right.normalized_matcher
-                ),
-                handler_evidence(left, right),
-                "Consolidate the definitions or use clearly distinct matchers",
+                PairFindingDescriptor {
+                    rule: Rule::NormalizedMatcher,
+                    left_index,
+                    right_index,
+                    left,
+                    right,
+                    message: "Two matchers are equivalent after normalization",
+                    matcher_similarity,
+                    handler_similarity,
+                    matcher_difference: Cow::Owned(format!(
+                        "`{}` normalizes to `{}`",
+                        right.matcher, right.normalized_matcher
+                    )),
+                    handler_evidence: Cow::Owned(handler_evidence(left, right)),
+                    suggested_action:
+                        "Consolidate the definitions or use clearly distinct matchers",
+                },
             );
         }
 
@@ -332,17 +339,22 @@ pub(super) fn analyze_definition_pairs(
                 &mut forests,
                 config,
                 suppressions,
-                Rule::DuplicateHandler,
-                left_index,
-                right_index,
-                left,
-                right,
-                "Different matchers use the same normalized implementation",
-                matcher_similarity,
-                handler_similarity,
-                matcher_difference(left, right),
-                "Handlers are identical after parameter and local-variable normalization",
-                "Review whether one parameterized step can replace both definitions",
+                PairFindingDescriptor {
+                    rule: Rule::DuplicateHandler,
+                    left_index,
+                    right_index,
+                    left,
+                    right,
+                    message: "Different matchers use the same normalized implementation",
+                    matcher_similarity,
+                    handler_similarity,
+                    matcher_difference: Cow::Owned(matcher_difference(left, right)),
+                    handler_evidence: Cow::Borrowed(
+                        "Handlers are identical after parameter and local-variable normalization",
+                    ),
+                    suggested_action:
+                        "Review whether one parameterized step can replace both definitions",
+                },
             );
         }
 
@@ -352,17 +364,22 @@ pub(super) fn analyze_definition_pairs(
                 &mut forests,
                 config,
                 suppressions,
-                Rule::ParameterizationCandidate,
-                left_index,
-                right_index,
-                left,
-                right,
-                "Handler structures differ primarily in literal values",
-                matcher_similarity,
-                handler_similarity,
-                matcher_difference(left, right),
-                "Handlers have the same control flow and calls after literal normalization",
-                "Consider replacing the literal differences with a step parameter",
+                PairFindingDescriptor {
+                    rule: Rule::ParameterizationCandidate,
+                    left_index,
+                    right_index,
+                    left,
+                    right,
+                    message: "Handler structures differ primarily in literal values",
+                    matcher_similarity,
+                    handler_similarity,
+                    matcher_difference: Cow::Owned(matcher_difference(left, right)),
+                    handler_evidence: Cow::Borrowed(
+                        "Handlers have the same control flow and calls after literal normalization",
+                    ),
+                    suggested_action:
+                        "Consider replacing the literal differences with a step parameter",
+                },
             );
         } else if handler_finding == Some(Rule::NearDuplicateStep) {
             push_pair_finding(
@@ -370,24 +387,28 @@ pub(super) fn analyze_definition_pairs(
                 &mut forests,
                 config,
                 suppressions,
-                Rule::NearDuplicateStep,
-                left_index,
-                right_index,
-                left,
-                right,
-                "Matcher wording is very close and handler behavior substantially overlaps",
-                matcher_similarity,
-                handler_similarity,
-                matcher_difference(left, right),
-                if same_structure {
-                    handler_evidence(left, right)
-                } else {
-                    format!(
-                        "Handlers share {:.1}% ordered behavior",
-                        handler_similarity * 100.0
-                    )
+                PairFindingDescriptor {
+                    rule: Rule::NearDuplicateStep,
+                    left_index,
+                    right_index,
+                    left,
+                    right,
+                    message:
+                        "Matcher wording is very close and handler behavior substantially overlaps",
+                    matcher_similarity,
+                    handler_similarity,
+                    matcher_difference: Cow::Owned(matcher_difference(left, right)),
+                    handler_evidence: if same_structure {
+                        Cow::Owned(handler_evidence(left, right))
+                    } else {
+                        Cow::Owned(format!(
+                            "Handlers share {:.1}% ordered behavior",
+                            handler_similarity * 100.0
+                        ))
+                    },
+                    suggested_action:
+                        "Check for wording drift and consolidate if the steps express one behavior",
                 },
-                "Check for wording drift and consolidate if the steps express one behavior",
             );
         }
         evaluated += 1;
@@ -1362,49 +1383,58 @@ impl DisjointSet {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+struct PairFindingDescriptor<'a> {
+    rule: Rule,
+    left_index: usize,
+    right_index: usize,
+    left: &'a StepDefinition,
+    right: &'a StepDefinition,
+    message: &'static str,
+    matcher_similarity: f64,
+    handler_similarity: f64,
+    matcher_difference: Cow<'static, str>,
+    handler_evidence: Cow<'static, str>,
+    suggested_action: &'static str,
+}
+
 fn push_pair_finding(
     findings: &mut Vec<Finding>,
     forests: &mut FindingForests,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
-    rule: Rule,
-    left_index: usize,
-    right_index: usize,
-    left: &StepDefinition,
-    right: &StepDefinition,
-    message: impl Into<String>,
-    matcher_similarity: f64,
-    handler_similarity: f64,
-    matcher_difference: impl Into<String>,
-    handler_evidence: impl Into<String>,
-    suggested_action: impl Into<String>,
+    finding: PairFindingDescriptor<'_>,
 ) {
-    let severity = config.severity(rule);
+    let severity = config.severity(finding.rule);
     if severity == Severity::Off {
         return;
     }
-    let suppression_reason = suppressions.find_reason(rule, &[left_index, right_index]);
-    if !forests.retain_edge(rule, suppression_reason.is_some(), left_index, right_index) {
+    let suppression_reason =
+        suppressions.find_reason(finding.rule, &[finding.left_index, finding.right_index]);
+    if !forests.retain_edge(
+        finding.rule,
+        suppression_reason.is_some(),
+        finding.left_index,
+        finding.right_index,
+    ) {
         return;
     }
     let suppression = suppression_reason.map(|reason| Suppression {
         reason: reason.to_owned(),
     });
     findings.push(Finding {
-        rule,
+        rule: finding.rule,
         severity,
-        message: message.into(),
-        primary: left.location.clone(),
-        related: vec![right.location.clone()],
+        message: finding.message.to_owned(),
+        primary: finding.left.location.clone(),
+        related: vec![finding.right.location.clone()],
         evidence: FindingEvidence {
-            matcher_similarity: Some(round_score(matcher_similarity)),
-            handler_similarity: Some(round_score(handler_similarity)),
-            matcher_difference: matcher_difference.into(),
-            handler_evidence: handler_evidence.into(),
-            comparison: Some(definition_comparison(left, right)),
+            matcher_similarity: Some(round_score(finding.matcher_similarity)),
+            handler_similarity: Some(round_score(finding.handler_similarity)),
+            matcher_difference: finding.matcher_difference.into_owned(),
+            handler_evidence: finding.handler_evidence.into_owned(),
+            comparison: Some(definition_comparison(finding.left, finding.right)),
         },
-        suggested_action: suggested_action.into(),
+        suggested_action: finding.suggested_action.to_owned(),
         suppression,
     });
 }
