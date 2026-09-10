@@ -35,6 +35,9 @@ inputs:
   no-metrics:
     description: Omit runtime metrics for reproducible machine reports
     default: "false"
+  fail-on-incomplete:
+    description: Fail with exit code 2 when the corpus or comparison set is incomplete
+    default: "false"
   version:
     description: Exact CukeDedup release version; defaults to the Action commit's package version
     default: ""

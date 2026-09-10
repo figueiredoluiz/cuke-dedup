@@ -150,6 +150,8 @@ pub enum Rule {
     NormalizedMatcher,
     /// A concrete feature step matches multiple definitions.
     AmbiguousStep,
+    /// Two matchers can accept the same step text, independent of the feature corpus.
+    OverlappingMatcher,
     /// Distinct matchers share an equivalent implementation.
     DuplicateHandler,
     /// Similar wording and handler structure indicate likely duplication.
@@ -162,10 +164,11 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule in deterministic report order.
-    pub const ALL: [Rule; 7] = [
+    pub const ALL: [Rule; 8] = [
         Rule::DuplicateMatcher,
         Rule::NormalizedMatcher,
         Rule::AmbiguousStep,
+        Rule::OverlappingMatcher,
         Rule::DuplicateHandler,
         Rule::NearDuplicateStep,
         Rule::ParameterizationCandidate,
@@ -187,6 +190,7 @@ impl Rule {
             Rule::DuplicateMatcher => "duplicate-matcher",
             Rule::NormalizedMatcher => "normalized-matcher",
             Rule::AmbiguousStep => "ambiguous-step",
+            Rule::OverlappingMatcher => "overlapping-matcher",
             Rule::DuplicateHandler => "duplicate-handler",
             Rule::NearDuplicateStep => "near-duplicate-step",
             Rule::ParameterizationCandidate => "parameterization-candidate",
@@ -214,6 +218,7 @@ impl FromStr for Rule {
             "duplicate-matcher" => Ok(Self::DuplicateMatcher),
             "normalized-matcher" => Ok(Self::NormalizedMatcher),
             "ambiguous-step" => Ok(Self::AmbiguousStep),
+            "overlapping-matcher" => Ok(Self::OverlappingMatcher),
             "duplicate-handler" => Ok(Self::DuplicateHandler),
             "near-duplicate-step" => Ok(Self::NearDuplicateStep),
             "parameterization-candidate" => Ok(Self::ParameterizationCandidate),

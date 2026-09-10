@@ -37,11 +37,11 @@ pub struct DiscoveredFiles {
 
 /// Discovers configured feature and definition files while respecting ignore rules.
 pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
-    let feature_globs = compile_feature_globs(&config.features)?;
+    let feature_globs = compile_pattern_matchers(&config.features, "feature")?;
     let definition_globs = if config.definitions.is_empty() {
         None
     } else {
-        Some(compile_definition_globs(&config.definitions)?)
+        Some(compile_pattern_matchers(&config.definitions, "definition")?)
     };
     let excludes = compile_globs(&config.exclude, "exclude")?;
     let mut files = DiscoveredFiles::default();
@@ -138,23 +138,13 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
     Ok(files)
 }
 
-fn compile_feature_globs(patterns: &[String]) -> Result<Vec<(GlobMatcher, String)>> {
+/// Compiles patterns into matchers paired with their original text for diagnostics.
+fn compile_pattern_matchers(patterns: &[String], kind: &str) -> Result<Vec<(GlobMatcher, String)>> {
     patterns
         .iter()
         .map(|pattern| {
             let glob = Glob::new(pattern)
-                .with_context(|| format!("invalid feature glob pattern `{pattern}`"))?;
-            Ok((glob.compile_matcher(), pattern.clone()))
-        })
-        .collect()
-}
-
-fn compile_definition_globs(patterns: &[String]) -> Result<Vec<(GlobMatcher, String)>> {
-    patterns
-        .iter()
-        .map(|pattern| {
-            let glob = Glob::new(pattern)
-                .with_context(|| format!("invalid definition glob pattern `{pattern}`"))?;
+                .with_context(|| format!("invalid {kind} glob pattern `{pattern}`"))?;
             Ok((glob.compile_matcher(), pattern.clone()))
         })
         .collect()

@@ -25,11 +25,12 @@ Use CukeDedup's structured findings to improve a Cucumber step-definition suite 
 - If `truncatedFields` is non-empty, read the referenced source before deciding. Even without truncation, inspect every involved definition and relevant feature usage; report evidence is not authorization to edit blindly.
 - Require the final summary. If it is missing, malformed, or contradicted by an operational diagnostic, treat the analysis as incomplete.
 - Compare `corpus.definitionFiles` with `corpus.definitionFilesWithDefinitions` and check `corpus.definitionsExtracted` and `corpus.featureFilesParsed`. Treat an unexpectedly sparse or empty census as a possible extraction miss, never as proof that the repository is clean. This census remains available when timing metrics are disabled.
-- Require `analysis.truncated` to be `false`. When it is `true`, treat every finding as useful partial evidence but never claim the repository passed; report `skippedCandidateComparisons` and the affected candidate sources to the user.
+- Require `analysis.truncated` to be `false`. When it is `true`, treat every finding as useful partial evidence but never claim the repository passed; report `skippedCandidateComparisons` and the affected candidate sources, including `matcherOverlap`, to the user.
 
 ## Choose a safe remediation
 
 - For `duplicate-matcher`, `normalized-matcher`, and `ambiguous-step`, determine which matcher and behavior are correct before consolidating or narrowing definitions. An ambiguity may come from overlapping matchers rather than identical code.
+- For `overlapping-matcher`, treat the reported step text as a witness that both matchers accept, not as a step that exists in the suite. Narrow whichever matcher is broader than its behavior requires; do not delete a definition merely because it overlaps.
 - For `duplicate-handler`, keep distinct domain language when it communicates different intent. Extract a shared helper when behavior is shared but step meaning is not.
 - For `near-duplicate-step` and `parameterization-candidate`, parameterize only when the varying values have the same domain meaning and behavior. Do not create a vague, overly broad step merely to reduce a metric.
 - For `unused-definition`, first confirm that feature discovery is complete and that the definition is not used by an excluded, generated, or dynamically supplied feature corpus.

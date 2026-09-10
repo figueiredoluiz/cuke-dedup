@@ -69,6 +69,10 @@ struct CheckOptions {
     #[arg(long, global = true)]
     require_features: bool,
 
+    /// Fail with exit code 2 when the corpus or comparison set is incomplete.
+    #[arg(long, global = true)]
+    fail_on_incomplete: bool,
+
     /// Fail with exit code 2 when no step definitions are extracted.
     #[arg(long, global = true)]
     require_definitions: bool,
@@ -179,6 +183,7 @@ fn execute(cli: Cli) -> Result<i32> {
         overrides,
         CliConfigOverrides {
             require_definitions: cli.options.require_definitions.then_some(true),
+            fail_on_incomplete: cli.options.fail_on_incomplete.then_some(true),
             max_candidate_comparisons: cli.options.max_candidate_comparisons,
             max_structural_class_comparisons: cli.options.max_structural_class_comparisons,
         },
@@ -204,6 +209,7 @@ fn execute(cli: Cli) -> Result<i32> {
     let parsing_started = Instant::now();
     let mut definitions = Vec::new();
     let mut definition_files_with_definitions = 0_usize;
+    let mut corpus_incomplete = false;
     let mut operational_errors = files.errors.clone();
     let mut operational_warnings = config.config_warnings.clone();
     for pattern in &files.unmatched_feature_patterns {
@@ -236,7 +242,10 @@ fn execute(cli: Cli) -> Result<i32> {
                 .to_owned(),
         );
     }
-    let mut extraction_session = source_adapter::SourceExtractionSession::new(&config.root);
+    let mut extraction_session = source_adapter::SourceExtractionSession::with_registrations(
+        &config.root,
+        &config.registrations,
+    );
     for file in &files.definitions {
         let adapter = source_adapter::adapter_for_language(file.language);
         match adapter
@@ -257,10 +266,14 @@ fn execute(cli: Cli) -> Result<i32> {
                         diagnostic.location.display(&config.root),
                         diagnostic.message
                     );
+                    let completeness = source_adapter::is_completeness_diagnostic(&diagnostic);
+                    // A registration import that could not be resolved hides every definition it
+                    // would have introduced, so the corpus is a subset of a complete run
+                    // regardless of which files changed.
+                    corpus_incomplete |= completeness;
                     match diagnostic.level {
                         ExtractionDiagnosticLevel::Warning
-                            if changed_or_full_run
-                                || source_adapter::is_completeness_diagnostic(&diagnostic) =>
+                            if changed_or_full_run || completeness =>
                         {
                             operational_warnings.push(message)
                         }
@@ -359,7 +372,21 @@ fn execute(cli: Cli) -> Result<i32> {
                 .to_owned(),
         );
     }
-    operational_errors.extend(analysis.operational_errors);
+    // Bounded work that could not finish makes findings a subset of a complete run, but every
+    // finding that is present is still valid and the report is still worth reading. Report it
+    // loudly without claiming the analyzer failed; `--fail-on-incomplete` restores strictness for
+    // gates that must refuse partial coverage.
+    let run_incomplete = corpus_incomplete || !analysis.incomplete.is_empty();
+    if config.fail_on_incomplete {
+        operational_errors.extend(analysis.incomplete);
+        if corpus_incomplete {
+            operational_errors.push(
+                "definition extraction could not resolve every registration import, so the analyzed corpus is incomplete".to_owned(),
+            );
+        }
+    } else {
+        operational_warnings.extend(analysis.incomplete);
+    }
     let mut result = analysis.result;
     let analysis_ms = elapsed_ms(analysis_started);
     if parsed_feature_files < files.features.len() || files.features.is_empty() {
@@ -377,7 +404,7 @@ fn execute(cli: Cli) -> Result<i32> {
         } else {
             config.root.join(path)
         };
-        if cli.options.update_baseline && !operational_errors.is_empty() {
+        if cli.options.update_baseline && (run_incomplete || !operational_errors.is_empty()) {
             operational_warnings.push(format!(
                 "baseline {} was not updated because analysis is incomplete",
                 path.display()
@@ -406,6 +433,7 @@ fn execute(cli: Cli) -> Result<i32> {
         definitions_extracted: result.definitions.len(),
         feature_files: files.features.len(),
         feature_files_parsed: parsed_feature_files,
+        incomplete: corpus_incomplete,
     };
     let metrics = reporters::ExecutionMetrics {
         definition_files: files.definitions.len(),
@@ -418,7 +446,10 @@ fn execute(cli: Cli) -> Result<i32> {
     let report_metadata = reporters::CliReportMetadata {
         corpus: &corpus,
         analysis: &analysis_census,
-        execution_successful: operational_errors.is_empty(),
+        // SARIF consumers treat a successful invocation as proof the tool covered its input.
+        // A run that could not analyze the complete corpus has not, so it reports an
+        // unsuccessful invocation alongside the census that explains which limit applied.
+        execution_successful: operational_errors.is_empty() && !run_incomplete,
     };
     let mut stdout = io::stdout().lock();
     reporters::write_cli_reports(

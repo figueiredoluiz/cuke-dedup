@@ -310,7 +310,9 @@ async function writeSingleFileProfile(root, definitions, profile) {
     findingCount: candidateLimit
       ? candidateLimit
       : definitions + (sharedStructure || sharedHandler ? definitions - 1 : 0),
-    exitCode: candidateLimit ? 2 : 0,
+    // Truncation is reported, not fatal: the run still writes findings and exits on their
+    // severity alone. Only `--fail-on-incomplete` turns partial coverage into exit code 2.
+    exitCode: 0,
     analysisTruncated: Boolean(candidateLimit),
   };
 }

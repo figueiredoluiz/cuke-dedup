@@ -114,11 +114,9 @@ pub(super) fn render_html_context_with_metadata(
     if cards.is_empty() {
         cards.push_str("<p class=empty>No active findings.</p>");
     }
-    let incomplete_analysis = metadata
-        .map(|metadata| metadata.analysis)
-        .filter(|analysis| analysis.truncated);
     let mut truncation_notice = String::new();
-    if let Some(analysis) = incomplete_analysis {
+    if let Some(metadata) = metadata.filter(|metadata| metadata.analysis.truncated) {
+        let analysis = metadata.analysis;
         truncation_notice.push_str(&format!(
             r#"<p class="truncation-notice" role="alert">{}</p>"#,
             html_escape(&format!(
@@ -126,6 +124,14 @@ pub(super) fn render_html_context_with_metadata(
                 analysis.candidate_comparisons_evaluated,
                 analysis.skipped_candidate_comparisons
             ))
+        ));
+    }
+    if metadata.is_some_and(|metadata| metadata.corpus.incomplete) {
+        truncation_notice.push_str(&format!(
+            r#"<p class="truncation-notice" role="alert">{}</p>"#,
+            html_escape(
+                "Corpus is incomplete: a registration import could not be resolved statically, so some step definitions were never analyzed."
+            )
         ));
     }
     if truncated > 0 {

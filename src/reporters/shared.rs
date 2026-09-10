@@ -173,11 +173,17 @@ pub(super) fn count_label(count: usize, singular: &str) -> String {
     format!("{count} {singular}{suffix}")
 }
 
-pub(super) fn terminal_safe(value: &str) -> String {
+/// Removes characters that could rewrite or misrepresent output when rendered.
+///
+/// Report text is attacker-controlled: it comes from matchers, handlers, and paths in the
+/// analyzed repository. Control characters can rewrite a terminal line, and bidirectional or
+/// invisible-format characters can make one string display as another.
+fn sanitize(value: &str, keep_whitespace: bool) -> String {
     value
         .chars()
         .filter(|character| {
-            !character.is_control()
+            let allowed_control = keep_whitespace && matches!(*character, '\n' | '\r' | '\t');
+            (!character.is_control() || allowed_control)
                 && !matches!(
                     *character,
                     '\u{00ad}'
@@ -192,21 +198,12 @@ pub(super) fn terminal_safe(value: &str) -> String {
         .collect()
 }
 
+/// Sanitizes text for a terminal, where even newlines and tabs would break line-oriented output.
+pub(super) fn terminal_safe(value: &str) -> String {
+    sanitize(value, false)
+}
+
+/// Sanitizes text for structured reports, which preserve intentional line breaks and tabs.
 pub(super) fn report_safe(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| {
-            (!character.is_control() || matches!(*character, '\n' | '\r' | '\t'))
-                && !matches!(
-                    *character,
-                    '\u{00ad}'
-                        | '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2060}'..='\u{2069}'
-                        | '\u{feff}'
-                        | '\u{e0000}'..='\u{e007f}'
-                )
-        })
-        .collect()
+    sanitize(value, true)
 }

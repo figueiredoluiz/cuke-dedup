@@ -85,9 +85,14 @@ fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
 
     let (outcome, census, _) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
     assert!(!outcome.result.findings.is_empty());
-    assert_eq!(outcome.operational_errors.len(), 1);
-    assert!(outcome.operational_errors[0].contains("partial findings are available"));
-    assert_eq!(census, generated.census);
+    assert_eq!(outcome.incomplete.len(), 1);
+    assert!(outcome.incomplete[0].contains("partial findings are available"));
+    let mut expected_census = generated.census;
+    expected_census.candidate_sources.insert(
+        "matcherOverlap".to_owned(),
+        CandidateSourceCensus::default(),
+    );
+    assert_eq!(census, expected_census);
 }
 
 #[test]
@@ -95,9 +100,14 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     let mut long_matchers = definitions(
         "Given('left', () => sharedImplementation());\nGiven('right', () => sharedImplementation());",
     );
-    long_matchers[0].matcher = format!("{}b", "a".repeat(100_000));
+    // Just past the matrix budget: `matrix_work` charges `l * r + l + r`, so this many characters
+    // costs slightly more than the ceiling. Sizing to the boundary rather than far beyond it keeps
+    // the computation finite when the budget is removed, so a regression fails these assertions
+    // instead of running long enough to look like a hang.
+    let over_budget = "a".repeat(1_010);
+    long_matchers[0].matcher = format!("{over_budget}b");
     long_matchers[0].normalized_matcher = long_matchers[0].matcher.clone();
-    long_matchers[1].matcher = format!("{}c", "a".repeat(100_000));
+    long_matchers[1].matcher = format!("{over_budget}c");
     long_matchers[1].normalized_matcher = long_matchers[1].matcher.clone();
 
     let (_directory, config) = config();
@@ -117,7 +127,7 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
         1
     );
     assert!(pair_analysis
-        .operational_error
+        .incomplete
         .as_deref()
         .is_some_and(|error| error.contains("after safety limits")));
     assert!(!findings.iter().any(|finding| matches!(
@@ -148,7 +158,7 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
         pair_analysis.census.candidate_sources["matcherBlocking"].skipped,
         1
     );
-    assert!(pair_analysis.operational_error.is_some());
+    assert!(pair_analysis.incomplete.is_some());
 }
 
 #[test]
@@ -195,7 +205,7 @@ fn suppression_globs_compile_once_and_pair_lookups_share_the_work_budget() {
     assert!(pair_analysis.census.truncated);
     assert!(pair_analysis.census.candidate_comparisons_evaluated < definitions.len() - 1);
     assert!(pair_analysis
-        .operational_error
+        .incomplete
         .as_deref()
         .is_some_and(|error| error.contains("after safety limits")));
 }
@@ -431,15 +441,15 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
 
     let (outcome, census, _) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
     assert_eq!(census.truncated_structural_classes, 5);
-    assert_eq!(outcome.operational_errors.len(), 1);
-    assert!(outcome.operational_errors[0].contains("and 2 more"));
+    assert_eq!(outcome.incomplete.len(), 1);
+    assert!(outcome.incomplete[0].contains("and 2 more"));
 
     let definitions = definitions(
         "Given('one', () => action(1));\nGiven('two', () => action(2));\nGiven('three', () => action(3));",
     );
     let (outcome, census, _) = analyze_for_cli(definitions, Vec::new(), &config).unwrap();
     assert_eq!(census.truncated_structural_classes, 1);
-    assert!(!outcome.operational_errors[0].contains("and 0 more"));
+    assert!(!outcome.incomplete[0].contains("and 0 more"));
 }
 
 #[test]
@@ -452,7 +462,7 @@ fn regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers() {
 
     let outcome = analyze_with_diagnostics(definitions, Vec::new(), &config).unwrap();
     assert_eq!(outcome.result.definitions.len(), 1);
-    assert_eq!(outcome.operational_errors.len(), 1);
+    assert_eq!(outcome.incomplete.len(), 1);
 }
 
 #[test]

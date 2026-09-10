@@ -1,6 +1,11 @@
 use super::*;
 use crate::model::Rule;
+use std::fs;
 use std::path::PathBuf;
+
+fn extract_ts(source: &str) -> Vec<crate::model::StepDefinition> {
+    extract(source, &file(SourceLanguage::TypeScript)).unwrap()
+}
 
 fn file(language: SourceLanguage) -> SourceFile {
     SourceFile {
@@ -51,6 +56,54 @@ Then('the page is visible', () => cy.get('main').should('be.visible'));
     assert!(definitions
         .iter()
         .all(|definition| definition.framework == Framework::CypressCucumber));
+}
+
+#[test]
+fn project_resolved_registrations_propagate_framework_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("support")).unwrap();
+    fs::create_dir_all(directory.path().join("packages/bdd/src")).unwrap();
+    fs::write(
+        directory.path().join("package.json"),
+        r##"{"imports":{"#bdd":"./support/world.ts"},"workspaces":["packages/*"]}"##,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("support/world.ts"),
+        "export { Given } from '@cucumber/cucumber';\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("packages/bdd/package.json"),
+        r#"{"name":"@example/bdd","exports":"./src/index.ts"}"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("packages/bdd/src/index.ts"),
+        "export { Given } from 'playwright-bdd';\n",
+    )
+    .unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    for (name, module, expected) in [
+        ("imports.ts", "#bdd", Framework::CucumberJs),
+        ("workspace.ts", "@example/bdd", Framework::PlaywrightBdd),
+    ] {
+        let path = directory.path().join(name);
+        fs::write(
+            &path,
+            format!("import {{ Given }} from '{module}';\nGiven('resolved', () => work());\n"),
+        )
+        .unwrap();
+        let file = SourceFile {
+            path,
+            language: SourceLanguage::TypeScript,
+        };
+        let source = fs::read_to_string(&file.path).unwrap();
+        let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+        assert_eq!(extracted.definitions.len(), 1, "{module}");
+        assert_eq!(extracted.definitions[0].framework, expected, "{module}");
+    }
 }
 
 #[test]
@@ -629,6 +682,10 @@ fn unresolved_registration_shaped_calls_are_visible_without_flagging_helpers() {
         ),
         ("helper('ordinary call', () => work());", 0),
         ("load().then(() => work());", 0),
+        (
+            "import * as utilities from '@company/helpers'; utilities.log('ordinary call');",
+            0,
+        ),
     ];
 
     for (source, expected_calls) in cases {
@@ -650,6 +707,29 @@ fn unresolved_registration_shaped_calls_are_visible_without_flagging_helpers() {
                 "{source}"
             );
         }
+    }
+}
+
+#[test]
+fn unresolved_registration_imports_name_the_module_in_diagnostics() {
+    for source in [
+        "import { Given } from '@company/bdd'; Given('missing', () => work());",
+        "import * as bdd from '@company/bdd'; bdd.Given('missing', () => work());",
+    ] {
+        let extracted = extract_detailed(source, &file(SourceLanguage::TypeScript)).unwrap();
+        let diagnostics = extracted
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1, "{source}");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unresolved module `@company/bdd`"),
+            "{source}: {}",
+            diagnostics[0].message
+        );
     }
 }
 
@@ -782,4 +862,117 @@ fn deeply_parenthesized_registration_callees_are_unwrapped_iteratively() {
 
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].matcher, "deep");
+}
+
+#[test]
+fn positional_registration_wrappers_are_inferred_but_reordering_ones_are_not() {
+    let inferred = extract_ts(
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { Given(text, handler); }
+step("wrapped step", () => work());"#,
+    );
+    assert_eq!(inferred.len(), 1);
+    assert_eq!(inferred[0].matcher, "wrapped step");
+    // A wrapper resolves to the registration it forwards to, so the step is a Given.
+    assert_eq!(inferred[0].registration, "Given");
+
+    let returned = extract_ts(
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { return Given(text, handler); }
+step("returned step", () => work());"#,
+    );
+    assert_eq!(returned.len(), 1);
+    assert_eq!(returned[0].matcher, "returned step");
+
+    // Every shape below breaks the positional correspondence the rule depends on, so extracting
+    // argument 0 as the matcher would attribute the wrong text to the wrong handler.
+    for source in [
+        // Reordered forward.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(handler, text) { Given(text, handler); }
+step(() => work(), "wrapped step");"#,
+        // Rewritten matcher.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { Given("prefix " + text, handler); }
+step("wrapped step", () => work());"#,
+        // Destructured parameters carry no positional guarantee.
+        r#"import { Given } from "@cucumber/cucumber";
+function step({ text }, handler) { Given(text, handler); }
+step({ text: "wrapped step" }, () => work());"#,
+        // A local helper that never reaches a registration is not a wrapper.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { return [text, handler]; }
+step("wrapped step", () => work());"#,
+        // A returned callback defers registration until that callback is invoked.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { return () => Given(text, handler); }
+step("wrapped step", () => work());"#,
+        // A conditional call is not guaranteed to register when the wrapper is invoked.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { if (enabled) Given(text, handler); }
+step("wrapped step", () => work());"#,
+        // Multiple statements require data-flow reasoning and use the explicit config escape hatch.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { trace(text); Given(text, handler); }
+step("wrapped step", () => work());"#,
+        // Async bodies can suspend before reaching the registration call.
+        r#"import { Given } from "@cucumber/cucumber";
+async function step(text, handler) { Given(text, handler); }
+step("wrapped step", () => work());"#,
+        // Generator bodies do not run merely because the generator function is called.
+        r#"import { Given } from "@cucumber/cucumber";
+function* step(text, handler) { Given(text, handler); }
+step("wrapped step", () => work());"#,
+        // A nested declaration must not escape its lexical scope into a file-wide alias.
+        r#"import { Given } from "@cucumber/cucumber";
+function outer() { function step(text, handler) { Given(text, handler); } }
+step("wrapped step", () => work());"#,
+    ] {
+        assert!(
+            extract_ts(source).is_empty(),
+            "must not infer a wrapper from: {source}"
+        );
+    }
+}
+
+#[test]
+fn wrapper_inference_follows_chains_without_looping_on_self_reference() {
+    let chained = extract_ts(
+        r#"import { Given } from "@cucumber/cucumber";
+function inner(text, handler) { Given(text, handler); }
+function outer(text, handler) { inner(text, handler); }
+outer("chained step", () => work());"#,
+    );
+    assert_eq!(chained.len(), 1);
+    assert_eq!(chained[0].matcher, "chained step");
+
+    // A self-recursive helper never reaches a registration, so it must not resolve to itself.
+    assert!(extract_ts(
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { step(text, handler); }
+step("looping step", () => work());"#,
+    )
+    .is_empty());
+}
+
+#[test]
+fn wrapper_inference_resolves_long_chains_without_quadratic_work() {
+    // Wrappers form a forward graph. Walking it from the known registrations visits each wrapper
+    // once, so a chain declared in reverse order — the worst ordering for a naive fixpoint —
+    // still resolves in linear time.
+    let chain = |depth: usize| {
+        let mut source = String::from("import { Given } from \"@cucumber/cucumber\";\n");
+        for index in (1..depth).rev() {
+            source.push_str(&format!(
+                "function w{index}(text, handler) {{ w{}(text, handler); }}\n",
+                index - 1
+            ));
+        }
+        source.push_str("function w0(text, handler) { Given(text, handler); }\n");
+        source.push_str(&format!("w{}(\"chained\", () => work());\n", depth - 1));
+        source
+    };
+
+    assert_eq!(extract_ts(&chain(200)).len(), 1);
+    assert_eq!(extract_ts(&chain(4000)).len(), 1);
 }

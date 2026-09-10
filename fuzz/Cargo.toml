@@ -10,11 +10,19 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-cuke-dedup = { path = "..", version = "=0.1.1" }
+cuke-dedup = { path = "..", version = "=0.2.0" }
+tempfile = "3.15"
 
 [[bin]]
 name = "parsers"
 path = "fuzz_targets/parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "inputs"
+path = "fuzz_targets/inputs.rs"
 test = false
 doc = false
 bench = false

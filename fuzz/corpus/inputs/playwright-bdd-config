@@ -1,0 +1,2 @@
+import { defineBddConfig } from "playwright-bdd";
+export default { features: ["features/**/*.feature"] };

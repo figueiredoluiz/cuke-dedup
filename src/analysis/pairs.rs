@@ -18,7 +18,14 @@ const MAX_MATCHER_SHINGLES_TOTAL: usize = 250_000;
 const MAX_MATCHER_BLOCKING_POSTING: usize = 256;
 const MAX_MATCHER_BLOCKING_PROPOSAL_WORK: u64 = 2_000_000;
 const MAX_MATCHER_BLOCKING_EVENT_WORK: u64 = 10_000_000;
+// A single edit-distance or LCS matrix may cost this many cells before the pair is refused.
+// Tests use a far smaller ceiling so the inputs that cross it stay small: an input sized to the
+// production ceiling costs 100,000,000 real cell operations whenever the budget is removed, which
+// is slow enough to look like a hang rather than a failure when the budget itself is under test.
+#[cfg(not(test))]
 const MAX_PAIR_MATRIX_WORK: u64 = 100_000_000;
+#[cfg(test)]
+const MAX_PAIR_MATRIX_WORK: u64 = 1_000_000;
 const MAX_TOTAL_PAIR_SIMILARITY_WORK: u64 = 1_000_000_000;
 const MAX_TOTAL_PAIR_SUPPRESSION_WORK: u64 = 100_000_000;
 const PAIR_LINEAR_SCAN_MULTIPLIER: u64 = 4;
@@ -125,7 +132,7 @@ impl ComparisonClasses {
 
 pub(super) struct PairAnalysis {
     pub(super) census: AnalysisCensus,
-    pub(super) operational_error: Option<String>,
+    pub(super) incomplete: Option<String>,
 }
 
 pub(super) fn analyze_definition_pairs(
@@ -388,10 +395,10 @@ pub(super) fn analyze_definition_pairs(
     if evaluated < generated.candidates.len() {
         generated.mark_verification_truncated(evaluated);
     }
-    let operational_error = generated.operational_error(config);
+    let incomplete = generated.incompleteness(config);
     PairAnalysis {
         census: generated.census,
-        operational_error,
+        incomplete,
     }
 }
 
@@ -1263,7 +1270,7 @@ impl CandidateGeneration {
         self.census.truncated = true;
     }
 
-    fn operational_error(&self, config: &Config) -> Option<String> {
+    fn incompleteness(&self, config: &Config) -> Option<String> {
         self.census.truncated.then(|| {
             let mut affected = self
                 .truncated_structural_classes
@@ -1673,7 +1680,7 @@ mod tests {
             analysis.census.candidate_sources["matcherBlocking"].evaluated,
             1
         );
-        assert!(analysis.operational_error.is_none());
+        assert!(analysis.incomplete.is_none());
         assert!(findings.is_empty());
     }
 
@@ -1840,7 +1847,7 @@ mod tests {
             analysis.census.candidate_sources["structuralHandler"].evaluated,
             1
         );
-        assert!(analysis.operational_error.is_none());
+        assert!(analysis.incomplete.is_none());
         assert!(findings.is_empty());
     }
 

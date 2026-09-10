@@ -1,8 +1,10 @@
 //! Tree-sitter based JavaScript and TypeScript step-definition extraction.
 
+mod ast;
 mod handler;
 mod matcher;
 mod module_resolver;
+mod project_resolution;
 mod registrations;
 mod suppression;
 
@@ -14,13 +16,14 @@ use self::handler::{bounded_source_snippet, MAX_HANDLER_SNIPPET_CHARS};
 pub use self::matcher::normalize_matcher;
 #[cfg(test)]
 use self::matcher::normalize_regular_expression;
+pub(crate) use self::matcher::rust_regex_expression;
 use self::matcher::{
     matcher_value, normalize_matcher_with_flags, rust_regex_support, RegexSupport,
 };
 use self::module_resolver::RegistrationResolver;
 use self::registrations::{
     detect_framework, detect_registrations, registration_callee, registration_name,
-    RegistrationCallee, RegistrationNames,
+    unresolved_registration_module, RegistrationCallee, RegistrationNames,
 };
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
@@ -30,7 +33,7 @@ pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
 use anyhow::{Context, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
 pub(crate) struct TreeSitterSourceAdapter {
@@ -54,12 +57,14 @@ pub(crate) static TSX_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter
 #[derive(Default)]
 pub(crate) struct TypeScriptExtractionSession {
     resolver: RegistrationResolver,
+    configured_registrations: std::collections::BTreeSet<String>,
 }
 
 impl TypeScriptExtractionSession {
-    pub(crate) fn for_root(root: &std::path::Path) -> Self {
+    pub(crate) fn for_root(root: &std::path::Path, registrations: &[String]) -> Self {
         Self {
             resolver: RegistrationResolver::for_root(root),
+            configured_registrations: registrations.iter().cloned().collect(),
         }
     }
 }
@@ -109,12 +114,21 @@ struct AdapterContext<'source, 'tree> {
 struct UnresolvedRegistrationCalls {
     count: usize,
     first_location: Option<SourceLocation>,
+    modules: BTreeMap<String, (usize, SourceLocation)>,
 }
 
 impl UnresolvedRegistrationCalls {
     fn record(&mut self, location: SourceLocation) {
         self.count = self.count.saturating_add(1);
         self.first_location.get_or_insert(location);
+    }
+
+    fn record_module(&mut self, module: &str, location: SourceLocation) {
+        let entry = self
+            .modules
+            .entry(module.to_owned())
+            .or_insert_with(|| (0, location));
+        entry.0 = entry.0.saturating_add(1);
     }
 }
 
@@ -166,7 +180,9 @@ fn extract_detailed_impl(
         framework,
         &file.path,
         &mut session.resolver,
+        &session.configured_registrations,
     )?;
+    let framework = registrations.framework;
     let mut handler_bindings = BTreeMap::new();
     collect_handler_bindings(root, source_bytes, &mut handler_bindings);
     let context = AdapterContext {
@@ -205,6 +221,39 @@ fn extract_detailed_impl(
             ),
         });
     }
+    let mut explained_modules = BTreeSet::new();
+    for (module, (count, location)) in unresolved_registration_calls.modules {
+        let cause = registrations::unresolved_module_reason(&registrations, &module)
+            .map(|reason| format!(" ({reason})"))
+            .unwrap_or_default();
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location,
+            message: format!(
+                "{UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX} {count} call(s) import a known registration through unresolved module `{module}`{cause}; definitions may be missing"
+            ),
+        });
+        explained_modules.insert(module);
+    }
+    // A specifier can fail resolution without any call being attributed to it — a barrel that is
+    // imported but whose registrations are re-exported onward, or a file whose registration calls
+    // were themselves unresolvable. Report the cause anyway so a resolution limit is never
+    // reduced to a bare "produced 0 definitions".
+    for (module, recorded) in registrations::unresolved_module_reasons(&registrations) {
+        if explained_modules.contains(module) {
+            continue;
+        }
+        let line = recorded.row + 1;
+        let column = unicode_column(source_bytes, recorded.byte_offset, recorded.byte_column);
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location: SourceLocation::new(&file.path, line, column, line, column),
+            message: format!(
+                "{UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX} module `{module}` could not be resolved statically ({}); definitions may be missing",
+                recorded.reason
+            ),
+        });
+    }
     definitions.sort_by(|left, right| {
         left.location
             .line
@@ -227,12 +276,16 @@ fn collect_calls<'tree>(
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         if node.kind() == "call_expression" {
-            if is_unresolved_registration_call(node, context) {
-                unresolved_registration_calls.record(node_location(
-                    context.file,
-                    node,
-                    context.source,
-                ));
+            if let Some(unresolved) = unresolved_registration_call(node, context) {
+                let location = node_location(context.file, node, context.source);
+                match unresolved {
+                    UnresolvedRegistration::Generic => {
+                        unresolved_registration_calls.record(location)
+                    }
+                    UnresolvedRegistration::Module(module) => {
+                        unresolved_registration_calls.record_module(module, location)
+                    }
+                }
             }
             if let Some(definition) = extract_call(node, context, diagnostics) {
                 definitions.push(definition);
@@ -244,14 +297,25 @@ fn collect_calls<'tree>(
     }
 }
 
-fn is_unresolved_registration_call(call: Node<'_>, context: &AdapterContext<'_, '_>) -> bool {
-    let Some(function) = call.child_by_field_name("function") else {
-        return false;
-    };
+enum UnresolvedRegistration<'a> {
+    Generic,
+    Module(&'a str),
+}
+
+fn unresolved_registration_call<'a>(
+    call: Node<'_>,
+    context: &'a AdapterContext<'_, '_>,
+) -> Option<UnresolvedRegistration<'a>> {
+    let function = call.child_by_field_name("function")?;
     if registration_name(function, context.source, context.registrations).is_some() {
-        return false;
+        return None;
     }
-    match registration_callee(function, context.source) {
+    if let Some(module) =
+        unresolved_registration_module(function, context.source, context.registrations)
+    {
+        return Some(UnresolvedRegistration::Module(module));
+    }
+    let looks_like_registration = match registration_callee(function, context.source) {
         Some(RegistrationCallee::Identifier(name)) => matches!(
             name,
             "Given"
@@ -272,7 +336,8 @@ fn is_unresolved_registration_call(call: Node<'_>, context: &AdapterContext<'_, 
             "Given" | "When" | "Then" | "And" | "But" | "Step" | "defineStep"
         ),
         _ => false,
-    }
+    };
+    looks_like_registration.then_some(UnresolvedRegistration::Generic)
 }
 
 fn extract_call<'tree>(

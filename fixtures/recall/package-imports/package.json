@@ -1,0 +1,7 @@
+{
+  "name": "package-imports-recall",
+  "private": true,
+  "imports": {
+    "#bdd": "./support/world.ts"
+  }
+}

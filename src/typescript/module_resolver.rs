@@ -1,4 +1,10 @@
+use super::ast::{
+    default_registration_exports, framework_for_module, import_module, push_named_children_reverse,
+    FRAMEWORK_MODULES,
+};
 use super::node_text;
+use super::project_resolution::ProjectResolution;
+use crate::model::Framework;
 use crate::resource_limits::{
     read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
     MAX_REGISTRATION_RESOLUTION_STATES,
@@ -9,22 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
-const REGISTRATIONS: [&str; 7] = [
-    "Given",
-    "When",
-    "Then",
-    "defineStep",
-    "given",
-    "when",
-    "then",
-];
-const FRAMEWORK_MODULES: [&str; 3] = [
-    "@cucumber/cucumber",
-    "playwright-bdd",
-    "@badeball/cypress-cucumber-preprocessor",
-];
 const MAX_REEXPORT_DEPTH: usize = 16;
-const MODULE_SUFFIXES: [&str; 8] = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+type RegistrationExports = BTreeMap<String, String>;
+type CachedExports = (Option<RegistrationExports>, Framework);
 
 #[derive(Debug, Clone)]
 struct Reexport {
@@ -36,7 +29,7 @@ struct Reexport {
 #[derive(Default)]
 struct ResolutionState {
     active: BTreeSet<PathBuf>,
-    exports: BTreeMap<(PathBuf, usize), Option<BTreeMap<String, String>>>,
+    exports: BTreeMap<(PathBuf, usize), CachedExports>,
     modules: BTreeMap<PathBuf, Option<Vec<Reexport>>>,
     module_bytes: usize,
     resolutions_started: usize,
@@ -44,13 +37,33 @@ struct ResolutionState {
 
 #[derive(Debug)]
 struct ResolvedExports {
-    exports: Option<BTreeMap<String, String>>,
+    exports: Option<RegistrationExports>,
+    framework: Framework,
     cacheable: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct RegistrationResolution {
+    pub(super) exports: RegistrationExports,
+    pub(super) framework: Framework,
+}
+
+/// Outcome of resolving one import specifier to its registration exports.
+///
+/// A specifier that cannot be resolved statically is a recall limitation, not an analyzer
+/// failure: the importing file simply contributes no registration aliases. `reason` carries the
+/// static-resolution failure so the caller can explain *why* in a source-localized diagnostic
+/// rather than aborting the run.
+#[derive(Debug, Default)]
+pub(super) struct RegistrationOutcome {
+    pub(super) resolution: Option<RegistrationResolution>,
+    pub(super) reason: Option<String>,
 }
 
 #[derive(Default)]
 pub(super) struct RegistrationResolver {
     boundary: Option<PathBuf>,
+    project: ProjectResolution,
     state: ResolutionState,
 }
 
@@ -58,6 +71,7 @@ impl RegistrationResolver {
     pub(super) fn for_root(root: &Path) -> Self {
         Self {
             boundary: root.canonicalize().ok(),
+            project: ProjectResolution::for_root(root),
             state: ResolutionState::default(),
         }
     }
@@ -66,12 +80,38 @@ impl RegistrationResolver {
         &mut self,
         importer: &Path,
         specifier: &str,
-    ) -> Result<Option<BTreeMap<String, String>>> {
+    ) -> Result<RegistrationOutcome> {
         let boundary = self.boundary.clone().or_else(|| project_boundary(importer));
         let Some(boundary) = boundary else {
-            return Ok(None);
+            return Ok(RegistrationOutcome::default());
         };
-        Ok(resolve_exports(importer, specifier, &boundary, &mut self.state, 0)?.exports)
+        match resolve_exports(
+            importer,
+            specifier,
+            &boundary,
+            &mut self.project,
+            &mut self.state,
+            0,
+        ) {
+            Ok(resolved) => Ok(RegistrationOutcome {
+                resolution: resolved.exports.map(|exports| RegistrationResolution {
+                    exports,
+                    framework: resolved.framework,
+                }),
+                reason: None,
+            }),
+            // A module the filesystem refused to hand over is an operational failure, exactly as
+            // it is for a definition source: the analyzer could not read input it was told to
+            // read, and silently continuing would understate the corpus. Everything else here
+            // means "this specifier is not statically resolvable" — outside the analysis root, a
+            // malformed or cyclic project config, or a resolution resource limit — which bounds
+            // recall without making any surviving finding wrong, so it degrades to a warning.
+            Err(error) if is_io_failure(&error) => Err(error),
+            Err(error) => Ok(RegistrationOutcome {
+                resolution: None,
+                reason: Some(format!("{error:#}")),
+            }),
+        }
     }
 }
 
@@ -79,32 +119,37 @@ fn resolve_exports(
     importer: &Path,
     specifier: &str,
     boundary: &Path,
+    project: &mut ProjectResolution,
     state: &mut ResolutionState,
     depth: usize,
 ) -> Result<ResolvedExports> {
     if depth >= MAX_REEXPORT_DEPTH {
         return Ok(ResolvedExports {
             exports: None,
+            framework: Framework::Unknown,
             cacheable: true,
         });
     }
-    let Some(path) = resolve_module(importer, specifier, boundary) else {
+    let Some(path) = project.resolve(importer, specifier, boundary)? else {
         return Ok(ResolvedExports {
             exports: None,
+            framework: Framework::Unknown,
             cacheable: true,
         });
     };
     let remaining_depth = MAX_REEXPORT_DEPTH - depth;
     let cache_key = (path.clone(), remaining_depth);
-    if let Some(exports) = state.exports.get(&cache_key) {
+    if let Some((exports, framework)) = state.exports.get(&cache_key) {
         return Ok(ResolvedExports {
             exports: exports.clone(),
+            framework: *framework,
             cacheable: true,
         });
     }
     if !state.active.insert(path.clone()) {
         return Ok(ResolvedExports {
             exports: None,
+            framework: Framework::Unknown,
             cacheable: false,
         });
     }
@@ -119,24 +164,30 @@ fn resolve_exports(
 
     let Some(reexports) = load_module(&path, state)? else {
         state.active.remove(&path);
-        state.exports.insert(cache_key, None);
+        state.exports.insert(cache_key, (None, Framework::Unknown));
         return Ok(ResolvedExports {
             exports: None,
+            framework: Framework::Unknown,
             cacheable: true,
         });
     };
     let mut exports = BTreeMap::new();
+    let mut framework = Framework::Unknown;
     let mut cacheable = true;
     for reexport in reexports {
-        let available = if FRAMEWORK_MODULES.contains(&reexport.module.as_str()) {
-            default_exports()
-        } else if is_relative_module(&reexport.module) {
-            let resolved = resolve_exports(&path, &reexport.module, boundary, state, depth + 1)?;
-            cacheable &= resolved.cacheable;
-            resolved.exports.unwrap_or_default()
-        } else {
-            BTreeMap::new()
-        };
+        let (available, available_framework) =
+            if FRAMEWORK_MODULES.contains(&reexport.module.as_str()) {
+                (
+                    default_registration_exports(),
+                    framework_for_module(&reexport.module),
+                )
+            } else {
+                let resolved =
+                    resolve_exports(&path, &reexport.module, boundary, project, state, depth + 1)?;
+                cacheable &= resolved.cacheable;
+                (resolved.exports.unwrap_or_default(), resolved.framework)
+            };
+        framework = merge_framework(framework, available_framework);
         for (imported, exported) in &reexport.specifiers {
             if let Some(canonical) = available.get(imported) {
                 exports.insert(exported.clone(), canonical.clone());
@@ -149,9 +200,36 @@ fn resolve_exports(
     state.active.remove(&path);
     let exports = Some(exports);
     if cacheable {
-        state.exports.insert(cache_key, exports.clone());
+        state
+            .exports
+            .insert(cache_key, (exports.clone(), framework));
     }
-    Ok(ResolvedExports { exports, cacheable })
+    Ok(ResolvedExports {
+        exports,
+        framework,
+        cacheable,
+    })
+}
+
+/// Returns whether `error` was caused by the filesystem refusing a read.
+///
+/// Resource limits carry their own typed cause, so an `io::Error` anywhere in the chain means a
+/// genuine read failure — a permission change, a vanished file, or exhausted descriptors.
+fn is_io_failure(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+}
+
+pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framework {
+    match (current, evidence) {
+        (Framework::PlaywrightBdd, _) | (_, Framework::PlaywrightBdd) => Framework::PlaywrightBdd,
+        (Framework::CypressCucumber, _) | (_, Framework::CypressCucumber) => {
+            Framework::CypressCucumber
+        }
+        (Framework::CucumberJs, _) | (_, Framework::CucumberJs) => Framework::CucumberJs,
+        _ => Framework::Unknown,
+    }
 }
 
 fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Vec<Reexport>>> {
@@ -173,7 +251,17 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Vec<Re
         );
     }
     state.module_bytes = module_bytes;
-    let module = parse_module(&source, path).map(|tree| collect_reexports(&tree, &source));
+    let module = if let Some(tree) = parse_module(&source, path) {
+        if tree.root_node().has_error() {
+            bail!(
+                "registration module {} contains JavaScript/TypeScript syntax errors; refusing recovered exports",
+                path.display()
+            );
+        }
+        Some(collect_reexports(&tree, &source))
+    } else {
+        None
+    };
     state.modules.insert(path.to_owned(), module.clone());
     Ok(module)
 }
@@ -205,25 +293,6 @@ fn project_boundary(importer: &Path) -> Option<PathBuf> {
         }
     }
     Some(parent)
-}
-
-fn resolve_module(importer: &Path, specifier: &str, boundary: &Path) -> Option<PathBuf> {
-    if !is_relative_module(specifier) {
-        return None;
-    }
-    let base = importer.parent()?.join(specifier);
-    let mut candidates = vec![base.clone()];
-    for suffix in MODULE_SUFFIXES {
-        candidates.push(PathBuf::from(format!("{}{suffix}", base.display())));
-        candidates.push(base.join(format!("index{suffix}")));
-    }
-    candidates.into_iter().find_map(|candidate| {
-        if language_for_path(&candidate).is_none() || !candidate.is_file() {
-            return None;
-        }
-        let canonical = candidate.canonicalize().ok()?;
-        canonical.starts_with(boundary).then_some(canonical)
-    })
 }
 
 fn parse_module(source: &str, path: &Path) -> Option<tree_sitter::Tree> {
@@ -262,16 +331,6 @@ fn export_specifiers(export: Node<'_>, source: &[u8]) -> Vec<(String, String)> {
     specifiers
 }
 
-fn import_module<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
-    let module = node.child_by_field_name("source")?;
-    let text = node_text(module, source);
-    let quote = text.as_bytes().first().copied()?;
-    if !matches!(quote, b'\'' | b'"') || text.as_bytes().last().copied()? != quote {
-        return None;
-    }
-    text.get(1..text.len() - 1)
-}
-
 fn is_star_export(node: Node<'_>, source: &[u8]) -> bool {
     node_text(node, source)
         .trim_start()
@@ -294,30 +353,13 @@ fn is_type_only_export(node: Node<'_>, source: &[u8]) -> bool {
         })
 }
 
-fn is_relative_module(module: &str) -> bool {
-    module == "." || module == ".." || module.starts_with("./") || module.starts_with("../")
-}
-
-fn default_exports() -> BTreeMap<String, String> {
-    REGISTRATIONS
-        .into_iter()
-        .map(|name| (name.to_owned(), name.to_owned()))
-        .collect()
-}
-
-fn push_named_children_reverse<'tree>(node: Node<'tree>, stack: &mut Vec<Node<'tree>>) {
-    let mut cursor = node.walk();
-    let children: Vec<_> = node.named_children(&mut cursor).collect();
-    stack.extend(children.into_iter().rev());
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
 
     #[test]
-    fn module_resolution_supports_files_and_indexes_but_rejects_escapes_and_bare_names() {
+    fn project_resolution_supports_relative_modules_and_rejects_escapes() {
         let directory = tempfile::tempdir().unwrap();
         let boundary = directory.path().canonicalize().unwrap();
         let importer = directory.path().join("nested/steps.ts");
@@ -328,6 +370,7 @@ mod tests {
         fs::write(directory.path().join("support/index.ts"), "").unwrap();
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join("escaped.ts"), "").unwrap();
+        let mut project = ProjectResolution::for_root(directory.path());
 
         let cases = [
             ("extension inference", "../direct", Some("direct.ts")),
@@ -337,7 +380,7 @@ mod tests {
             ("missing relative", "../missing", None),
         ];
         for (name, specifier, expected_suffix) in cases {
-            let resolved = resolve_module(&importer, specifier, &boundary);
+            let resolved = project.resolve(&importer, specifier, &boundary).unwrap();
             assert_eq!(
                 resolved.as_ref().map(|path| {
                     path.strip_prefix(&boundary)
@@ -351,10 +394,13 @@ mod tests {
         }
 
         let escape = format!(
-            "../../{}",
+            "../../{}/escaped",
             outside.path().file_name().unwrap().to_string_lossy()
         );
-        assert_eq!(resolve_module(&importer, &escape, &boundary), None);
+        let error = project.resolve(&importer, &escape, &boundary).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("outside package or analysis root"));
     }
 
     #[test]
@@ -385,8 +431,10 @@ mod tests {
         }
 
         let boundary = project_boundary(&importer).unwrap();
+        let mut project = ProjectResolution::for_root(directory.path());
         let mut state = ResolutionState::default();
-        let resolved = resolve_exports(&importer, "./root", &boundary, &mut state, 0).unwrap();
+        let resolved =
+            resolve_exports(&importer, "./root", &boundary, &mut project, &mut state, 0).unwrap();
 
         assert_eq!(
             resolved.exports.unwrap().get("Given").map(String::as_str),
@@ -413,12 +461,10 @@ mod tests {
         .unwrap();
 
         let mut resolver = RegistrationResolver::for_root(directory.path());
-        resolver.registration_exports(&first, "../support").unwrap();
+        let _ = resolver.registration_exports(&first, "../support");
         let modules_after_first = resolver.state.modules.len();
         let resolutions_after_first = resolver.state.resolutions_started;
-        resolver
-            .registration_exports(&second, "../support")
-            .unwrap();
+        let _ = resolver.registration_exports(&second, "../support");
 
         assert_eq!(resolver.state.modules.len(), modules_after_first);
         assert_eq!(resolver.state.resolutions_started, resolutions_after_first);
@@ -441,9 +487,14 @@ mod tests {
         let exports = resolver
             .registration_exports(&importer, "../../support")
             .unwrap()
+            .resolution
             .unwrap();
 
-        assert_eq!(exports.get("Given").map(String::as_str), Some("Given"));
+        assert_eq!(
+            exports.exports.get("Given").map(String::as_str),
+            Some("Given")
+        );
+        assert_eq!(exports.framework, Framework::CucumberJs);
     }
 
     #[test]
@@ -480,6 +531,7 @@ mod tests {
         let exports = resolver
             .registration_exports(&importer, "./root")
             .unwrap()
+            .resolution
             .unwrap();
         let shared = directory.path().join("shared.ts").canonicalize().unwrap();
         let shared_states = resolver
@@ -489,7 +541,11 @@ mod tests {
             .filter(|(path, _)| path == &shared)
             .count();
 
-        assert_eq!(exports.get("Given").map(String::as_str), Some("Given"));
+        assert_eq!(
+            exports.exports.get("Given").map(String::as_str),
+            Some("Given")
+        );
+        assert_eq!(exports.framework, Framework::CucumberJs);
         assert_eq!(shared_states, chain_depth + 1);
         assert!(resolver.state.resolutions_started < MAX_REGISTRATION_RESOLUTION_STATES);
     }
@@ -508,9 +564,12 @@ mod tests {
         fs::write(directory.path().join("b.ts"), "export * from './a';\n").unwrap();
 
         let boundary = project_boundary(&importer).unwrap();
+        let mut project = ProjectResolution::for_root(directory.path());
         let mut state = ResolutionState::default();
-        let from_a = resolve_exports(&importer, "./a", &boundary, &mut state, 0).unwrap();
-        let from_b = resolve_exports(&importer, "./b", &boundary, &mut state, 0).unwrap();
+        let from_a =
+            resolve_exports(&importer, "./a", &boundary, &mut project, &mut state, 0).unwrap();
+        let from_b =
+            resolve_exports(&importer, "./b", &boundary, &mut project, &mut state, 0).unwrap();
 
         assert_eq!(
             from_a.exports.unwrap().get("Given").map(String::as_str),
@@ -558,12 +617,45 @@ mod tests {
         assert_eq!(exact_byte_state.module_bytes, MAX_REGISTRATION_MODULE_BYTES);
 
         let boundary = project_boundary(&importer).unwrap();
+        let mut project = ProjectResolution::for_root(directory.path());
         let mut resolution_state = ResolutionState {
             resolutions_started: MAX_REGISTRATION_RESOLUTION_STATES,
             ..ResolutionState::default()
         };
-        let error = resolve_exports(&importer, "./module", &boundary, &mut resolution_state, 0)
-            .unwrap_err();
+        let error = resolve_exports(
+            &importer,
+            "./module",
+            &boundary,
+            &mut project,
+            &mut resolution_state,
+            0,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("state resolution limit"));
+    }
+
+    #[test]
+    fn malformed_reexport_modules_cannot_supply_recovered_registrations() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("package.json"), "{}").unwrap();
+        let importer = directory.path().join("steps.ts");
+        fs::write(&importer, "").unwrap();
+        fs::write(
+            directory.path().join("broken.ts"),
+            "export { Given } from '@cucumber/cucumber';\nconst broken = ;\n",
+        )
+        .unwrap();
+
+        let mut resolver = RegistrationResolver::for_root(directory.path());
+        let outcome = resolver
+            .registration_exports(&importer, "./broken")
+            .expect("a malformed barrel is not an operational failure");
+
+        // A malformed barrel yields no registrations and an explainable reason, never an error
+        // that would abort analysis of the importing file.
+        assert!(outcome.resolution.is_none());
+        let reason = outcome.reason.expect("static resolution reason");
+        assert!(reason.contains("syntax errors"), "{reason}");
+        assert!(reason.contains("refusing recovered exports"), "{reason}");
     }
 }
