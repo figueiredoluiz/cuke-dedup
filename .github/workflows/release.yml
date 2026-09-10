@@ -3,15 +3,10 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch, tag, or commit to build
-        required: true
-        default: main
-        type: string
       version:
         description: Package version used in artifact names
         required: true
-        default: 0.1.0
+        default: 0.2.0
         type: string
       publish_release:
         description: Create a GitHub release and enable configured registry publishing
@@ -32,11 +27,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  BUILD_REF: ${{ inputs.ref }}
   PACKAGE_VERSION: ${{ inputs.version }}
   PUBLISH_RELEASE: ${{ inputs.publish_release }}
   RELEASE_TAG: ${{ inputs.release_tag }}
@@ -49,11 +43,10 @@ jobs:
     outputs:
       msrv: ${{ steps.metadata.outputs.msrv }}
       matrix: ${{ steps.metadata.outputs.matrix }}
-      release_sha: ${{ steps.metadata.outputs.release_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.BUILD_REF }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Validate inputs and load checked-in metadata
@@ -74,7 +67,6 @@ jobs:
           {
             echo "msrv=$msrv"
             echo "matrix=$matrix"
-            echo "release_sha=$release_sha"
           } >> "$GITHUB_OUTPUT"
 
   build-native:
@@ -94,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - shell: bash
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "$RELEASE_TARGET"
@@ -195,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - name: Authenticate with crates.io trusted publishing
@@ -226,7 +218,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:

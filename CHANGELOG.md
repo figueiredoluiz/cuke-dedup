@@ -40,6 +40,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 - A second fuzz target covers configuration discovery, project module metadata, and baseline
   parsing, the untrusted inputs that are read outside the source parsers.
+- Release jobs are bound to the immutable workflow commit instead of accepting a free-form checkout
+  ref, and the GitHub Action no longer derives outbound download URLs from runtime file contents.
 
 ### Performance
 

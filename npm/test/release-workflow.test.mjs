@@ -8,16 +8,16 @@ const workflow = await readFile(
 );
 
 test("release publishing stays bound to one immutable tagged commit", () => {
-  assert.doesNotMatch(workflow, /\bgithub\.sha\b/);
+  assert.doesNotMatch(workflow, /inputs\.ref|BUILD_REF|outputs\.release_sha/);
   assert.match(
     workflow,
     /RELEASE_SHA="\$release_sha" node scripts\/release\/validate-release-context\.mjs/,
   );
 
   const immutableCheckouts = workflow.match(
-    /ref: \$\{\{ needs\.metadata\.outputs\.release_sha \}\}/g,
+    /ref: \$\{\{ github\.sha \}\}/g,
   );
-  assert.equal(immutableCheckouts?.length, 3);
+  assert.equal(immutableCheckouts?.length, 4);
 });
 
 test("manually selected release refs cannot write reusable build caches", () => {
