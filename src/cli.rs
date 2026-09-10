@@ -303,15 +303,6 @@ fn execute(cli: Cli) -> Result<i32> {
             operational_warnings.push(message);
         }
     }
-    for index in analysis::unmatched_suppressions(&config, &definitions) {
-        let suppression = &config.suppressions[index];
-        operational_warnings.push(format!(
-            "suppression {} for {} matched no step definitions",
-            index + 1,
-            suppression.rule
-        ));
-    }
-
     let mut feature_steps = Vec::new();
     let mut parsed_feature_files = 0_usize;
     for file in &files.features {
@@ -352,8 +343,22 @@ fn execute(cli: Cli) -> Result<i32> {
     let parsing_ms = elapsed_ms(parsing_started);
 
     let analysis_started = Instant::now();
-    let (analysis, analysis_census) =
+    let (analysis, analysis_census, unmatched_suppressions) =
         analysis::analyze_for_cli(definitions, feature_steps, &config)?;
+    for index in unmatched_suppressions.indices {
+        let suppression = &config.suppressions[index];
+        operational_warnings.push(format!(
+            "suppression {} for {} matched no step definitions",
+            index + 1,
+            suppression.rule
+        ));
+    }
+    if unmatched_suppressions.truncated {
+        operational_warnings.push(
+            "unmatched suppression validation stopped after its safety limit; analysis findings are unaffected"
+                .to_owned(),
+        );
+    }
     operational_errors.extend(analysis.operational_errors);
     let mut result = analysis.result;
     let analysis_ms = elapsed_ms(analysis_started);

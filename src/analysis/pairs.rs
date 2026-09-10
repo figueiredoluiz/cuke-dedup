@@ -1,16 +1,107 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
-use super::similarity::{handler_similarity, is_near_matcher, matcher_similarity, round_score};
-use super::suppression::find_suppression;
+use super::similarity::{
+    handler_similarity_with_relationship, is_near_matcher, matcher_similarity, round_score,
+};
+use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
 use crate::model::{
     Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation, StepDefinition,
+    Suppression,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::Hash;
 
-const NORMALIZED_MATCHER_SOURCE: &str = "normalizedMatcher";
-const IDENTICAL_HANDLER_SOURCE: &str = "identicalHandler";
-const STRUCTURAL_HANDLER_SOURCE: &str = "structuralHandler";
+const MATCHER_SHINGLE_WIDTH: usize = 3;
+const MAX_MATCHER_SHINGLES_PER_DEFINITION: usize = 4_096;
+const MAX_MATCHER_SHINGLES_TOTAL: usize = 250_000;
+const MAX_MATCHER_BLOCKING_POSTING: usize = 256;
+const MAX_MATCHER_BLOCKING_PROPOSAL_WORK: u64 = 2_000_000;
+const MAX_MATCHER_BLOCKING_EVENT_WORK: u64 = 10_000_000;
+const MAX_PAIR_SIMILARITY_WORK: u64 = 100_000_000;
+const PAIR_LINEAR_SCAN_MULTIPLIER: u64 = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CandidateSource {
+    NormalizedMatcher,
+    IdenticalHandler,
+    StructuralHandler,
+    MatcherBlocking,
+}
+
+impl CandidateSource {
+    const ALL: [Self; 4] = [
+        Self::NormalizedMatcher,
+        Self::IdenticalHandler,
+        Self::StructuralHandler,
+        Self::MatcherBlocking,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NormalizedMatcher => "normalizedMatcher",
+            Self::IdenticalHandler => "identicalHandler",
+            Self::StructuralHandler => "structuralHandler",
+            Self::MatcherBlocking => "matcherBlocking",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CandidateSources(u8);
+
+impl CandidateSources {
+    fn insert(&mut self, source: CandidateSource) {
+        self.0 |= 1 << source as u8;
+    }
+
+    fn contains(self, source: CandidateSource) -> bool {
+        self.0 & (1 << source as u8) != 0
+    }
+
+    fn can_feed_near_matcher(self) -> bool {
+        self.contains(CandidateSource::IdenticalHandler)
+            || self.contains(CandidateSource::StructuralHandler)
+            || self.contains(CandidateSource::MatcherBlocking)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CandidatePair {
+    left: usize,
+    right: usize,
+    sources: CandidateSources,
+    owner: CandidateSource,
+}
+
+#[derive(Clone, Copy)]
+struct PairRelationships {
+    exact_matcher: bool,
+    normalized_matcher: bool,
+    same_handler: bool,
+    same_handler_structure: bool,
+    same_structure: bool,
+}
+
+struct ComparisonClasses {
+    exact_matcher: Vec<usize>,
+    normalized_matcher: Vec<usize>,
+    alpha_handler: Vec<usize>,
+    structural_handler: Vec<usize>,
+    structure_and_behavior: Vec<usize>,
+}
+
+impl ComparisonClasses {
+    fn relationships(&self, left: usize, right: usize) -> PairRelationships {
+        PairRelationships {
+            exact_matcher: self.exact_matcher[left] == self.exact_matcher[right],
+            normalized_matcher: self.normalized_matcher[left] == self.normalized_matcher[right],
+            same_handler: self.alpha_handler[left] == self.alpha_handler[right],
+            same_handler_structure: self.structural_handler[left] == self.structural_handler[right],
+            same_structure: self.structure_and_behavior[left] == self.structure_and_behavior[right],
+        }
+    }
+}
 
 pub(super) struct PairAnalysis {
     pub(super) census: AnalysisCensus,
@@ -20,25 +111,62 @@ pub(super) struct PairAnalysis {
 pub(super) fn analyze_definition_pairs(
     definitions: &[StepDefinition],
     config: &Config,
+    suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
 ) -> PairAnalysis {
-    let generated = definition_pair_candidates(definitions, config);
+    let mut generated = definition_pair_candidates(definitions, config);
+    let matcher_lengths = definitions
+        .iter()
+        .map(|definition| definition.normalized_matcher.chars().count())
+        .collect::<Vec<_>>();
+    let comparison_bytes = definitions
+        .iter()
+        .map(definition_comparison_bytes)
+        .collect::<Vec<_>>();
+    let classes = &generated.comparison_classes;
+    let behavior_events = &generated.behavior_events;
     let mut forests = FindingForests::new(definitions.len());
-    for &(left_index, right_index) in &generated.candidates {
+    let mut similarity_work = 0_u64;
+    let mut evaluated = 0_usize;
+    for candidate in generated.candidates.values() {
+        let left_index = candidate.left;
+        let right_index = candidate.right;
         let left = &definitions[left_index];
         let right = &definitions[right_index];
-        let exact_matcher = left.matcher_kind == right.matcher_kind
-            && left.matcher == right.matcher
-            && left.matcher_flags == right.matcher_flags;
-        let normalized_matcher = left.matcher_kind == right.matcher_kind
-            && left.normalized_matcher == right.normalized_matcher;
-        let same_handler = left.handler.alpha_normalized == right.handler.alpha_normalized;
-        let same_structure = left.handler.structural == right.handler.structural
-            && left.handler.behavior_signature == right.handler.behavior_signature;
+        let relationships = classes.relationships(left_index, right_index);
+        let exact_matcher = relationships.exact_matcher;
+        let normalized_matcher = relationships.normalized_matcher;
+        let same_handler = relationships.same_handler;
+        let same_structure = relationships.same_structure;
         let meaningful_handlers = left.handler.comparable
             && right.handler.comparable
             && !left.handler.trivial
             && !right.handler.trivial;
+
+        let pair_work = pair_similarity_work(
+            left,
+            right,
+            matcher_lengths[left_index],
+            matcher_lengths[right_index],
+            comparison_bytes[left_index],
+            comparison_bytes[right_index],
+            relationships,
+        )
+        .saturating_add(candidate_suppression_work(
+            candidate,
+            relationships,
+            meaningful_handlers,
+            config,
+            suppressions,
+        ));
+        let Some(next_work) = similarity_work.checked_add(pair_work) else {
+            break;
+        };
+        if next_work > MAX_PAIR_SIMILARITY_WORK {
+            break;
+        }
+        similarity_work = next_work;
+        evaluated += 1;
 
         // Equal normalized matchers have a known score. Every other candidate needs the
         // fuzzy score either to classify the finding or to retain report evidence.
@@ -48,12 +176,23 @@ pub(super) fn analyze_definition_pairs(
             matcher_similarity(left, right)
         };
         let near_matcher = !normalized_matcher && is_near_matcher(left, right, matcher_similarity);
+        let handler_similarity = handler_similarity_with_relationship(
+            same_handler,
+            relationships.same_handler_structure,
+            &behavior_events[left_index],
+            &behavior_events[right_index],
+        );
 
-        if exact_matcher {
+        if candidate
+            .sources
+            .contains(CandidateSource::NormalizedMatcher)
+            && exact_matcher
+        {
             push_pair_finding(
                 findings,
                 &mut forests,
                 config,
+                suppressions,
                 Rule::DuplicateMatcher,
                 left_index,
                 right_index,
@@ -61,16 +200,21 @@ pub(super) fn analyze_definition_pairs(
                 right,
                 "Two step definitions use the same effective matcher",
                 matcher_similarity,
-                handler_similarity(left, right),
+                handler_similarity,
                 "Matchers are textually identical",
                 handler_evidence(left, right),
                 "Keep one definition or make the matchers intentionally distinct",
             );
-        } else if normalized_matcher {
+        } else if candidate
+            .sources
+            .contains(CandidateSource::NormalizedMatcher)
+            && normalized_matcher
+        {
             push_pair_finding(
                 findings,
                 &mut forests,
                 config,
+                suppressions,
                 Rule::NormalizedMatcher,
                 left_index,
                 right_index,
@@ -78,7 +222,7 @@ pub(super) fn analyze_definition_pairs(
                 right,
                 "Two matchers are equivalent after normalization",
                 matcher_similarity,
-                handler_similarity(left, right),
+                handler_similarity,
                 format!(
                     "`{}` normalizes to `{}`",
                     right.matcher, right.normalized_matcher
@@ -88,11 +232,18 @@ pub(super) fn analyze_definition_pairs(
             );
         }
 
-        if !normalized_matcher && same_handler && meaningful_handlers {
+        if candidate
+            .sources
+            .contains(CandidateSource::IdenticalHandler)
+            && !normalized_matcher
+            && same_handler
+            && meaningful_handlers
+        {
             push_pair_finding(
                 findings,
                 &mut forests,
                 config,
+                suppressions,
                 Rule::DuplicateHandler,
                 left_index,
                 right_index,
@@ -100,14 +251,17 @@ pub(super) fn analyze_definition_pairs(
                 right,
                 "Different matchers use the same normalized implementation",
                 matcher_similarity,
-                handler_similarity(left, right),
+                handler_similarity,
                 matcher_difference(left, right),
                 "Handlers are identical after parameter and local-variable normalization",
                 "Review whether one parameterized step can replace both definitions",
             );
         }
 
-        if !normalized_matcher
+        if candidate
+            .sources
+            .contains(CandidateSource::StructuralHandler)
+            && !normalized_matcher
             && !same_handler
             && same_structure
             && meaningful_handlers
@@ -117,6 +271,7 @@ pub(super) fn analyze_definition_pairs(
                 findings,
                 &mut forests,
                 config,
+                suppressions,
                 Rule::ParameterizationCandidate,
                 left_index,
                 right_index,
@@ -124,29 +279,45 @@ pub(super) fn analyze_definition_pairs(
                 right,
                 "Handler structures differ primarily in literal values",
                 matcher_similarity,
-                handler_similarity(left, right),
+                handler_similarity,
                 matcher_difference(left, right),
                 "Handlers have the same control flow and calls after literal normalization",
                 "Consider replacing the literal differences with a step parameter",
             );
-        } else if !normalized_matcher && near_matcher && same_structure && meaningful_handlers {
+        } else if candidate.sources.can_feed_near_matcher()
+            && !normalized_matcher
+            && near_matcher
+            && handler_similarity >= 0.6
+            && meaningful_handlers
+        {
             push_pair_finding(
                 findings,
                 &mut forests,
                 config,
+                suppressions,
                 Rule::NearDuplicateStep,
                 left_index,
                 right_index,
                 left,
                 right,
-                "Matcher wording is very close and handler structure agrees",
+                "Matcher wording is very close and handler behavior substantially overlaps",
                 matcher_similarity,
-                handler_similarity(left, right),
+                handler_similarity,
                 matcher_difference(left, right),
-                handler_evidence(left, right),
+                if same_structure {
+                    handler_evidence(left, right)
+                } else {
+                    format!(
+                        "Handlers share {:.1}% ordered behavior",
+                        handler_similarity * 100.0
+                    )
+                },
                 "Check for wording drift and consolidate if the steps express one behavior",
             );
         }
+    }
+    if evaluated < generated.candidates.len() {
+        generated.mark_verification_truncated(evaluated);
     }
     let operational_error = generated.operational_error(config);
     PairAnalysis {
@@ -155,10 +326,192 @@ pub(super) fn analyze_definition_pairs(
     }
 }
 
+fn pair_similarity_work(
+    left: &StepDefinition,
+    right: &StepDefinition,
+    left_matcher_length: usize,
+    right_matcher_length: usize,
+    left_comparison_bytes: u64,
+    right_comparison_bytes: u64,
+    relationships: PairRelationships,
+) -> u64 {
+    let linear_work = left_comparison_bytes
+        .saturating_add(right_comparison_bytes)
+        .saturating_mul(PAIR_LINEAR_SCAN_MULTIPLIER);
+    let matcher_work = if relationships.normalized_matcher {
+        0
+    } else {
+        matrix_work(left_matcher_length, right_matcher_length)
+    };
+    let handler_work = if relationships.same_handler || relationships.same_handler_structure {
+        0
+    } else {
+        matrix_work(
+            left.handler.behavior_signature.len(),
+            right.handler.behavior_signature.len(),
+        )
+    };
+    linear_work
+        .saturating_add(matcher_work)
+        .saturating_add(handler_work)
+}
+
+fn candidate_suppression_work(
+    candidate: &CandidatePair,
+    relationships: PairRelationships,
+    meaningful_handlers: bool,
+    config: &Config,
+    suppressions: &SuppressionIndex<'_>,
+) -> u64 {
+    let indices = [candidate.left, candidate.right];
+    let lookup_work = |rule| {
+        if config.severity(rule) == Severity::Off {
+            0
+        } else {
+            suppressions.lookup_work(rule, &indices)
+        }
+    };
+    let mut work = 0_u64;
+    if candidate
+        .sources
+        .contains(CandidateSource::NormalizedMatcher)
+    {
+        let rule = if relationships.exact_matcher {
+            Rule::DuplicateMatcher
+        } else {
+            Rule::NormalizedMatcher
+        };
+        work = work.saturating_add(lookup_work(rule));
+    }
+    if candidate
+        .sources
+        .contains(CandidateSource::IdenticalHandler)
+        && !relationships.normalized_matcher
+        && relationships.same_handler
+        && meaningful_handlers
+    {
+        work = work.saturating_add(lookup_work(Rule::DuplicateHandler));
+    }
+    if candidate.sources.can_feed_near_matcher()
+        && !relationships.normalized_matcher
+        && meaningful_handlers
+    {
+        if candidate
+            .sources
+            .contains(CandidateSource::StructuralHandler)
+            && !relationships.same_handler
+            && relationships.same_structure
+        {
+            work = work.saturating_add(lookup_work(Rule::ParameterizationCandidate));
+        } else {
+            work = work.saturating_add(lookup_work(Rule::NearDuplicateStep));
+        }
+    }
+    work
+}
+
+fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
+    let mut exact_matchers = HashMap::new();
+    let mut normalized_matchers = HashMap::new();
+    let mut alpha_handlers = HashMap::new();
+    let mut structural_handlers = HashMap::new();
+    let mut structures_and_behavior = HashMap::new();
+    let mut classes = ComparisonClasses {
+        exact_matcher: Vec::with_capacity(definitions.len()),
+        normalized_matcher: Vec::with_capacity(definitions.len()),
+        alpha_handler: Vec::with_capacity(definitions.len()),
+        structural_handler: Vec::with_capacity(definitions.len()),
+        structure_and_behavior: Vec::with_capacity(definitions.len()),
+    };
+    for definition in definitions {
+        classes.exact_matcher.push(intern_class(
+            &mut exact_matchers,
+            (
+                definition.matcher_kind,
+                definition.matcher.as_str(),
+                definition.matcher_flags.as_str(),
+            ),
+        ));
+        classes.normalized_matcher.push(intern_class(
+            &mut normalized_matchers,
+            (
+                definition.matcher_kind,
+                definition.normalized_matcher.as_str(),
+            ),
+        ));
+        classes.alpha_handler.push(intern_class(
+            &mut alpha_handlers,
+            definition.handler.alpha_normalized.as_str(),
+        ));
+        classes.structural_handler.push(intern_class(
+            &mut structural_handlers,
+            definition.handler.structural.as_str(),
+        ));
+        classes.structure_and_behavior.push(intern_class(
+            &mut structures_and_behavior,
+            (
+                definition.handler.structural.as_str(),
+                definition.handler.behavior_signature.as_slice(),
+            ),
+        ));
+    }
+    classes
+}
+
+fn intern_class<K: Eq + Hash>(classes: &mut HashMap<K, usize>, key: K) -> usize {
+    let next = classes.len();
+    *classes.entry(key).or_insert(next)
+}
+
+fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
+    let mut events = HashMap::new();
+    definitions
+        .iter()
+        .map(|definition| {
+            definition
+                .handler
+                .behavior_signature
+                .iter()
+                .map(|event| intern_class(&mut events, event.as_str()))
+                .collect()
+        })
+        .collect()
+}
+
+fn definition_comparison_bytes(definition: &StepDefinition) -> u64 {
+    let fixed = [
+        definition.matcher.len(),
+        definition.normalized_matcher.len(),
+        definition.matcher_flags.len(),
+        definition.handler.exact.len(),
+        definition.handler.normalized.len(),
+        definition.handler.alpha_normalized.len(),
+        definition.handler.structural.len(),
+        definition.handler.source_snippet.len(),
+    ]
+    .into_iter()
+    .fold(0_usize, usize::saturating_add);
+    let events = definition.handler.behavior_signature.iter().fold(
+        definition.handler.behavior_signature.len(),
+        |total, event| total.saturating_add(event.len()),
+    );
+    u64::try_from(fixed.saturating_add(events)).unwrap_or(u64::MAX)
+}
+
+fn matrix_work(left: usize, right: usize) -> u64 {
+    let left = u64::try_from(left).unwrap_or(u64::MAX);
+    let right = u64::try_from(right).unwrap_or(u64::MAX);
+    left.saturating_mul(right)
+        .saturating_add(left)
+        .saturating_add(right)
+}
+
 pub(super) fn definition_pair_candidates(
     definitions: &[StepDefinition],
     config: &Config,
 ) -> CandidateGeneration {
+    let comparison_classes = comparison_classes(definitions);
+    let behavior_events = behavior_event_ids(definitions);
     let mut normalized_matchers: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
     let mut handlers: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
@@ -195,9 +548,17 @@ pub(super) fn definition_pair_candidates(
         }
         let exact_groups = sorted_groups(exact_groups);
         for exact_group in &exact_groups {
-            insert_spanning(exact_group, NORMALIZED_MATCHER_SOURCE, &mut builder);
+            insert_spanning(
+                exact_group,
+                CandidateSource::NormalizedMatcher,
+                &mut builder,
+            );
         }
-        insert_multipartite_spanning(&exact_groups, NORMALIZED_MATCHER_SOURCE, &mut builder);
+        insert_multipartite_spanning(
+            &exact_groups,
+            CandidateSource::NormalizedMatcher,
+            &mut builder,
+        );
     }
 
     for group in sorted_groups(handlers) {
@@ -211,7 +572,7 @@ pub(super) fn definition_pair_candidates(
         }
         insert_multipartite_spanning(
             &sorted_groups(matcher_groups),
-            IDENTICAL_HANDLER_SOURCE,
+            CandidateSource::IdenticalHandler,
             &mut builder,
         );
     }
@@ -219,6 +580,7 @@ pub(super) fn definition_pair_candidates(
     let mut structural_classes = Vec::new();
     let mut structural_class_by_definition = vec![None; definitions.len()];
     let mut handler_group_by_definition = vec![0_usize; definitions.len()];
+    let mut matcher_group_by_definition = vec![0_usize; definitions.len()];
     for (class_index, group) in sorted_groups(structures).into_iter().enumerate() {
         let mut handler_groups: HashMap<&str, Vec<usize>> = HashMap::new();
         for &index in &group {
@@ -234,10 +596,34 @@ pub(super) fn definition_pair_candidates(
                 handler_group_by_definition[index] = handler_group;
             }
         }
+        let mut matcher_groups: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
+        for &index in &group {
+            let definition = &definitions[index];
+            matcher_groups
+                .entry((definition.matcher_kind, &definition.normalized_matcher))
+                .or_default()
+                .push(index);
+        }
+        let matcher_groups = sorted_groups(matcher_groups);
+        for (matcher_group, indexes) in matcher_groups.iter().enumerate() {
+            for &index in indexes {
+                matcher_group_by_definition[index] = matcher_group;
+            }
+        }
+        let same_handler_proposals = handler_groups.iter().fold(0_u64, |total, indexes| {
+            let mut matcher_counts = HashMap::new();
+            for &index in indexes {
+                *matcher_counts
+                    .entry(matcher_group_by_definition[index])
+                    .or_insert(0_u64) += 1;
+            }
+            total.saturating_add(multipartite_count_sizes(matcher_counts.into_values()))
+        });
         structural_classes.push(StructuralClass {
             anchor: definitions[group[0]].location.clone(),
-            unique_proposals: multipartite_pair_count(&handler_groups),
-            handler_groups,
+            unique_proposals: multipartite_pair_count(&matcher_groups)
+                .saturating_sub(same_handler_proposals),
+            matcher_groups,
         });
     }
     for &(left, right) in &builder.proposals {
@@ -246,6 +632,7 @@ pub(super) fn definition_pair_candidates(
         };
         if structural_class_by_definition[right] == Some(class_index)
             && handler_group_by_definition[left] != handler_group_by_definition[right]
+            && matcher_group_by_definition[left] != matcher_group_by_definition[right]
         {
             structural_classes[class_index].unique_proposals = structural_classes[class_index]
                 .unique_proposals
@@ -258,25 +645,29 @@ pub(super) fn definition_pair_candidates(
         let mut inserted = 0_u64;
         let per_class_limit =
             u64::try_from(config.max_structural_class_comparisons).unwrap_or(u64::MAX);
-        'groups: for left_group in 0..structural_class.handler_groups.len() {
-            for right_group in left_group + 1..structural_class.handler_groups.len() {
-                for left in &structural_class.handler_groups[left_group] {
-                    for right in &structural_class.handler_groups[right_group] {
+        'groups: for left_group in 0..structural_class.matcher_groups.len() {
+            for right_group in left_group + 1..structural_class.matcher_groups.len() {
+                for left in &structural_class.matcher_groups[left_group] {
+                    for right in &structural_class.matcher_groups[right_group] {
+                        if handler_group_by_definition[*left] == handler_group_by_definition[*right]
+                        {
+                            continue;
+                        }
                         if inserted >= per_class_limit {
                             let remaining =
                                 structural_class.unique_proposals.saturating_sub(inserted);
                             if remaining > 0 {
-                                builder.skip(STRUCTURAL_HANDLER_SOURCE, remaining);
+                                builder.skip(CandidateSource::StructuralHandler, remaining);
                                 truncated_structural_classes.push(structural_class.anchor.clone());
                             }
                             break 'groups;
                         }
-                        match builder.insert(STRUCTURAL_HANDLER_SOURCE, *left, *right) {
+                        match builder.insert(CandidateSource::StructuralHandler, *left, *right) {
                             InsertOutcome::Inserted => inserted = inserted.saturating_add(1),
                             InsertOutcome::Existing => {}
                             InsertOutcome::Limit => {
                                 builder.skip(
-                                    STRUCTURAL_HANDLER_SOURCE,
+                                    CandidateSource::StructuralHandler,
                                     structural_class
                                         .unique_proposals
                                         .saturating_sub(inserted)
@@ -291,18 +682,27 @@ pub(super) fn definition_pair_candidates(
             }
         }
     }
+
+    insert_matcher_blocking_candidates(
+        definitions,
+        &comparison_classes,
+        &behavior_events,
+        &mut builder,
+    );
     let census = builder.census(truncated_structural_classes.len());
     CandidateGeneration {
         candidates: builder.candidates,
         census,
         truncated_structural_classes,
+        comparison_classes,
+        behavior_events,
     }
 }
 
 struct StructuralClass {
     anchor: SourceLocation,
     unique_proposals: u64,
-    handler_groups: Vec<Vec<usize>>,
+    matcher_groups: Vec<Vec<usize>>,
 }
 
 fn sorted_groups<K>(groups: HashMap<K, Vec<usize>>) -> Vec<Vec<usize>> {
@@ -311,7 +711,7 @@ fn sorted_groups<K>(groups: HashMap<K, Vec<usize>>) -> Vec<Vec<usize>> {
     groups
 }
 
-fn insert_spanning(group: &[usize], source: &'static str, builder: &mut CandidateBuilder) {
+fn insert_spanning(group: &[usize], source: CandidateSource, builder: &mut CandidateBuilder) {
     for pair in group.windows(2) {
         builder.insert(source, pair[0], pair[1]);
     }
@@ -319,7 +719,7 @@ fn insert_spanning(group: &[usize], source: &'static str, builder: &mut Candidat
 
 fn insert_multipartite_spanning(
     groups: &[Vec<usize>],
-    source: &'static str,
+    source: CandidateSource,
     builder: &mut CandidateBuilder,
 ) {
     if groups.len() < 2 {
@@ -337,11 +737,304 @@ fn insert_multipartite_spanning(
     }
 }
 
+fn insert_matcher_blocking_candidates(
+    definitions: &[StepDefinition],
+    classes: &ComparisonClasses,
+    behavior_events: &[Vec<usize>],
+    builder: &mut CandidateBuilder,
+) {
+    let mut shingle_count = 0_usize;
+    let mut shingles = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        if !meaningful_handler(definition) {
+            shingles.push(Vec::new());
+            continue;
+        }
+        let Some(definition_shingles) = matcher_shingle_keys(&definition.normalized_matcher) else {
+            builder.skip(CandidateSource::MatcherBlocking, 1);
+            return;
+        };
+        let Some(next_count) = shingle_count.checked_add(definition_shingles.len()) else {
+            builder.skip(CandidateSource::MatcherBlocking, 1);
+            return;
+        };
+        if next_count > MAX_MATCHER_SHINGLES_TOTAL {
+            builder.skip(CandidateSource::MatcherBlocking, 1);
+            return;
+        }
+        shingle_count = next_count;
+        shingles.push(definition_shingles);
+    }
+
+    let sorted_events = behavior_events
+        .iter()
+        .map(|events| {
+            let mut events = events.clone();
+            events.sort_unstable();
+            events
+        })
+        .collect::<Vec<_>>();
+    let mut postings: HashMap<(MatcherKind, u64), MatcherPosting> = HashMap::new();
+    for (index, definition) in definitions.iter().enumerate() {
+        if !meaningful_handler(definition) {
+            continue;
+        }
+        for &shingle in &shingles[index] {
+            postings
+                .entry((definition.matcher_kind, shingle))
+                .or_default()
+                .insert(index);
+        }
+    }
+
+    let mut ordered_postings = postings.into_iter().collect::<Vec<_>>();
+    ordered_postings.sort_by_key(|(key, _)| *key);
+    let mut proposal_work = 0_u64;
+    let mut event_work = 0_u64;
+    let mut considered_pairs = HashSet::new();
+    let mut saturated_postings = Vec::new();
+    for (_, posting) in &ordered_postings {
+        if posting.indices.len() > MAX_MATCHER_BLOCKING_POSTING {
+            saturated_postings.push(posting.indices.clone());
+            continue;
+        }
+        if posting.indices.len() < 2 {
+            continue;
+        }
+        for left_offset in 0..posting.indices.len() {
+            for right_offset in left_offset + 1..posting.indices.len() {
+                if !consider_matcher_blocking_pair(
+                    classes,
+                    &sorted_events,
+                    posting.indices[left_offset],
+                    posting.indices[right_offset],
+                    &mut considered_pairs,
+                    &mut proposal_work,
+                    &mut event_work,
+                    builder,
+                ) {
+                    return;
+                }
+            }
+        }
+    }
+
+    // A high-frequency shingle cannot be expanded without quadratic work. Keep each saturated
+    // posting independent so unrelated shingle groups cannot interleave and displace its useful
+    // neighbors. Complete-matcher ordering yields a deterministic linear sample per posting;
+    // `considered_pairs` deduplicates overlapping postings and the shared work limits remain final.
+    for mut lexical in saturated_postings {
+        lexical.sort_by(|&left, &right| {
+            let left = &definitions[left];
+            let right = &definitions[right];
+            left.matcher_kind
+                .cmp(&right.matcher_kind)
+                .then(left.normalized_matcher.cmp(&right.normalized_matcher))
+                .then(left.location.path.cmp(&right.location.path))
+                .then(left.location.line.cmp(&right.location.line))
+                .then(left.location.column.cmp(&right.location.column))
+        });
+        for pair in lexical.windows(2) {
+            if definitions[pair[0]].matcher_kind != definitions[pair[1]].matcher_kind {
+                continue;
+            }
+            if !consider_matcher_blocking_pair(
+                classes,
+                &sorted_events,
+                pair[0],
+                pair[1],
+                &mut considered_pairs,
+                &mut proposal_work,
+                &mut event_work,
+                builder,
+            ) {
+                return;
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct MatcherPosting {
+    indices: Vec<usize>,
+}
+
+impl MatcherPosting {
+    fn insert(&mut self, index: usize) {
+        self.indices.push(index);
+    }
+}
+
+fn matcher_shingle_keys(matcher: &str) -> Option<Vec<u64>> {
+    let mut window = ['\0'; MATCHER_SHINGLE_WIDTH];
+    let mut length = 0_usize;
+    let mut digit_run = false;
+    let mut keys = HashSet::new();
+    for character in matcher.chars().flat_map(char::to_lowercase) {
+        if character.is_numeric() {
+            if digit_run {
+                continue;
+            }
+            digit_run = true;
+            push_matcher_character('0', &mut window, &mut length, &mut keys);
+        } else {
+            digit_run = false;
+            push_matcher_character(character, &mut window, &mut length, &mut keys);
+        }
+        if keys.len() > MAX_MATCHER_SHINGLES_PER_DEFINITION {
+            return None;
+        }
+    }
+    if length > 0 && length < MATCHER_SHINGLE_WIDTH {
+        keys.insert(encode_matcher_characters(&window[..length]));
+    }
+    let mut keys = keys.into_iter().collect::<Vec<_>>();
+    keys.sort_unstable();
+    Some(keys)
+}
+
+fn push_matcher_character(
+    character: char,
+    window: &mut [char; MATCHER_SHINGLE_WIDTH],
+    length: &mut usize,
+    keys: &mut HashSet<u64>,
+) {
+    if *length < MATCHER_SHINGLE_WIDTH {
+        window[*length] = character;
+        *length += 1;
+    } else {
+        window.rotate_left(1);
+        window[MATCHER_SHINGLE_WIDTH - 1] = character;
+    }
+    if *length == MATCHER_SHINGLE_WIDTH {
+        keys.insert(encode_matcher_characters(window));
+    }
+}
+
+fn encode_matcher_characters(characters: &[char]) -> u64 {
+    characters
+        .iter()
+        .enumerate()
+        .fold(0_u64, |encoded, (index, character)| {
+            encoded | ((u64::from(u32::from(*character)) + 1) << (index * 21))
+        })
+}
+
+fn meaningful_handler(definition: &StepDefinition) -> bool {
+    definition.handler.comparable && !definition.handler.trivial
+}
+
+fn covered_by_structural_source(relationships: PairRelationships) -> bool {
+    !relationships.same_handler && relationships.same_structure
+}
+
+fn can_reach_handler_similarity_gate(
+    relationships: PairRelationships,
+    left_events: &[usize],
+    right_events: &[usize],
+) -> bool {
+    if relationships.same_handler || relationships.same_handler_structure {
+        return true;
+    }
+    let longest = left_events.len().max(right_events.len());
+    if longest == 0 {
+        return false;
+    }
+    let mut overlap = 0_usize;
+    let mut left_index = 0_usize;
+    let mut right_index = 0_usize;
+    while left_index < left_events.len() && right_index < right_events.len() {
+        match left_events[left_index].cmp(&right_events[right_index]) {
+            std::cmp::Ordering::Less => left_index += 1,
+            std::cmp::Ordering::Greater => right_index += 1,
+            std::cmp::Ordering::Equal => {
+                left_index += 1;
+                right_index += 1;
+                overlap += 1;
+            }
+        }
+    }
+    overlap as f64 / longest as f64 >= 0.6
+}
+
+#[allow(clippy::too_many_arguments)]
+fn consider_matcher_blocking_pair(
+    classes: &ComparisonClasses,
+    sorted_events: &[Vec<usize>],
+    left: usize,
+    right: usize,
+    considered_pairs: &mut HashSet<(usize, usize)>,
+    proposal_work: &mut u64,
+    event_work: &mut u64,
+    builder: &mut CandidateBuilder,
+) -> bool {
+    let pair = candidate_pair(left, right);
+    let relationships = classes.relationships(left, right);
+    if relationships.normalized_matcher
+        || covered_by_structural_source(relationships)
+        || builder.candidates.contains_key(&pair)
+        || !considered_pairs.insert(pair)
+    {
+        return true;
+    }
+    *proposal_work = proposal_work.saturating_add(1);
+    if *proposal_work > MAX_MATCHER_BLOCKING_PROPOSAL_WORK {
+        builder.skip(CandidateSource::MatcherBlocking, 1);
+        return false;
+    }
+    try_insert_matcher_blocking_candidate(
+        relationships,
+        sorted_events,
+        left,
+        right,
+        event_work,
+        builder,
+    )
+}
+
+fn try_insert_matcher_blocking_candidate(
+    relationships: PairRelationships,
+    sorted_events: &[Vec<usize>],
+    left: usize,
+    right: usize,
+    event_work: &mut u64,
+    builder: &mut CandidateBuilder,
+) -> bool {
+    if builder.candidates.len() >= builder.limit {
+        builder.skip(CandidateSource::MatcherBlocking, 1);
+        return false;
+    }
+    let work = u64::try_from(
+        sorted_events[left]
+            .len()
+            .saturating_add(sorted_events[right].len()),
+    )
+    .unwrap_or(u64::MAX);
+    *event_work = event_work.saturating_add(work);
+    if *event_work > MAX_MATCHER_BLOCKING_EVENT_WORK {
+        builder.skip(CandidateSource::MatcherBlocking, 1);
+        return false;
+    }
+    if can_reach_handler_similarity_gate(relationships, &sorted_events[left], &sorted_events[right])
+        && builder.insert(CandidateSource::MatcherBlocking, left, right) == InsertOutcome::Limit
+    {
+        return false;
+    }
+    true
+}
+
 fn multipartite_pair_count(groups: &[Vec<usize>]) -> u64 {
+    multipartite_count_sizes(
+        groups
+            .iter()
+            .map(|group| u64::try_from(group.len()).unwrap_or(u64::MAX)),
+    )
+}
+
+fn multipartite_count_sizes(sizes: impl IntoIterator<Item = u64>) -> u64 {
     let mut prior = 0_u64;
     let mut total = 0_u64;
-    for group in groups {
-        let size = u64::try_from(group.len()).unwrap_or(u64::MAX);
+    for size in sizes {
         total = total.saturating_add(prior.saturating_mul(size));
         prior = prior.saturating_add(size);
     }
@@ -356,43 +1049,53 @@ enum InsertOutcome {
 }
 
 struct CandidateBuilder {
-    candidates: BTreeSet<(usize, usize)>,
+    candidates: BTreeMap<(usize, usize), CandidatePair>,
     proposals: BTreeSet<(usize, usize)>,
     limit: usize,
-    sources: BTreeMap<&'static str, CandidateSourceCensus>,
+    sources: BTreeMap<CandidateSource, CandidateSourceCensus>,
 }
 
 impl CandidateBuilder {
     fn new(limit: usize) -> Self {
         Self {
-            candidates: BTreeSet::new(),
+            candidates: BTreeMap::new(),
             proposals: BTreeSet::new(),
             limit,
-            sources: [
-                (NORMALIZED_MATCHER_SOURCE, CandidateSourceCensus::default()),
-                (IDENTICAL_HANDLER_SOURCE, CandidateSourceCensus::default()),
-                (STRUCTURAL_HANDLER_SOURCE, CandidateSourceCensus::default()),
-            ]
-            .into_iter()
-            .collect(),
+            sources: CandidateSource::ALL
+                .into_iter()
+                .map(|source| (source, CandidateSourceCensus::default()))
+                .collect(),
         }
     }
 
-    fn insert(&mut self, source: &'static str, left: usize, right: usize) -> InsertOutcome {
+    fn insert(&mut self, source: CandidateSource, left: usize, right: usize) -> InsertOutcome {
         let pair = candidate_pair(left, right);
         if !self.proposals.insert(pair) {
+            if let Some(candidate) = self.candidates.get_mut(&pair) {
+                candidate.sources.insert(source);
+            }
             return InsertOutcome::Existing;
         }
         if self.candidates.len() >= self.limit {
             self.skip(source, 1);
             return InsertOutcome::Limit;
         }
-        self.candidates.insert(pair);
+        let mut sources = CandidateSources::default();
+        sources.insert(source);
+        self.candidates.insert(
+            pair,
+            CandidatePair {
+                left: pair.0,
+                right: pair.1,
+                sources,
+                owner: source,
+            },
+        );
         self.sources.entry(source).or_default().evaluated += 1;
         InsertOutcome::Inserted
     }
 
-    fn skip(&mut self, source: &'static str, count: u64) {
+    fn skip(&mut self, source: CandidateSource, count: u64) {
         let metrics = self.sources.entry(source).or_default();
         metrics.skipped = metrics.skipped.saturating_add(count);
     }
@@ -410,7 +1113,7 @@ impl CandidateBuilder {
             candidate_sources: self
                 .sources
                 .iter()
-                .map(|(name, census)| ((*name).to_owned(), census.clone()))
+                .map(|(source, census)| (source.as_str().to_owned(), census.clone()))
                 .collect(),
         }
     }
@@ -421,12 +1124,49 @@ fn candidate_pair(left: usize, right: usize) -> (usize, usize) {
 }
 
 pub(super) struct CandidateGeneration {
-    pub(super) candidates: BTreeSet<(usize, usize)>,
+    candidates: BTreeMap<(usize, usize), CandidatePair>,
     pub(super) census: AnalysisCensus,
     truncated_structural_classes: Vec<SourceLocation>,
+    comparison_classes: ComparisonClasses,
+    behavior_events: Vec<Vec<usize>>,
+}
+
+#[cfg(test)]
+impl CandidateGeneration {
+    pub(super) fn len(&self) -> usize {
+        self.candidates.len()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+
+    pub(super) fn contains_pair(&self, left: usize, right: usize) -> bool {
+        self.candidates.contains_key(&candidate_pair(left, right))
+    }
 }
 
 impl CandidateGeneration {
+    fn mark_verification_truncated(&mut self, evaluated: usize) {
+        let skipped = self.candidates.len().saturating_sub(evaluated);
+        for candidate in self.candidates.values().skip(evaluated) {
+            if let Some(source) = self
+                .census
+                .candidate_sources
+                .get_mut(candidate.owner.as_str())
+            {
+                source.evaluated = source.evaluated.saturating_sub(1);
+                source.skipped = source.skipped.saturating_add(1);
+            }
+        }
+        self.census.candidate_comparisons_evaluated = evaluated;
+        self.census.skipped_candidate_comparisons = self
+            .census
+            .skipped_candidate_comparisons
+            .saturating_add(u64::try_from(skipped).unwrap_or(u64::MAX));
+        self.census.truncated = true;
+    }
+
     fn operational_error(&self, config: &Config) -> Option<String> {
         self.census.truncated.then(|| {
             let mut affected = self
@@ -446,7 +1186,7 @@ impl CandidateGeneration {
                 format!("; affected structural classes start at {affected}")
             };
             format!(
-                "analysis is incomplete: evaluated {} candidate definition comparisons and skipped {} after configured limits{}; partial findings are available",
+                "analysis is incomplete: evaluated {} candidate definition comparisons and skipped {} after safety limits{}; partial findings are available",
                 self.census.candidate_comparisons_evaluated,
                 self.census.skipped_candidate_comparisons,
                 class_detail
@@ -524,6 +1264,7 @@ fn push_pair_finding(
     findings: &mut Vec<Finding>,
     forests: &mut FindingForests,
     config: &Config,
+    suppressions: &SuppressionIndex<'_>,
     rule: Rule,
     left_index: usize,
     right_index: usize,
@@ -540,10 +1281,13 @@ fn push_pair_finding(
     if severity == Severity::Off {
         return;
     }
-    let suppression = find_suppression(config, rule, &[left, right]);
-    if !forests.retain_edge(rule, suppression.is_some(), left_index, right_index) {
+    let suppression_reason = suppressions.find_reason(rule, &[left_index, right_index]);
+    if !forests.retain_edge(rule, suppression_reason.is_some(), left_index, right_index) {
         return;
     }
+    let suppression = suppression_reason.map(|reason| Suppression {
+        reason: reason.to_owned(),
+    });
     findings.push(Finding {
         rule,
         severity,
@@ -560,4 +1304,507 @@ fn push_pair_finding(
         suggested_action: suggested_action.into(),
         suppression,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::{SourceFile, SourceLanguage};
+    use std::path::PathBuf;
+
+    fn definition() -> StepDefinition {
+        crate::typescript::extract(
+            "Given('abc', () => { open(); fill(); save(); });",
+            &SourceFile {
+                path: PathBuf::from("steps.ts"),
+                language: SourceLanguage::TypeScript,
+            },
+        )
+        .unwrap()
+        .remove(0)
+    }
+
+    fn insert_blocking_candidates(definitions: &[StepDefinition], builder: &mut CandidateBuilder) {
+        let classes = comparison_classes(definitions);
+        let events = behavior_event_ids(definitions);
+        insert_matcher_blocking_candidates(definitions, &classes, &events, builder);
+    }
+
+    #[test]
+    fn candidate_source_flags_preserve_independent_rule_inputs() {
+        let mut sources = CandidateSources::default();
+        for source in CandidateSource::ALL {
+            assert!(!sources.contains(source));
+            sources.insert(source);
+            assert!(sources.contains(source));
+        }
+        assert!(sources.can_feed_near_matcher());
+        let mut normalized_only = CandidateSources::default();
+        normalized_only.insert(CandidateSource::NormalizedMatcher);
+        assert!(!normalized_only.can_feed_near_matcher());
+    }
+
+    #[test]
+    fn matcher_shingle_keys_are_case_folded_unicode_safe_and_deduplicated() {
+        let keys = |values: &[&str]| {
+            let mut keys = values
+                .iter()
+                .map(|value| encode_matcher_characters(&value.chars().collect::<Vec<_>>()))
+                .collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys
+        };
+        assert_eq!(matcher_shingle_keys(""), Some(Vec::new()));
+        assert_eq!(matcher_shingle_keys("AB"), Some(keys(&["ab"])));
+        assert_eq!(matcher_shingle_keys("Abca"), Some(keys(&["abc", "bca"])));
+        assert_eq!(
+            matcher_shingle_keys("再生再生"),
+            Some(keys(&["再生再", "生再生"]))
+        );
+        assert_eq!(matcher_shingle_keys("aaaa"), Some(keys(&["aaa"])));
+        assert_eq!(
+            matcher_shingle_keys("Step 123"),
+            Some(keys(&["ste", "tep", "ep ", "p 0"]))
+        );
+    }
+
+    #[test]
+    fn matcher_shingle_keys_bound_allocation_for_large_inputs() {
+        assert_eq!(
+            matcher_shingle_keys(&"a".repeat(1_000_000))
+                .expect("one repeated shingle")
+                .len(),
+            1
+        );
+        let diverse = (0..MAX_MATCHER_SHINGLES_PER_DEFINITION + 1_000)
+            .filter_map(|offset| char::from_u32(0x1_000 + u32::try_from(offset).unwrap()))
+            .collect::<String>();
+        assert!(matcher_shingle_keys(&diverse).is_none());
+    }
+
+    #[test]
+    fn matcher_blocking_fails_closed_when_a_work_budget_is_exceeded() {
+        let mut oversized = definition();
+        oversized.normalized_matcher = (0..MAX_MATCHER_SHINGLES_PER_DEFINITION + 1_000)
+            .filter_map(|offset| char::from_u32(0x1_000 + u32::try_from(offset).unwrap()))
+            .collect();
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        insert_blocking_candidates(&[oversized], &mut builder);
+        assert!(builder.candidates.is_empty());
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            1
+        );
+
+        let left = definition();
+        let mut right = definition();
+        right.matcher = "abd".to_owned();
+        right.normalized_matcher = "abd".to_owned();
+        right.handler.alpha_normalized = "different-alpha".to_owned();
+        right.handler.structural = "different-structure".to_owned();
+        let definitions = [left, right];
+        let classes = comparison_classes(&definitions);
+        let relationships = classes.relationships(0, 1);
+        let mut sorted_events = behavior_event_ids(&definitions);
+        sorted_events
+            .iter_mut()
+            .for_each(|events| events.sort_unstable());
+        let mut event_work = MAX_MATCHER_BLOCKING_EVENT_WORK;
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        assert!(!try_insert_matcher_blocking_candidate(
+            relationships,
+            &sorted_events,
+            0,
+            1,
+            &mut event_work,
+            &mut builder
+        ));
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            1
+        );
+    }
+
+    #[test]
+    fn handler_prefilters_are_safe_upper_bounds_for_the_near_rule() {
+        let base = definition();
+        assert!(meaningful_handler(&base));
+        let mut trivial = base.clone();
+        trivial.handler.trivial = true;
+        assert!(!meaningful_handler(&trivial));
+        let mut unresolved = base.clone();
+        unresolved.handler.comparable = false;
+        assert!(!meaningful_handler(&unresolved));
+
+        let mut same_structure = base.clone();
+        same_structure.handler.alpha_normalized = "different".to_owned();
+        let definitions = [base.clone(), same_structure.clone()];
+        let classes = comparison_classes(&definitions);
+        assert!(covered_by_structural_source(classes.relationships(0, 1)));
+        same_structure
+            .handler
+            .behavior_signature
+            .push("notify".to_owned());
+        let definitions = [base.clone(), same_structure];
+        let classes = comparison_classes(&definitions);
+        assert!(!covered_by_structural_source(classes.relationships(0, 1)));
+        assert!(!covered_by_structural_source(classes.relationships(0, 0)));
+
+        let cases = [
+            (vec!["a", "b", "c", "d", "e"], vec!["a", "b", "c"], true),
+            (vec!["a", "b", "c", "d", "e"], vec!["a", "b"], false),
+            (vec!["a", "a", "a"], vec!["a", "b", "b"], false),
+            (vec![], vec!["a"], false),
+        ];
+        for (left, right, expected) in cases {
+            let mut left_definition = base.clone();
+            let mut right_definition = base.clone();
+            right_definition.handler.alpha_normalized = "different-alpha".to_owned();
+            right_definition.handler.structural = "different-structure".to_owned();
+            left_definition.handler.behavior_signature =
+                left.into_iter().map(str::to_owned).collect();
+            right_definition.handler.behavior_signature =
+                right.into_iter().map(str::to_owned).collect();
+            let definitions = [left_definition, right_definition];
+            let classes = comparison_classes(&definitions);
+            let mut events = behavior_event_ids(&definitions);
+            events.iter_mut().for_each(|events| events.sort_unstable());
+            assert_eq!(
+                can_reach_handler_similarity_gate(
+                    classes.relationships(0, 1),
+                    &events[0],
+                    &events[1]
+                ),
+                expected
+            );
+        }
+
+        let empty_events = Vec::<usize>::new();
+        let definitions = [base.clone(), base];
+        let classes = comparison_classes(&definitions);
+        assert!(can_reach_handler_similarity_gate(
+            classes.relationships(0, 1),
+            &empty_events,
+            &empty_events
+        ));
+    }
+
+    #[test]
+    fn behavior_events_are_interned_before_pairwise_sequence_comparison() {
+        let prefix = "x".repeat(4_096);
+        let mut left = definition();
+        let mut right = definition();
+        left.handler.behavior_signature = vec![format!("{prefix}a"); 256];
+        right.handler.behavior_signature = vec![format!("{prefix}b"); 256];
+
+        let events = behavior_event_ids(&[left, right]);
+        assert_eq!(events[0].len(), 256);
+        assert_eq!(events[1].len(), 256);
+        assert!(events[0].iter().all(|event| *event == events[0][0]));
+        assert!(events[1].iter().all(|event| *event == events[1][0]));
+        assert_ne!(events[0][0], events[1][0]);
+        assert_eq!(
+            handler_similarity_with_relationship(false, false, &events[0], &events[1]),
+            0.0
+        );
+    }
+
+    #[test]
+    fn similarity_work_charges_equality_shortcuts_and_structural_skips_unreachable_pairs() {
+        let mut left = definition();
+        let mut right = left.clone();
+        left.handler.alpha_normalized = format!("{}a", "x".repeat(10_000));
+        right.handler.alpha_normalized = format!("{}b", "x".repeat(10_000));
+        left.handler.structural = "shared-structure".repeat(1_000);
+        right.handler.structural = left.handler.structural.clone();
+        let pair = [left, right];
+        let classes = comparison_classes(&pair);
+        assert!(
+            pair_similarity_work(
+                &pair[0],
+                &pair[1],
+                3,
+                3,
+                definition_comparison_bytes(&pair[0]),
+                definition_comparison_bytes(&pair[1]),
+                classes.relationships(0, 1)
+            ) > 100_000
+        );
+
+        let definitions = crate::typescript::extract(
+            "Given('same', () => perform(1));\nGiven('same', () => perform(2));\nGiven('same', () => perform(3));",
+            &SourceFile {
+                path: PathBuf::from("steps.ts"),
+                language: SourceLanguage::TypeScript,
+            },
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let config = Config::load(directory.path(), Default::default()).unwrap();
+        let generated = definition_pair_candidates(&definitions, &config);
+        assert_eq!(generated.candidates.len(), 2);
+        assert!(generated.candidates.values().all(|candidate| candidate
+            .sources
+            .contains(CandidateSource::NormalizedMatcher)));
+        assert!(generated.candidates.values().all(|candidate| !candidate
+            .sources
+            .contains(CandidateSource::StructuralHandler)));
+    }
+
+    #[test]
+    fn suppression_work_mirrors_mutually_exclusive_structural_and_near_rules() {
+        let left = definition();
+        let mut right = left.clone();
+        right.matcher = "different matcher".to_owned();
+        right.normalized_matcher = right.matcher.clone();
+        right.handler.alpha_normalized = "different-alpha".to_owned();
+        let definitions = [left, right];
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::load(directory.path(), Default::default()).unwrap();
+        config.suppressions = [
+            Rule::ParameterizationCandidate,
+            Rule::NearDuplicateStep,
+            Rule::NearDuplicateStep,
+        ]
+        .into_iter()
+        .map(|rule| crate::config::SuppressionConfig {
+            rule,
+            reason: "temporary migration".to_owned(),
+            path: Some("**".to_owned()),
+            matcher: None,
+        })
+        .collect();
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let classes = comparison_classes(&definitions);
+        let mut sources = CandidateSources::default();
+        sources.insert(CandidateSource::StructuralHandler);
+        let candidate = CandidatePair {
+            left: 0,
+            right: 1,
+            sources,
+            owner: CandidateSource::StructuralHandler,
+        };
+
+        let parameterization_work =
+            suppressions.lookup_work(Rule::ParameterizationCandidate, &[0, 1]);
+        let near_work = suppressions.lookup_work(Rule::NearDuplicateStep, &[0, 1]);
+        assert_eq!(near_work, parameterization_work * 2);
+        assert_eq!(
+            candidate_suppression_work(
+                &candidate,
+                classes.relationships(0, 1),
+                true,
+                &config,
+                &suppressions,
+            ),
+            parameterization_work
+        );
+
+        let relationships = classes.relationships(0, 1);
+        assert_eq!(
+            candidate_suppression_work(
+                &candidate,
+                PairRelationships {
+                    same_handler: true,
+                    ..relationships
+                },
+                true,
+                &config,
+                &suppressions,
+            ),
+            near_work
+        );
+        assert_eq!(
+            candidate_suppression_work(
+                &candidate,
+                PairRelationships {
+                    same_structure: false,
+                    ..relationships
+                },
+                true,
+                &config,
+                &suppressions,
+            ),
+            near_work
+        );
+        assert_eq!(
+            candidate_suppression_work(
+                &candidate,
+                PairRelationships {
+                    normalized_matcher: true,
+                    ..relationships
+                },
+                true,
+                &config,
+                &suppressions,
+            ),
+            0
+        );
+        assert_eq!(
+            candidate_suppression_work(&candidate, relationships, false, &config, &suppressions,),
+            0
+        );
+
+        config.suppressions = vec![crate::config::SuppressionConfig {
+            rule: Rule::DuplicateHandler,
+            reason: "temporary migration".to_owned(),
+            path: Some("**".to_owned()),
+            matcher: None,
+        }];
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut identical_sources = CandidateSources::default();
+        identical_sources.insert(CandidateSource::IdenticalHandler);
+        let identical_candidate = CandidatePair {
+            sources: identical_sources,
+            owner: CandidateSource::IdenticalHandler,
+            ..candidate
+        };
+        let duplicate_work = suppressions.lookup_work(Rule::DuplicateHandler, &[0, 1]);
+        let same_handler = PairRelationships {
+            same_handler: true,
+            same_structure: false,
+            ..relationships
+        };
+        assert_eq!(
+            candidate_suppression_work(
+                &identical_candidate,
+                same_handler,
+                true,
+                &config,
+                &suppressions,
+            ),
+            duplicate_work
+        );
+        for (relationships, meaningful) in [
+            (
+                PairRelationships {
+                    normalized_matcher: true,
+                    ..same_handler
+                },
+                true,
+            ),
+            (
+                PairRelationships {
+                    same_handler: false,
+                    ..same_handler
+                },
+                true,
+            ),
+            (same_handler, false),
+        ] {
+            assert_eq!(
+                candidate_suppression_work(
+                    &identical_candidate,
+                    relationships,
+                    meaningful,
+                    &config,
+                    &suppressions,
+                ),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn saturated_matcher_postings_use_a_linear_lexical_fallback() {
+        let base = definition();
+        let definitions = (0..=MAX_MATCHER_BLOCKING_POSTING)
+            .map(|index| {
+                let mut definition = base.clone();
+                definition.matcher = format!("the account record {index:03} is enabled");
+                definition.normalized_matcher = definition.matcher.clone();
+                definition.handler.alpha_normalized = format!("alpha-{index}");
+                definition.handler.structural = format!("structure-{index}");
+                definition.handler.behavior_signature = vec![
+                    "open".to_owned(),
+                    "fill".to_owned(),
+                    format!("specific-{index}"),
+                ];
+                definition
+            })
+            .collect::<Vec<_>>();
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        insert_blocking_candidates(&definitions, &mut builder);
+        assert_eq!(builder.candidates.len(), definitions.len() - 1);
+        assert!(builder.candidates.contains_key(&candidate_pair(0, 1)));
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            0
+        );
+    }
+
+    #[test]
+    fn saturated_matcher_fallback_keeps_interleaved_postings_independent() {
+        let base = definition();
+        let definitions = (0..=MAX_MATCHER_BLOCKING_POSTING)
+            .flat_map(|index| {
+                ["aaa", "bbb"].into_iter().enumerate().map({
+                    let base = base.clone();
+                    move |(group, shingle)| {
+                        let mut definition = base.clone();
+                        definition.matcher = format!("{index:03} {shingle} shared");
+                        definition.normalized_matcher = definition.matcher.clone();
+                        definition.handler.alpha_normalized = format!("alpha-{group}-{index}");
+                        definition.handler.structural = format!("structure-{group}-{index}");
+                        definition.handler.behavior_signature = vec![
+                            format!("group-{group}"),
+                            "open".to_owned(),
+                            "fill".to_owned(),
+                            "save".to_owned(),
+                        ];
+                        definition
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        insert_blocking_candidates(&definitions, &mut builder);
+
+        assert!(builder.candidates.contains_key(&candidate_pair(0, 2)));
+        assert!(builder.candidates.contains_key(&candidate_pair(1, 3)));
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            0
+        );
+    }
+
+    #[test]
+    fn repeated_posting_pairs_are_charged_once_and_fallback_requires_saturation() {
+        let base = definition();
+        let shared_prefix = (0..80)
+            .filter_map(|offset| char::from_u32(0x1_000 + offset))
+            .collect::<String>();
+        let definitions = (0..MAX_MATCHER_BLOCKING_POSTING)
+            .map(|index| {
+                let mut definition = base.clone();
+                definition.matcher = format!(
+                    "{shared_prefix}{}",
+                    char::from_u32(0x2_000 + u32::try_from(index).unwrap()).unwrap()
+                );
+                definition.normalized_matcher = definition.matcher.clone();
+                definition.handler.alpha_normalized = format!("alpha-{index}");
+                definition.handler.structural = format!("structure-{index}");
+                definition.handler.behavior_signature = vec![format!("event-{index}")];
+                definition
+            })
+            .collect::<Vec<_>>();
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        insert_blocking_candidates(&definitions, &mut builder);
+        assert!(builder.candidates.is_empty());
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            0
+        );
+
+        let mut left = base.clone();
+        left.matcher = "ab".to_owned();
+        left.normalized_matcher = left.matcher.clone();
+        let mut right = base;
+        right.matcher = "ac".to_owned();
+        right.normalized_matcher = right.matcher.clone();
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        insert_blocking_candidates(&[left, right], &mut builder);
+        assert!(builder.candidates.is_empty());
+    }
 }

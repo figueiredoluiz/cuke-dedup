@@ -2,7 +2,9 @@
 
 use crate::framework_config;
 use crate::model::{Rule, Severity};
-use crate::resource_limits::{is_input_limit_error, read_utf8, MAX_CONFIG_INPUT_BYTES};
+use crate::resource_limits::{
+    is_input_limit_error, read_utf8, MAX_CONFIG_INPUT_BYTES, MAX_SUPPRESSION_REASON_CHARS,
+};
 use anyhow::{bail, Context, Result};
 use globset::Glob;
 use serde::{Deserialize, Serialize};
@@ -490,6 +492,13 @@ impl Config {
                     suppression.rule
                 );
             }
+            if suppression.reason.chars().count() > MAX_SUPPRESSION_REASON_CHARS {
+                bail!(
+                    "suppression reason for {} exceeds the {}-character limit",
+                    suppression.rule,
+                    MAX_SUPPRESSION_REASON_CHARS
+                );
+            }
             if suppression.path.is_none() && suppression.matcher.is_none() {
                 bail!(
                     "suppression for {} must select a path or matcher",
@@ -805,6 +814,21 @@ mod tests {
         .unwrap();
         let error = Config::load(directory.path(), ConfigOverrides::default()).unwrap_err();
         assert!(error.to_string().contains("non-empty reason"));
+    }
+
+    #[test]
+    fn suppression_reasons_have_a_bounded_payload() {
+        let directory = tempfile::tempdir().unwrap();
+        let reason = "x".repeat(MAX_SUPPRESSION_REASON_CHARS + 1);
+        fs::write(
+            directory.path().join("cuke-dedup.config.json"),
+            format!(
+                r#"{{"suppressions":[{{"rule":"duplicate-handler","path":"steps.ts","reason":"{reason}"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let error = Config::load(directory.path(), ConfigOverrides::default()).unwrap_err();
+        assert!(error.to_string().contains("512-character limit"));
     }
 
     #[test]

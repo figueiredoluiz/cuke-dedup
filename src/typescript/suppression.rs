@@ -1,4 +1,5 @@
 use crate::model::{InlineSuppression, Rule, SourceLocation};
+use crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS;
 use crate::source_adapter::{ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile};
 use tree_sitter::Node;
 
@@ -43,6 +44,14 @@ pub(super) fn inline_suppressions(
                 file,
                 index,
                 "inline suppression reason must not be empty",
+            ));
+        } else if reason.chars().count() > MAX_SUPPRESSION_REASON_CHARS {
+            diagnostics.push(inline_suppression_diagnostic(
+                file,
+                index,
+                &format!(
+                    "inline suppression reason exceeds the {MAX_SUPPRESSION_REASON_CHARS}-character limit"
+                ),
             ));
         } else {
             suppressions.push(InlineSuppression {

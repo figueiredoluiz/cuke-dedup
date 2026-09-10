@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "knownMissBaseline": 3,
-  "minimumRecall": 0.4,
+  "knownMissBaseline": 2,
+  "minimumRecall": 0.6,
   "cases": [
     {
       "name": "exact-match-remains-detectable",
@@ -18,12 +18,11 @@
       "name": "fuzzy-wording-with-varied-handler-shape",
       "path": "fuzzy-varied-handler",
       "expectedDefinitions": 2,
-      "knownMisses": [
+      "expectedCandidateSources": { "matcherBlocking": 1 },
+      "expectedFindings": [
         {
-          "id": "D-1",
           "rule": "near-duplicate-step",
-          "matchers": ["I am on login page", "I am on the login page"],
-          "reason": "Matcher-driven blocking and soft handler agreement are not implemented yet"
+          "matchers": ["I am on login page", "I am on the login page"]
         }
       ]
     },

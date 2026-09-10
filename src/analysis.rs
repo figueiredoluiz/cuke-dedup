@@ -41,13 +41,6 @@ pub struct AnalysisOutcome {
     pub operational_errors: Vec<String>,
 }
 
-pub(crate) fn unmatched_suppressions(
-    config: &Config,
-    definitions: &[StepDefinition],
-) -> Vec<usize> {
-    suppression::unmatched_suppressions(config, definitions)
-}
-
 /// Evaluates every configured rule against extracted definitions and feature steps.
 pub fn analyze(
     definitions: Vec<StepDefinition>,
@@ -72,26 +65,54 @@ pub fn analyze_with_diagnostics(
     feature_steps: Vec<FeatureStep>,
     config: &Config,
 ) -> Result<AnalysisOutcome> {
-    Ok(analyze_internal(definitions, feature_steps, config)?.0)
+    Ok(analyze_internal(definitions, feature_steps, config, false)?.0)
 }
 
 pub(crate) fn analyze_for_cli(
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
     config: &Config,
-) -> Result<(AnalysisOutcome, AnalysisCensus)> {
-    analyze_internal(definitions, feature_steps, config)
+) -> Result<(
+    AnalysisOutcome,
+    AnalysisCensus,
+    suppression::UnmatchedSuppressionOutcome,
+)> {
+    analyze_internal(definitions, feature_steps, config, true)
 }
 
 fn analyze_internal(
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
     config: &Config,
-) -> Result<(AnalysisOutcome, AnalysisCensus)> {
+    include_unmatched_suppressions: bool,
+) -> Result<(
+    AnalysisOutcome,
+    AnalysisCensus,
+    suppression::UnmatchedSuppressionOutcome,
+)> {
     let mut findings = Vec::new();
-    let pair_analysis = pairs::analyze_definition_pairs(&definitions, config, &mut findings);
-    let usage = usage::analyze_feature_usage(&definitions, &feature_steps, config, &mut findings);
-    usage::analyze_unused(&definitions, &usage.used, config, &mut findings);
+    let suppressions = suppression::SuppressionIndex::new(config, &definitions);
+    let pair_analysis =
+        pairs::analyze_definition_pairs(&definitions, config, &suppressions, &mut findings);
+    let usage = usage::analyze_feature_usage(
+        &definitions,
+        &feature_steps,
+        config,
+        &suppressions,
+        &mut findings,
+    );
+    usage::analyze_unused(
+        &definitions,
+        &usage.used,
+        config,
+        &suppressions,
+        &mut findings,
+    );
+    let unmatched_suppressions = if include_unmatched_suppressions {
+        suppressions.unmatched()
+    } else {
+        suppression::UnmatchedSuppressionOutcome::default()
+    };
     findings.sort_by(|left, right| {
         left.primary
             .path
@@ -112,6 +133,7 @@ fn analyze_internal(
             operational_errors,
         },
         pair_analysis.census,
+        unmatched_suppressions,
     ))
 }
 
