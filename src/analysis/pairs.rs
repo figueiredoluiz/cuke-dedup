@@ -18,8 +18,27 @@ const MAX_MATCHER_SHINGLES_TOTAL: usize = 250_000;
 const MAX_MATCHER_BLOCKING_POSTING: usize = 256;
 const MAX_MATCHER_BLOCKING_PROPOSAL_WORK: u64 = 2_000_000;
 const MAX_MATCHER_BLOCKING_EVENT_WORK: u64 = 10_000_000;
-const MAX_PAIR_SIMILARITY_WORK: u64 = 100_000_000;
+const MAX_PAIR_MATRIX_WORK: u64 = 100_000_000;
+const MAX_TOTAL_PAIR_SIMILARITY_WORK: u64 = 1_000_000_000;
+const MAX_TOTAL_PAIR_SUPPRESSION_WORK: u64 = 100_000_000;
 const PAIR_LINEAR_SCAN_MULTIPLIER: u64 = 4;
+
+#[derive(Clone, Copy)]
+enum PairSimilarityWork {
+    Matcher,
+    Handler,
+    Evidence,
+}
+
+struct PairWorkInput<'a> {
+    left: &'a StepDefinition,
+    right: &'a StepDefinition,
+    left_matcher_length: usize,
+    right_matcher_length: usize,
+    left_comparison_bytes: u64,
+    right_comparison_bytes: u64,
+    relationships: PairRelationships,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum CandidateSource {
@@ -127,6 +146,7 @@ pub(super) fn analyze_definition_pairs(
     let behavior_events = &generated.behavior_events;
     let mut forests = FindingForests::new(definitions.len());
     let mut similarity_work = 0_u64;
+    let mut suppression_work = 0_u64;
     let mut evaluated = 0_usize;
     for candidate in generated.candidates.values() {
         let left_index = candidate.left;
@@ -142,51 +162,126 @@ pub(super) fn analyze_definition_pairs(
             && right.handler.comparable
             && !left.handler.trivial
             && !right.handler.trivial;
-
-        let pair_work = pair_similarity_work(
+        let pair_work = PairWorkInput {
             left,
             right,
-            matcher_lengths[left_index],
-            matcher_lengths[right_index],
-            comparison_bytes[left_index],
-            comparison_bytes[right_index],
+            left_matcher_length: matcher_lengths[left_index],
+            right_matcher_length: matcher_lengths[right_index],
+            left_comparison_bytes: comparison_bytes[left_index],
+            right_comparison_bytes: comparison_bytes[right_index],
             relationships,
-        )
-        .saturating_add(candidate_suppression_work(
-            candidate,
-            relationships,
-            meaningful_handlers,
-            config,
-            suppressions,
-        ));
-        let Some(next_work) = similarity_work.checked_add(pair_work) else {
-            break;
         };
-        if next_work > MAX_PAIR_SIMILARITY_WORK {
-            break;
-        }
-        similarity_work = next_work;
-        evaluated += 1;
 
-        // Equal normalized matchers have a known score. Every other candidate needs the
-        // fuzzy score either to classify the finding or to retain report evidence.
-        let matcher_similarity = if normalized_matcher {
-            1.0
-        } else {
-            matcher_similarity(left, right)
-        };
-        let near_matcher = !normalized_matcher && is_near_matcher(left, right, matcher_similarity);
-        let handler_similarity = handler_similarity_with_relationship(
-            same_handler,
-            relationships.same_handler_structure,
-            &behavior_events[left_index],
-            &behavior_events[right_index],
-        );
-
-        if candidate
+        let normalized_rule = candidate
             .sources
             .contains(CandidateSource::NormalizedMatcher)
-            && exact_matcher
+            .then_some(if exact_matcher {
+                Rule::DuplicateMatcher
+            } else {
+                Rule::NormalizedMatcher
+            })
+            .filter(|_| normalized_matcher);
+        let duplicate_handler = candidate
+            .sources
+            .contains(CandidateSource::IdenticalHandler)
+            && !normalized_matcher
+            && same_handler
+            && meaningful_handlers;
+        let structural_handler = candidate
+            .sources
+            .contains(CandidateSource::StructuralHandler)
+            && !normalized_matcher
+            && !same_handler
+            && same_structure
+            && meaningful_handlers;
+        let near_handler = candidate.sources.can_feed_near_matcher()
+            && !structural_handler
+            && !normalized_matcher
+            && meaningful_handlers;
+        let rule_is_active = |rule| config.severity(rule) != Severity::Off;
+        let matcher_is_needed = !normalized_matcher
+            && ((duplicate_handler && rule_is_active(Rule::DuplicateHandler))
+                || (structural_handler && rule_is_active(Rule::ParameterizationCandidate))
+                || (near_handler && rule_is_active(Rule::NearDuplicateStep)));
+
+        if matcher_is_needed
+            && !charge_matrix_work(
+                &mut similarity_work,
+                pair_similarity_work(&pair_work, PairSimilarityWork::Matcher),
+            )
+        {
+            break;
+        }
+        let matcher_similarity = if normalized_matcher {
+            1.0
+        } else if matcher_is_needed {
+            matcher_similarity(left, right)
+        } else {
+            0.0
+        };
+        let parameterization_candidate = structural_handler && matcher_similarity >= 0.6;
+        let near_duplicate_candidate = !parameterization_candidate
+            && near_handler
+            && matcher_is_needed
+            && is_near_matcher(left, right, matcher_similarity);
+        let handler_is_needed = normalized_rule.is_some_and(rule_is_active)
+            || (duplicate_handler && rule_is_active(Rule::DuplicateHandler))
+            || (parameterization_candidate && rule_is_active(Rule::ParameterizationCandidate))
+            || (near_duplicate_candidate && rule_is_active(Rule::NearDuplicateStep));
+        if handler_is_needed
+            && !charge_matrix_work(
+                &mut similarity_work,
+                pair_similarity_work(&pair_work, PairSimilarityWork::Handler),
+            )
+        {
+            break;
+        }
+        let handler_similarity = if handler_is_needed {
+            handler_similarity_with_relationship(
+                same_handler,
+                relationships.same_handler_structure,
+                &behavior_events[left_index],
+                &behavior_events[right_index],
+            )
+        } else {
+            0.0
+        };
+
+        let normalized_finding = normalized_rule.filter(|rule| rule_is_active(*rule));
+        let duplicate_finding = (duplicate_handler && rule_is_active(Rule::DuplicateHandler))
+            .then_some(Rule::DuplicateHandler);
+        let handler_finding =
+            if parameterization_candidate && rule_is_active(Rule::ParameterizationCandidate) {
+                Some(Rule::ParameterizationCandidate)
+            } else if near_duplicate_candidate
+                && handler_similarity >= 0.6
+                && rule_is_active(Rule::NearDuplicateStep)
+            {
+                Some(Rule::NearDuplicateStep)
+            } else {
+                None
+            };
+        let finding_rules = [normalized_finding, duplicate_finding, handler_finding];
+        let finding_count = finding_rules.iter().flatten().count();
+        let evidence_work = if finding_count == 0 {
+            0
+        } else {
+            pair_similarity_work(&pair_work, PairSimilarityWork::Evidence)
+                .saturating_mul(u64::try_from(finding_count).unwrap_or(u64::MAX))
+        };
+        let candidate_suppression_work =
+            candidate_suppression_work(&finding_rules, candidate, suppressions);
+        if !charge_similarity_work(&mut similarity_work, evidence_work)
+            || !charge_work(
+                &mut suppression_work,
+                candidate_suppression_work,
+                MAX_TOTAL_PAIR_SUPPRESSION_WORK,
+            )
+        {
+            break;
+        }
+
+        if normalized_rule == Some(Rule::DuplicateMatcher) && rule_is_active(Rule::DuplicateMatcher)
         {
             push_pair_finding(
                 findings,
@@ -205,10 +300,8 @@ pub(super) fn analyze_definition_pairs(
                 handler_evidence(left, right),
                 "Keep one definition or make the matchers intentionally distinct",
             );
-        } else if candidate
-            .sources
-            .contains(CandidateSource::NormalizedMatcher)
-            && normalized_matcher
+        } else if normalized_rule == Some(Rule::NormalizedMatcher)
+            && rule_is_active(Rule::NormalizedMatcher)
         {
             push_pair_finding(
                 findings,
@@ -232,13 +325,7 @@ pub(super) fn analyze_definition_pairs(
             );
         }
 
-        if candidate
-            .sources
-            .contains(CandidateSource::IdenticalHandler)
-            && !normalized_matcher
-            && same_handler
-            && meaningful_handlers
-        {
+        if duplicate_handler && rule_is_active(Rule::DuplicateHandler) {
             push_pair_finding(
                 findings,
                 &mut forests,
@@ -258,15 +345,7 @@ pub(super) fn analyze_definition_pairs(
             );
         }
 
-        if candidate
-            .sources
-            .contains(CandidateSource::StructuralHandler)
-            && !normalized_matcher
-            && !same_handler
-            && same_structure
-            && meaningful_handlers
-            && matcher_similarity >= 0.6
-        {
+        if parameterization_candidate && rule_is_active(Rule::ParameterizationCandidate) {
             push_pair_finding(
                 findings,
                 &mut forests,
@@ -284,11 +363,9 @@ pub(super) fn analyze_definition_pairs(
                 "Handlers have the same control flow and calls after literal normalization",
                 "Consider replacing the literal differences with a step parameter",
             );
-        } else if candidate.sources.can_feed_near_matcher()
-            && !normalized_matcher
-            && near_matcher
+        } else if near_duplicate_candidate
             && handler_similarity >= 0.6
-            && meaningful_handlers
+            && rule_is_active(Rule::NearDuplicateStep)
         {
             push_pair_finding(
                 findings,
@@ -315,6 +392,7 @@ pub(super) fn analyze_definition_pairs(
                 "Check for wording drift and consolidate if the steps express one behavior",
             );
         }
+        evaluated += 1;
     }
     if evaluated < generated.candidates.len() {
         generated.mark_verification_truncated(evaluated);
@@ -326,88 +404,55 @@ pub(super) fn analyze_definition_pairs(
     }
 }
 
-fn pair_similarity_work(
-    left: &StepDefinition,
-    right: &StepDefinition,
-    left_matcher_length: usize,
-    right_matcher_length: usize,
-    left_comparison_bytes: u64,
-    right_comparison_bytes: u64,
-    relationships: PairRelationships,
-) -> u64 {
-    let linear_work = left_comparison_bytes
-        .saturating_add(right_comparison_bytes)
-        .saturating_mul(PAIR_LINEAR_SCAN_MULTIPLIER);
-    let matcher_work = if relationships.normalized_matcher {
-        0
-    } else {
-        matrix_work(left_matcher_length, right_matcher_length)
-    };
-    let handler_work = if relationships.same_handler || relationships.same_handler_structure {
-        0
-    } else {
-        matrix_work(
-            left.handler.behavior_signature.len(),
-            right.handler.behavior_signature.len(),
-        )
-    };
-    linear_work
-        .saturating_add(matcher_work)
-        .saturating_add(handler_work)
+fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> u64 {
+    match work {
+        PairSimilarityWork::Matcher if !input.relationships.normalized_matcher => {
+            matrix_work(input.left_matcher_length, input.right_matcher_length)
+        }
+        PairSimilarityWork::Handler
+            if !input.relationships.same_handler && !input.relationships.same_handler_structure =>
+        {
+            matrix_work(
+                input.left.handler.behavior_signature.len(),
+                input.right.handler.behavior_signature.len(),
+            )
+        }
+        PairSimilarityWork::Evidence => input
+            .left_comparison_bytes
+            .saturating_add(input.right_comparison_bytes)
+            .saturating_mul(PAIR_LINEAR_SCAN_MULTIPLIER),
+        _ => 0,
+    }
 }
 
 fn candidate_suppression_work(
+    rules: &[Option<Rule>],
     candidate: &CandidatePair,
-    relationships: PairRelationships,
-    meaningful_handlers: bool,
-    config: &Config,
     suppressions: &SuppressionIndex<'_>,
 ) -> u64 {
     let indices = [candidate.left, candidate.right];
-    let lookup_work = |rule| {
-        if config.severity(rule) == Severity::Off {
-            0
-        } else {
-            suppressions.lookup_work(rule, &indices)
-        }
+    rules.iter().flatten().fold(0_u64, |work, &rule| {
+        work.saturating_add(suppressions.lookup_work(rule, &indices))
+    })
+}
+
+fn charge_similarity_work(total: &mut u64, work: u64) -> bool {
+    charge_work(total, work, MAX_TOTAL_PAIR_SIMILARITY_WORK)
+}
+
+fn charge_work(total: &mut u64, work: u64, limit: u64) -> bool {
+    let Some(next) = total.checked_add(work) else {
+        return false;
     };
-    let mut work = 0_u64;
-    if candidate
-        .sources
-        .contains(CandidateSource::NormalizedMatcher)
-    {
-        let rule = if relationships.exact_matcher {
-            Rule::DuplicateMatcher
-        } else {
-            Rule::NormalizedMatcher
-        };
-        work = work.saturating_add(lookup_work(rule));
+    if next > limit {
+        return false;
     }
-    if candidate
-        .sources
-        .contains(CandidateSource::IdenticalHandler)
-        && !relationships.normalized_matcher
-        && relationships.same_handler
-        && meaningful_handlers
-    {
-        work = work.saturating_add(lookup_work(Rule::DuplicateHandler));
-    }
-    if candidate.sources.can_feed_near_matcher()
-        && !relationships.normalized_matcher
-        && meaningful_handlers
-    {
-        if candidate
-            .sources
-            .contains(CandidateSource::StructuralHandler)
-            && !relationships.same_handler
-            && relationships.same_structure
-        {
-            work = work.saturating_add(lookup_work(Rule::ParameterizationCandidate));
-        } else {
-            work = work.saturating_add(lookup_work(Rule::NearDuplicateStep));
-        }
-    }
-    work
+    *total = next;
+    true
+}
+
+fn charge_matrix_work(total: &mut u64, work: u64) -> bool {
+    work <= MAX_PAIR_MATRIX_WORK && charge_similarity_work(total, work)
 }
 
 fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
@@ -1510,26 +1555,302 @@ mod tests {
     }
 
     #[test]
-    fn similarity_work_charges_equality_shortcuts_and_structural_skips_unreachable_pairs() {
+    fn matcher_blocking_rejections_do_not_spend_handler_lcs_work() {
+        let mut left = definition();
+        left.matcher = format!("abc {}", "x".repeat(64));
+        left.normalized_matcher = left.matcher.clone();
+        left.handler.alpha_normalized = "left-alpha".to_owned();
+        left.handler.structural = "left-structure".to_owned();
+        left.handler.behavior_signature = vec!["shared-event".to_owned(); 10_000];
+
+        let mut right = definition();
+        right.matcher = format!("abc {}", "y".repeat(64));
+        right.normalized_matcher = right.matcher.clone();
+        right.handler.alpha_normalized = "right-alpha".to_owned();
+        right.handler.structural = "right-structure".to_owned();
+        right.handler.behavior_signature = vec!["shared-event".to_owned(); 10_000];
+
+        let definitions = [left, right];
+        let directory = tempfile::tempdir().unwrap();
+        let config = Config::load(directory.path(), Default::default()).unwrap();
+        let generated = definition_pair_candidates(&definitions, &config);
+        let candidate = generated.candidates.values().next().unwrap();
+        assert_eq!(generated.candidates.len(), 1);
+        assert_eq!(candidate.owner, CandidateSource::MatcherBlocking);
+        assert!(candidate.sources.contains(CandidateSource::MatcherBlocking));
+        assert!(!is_near_matcher(
+            &definitions[0],
+            &definitions[1],
+            matcher_similarity(&definitions[0], &definitions[1])
+        ));
+
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut findings = Vec::new();
+        let analysis =
+            analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+
+        assert!(!analysis.census.truncated);
+        assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
+        assert_eq!(analysis.census.skipped_candidate_comparisons, 0);
+        assert_eq!(
+            analysis.census.candidate_sources["matcherBlocking"].evaluated,
+            1
+        );
+        assert!(analysis.operational_error.is_none());
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn matcher_blocking_survivors_retain_computed_similarity_evidence() {
+        let mut left = definition();
+        left.matcher = "the account record is enabled".to_owned();
+        left.normalized_matcher = left.matcher.clone();
+        left.handler.alpha_normalized = "left-alpha".to_owned();
+        left.handler.structural = "left-structure".to_owned();
+        left.handler.behavior_signature = ["open", "fill", "save", "close", "archive"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+
+        let mut right = definition();
+        right.matcher = "the account records are enabled".to_owned();
+        right.normalized_matcher = right.matcher.clone();
+        right.handler.alpha_normalized = "right-alpha".to_owned();
+        right.handler.structural = "right-structure".to_owned();
+        right.handler.behavior_signature = ["open", "fill", "save"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+
+        let expected_matcher_similarity = matcher_similarity(&left, &right);
+        let definitions = [left, right];
+        let directory = tempfile::tempdir().unwrap();
+        let config = Config::load(directory.path(), Default::default()).unwrap();
+        let generated = definition_pair_candidates(&definitions, &config);
+        let candidate = generated.candidates.values().next().unwrap();
+        assert_eq!(generated.candidates.len(), 1);
+        assert_eq!(candidate.owner, CandidateSource::MatcherBlocking);
+
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut findings = Vec::new();
+        let analysis =
+            analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+
+        assert!(!analysis.census.truncated);
+        assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
+        let finding = findings
+            .iter()
+            .find(|finding| finding.rule == Rule::NearDuplicateStep)
+            .expect("near-duplicate finding");
+        assert_eq!(
+            finding.evidence.matcher_similarity,
+            Some(round_score(expected_matcher_similarity))
+        );
+        assert_eq!(finding.evidence.handler_similarity, Some(0.6));
+        assert_eq!(
+            finding.evidence.handler_evidence,
+            "Handlers share 60.0% ordered behavior"
+        );
+        assert!(finding.evidence.comparison.is_some());
+    }
+
+    #[test]
+    fn disabled_source_rules_do_not_leak_placeholder_similarity_evidence() {
+        let mut left = definition();
+        left.matcher = "the account is enabled".to_owned();
+        left.normalized_matcher = left.matcher.clone();
+        let mut right = left.clone();
+        right.matcher = "the accounts are enabled".to_owned();
+        right.normalized_matcher = right.matcher.clone();
+        let expected_matcher_similarity = round_score(matcher_similarity(&left, &right));
+        let definitions = [left, right];
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::load(directory.path(), Default::default()).unwrap();
+        config.rules.insert(Rule::DuplicateHandler, Severity::Off);
+
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut findings = Vec::new();
+        let analysis =
+            analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+
+        assert!(!analysis.census.truncated);
+        assert!(!findings
+            .iter()
+            .any(|finding| finding.rule == Rule::DuplicateHandler));
+        let near = findings
+            .iter()
+            .find(|finding| finding.rule == Rule::NearDuplicateStep)
+            .expect("near-duplicate finding");
+        assert_eq!(
+            near.evidence.matcher_similarity,
+            Some(expected_matcher_similarity)
+        );
+        assert_eq!(near.evidence.handler_similarity, Some(1.0));
+        assert!(near.evidence.comparison.is_some());
+
+        config.rules.insert(Rule::DuplicateHandler, Severity::Error);
+        config.rules.insert(Rule::NearDuplicateStep, Severity::Off);
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut findings = Vec::new();
+        let analysis =
+            analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+
+        assert!(!analysis.census.truncated);
+        assert!(!findings
+            .iter()
+            .any(|finding| finding.rule == Rule::NearDuplicateStep));
+        let duplicate = findings
+            .iter()
+            .find(|finding| finding.rule == Rule::DuplicateHandler)
+            .expect("duplicate-handler finding");
+        assert_eq!(
+            duplicate.evidence.matcher_similarity,
+            Some(expected_matcher_similarity)
+        );
+        assert_eq!(duplicate.evidence.handler_similarity, Some(1.0));
+        assert!(duplicate.evidence.comparison.is_some());
+    }
+
+    #[test]
+    fn disabled_parameterization_skips_unreachable_structural_matcher_work() {
+        let mut left = definition();
+        left.matcher = format!("{}b", "a".repeat(100_000));
+        left.normalized_matcher = left.matcher.clone();
+        left.handler.alpha_normalized = "left-alpha".to_owned();
+
+        let mut right = left.clone();
+        right.matcher = format!("{}c", "a".repeat(100_000));
+        right.normalized_matcher = right.matcher.clone();
+        right.handler.alpha_normalized = "right-alpha".to_owned();
+
+        let definitions = [left, right];
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::load(directory.path(), Default::default()).unwrap();
+        config
+            .rules
+            .insert(Rule::ParameterizationCandidate, Severity::Off);
+        assert_ne!(config.severity(Rule::NearDuplicateStep), Severity::Off);
+        assert!(
+            matrix_work(
+                definitions[0].normalized_matcher.chars().count(),
+                definitions[1].normalized_matcher.chars().count(),
+            ) > MAX_PAIR_MATRIX_WORK
+        );
+
+        let generated = definition_pair_candidates(&definitions, &config);
+        let candidate = generated.candidates.values().next().unwrap();
+        assert_eq!(generated.candidates.len(), 1);
+        assert_eq!(candidate.owner, CandidateSource::StructuralHandler);
+        assert!(candidate
+            .sources
+            .contains(CandidateSource::StructuralHandler));
+
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut findings = Vec::new();
+        let analysis =
+            analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+
+        assert!(!analysis.census.truncated);
+        assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
+        assert_eq!(analysis.census.skipped_candidate_comparisons, 0);
+        assert_eq!(
+            analysis.census.candidate_sources["structuralHandler"].evaluated,
+            1
+        );
+        assert!(analysis.operational_error.is_none());
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() {
         let mut left = definition();
         let mut right = left.clone();
         left.handler.alpha_normalized = format!("{}a", "x".repeat(10_000));
         right.handler.alpha_normalized = format!("{}b", "x".repeat(10_000));
         left.handler.structural = "shared-structure".repeat(1_000);
         right.handler.structural = left.handler.structural.clone();
+        left.handler.behavior_signature = vec!["left".to_owned(); 2];
+        right.handler.behavior_signature = vec!["right".to_owned(); 3];
         let pair = [left, right];
-        let classes = comparison_classes(&pair);
-        assert!(
-            pair_similarity_work(
-                &pair[0],
-                &pair[1],
-                3,
-                3,
-                definition_comparison_bytes(&pair[0]),
-                definition_comparison_bytes(&pair[1]),
-                classes.relationships(0, 1)
-            ) > 100_000
+        let unrelated = PairRelationships {
+            exact_matcher: false,
+            normalized_matcher: false,
+            same_handler: false,
+            same_handler_structure: false,
+            same_structure: false,
+        };
+        let work = |relationships, stage| {
+            let input = PairWorkInput {
+                left: &pair[0],
+                right: &pair[1],
+                left_matcher_length: 3,
+                right_matcher_length: 5,
+                left_comparison_bytes: definition_comparison_bytes(&pair[0]),
+                right_comparison_bytes: definition_comparison_bytes(&pair[1]),
+                relationships,
+            };
+            pair_similarity_work(&input, stage)
+        };
+        assert_eq!(
+            work(unrelated, PairSimilarityWork::Matcher),
+            matrix_work(3, 5)
         );
+        assert_eq!(
+            work(unrelated, PairSimilarityWork::Handler),
+            matrix_work(2, 3)
+        );
+        assert!(work(unrelated, PairSimilarityWork::Evidence) > 100_000);
+        assert_eq!(
+            work(
+                PairRelationships {
+                    normalized_matcher: true,
+                    ..unrelated
+                },
+                PairSimilarityWork::Matcher,
+            ),
+            0
+        );
+        for relationships in [
+            PairRelationships {
+                same_handler: true,
+                ..unrelated
+            },
+            PairRelationships {
+                same_handler_structure: true,
+                ..unrelated
+            },
+        ] {
+            assert_eq!(work(relationships, PairSimilarityWork::Handler), 0);
+        }
+
+        let mut total = 0;
+        assert!(charge_work(&mut total, 5, 5));
+        assert_eq!(total, 5);
+        assert!(!charge_work(&mut total, 1, 5));
+        assert_eq!(total, 5);
+        let mut overflow = u64::MAX;
+        assert!(!charge_work(&mut overflow, 1, u64::MAX));
+        assert_eq!(overflow, u64::MAX);
+
+        let mut similarity = 0;
+        assert!(charge_similarity_work(
+            &mut similarity,
+            MAX_TOTAL_PAIR_SIMILARITY_WORK
+        ));
+        assert!(!charge_similarity_work(&mut similarity, 1));
+
+        let mut matrix = 0;
+        assert!(charge_matrix_work(&mut matrix, MAX_PAIR_MATRIX_WORK));
+        assert!(charge_matrix_work(&mut matrix, 1));
+        assert_eq!(matrix, MAX_PAIR_MATRIX_WORK + 1);
+        let mut exhausted_matrix_total = MAX_TOTAL_PAIR_SIMILARITY_WORK;
+        assert!(!charge_matrix_work(&mut exhausted_matrix_total, 1));
+        let mut oversized_matrix = 0;
+        assert!(!charge_matrix_work(
+            &mut oversized_matrix,
+            MAX_PAIR_MATRIX_WORK + 1
+        ));
+        assert_eq!(oversized_matrix, 0);
 
         let definitions = crate::typescript::extract(
             "Given('same', () => perform(1));\nGiven('same', () => perform(2));\nGiven('same', () => perform(3));",
@@ -1552,7 +1873,7 @@ mod tests {
     }
 
     #[test]
-    fn suppression_work_mirrors_mutually_exclusive_structural_and_near_rules() {
+    fn work_accounting_contract_charges_only_rules_that_will_be_evaluated() {
         let left = definition();
         let mut right = left.clone();
         right.matcher = "different matcher".to_owned();
@@ -1575,7 +1896,6 @@ mod tests {
         })
         .collect();
         let suppressions = SuppressionIndex::new(&config, &definitions);
-        let classes = comparison_classes(&definitions);
         let mut sources = CandidateSources::default();
         sources.insert(CandidateSource::StructuralHandler);
         let candidate = CandidatePair {
@@ -1591,57 +1911,30 @@ mod tests {
         assert_eq!(near_work, parameterization_work * 2);
         assert_eq!(
             candidate_suppression_work(
+                &[Some(Rule::ParameterizationCandidate)],
                 &candidate,
-                classes.relationships(0, 1),
-                true,
-                &config,
                 &suppressions,
             ),
             parameterization_work
         );
-
-        let relationships = classes.relationships(0, 1);
         assert_eq!(
-            candidate_suppression_work(
-                &candidate,
-                PairRelationships {
-                    same_handler: true,
-                    ..relationships
-                },
-                true,
-                &config,
-                &suppressions,
-            ),
+            candidate_suppression_work(&[Some(Rule::NearDuplicateStep)], &candidate, &suppressions,),
             near_work
         );
         assert_eq!(
             candidate_suppression_work(
+                &[
+                    Some(Rule::ParameterizationCandidate),
+                    None,
+                    Some(Rule::NearDuplicateStep),
+                ],
                 &candidate,
-                PairRelationships {
-                    same_structure: false,
-                    ..relationships
-                },
-                true,
-                &config,
                 &suppressions,
             ),
-            near_work
+            parameterization_work + near_work
         );
         assert_eq!(
-            candidate_suppression_work(
-                &candidate,
-                PairRelationships {
-                    normalized_matcher: true,
-                    ..relationships
-                },
-                true,
-                &config,
-                &suppressions,
-            ),
-            0
-        );
-        assert_eq!(
-            candidate_suppression_work(&candidate, relationships, false, &config, &suppressions,),
+            candidate_suppression_work(&[], &candidate, &suppressions),
             0
         );
 
@@ -1660,49 +1953,14 @@ mod tests {
             ..candidate
         };
         let duplicate_work = suppressions.lookup_work(Rule::DuplicateHandler, &[0, 1]);
-        let same_handler = PairRelationships {
-            same_handler: true,
-            same_structure: false,
-            ..relationships
-        };
         assert_eq!(
             candidate_suppression_work(
+                &[Some(Rule::DuplicateHandler)],
                 &identical_candidate,
-                same_handler,
-                true,
-                &config,
                 &suppressions,
             ),
             duplicate_work
         );
-        for (relationships, meaningful) in [
-            (
-                PairRelationships {
-                    normalized_matcher: true,
-                    ..same_handler
-                },
-                true,
-            ),
-            (
-                PairRelationships {
-                    same_handler: false,
-                    ..same_handler
-                },
-                true,
-            ),
-            (same_handler, false),
-        ] {
-            assert_eq!(
-                candidate_suppression_work(
-                    &identical_candidate,
-                    relationships,
-                    meaningful,
-                    &config,
-                    &suppressions,
-                ),
-                0
-            );
-        }
     }
 
     #[test]
