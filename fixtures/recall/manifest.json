@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "knownMissBaseline": 3,
+  "minimumRecall": 0.4,
+  "cases": [
+    {
+      "name": "exact-match-remains-detectable",
+      "path": "exact-match",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": ["the account is active", "the account is active"]
+        }
+      ]
+    },
+    {
+      "name": "fuzzy-wording-with-varied-handler-shape",
+      "path": "fuzzy-varied-handler",
+      "expectedDefinitions": 2,
+      "knownMisses": [
+        {
+          "id": "D-1",
+          "rule": "near-duplicate-step",
+          "matchers": ["I am on login page", "I am on the login page"],
+          "reason": "Matcher-driven blocking and soft handler agreement are not implemented yet"
+        }
+      ]
+    },
+    {
+      "name": "typescript-path-alias-registration",
+      "path": "path-alias",
+      "expectedDefinitions": 0,
+      "knownMisses": [
+        {
+          "id": "D-2",
+          "rule": "duplicate-matcher",
+          "matchers": ["aliased registration", "aliased registration"],
+          "reason": "TypeScript compiler path aliases are not resolved yet"
+        }
+      ]
+    },
+    {
+      "name": "cross-package-relative-reexport",
+      "path": "cross-package",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": ["cross package registration", "cross package registration"]
+        }
+      ]
+    },
+    {
+      "name": "local-registration-wrapper",
+      "path": "local-wrapper",
+      "expectedDefinitions": 0,
+      "knownMisses": [
+        {
+          "id": "D-5",
+          "rule": "duplicate-matcher",
+          "matchers": ["wrapped registration", "wrapped registration"],
+          "reason": "Single-level registration wrapper inference is not implemented yet"
+        }
+      ]
+    },
+    {
+      "name": "polarity-conflict-is-intentionally-not-near",
+      "path": "polarity",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the account is enabled", "the account is not enabled"]
+        }
+      ]
+    }
+  ]
+}

@@ -317,6 +317,47 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn module_resolution_supports_files_and_indexes_but_rejects_escapes_and_bare_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let boundary = directory.path().canonicalize().unwrap();
+        let importer = directory.path().join("nested/steps.ts");
+        fs::create_dir(directory.path().join("nested")).unwrap();
+        fs::create_dir(directory.path().join("support")).unwrap();
+        fs::write(&importer, "").unwrap();
+        fs::write(directory.path().join("direct.ts"), "").unwrap();
+        fs::write(directory.path().join("support/index.ts"), "").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("escaped.ts"), "").unwrap();
+
+        let cases = [
+            ("extension inference", "../direct", Some("direct.ts")),
+            ("explicit extension", "../direct.ts", Some("direct.ts")),
+            ("directory index", "../support", Some("support/index.ts")),
+            ("bare package", "@example/support", None),
+            ("missing relative", "../missing", None),
+        ];
+        for (name, specifier, expected_suffix) in cases {
+            let resolved = resolve_module(&importer, specifier, &boundary);
+            assert_eq!(
+                resolved.as_ref().map(|path| {
+                    path.strip_prefix(&boundary)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                }),
+                expected_suffix.map(str::to_owned),
+                "{name}"
+            );
+        }
+
+        let escape = format!(
+            "../../{}",
+            outside.path().file_name().unwrap().to_string_lossy()
+        );
+        assert_eq!(resolve_module(&importer, &escape, &boundary), None);
+    }
+
+    #[test]
     fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(directory.path().join("package.json"), "{}").unwrap();

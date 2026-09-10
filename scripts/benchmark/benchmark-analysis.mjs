@@ -10,12 +10,13 @@ const repeats = Number.parseInt(process.env.CUKE_DEDUP_BENCH_REPEATS || "3", 10)
 assert.ok(Number.isInteger(repeats) && repeats > 0, "CUKE_DEDUP_BENCH_REPEATS must be positive");
 const smoke = process.env.CUKE_DEDUP_BENCH_SMOKE === "1";
 
-const profiles = smoke
+const allProfiles = smoke
   ? [
       { name: "unrelated", sizes: [10], sharedStructure: false },
       { name: "shared-structure", sizes: [10], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [20], sharedHandler: true },
       { name: "repository-scale", sizes: [20], repositoryShape: true },
+      { name: "usage-scale", sizes: [50], usageSteps: 100 },
       { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
     ]
   : [
@@ -23,8 +24,14 @@ const profiles = smoke
       { name: "shared-structure", sizes: [250, 500], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [1000, 2000], sharedHandler: true },
       { name: "repository-scale", sizes: [2000], repositoryShape: true },
+      { name: "usage-scale", sizes: [2000], usageSteps: 2000 },
       { name: "candidate-limit", sizes: [10000], sharedStructure: true, candidateLimit: 1000 },
     ];
+const profileFilter = process.env.CUKE_DEDUP_BENCH_PROFILE;
+const profiles = profileFilter
+  ? allProfiles.filter((profile) => profile.name === profileFilter)
+  : allProfiles;
+assert.ok(profiles.length > 0, `Unknown benchmark profile: ${profileFilter}`);
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-benchmark-"));
 const results = [];
 
@@ -36,7 +43,9 @@ try {
       await mkdir(root, { recursive: true });
       const generated = profile.repositoryShape
         ? await writeRepositoryScale(root, definitions)
-        : await writeSingleFileProfile(root, definitions, profile);
+        : profile.usageSteps
+          ? await writeUsageScale(root, definitions, profile.usageSteps)
+          : await writeSingleFileProfile(root, definitions, profile);
 
       run(root, output, generated.exitCode); // Warm filesystem and process-launch paths before recording.
       const samples = [];
@@ -91,7 +100,13 @@ try {
       });
     }
   }
-  console.log(JSON.stringify({ schemaVersion: 2, binary, repeats, smoke, results }, null, 2));
+  console.log(
+    JSON.stringify(
+      { schemaVersion: 2, binary, repeats, smoke, profileFilter: profileFilter || null, results },
+      null,
+      2,
+    ),
+  );
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -279,6 +294,37 @@ async function writeRepositoryScale(root, definitions) {
     featureFiles,
     candidatePairs: (layout.packages * (layout.packages - 1)) / 2,
     findingCount: layout.packages + (layout.packages - 1),
+    exitCode: 0,
+    analysisTruncated: false,
+  };
+}
+
+async function writeUsageScale(root, definitions, featureSteps) {
+  assert.ok(featureSteps >= definitions, "usage-scale must exercise every definition");
+  await writeFile(
+    join(root, "steps.ts"),
+    Array.from(
+      { length: definitions },
+      (_, index) => `Given('usage step ${index}', () => action_${index}());`,
+    ).join("\n") + "\n",
+  );
+  const featureLines = ["Feature: Production-scale usage", "  Scenario: Exercise definitions"];
+  for (let index = 0; index < featureSteps; index += 1) {
+    featureLines.push(`    Given usage step ${index % definitions}`);
+  }
+  await writeFile(join(root, "usage.feature"), `${featureLines.join("\n")}\n`);
+  await writeFile(
+    join(root, ".cuke-dedup.json"),
+    `${JSON.stringify({ threshold: 100 }, null, 2)}\n`,
+  );
+  return {
+    packages: 1,
+    definitions,
+    featureSteps,
+    definitionFiles: 1,
+    featureFiles: 1,
+    candidatePairs: 0,
+    findingCount: 0,
     exitCode: 0,
     analysisTruncated: false,
   };
