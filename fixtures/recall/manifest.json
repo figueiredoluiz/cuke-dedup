@@ -27,6 +27,18 @@
       ]
     },
     {
+      "name": "direct-and-fluent-action-equivalence",
+      "path": "direct-fluent-action",
+      "expectedDefinitions": 2,
+      "expectedCandidateSources": { "matcherBlocking": 1 },
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["I click the save button", "I click save button"]
+        }
+      ]
+    },
+    {
       "name": "typescript-path-alias-registration",
       "path": "path-alias",
       "expectedDefinitions": 0,
