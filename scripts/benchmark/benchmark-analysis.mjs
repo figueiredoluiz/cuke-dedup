@@ -8,13 +8,31 @@ import { spawnSync } from "node:child_process";
 const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
 const repeats = Number.parseInt(process.env.CUKE_DEDUP_BENCH_REPEATS || "3", 10);
 assert.ok(Number.isInteger(repeats) && repeats > 0, "CUKE_DEDUP_BENCH_REPEATS must be positive");
+const timeoutMs = Number.parseInt(process.env.CUKE_DEDUP_BENCH_TIMEOUT_MS || "60000", 10);
+assert.ok(
+  Number.isInteger(timeoutMs) && timeoutMs > 0,
+  "CUKE_DEDUP_BENCH_TIMEOUT_MS must be positive",
+);
 const smoke = process.env.CUKE_DEDUP_BENCH_SMOKE === "1";
+const sizeFilter = process.env.CUKE_DEDUP_BENCH_SIZE === undefined
+  ? null
+  : Number.parseInt(process.env.CUKE_DEDUP_BENCH_SIZE, 10);
+assert.ok(
+  sizeFilter === null || (Number.isInteger(sizeFilter) && sizeFilter > 0),
+  "CUKE_DEDUP_BENCH_SIZE must be positive",
+);
 
 const allProfiles = smoke
   ? [
       { name: "unrelated", sizes: [10], sharedStructure: false },
       { name: "shared-structure", sizes: [10], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [20], sharedHandler: true },
+      {
+        name: "varied-handler",
+        sizes: [50],
+        variedHandlers: true,
+        requiresCompleteCensus: true,
+      },
       { name: "repository-scale", sizes: [20], repositoryShape: true },
       { name: "usage-scale", sizes: [50], usageSteps: 100 },
       { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
@@ -23,15 +41,30 @@ const allProfiles = smoke
       { name: "unrelated", sizes: [250, 500, 1000, 2000], sharedStructure: false },
       { name: "shared-structure", sizes: [250, 500], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [1000, 2000], sharedHandler: true },
+      {
+        name: "varied-handler",
+        sizes: [500, 1000, 2000],
+        variedHandlers: true,
+        requiresCompleteCensus: true,
+      },
       { name: "repository-scale", sizes: [2000], repositoryShape: true },
       { name: "usage-scale", sizes: [2000], usageSteps: 2000 },
       { name: "candidate-limit", sizes: [10000], sharedStructure: true, candidateLimit: 1000 },
     ];
 const profileFilter = process.env.CUKE_DEDUP_BENCH_PROFILE;
-const profiles = profileFilter
+const selectedProfiles = profileFilter
   ? allProfiles.filter((profile) => profile.name === profileFilter)
   : allProfiles;
-assert.ok(profiles.length > 0, `Unknown benchmark profile: ${profileFilter}`);
+const profiles = selectedProfiles
+  .map((profile) => ({
+    ...profile,
+    sizes: sizeFilter === null ? profile.sizes : profile.sizes.filter((size) => size === sizeFilter),
+  }))
+  .filter((profile) => profile.sizes.length > 0);
+assert.ok(
+  profiles.length > 0,
+  `Unknown benchmark profile or size: ${profileFilter || "all"}/${sizeFilter || "all"}`,
+);
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-benchmark-"));
 const results = [];
 
@@ -45,7 +78,9 @@ try {
         ? await writeRepositoryScale(root, definitions)
         : profile.usageSteps
           ? await writeUsageScale(root, definitions, profile.usageSteps)
-          : await writeSingleFileProfile(root, definitions, profile);
+          : profile.variedHandlers
+            ? await writeVariedHandlerScale(root, definitions)
+            : await writeSingleFileProfile(root, definitions, profile);
 
       run(root, output, generated.exitCode); // Warm filesystem and process-launch paths before recording.
       const samples = [];
@@ -57,8 +92,31 @@ try {
       assert.equal(reference.featureStepsAnalyzed, generated.featureSteps);
       assert.equal(reference.definitionFiles, generated.definitionFiles);
       assert.equal(reference.featureFiles, generated.featureFiles);
-      assert.equal(reference.findingCount, generated.findingCount);
+      if (generated.findingCount !== null) {
+        assert.equal(reference.findingCount, generated.findingCount);
+      }
       assert.equal(reference.analysisTruncated, generated.analysisTruncated);
+      if (profile.requiresCompleteCensus) {
+        assert.equal(
+          reference.analysisTruncated,
+          false,
+          `${profile.name}-${definitions}: analysis must complete without truncation`,
+        );
+        assert.equal(
+          reference.skippedCandidateComparisons,
+          0,
+          `${profile.name}-${definitions}: normal-scale candidates must not be skipped`,
+        );
+        assert.equal(
+          reference.truncatedStructuralClasses,
+          0,
+          `${profile.name}-${definitions}: structural classes must be complete`,
+        );
+        assert.ok(
+          reference.candidateComparisonsEvaluated > 0,
+          `${profile.name}-${definitions}: profile must exercise candidate comparison work`,
+        );
+      }
       for (const sample of samples.slice(1)) {
         assert.equal(sample.definitionsAnalyzed, reference.definitionsAnalyzed);
         assert.equal(sample.featureStepsAnalyzed, reference.featureStepsAnalyzed);
@@ -69,6 +127,8 @@ try {
         assert.equal(sample.analysisTruncated, reference.analysisTruncated);
         assert.equal(sample.candidateComparisonsEvaluated, reference.candidateComparisonsEvaluated);
         assert.equal(sample.skippedCandidateComparisons, reference.skippedCandidateComparisons);
+        assert.equal(sample.truncatedStructuralClasses, reference.truncatedStructuralClasses);
+        assert.deepEqual(sample.candidateSources, reference.candidateSources);
       }
       const wallSamples = samples.map((sample) => sample.wallMs);
       results.push({
@@ -76,14 +136,17 @@ try {
         packageCount: generated.packages,
         definitions,
         featureSteps: reference.featureStepsAnalyzed,
-        candidatePairs: generated.candidatePairs,
+        candidatePairs: generated.candidatePairs ?? reference.candidateComparisonsEvaluated,
         definitionFiles: reference.definitionFiles,
         featureFiles: reference.featureFiles,
         fileCount: reference.fileCount,
         findingCount: reference.findingCount,
+        analysisComplete: !reference.analysisTruncated,
         analysisTruncated: reference.analysisTruncated,
         candidateComparisonsEvaluated: reference.candidateComparisonsEvaluated,
         skippedCandidateComparisons: reference.skippedCandidateComparisons,
+        truncatedStructuralClasses: reference.truncatedStructuralClasses,
+        candidateSources: reference.candidateSources,
         medianMs: median(wallSamples),
         discoveryMedianMs: median(samples.map((sample) => sample.discoveryMs)),
         parsingMedianMs: median(samples.map((sample) => sample.parsingMs)),
@@ -102,7 +165,16 @@ try {
   }
   console.log(
     JSON.stringify(
-      { schemaVersion: 2, binary, repeats, smoke, profileFilter: profileFilter || null, results },
+      {
+        schemaVersion: 3,
+        binary,
+        repeats,
+        timeoutMs,
+        smoke,
+        profileFilter: profileFilter || null,
+        sizeFilter,
+        results,
+      },
       null,
       2,
     ),
@@ -131,9 +203,15 @@ function run(root, output, expectedExitCode) {
   const result = spawnSync(command, commandArguments, {
     cwd: root,
     encoding: "utf8",
+    timeout: timeoutMs,
+    maxBuffer: 1024 * 1024,
   });
   const wallMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-  assert.equal(result.status, expectedExitCode, result.stderr || result.stdout);
+  assert.equal(
+    result.status,
+    expectedExitCode,
+    result.error?.message || result.stderr || result.stdout,
+  );
   const report = JSON.parse(readFileSync(join(output, "cuke-dedup.json"), "utf8"));
   assert.ok(report.metrics, "JSON report is missing execution metrics");
   const peakMemoryBytes = readPeakMemory(memoryFormat, memoryFile, result.stderr);
@@ -152,6 +230,8 @@ function run(root, output, expectedExitCode) {
     analysisTruncated: report.analysis.truncated,
     candidateComparisonsEvaluated: report.analysis.candidateComparisonsEvaluated,
     skippedCandidateComparisons: report.analysis.skippedCandidateComparisons,
+    truncatedStructuralClasses: report.analysis.truncatedStructuralClasses,
+    candidateSources: report.analysis.candidateSources,
   };
 }
 
@@ -233,6 +313,93 @@ async function writeSingleFileProfile(root, definitions, profile) {
     exitCode: candidateLimit ? 2 : 0,
     analysisTruncated: Boolean(candidateLimit),
   };
+}
+
+async function writeVariedHandlerScale(root, definitions) {
+  const actors = ["customer", "administrator", "operator", "reviewer", "member"];
+  const resources = [
+    "account",
+    "order",
+    "invoice",
+    "profile",
+    "shipment",
+    "subscription",
+    "payment",
+    "workspace",
+  ];
+  const states = ["ready", "approved", "archived", "visible", "synchronized"];
+  const channels = ["dashboard", "api", "mobile", "batch"];
+  const registrations = ["Given", "When", "Then"];
+  const lines = [];
+
+  for (let index = 0; index < definitions; index += 1) {
+    const actor = actors[index % actors.length];
+    const resource = resources[Math.floor(index / actors.length) % resources.length];
+    const state = states[
+      Math.floor(index / (actors.length * resources.length)) % states.length
+    ];
+    const channel = channels[
+      Math.floor(index / (actors.length * resources.length * states.length)) % channels.length
+    ];
+    const handlerVariant = Math.floor(index / (actors.length * resources.length)) % 4;
+    const workflow = `${actor}${capitalize(resource)}`;
+    const matcher = variedMatcher(index, actor, resource, state, channel);
+    const handler = variedHandler(index, resource, state, workflow, handlerVariant);
+    lines.push(
+      `${registrations[index % registrations.length]}(${JSON.stringify(matcher)}, ${handler});`,
+    );
+  }
+
+  await writeFile(join(root, "steps.ts"), `${lines.join("\n")}\n`);
+  await writeFile(
+    join(root, "suite.feature"),
+    "Feature: Varied handler benchmark\n  Scenario: Census only\n",
+  );
+  await writeFile(
+    join(root, ".cuke-dedup.json"),
+    `${JSON.stringify({ threshold: 100, rules: { "unused-definition": "off" } }, null, 2)}\n`,
+  );
+
+  return {
+    packages: 1,
+    definitions,
+    featureSteps: 0,
+    definitionFiles: 1,
+    featureFiles: 1,
+    findingCount: null,
+    exitCode: 0,
+    analysisTruncated: false,
+  };
+}
+
+function variedMatcher(index, actor, resource, state, channel) {
+  switch (index % 4) {
+    case 0:
+      return `the ${actor} ${resource} workflow ${index} becomes ${state} through ${channel}`;
+    case 1:
+      return `${actor} completes ${channel} workflow ${index} for the ${state} ${resource}`;
+    case 2:
+      return `the ${state} ${resource} workflow ${index} is processed for ${actor} by ${channel}`;
+    default:
+      return `during the ${channel} workflow ${actor} marks ${resource} ${index} as ${state}`;
+  }
+}
+
+function variedHandler(index, resource, state, workflow, variant) {
+  switch (variant) {
+    case 0:
+      return `async ({ world }) => { const record = await world.${resource}.load(${index}); await ${workflow}Workflow.verify(record); }`;
+    case 1:
+      return `async function (context) { const record = await context.${resource}.findById(${index}); return ${workflow}Policy.assertState(record); }`;
+    case 2:
+      return `({ services }) => services.${resource}.transition(${index}, ${JSON.stringify(state)})`;
+    default:
+      return `async ({ api }) => { await api.${resource}.update(${index}, { state: ${JSON.stringify(state)} }); await ${workflow}Audit.record(${index}); }`;
+  }
+}
+
+function capitalize(value) {
+  return `${value[0].toUpperCase()}${value.slice(1)}`;
 }
 
 async function writeRepositoryScale(root, definitions) {
