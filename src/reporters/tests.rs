@@ -1,5 +1,6 @@
 use super::jsonl::JSONL_TEXT_LIMIT_CHARS;
 use super::*;
+use crate::config::{Config, ConfigOverrides, ReporterKind};
 use crate::model::{
     AnalysisResult, DefinitionComparison, Finding, FindingEvidence, Framework, HandlerFingerprint,
     MatcherDiff, MatcherKind, Rule, Severity, SourceLocation, StepDefinition, Suppression,
@@ -77,7 +78,7 @@ fn json_uses_versioned_schema_and_relative_paths() {
     analysis.findings[0]
         .message
         .push_str("\u{202e}\u{200b}\u{2060}\u{feff}\u{00ad}\u{e0001}\u{e007f}");
-    let json = render_json(&analysis, &root).unwrap();
+    let json = render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
     assert!(json.contains("\"schemaVersion\": \"1\""));
     assert!(json.contains("\"path\": \"steps/a.ts\""));
     assert!(json.contains("\"leftHandler\": \"() => '</script><script>bad()</script>'\""));
@@ -101,6 +102,15 @@ fn json_uses_versioned_schema_and_relative_paths() {
 }
 
 #[test]
+fn default_summary_uses_the_strict_zero_percent_threshold() {
+    let root = PathBuf::from("/repo");
+    let summary = Summary::from_result(&result(&root));
+    assert_eq!(summary.findings, 1);
+    assert_eq!(summary.duplication.threshold, 0.0);
+    assert!(!summary.duplication.passed);
+}
+
+#[test]
 fn jsonl_emits_self_contained_findings_and_a_final_summary() {
     let root = PathBuf::from("/repo");
     let mut analysis = result(&root);
@@ -111,7 +121,7 @@ fn jsonl_emits_self_contained_findings_and_a_final_summary() {
         .unwrap()
         .left_handler = "界".repeat(JSONL_TEXT_LIMIT_CHARS + 1);
 
-    let jsonl = render_jsonl_with_threshold(&analysis, &root, 100.0).unwrap();
+    let jsonl = render_jsonl(&ReportContext::new(&analysis, &root, 100.0)).unwrap();
     assert!(jsonl.ends_with('\n'));
     let records = jsonl
         .lines()
@@ -161,7 +171,7 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
         ..analysis.findings[0].clone()
     });
     let sarif: serde_json::Value =
-        serde_json::from_str(&render_sarif_with_threshold(&analysis, &root, 100.0).unwrap())
+        serde_json::from_str(&render_sarif(&ReportContext::new(&analysis, &root, 100.0)).unwrap())
             .unwrap();
     assert_eq!(sarif["version"], "2.1.0");
     assert_eq!(sarif["runs"][0]["columnKind"], "unicodeCodePoints");
@@ -189,7 +199,7 @@ fn html_is_self_contained_and_escapes_finding_text() {
     analysis.findings[0]
         .message
         .push_str(" safe\u{1b}[31m\u{202e}spoof");
-    let html = render_html(&analysis, &root).unwrap();
+    let html = render_html(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
     assert!(html.starts_with("<!doctype html>"));
     assert!(html.contains("Duplicate &lt;matcher&gt;"));
     assert!(html.contains("application/json"));
@@ -225,14 +235,15 @@ fn buffered_reports_cap_findings_and_signal_truncation() {
         .collect();
 
     let json: serde_json::Value =
-        serde_json::from_str(&render_json(&analysis, &root).unwrap()).unwrap();
+        serde_json::from_str(&render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap())
+            .unwrap();
     assert_eq!(
         json["findings"].as_array().unwrap().len(),
         super::shared::MAX_BUFFERED_REPORT_FINDINGS
     );
     assert_eq!(json["findingsTruncated"], 1);
 
-    let html = render_html(&analysis, &root).unwrap();
+    let html = render_html(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
     assert_eq!(
         html.matches("<article class=\"finding\"").count(),
         super::shared::MAX_BUFFERED_REPORT_FINDINGS
@@ -265,7 +276,8 @@ fn buffered_reports_cap_findings_and_signal_truncation() {
     assert!(combined.contains(r#"class="truncation-notice" role="status""#));
 
     let sarif: serde_json::Value =
-        serde_json::from_str(&render_sarif(&analysis, &root).unwrap()).unwrap();
+        serde_json::from_str(&render_sarif(&ReportContext::new(&analysis, &root, 0.0)).unwrap())
+            .unwrap();
     assert_eq!(
         sarif["runs"][0]["results"].as_array().unwrap().len(),
         super::shared::MAX_BUFFERED_REPORT_FINDINGS
@@ -276,7 +288,7 @@ fn buffered_reports_cap_findings_and_signal_truncation() {
     );
 
     let mut terminal = Vec::new();
-    write_terminal(&analysis, &root, &mut terminal).unwrap();
+    write_terminal(&ReportContext::new(&analysis, &root, 0.0), &mut terminal).unwrap();
     let terminal = String::from_utf8(terminal).unwrap();
     assert_eq!(
         terminal
@@ -308,18 +320,20 @@ fn bounded_reports_never_displace_an_error_with_warnings() {
     });
 
     let json: serde_json::Value =
-        serde_json::from_str(&render_json(&analysis, &root).unwrap()).unwrap();
+        serde_json::from_str(&render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap())
+            .unwrap();
     assert!(json["findings"]
         .as_array()
         .unwrap()
         .iter()
         .any(|finding| finding["message"] == "release-blocking error"));
 
-    let html = render_html(&analysis, &root).unwrap();
+    let html = render_html(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
     assert!(html.contains("release-blocking error"));
 
     let sarif: serde_json::Value =
-        serde_json::from_str(&render_sarif(&analysis, &root).unwrap()).unwrap();
+        serde_json::from_str(&render_sarif(&ReportContext::new(&analysis, &root, 0.0)).unwrap())
+            .unwrap();
     assert!(sarif["runs"][0]["results"]
         .as_array()
         .unwrap()
@@ -327,7 +341,7 @@ fn bounded_reports_never_displace_an_error_with_warnings() {
         .any(|finding| finding["message"]["text"] == "release-blocking error"));
 
     let mut terminal = Vec::new();
-    write_terminal(&analysis, &root, &mut terminal).unwrap();
+    write_terminal(&ReportContext::new(&analysis, &root, 0.0), &mut terminal).unwrap();
     assert!(String::from_utf8(terminal)
         .unwrap()
         .contains("release-blocking error"));
@@ -347,7 +361,7 @@ fn terminal_groups_each_rule_once_and_removes_control_characters() {
     analysis.findings.extend([warning, duplicate]);
 
     let mut terminal = Vec::new();
-    write_terminal(&analysis, &root, &mut terminal).unwrap();
+    write_terminal(&ReportContext::new(&analysis, &root, 0.0), &mut terminal).unwrap();
     let terminal = String::from_utf8(terminal).unwrap();
     assert_eq!(terminal.matches("\nduplicate-matcher\n").count(), 1);
     assert_eq!(terminal.matches("\nnear-duplicate-step\n").count(), 1);
@@ -382,16 +396,13 @@ fn reporters_preserve_finding_counts_and_information_across_formats() {
     analysis.findings.extend([warning, suppressed]);
 
     let mut terminal = Vec::new();
-    write_terminal_with_threshold(&analysis, &root, 100.0, &mut terminal).unwrap();
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    write_terminal(&context, &mut terminal).unwrap();
     let terminal = String::from_utf8(terminal).unwrap();
-    let json: serde_json::Value =
-        serde_json::from_str(&render_json_with_threshold(&analysis, &root, 100.0).unwrap())
-            .unwrap();
-    let html = render_html_with_threshold(&analysis, &root, 100.0).unwrap();
-    let sarif: serde_json::Value =
-        serde_json::from_str(&render_sarif_with_threshold(&analysis, &root, 100.0).unwrap())
-            .unwrap();
-    let jsonl = render_jsonl_with_threshold(&analysis, &root, 100.0).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&render_json(&context).unwrap()).unwrap();
+    let html = render_html(&context).unwrap();
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    let jsonl = render_jsonl(&context).unwrap();
     let jsonl_records = jsonl
         .lines()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
@@ -493,4 +504,57 @@ fn reporters_preserve_finding_counts_and_information_across_formats() {
                     == finding.primary.display(&root).split(':').next().unwrap()
         }));
     }
+}
+
+#[test]
+fn public_report_writer_uses_one_context_for_every_configured_format() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(
+        directory.path(),
+        ConfigOverrides {
+            reporters: Some(vec![
+                ReporterKind::Terminal,
+                ReporterKind::Json,
+                ReporterKind::Html,
+                ReporterKind::Sarif,
+            ]),
+            output: Some(PathBuf::from("reports")),
+            ..ConfigOverrides::default()
+        },
+    )
+    .unwrap();
+    let analysis = result(&config.root);
+    let metrics = ExecutionMetrics {
+        definition_files: 1,
+        feature_files: 1,
+        files_discovered: 2,
+        discovery_ms: 1.0,
+        parsing_ms: 2.0,
+        analysis_ms: 3.0,
+    };
+    let context = ReportContext::with_metrics(&analysis, &config.root, 50.0, &metrics);
+    let mut terminal = Vec::new();
+    let written = write_reports(&context, &config, &mut terminal).unwrap();
+
+    assert_eq!(written.len(), 3);
+    assert!(written.iter().all(|path| path.is_file()));
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(terminal.contains("CukeDedup"));
+
+    let jsonl_config = Config::load(
+        directory.path(),
+        ConfigOverrides {
+            reporters: Some(vec![ReporterKind::Jsonl]),
+            ..ConfigOverrides::default()
+        },
+    )
+    .unwrap();
+    let mut jsonl = Vec::new();
+    assert!(write_reports(&context, &jsonl_config, &mut jsonl)
+        .unwrap()
+        .is_empty());
+    assert!(String::from_utf8(jsonl)
+        .unwrap()
+        .lines()
+        .any(|line| line.contains("\"type\":\"summary\"")));
 }

@@ -231,4 +231,16 @@ mod tests {
             assert_eq!(handler_evidence(&pair[0], &pair[1]), expected, "{name}");
         }
     }
+
+    #[test]
+    fn semantic_fingerprint_distinguishes_matcher_syntax() {
+        let mut pair = definitions(
+            "Given('same matcher', () => work()); Given(/same matcher/, () => work());",
+        );
+        pair[1].normalized_matcher = pair[0].normalized_matcher.clone();
+        assert_ne!(
+            definition_semantic_fingerprint(&pair[0]),
+            definition_semantic_fingerprint(&pair[1])
+        );
+    }
 }

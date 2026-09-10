@@ -273,3 +273,60 @@ fn normalize_capture_groups(expression: &str) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn javascript_string_decoding_covers_escape_forms_and_rejections() {
+        assert_eq!(
+            decode_js_string(r#""\n\r\t\b\f\v\0\"\\\x41\u0042\u{43}z""#).unwrap(),
+            "\n\r\t\u{0008}\u{000c}\u{000b}\0\"\\ABCz"
+        );
+        assert_eq!(
+            decode_js_string("'line\\\njoin'"),
+            Some("linejoin".to_owned())
+        );
+        assert_eq!(
+            decode_js_string("'line\\\r\njoin'"),
+            Some("linejoin".to_owned())
+        );
+        assert_eq!(decode_js_string(r#"'\q'"#), Some("q".to_owned()));
+        for invalid in [
+            "",
+            "plain",
+            "'unterminated",
+            r#"'\xG0'"#,
+            r#"'\u{}'"#,
+            r#"'\u{110000}'"#,
+        ] {
+            assert!(decode_js_string(invalid).is_none(), "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn regex_normalization_preserves_semantics_while_canonicalizing_equivalence() {
+        assert_eq!(rust_regex_expression("^value$", "gymi"), "(?mi:^value$)");
+        assert_eq!(rust_regex_expression("^value$", "gy"), "^value$");
+        assert_eq!(rust_regex_support("^value$", ""), RegexSupport::Supported);
+        assert_eq!(rust_regex_support("(", ""), RegexSupport::Unsupported);
+        assert_eq!(semantic_regex_flags("uugmisy"), "imsu");
+        assert_eq!(
+            normalize_matcher_with_flags("(?<name>a)\\s+b", MatcherKind::RegularExpression, "mi"),
+            "[regex-flags:im] (a) b"
+        );
+        assert_eq!(
+            normalize_matcher_with_flags("I have { int }", MatcherKind::CucumberExpression, "i"),
+            "I have {int}"
+        );
+        assert_eq!(
+            normalize_regular_expression(r"[a\ ]\s+\ value"),
+            r"[a\ ]  value"
+        );
+        assert_eq!(normalize_regular_expression(r"\(literal\)"), r"\(literal\)");
+        assert_eq!(normalize_regular_expression("(?<1bad>a)"), "(?<1bad>a)");
+        assert_eq!(normalize_regular_expression("(?<open"), "(?<open");
+        assert_eq!(normalize_regular_expression("[(?<name>)]"), "[(?<name>)]");
+    }
+}

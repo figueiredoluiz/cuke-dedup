@@ -127,3 +127,67 @@ pub(super) fn ordered_common_subsequence_len<T: Eq>(left: &[T], right: &[T]) -> 
 pub(super) fn round_score(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition,
+    };
+
+    fn definition(matcher: &str, kind: MatcherKind) -> StepDefinition {
+        StepDefinition {
+            matcher: matcher.to_owned(),
+            normalized_matcher: matcher.to_owned(),
+            matcher_kind: kind,
+            matcher_flags: String::new(),
+            handler: HandlerFingerprint {
+                exact: String::new(),
+                normalized: String::new(),
+                alpha_normalized: String::new(),
+                structural: String::new(),
+                behavior_signature: Vec::new(),
+                source_snippet: String::new(),
+                comparable: true,
+                trivial: false,
+            },
+            framework: Framework::Unknown,
+            registration: "Given".to_owned(),
+            location: SourceLocation::new("steps.ts", 1, 1, 1, 1),
+            inline_suppressions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn matcher_gate_rejects_mixed_syntax_and_polarity_conflicts() {
+        let expression = definition("account is active", MatcherKind::CucumberExpression);
+        let regex = definition("account is active", MatcherKind::RegularExpression);
+        assert!(!is_near_matcher(&expression, &regex, 1.0));
+
+        let inactive = definition("account is inactive", MatcherKind::CucumberExpression);
+        assert!(!is_near_matcher(&expression, &inactive, 1.0));
+
+        let not_active = definition("account is not active", MatcherKind::CucumberExpression);
+        assert!(!is_near_matcher(&expression, &not_active, 1.0));
+    }
+
+    #[test]
+    fn similarity_helpers_cover_empty_exact_structural_and_lcs_paths() {
+        let empty = definition("", MatcherKind::CucumberExpression);
+        assert_eq!(matcher_similarity(&empty, &empty), 1.0);
+        assert_eq!(
+            handler_similarity_with_relationship::<u8>(true, false, &[], &[]),
+            1.0
+        );
+        assert_eq!(
+            handler_similarity_with_relationship::<u8>(false, true, &[], &[]),
+            0.95
+        );
+        assert_eq!(
+            handler_similarity_with_relationship::<u8>(false, false, &[], &[]),
+            0.0
+        );
+        assert_eq!(ordered_common_subsequence_len(&[1, 2, 3], &[2, 3, 4]), 2);
+        assert_eq!(round_score(0.123_6), 0.124);
+    }
+}

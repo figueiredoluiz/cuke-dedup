@@ -1,26 +1,12 @@
 use super::shared::{bounded_findings, count_label, report_safe, report_value_with_metadata};
 use super::{CliReportMetadata, ReportContext};
-use crate::model::{AnalysisResult, DefinitionComparison, MatcherDiff};
+use crate::model::{DefinitionComparison, MatcherDiff};
 use anyhow::{Context, Result};
-use std::path::Path;
 
 const HTML_TEMPLATE: &str = include_str!("templates/report.html");
 
 /// Renders the self-contained interactive HTML report without writing it to disk.
-pub fn render_html(result: &AnalysisResult, root: &Path) -> Result<String> {
-    render_html_with_threshold(result, root, 0.0)
-}
-
-/// Renders self-contained HTML using the configured duplication threshold.
-pub fn render_html_with_threshold(
-    result: &AnalysisResult,
-    root: &Path,
-    threshold: f64,
-) -> Result<String> {
-    render_html_context(&ReportContext::new(result, root, threshold))
-}
-
-pub(super) fn render_html_context(context: &ReportContext<'_>) -> Result<String> {
+pub fn render_html(context: &ReportContext<'_>) -> Result<String> {
     render_html_context_with_metadata(context, None)
 }
 

@@ -1,24 +1,11 @@
 use super::shared::{bounded_findings, convert_location, report_safe};
 use super::{CliReportMetadata, ReportContext};
-use crate::model::{stable_fingerprint, AnalysisResult, Severity, SourceLocation};
+use crate::model::{stable_fingerprint, Severity, SourceLocation};
 use anyhow::{Context, Result};
 use std::path::Path;
 
 /// Renders active findings as a SARIF 2.1.0 log without writing it to disk.
-pub fn render_sarif(result: &AnalysisResult, root: &Path) -> Result<String> {
-    render_sarif_with_threshold(result, root, 0.0)
-}
-
-/// Renders SARIF using the configured duplication threshold.
-pub fn render_sarif_with_threshold(
-    result: &AnalysisResult,
-    root: &Path,
-    threshold: f64,
-) -> Result<String> {
-    render_sarif_context(&ReportContext::new(result, root, threshold))
-}
-
-pub(super) fn render_sarif_context(context: &ReportContext<'_>) -> Result<String> {
+pub fn render_sarif(context: &ReportContext<'_>) -> Result<String> {
     render_sarif_context_with_metadata(context, None)
 }
 

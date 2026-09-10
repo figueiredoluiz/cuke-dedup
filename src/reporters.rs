@@ -10,11 +10,11 @@ mod terminal;
 
 pub(crate) use context::{CliReportMetadata, CorpusCensus};
 pub use context::{ExecutionMetrics, ReportContext, Summary};
-pub use html::{render_html, render_html_with_threshold};
-pub use json::{render_json, render_json_with_threshold};
-pub use jsonl::{render_jsonl, render_jsonl_with_threshold};
-pub use sarif::{render_sarif, render_sarif_with_threshold};
-pub use terminal::{write_terminal, write_terminal_with_threshold};
+pub use html::render_html;
+pub use json::render_json;
+pub use jsonl::render_jsonl;
+pub use sarif::render_sarif;
+pub use terminal::write_terminal;
 
 use crate::config::{Config, ReporterKind};
 use crate::model::AnalysisResult;
@@ -31,31 +31,11 @@ pub const JSONL_SCHEMA_VERSION: &str = "1";
 
 /// Writes every configured report and returns the paths of file-based reports.
 pub fn write_reports(
-    result: &AnalysisResult,
+    context: &ReportContext<'_>,
     config: &Config,
     terminal: &mut dyn Write,
 ) -> Result<Vec<std::path::PathBuf>> {
-    write_reports_context(
-        &ReportContext::new(result, &config.root, config.threshold),
-        config,
-        None,
-        terminal,
-    )
-}
-
-/// Writes every configured report with measured CLI execution phases.
-pub fn write_reports_with_metrics(
-    result: &AnalysisResult,
-    config: &Config,
-    metrics: &ExecutionMetrics,
-    terminal: &mut dyn Write,
-) -> Result<Vec<std::path::PathBuf>> {
-    write_reports_context(
-        &ReportContext::with_metrics(result, &config.root, config.threshold, metrics),
-        config,
-        None,
-        terminal,
-    )
+    write_reports_context(context, config, None, terminal)
 }
 
 pub(crate) fn write_cli_reports(
@@ -85,7 +65,7 @@ fn write_reports_context(
         .any(|reporter| matches!(reporter, ReporterKind::Terminal | ReporterKind::Jsonl));
     for reporter in &config.reporters {
         match reporter {
-            ReporterKind::Terminal => terminal::write_terminal_context(context, terminal)?,
+            ReporterKind::Terminal => terminal::write_terminal(context, terminal)?,
             ReporterKind::Json => {
                 let path = config.output_path("cuke-dedup.json");
                 ensure_parent(&path)?;

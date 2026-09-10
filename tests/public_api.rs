@@ -1,8 +1,11 @@
 use cuke_dedup::analysis::{analyze, analyze_with_diagnostics};
 use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
-use cuke_dedup::model::{Rule, Severity};
-use cuke_dedup::reporters::ExecutionMetrics;
+use cuke_dedup::model::{AnalysisResult, Rule, Severity};
+use cuke_dedup::reporters::{
+    render_html, render_json, render_jsonl, render_sarif, write_terminal, ExecutionMetrics,
+    ReportContext,
+};
 use cuke_dedup::typescript;
 use std::collections::BTreeMap;
 use std::fs;
@@ -84,4 +87,32 @@ fn completeness_reporting_preserves_existing_public_struct_construction() {
         analysis_ms: 3.0,
     };
     assert_eq!(metrics.files_discovered, 3);
+}
+
+#[test]
+fn report_context_is_the_single_public_rendering_entry_point() {
+    let root = PathBuf::from("/repo");
+    let result = AnalysisResult {
+        definitions: Vec::new(),
+        feature_steps: Vec::new(),
+        findings: Vec::new(),
+    };
+    let context = ReportContext::new(&result, &root, 5.0);
+
+    assert!(render_json(&context)
+        .unwrap()
+        .contains("\"threshold\": 5.0"));
+    assert!(render_jsonl(&context)
+        .unwrap()
+        .contains("\"type\":\"summary\""));
+    assert!(render_html(&context).unwrap().contains("<!doctype html>"));
+    assert!(render_sarif(&context)
+        .unwrap()
+        .contains("\"version\": \"2.1.0\""));
+
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    assert!(String::from_utf8(terminal)
+        .unwrap()
+        .contains("Analyzed 0 definitions"));
 }

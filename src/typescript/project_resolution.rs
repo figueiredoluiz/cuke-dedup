@@ -1043,6 +1043,17 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn config_error(source: &str) -> String {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("tsconfig.json"), source).unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let mut resolver = ProjectResolution::for_root(&root);
+        resolver
+            .load_project_config(&root.join("tsconfig.json"), &root, 0)
+            .unwrap_err()
+            .to_string()
+    }
+
     #[test]
     fn jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas() {
         let source = "\u{feff}".to_owned()
@@ -1306,6 +1317,336 @@ mod tests {
             let error = package_map_targets(&map, key, kind).unwrap_err();
             assert!(error.to_string().contains(expected), "{kind}: {error}");
         }
+    }
+
+    #[test]
+    fn pure_resolution_helpers_cover_valid_and_rejected_shapes() {
+        assert!(is_bare_module("package"));
+        for value in ["", "./local", "../parent", "/absolute", "https://host/mod"] {
+            assert!(!is_bare_module(value), "{value}");
+        }
+        assert_eq!(
+            split_package_specifier("pkg/sub/path"),
+            Some(("pkg", "sub/path"))
+        );
+        assert_eq!(split_package_specifier("pkg"), Some(("pkg", "")));
+        assert_eq!(
+            split_package_specifier("@scope/pkg/sub"),
+            Some(("@scope/pkg", "sub"))
+        );
+        assert_eq!(split_package_specifier("@scope"), None);
+
+        assert_eq!(pattern_capture("exact", "exact"), Some(None));
+        assert_eq!(pattern_capture("exact", "other"), None);
+        assert_eq!(
+            pattern_capture("@app/*/test", "@app/world/test"),
+            Some(Some("world".to_owned()))
+        );
+        assert_eq!(pattern_capture("prefix*suffix", "short"), None);
+        assert_eq!(substitute_star("src/*/index", Some("bdd")), "src/bdd/index");
+        assert_eq!(substitute_star("src/index", None), "src/index");
+        assert!(validate_single_star("one/*/two/*", "mapping").is_err());
+        assert!(validate_single_star("one/*", "mapping").is_ok());
+
+        let mappings = vec![
+            PathMapping {
+                pattern: "@app/*".to_owned(),
+                targets: vec![],
+                origin: PathBuf::new(),
+            },
+            PathMapping {
+                pattern: "@app/exact".to_owned(),
+                targets: vec![],
+                origin: PathBuf::new(),
+            },
+        ];
+        assert_eq!(
+            best_mapping(&mappings, "@app/exact").unwrap().0.pattern,
+            "@app/exact"
+        );
+        assert!(best_mapping(&mappings, "other").is_none());
+
+        assert_eq!(
+            string_or_string_array(&serde_json::json!("a")).unwrap(),
+            ["a"]
+        );
+        assert_eq!(
+            string_or_string_array(&serde_json::json!(["a", "b"])).unwrap(),
+            ["a", "b"]
+        );
+        assert!(string_or_string_array(&serde_json::json!(1)).is_err());
+        assert!(string_or_string_array(&serde_json::json!(["a", 1])).is_err());
+
+        assert_eq!(
+            extension_substitutions(Path::new("entry.js"))
+                .unwrap()
+                .len(),
+            2
+        );
+        for (path, expected) in [
+            ("entry.mjs", "entry.mts"),
+            ("entry.cjs", "entry.cts"),
+            ("entry.jsx", "entry.tsx"),
+        ] {
+            assert_eq!(
+                extension_substitutions(Path::new(path)).unwrap(),
+                [PathBuf::from(expected)]
+            );
+        }
+        assert!(extension_substitutions(Path::new("entry.ts")).is_none());
+        assert!(extension_substitutions(Path::new("entry")).is_none());
+        assert_eq!(
+            with_appended_suffix(Path::new("entry"), ".ts"),
+            Path::new("entry.ts")
+        );
+    }
+
+    #[test]
+    fn package_map_targets_cover_conditions_arrays_wildcards_and_errors() {
+        assert_eq!(
+            package_map_targets(&serde_json::json!("./index.ts"), ".", "package exports").unwrap(),
+            Some(vec!["./index.ts".to_owned()])
+        );
+        assert_eq!(
+            package_map_targets(&serde_json::json!("./index.ts"), "./sub", "package exports")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            package_map_targets(
+                &serde_json::json!({
+                    "./*": [null, {"browser": "./ignored.js", "import": "./src/*.ts"}]
+                }),
+                "./world",
+                "package exports"
+            )
+            .unwrap(),
+            Some(vec!["./src/world.ts".to_owned()])
+        );
+        assert_eq!(
+            package_map_targets(
+                &serde_json::json!({"browser": "./browser.ts"}),
+                ".",
+                "package exports"
+            )
+            .unwrap(),
+            Some(Vec::new())
+        );
+        assert!(package_map_targets(
+            &serde_json::json!({".": "./index.ts", "default": "./fallback.ts"}),
+            ".",
+            "package exports"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("cannot mix"));
+        assert!(package_map_targets(
+            &serde_json::json!({"./x": {"./nested": "./x.ts"}}),
+            "./x",
+            "package exports"
+        )
+        .is_err());
+        assert!(target_candidates(&serde_json::json!("./*.ts"), None, "package exports").is_err());
+        assert!(target_candidates(&serde_json::json!(42), None, "package exports").is_err());
+        for target in [
+            "../outside.ts",
+            "./../outside.ts",
+            "./node_modules/x.ts",
+            "bare",
+        ] {
+            assert!(
+                reject_invalid_package_target(target, "target").is_err(),
+                "{target}"
+            );
+        }
+        assert!(reject_invalid_package_target("./src/index.ts", "target").is_ok());
+    }
+
+    #[test]
+    fn project_config_validation_reports_each_unsafe_static_shape() {
+        for (source, expected) in [
+            ("[]", "must contain an object"),
+            (r#"{"extends":42}"#, "string or string array"),
+            (r#"{"compilerOptions":[]}"#, "must contain an object"),
+            (r#"{"compilerOptions":{"baseUrl":[]}}"#, "must be a string"),
+            (
+                r#"{"compilerOptions":{"paths":[]}}"#,
+                "must contain an object",
+            ),
+            (
+                r#"{"compilerOptions":{"paths":{"@/*/*":["src/*"]}}}"#,
+                "more than one wildcard",
+            ),
+            (
+                r#"{"compilerOptions":{"paths":{"@/*":["src/*/*"]}}}"#,
+                "more than one wildcard",
+            ),
+            (
+                r#"{"compilerOptions":{"paths":{"@/*":[1]}}}"#,
+                "string targets",
+            ),
+            (
+                r#"{"extends":"package-config"}"#,
+                "only supports static JSON paths",
+            ),
+            (r#"{"extends":"./config.js"}"#, "would require executing"),
+            (r#"{"extends":"./missing"}"#, "could not be resolved"),
+        ] {
+            let error = config_error(source);
+            assert!(error.contains(expected), "{source}: {error}");
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("tsconfig.json"),
+            r#"{"extends":"./base.json"}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("base.json"),
+            r#"{"extends":"./tsconfig.json"}"#,
+        )
+        .unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let error = ProjectResolution::for_root(&root)
+            .load_project_config(&root.join("tsconfig.json"), &root, 0)
+            .unwrap_err();
+        assert!(error.to_string().contains("extends cycle"));
+        assert!(normalize_jsonc("{/* never closed")
+            .unwrap_err()
+            .to_string()
+            .contains("unterminated"));
+    }
+
+    #[test]
+    fn package_metadata_and_workspace_shapes_are_validated() {
+        let manifest = Path::new("package.json");
+        assert_eq!(
+            workspace_patterns(None, manifest).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            workspace_patterns(
+                Some(&serde_json::json!({"packages": ["packages/*"]})),
+                manifest
+            )
+            .unwrap(),
+            ["packages/*"]
+        );
+        assert_eq!(
+            workspace_patterns(Some(&serde_json::json!({})), manifest).unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(workspace_patterns(Some(&serde_json::json!(42)), manifest).is_err());
+        assert!(compile_workspace_globs(&["!excluded".to_owned()]).is_err());
+        assert!(compile_workspace_globs(&["/absolute".to_owned()]).is_err());
+        assert!(compile_workspace_globs(&["[".to_owned()]).is_err());
+        assert!(compile_workspace_globs(&["packages/*".to_owned()])
+            .unwrap()
+            .is_match("packages/a"));
+
+        let mut object = Map::new();
+        object.insert("name".to_owned(), Value::String("pkg".to_owned()));
+        assert_eq!(
+            optional_string(&object, "name", manifest)
+                .unwrap()
+                .as_deref(),
+            Some("pkg")
+        );
+        assert_eq!(optional_string(&object, "main", manifest).unwrap(), None);
+        object.insert("main".to_owned(), Value::Bool(true));
+        assert!(optional_string(&object, "main", manifest).is_err());
+        assert_eq!(map_size(Some(&serde_json::json!({"a": 1}))), 1);
+        assert_eq!(map_size(Some(&serde_json::json!([]))), 0);
+        assert_eq!(map_size(None), 0);
+
+        for (source, expected) in [
+            ("[]", "must contain an object"),
+            (r#"{"name":1}"#, "name"),
+            (r#"{"main":1}"#, "main"),
+            (r#"{"workspaces":1}"#, "workspaces"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            fs::write(directory.path().join("package.json"), source).unwrap();
+            let root = directory.path().canonicalize().unwrap();
+            let error = ProjectResolution::for_root(&root)
+                .load_package(&root, &root)
+                .unwrap_err();
+            assert!(error.to_string().contains(expected), "{source}: {error:#}");
+        }
+    }
+
+    #[test]
+    fn resolver_covers_relative_fallback_package_main_subpaths_and_missing_targets() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("src")).unwrap();
+        fs::create_dir_all(directory.path().join("sub")).unwrap();
+        fs::write(directory.path().join("src/local.ts"), "").unwrap();
+        fs::write(directory.path().join("sub/index.ts"), "").unwrap();
+        let importer = directory.path().join("src/steps.ts");
+        fs::write(&importer, "").unwrap();
+        let boundary = directory.path().canonicalize().unwrap();
+
+        let mut fallback = ProjectResolution::default();
+        assert!(fallback
+            .resolve(&importer, "./local", &boundary)
+            .unwrap()
+            .is_some());
+        assert!(fallback
+            .resolve(&importer, "package", &boundary)
+            .unwrap()
+            .is_none());
+
+        fs::write(
+            directory.path().join("package.json"),
+            r#"{"name":"root","main":"src/local.ts"}"#,
+        )
+        .unwrap();
+        let mut resolver = ProjectResolution::for_root(directory.path());
+        assert!(resolver
+            .resolve(&importer, "root", &boundary)
+            .unwrap()
+            .is_some());
+        assert!(resolver
+            .resolve(&importer, "root/sub", &boundary)
+            .unwrap()
+            .is_some());
+        assert!(resolver
+            .resolve(&importer, "unknown", &boundary)
+            .unwrap()
+            .is_none());
+        assert!(resolver
+            .resolve(&importer, "#missing", &boundary)
+            .unwrap()
+            .is_none());
+
+        fs::write(
+            directory.path().join("package.json"),
+            r#"{"name":"root","main":"../outside.ts"}"#,
+        )
+        .unwrap();
+        let mut resolver = ProjectResolution::for_root(directory.path());
+        assert!(resolver.resolve(&importer, "root", &boundary).is_err());
+    }
+
+    #[test]
+    fn canonical_paths_and_mapping_limits_fail_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let nested = canonicalize_existing_ancestor(&root.join("missing/deeper"), &root).unwrap();
+        assert_eq!(nested, root.join("missing/deeper"));
+
+        let mut resolver = ProjectResolution {
+            mappings: MAX_PROJECT_MODULE_MAPPINGS,
+            ..ProjectResolution::for_root(&root)
+        };
+        assert!(resolver.charge_mappings(1).is_err());
+
+        let outside = tempfile::tempdir().unwrap();
+        assert!(canonicalize_existing_ancestor(outside.path(), &root).is_err());
+        assert!(resolver
+            .nearest_project_config(&outside.path().join("steps.ts"), &root)
+            .is_err());
     }
 
     #[test]

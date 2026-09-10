@@ -154,6 +154,10 @@ fn extracts_rule_scoped_inline_suppressions_and_rejects_malformed_directives() {
 Given('external wording', () => work());
 // cuke-dedup:ignore duplicate-handler
 Then('broken directive', () => other());
+// cuke-dedup:ignore unknown-rule -- not a real rule
+When('unknown rule', () => another());
+// cuke-dedup:ignore unused-definition --
+When('empty reason', () => finalAction());
 "#,
         &file(SourceLanguage::TypeScript),
     )
@@ -164,7 +168,7 @@ Then('broken directive', () => other());
         extracted.definitions[0].inline_suppressions[0].rule,
         Rule::DuplicateMatcher
     );
-    assert_eq!(extracted.diagnostics.len(), 1);
+    assert_eq!(extracted.diagnostics.len(), 3);
     assert_eq!(
         extracted.diagnostics[0].level,
         ExtractionDiagnosticLevel::Error
@@ -172,6 +176,10 @@ Then('broken directive', () => other());
     assert!(extracted.diagnostics[0]
         .message
         .contains("cuke-dedup:ignore RULE -- REASON"));
+    assert!(extracted.diagnostics[1].message.contains("unknown rule"));
+    assert!(extracted.diagnostics[2]
+        .message
+        .contains("reason must not be empty"));
 }
 
 #[test]
@@ -975,4 +983,58 @@ fn wrapper_inference_resolves_long_chains_without_quadratic_work() {
 
     assert_eq!(extract_ts(&chain(200)).len(), 1);
     assert_eq!(extract_ts(&chain(4000)).len(), 1);
+}
+
+#[test]
+fn registration_discovery_covers_static_alias_and_shadowing_forms() {
+    let source = r#"
+import type { Given as TypeGiven } from '@cucumber/cucumber';
+import { Given as ImportedGiven } from '@cucumber/cucumber';
+const cucumber = require('@cucumber/cucumber');
+const { When: RequiredWhen, Then } = require('@cucumber/cucumber');
+const { Given: NamespaceGiven } = cucumber;
+const AliasGiven = ImportedGiven;
+let AssignedGiven;
+AssignedGiven = AliasGiven;
+
+export function wrapped(text: string, handler: () => void) {
+  return (((ImportedGiven)))(text, handler);
+}
+
+ImportedGiven('imported', () => work());
+cucumber.Then('namespace', () => work());
+cucumber['When']('subscript', () => work());
+RequiredWhen('required', () => work());
+Then('destructured', () => work());
+NamespaceGiven('namespace destructured', () => work());
+AliasGiven('alias', () => work());
+AssignedGiven('assigned', () => work());
+wrapped('wrapped', () => work());
+TypeGiven('type only', () => work());
+"#;
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 9);
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.framework == Framework::CucumberJs));
+    assert!(!definitions
+        .iter()
+        .any(|definition| definition.matcher == "type only"));
+
+    let create_bdd = extract_ts(
+        "const factory = createBdd(); const { Given } = factory; Given('bdd', () => work());",
+    );
+    assert_eq!(create_bdd.len(), 1);
+    assert_eq!(create_bdd[0].framework, Framework::PlaywrightBdd);
+}
+
+#[test]
+fn configured_registration_names_override_inference_without_duplicating_known_aliases() {
+    let configured = vec!["step".to_owned(), "Given".to_owned()];
+    let mut session = TypeScriptExtractionSession::for_root(std::path::Path::new("."), &configured);
+    let source = "function step(text, handler) { dynamic(text, handler); }\nstep('configured', () => work());";
+    let extracted =
+        extract_detailed_impl(source, &file(SourceLanguage::TypeScript), &mut session).unwrap();
+    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(extracted.definitions[0].registration, "step");
 }
