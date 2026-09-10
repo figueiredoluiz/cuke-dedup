@@ -79,15 +79,28 @@ fn prefixed_opposites(positive: &str, negative: &str) -> bool {
             .any(|prefix| negative.strip_prefix(prefix) == Some(positive))
 }
 
+#[cfg(test)]
 pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
-    if left.handler.alpha_normalized == right.handler.alpha_normalized {
+    handler_similarity_with_relationship(
+        left.handler.alpha_normalized == right.handler.alpha_normalized,
+        left.handler.structural == right.handler.structural,
+        &left.handler.behavior_signature,
+        &right.handler.behavior_signature,
+    )
+}
+
+pub(super) fn handler_similarity_with_relationship<T: Eq>(
+    same_alpha: bool,
+    same_structural: bool,
+    left_events: &[T],
+    right_events: &[T],
+) -> f64 {
+    if same_alpha {
         return 1.0;
     }
-    if left.handler.structural == right.handler.structural {
+    if same_structural {
         return 0.95;
     }
-    let left_events = &left.handler.behavior_signature;
-    let right_events = &right.handler.behavior_signature;
     let max_len = left_events.len().max(right_events.len());
     if max_len == 0 {
         return 0.0;
@@ -95,7 +108,7 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
     ordered_common_subsequence_len(left_events, right_events) as f64 / max_len as f64
 }
 
-pub(super) fn ordered_common_subsequence_len(left: &[String], right: &[String]) -> usize {
+pub(super) fn ordered_common_subsequence_len<T: Eq>(left: &[T], right: &[T]) -> usize {
     let mut previous = vec![0; right.len() + 1];
     for left_event in left {
         let mut current = vec![0; right.len() + 1];

@@ -72,7 +72,14 @@ Record the non-blocking scalability profiles with `npm run benchmark`. The bench
 The scheduled mutation workflow holds the core similarity and evidence contracts to a 90% score. Its checked-in configuration keeps local execution bounded; run the same focused measurement with:
 
 ```sh
-cargo mutants --file 'src/analysis/similarity.rs' --file 'src/analysis/evidence.rs' --jobs 1 --jobserver-tasks 2
+cargo mutants \
+  --file 'src/analysis/similarity.rs' \
+  --file 'src/analysis/evidence.rs' \
+  --file 'src/analysis/pairs.rs' \
+  --file 'src/analysis/suppression.rs' \
+  --re 'src/analysis/(similarity|evidence|suppression)\.rs|CandidateSources::|ComparisonClasses::|comparison_classes|intern_class|behavior_event_ids|CandidateGeneration::mark_verification_truncated|pair_similarity_work|candidate_suppression_work|definition_comparison_bytes|matrix_work|multipartite_count_sizes|insert_matcher_blocking_candidates|matcher_shingle_keys|MatcherPosting::|meaningful_handler|covered_by_structural_source|can_reach_handler_similarity_gate|consider_matcher_blocking_pair|try_insert_matcher_blocking_candidate' \
+  --jobs 1 \
+  --jobserver-tasks 2
 node scripts/check/check-mutation-score.mjs mutants.out/outcomes.json 90
 ```
 

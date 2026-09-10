@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const MAX_PROJECT_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 pub(crate) const MAX_CONFIG_INPUT_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_SUPPRESSION_REASON_CHARS: usize = 512;
 pub(crate) const MAX_BASELINE_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 pub(crate) const MAX_REGEX_PATTERN_BYTES: usize = 1024 * 1024;
 pub(crate) const REGEX_SIZE_LIMIT_BYTES: usize = 1024 * 1024;
@@ -140,6 +141,7 @@ mod tests {
     fn release_resource_limits_match_the_documented_policy() {
         assert_eq!(MAX_PROJECT_INPUT_BYTES, 8 * 1024 * 1024);
         assert_eq!(MAX_CONFIG_INPUT_BYTES, 1024 * 1024);
+        assert_eq!(MAX_SUPPRESSION_REASON_CHARS, 512);
         assert_eq!(MAX_BASELINE_INPUT_BYTES, 8 * 1024 * 1024);
         assert_eq!(MAX_REGEX_PATTERN_BYTES, 1024 * 1024);
         assert_eq!(REGEX_SIZE_LIMIT_BYTES, 1024 * 1024);

@@ -152,6 +152,13 @@ async function validateRecallCorpus(temporary) {
       testCase.expectedDefinitions,
       `${testCase.name}: definitions`,
     );
+    for (const [source, expected] of Object.entries(testCase.expectedCandidateSources || {})) {
+      assert.equal(
+        report.analysis.candidateSources[source]?.evaluated,
+        expected,
+        `${testCase.name}: ${source} candidate count`,
+      );
+    }
 
     const activeFindings = report.findings.filter((finding) => finding.suppression === null);
     const expectedFindings = testCase.expectedFindings || [];

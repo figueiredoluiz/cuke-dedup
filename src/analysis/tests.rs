@@ -1,4 +1,4 @@
-use super::pairs::definition_pair_candidates;
+use super::pairs::{analyze_definition_pairs, definition_pair_candidates};
 use super::similarity::{
     handler_similarity, is_near_matcher, matcher_similarity, ordered_common_subsequence_len,
 };
@@ -55,17 +55,12 @@ fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     }
     let unrelated = definitions(&unrelated_source);
     let (_directory, config) = config();
-    assert!(definition_pair_candidates(&unrelated, &config)
-        .candidates
-        .is_empty());
+    assert!(definition_pair_candidates(&unrelated, &config).is_empty());
 
     let exact = definitions(
         "Given('same', () => one());\nGiven('same', () => two());\nGiven('same', () => three());",
     );
-    assert_eq!(
-        definition_pair_candidates(&exact, &config).candidates.len(),
-        2
-    );
+    assert_eq!(definition_pair_candidates(&exact, &config).len(), 2);
 }
 
 #[test]
@@ -83,16 +78,162 @@ fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
 
     let generated = definition_pair_candidates(&class_definitions, &config);
     assert!(generated.census.truncated);
-    assert!(generated.candidates.len() <= 100);
+    assert!(generated.len() <= 100);
     assert_eq!(generated.census.truncated_structural_classes, 1);
     assert!(generated.census.skipped_candidate_comparisons > 0);
     assert!(generated.census.candidate_sources["structuralHandler"].skipped > 0);
 
-    let (outcome, census) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
+    let (outcome, census, _) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
     assert!(!outcome.result.findings.is_empty());
     assert_eq!(outcome.operational_errors.len(), 1);
     assert!(outcome.operational_errors[0].contains("partial findings are available"));
     assert_eq!(census, generated.census);
+}
+
+#[test]
+fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
+    let mut long_matchers = definitions(
+        "Given('left', () => sharedImplementation());\nGiven('right', () => sharedImplementation());",
+    );
+    long_matchers[0].matcher = format!("{}b", "a".repeat(100_000));
+    long_matchers[0].normalized_matcher = long_matchers[0].matcher.clone();
+    long_matchers[1].matcher = format!("{}c", "a".repeat(100_000));
+    long_matchers[1].normalized_matcher = long_matchers[1].matcher.clone();
+
+    let (_directory, config) = config();
+    let mut findings = Vec::new();
+    let suppressions = super::suppression::SuppressionIndex::new(&config, &long_matchers);
+    let pair_analysis =
+        analyze_definition_pairs(&long_matchers, &config, &suppressions, &mut findings);
+    assert!(pair_analysis.census.truncated);
+    assert_eq!(pair_analysis.census.candidate_comparisons_evaluated, 0);
+    assert_eq!(pair_analysis.census.skipped_candidate_comparisons, 1);
+    assert_eq!(
+        pair_analysis.census.candidate_sources["identicalHandler"].evaluated,
+        0
+    );
+    assert_eq!(
+        pair_analysis.census.candidate_sources["identicalHandler"].skipped,
+        1
+    );
+    assert!(pair_analysis
+        .operational_error
+        .as_deref()
+        .is_some_and(|error| error.contains("after safety limits")));
+    assert!(!findings.iter().any(|finding| matches!(
+        finding.rule,
+        Rule::DuplicateHandler | Rule::NearDuplicateStep
+    )));
+
+    let mut long_handlers = definitions(
+        "Given('the account is enabled', () => first());\nGiven('the accounts are enabled', () => second());",
+    );
+    for (index, definition) in long_handlers.iter_mut().enumerate() {
+        definition.handler.alpha_normalized = format!("alpha-{index}");
+        definition.handler.structural = format!("structure-{index}");
+        definition.handler.behavior_signature = vec!["shared-event".to_owned(); 10_000];
+    }
+    let mut findings = Vec::new();
+    let suppressions = super::suppression::SuppressionIndex::new(&config, &long_handlers);
+    let pair_analysis =
+        analyze_definition_pairs(&long_handlers, &config, &suppressions, &mut findings);
+    assert!(pair_analysis.census.truncated);
+    assert_eq!(pair_analysis.census.candidate_comparisons_evaluated, 0);
+    assert_eq!(pair_analysis.census.skipped_candidate_comparisons, 1);
+    assert_eq!(
+        pair_analysis.census.candidate_sources["matcherBlocking"].evaluated,
+        0
+    );
+    assert_eq!(
+        pair_analysis.census.candidate_sources["matcherBlocking"].skipped,
+        1
+    );
+    assert!(pair_analysis.operational_error.is_some());
+}
+
+#[test]
+fn suppression_globs_compile_once_and_pair_lookups_share_the_work_budget() {
+    let base = definitions("Given('base', () => sharedImplementation());").remove(0);
+    let (directory, mut config) = config();
+    let long_directory = "nested/".repeat(30);
+    let definitions = (0..700)
+        .map(|index| {
+            let mut definition = base.clone();
+            definition.matcher = format!("operation label {index:04}");
+            definition.normalized_matcher = definition.matcher.clone();
+            definition.location.path = directory
+                .path()
+                .join(format!("{long_directory}steps-{index}.ts"));
+            definition.location.line = index + 1;
+            definition
+        })
+        .collect::<Vec<_>>();
+    config.suppressions = (0..1_000)
+        .map(|index| SuppressionConfig {
+            rule: Rule::DuplicateHandler,
+            reason: format!("legacy exception {index}"),
+            path: Some(format!("missing-{index}/**")),
+            matcher: None,
+        })
+        .collect();
+
+    let suppressions = super::suppression::SuppressionIndex::new(&config, &definitions);
+    assert_eq!(suppressions.compiled_path_count(), 1_000);
+    for _ in 0..10 {
+        assert!(suppressions
+            .find_reason(Rule::DuplicateHandler, &[0, 1])
+            .is_none());
+    }
+    assert_eq!(suppressions.compiled_path_count(), 1_000);
+    let unmatched = suppressions.unmatched();
+    assert!(unmatched.truncated);
+    assert!(unmatched.indices.len() < config.suppressions.len());
+
+    let mut findings = Vec::new();
+    let pair_analysis =
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+    assert!(pair_analysis.census.truncated);
+    assert!(pair_analysis.census.candidate_comparisons_evaluated < definitions.len() - 1);
+    assert!(pair_analysis
+        .operational_error
+        .as_deref()
+        .is_some_and(|error| error.contains("after safety limits")));
+}
+
+#[test]
+fn suppression_lookup_borrows_and_bounds_large_reasons_until_a_finding_is_retained() {
+    let definitions = definitions("Given('left', () => work()); Given('right', () => work());");
+    let (_directory, mut config) = config();
+    config.suppressions.push(SuppressionConfig {
+        rule: Rule::DuplicateHandler,
+        reason: "accepted because migration is in progress ".repeat(10_000),
+        path: Some("**".to_owned()),
+        matcher: None,
+    });
+
+    let suppressions = super::suppression::SuppressionIndex::new(&config, &definitions);
+    let reason = suppressions
+        .find_reason(Rule::DuplicateHandler, &[0, 1])
+        .expect("matching suppression");
+    assert!(std::ptr::eq(
+        reason.as_ptr(),
+        config.suppressions[0].reason.as_ptr()
+    ));
+    assert_eq!(
+        reason.chars().count(),
+        crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS
+    );
+
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    let finding = result
+        .findings
+        .iter()
+        .find(|finding| finding.rule == Rule::DuplicateHandler)
+        .expect("duplicate handler finding");
+    assert_eq!(
+        finding.suppression.as_ref().unwrap().reason.chars().count(),
+        crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS
+    );
 }
 
 #[test]
@@ -116,14 +257,8 @@ fn structural_class_limit_preserves_work_from_later_classes() {
         generated.census.candidate_sources["structuralHandler"].evaluated,
         4
     );
-    assert!(generated
-        .candidates
-        .iter()
-        .any(|(left, right)| *left < 6 && *right < 6));
-    assert!(generated
-        .candidates
-        .iter()
-        .any(|(left, right)| *left >= 6 && *right >= 6));
+    assert!((0..6).any(|left| (left + 1..6).any(|right| generated.contains_pair(left, right))));
+    assert!((6..12).any(|left| (left + 1..12).any(|right| generated.contains_pair(left, right))));
 }
 
 #[test]
@@ -136,7 +271,7 @@ fn global_candidate_limit_reports_the_source_that_was_truncated() {
     config.max_structural_class_comparisons = 100;
 
     let generated = definition_pair_candidates(&definitions, &config);
-    assert_eq!(generated.candidates.len(), 2);
+    assert_eq!(generated.len(), 2);
     assert!(generated.census.truncated);
     assert_eq!(
         generated.census.candidate_sources["normalizedMatcher"].skipped,
@@ -149,7 +284,7 @@ fn global_candidate_limit_reports_the_source_that_was_truncated() {
             .values()
             .map(|source| source.evaluated)
             .sum::<usize>(),
-        generated.candidates.len()
+        generated.len()
     );
 }
 
@@ -166,20 +301,20 @@ fn candidate_limits_are_inclusive_at_the_exact_boundary() {
     config.max_structural_class_comparisons = 3;
 
     let structural = definition_pair_candidates(&structural, &config);
-    assert_eq!(structural.candidates.len(), 3);
+    assert_eq!(structural.len(), 3);
     assert!(!structural.census.truncated);
     assert_eq!(structural.census.skipped_candidate_comparisons, 0);
     assert_eq!(structural.census.truncated_structural_classes, 0);
 
     config.max_candidate_comparisons = 2;
     let exact = definition_pair_candidates(&exact, &config);
-    assert_eq!(exact.candidates.len(), 2);
+    assert_eq!(exact.len(), 2);
     assert!(!exact.census.truncated);
     assert_eq!(exact.census.skipped_candidate_comparisons, 0);
 }
 
 #[test]
-fn skipped_count_deduplicates_rejected_pairs_across_candidate_sources() {
+fn candidate_limits_do_not_count_structural_pairs_that_cannot_reach_a_rule() {
     let definitions = definitions(
         "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));",
     );
@@ -189,20 +324,20 @@ fn skipped_count_deduplicates_rejected_pairs_across_candidate_sources() {
 
     let generated = definition_pair_candidates(&definitions, &config);
     assert!(generated.census.truncated);
-    assert_eq!(generated.candidates.len(), 1);
-    assert_eq!(generated.census.skipped_candidate_comparisons, 2);
+    assert_eq!(generated.len(), 1);
+    assert_eq!(generated.census.skipped_candidate_comparisons, 1);
     assert_eq!(
         generated.census.candidate_sources["normalizedMatcher"].skipped,
         1
     );
     assert_eq!(
         generated.census.candidate_sources["structuralHandler"].skipped,
-        1
+        0
     );
 }
 
 #[test]
-fn structural_limits_count_only_pairs_not_already_scheduled_by_other_sources() {
+fn same_normalized_pairs_do_not_consume_the_structural_limit() {
     let definitions = definitions(
         "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));",
     );
@@ -211,7 +346,7 @@ fn structural_limits_count_only_pairs_not_already_scheduled_by_other_sources() {
     config.max_structural_class_comparisons = 1;
 
     let generated = definition_pair_candidates(&definitions, &config);
-    assert_eq!(generated.candidates.len(), 3);
+    assert_eq!(generated.len(), 2);
     assert!(!generated.census.truncated);
     assert_eq!(generated.census.skipped_candidate_comparisons, 0);
     assert_eq!(generated.census.truncated_structural_classes, 0);
@@ -221,12 +356,12 @@ fn structural_limits_count_only_pairs_not_already_scheduled_by_other_sources() {
     );
     assert_eq!(
         generated.census.candidate_sources["structuralHandler"].evaluated,
-        1
+        0
     );
 }
 
 #[test]
-fn structural_skipped_count_excludes_cross_source_candidates_exactly() {
+fn same_normalized_class_does_not_report_false_structural_truncation() {
     let definitions = definitions(
         "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));\nGiven('same', () => action(4));",
     );
@@ -235,15 +370,15 @@ fn structural_skipped_count_excludes_cross_source_candidates_exactly() {
     config.max_structural_class_comparisons = 1;
 
     let generated = definition_pair_candidates(&definitions, &config);
-    assert!(generated.census.truncated);
-    assert_eq!(generated.census.skipped_candidate_comparisons, 2);
+    assert!(!generated.census.truncated);
+    assert_eq!(generated.census.skipped_candidate_comparisons, 0);
     assert_eq!(
         generated.census.candidate_sources["normalizedMatcher"].evaluated,
         3
     );
     assert_eq!(
         generated.census.candidate_sources["structuralHandler"].evaluated,
-        1
+        0
     );
 }
 
@@ -273,7 +408,7 @@ fn trivial_and_unresolved_handlers_do_not_consume_candidate_budgets() {
     ] {
         let (_directory, config) = config();
         let generated = definition_pair_candidates(&definitions, &config);
-        assert!(generated.candidates.is_empty());
+        assert!(generated.is_empty());
         assert_eq!(generated.census.candidate_comparisons_evaluated, 0);
         assert!(!generated.census.truncated);
     }
@@ -294,7 +429,7 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     config.max_candidate_comparisons = 100;
     config.max_structural_class_comparisons = 1;
 
-    let (outcome, census) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
+    let (outcome, census, _) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
     assert_eq!(census.truncated_structural_classes, 5);
     assert_eq!(outcome.operational_errors.len(), 1);
     assert!(outcome.operational_errors[0].contains("and 2 more"));
@@ -302,7 +437,7 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     let definitions = definitions(
         "Given('one', () => action(1));\nGiven('two', () => action(2));\nGiven('three', () => action(3));",
     );
-    let (outcome, census) = analyze_for_cli(definitions, Vec::new(), &config).unwrap();
+    let (outcome, census, _) = analyze_for_cli(definitions, Vec::new(), &config).unwrap();
     assert_eq!(census.truncated_structural_classes, 1);
     assert!(!outcome.operational_errors[0].contains("and 0 more"));
 }
@@ -383,6 +518,152 @@ Then('the items are visible', async () => { await expect(item).toBeVisible(); })
 }
 
 #[test]
+fn matcher_blocking_finds_near_wording_across_related_handler_shapes() {
+    let definitions = definitions(
+        r##"
+Given("I am on login page", async function () {
+  await this.page.goto("/login");
+  await this.page.fill("#email", "user@example.test");
+});
+Given("I am on the login page", async function () {
+  await this.page.goto("/login");
+  await this.page.fill("#email", "user@example.test");
+  await this.page.waitForLoadState();
+});
+"##,
+    );
+    assert_ne!(
+        definitions[0].handler.structural,
+        definitions[1].handler.structural
+    );
+    assert!(handler_similarity(&definitions[0], &definitions[1]) >= 0.6);
+    let (_directory, config) = config();
+    let candidates = definition_pair_candidates(&definitions, &config);
+    assert!(candidates.contains_pair(0, 1));
+    assert_eq!(
+        candidates.census.candidate_sources["matcherBlocking"].evaluated,
+        1
+    );
+
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn matcher_blocking_rejects_similar_wording_without_handler_agreement() {
+    let definitions = definitions(
+        r##"
+Given("I am on login page", async function () {
+  await this.page.goto("/login");
+  await this.page.fill("#email", "user@example.test");
+});
+Given("I am on the login page", async function () {
+  await unrelatedAudit();
+  await unrelatedNotification();
+});
+"##,
+    );
+    let (_directory, config) = config();
+    assert!(definition_pair_candidates(&definitions, &config).is_empty());
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn matcher_blocking_finds_near_members_outside_an_identical_handler_spanning_tree() {
+    let definitions = definitions(
+        r#"
+Given('completely unrelated setup', () => sharedImplementation());
+Given('the account is enabled', () => sharedImplementation());
+Given('the accounts are enabled', () => sharedImplementation());
+"#,
+    );
+    let (_directory, config) = config();
+    let candidates = definition_pair_candidates(&definitions, &config);
+    assert!(candidates.contains_pair(1, 2));
+    assert!(candidates.census.candidate_sources["matcherBlocking"].evaluated >= 1);
+
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    let near = result
+        .findings
+        .iter()
+        .find(|finding| finding.rule == Rule::NearDuplicateStep)
+        .expect("near wording pair");
+    let comparison = near.evidence.comparison.as_ref().unwrap();
+    assert_eq!(
+        [
+            comparison.left_matcher.as_str(),
+            comparison.right_matcher.as_str()
+        ],
+        ["the account is enabled", "the accounts are enabled"]
+    );
+}
+
+#[test]
+fn matcher_blocking_keeps_alpha_identical_handlers_with_empty_behavior_signatures() {
+    let definitions = definitions(
+        r#"
+Given('completely unrelated setup', () => world.value);
+Given('the account is enabled', () => world.value);
+Given('the accounts are enabled', () => world.value);
+"#,
+    );
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.handler.behavior_signature.is_empty()));
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.handler.comparable && !definition.handler.trivial));
+
+    let (_directory, config) = config();
+    let candidates = definition_pair_candidates(&definitions, &config);
+    assert!(candidates.contains_pair(1, 2));
+    assert!(candidates.census.candidate_sources["matcherBlocking"].evaluated >= 1);
+
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn matcher_blocking_respects_the_global_candidate_limit() {
+    let mut definitions = definitions(
+        r#"
+Given('account operation one', () => first());
+Given('account operation two', () => second());
+Given('account operation three', () => third());
+Given('account operation four', () => fourth());
+"#,
+    );
+    for (index, definition) in definitions.iter_mut().enumerate() {
+        definition.handler.alpha_normalized = format!("alpha-{index}");
+        definition.handler.structural = format!("structure-{index}");
+        definition.handler.behavior_signature = vec!["open".to_owned(), "fill".to_owned()];
+    }
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 2;
+    let generated = definition_pair_candidates(&definitions, &config);
+    assert_eq!(generated.len(), 2);
+    assert!(generated.census.truncated);
+    assert_eq!(
+        generated.census.candidate_sources["matcherBlocking"].evaluated,
+        2
+    );
+    assert_eq!(
+        generated.census.candidate_sources["matcherBlocking"].skipped,
+        1
+    );
+}
+
+#[test]
 fn homogeneous_handler_groups_generate_linear_candidates() {
     let mut source = String::new();
     for index in 0..2_000 {
@@ -392,12 +673,7 @@ fn homogeneous_handler_groups_generate_linear_candidates() {
     }
     let definitions = definitions(&source);
     let (_directory, config) = config();
-    assert!(
-        definition_pair_candidates(&definitions, &config)
-            .candidates
-            .len()
-            <= definitions.len() * 2
-    );
+    assert!(definition_pair_candidates(&definitions, &config).len() <= definitions.len() * 2);
 }
 
 #[test]
@@ -764,6 +1040,16 @@ fn path_and_matcher_suppression_must_select_the_same_definition() {
         .find(|finding| finding.rule == Rule::DuplicateHandler)
         .unwrap();
     assert!(finding.suppression.is_none());
+
+    config.suppressions[0].path = Some("*.ts".to_owned());
+    config.suppressions[0].matcher = Some("missing matcher".to_owned());
+    let result = analyze(result.definitions, Vec::new(), &config).unwrap();
+    let finding = result
+        .findings
+        .iter()
+        .find(|finding| finding.rule == Rule::DuplicateHandler)
+        .unwrap();
+    assert!(finding.suppression.is_none());
 }
 
 #[test]
@@ -842,10 +1128,20 @@ fn suppression_directory_patterns_and_unmatched_detection_share_semantics() {
         path: Some("legacy/".to_owned()),
         matcher: None,
     });
-    assert!(super::unmatched_suppressions(&config, &definitions).is_empty());
+    assert!(
+        super::suppression::SuppressionIndex::new(&config, &definitions)
+            .unmatched()
+            .indices
+            .is_empty()
+    );
 
     config.suppressions[0].path = Some("missing/**".to_owned());
-    assert_eq!(super::unmatched_suppressions(&config, &definitions), [0]);
+    assert_eq!(
+        super::suppression::SuppressionIndex::new(&config, &definitions)
+            .unmatched()
+            .indices,
+        [0]
+    );
 }
 
 #[test]

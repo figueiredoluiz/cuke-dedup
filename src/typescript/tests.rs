@@ -122,6 +122,23 @@ Then('broken directive', () => other());
 }
 
 #[test]
+fn rejects_oversized_inline_suppression_reasons() {
+    let reason = "x".repeat(crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS + 1);
+    let extracted = extract_detailed(
+        &format!(
+            "// cuke-dedup:ignore duplicate-handler -- {reason}\nGiven('step', () => work());"
+        ),
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+
+    assert!(extracted.definitions[0].inline_suppressions.is_empty());
+    assert!(extracted.diagnostics[0]
+        .message
+        .contains("512-character limit"));
+}
+
+#[test]
 fn structural_fingerprint_masks_string_literal_contents() {
     let first = extract(
         "Then('save', async ({ page }) => { await page.locator('#save').click(); });",

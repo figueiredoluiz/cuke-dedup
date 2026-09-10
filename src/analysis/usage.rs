@@ -1,4 +1,4 @@
-use super::suppression::find_suppression;
+use super::suppression::SuppressionIndex;
 use crate::config::Config;
 use crate::model::{
     FeatureStep, Finding, FindingEvidence, MatcherKind, Rule, Severity, StepDefinition,
@@ -32,6 +32,7 @@ pub(super) fn analyze_feature_usage(
     definitions: &[StepDefinition],
     steps: &[FeatureStep],
     config: &Config,
+    suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
 ) -> FeatureUsageOutcome {
     let (compiled, operational_errors): (Vec<_>, Vec<_>) =
@@ -80,8 +81,11 @@ pub(super) fn analyze_feature_usage(
     let severity = config.severity(Rule::AmbiguousStep);
     if severity != Severity::Off {
         for (_, (step, matches, expansion_count)) in ambiguities {
-            let matched_definitions: Vec<_> =
-                matches.iter().map(|index| &definitions[*index]).collect();
+            let matched_indices = matches.iter().copied().collect::<Vec<_>>();
+            let matched_definitions: Vec<_> = matched_indices
+                .iter()
+                .map(|index| &definitions[*index])
+                .collect();
             let matcher_list = matched_definitions
                 .iter()
                 .map(|definition| format!("`{}`", definition.matcher))
@@ -118,7 +122,11 @@ pub(super) fn analyze_feature_usage(
                     comparison: None,
                 },
                 suggested_action: "Make the matchers mutually exclusive".to_owned(),
-                suppression: find_suppression(config, Rule::AmbiguousStep, &matched_definitions),
+                suppression: suppressions
+                    .find_reason(Rule::AmbiguousStep, &matched_indices)
+                    .map(|reason| crate::model::Suppression {
+                        reason: reason.to_owned(),
+                    }),
             });
         }
     }
@@ -132,6 +140,7 @@ pub(super) fn analyze_unused(
     definitions: &[StepDefinition],
     used: &BTreeSet<usize>,
     config: &Config,
+    suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
 ) {
     let severity = config.severity(Rule::UnusedDefinition);
@@ -159,7 +168,11 @@ pub(super) fn analyze_unused(
                 comparison: None,
             },
             suggested_action: "Remove the definition or add the missing feature usage".to_owned(),
-            suppression: find_suppression(config, Rule::UnusedDefinition, &[definition]),
+            suppression: suppressions
+                .find_reason(Rule::UnusedDefinition, &[index])
+                .map(|reason| crate::model::Suppression {
+                    reason: reason.to_owned(),
+                }),
         });
     }
 }
