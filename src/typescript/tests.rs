@@ -107,6 +107,175 @@ fn project_resolved_registrations_propagate_framework_metadata() {
 }
 
 #[test]
+fn project_resolves_playwright_bdd_registrations_created_and_exported_by_local_fixture() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("fixtures")).unwrap();
+    fs::create_dir_all(directory.path().join("steps")).unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"~/*":["./*"]}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("fixtures/test.ts"),
+        r#"
+import { createBdd as makeBdd } from 'playwright-bdd';
+const test = {};
+export const { Given, When: Action, Then } = makeBdd(test);
+"#,
+    )
+    .unwrap();
+    let path = directory.path().join("steps/example.steps.ts");
+    fs::write(
+        &path,
+        r#"
+import { Given, Action, Then } from '~/fixtures/test';
+Given('a local fixture', () => prepare());
+Action('an aliased registration', () => act());
+Then('the result is visible', () => verify());
+"#,
+    )
+    .unwrap();
+    let file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let source = fs::read_to_string(&file.path).unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+
+    assert!(extracted.diagnostics.is_empty());
+    assert_eq!(extracted.definitions.len(), 3);
+    assert_eq!(extracted.definitions[0].registration, "Given");
+    assert_eq!(extracted.definitions[1].registration, "When");
+    assert_eq!(extracted.definitions[2].registration, "Then");
+    assert!(extracted
+        .definitions
+        .iter()
+        .all(|definition| definition.framework == Framework::PlaywrightBdd));
+}
+
+#[test]
+fn project_resolves_explicit_exports_but_rejects_untrusted_create_bdd_lookalikes() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("fixture.ts"),
+        r#"
+import { createBdd } from 'playwright-bdd';
+const { Given: Setup } = createBdd(test);
+export { Setup as Given };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("lookalike.ts"),
+        r#"
+const createBdd = () => ({ Given: () => {} });
+export const { Given } = createBdd();
+"#,
+    )
+    .unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    for (module, expected_definitions) in [("./fixture", 1), ("./lookalike", 0)] {
+        let path = directory.path().join(format!("{}.steps.ts", &module[2..]));
+        fs::write(
+            &path,
+            format!(
+                "import {{ Given }} from '{module}';\nGiven('resolved safely', () => work());\n"
+            ),
+        )
+        .unwrap();
+        let file = SourceFile {
+            path,
+            language: SourceLanguage::TypeScript,
+        };
+        let source = fs::read_to_string(&file.path).unwrap();
+        let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+        assert_eq!(
+            extracted.definitions.len(),
+            expected_definitions,
+            "{module}"
+        );
+    }
+}
+
+#[test]
+fn project_resolves_wrapped_create_bdd_results_through_star_exports() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("fixture.ts"),
+        r#"
+import { createBdd } from 'playwright-bdd';
+export const { Given } = (createBdd(test) as ReturnType<typeof createBdd>)!;
+"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("barrel.ts"),
+        "export * from './fixture';\n",
+    )
+    .unwrap();
+    let path = directory.path().join("example.steps.ts");
+    fs::write(
+        &path,
+        "import { Given } from './barrel';\nGiven('through a barrel', () => work());\n",
+    )
+    .unwrap();
+    let file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let source = fs::read_to_string(&file.path).unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+
+    assert!(extracted.diagnostics.is_empty());
+    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(extracted.definitions[0].registration, "Given");
+    assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+}
+
+#[test]
+fn project_does_not_trust_type_only_create_bdd_imports() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("fixture.ts"),
+        r#"
+import { type createBdd as Factory } from 'playwright-bdd';
+export const { Given } = Factory(test);
+"#,
+    )
+    .unwrap();
+    let path = directory.path().join("example.steps.ts");
+    fs::write(
+        &path,
+        "import { Given } from './fixture';\nGiven('not trusted', () => work());\n",
+    )
+    .unwrap();
+    let file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let source = fs::read_to_string(&file.path).unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+
+    assert!(extracted.definitions.is_empty());
+    assert_eq!(extracted.diagnostics.len(), 1);
+    assert!(extracted.diagnostics[0]
+        .message
+        .contains("could not be resolved"));
+}
+
+#[test]
 fn alpha_fingerprint_ignores_local_renames_but_not_opposite_assertions() {
     let first = extract(
             "Then('visible', async ({ page }) => { const item = page.locator('x'); await expect(item).toBeVisible(); });",

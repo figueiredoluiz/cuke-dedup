@@ -1,6 +1,6 @@
 use super::ast::{
     default_registration_exports, framework_for_module, import_module, push_named_children_reverse,
-    FRAMEWORK_MODULES,
+    FRAMEWORK_MODULES, PLAYWRIGHT_MODULE, REGISTRATIONS,
 };
 use super::node_text;
 use super::project_resolution::ProjectResolution;
@@ -26,11 +26,18 @@ struct Reexport {
     star: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ModuleFacts {
+    reexports: Vec<Reexport>,
+    direct_exports: RegistrationExports,
+    framework: Framework,
+}
+
 #[derive(Default)]
 struct ResolutionState {
     active: BTreeSet<PathBuf>,
     exports: BTreeMap<(PathBuf, usize), CachedExports>,
-    modules: BTreeMap<PathBuf, Option<Vec<Reexport>>>,
+    modules: BTreeMap<PathBuf, Option<ModuleFacts>>,
     module_bytes: usize,
     resolutions_started: usize,
 }
@@ -162,7 +169,7 @@ fn resolve_exports(
     }
     state.resolutions_started += 1;
 
-    let Some(reexports) = load_module(&path, state)? else {
+    let Some(module) = load_module(&path, state)? else {
         state.active.remove(&path);
         state.exports.insert(cache_key, (None, Framework::Unknown));
         return Ok(ResolvedExports {
@@ -171,10 +178,10 @@ fn resolve_exports(
             cacheable: true,
         });
     };
-    let mut exports = BTreeMap::new();
-    let mut framework = Framework::Unknown;
+    let mut exports = module.direct_exports;
+    let mut framework = module.framework;
     let mut cacheable = true;
-    for reexport in reexports {
+    for reexport in module.reexports {
         let (available, available_framework) =
             if FRAMEWORK_MODULES.contains(&reexport.module.as_str()) {
                 (
@@ -232,7 +239,7 @@ pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framew
     }
 }
 
-fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Vec<Reexport>>> {
+fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<ModuleFacts>> {
     if let Some(module) = state.modules.get(path) {
         return Ok(module.clone());
     }
@@ -258,7 +265,7 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Vec<Re
                 path.display()
             );
         }
-        Some(collect_reexports(&tree, &source))
+        Some(collect_module_facts(&tree, &source))
     } else {
         None
     };
@@ -266,22 +273,191 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Vec<Re
     Ok(module)
 }
 
-fn collect_reexports(tree: &tree_sitter::Tree, source: &str) -> Vec<Reexport> {
+fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
+    let source = source.as_bytes();
+    let mut create_bdd_aliases = BTreeSet::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_statement"
+            && import_module(node, source) == Some(PLAYWRIGHT_MODULE)
+            && !is_type_only_import(node, source)
+        {
+            collect_named_import_aliases(node, source, "createBdd", &mut create_bdd_aliases);
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+
+    let mut local_registrations = RegistrationExports::new();
+    let mut direct_export_names = Vec::new();
     let mut reexports = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
-        if node.kind() == "export_statement" && !is_type_only_export(node, source.as_bytes()) {
-            if let Some(module) = import_module(node, source.as_bytes()) {
-                reexports.push(Reexport {
-                    module: module.to_owned(),
-                    specifiers: export_specifiers(node, source.as_bytes()),
-                    star: is_star_export(node, source.as_bytes()),
-                });
+        match node.kind() {
+            "variable_declarator" if is_top_level_variable(node) => {
+                collect_create_bdd_bindings(
+                    node,
+                    source,
+                    &create_bdd_aliases,
+                    &mut local_registrations,
+                    &mut direct_export_names,
+                );
+            }
+            "export_statement" if !is_type_only_export(node, source) => {
+                if let Some(module) = import_module(node, source) {
+                    reexports.push(Reexport {
+                        module: module.to_owned(),
+                        specifiers: export_specifiers(node, source),
+                        star: is_star_export(node, source),
+                    });
+                } else {
+                    direct_export_names.extend(export_specifiers(node, source));
+                }
+            }
+            _ => {}
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+
+    let direct_exports = direct_export_names
+        .into_iter()
+        .filter_map(|(local, exported)| {
+            local_registrations
+                .get(&local)
+                .cloned()
+                .map(|registration| (exported, registration))
+        })
+        .collect::<RegistrationExports>();
+    let framework = if direct_exports.is_empty() {
+        Framework::Unknown
+    } else {
+        Framework::PlaywrightBdd
+    };
+    ModuleFacts {
+        reexports,
+        direct_exports,
+        framework,
+    }
+}
+
+fn collect_named_import_aliases(
+    import: Node<'_>,
+    source: &[u8],
+    expected: &str,
+    aliases: &mut BTreeSet<String>,
+) {
+    let mut stack = vec![import];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_specifier"
+            && !node_text(node, source).trim_start().starts_with("type ")
+        {
+            if let Some(name) = node.child_by_field_name("name") {
+                if node_text(name, source) == expected {
+                    let alias = node
+                        .child_by_field_name("alias")
+                        .map_or(expected, |alias| node_text(alias, source));
+                    aliases.insert(alias.to_owned());
+                }
             }
         }
         push_named_children_reverse(node, &mut stack);
     }
-    reexports
+}
+
+fn collect_create_bdd_bindings(
+    declarator: Node<'_>,
+    source: &[u8],
+    create_bdd_aliases: &BTreeSet<String>,
+    local_registrations: &mut RegistrationExports,
+    direct_export_names: &mut Vec<(String, String)>,
+) {
+    let (Some(pattern), Some(value)) = (
+        declarator.child_by_field_name("name"),
+        declarator.child_by_field_name("value"),
+    ) else {
+        return;
+    };
+    if pattern.kind() != "object_pattern"
+        || call_identifier(value, source).is_none_or(|name| !create_bdd_aliases.contains(name))
+    {
+        return;
+    }
+
+    let directly_exported = is_directly_exported_variable(declarator);
+    let mut cursor = pattern.walk();
+    for binding in pattern.named_children(&mut cursor) {
+        let (registration, local) = match binding.kind() {
+            "shorthand_property_identifier_pattern" => {
+                let name = node_text(binding, source);
+                (name, name)
+            }
+            "pair_pattern" => {
+                let (Some(key), Some(value)) = (
+                    binding.child_by_field_name("key"),
+                    binding.child_by_field_name("value"),
+                ) else {
+                    continue;
+                };
+                if value.kind() != "identifier" {
+                    continue;
+                }
+                (node_text(key, source), node_text(value, source))
+            }
+            _ => continue,
+        };
+        if REGISTRATIONS.contains(&registration) {
+            local_registrations.insert(local.to_owned(), registration.to_owned());
+            if directly_exported {
+                direct_export_names.push((local.to_owned(), local.to_owned()));
+            }
+        }
+    }
+}
+
+fn call_identifier<'a>(mut call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    while matches!(
+        call.kind(),
+        "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression"
+    ) {
+        call = call.named_child(0)?;
+    }
+    if call.kind() != "call_expression" {
+        return None;
+    }
+    let mut function = call.child_by_field_name("function")?;
+    while matches!(
+        function.kind(),
+        "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression"
+            | "instantiation_expression"
+    ) {
+        function = function.named_child(0)?;
+    }
+    (function.kind() == "identifier").then(|| node_text(function, source))
+}
+
+fn is_top_level_variable(declarator: Node<'_>) -> bool {
+    let Some(declaration) = declarator.parent() else {
+        return false;
+    };
+    match declaration.parent() {
+        Some(parent) if parent.kind() == "program" => true,
+        Some(parent) if parent.kind() == "export_statement" => parent
+            .parent()
+            .is_some_and(|ancestor| ancestor.kind() == "program"),
+        _ => false,
+    }
+}
+
+fn is_directly_exported_variable(declarator: Node<'_>) -> bool {
+    declarator
+        .parent()
+        .and_then(|declaration| declaration.parent())
+        .is_some_and(|parent| parent.kind() == "export_statement")
 }
 
 fn project_boundary(importer: &Path) -> Option<PathBuf> {
@@ -334,6 +510,20 @@ fn is_type_only_export(node: Node<'_>, source: &[u8]) -> bool {
     node_text(node, source)
         .trim_start()
         .strip_prefix("export")
+        .is_some_and(|rest| {
+            let rest = rest.trim_start();
+            rest.strip_prefix("type").is_some_and(|after_type| {
+                after_type.is_empty()
+                    || after_type.starts_with(char::is_whitespace)
+                    || after_type.starts_with('{')
+            })
+        })
+}
+
+fn is_type_only_import(node: Node<'_>, source: &[u8]) -> bool {
+    node_text(node, source)
+        .trim_start()
+        .strip_prefix("import")
         .is_some_and(|rest| {
             let rest = rest.trim_start();
             rest.strip_prefix("type").is_some_and(|after_type| {
