@@ -1,30 +1,11 @@
 use super::shared::{bounded_findings, count_label, terminal_safe};
 use super::ReportContext;
-use crate::model::AnalysisResult;
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::Path;
 
 /// Writes grouped, terminal-safe findings and totals to `writer`.
-pub fn write_terminal(result: &AnalysisResult, root: &Path, writer: &mut dyn Write) -> Result<()> {
-    write_terminal_with_threshold(result, root, 0.0, writer)
-}
-
-/// Writes terminal findings and totals using the configured duplication threshold.
-pub fn write_terminal_with_threshold(
-    result: &AnalysisResult,
-    root: &Path,
-    threshold: f64,
-    writer: &mut dyn Write,
-) -> Result<()> {
-    write_terminal_context(&ReportContext::new(result, root, threshold), writer)
-}
-
-pub(super) fn write_terminal_context(
-    context: &ReportContext<'_>,
-    writer: &mut dyn Write,
-) -> Result<()> {
+pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Result<()> {
     let result = context.result;
     let root = context.root;
     let summary = &context.summary;

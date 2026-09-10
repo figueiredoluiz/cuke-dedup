@@ -294,7 +294,11 @@ mod tests {
         };
         let mut session = SourceExtractionSession::new(directory.path());
 
-        let error = DefaultSessionAdapter
+        let adapter = DefaultSessionAdapter;
+        assert_eq!(adapter.name(), "default-session-test");
+        assert_eq!(adapter.language(), SourceLanguage::JavaScript);
+
+        let error = adapter
             .extract_with_session("", &file, &mut session)
             .unwrap_err();
 

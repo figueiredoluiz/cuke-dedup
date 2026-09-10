@@ -474,4 +474,109 @@ mod tests {
         assert_eq!(baseline.schema_version, BASELINE_SCHEMA_VERSION);
         assert_eq!(baseline.fingerprints.values().sum::<usize>(), 1);
     }
+
+    #[test]
+    fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("tracked.ts"), "initial").unwrap();
+        initialize_repository(directory.path());
+        assert!(
+            ensure_changed_root_is_trackable(&directory.path().canonicalize().unwrap()).is_ok()
+        );
+        for revision in ["", " ", "--all", "missing-revision"] {
+            assert!(
+                resolve_commit(directory.path(), revision).is_err(),
+                "{revision}"
+            );
+        }
+        assert!(git_paths(directory.path(), &["not-a-command"], "expected failure").is_err());
+
+        let ignored = directory.path().join("ignored");
+        fs::create_dir(&ignored).unwrap();
+        fs::write(directory.path().join(".gitignore"), "ignored/\n").unwrap();
+        assert!(
+            ensure_changed_root_is_trackable(&ignored.canonicalize().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("ignored by Git")
+        );
+
+        let outside = tempfile::tempdir().unwrap();
+        assert!(ensure_changed_root_is_trackable(outside.path()).is_err());
+    }
+
+    #[test]
+    fn changed_mode_keeps_findings_with_changed_related_locations() {
+        let root = Path::new("/repo");
+        let mut findings = vec![finding(root, "steps/old.ts")];
+        let changed = BTreeSet::from([root.join("steps/shared.ts")]);
+        retain_changed_findings(&mut findings, &changed);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn baseline_validation_counts_removals_and_ignores_suppressed_findings() {
+        let directory = tempfile::tempdir().unwrap();
+        let baseline_path = directory.path().join("nested/baseline.json");
+        let mut initial = vec![
+            finding(directory.path(), "one.ts"),
+            finding(directory.path(), "two.ts"),
+        ];
+        initial[1].message = "second duplicate".to_owned();
+        update_baseline(&mut initial, &baseline_path).unwrap();
+
+        let mut current = vec![finding(directory.path(), "one.ts")];
+        current[0].suppression = Some(Suppression {
+            reason: "already accepted elsewhere".to_owned(),
+        });
+        let outcome = update_baseline(&mut current, &baseline_path).unwrap();
+        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.removed, 2);
+        assert_eq!(outcome.suppressed, 0);
+
+        fs::write(&baseline_path, r#"{"schemaVersion":99,"fingerprints":{}}"#).unwrap();
+        assert!(apply_baseline(&mut [], &baseline_path)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported baseline schema"));
+        fs::write(&baseline_path, "not json").unwrap();
+        assert!(apply_baseline(&mut [], &baseline_path)
+            .unwrap_err()
+            .to_string()
+            .contains("failed to parse baseline"));
+    }
+
+    #[test]
+    fn comparison_fingerprints_are_independent_of_pair_order() {
+        let comparison = DefinitionComparison {
+            left_fingerprint: "left".to_owned(),
+            right_fingerprint: "right".to_owned(),
+            left_matcher: String::new(),
+            right_matcher: String::new(),
+            left_handler: String::new(),
+            right_handler: String::new(),
+            matcher_diff: crate::model::MatcherDiff {
+                prefix: String::new(),
+                left_change: String::new(),
+                right_change: String::new(),
+                suffix: String::new(),
+            },
+        };
+        let mut reversed = comparison.clone();
+        std::mem::swap(
+            &mut reversed.left_fingerprint,
+            &mut reversed.right_fingerprint,
+        );
+        assert_eq!(
+            comparison_fingerprint_input(&comparison),
+            comparison_fingerprint_input(&reversed)
+        );
+        assert_eq!(
+            count_added(
+                &BTreeMap::from([("a".to_owned(), 3)]),
+                &BTreeMap::from([("a".to_owned(), 1)])
+            ),
+            0
+        );
+    }
 }

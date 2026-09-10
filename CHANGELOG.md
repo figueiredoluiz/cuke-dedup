@@ -18,6 +18,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
 - **Breaking (Rust API):** `AnalysisOutcome::operational_errors` is replaced by
   `AnalysisOutcome::incomplete`. Bounded work that could not finish is a completeness signal, not
   an operational failure; `analyze` still refuses an incomplete result.
+- **Breaking (Rust API):** report renderers and `write_reports` now accept a shared
+  `ReportContext` instead of separate result, root, threshold, and metrics arguments. Construct it
+  with `ReportContext::new` or `ReportContext::with_metrics`; the redundant
+  `*_with_threshold` and `write_reports_with_metrics` wrappers were removed.
 
 ### Added
 

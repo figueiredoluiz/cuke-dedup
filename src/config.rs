@@ -729,6 +729,91 @@ mod tests {
     }
 
     #[test]
+    fn configuration_rejects_empty_or_malformed_public_selectors() {
+        assert!("unknown"
+            .parse::<ReporterKind>()
+            .unwrap_err()
+            .contains("unknown reporter"));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(".cuke-dedup.json");
+        for (source, expected) in [
+            (r#"{"reporters":[]}"#, "at least one reporter"),
+            (r#"{"parameterTypes":{"":"x"}}"#, "parameter type"),
+            (r#"{"parameterTypes":{"bad{type}":"x"}}"#, "parameter type"),
+            (
+                r#"{"parameterTypes":{"colour":"("}}"#,
+                "invalid regular expression",
+            ),
+            (r#"{"registrations":[""]}"#, "JavaScript identifier"),
+            (r#"{"registrations":["1step"]}"#, "JavaScript identifier"),
+            (
+                r#"{"registrations":["step-name"]}"#,
+                "JavaScript identifier",
+            ),
+            (
+                r#"{"suppressions":[{"rule":"duplicate-handler","reason":"because"}]}"#,
+                "select a path or matcher",
+            ),
+        ] {
+            fs::write(&path, source).unwrap();
+            let error = Config::load(directory.path(), ConfigOverrides::default()).unwrap_err();
+            assert!(error.to_string().contains(expected), "{source}: {error:#}");
+        }
+
+        fs::remove_file(path).unwrap();
+        let ordinary_file = directory.path().join("not-a-directory");
+        fs::write(&ordinary_file, "x").unwrap();
+        assert!(Config::load(&ordinary_file, ConfigOverrides::default())
+            .unwrap_err()
+            .to_string()
+            .contains("not a directory"));
+    }
+
+    #[test]
+    fn raw_configuration_applies_every_boolean_and_collection_field() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(".cuke-dedup.json"),
+            r#"{
+              "definitions":["steps/**/*.ts"],
+              "features":["specs/**/*.feature"],
+              "excludeDefaults":false,
+              "includeHidden":true,
+              "exclude":["generated/**"],
+              "reporters":["html"],
+              "output":"artifacts",
+              "threshold":12,
+              "requireFeatures":true,
+              "requireDefinitions":true,
+              "failOnIncomplete":true,
+              "registrations":["step"],
+              "parameterTypes":{"colour":"red|green"},
+              "noMetrics":true,
+              "rules":{"unused-definition":"off"},
+              "suppressions":[{"rule":"unused-definition","matcher":"legacy","reason":"migration"}]
+            }"#,
+        )
+        .unwrap();
+        let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        assert_eq!(config.definitions, ["steps/**/*.ts"]);
+        assert_eq!(config.features, ["specs/**/*.feature"]);
+        assert_eq!(config.exclude, ["generated/**"]);
+        assert!(!config.exclude_defaults);
+        assert!(config.include_hidden);
+        assert_eq!(config.reporters, [ReporterKind::Html]);
+        assert_eq!(
+            config.output_path("report.html"),
+            config.root.join("artifacts/report.html")
+        );
+        assert!(config.require_features && config.require_definitions && config.fail_on_incomplete);
+        assert_eq!(config.registrations, ["step"]);
+        assert_eq!(config.parameter_types["colour"], "red|green");
+        assert!(config.no_metrics);
+        assert_eq!(config.severity(Rule::UnusedDefinition), Severity::Off);
+        assert_eq!(config.suppressions.len(), 1);
+    }
+
+    #[test]
     fn no_metrics_is_available_from_project_config_and_cli_override() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(

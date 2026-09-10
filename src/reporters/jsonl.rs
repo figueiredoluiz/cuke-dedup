@@ -3,11 +3,10 @@ use super::{
     CliReportMetadata, CorpusCensus, ExecutionMetrics, ReportContext, Summary, JSONL_SCHEMA_VERSION,
 };
 use crate::analysis::AnalysisCensus;
-use crate::model::{AnalysisResult, Finding, Rule, Severity};
+use crate::model::{Finding, Rule, Severity};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::{BufWriter, Write};
-use std::path::Path;
 
 pub(super) const JSONL_TEXT_LIMIT_CHARS: usize = 2_000;
 
@@ -92,17 +91,8 @@ struct JsonlSummary<'a> {
 /// Records are newline-delimited and the returned string ends with a newline, making it
 /// suitable for streaming consumers. Long free-text evidence is capped and named in each
 /// finding's `truncatedFields` array. Unlike buffered reporters, JSONL retains every finding.
-pub fn render_jsonl(result: &AnalysisResult, root: &Path) -> Result<String> {
-    render_jsonl_with_threshold(result, root, 0.0)
-}
-
-/// Renders JSON Lines using the configured duplication threshold.
-pub fn render_jsonl_with_threshold(
-    result: &AnalysisResult,
-    root: &Path,
-    threshold: f64,
-) -> Result<String> {
-    render_jsonl_context(&ReportContext::new(result, root, threshold))
+pub fn render_jsonl(context: &ReportContext<'_>) -> Result<String> {
+    render_jsonl_context(context)
 }
 
 pub(super) fn write_jsonl_context(

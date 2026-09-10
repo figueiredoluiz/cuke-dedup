@@ -496,6 +496,21 @@ mod tests {
     }
 
     #[test]
+    fn severity_text_forms_are_complete_and_reject_unknown_values() {
+        assert_eq!(Severity::Off.to_string(), "off");
+        assert_eq!(Severity::Warning.to_string(), "warning");
+        assert_eq!(Severity::Error.to_string(), "error");
+        assert_eq!("off".parse(), Ok(Severity::Off));
+        assert_eq!("warn".parse(), Ok(Severity::Warning));
+        assert_eq!("warning".parse(), Ok(Severity::Warning));
+        assert_eq!("error".parse(), Ok(Severity::Error));
+        assert_eq!(
+            "fatal".parse::<Severity>(),
+            Err("invalid severity `fatal` (expected off, warning, or error)".to_owned())
+        );
+    }
+
+    #[test]
     fn threshold_rules_exclude_correctness_and_usage_findings() {
         assert!(Rule::DuplicateMatcher.contributes_to_duplication_threshold());
         assert!(Rule::ParameterizationCandidate.contributes_to_duplication_threshold());

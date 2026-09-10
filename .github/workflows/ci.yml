@@ -137,7 +137,7 @@ jobs:
         run: |
           set -o pipefail
           cargo +stable llvm-cov --all-features --all-targets --locked --no-report
-          cargo +stable llvm-cov report --summary-only --fail-under-lines 90 | tee coverage-summary.txt
+          cargo +stable llvm-cov report --summary-only --fail-under-lines 97 | tee coverage-summary.txt
           cargo +stable llvm-cov report --lcov --output-path lcov.info
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
