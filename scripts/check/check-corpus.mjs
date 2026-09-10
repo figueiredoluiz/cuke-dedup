@@ -14,6 +14,11 @@ const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
 const corpus = resolve(process.argv[3] || "fixtures/corpus");
 const manifest = JSON.parse(await readFile(join(corpus, "manifest.json"), "utf8"));
 assert.equal(manifest.schemaVersion, 1);
+const recallRoot = resolve("fixtures/recall");
+const recallManifest = JSON.parse(
+  await readFile(join(recallRoot, "manifest.json"), "utf8"),
+);
+assert.equal(recallManifest.schemaVersion, 1);
 
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-corpus-"));
 try {
@@ -45,6 +50,8 @@ try {
       assert.ok(run.stderr.includes(message), `${testCase.name}: missing stderr message ${message}`);
     }
   }
+
+  const recall = await validateRecallCorpus(temporary);
 
   const parityRoot = join(corpus, "threshold-group");
   const parityOutput = join(temporary, "reporter-parity");
@@ -114,9 +121,98 @@ try {
       `JSONL lost ${finding.rule} at ${finding.primary.path}`,
     );
   }
-  console.log(`Validated ${manifest.cases.length} corpus cases and ${active.length} findings across terminal, JSON, JSONL, HTML, and SARIF.`);
+  console.log(
+    `Validated ${manifest.cases.length} behavior cases, ${recall.cases} recall cases, and ${active.length} findings across terminal, JSON, JSONL, HTML, and SARIF.`,
+  );
+  console.log(
+    `Recall baseline: ${recall.detected}/${recall.desired} desired findings (${(recall.ratio * 100).toFixed(1)}%); ${recall.knownMisses} explicit known misses.`,
+  );
 } finally {
   await rm(temporary, { recursive: true, force: true });
+}
+
+async function validateRecallCorpus(temporary) {
+  const knownIds = new Set();
+  let detected = 0;
+  let knownMisses = 0;
+
+  for (const testCase of recallManifest.cases) {
+    const caseRoot = join(temporary, "recall", testCase.name, "case");
+    const output = join(temporary, "recall", testCase.name, "report");
+    await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
+    const run = spawnSync(
+      binary,
+      [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output],
+      { cwd: caseRoot, encoding: "utf8" },
+    );
+    assert.equal(run.status, testCase.expectedExit || 0, `${testCase.name}: ${run.stderr}`);
+    const report = JSON.parse(await readFile(join(output, "cuke-dedup.json"), "utf8"));
+    assert.equal(
+      report.summary.definitionsAnalyzed,
+      testCase.expectedDefinitions,
+      `${testCase.name}: definitions`,
+    );
+
+    const activeFindings = report.findings.filter((finding) => finding.suppression === null);
+    const expectedFindings = testCase.expectedFindings || [];
+    for (const expected of expectedFindings) {
+      assertFindingCount(activeFindings, expected, 1, `${testCase.name}: expected finding`);
+    }
+    for (const expected of testCase.expectedAbsent || []) {
+      assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
+    }
+    for (const miss of testCase.knownMisses || []) {
+      assert.ok(miss.reason, `${testCase.name}: known miss ${miss.id} needs a reason`);
+      assert.ok(!knownIds.has(miss.id), `duplicate known-miss id ${miss.id}`);
+      knownIds.add(miss.id);
+      assertFindingCount(
+        activeFindings,
+        miss,
+        0,
+        `${testCase.name}: known miss ${miss.id} was fixed; move it to expectedFindings`,
+      );
+      knownMisses += 1;
+    }
+    assert.equal(
+      activeFindings.length,
+      expectedFindings.length,
+      `${testCase.name}: unclassified active findings`,
+    );
+    detected += expectedFindings.length;
+  }
+
+  assert.equal(
+    knownMisses,
+    recallManifest.knownMissBaseline,
+    "known-miss baseline changed; fixes must move entries to expectedFindings and reduce the baseline",
+  );
+  const desired = detected + knownMisses;
+  const ratio = desired === 0 ? 1 : detected / desired;
+  assert.ok(
+    ratio >= recallManifest.minimumRecall,
+    `recall ${(ratio * 100).toFixed(1)}% is below ${(recallManifest.minimumRecall * 100).toFixed(1)}%`,
+  );
+  return { cases: recallManifest.cases.length, detected, desired, ratio, knownMisses };
+}
+
+function assertFindingCount(findings, expected, count, context) {
+  const matches = findings.filter((finding) => findingMatches(finding, expected));
+  assert.equal(matches.length, count, `${context}: ${JSON.stringify(expected)}`);
+}
+
+function findingMatches(finding, expected) {
+  if (finding.rule !== expected.rule) return false;
+  if (expected.primaryPath && finding.primary.path !== expected.primaryPath) return false;
+  if (expected.primaryLine && finding.primary.line !== expected.primaryLine) return false;
+  if (expected.matchers) {
+    const comparison = finding.evidence.comparison;
+    if (!comparison) return false;
+    const actual = [comparison.leftMatcher, comparison.rightMatcher].sort();
+    const wanted = [...expected.matchers].sort();
+    return actual.length === wanted.length
+      && actual.every((matcher, index) => matcher === wanted[index]);
+  }
+  return true;
 }
 
 function escapeRegex(value) {

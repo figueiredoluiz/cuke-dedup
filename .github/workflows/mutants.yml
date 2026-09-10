@@ -1,0 +1,57 @@
+name: Scheduled mutation testing
+
+on:
+  schedule:
+    - cron: "17 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-mutation-testing
+  cancel-in-progress: true
+
+jobs:
+  analysis-contracts:
+    name: Analysis contract mutation score
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: scheduled-cargo-mutants-27.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+        with:
+          tool: cargo-mutants@27.1.0
+          fallback: none
+      - name: Measure focused mutation score
+        shell: bash
+        run: |
+          set +e
+          cargo +stable mutants \
+            --file 'src/analysis/similarity.rs' \
+            --file 'src/analysis/evidence.rs' \
+            --jobs 1 \
+            --jobserver-tasks 2
+          mutants_exit=$?
+          set -e
+          if [[ "$mutants_exit" -ne 0 && "$mutants_exit" -ne 2 ]]; then
+            exit "$mutants_exit"
+          fi
+          node scripts/check/check-mutation-score.mjs mutants.out/outcomes.json 90
+      - name: Upload mutation results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cargo-mutants-analysis-${{ github.run_id }}
+          path: mutants.out
+          if-no-files-found: warn

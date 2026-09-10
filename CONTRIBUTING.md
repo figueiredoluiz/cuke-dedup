@@ -12,6 +12,7 @@ rustup toolchain install stable --profile minimal --component clippy,rustfmt
 cargo install cargo-llvm-cov --locked
 cargo install cargo-audit --version 0.22.2 --locked
 cargo install cargo-deny --version 0.20.2 --locked
+cargo install cargo-mutants --version 27.1.0 --locked
 ```
 
 Enable the repository's pre-commit hook:
@@ -59,18 +60,25 @@ The Python packaging utility intentionally uses only the standard library to cre
 
 ## Corpus and benchmarks
 
-The sanitized end-to-end fixtures and their manifest are documented in [`fixtures/corpus`](fixtures/corpus/README.md). Add a corpus case for parser, discovery, policy, or reporting regressions that benefit from a repository-shaped fixture. Build the release binary before running the corpus directly:
+The sanitized end-to-end fixtures and their manifest are documented in [`fixtures/corpus`](fixtures/corpus/README.md). Add a corpus case for parser, discovery, policy, or reporting regressions that benefit from a repository-shaped fixture. [`fixtures/recall`](fixtures/recall/README.md) separately records exact findings that must remain detectable, deliberate non-findings, and explicitly budgeted known misses. Never add a known miss merely to make CI pass. Build the release binary before running both corpora:
 
 ```sh
 cargo build --release --locked
 npm run corpus:check
 ```
 
-Record the non-blocking scalability profiles with `npm run benchmark`. The benchmark measures wall-clock, discovery, parsing, analysis, peak resident memory where available, input counts, and findings. Set `CUKE_DEDUP_BENCH_REPEATS` to change the sample count; `CUKE_DEDUP_BENCH_SMOKE=1` selects the reduced validation profile used by local and CI checks.
+Record the non-blocking scalability profiles with `npm run benchmark`. The benchmark measures wall-clock, discovery, parsing, analysis, peak resident memory where available, input counts, and findings. Set `CUKE_DEDUP_BENCH_REPEATS` to change the sample count, `CUKE_DEDUP_BENCH_SMOKE=1` to select the reduced validation profile used by local and CI checks, or `CUKE_DEDUP_BENCH_PROFILE=usage-scale` to isolate one profile.
+
+The scheduled mutation workflow holds the core similarity and evidence contracts to a 90% score. Its checked-in configuration keeps local execution bounded; run the same focused measurement with:
+
+```sh
+cargo mutants --file 'src/analysis/similarity.rs' --file 'src/analysis/evidence.rs' --jobs 1 --jobserver-tasks 2
+node scripts/check/check-mutation-score.mjs mutants.out/outcomes.json 90
+```
 
 ## Pull requests
 
-Describe the user-visible problem, the chosen behavior, and the validation performed. CI reads the declared MSRV from `Cargo.toml`, tests it on Linux, macOS, and Windows, publishes JUnit results, measures Rust coverage, compiles the parser fuzz target, scans Git history for secrets, validates clean-room Cargo and npm installation, validates the release binary and local GitHub Action against the corpus, tests the npm launcher on Node 20 and 24, and enforces stable Rust quality, rustdoc, dependency policy, and deterministic release packaging. Scheduled workflows run the full parser fuzz campaign and catch vulnerability disclosures, leaked credentials, parser failures, and performance regressions that occur without a source change.
+Describe the user-visible problem, the chosen behavior, and the validation performed. CI reads the declared MSRV from `Cargo.toml`, tests it on Linux, macOS, and Windows, publishes JUnit results, measures Rust coverage, compiles the parser fuzz target, scans Git history for secrets, validates clean-room Cargo and npm installation, validates the release binary and local GitHub Action against the corpus, tests the npm launcher on Node 20 and 24, and enforces stable Rust quality, rustdoc, dependency policy, and deterministic release packaging. Scheduled workflows run the full parser fuzz campaign, focused mutation analysis, and scalability profiles, and catch vulnerability disclosures or leaked credentials that occur without a source change.
 
 Maintainers may ask for a smaller change when a pull request mixes unrelated parser, rule, reporter, and distribution behavior.
 

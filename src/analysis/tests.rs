@@ -1,5 +1,7 @@
 use super::pairs::definition_pair_candidates;
-use super::similarity::{is_near_matcher, matcher_similarity, ordered_common_subsequence_len};
+use super::similarity::{
+    handler_similarity, is_near_matcher, matcher_similarity, ordered_common_subsequence_len,
+};
 use super::*;
 use crate::config::{ConfigOverrides, SuppressionConfig};
 use crate::discovery::{SourceFile, SourceLanguage};
@@ -509,6 +511,208 @@ fn similarity_rejects_opposite_or_different_actions() {
 }
 
 #[test]
+fn matcher_similarity_gates_are_pinned_at_short_and_long_boundaries() {
+    struct Case {
+        name: &'static str,
+        left: &'static str,
+        right: &'static str,
+        similarity: f64,
+        expected: bool,
+    }
+
+    for case in [
+        Case {
+            name: "twelve characters accept the short boundary",
+            left: "abcdefghijkl",
+            right: "abcdefghijkx",
+            similarity: 0.92,
+            expected: true,
+        },
+        Case {
+            name: "twelve characters reject below the short boundary",
+            left: "abcdefghijkl",
+            right: "abcdefghijkx",
+            similarity: 0.919,
+            expected: false,
+        },
+        Case {
+            name: "thirteen characters accept the long boundary",
+            left: "abcdefghijklm",
+            right: "abcdefghijklz",
+            similarity: 0.90,
+            expected: true,
+        },
+        Case {
+            name: "thirteen characters reject below the long boundary",
+            left: "abcdefghijklm",
+            right: "abcdefghijklz",
+            similarity: 0.899,
+            expected: false,
+        },
+        Case {
+            name: "negation wins over a high similarity score",
+            left: "user is active",
+            right: "user is not active",
+            similarity: 0.99,
+            expected: false,
+        },
+    ] {
+        let definitions = definitions(&format!(
+            "Then('{}', () => work()); Then('{}', () => work());",
+            case.left, case.right
+        ));
+        assert_eq!(
+            is_near_matcher(&definitions[0], &definitions[1], case.similarity),
+            case.expected,
+            "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn matcher_similarity_reports_the_stronger_normalized_score() {
+    let mut pair = definitions("Given('left', () => first()); Given('right', () => second());");
+    for (left, right) in [("", ""), ("kitten", "sitting"), ("account", "accounts")] {
+        pair[0].normalized_matcher = left.to_owned();
+        pair[1].normalized_matcher = right.to_owned();
+        let expected = if left.is_empty() && right.is_empty() {
+            1.0
+        } else {
+            let longest = left.chars().count().max(right.chars().count());
+            let edit = 1.0 - strsim::levenshtein(left, right) as f64 / longest as f64;
+            edit.max(strsim::jaro_winkler(left, right))
+        };
+        assert!(
+            (matcher_similarity(&pair[0], &pair[1]) - expected).abs() < f64::EPSILON,
+            "{left:?} and {right:?}"
+        );
+    }
+}
+
+#[test]
+fn handler_similarity_contract_is_table_driven() {
+    let mut base = definitions("Given('left', () => first()); Given('right', () => second());");
+    base[0].handler.alpha_normalized = "alpha-left".to_owned();
+    base[1].handler.alpha_normalized = "alpha-right".to_owned();
+    base[0].handler.structural = "structure-left".to_owned();
+    base[1].handler.structural = "structure-right".to_owned();
+
+    let cases = [
+        (
+            "alpha equivalence",
+            "same",
+            "same",
+            "left",
+            "right",
+            vec!["open"],
+            vec!["close"],
+            1.0,
+        ),
+        (
+            "structural equivalence",
+            "left",
+            "right",
+            "same",
+            "same",
+            vec!["open"],
+            vec!["close"],
+            0.95,
+        ),
+        (
+            "ordered behavior overlap",
+            "left",
+            "right",
+            "left",
+            "right",
+            vec!["open", "fill", "save"],
+            vec!["open", "save", "notify"],
+            2.0 / 3.0,
+        ),
+        (
+            "no behavior",
+            "left",
+            "right",
+            "left",
+            "right",
+            vec![],
+            vec![],
+            0.0,
+        ),
+    ];
+
+    for (
+        name,
+        left_alpha,
+        right_alpha,
+        left_structure,
+        right_structure,
+        left_events,
+        right_events,
+        expected,
+    ) in cases
+    {
+        let mut pair = base.clone();
+        pair[0].handler.alpha_normalized = left_alpha.to_owned();
+        pair[1].handler.alpha_normalized = right_alpha.to_owned();
+        pair[0].handler.structural = left_structure.to_owned();
+        pair[1].handler.structural = right_structure.to_owned();
+        pair[0].handler.behavior_signature = left_events.into_iter().map(str::to_owned).collect();
+        pair[1].handler.behavior_signature = right_events.into_iter().map(str::to_owned).collect();
+        assert!(
+            (handler_similarity(&pair[0], &pair[1]) - expected).abs() < f64::EPSILON,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn duplicate_matcher_components_are_invariant_to_definition_input_order() {
+    let mut ordered = definitions(
+        "Given('same', () => first());\nGiven('same', () => second());\nGiven('same', () => third());",
+    );
+    for (index, definition) in ordered.iter_mut().enumerate() {
+        definition.location.path = PathBuf::from(format!("definition-{index}.ts"));
+    }
+    let (_directory, config) = config();
+
+    fn component_members(result: &AnalysisResult) -> Vec<String> {
+        let mut paths = result
+            .findings
+            .iter()
+            .filter(|finding| finding.rule == Rule::DuplicateMatcher)
+            .flat_map(|finding| std::iter::once(&finding.primary).chain(&finding.related))
+            .map(|location| location.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
+    let expected = [
+        "definition-0.ts".to_owned(),
+        "definition-1.ts".to_owned(),
+        "definition-2.ts".to_owned(),
+    ];
+    for permutation in [[0, 1, 2], [2, 1, 0], [0, 2, 1], [1, 0, 2]] {
+        let definitions = permutation
+            .into_iter()
+            .map(|index| ordered[index].clone())
+            .collect();
+        let result = analyze(definitions, Vec::new(), &config).unwrap();
+        assert_eq!(component_members(&result), expected);
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .filter(|finding| finding.rule == Rule::DuplicateMatcher)
+                .count(),
+            2
+        );
+    }
+}
+
+#[test]
 fn shared_context_does_not_override_parameterization_evidence() {
     for (left, right) in [
         (
@@ -921,8 +1125,31 @@ Given('I wait for the page', () => waitForPage());
 
 #[test]
 fn ordered_behavior_similarity_uses_longest_common_subsequence() {
-    let left = vec!["open".to_owned(), "fill".to_owned(), "save".to_owned()];
-    let right = vec!["open".to_owned(), "save".to_owned(), "notify".to_owned()];
-    assert_eq!(ordered_common_subsequence_len(&left, &right), 2);
-    assert_eq!(ordered_common_subsequence_len(&right, &left), 2);
+    for (left, right, expected) in [
+        (
+            vec!["open", "fill", "save"],
+            vec!["open", "save", "notify"],
+            2,
+        ),
+        (vec!["open"], vec!["close"], 0),
+        (vec!["open", "save"], vec!["open", "save"], 2),
+        (vec![], vec!["open"], 0),
+    ] {
+        let left = left.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let right = right.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(ordered_common_subsequence_len(&left, &right), expected);
+        assert_eq!(ordered_common_subsequence_len(&right, &left), expected);
+    }
+}
+
+#[test]
+fn reported_similarity_scores_round_to_three_decimal_places() {
+    for (input, expected) in [
+        (0.0, 0.0),
+        (0.123_4, 0.123),
+        (0.123_5, 0.124),
+        (0.999_9, 1.0),
+    ] {
+        assert_eq!(super::similarity::round_score(input), expected);
+    }
 }

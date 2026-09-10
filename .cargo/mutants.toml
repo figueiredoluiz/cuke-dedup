@@ -1,0 +1,9 @@
+profile = "mutants"
+all_features = true
+minimum_test_timeout = 60.0
+build_timeout_multiplier = 3.0
+timeout_multiplier = 4.0
+gitignore = true
+copy_vcs = false
+copy_target = false
+additional_cargo_test_args = ["--all-targets"]
