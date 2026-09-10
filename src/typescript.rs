@@ -27,8 +27,10 @@ use self::registrations::{
 };
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
-use crate::source_adapter::UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX;
-use crate::source_adapter::{adapter_for_language, SourceAdapter, SourceExtractionSession};
+use crate::source_adapter::{
+    adapter_for_language, grammar_for_language, SourceAdapter, SourceExtractionSession,
+    UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
+};
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
@@ -158,13 +160,8 @@ fn extract_detailed_impl(
     session: &mut TypeScriptExtractionSession,
 ) -> Result<Extraction> {
     let mut parser = Parser::new();
-    let language = match file.language {
-        SourceLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
-        SourceLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        SourceLanguage::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
-    };
     parser
-        .set_language(&language)
+        .set_language(&grammar_for_language(file.language))
         .context("failed to initialize the JavaScript/TypeScript parser")?;
     let tree = parser
         .parse(source, None)
