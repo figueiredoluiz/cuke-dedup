@@ -486,18 +486,66 @@ fn collect_behavior(
         match node.kind() {
             "call_expression" => {
                 if let Some(function) = node.child_by_field_name("function") {
-                    output.push(format!(
-                        "call:{}",
-                        serialize_ast(function, source, declared, AstMode::Structural)
-                    ));
+                    output.push(call_behavior_event(function, source, declared));
                 }
             }
             "if_statement" | "switch_statement" | "for_statement" | "for_in_statement"
-            | "while_statement" | "do_statement" | "return_statement" | "throw_statement"
-            | "await_expression" => output.push(node.kind().to_owned()),
+            | "while_statement" | "do_statement" | "return_statement" | "throw_statement" => {
+                output.push(node.kind().to_owned())
+            }
             _ => {}
         }
         push_named_children_reverse(node, &mut stack);
+    }
+}
+
+fn call_behavior_event(
+    function: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+) -> String {
+    if function.kind() == "identifier" {
+        let name = node_text(function, source);
+        return format!("call:{}", declared.get(name).map_or(name, String::as_str));
+    }
+    if function.kind() == "member_expression" {
+        if let (Some(object), Some(property)) = (
+            function.child_by_field_name("object"),
+            function.child_by_field_name("property"),
+        ) {
+            if let Some(receiver) = static_call_receiver(object, source) {
+                return format!("call:{receiver}#{}", node_text(property, source));
+            }
+        }
+    }
+    format!(
+        "call:{}",
+        serialize_ast(function, source, declared, AstMode::Structural)
+    )
+}
+
+fn static_call_receiver(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" | "this" | "super" => Some(node_text(node, source).to_owned()),
+        "parenthesized_expression" | "await_expression" => {
+            static_call_receiver(node.named_child(0)?, source)
+        }
+        "member_expression" => {
+            let object = static_call_receiver(node.child_by_field_name("object")?, source)?;
+            let property = node.child_by_field_name("property")?;
+            Some(format!("{object}.{}", node_text(property, source)))
+        }
+        "call_expression" => {
+            let function = node.child_by_field_name("function")?;
+            if function.kind() == "member_expression" {
+                static_call_receiver(function.child_by_field_name("object")?, source)
+            } else if function.kind() == "identifier" {
+                Some(node_text(function, source).to_owned())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 

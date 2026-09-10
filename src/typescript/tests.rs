@@ -160,6 +160,71 @@ fn structural_fingerprint_masks_string_literal_contents() {
 }
 
 #[test]
+fn behavior_signatures_canonicalize_calls_without_treating_await_as_behavior() {
+    struct Case {
+        name: &'static str,
+        source: &'static str,
+        expected: &'static [&'static str],
+    }
+
+    for case in [
+        Case {
+            name: "direct member call",
+            source: "Given('step', async function () { await this.page.click('#save'); });",
+            expected: &["call:this.page#click"],
+        },
+        Case {
+            name: "fluent member call",
+            source:
+                "Given('step', async function () { await this.page.locator('#save').click(); });",
+            expected: &["call:this.page#click", "call:this.page#locator"],
+        },
+        Case {
+            name: "parenthesized awaited receiver",
+            source:
+                "Given('step', async function () { await (await this.page.locator('#save')).click(); });",
+            expected: &["call:this.page#click", "call:this.page#locator"],
+        },
+        Case {
+            name: "factory call receiver",
+            source: "Given('step', async function () { await browser().click('#save'); });",
+            expected: &["call:browser#click", "call:browser"],
+        },
+        Case {
+            name: "free local callback",
+            source: "Given('step', async (perform) => { await perform(); });",
+            expected: &["call:v0"],
+        },
+        Case {
+            name: "receiver identity",
+            source: "Given('step', async ({ audit }) => { await audit.click(); });",
+            expected: &["call:audit#click"],
+        },
+    ] {
+        let definition = extract(case.source, &file(SourceLanguage::TypeScript))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            definition.handler.behavior_signature, case.expected,
+            "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn computed_callees_keep_the_structural_fallback() {
+    let definition = extract(
+        "Given('step', ({ page, method }) => page[method]());",
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(definition.handler.behavior_signature.len(), 1);
+    assert!(definition.handler.behavior_signature[0].starts_with("call:(subscript_expression"));
+}
+
+#[test]
 fn ignores_unrelated_member_calls_and_destructuring_aliases() {
     let source = r#"
 somePromise.then('not a step', () => {});

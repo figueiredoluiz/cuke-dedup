@@ -131,7 +131,7 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     for (index, definition) in long_handlers.iter_mut().enumerate() {
         definition.handler.alpha_normalized = format!("alpha-{index}");
         definition.handler.structural = format!("structure-{index}");
-        definition.handler.behavior_signature = vec!["shared-event".to_owned(); 10_000];
+        definition.handler.behavior_signature = vec!["call:shared-event".to_owned(); 10_000];
     }
     let mut findings = Vec::new();
     let suppressions = super::suppression::SuppressionIndex::new(&config, &long_handlers);
@@ -576,6 +576,93 @@ Given("I am on the login page", async function () {
 }
 
 #[test]
+fn matcher_blocking_semantic_boundary_is_table_driven() {
+    struct Case {
+        name: &'static str,
+        left_handler: &'static str,
+        right_handler: &'static str,
+        expected_near: bool,
+        expected_similarity: f64,
+    }
+
+    let cases = [
+        Case {
+            name: "one shared action out of two reaches the boundary",
+            left_handler: "async function () { await this.page.goto('/login'); }",
+            right_handler: "async function () { await this.page.goto('/login'); await this.page.waitForLoadState(); }",
+            expected_near: true,
+            expected_similarity: 0.5,
+        },
+        Case {
+            name: "direct and fluent calls share their terminal action",
+            left_handler: "async ({ page }) => { await page.click('#save'); }",
+            right_handler: "async ({ page }) => { await page.locator('#save').click(); }",
+            expected_near: true,
+            expected_similarity: 0.5,
+        },
+        Case {
+            name: "unrelated awaited calls do not share synthetic behavior",
+            left_handler: "async () => { await loadAccount(); }",
+            right_handler: "async () => { await writeAudit(); }",
+            expected_near: false,
+            expected_similarity: 0.0,
+        },
+        Case {
+            name: "receiver names remain semantically distinct",
+            left_handler: "async () => { await page.click('#save'); }",
+            right_handler: "async () => { await audit.click('#save'); }",
+            expected_near: false,
+            expected_similarity: 0.0,
+        },
+        Case {
+            name: "control flow alone cannot establish handler agreement",
+            left_handler: "() => { if (ready) return first; return second; }",
+            right_handler: "() => { if (active) return third; }",
+            expected_near: false,
+            expected_similarity: 2.0 / 3.0,
+        },
+        Case {
+            name: "one shared action out of three remains below the boundary",
+            left_handler: "async ({ page }) => { await page.goto('/'); await page.fill('#x', 'x'); await page.click('#save'); }",
+            right_handler: "async ({ page }) => { await page.goto('/'); await page.reload(); await page.screenshot(); }",
+            expected_near: false,
+            expected_similarity: 1.0 / 3.0,
+        },
+        Case {
+            name: "different terminal operations do not collide",
+            left_handler: "async ({ page }) => { await page.click('#save'); }",
+            right_handler: "async ({ page }) => { await page.fill('#save', 'value'); }",
+            expected_near: false,
+            expected_similarity: 0.0,
+        },
+    ];
+
+    let (_directory, config) = config();
+    for case in cases {
+        let definitions = definitions(&format!(
+            "Given('I am on login page', {}); Given('I am on the login page', {});",
+            case.left_handler, case.right_handler
+        ));
+        let similarity = handler_similarity(&definitions[0], &definitions[1]);
+        assert!(
+            (similarity - case.expected_similarity).abs() < f64::EPSILON,
+            "{}: {similarity}",
+            case.name
+        );
+        let result = analyze(definitions, Vec::new(), &config).unwrap();
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .any(|finding| finding.rule == Rule::NearDuplicateStep),
+            case.expected_near,
+            "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
 fn matcher_blocking_finds_near_members_outside_an_identical_handler_spanning_tree() {
     let definitions = definitions(
         r#"
@@ -646,7 +733,8 @@ Given('account operation four', () => fourth());
     for (index, definition) in definitions.iter_mut().enumerate() {
         definition.handler.alpha_normalized = format!("alpha-{index}");
         definition.handler.structural = format!("structure-{index}");
-        definition.handler.behavior_signature = vec!["open".to_owned(), "fill".to_owned()];
+        definition.handler.behavior_signature =
+            vec!["call:open".to_owned(), "call:fill".to_owned()];
     }
     let (_directory, mut config) = config();
     config.max_candidate_comparisons = 2;
