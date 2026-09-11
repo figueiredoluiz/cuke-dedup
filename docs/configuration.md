@@ -107,7 +107,7 @@ Example:
 
 ```gitignore
 # Generated feature sources
-features/generated/
+features/generated/*
 **/*.generated.ts
 
 # Keep one reviewed generated definition

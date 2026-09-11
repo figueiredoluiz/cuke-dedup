@@ -96,7 +96,7 @@ A minimal `.cuke-dedup.json` might be:
 Use `.cuke-dedupignore` for repository-specific exclusions:
 
 ```gitignore
-features/generated/
+features/generated/*
 **/*.generated.ts
 !features/generated/reviewed.generated.ts
 ```
