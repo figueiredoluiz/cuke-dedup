@@ -1,0 +1,5 @@
+name: CukeDedup CodeQL configuration
+
+paths-ignore:
+  # Intentionally invalid JavaScript used to verify fail-closed parser diagnostics.
+  - fixtures/corpus/malformed-matcher/steps.js
