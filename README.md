@@ -444,6 +444,8 @@ gh attestation verify <archive> \
 
 Cargo, npm, the Git tag, and the GitHub release use the same version. See [CHANGELOG.md](CHANGELOG.md) for release history and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for the runtime dependency license inventory.
 
+npm releases use OIDC trusted publishing and do not read a long-lived registry token. Every npm package in the release matrix must authorize the `figueiredoluiz/cuke-dedup` repository, `release.yml` workflow, and `npm` environment on npmjs.com, with direct `npm publish` allowed. The workflow fails before publication when the runner's npm CLI is older than the trusted-publishing minimum.
+
 ## License
 
 [MIT](LICENSE)

@@ -238,7 +238,7 @@ jobs:
       - run: python3 scripts/release/verify_npm_binaries.py --binaries native --archives release-assets
       - run: node scripts/release/prepare-npm-packages.mjs native
       - run: npm ci --ignore-scripts --force
+      - name: Verify npm trusted-publishing support
+        run: node scripts/release/check-npm-trusted-publishing.mjs
       - name: Publish platform packages, then launcher
         run: node scripts/release/publish-npm-packages.mjs
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

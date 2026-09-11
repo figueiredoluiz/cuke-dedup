@@ -43,6 +43,9 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Security
 
+- npm publishing now uses short-lived OIDC trusted-publisher credentials exclusively; the release
+  workflow no longer reads a long-lived `NPM_TOKEN` secret and fails closed on unsupported npm
+  clients.
 - A second fuzz target covers configuration discovery, project module metadata, and baseline
   parsing, the untrusted inputs that are read outside the source parsers.
 - Release jobs are bound to the immutable workflow commit instead of accepting a free-form checkout
