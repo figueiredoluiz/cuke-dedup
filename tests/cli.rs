@@ -234,6 +234,72 @@ fn print_config_reports_merged_values_without_running_discovery() {
 }
 
 #[test]
+fn candidate_limits_cannot_exceed_hard_safety_ceilings_from_config_or_cli() {
+    let directory = tempfile::tempdir().unwrap();
+    let config_path = directory.path().join(".cuke-dedup.json");
+
+    for (config, expected) in [
+        (
+            r#"{"maxCandidateComparisons":2000001}"#,
+            "maxCandidateComparisons must not exceed the hard safety limit of 2000000",
+        ),
+        (
+            r#"{"maxStructuralClassComparisons":250001}"#,
+            "maxStructuralClassComparisons must not exceed the hard safety limit of 250000",
+        ),
+    ] {
+        fs::write(&config_path, config).unwrap();
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(directory.path())
+            .args([".", "--print-config"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(expected));
+    }
+
+    fs::write(&config_path, "{}").unwrap();
+    for (flag, value, expected) in [
+        (
+            "--max-candidate-comparisons",
+            "2000001",
+            "maxCandidateComparisons must not exceed the hard safety limit of 2000000",
+        ),
+        (
+            "--max-structural-class-comparisons",
+            "250001",
+            "maxStructuralClassComparisons must not exceed the hard safety limit of 250000",
+        ),
+    ] {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(directory.path())
+            .args([".", "--print-config", flag, value])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(expected));
+    }
+
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([
+            ".",
+            "--print-config",
+            "--max-candidate-comparisons",
+            "2000000",
+            "--max-structural-class-comparisons",
+            "250000",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let config: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(config["maxCandidateComparisons"], 2_000_000);
+    assert_eq!(config["maxStructuralClassComparisons"], 250_000);
+}
+
+#[test]
 fn zero_config_implicit_check_reports_duplicates_and_writes_machine_reports() {
     let directory = tempfile::tempdir().unwrap();
     write(

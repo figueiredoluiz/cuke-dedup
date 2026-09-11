@@ -43,6 +43,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Security
 
+- Repository-controlled configuration can lower analysis candidate budgets but can no longer
+  raise their immutable memory and work ceilings.
 - npm publishing now uses short-lived OIDC trusted-publisher credentials exclusively; the release
   workflow no longer reads a long-lived `NPM_TOKEN` secret and fails closed on unsupported npm
   clients.

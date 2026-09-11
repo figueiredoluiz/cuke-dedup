@@ -28,6 +28,23 @@ fn config() -> (tempfile::TempDir, Config) {
 }
 
 #[test]
+fn public_analysis_rejects_mutated_configs_above_hard_safety_ceilings() {
+    let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 2_000_001;
+    let error = analyze(Vec::new(), Vec::new(), &config).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("maxCandidateComparisons must not exceed the hard safety limit of 2000000"));
+
+    config.max_candidate_comparisons = 2_000_000;
+    config.max_structural_class_comparisons = 250_001;
+    let error = analyze_with_diagnostics(Vec::new(), Vec::new(), &config).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("maxStructuralClassComparisons must not exceed the hard safety limit of 250000"));
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"
