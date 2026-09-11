@@ -1,7 +1,8 @@
 use super::{CliReportMetadata, CorpusCensus, ReportContext, Summary, JSON_SCHEMA_VERSION};
 use crate::analysis::AnalysisCensus;
 use crate::model::{
-    AnalysisResult, Finding, FindingEvidence, Rule, Severity, SourceLocation, Suppression,
+    AnalysisResult, DefinitionCluster, Finding, FindingEvidence, Rule, Severity, SourceLocation,
+    Suppression,
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -12,6 +13,10 @@ use std::path::Path;
 pub(super) const MAX_BUFFERED_REPORT_FINDINGS: usize = 10_000;
 #[cfg(test)]
 pub(super) const MAX_BUFFERED_REPORT_FINDINGS: usize = 100;
+#[cfg(not(test))]
+pub(super) const MAX_REPORTED_CLUSTER_MEMBERS: usize = 256;
+#[cfg(test)]
+pub(super) const MAX_REPORTED_CLUSTER_MEMBERS: usize = 16;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +41,7 @@ struct ReportFinding {
     message: String,
     primary: ReportLocation,
     related: Vec<ReportLocation>,
+    related_locations_truncated: bool,
     evidence: FindingEvidence,
     suggested_action: String,
     suppression: Option<Suppression>,
@@ -113,10 +119,8 @@ pub(super) fn report_value_with_metadata<'a>(
 }
 
 fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
-    let mut evidence = finding.evidence.clone();
-    evidence.matcher_difference = report_safe(&evidence.matcher_difference);
-    evidence.handler_evidence = report_safe(&evidence.handler_evidence);
-    if let Some(comparison) = evidence.comparison.as_mut() {
+    let mut comparison = finding.evidence.comparison.clone();
+    if let Some(comparison) = comparison.as_mut() {
         comparison.left_matcher = report_safe(&comparison.left_matcher);
         comparison.right_matcher = report_safe(&comparison.right_matcher);
         comparison.left_handler = report_safe(&comparison.left_handler);
@@ -126,6 +130,30 @@ fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
         comparison.matcher_diff.right_change = report_safe(&comparison.matcher_diff.right_change);
         comparison.matcher_diff.suffix = report_safe(&comparison.matcher_diff.suffix);
     }
+    let cluster = finding.evidence.cluster.as_ref().map(|cluster| {
+        let definition_fingerprints = cluster
+            .definition_fingerprints
+            .iter()
+            .take(MAX_REPORTED_CLUSTER_MEMBERS)
+            .cloned()
+            .collect::<Vec<_>>();
+        DefinitionCluster {
+            member_count: cluster.member_count,
+            members_truncated: cluster.members_truncated
+                || definition_fingerprints.len() < cluster.member_count,
+            definition_fingerprints,
+            pair_findings_collapsed: cluster.pair_findings_collapsed,
+        }
+    });
+    let evidence = FindingEvidence {
+        matcher_similarity: finding.evidence.matcher_similarity,
+        handler_similarity: finding.evidence.handler_similarity,
+        matcher_difference: report_safe(&finding.evidence.matcher_difference),
+        handler_evidence: report_safe(&finding.evidence.handler_evidence),
+        comparison,
+        cluster,
+    };
+    let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
     ReportFinding {
         rule: finding.rule,
         severity: finding.severity,
@@ -134,8 +162,10 @@ fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
         related: finding
             .related
             .iter()
+            .take(retained_related)
             .map(|location| convert_location(location, root))
             .collect(),
+        related_locations_truncated: finding.related.len() > retained_related,
         evidence,
         suggested_action: report_safe(&finding.suggested_action),
         suppression: finding.suppression.as_ref().map(|suppression| Suppression {

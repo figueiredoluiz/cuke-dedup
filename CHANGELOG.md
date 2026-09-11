@@ -7,6 +7,11 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Changed
 
+- **Breaking (reports and baselines):** JSON and JSONL reports now use schema version `2`, and
+  semantic baselines use version `2`. Large exact-equivalence groups are represented by bounded
+  cluster evidence instead of many pair records. Existing version `1` baselines are rejected for
+  normal comparison but can be replaced directly with `--update-baseline`; no manual deletion is
+  required.
 - **Breaking (CLI):** analysis that cannot cover the complete corpus now warns and exits on
   finding severity instead of returning operational exit code `2`. Candidate-comparison
   truncation, resolution resource limits, and registration imports that cannot be resolved

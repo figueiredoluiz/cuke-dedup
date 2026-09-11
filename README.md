@@ -253,13 +253,13 @@ JSON, HTML, and SARIF reports default to `reports/cuke-dedup/` and can be redire
 
 ### JSON and HTML
 
-The JSON report uses schema version `1`. It includes relative source spans, severity, suppressions, similarity scores, suggested actions, structured matcher/handler evidence, threshold calculations, an extraction-completeness census including a `corpus.incomplete` flag, candidate-source counts and truncation status, input counts, and execution metrics. The self-contained HTML report presents the same result with search, severity and rule filters, a light/dark theme switch, matcher differences, side-by-side handler snippets, and a visible incomplete-analysis alert.
+The JSON report uses schema version `2`. It includes relative source spans, severity, suppressions, similarity scores, suggested actions, structured pair or cluster evidence, threshold calculations, an extraction-completeness census including a `corpus.incomplete` flag, candidate-source counts and truncation status, input counts, and execution metrics. The self-contained HTML report presents the same result with search, severity and rule filters, a light/dark theme switch, matcher differences, side-by-side handler snippets, and a visible incomplete-analysis alert.
 
 Set `noMetrics: true`, pass `--no-metrics`, or use the Action's `no-metrics: true` input to omit timing data when byte-reproducible artifacts matter. The deterministic top-level `corpus` census remains present.
 
 ### JSON Lines
 
-JSONL schema version `1` is intended for streaming agent and shell consumption:
+JSONL schema version `2` is intended for streaming agent and shell consumption:
 
 ```sh
 cuke-dedup . --reporters jsonl \
@@ -274,7 +274,7 @@ The final `type: "summary"` record declares `recordCount` and stream-level `trun
 
 SARIF 2.1.0 contains active findings, portable relative Unicode-aware locations, stable partial fingerprints, severity, similarity properties, suggested actions, and the threshold outcome for GitHub code scanning or another compatible consumer. Handler snippets are bounded before being embedded. HTML-visible text is escaped, bidirectional and invisible-format controls—including Unicode Tag characters—are removed, and embedded JSON characters that could close a script element are encoded.
 
-Terminal, JSON, HTML, and SARIF output retain at most 10,000 findings, prioritizing active errors before warnings and clearly reporting truncation. Their summaries still describe the complete analysis. JSONL remains the uncapped finding stream.
+Terminal, JSON, HTML, and SARIF output retain at most 10,000 findings, prioritizing active errors before warnings and clearly reporting truncation. A single finding retains at most 256 cluster members in any report; `memberCount`, `membersTruncated`, and `relatedLocationsTruncated` preserve the full count and make omissions explicit. Their summaries and duplication thresholds still describe the complete analysis. JSONL remains uncapped by finding count while applying the same per-record membership bound.
 
 ## Agent Skill
 
@@ -353,7 +353,7 @@ cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new
 cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new 3
 ```
 
-`--fail-on-new` defaults to zero when no count is supplied. `--update-baseline` and `--fail-on-new` require `--baseline`; they cannot be combined. Baseline updates reject `--changed-since` and are skipped whenever analysis has an operational error, preventing a partial scan from erasing accepted findings. The sorted, versioned baseline records one semantic fingerprint per line with a multiplicity count for reviewable diffs.
+`--fail-on-new` defaults to zero when no count is supplied. `--update-baseline` and `--fail-on-new` require `--baseline`; they cannot be combined. Baseline updates reject `--changed-since` and are skipped whenever analysis has an operational error, preventing a partial scan from erasing accepted findings. The sorted, versioned baseline records one semantic fingerprint per line with a multiplicity count for reviewable diffs. Version `1` baselines from CukeDedup 0.1 can be replaced in place by running the version `2` tool with `--update-baseline`; normal comparison rejects mismatched schemas.
 
 Changed-file mode still analyzes the complete discovered corpus so a changed definition can be compared with unchanged definitions. It filters the reported findings to those touching a changed file, while summary definition counts and the duplication-threshold denominator remain the complete corpus.
 
@@ -377,7 +377,7 @@ Warnings do not produce exit code `1`.
 - Named handlers declared in the same source file are resolved to their bodies. Imported or unresolved handler references remain available for matcher and usage rules but are not compared by identifier text.
 - Malformed JavaScript or TypeScript fails closed. Unsupported regular-expression constructs emit a warning; malformed matcher escapes are operational errors.
 - One analysis root is one comparison corpus. Run independent monorepo packages separately when their step registries are unrelated.
-- Exact matcher and handler equivalence groups produce a linear spanning set of findings. Fuzzy matcher discovery uses collision-free fixed-width keys for case-folded character trigrams with digit runs normalized. Every unsaturated posting list is considered; lists above 256 definitions use a deterministic lexical-neighbor fallback instead of quadratic expansion. Candidates must also be capable of reaching the 50% handler-behavior gate and, unless otherwise structurally equivalent, share a canonical call action. The fallback preserves a linear sample for highly repetitive vocabularies but, like other bounded fuzzy indexes, does not promise every possible pair. Explicit shingle, unique-proposal, per-matrix, aggregate-verification, global-candidate, and per-structural-class limits prevent adversarial input from causing unbounded work. Reaching a work or candidate limit preserves the findings evaluated so far and explicitly marks every machine report incomplete, so the absence of a finding proves nothing while the findings present remain valid. The run warns rather than failing; set `failOnIncomplete: true`, pass `--fail-on-incomplete`, or set the Action's `fail-on-incomplete` input to make it exit `2`, or split independent suites, narrow the root, or adjust a configurable candidate limit when its report census identifies that limit as the cause.
+- Exact matcher and handler equivalence groups of up to four definitions produce a linear spanning set of pair findings. Larger exact-equivalence groups produce one cluster finding with a bounded location and fingerprint preview, the complete member count, and an explicit truncation signal; duplication thresholds still count every member. Fuzzy and structural-similarity rules remain pair findings so their individual scores and comparisons are never hidden. Fuzzy matcher discovery uses collision-free fixed-width keys for case-folded character trigrams with digit runs normalized. Every unsaturated posting list is considered; lists above 256 definitions use a deterministic lexical-neighbor fallback instead of quadratic expansion. Candidates must also be capable of reaching the 50% handler-behavior gate and, unless otherwise structurally equivalent, share a canonical call action. The fallback preserves a linear sample for highly repetitive vocabularies but, like other bounded fuzzy indexes, does not promise every possible pair. Explicit shingle, unique-proposal, per-matrix, aggregate-verification, global-candidate, and per-structural-class limits prevent adversarial input from causing unbounded work. Reaching a work or candidate limit preserves the findings evaluated so far and explicitly marks every machine report incomplete, so the absence of a finding proves nothing while the findings present remain valid. The run warns rather than failing; set `failOnIncomplete: true`, pass `--fail-on-incomplete`, or set the Action's `fail-on-incomplete` input to make it exit `2`, or split independent suites, narrow the root, or adjust a configurable candidate limit when its report census identifies that limit as the cause.
 - Before version 1.0, configuration and machine-report schemas may evolve between minor releases. Schema changes will be explicit and versioned.
 
 CukeDedup is an independent project. It is not affiliated with or endorsed by the Cucumber project or its maintainers.

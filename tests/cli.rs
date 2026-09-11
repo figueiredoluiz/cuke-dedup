@@ -266,7 +266,7 @@ Then('the receipt is visible', async () => { await expect(otherReceipt).toBeVisi
 
     let json_path = directory.path().join("artifacts/cuke-dedup.json");
     let report: Value = serde_json::from_str(&fs::read_to_string(json_path).unwrap()).unwrap();
-    assert_eq!(report["schemaVersion"], "1");
+    assert_eq!(report["schemaVersion"], "2");
     assert_eq!(report["summary"]["errors"], 2); // duplicate matcher + ambiguity
     assert_eq!(report["metrics"]["definitionFiles"], 1);
     assert_eq!(report["corpus"]["definitionFiles"], 1);
@@ -1948,7 +1948,7 @@ fn semantic_baseline_can_be_updated_moved_and_gated_by_new_findings() {
         &fs::read_to_string(directory.path().join(".cuke-dedup-baseline.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(baseline["schemaVersion"], 1);
+    assert_eq!(baseline["schemaVersion"], 2);
     assert_eq!(
         baseline["fingerprints"]
             .as_object()
@@ -1999,6 +1999,42 @@ fn semantic_baseline_can_be_updated_moved_and_gated_by_new_findings() {
         ])
         .assert()
         .code(1);
+}
+
+#[test]
+fn baseline_update_replaces_v1_but_refuses_unknown_future_schemas() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('same step', () => first());\nGiven('same step', () => second());\n",
+    );
+    let baseline_path = directory.path().join("baseline.json");
+    fs::write(
+        &baseline_path,
+        r#"{"schemaVersion":1,"fingerprints":{"legacy":1}}"#,
+    )
+    .unwrap();
+
+    let mut migrate = Command::cargo_bin("cuke-dedup").unwrap();
+    migrate
+        .current_dir(directory.path())
+        .args([".", "--baseline", "baseline.json", "--update-baseline"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("updated baseline"));
+    let migrated: Value =
+        serde_json::from_str(&fs::read_to_string(&baseline_path).unwrap()).unwrap();
+    assert_eq!(migrated["schemaVersion"], 2);
+
+    fs::write(&baseline_path, r#"{"schemaVersion":99,"fingerprints":{}}"#).unwrap();
+    let mut future = Command::cargo_bin("cuke-dedup").unwrap();
+    future
+        .current_dir(directory.path())
+        .args([".", "--baseline", "baseline.json", "--update-baseline"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("newer than supported"));
 }
 
 #[test]
@@ -2386,6 +2422,30 @@ fn large_equivalence_class_emits_a_bounded_spanning_finding_set() {
     assert!(
         report["summary"]["findings"].as_u64().unwrap()
             <= (PAIR_RULE_COUNT * (definition_count - 1)) as u64
+    );
+    let duplicate_handler_cluster = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["rule"] == "duplicate-handler")
+        .unwrap();
+    assert_eq!(
+        duplicate_handler_cluster["related"]
+            .as_array()
+            .unwrap()
+            .len(),
+        definition_count - 1
+    );
+    assert_eq!(
+        duplicate_handler_cluster["evidence"]["cluster"]["definitionFingerprints"]
+            .as_array()
+            .unwrap()
+            .len(),
+        definition_count
+    );
+    assert_eq!(
+        duplicate_handler_cluster["evidence"]["cluster"]["pairFindingsCollapsed"],
+        definition_count - 1
     );
     assert_eq!(report["findingsTruncated"], 0);
 }

@@ -280,6 +280,25 @@ pub struct FindingEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Structured definition comparison for rich reports.
     pub comparison: Option<DefinitionComparison>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Connected definition group when a large set of pair findings is collapsed.
+    pub cluster: Option<DefinitionCluster>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Stable semantic identity and size information for a clustered finding.
+pub struct DefinitionCluster {
+    /// Total number of definitions represented by the cluster.
+    pub member_count: usize,
+    /// Location-independent fingerprints for every definition in the cluster.
+    ///
+    /// Reporters may retain only a bounded prefix and set [`Self::members_truncated`].
+    pub definition_fingerprints: Vec<String>,
+    /// Number of pair findings represented by the single cluster finding.
+    pub pair_findings_collapsed: usize,
+    /// Whether a reporter omitted members from its serialized representation.
+    pub members_truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -437,6 +456,21 @@ pub fn stable_fingerprint(value: &str) -> String {
     format!("{hash:016x}")
 }
 
+pub(crate) fn stable_fingerprint_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for (index, part) in parts.into_iter().enumerate() {
+        if index > 0 {
+            hash ^= 0;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        for byte in part.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("{hash:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,6 +516,7 @@ mod tests {
                 matcher_difference: String::new(),
                 handler_evidence: String::new(),
                 comparison: None,
+                cluster: None,
             },
             suggested_action: "consolidate".to_owned(),
             suppression: None,
@@ -493,6 +528,14 @@ mod tests {
         for rule in Rule::ALL {
             assert_eq!(rule.to_string().parse::<Rule>(), Ok(rule));
         }
+    }
+
+    #[test]
+    fn multipart_fingerprint_matches_nul_joined_input_without_join_allocation() {
+        assert_eq!(
+            stable_fingerprint_parts(["duplicate-matcher", "alpha", "bravo"]),
+            stable_fingerprint("duplicate-matcher\0alpha\0bravo")
+        );
     }
 
     #[test]

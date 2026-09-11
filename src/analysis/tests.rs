@@ -6,7 +6,7 @@ use super::*;
 use crate::config::{ConfigOverrides, SuppressionConfig};
 use crate::discovery::{SourceFile, SourceLanguage};
 use crate::gherkin;
-use crate::model::Rule;
+use crate::model::{DuplicationThreshold, Rule};
 use crate::typescript;
 use std::path::{Path, PathBuf};
 
@@ -479,6 +479,47 @@ fn equivalence_classes_report_a_spanning_set_instead_of_every_pair() {
             .filter(|finding| finding.rule == Rule::DuplicateMatcher)
             .count(),
         3
+    );
+}
+
+#[test]
+fn large_equivalence_classes_report_one_stable_cluster() {
+    let definitions = definitions(
+        "Given('same', () => one());\nGiven('same', () => two());\nGiven('same', () => three());\nGiven('same', () => four());\nGiven('same', () => five());",
+    );
+    let (_directory, config) = config();
+    let result = analyze(definitions.clone(), Vec::new(), &config).unwrap();
+    let duplicate_matcher = result
+        .findings
+        .iter()
+        .filter(|finding| finding.rule == Rule::DuplicateMatcher)
+        .collect::<Vec<_>>();
+
+    assert_eq!(duplicate_matcher.len(), 1);
+    let finding = duplicate_matcher[0];
+    assert_eq!(finding.related.len(), 4);
+    assert!(finding.evidence.comparison.is_none());
+    let cluster = finding.evidence.cluster.as_ref().unwrap();
+    assert_eq!(cluster.member_count, 5);
+    assert_eq!(cluster.definition_fingerprints.len(), 5);
+    assert_eq!(cluster.pair_findings_collapsed, 4);
+    assert!(!cluster.members_truncated);
+
+    let duplication = DuplicationThreshold::from_result(&result, 100.0);
+    assert_eq!(duplication.duplicated_definitions, 5);
+    assert_eq!(duplication.percentage, 100.0);
+
+    let mut reversed = definitions;
+    reversed.reverse();
+    let reordered = analyze(reversed, Vec::new(), &config).unwrap();
+    let reordered_finding = reordered
+        .findings
+        .iter()
+        .find(|finding| finding.rule == Rule::DuplicateMatcher)
+        .unwrap();
+    assert_eq!(
+        crate::modes::finding_fingerprint(finding),
+        crate::modes::finding_fingerprint(reordered_finding)
     );
 }
 

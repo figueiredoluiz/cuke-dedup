@@ -1,7 +1,9 @@
 //! Changed-files and existing-findings baseline modes for incremental CI adoption.
 
 use crate::config::normalize_platform_path;
-use crate::model::{stable_fingerprint, DefinitionComparison, Finding, Suppression};
+use crate::model::{
+    stable_fingerprint, stable_fingerprint_parts, DefinitionComparison, Finding, Suppression,
+};
 use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -161,7 +163,7 @@ pub fn retain_changed_findings(findings: &mut Vec<Finding>, changed: &BTreeSet<P
 }
 
 /// Schema version of the compact, reviewable baseline format.
-pub const BASELINE_SCHEMA_VERSION: u32 = 1;
+pub const BASELINE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -207,7 +209,7 @@ pub fn apply_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<
 /// Rewrites a baseline from the current active findings and suppresses those findings.
 pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
     let previous = if baseline_path.is_file() {
-        load_baseline(baseline_path)?
+        load_baseline_for_update(baseline_path)?
     } else {
         BaselineFile::empty()
     };
@@ -222,10 +224,7 @@ pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result
 }
 
 fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
-    let text = read_utf8(baseline_path, "baseline", MAX_BASELINE_INPUT_BYTES)?;
-    // serde_json's default recursion limit remains enabled for untrusted baseline input.
-    let baseline: BaselineFile = serde_json::from_str(&text)
-        .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))?;
+    let baseline = parse_baseline(baseline_path)?;
     if baseline.schema_version != BASELINE_SCHEMA_VERSION {
         bail!(
             "unsupported baseline schema version `{}` (expected `{}`); regenerate it with --update-baseline",
@@ -234,6 +233,25 @@ fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
         );
     }
     Ok(baseline)
+}
+
+fn load_baseline_for_update(baseline_path: &Path) -> Result<BaselineFile> {
+    let baseline = parse_baseline(baseline_path)?;
+    if baseline.schema_version > BASELINE_SCHEMA_VERSION {
+        bail!(
+            "baseline schema version `{}` is newer than supported version `{}` and cannot be replaced safely",
+            baseline.schema_version,
+            BASELINE_SCHEMA_VERSION
+        );
+    }
+    Ok(baseline)
+}
+
+fn parse_baseline(baseline_path: &Path) -> Result<BaselineFile> {
+    let text = read_utf8(baseline_path, "baseline", MAX_BASELINE_INPUT_BYTES)?;
+    // serde_json's default recursion limit remains enabled for untrusted baseline input.
+    serde_json::from_str(&text)
+        .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))
 }
 
 fn save_baseline(path: &Path, baseline: &BaselineFile) -> Result<()> {
@@ -285,6 +303,16 @@ fn apply_loaded_baseline(
 
 /// Returns a location-independent fingerprint for baseline comparison.
 pub fn finding_fingerprint(finding: &Finding) -> String {
+    if let Some(cluster) = &finding.evidence.cluster {
+        let rule = finding.rule.to_string();
+        let mut fingerprints = cluster
+            .definition_fingerprints
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        fingerprints.sort_unstable();
+        return stable_fingerprint_parts(std::iter::once(rule.as_str()).chain(fingerprints));
+    }
     let semantic = finding
         .evidence
         .comparison
@@ -322,7 +350,7 @@ fn count_added(previous: &BTreeMap<String, usize>, current: &BTreeMap<String, us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{FindingEvidence, Rule, Severity, SourceLocation};
+    use crate::model::{DefinitionCluster, FindingEvidence, Rule, Severity, SourceLocation};
 
     fn initialize_repository(root: &Path) {
         for arguments in [
@@ -360,6 +388,7 @@ mod tests {
                 matcher_difference: "same".to_owned(),
                 handler_evidence: "different".to_owned(),
                 comparison: None,
+                cluster: None,
             },
             suggested_action: "consolidate".to_owned(),
             suppression: None,
@@ -377,6 +406,35 @@ mod tests {
         retain_changed_findings(&mut findings, &changed);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].primary.path.ends_with("changed.ts"));
+    }
+
+    #[test]
+    fn cluster_fingerprints_are_location_and_member_order_independent() {
+        let root = Path::new("/repo");
+        let mut original = finding(root, "steps/a.ts");
+        original.evidence.cluster = Some(DefinitionCluster {
+            member_count: 3,
+            definition_fingerprints: vec!["charlie".into(), "alpha".into(), "bravo".into()],
+            pair_findings_collapsed: 2,
+            members_truncated: false,
+        });
+        let mut moved = finding(root, "moved/renamed.ts");
+        moved.evidence.cluster = Some(DefinitionCluster {
+            member_count: 3,
+            definition_fingerprints: vec!["bravo".into(), "charlie".into(), "alpha".into()],
+            pair_findings_collapsed: 99,
+            members_truncated: false,
+        });
+
+        assert_eq!(finding_fingerprint(&original), finding_fingerprint(&moved));
+        moved
+            .evidence
+            .cluster
+            .as_mut()
+            .unwrap()
+            .definition_fingerprints
+            .push("delta".into());
+        assert_ne!(finding_fingerprint(&original), finding_fingerprint(&moved));
     }
 
     #[test]

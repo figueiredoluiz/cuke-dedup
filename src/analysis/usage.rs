@@ -290,6 +290,7 @@ pub(super) fn analyze_feature_usage(
                         "More than one definition accepts at least one concrete feature step"
                             .to_owned(),
                     comparison: None,
+                    cluster: None,
                 },
                 suggested_action: "Make the matchers mutually exclusive".to_owned(),
                 suppression: suppressions
@@ -435,6 +436,7 @@ fn analyze_matcher_overlap(
                         "No feature step exercises this overlap yet; `{witness}` would be ambiguous at runtime"
                     ),
                     comparison: None,
+                    cluster: None,
                 },
                 suggested_action: "Make the matchers mutually exclusive before a feature reaches both"
                     .to_owned(),
@@ -593,6 +595,7 @@ pub(super) fn analyze_unused(
                 matcher_difference: "No discovered feature step matched this definition".to_owned(),
                 handler_evidence: String::new(),
                 comparison: None,
+                cluster: None,
             },
             suggested_action: "Remove the definition or add the missing feature usage".to_owned(),
             suppression: suppressions
