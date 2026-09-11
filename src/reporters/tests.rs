@@ -171,7 +171,7 @@ fn machine_reporters_preserve_cluster_evidence() {
         member_count: 2,
         definition_fingerprints: vec!["alpha".into(), "bravo".into()],
         pair_findings_collapsed: 7,
-        members_truncated: false,
+        members_truncated: true,
     });
     let context = ReportContext::new(&analysis, &root, 100.0);
 
@@ -184,8 +184,14 @@ fn machine_reporters_preserve_cluster_evidence() {
             serde_json::json!(["alpha", "bravo"])
         );
         assert_eq!(evidence["cluster"]["pairFindingsCollapsed"], 7);
+        assert_eq!(evidence["cluster"]["membersTruncated"], true);
         assert!(evidence.get("comparison").is_none());
     }
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    assert_eq!(
+        sarif["runs"][0]["results"][0]["properties"]["clusterMembersTruncated"],
+        true
+    );
 }
 
 #[test]

@@ -18,9 +18,8 @@ pub use self::matcher::normalize_matcher;
 #[cfg(test)]
 use self::matcher::normalize_regular_expression;
 pub(crate) use self::matcher::rust_regex_expression;
-use self::matcher::{
-    matcher_value, normalize_matcher_with_flags, rust_regex_support, RegexSupport,
-};
+use self::matcher::{matcher_value, normalize_matcher_with_flags};
+use self::matcher::{rust_regex_support, RegexSupport};
 use self::module_resolver::RegistrationResolver;
 use self::registrations::{
     decorator_registration_name, detect_framework, detect_registrations, registration_callee,

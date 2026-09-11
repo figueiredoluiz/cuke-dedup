@@ -3,7 +3,8 @@ use super::ast::{
     import_has_runtime_module_reference, import_module, is_supported_module,
     is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
     registration_exports_for_framework, registration_exports_for_module, string_literal,
-    RegistrationExport, RegistrationExports, DEFAULT_REGISTRATIONS, REGISTRATIONS,
+    RegistrationExport, RegistrationExportKind, RegistrationExports, DEFAULT_REGISTRATIONS,
+    REGISTRATIONS,
 };
 use super::matcher::decode_js_string;
 use super::module_resolver::{merge_framework, RegistrationResolver};
@@ -51,6 +52,8 @@ struct RegistrationDiscovery<'tree> {
     unresolved_aliases: BTreeMap<String, String>,
     unresolved_namespaces: BTreeMap<String, String>,
     unresolved_reasons: BTreeMap<String, UnresolvedModuleReason>,
+    /// Local identifiers proven to be Playwright-BDD's `createBdd` export.
+    create_bdd_factories: BTreeSet<String>,
     /// Locally declared functions that may forward to a registration, resolved after imports.
     wrapper_candidates: Vec<WrapperCandidate>,
 }
@@ -70,7 +73,7 @@ pub(super) fn registration_name(
     registrations: &RegistrationNames,
 ) -> Option<(String, String, Framework)> {
     let (callee, registration) = registration_binding(function, source, registrations)?;
-    (!registration.decorator).then(|| {
+    (registration.kind == RegistrationExportKind::Call).then(|| {
         (
             callee,
             registration.canonical.clone(),
@@ -86,7 +89,7 @@ pub(super) fn decorator_registration_name(
     registrations: &RegistrationNames,
 ) -> Option<(String, String, Framework)> {
     let (callee, registration) = registration_binding(function, source, registrations)?;
-    registration.decorator.then(|| {
+    (registration.kind == RegistrationExportKind::Decorator).then(|| {
         (
             callee,
             registration.canonical.clone(),
@@ -204,15 +207,9 @@ pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
             if let Some(module) = import_module(node, source) {
                 framework = merge_framework(framework, framework_for_module(module));
             }
-        } else if node.kind() == "call_expression" {
-            if call_name(node, source) == Some("createBdd") {
-                framework = merge_framework(framework, Framework::PlaywrightBdd);
-            }
-            if call_name(node, source) == Some("require") {
-                if let Some(evidence) = call_string_argument(node, source).map(framework_for_module)
-                {
-                    framework = merge_framework(framework, evidence);
-                }
+        } else if node.kind() == "call_expression" && call_name(node, source) == Some("require") {
+            if let Some(evidence) = call_string_argument(node, source).map(framework_for_module) {
+                framework = merge_framework(framework, evidence);
             }
         }
         push_named_children_reverse(node, &mut stack);
@@ -228,7 +225,10 @@ pub(super) fn detect_registrations(
     resolver: &mut RegistrationResolver,
     configured: &BTreeSet<String>,
 ) -> Result<RegistrationNames> {
-    let mut discovered = RegistrationDiscovery::default();
+    let mut discovered = RegistrationDiscovery {
+        create_bdd_factories: collect_create_bdd_factories(root, source, file_path, resolver)?,
+        ..RegistrationDiscovery::default()
+    };
     let mut effective_framework = framework;
     let mut stack = vec![root];
 
@@ -270,6 +270,7 @@ pub(super) fn detect_registrations(
                         &exports.unwrap_or_default(),
                         &mut discovered.aliases,
                         &mut discovered.namespaces,
+                        &mut discovered.create_bdd_factories,
                     );
                 } else if !is_type_only_declaration(node) && exports.is_none() {
                     if let Some(module) = module {
@@ -290,9 +291,7 @@ pub(super) fn detect_registrations(
                     collect_exports(node, source, &available, &mut discovered.aliases);
                 }
             }
-            "variable_declarator" => {
-                collect_variable_registration(node, source, effective_framework, &mut discovered)
-            }
+            "variable_declarator" => collect_variable_registration(node, source, &mut discovered),
             "function_declaration" => {
                 shadow_named_declaration(node, source, &mut discovered.shadowed_defaults);
                 collect_wrapper_candidate(node, source, &mut discovered);
@@ -325,7 +324,7 @@ pub(super) fn detect_registrations(
                 name.to_owned(),
                 RegistrationExport {
                     canonical: name.to_owned(),
-                    decorator: false,
+                    kind: RegistrationExportKind::Call,
                     framework: effective_framework,
                 },
             );
@@ -353,7 +352,7 @@ pub(super) fn detect_registrations(
             .entry(name.clone())
             .or_insert_with(|| RegistrationExport {
                 canonical: name.clone(),
-                decorator: false,
+                kind: RegistrationExportKind::Call,
                 framework: effective_framework,
             });
     }
@@ -579,6 +578,7 @@ fn collect_imports(
     exports: &RegistrationExports,
     aliases: &mut RegistrationExports,
     namespaces: &mut BTreeMap<String, RegistrationExports>,
+    create_bdd_factories: &mut BTreeSet<String>,
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
@@ -595,7 +595,11 @@ fn collect_imports(
                     let alias = node
                         .child_by_field_name("alias")
                         .map_or(original, |alias| node_text(alias, source));
-                    aliases.insert(alias.to_owned(), registration.clone());
+                    if registration.kind == RegistrationExportKind::Factory {
+                        create_bdd_factories.insert(alias.to_owned());
+                    } else {
+                        aliases.insert(alias.to_owned(), registration.clone());
+                    }
                 }
             }
             "namespace_import" => {
@@ -658,7 +662,6 @@ fn collect_shadowing_imports(
 fn collect_variable_registration<'tree>(
     declaration: Node<'tree>,
     source: &[u8],
-    framework: Framework,
     discovered: &mut RegistrationDiscovery<'tree>,
 ) {
     let Some(name) = declaration.child_by_field_name("name") else {
@@ -676,7 +679,8 @@ fn collect_variable_registration<'tree>(
         let function = call_name(value, source);
         let supported_require = function == Some("require")
             && call_string_argument(value, source).is_some_and(is_supported_module);
-        let create_bdd = framework == Framework::PlaywrightBdd && function == Some("createBdd");
+        let create_bdd =
+            function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
         if supported_require || create_bdd {
             let exports = call_string_argument(value, source)
                 .map(registration_exports_for_module)
@@ -709,6 +713,142 @@ fn collect_variable_registration<'tree>(
         if DEFAULT_REGISTRATIONS.contains(&local) {
             discovered.shadowed_defaults.insert(local.to_owned());
         }
+    }
+}
+
+/// Collects only bindings with static module evidence for Playwright-BDD's factory.
+///
+/// The factory name is not treated as an ambient global: unrelated libraries and local helpers
+/// commonly use generic factory names, and trusting one would misattribute every destructured
+/// registration it returns. ESM aliases retain that evidence through resolved local barrels;
+/// CommonJS destructuring requires the exact package specifier.
+fn collect_create_bdd_factories(
+    root: Node<'_>,
+    source: &[u8],
+    file_path: &Path,
+    resolver: &mut RegistrationResolver,
+) -> Result<BTreeSet<String>> {
+    let mut factories = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "import_statement" if import_has_runtime_bindings(node) => {
+                let exports = match import_module(node, source) {
+                    Some(module) if is_supported_module(module) => {
+                        Some(registration_exports_for_module(module))
+                    }
+                    Some(module) => resolver
+                        .registration_exports(file_path, module)?
+                        .resolution
+                        .map(|resolution| resolution.exports),
+                    None => None,
+                };
+                if let Some(exports) = exports {
+                    collect_factory_import_aliases(node, source, &exports, &mut factories);
+                }
+            }
+            "variable_declarator" if is_top_level_variable(node) => {
+                let (Some(pattern), Some(value)) = (
+                    node.child_by_field_name("name"),
+                    node.child_by_field_name("value"),
+                ) else {
+                    push_named_children_reverse(node, &mut stack);
+                    continue;
+                };
+                if pattern.kind() == "object_pattern"
+                    && value.kind() == "call_expression"
+                    && call_name(value, source) == Some("require")
+                    && call_string_argument(value, source) == Some(super::ast::PLAYWRIGHT_MODULE)
+                {
+                    collect_named_binding_aliases(
+                        pattern,
+                        source,
+                        "pair_pattern",
+                        "createBdd",
+                        &mut factories,
+                    );
+                    let mut cursor = pattern.walk();
+                    for binding in pattern.named_children(&mut cursor) {
+                        if binding.kind() == "shorthand_property_identifier_pattern"
+                            && node_text(binding, source) == "createBdd"
+                        {
+                            factories.insert("createBdd".to_owned());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+    Ok(factories)
+}
+
+fn collect_factory_import_aliases(
+    import: Node<'_>,
+    source: &[u8],
+    exports: &RegistrationExports,
+    factories: &mut BTreeSet<String>,
+) {
+    let mut stack = vec![import];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
+            if let Some(name) = node.child_by_field_name("name") {
+                let imported = node_text(name, source);
+                if exports
+                    .get(imported)
+                    .is_some_and(|export| export.kind == RegistrationExportKind::Factory)
+                {
+                    let local = node
+                        .child_by_field_name("alias")
+                        .map_or(imported, |alias| node_text(alias, source));
+                    factories.insert(local.to_owned());
+                }
+            }
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+}
+
+fn is_top_level_variable(declarator: Node<'_>) -> bool {
+    let Some(declaration) = declarator.parent() else {
+        return false;
+    };
+    match declaration.parent() {
+        Some(parent) if parent.kind() == "program" => true,
+        Some(parent) if parent.kind() == "export_statement" => parent
+            .parent()
+            .is_some_and(|ancestor| ancestor.kind() == "program"),
+        _ => false,
+    }
+}
+
+fn collect_named_binding_aliases(
+    root: Node<'_>,
+    source: &[u8],
+    binding_kind: &str,
+    expected: &str,
+    aliases: &mut BTreeSet<String>,
+) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == binding_kind && !is_type_only_specifier(node) {
+            if let Some(name) = node
+                .child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("key"))
+            {
+                if node_text(name, source) == expected {
+                    let alias = node
+                        .child_by_field_name("alias")
+                        .or_else(|| node.child_by_field_name("value"))
+                        .map_or(expected, |alias| node_text(alias, source));
+                    if alias.chars().all(is_identifier_character) {
+                        aliases.insert(alias.to_owned());
+                    }
+                }
+            }
+        }
+        push_named_children_reverse(node, &mut stack);
     }
 }
 

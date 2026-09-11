@@ -66,7 +66,10 @@ pub(super) fn render_sarif_context_with_metadata(
                     "handlerSimilarity": finding.evidence.handler_similarity,
                     "clusterSize": finding.evidence.cluster.as_ref().map(|cluster| cluster.member_count),
                     "pairFindingsCollapsed": finding.evidence.cluster.as_ref().map(|cluster| cluster.pair_findings_collapsed),
-                    "clusterMembersTruncated": finding.evidence.cluster.as_ref().is_some_and(|cluster| cluster.member_count > MAX_REPORTED_CLUSTER_MEMBERS),
+                    "clusterMembersTruncated": finding.evidence.cluster.as_ref().is_some_and(|cluster| {
+                        cluster.members_truncated
+                            || cluster.member_count > MAX_REPORTED_CLUSTER_MEMBERS
+                    }),
                     "relatedLocationsTruncated": finding.related.len() > MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1),
                 }
             })
