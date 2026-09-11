@@ -475,7 +475,8 @@ fn extract_feature_steps(
                         .path
                         .strip_prefix(&config.root)
                         .unwrap_or(&file.path)
-                        .display();
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     diagnostics.warnings.push(format!(
                         "Gherkin Markdown file {display} parsed successfully but produced 0 feature steps; unused-definition findings are disabled for this incomplete corpus"
                     ));

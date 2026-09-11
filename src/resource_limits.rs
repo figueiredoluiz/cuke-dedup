@@ -135,6 +135,14 @@ mod tests {
         assert!(error.to_string().contains("not valid UTF-8"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_limits_special_files_without_reliable_metadata_lengths() {
+        let error = read_utf8(Path::new("/dev/zero"), "special input", 4).unwrap_err();
+        assert!(is_input_limit_error(&error));
+        assert!(error.to_string().contains("4-byte input limit"));
+    }
+
     #[test]
     fn regex_builder_enforces_the_configured_program_limit() {
         let pattern = (0..1_000)

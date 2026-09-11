@@ -186,18 +186,24 @@ pub static SOURCE_ADAPTER_REGISTRY: [SourceAdapterRegistration; 8] = [
 
 /// Returns the adapter registered for `path`, rejecting declaration and source-map files.
 pub fn adapter_for_path(path: &Path) -> Option<&'static dyn SourceAdapter> {
-    let name = path.file_name()?.to_str()?;
-    if name.ends_with(".d.ts")
-        || name.ends_with(".d.mts")
-        || name.ends_with(".d.cts")
-        || name.ends_with(".map")
-    {
+    let extension = path.extension()?.to_str()?;
+    if extension == "map" || is_declaration_file(path, extension) {
         return None;
     }
     SOURCE_ADAPTER_REGISTRY
         .iter()
-        .find(|registration| name.ends_with(registration.suffix))
+        .find(|registration| extension == registration.suffix.trim_start_matches('.'))
         .map(|registration| registration.adapter)
+}
+
+fn is_declaration_file(path: &Path, extension: &str) -> bool {
+    matches!(extension, "ts" | "mts" | "cts")
+        && path.file_stem().is_some_and(|stem| {
+            stem == ".d"
+                || Path::new(stem)
+                    .extension()
+                    .is_some_and(|extension| extension == "d")
+        })
 }
 
 /// Returns the adapter for an already classified source language.
@@ -305,11 +311,27 @@ mod tests {
             "types.d.ts",
             "types.d.mts",
             "types.d.cts",
+            ".d.ts",
+            ".d.mts",
+            ".d.cts",
             "steps.js.map",
             "steps.py",
         ] {
             assert!(adapter_for_path(Path::new(path)).is_none(), "{path}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registry_classifies_non_utf8_names_by_their_ascii_extension() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let source = PathBuf::from(OsString::from_vec(b"steps-\xff.ts".to_vec()));
+        assert_eq!(language_for_path(&source), Some(SourceLanguage::TypeScript));
+
+        let declaration = PathBuf::from(OsString::from_vec(b"types-\xff.d.ts".to_vec()));
+        assert!(adapter_for_path(&declaration).is_none());
     }
 
     #[test]

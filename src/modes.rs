@@ -68,9 +68,10 @@ fn resolve_commit(root: &Path, base: &str) -> Result<String> {
 
 /// Rejects changed-file mode when the analyzed root itself is excluded by Git.
 pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
+    let root = normalize_platform_path(root.to_path_buf());
     let repository = Command::new("git")
         .arg("-C")
-        .arg(root)
+        .arg(&root)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .with_context(|| "failed to locate the Git repository for changed-files mode")?;
@@ -446,18 +447,18 @@ mod tests {
         initialize_repository(root);
         fs::write(root.join("packages/e2e/steps/träcked.ts"), "after").unwrap();
         fs::write(root.join("packages/e2e/steps/ new step.ts"), "new").unwrap();
+        #[cfg(unix)]
         fs::write(root.join("packages/e2e/steps/trailing step.ts "), "new").unwrap();
 
         let subdirectory = root.join("packages/e2e");
         let changed = git_changed_files(&subdirectory, "HEAD").unwrap();
-        assert_eq!(
-            changed,
-            BTreeSet::from([
-                subdirectory.join("steps/ new step.ts"),
-                subdirectory.join("steps/träcked.ts"),
-                subdirectory.join("steps/trailing step.ts "),
-            ])
-        );
+        let mut expected = BTreeSet::from([
+            subdirectory.join("steps/ new step.ts"),
+            subdirectory.join("steps/träcked.ts"),
+        ]);
+        #[cfg(unix)]
+        expected.insert(subdirectory.join("steps/trailing step.ts "));
+        assert_eq!(changed, expected);
     }
 
     #[cfg(unix)]

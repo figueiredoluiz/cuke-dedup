@@ -2101,6 +2101,62 @@ fn missing_feature_corpus_is_safe_by_default_and_can_be_required() {
 }
 
 #[test]
+fn partial_feature_parse_failure_is_summarized_when_features_are_required() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('working step', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "valid.feature",
+        "Feature: Valid\n  Scenario: One\n    Given working step\n",
+    );
+    write(directory.path(), "invalid.feature", "Feature broken\n");
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--require-features"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "1 discovered feature file(s) could not be parsed",
+        ));
+}
+
+#[test]
+fn unmatched_definition_patterns_and_suppressions_are_visible() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{
+  "definitions": ["missing/**/*.ts"],
+  "suppressions": [{
+    "rule": "duplicate-matcher",
+    "matcher": "missing step",
+    "reason": "migration exception"
+  }]
+}"#,
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "definition pattern `missing/**/*.ts` matched no files",
+        ))
+        .stderr(predicate::str::contains(
+            "suppression 1 for duplicate-matcher matched no step definitions",
+        ));
+}
+
+#[test]
 fn semantic_baseline_can_be_updated_moved_and_gated_by_new_findings() {
     let directory = tempfile::tempdir().unwrap();
     write(
