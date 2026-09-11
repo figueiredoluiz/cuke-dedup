@@ -95,6 +95,7 @@ try {
       if (generated.findingCount !== null) {
         assert.equal(reference.findingCount, generated.findingCount);
       }
+      assert.deepEqual(reference.clusterFindings, generated.clusterFindings ?? []);
       assert.equal(reference.analysisTruncated, generated.analysisTruncated);
       if (profile.requiresCompleteCensus) {
         assert.equal(
@@ -124,6 +125,7 @@ try {
         assert.equal(sample.featureFiles, reference.featureFiles);
         assert.equal(sample.fileCount, reference.fileCount);
         assert.equal(sample.findingCount, reference.findingCount);
+        assert.deepEqual(sample.clusterFindings, reference.clusterFindings);
         assert.equal(sample.analysisTruncated, reference.analysisTruncated);
         assert.equal(sample.candidateComparisonsEvaluated, reference.candidateComparisonsEvaluated);
         assert.equal(sample.skippedCandidateComparisons, reference.skippedCandidateComparisons);
@@ -222,6 +224,14 @@ function run(root, output, expectedExitCode) {
     featureFiles: report.metrics.featureFiles,
     fileCount: report.metrics.filesDiscovered,
     findingCount: report.summary.findings,
+    clusterFindings: report.findings
+      .filter((finding) => finding.evidence?.cluster)
+      .map((finding) => ({
+        rule: finding.rule,
+        memberCount: finding.evidence.cluster.memberCount,
+        pairFindingsCollapsed: finding.evidence.cluster.pairFindingsCollapsed,
+      }))
+      .sort((left, right) => left.rule.localeCompare(right.rule)),
     definitionsAnalyzed: report.summary.definitionsAnalyzed,
     featureStepsAnalyzed: report.summary.featureStepsAnalyzed,
     discoveryMs: report.metrics.discoveryMs,
@@ -309,7 +319,14 @@ async function writeSingleFileProfile(root, definitions, profile) {
         : 0,
     findingCount: candidateLimit
       ? candidateLimit
-      : definitions + (sharedStructure || sharedHandler ? definitions - 1 : 0),
+      : definitions + (sharedHandler ? 1 : sharedStructure ? definitions - 1 : 0),
+    clusterFindings: sharedHandler
+      ? [{
+          rule: "duplicate-handler",
+          memberCount: definitions,
+          pairFindingsCollapsed: definitions - 1,
+        }]
+      : [],
     // Truncation is reported, not fatal: the run still writes findings and exits on their
     // severity alone. Only `--fail-on-incomplete` turns partial coverage into exit code 2.
     exitCode: 0,
@@ -369,6 +386,7 @@ async function writeVariedHandlerScale(root, definitions) {
     definitionFiles: 1,
     featureFiles: 1,
     findingCount: null,
+    clusterFindings: [],
     exitCode: 0,
     analysisTruncated: false,
   };
@@ -462,7 +480,14 @@ async function writeRepositoryScale(root, definitions) {
     definitionFiles: layout.packages * layout.definitionFiles,
     featureFiles,
     candidatePairs: (layout.packages * (layout.packages - 1)) / 2,
-    findingCount: layout.packages + (layout.packages - 1),
+    findingCount: layout.packages + (layout.packages >= 5 ? 1 : layout.packages - 1),
+    clusterFindings: layout.packages >= 5
+      ? [{
+          rule: "duplicate-matcher",
+          memberCount: layout.packages,
+          pairFindingsCollapsed: layout.packages - 1,
+        }]
+      : [],
     exitCode: 0,
     analysisTruncated: false,
   };
@@ -494,6 +519,7 @@ async function writeUsageScale(root, definitions, featureSteps) {
     featureFiles: 1,
     candidatePairs: 0,
     findingCount: 0,
+    clusterFindings: [],
     exitCode: 0,
     analysisTruncated: false,
   };
