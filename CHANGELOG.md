@@ -70,6 +70,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Fixed
 
+- CodeQL default setup now loads the repository configuration and excludes the intentionally
+  malformed JavaScript parser fixture from extraction.
 - Analyzing a single package whose imports resolve outside it no longer fails the run; the
   unresolved specifier is reported as a source-localized warning naming its cause.
 - Registration modules the filesystem refuses to read remain operational failures, matching how
