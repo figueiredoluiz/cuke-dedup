@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A discovered feature file together with its parser and matching config pattern.
+#[non_exhaustive]
 pub struct FeatureFile {
     /// Absolute feature-file path.
     pub path: PathBuf,
@@ -22,6 +23,7 @@ pub struct FeatureFile {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// Deterministically ordered files discovered for one analysis run.
+#[non_exhaustive]
 pub struct DiscoveredFiles {
     /// Gherkin feature files and their selected parser formats.
     pub features: Vec<FeatureFile>,

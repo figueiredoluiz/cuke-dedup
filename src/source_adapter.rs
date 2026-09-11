@@ -9,6 +9,7 @@ pub(crate) const UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX: &str =
     "unresolved step-registration calls:";
 
 /// Parser language selected for a definition source.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceLanguage {
     /// JavaScript, JSX, or their module variants.
@@ -38,6 +39,7 @@ pub struct SourceFile {
 }
 
 /// Impact of a source-extraction diagnostic.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractionDiagnosticLevel {
     /// Analysis continues, but a static-analysis limitation applies.
@@ -47,6 +49,7 @@ pub enum ExtractionDiagnosticLevel {
 }
 
 /// A source-localized problem encountered while extracting definitions.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractionDiagnostic {
     /// Diagnostic impact.
@@ -57,6 +60,21 @@ pub struct ExtractionDiagnostic {
     pub message: String,
 }
 
+impl ExtractionDiagnostic {
+    /// Creates a source-localized extraction diagnostic.
+    pub fn new(
+        level: ExtractionDiagnosticLevel,
+        location: SourceLocation,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            level,
+            location,
+            message: message.into(),
+        }
+    }
+}
+
 pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> bool {
     diagnostic
         .message
@@ -64,12 +82,23 @@ pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> b
 }
 
 /// Definitions and non-fatal diagnostics extracted from one source.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Extraction {
     /// Successfully extracted definitions.
     pub definitions: Vec<StepDefinition>,
     /// Problems that did not prevent extraction of the rest of the file.
     pub diagnostics: Vec<ExtractionDiagnostic>,
+}
+
+impl Extraction {
+    /// Creates an extraction result from definitions and non-fatal diagnostics.
+    pub fn new(definitions: Vec<StepDefinition>, diagnostics: Vec<ExtractionDiagnostic>) -> Self {
+        Self {
+            definitions,
+            diagnostics,
+        }
+    }
 }
 
 /// Reusable state for extracting multiple definition sources in one analysis run.
@@ -140,6 +169,7 @@ pub trait SourceAdapter: Sync {
 }
 
 /// One suffix-to-adapter registration.
+#[non_exhaustive]
 #[derive(Clone, Copy)]
 pub struct SourceAdapterRegistration {
     /// Filename suffix, including the leading dot.
@@ -148,40 +178,23 @@ pub struct SourceAdapterRegistration {
     pub adapter: &'static dyn SourceAdapter,
 }
 
+impl SourceAdapterRegistration {
+    /// Creates one suffix-to-adapter registration.
+    pub const fn new(suffix: &'static str, adapter: &'static dyn SourceAdapter) -> Self {
+        Self { suffix, adapter }
+    }
+}
+
 /// Registered definition-source suffixes in deterministic lookup order.
-pub static SOURCE_ADAPTER_REGISTRY: [SourceAdapterRegistration; 8] = [
-    SourceAdapterRegistration {
-        suffix: ".mjs",
-        adapter: &crate::typescript::JAVASCRIPT_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".cjs",
-        adapter: &crate::typescript::JAVASCRIPT_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".jsx",
-        adapter: &crate::typescript::JAVASCRIPT_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".js",
-        adapter: &crate::typescript::JAVASCRIPT_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".mts",
-        adapter: &crate::typescript::TYPESCRIPT_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".cts",
-        adapter: &crate::typescript::TYPESCRIPT_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".tsx",
-        adapter: &crate::typescript::TSX_ADAPTER,
-    },
-    SourceAdapterRegistration {
-        suffix: ".ts",
-        adapter: &crate::typescript::TYPESCRIPT_ADAPTER,
-    },
+pub static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
+    SourceAdapterRegistration::new(".mjs", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::new(".cjs", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::new(".jsx", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::new(".js", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::new(".mts", &crate::typescript::TYPESCRIPT_ADAPTER),
+    SourceAdapterRegistration::new(".cts", &crate::typescript::TYPESCRIPT_ADAPTER),
+    SourceAdapterRegistration::new(".tsx", &crate::typescript::TSX_ADAPTER),
+    SourceAdapterRegistration::new(".ts", &crate::typescript::TYPESCRIPT_ADAPTER),
 ];
 
 /// Returns the adapter registered for `path`, rejecting declaration and source-map files.

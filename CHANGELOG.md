@@ -27,6 +27,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
   `ReportContext` instead of separate result, root, threshold, and metrics arguments. Construct it
   with `ReportContext::new` or `ReportContext::with_metrics`; the redundant
   `*_with_threshold` and `write_reports_with_metrics` wrappers were removed.
+- **Breaking (Rust API):** public result, diagnostic, reporter, and extensible enum types are now
+  `#[non_exhaustive]`. Use `AnalysisResult::new`, `ExecutionMetrics::new`, existing constructors,
+  and wildcard enum match arms so future fields and variants do not require another breaking
+  release.
 
 ### Added
 

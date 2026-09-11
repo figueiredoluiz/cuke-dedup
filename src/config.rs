@@ -23,6 +23,7 @@ const DEFAULT_EXCLUDES: [&str; 5] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 /// Destination format selected for analysis output.
+#[non_exhaustive]
 pub enum ReporterKind {
     /// Human-readable output written to the supplied terminal stream.
     Terminal,
