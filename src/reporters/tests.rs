@@ -287,7 +287,7 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
     assert_eq!(sarif["runs"][0]["columnKind"], "unicodeCodePoints");
     assert_eq!(
         sarif["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"],
-        "https://github.com/figueiredoluiz/cuke-dedup#duplicate-matcher"
+        "https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/rules.md#duplicate-matcher"
     );
     assert_eq!(
         sarif["runs"][0]["invocations"][0]["executionSuccessful"],
@@ -307,8 +307,8 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
 }
 
 #[test]
-fn every_sarif_rule_links_to_its_readme_section() {
-    let readme = include_str!("../../README.md");
+fn every_sarif_rule_links_to_its_documentation_section() {
+    let rule_documentation = include_str!("../../docs/rules.md");
     let root = PathBuf::from("/repo");
     let template = result(&root).findings.remove(0);
     let mut analysis = result(&root);
@@ -333,9 +333,9 @@ fn every_sarif_rule_links_to_its_readme_section() {
     for &rule in Rule::ALL {
         let heading = format!("### {}", rule.as_str());
         assert_eq!(
-            readme.matches(&heading).count(),
+            rule_documentation.matches(&heading).count(),
             1,
-            "README must contain exactly one stable heading for {rule}"
+            "rule documentation must contain exactly one stable heading for {rule}"
         );
         let descriptor = descriptors
             .iter()

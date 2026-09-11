@@ -11,6 +11,7 @@
     "npm/lib/",
     "npm/prebuilt-targets.json",
     "README.md",
+    "docs/",
     "LICENSE",
     "CHANGELOG.md",
     "SECURITY.md",
