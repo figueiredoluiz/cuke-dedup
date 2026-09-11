@@ -217,6 +217,38 @@ Use `--print-config` to serialize the fully merged and validated configuration a
 | `parameterization-candidate` | Warning | Handler structures differ primarily in literal values. |
 | `unused-definition` | Warning | No discovered feature step uses the definition. |
 
+### duplicate-matcher
+
+Triggers when two definitions have the same matcher kind, source text, and effective regular-expression flags. It does not compare handlers to decide whether the matcher collision is safe: at runtime both definitions still claim the same step. Keep one definition or make their matchers intentionally distinct. Suppress only when the framework guarantees the definitions cannot coexist in one runtime scope.
+
+### normalized-matcher
+
+Triggers when matcher text becomes equal after Unicode, whitespace, placeholder, and regular-expression normalization even though the original source differs. Semantically distinct matcher kinds or regular-expression flags do not trigger it. Consolidate the definitions or rewrite the matchers so their intended distinction survives normalization.
+
+### ambiguous-step
+
+Triggers when one concrete step from the discovered feature corpus matches multiple definitions. It does not speculate about steps absent from the corpus; that is the role of `overlapping-matcher`. Make the definitions mutually exclusive, normally by narrowing one matcher or removing the duplicate.
+
+### overlapping-matcher
+
+Triggers when static analysis can synthesize a concrete Cucumber Expression accepted by two definitions, even if no discovered feature currently uses it. Equivalent matchers already covered by duplicate rules and unsupported regular-expression reversal do not produce this finding. Narrow one matcher before a future scenario makes the overlap a runtime ambiguity.
+
+### duplicate-handler
+
+Triggers when different effective matchers use the same non-trivial handler after parameter and local-variable normalization. Empty, pending, unresolved, or otherwise non-comparable handlers are excluded. Consider replacing the definitions with one parameterized step, but retain separate definitions when the shared implementation is intentional domain vocabulary.
+
+### near-duplicate-step
+
+Triggers when matcher wording is close and meaningful handlers share at least 50% ordered behavior, with compatible structural or canonical call evidence. Similar prose alone and unrelated handler actions do not trigger it. Review the reported pair and consolidate only when both definitions express the same behavior.
+
+### parameterization-candidate
+
+Triggers when handlers preserve the same control flow and calls after literal normalization and the matcher texts are sufficiently similar. It remains pair-specific so reports retain the literal and matcher differences. Replace repeated literals with a step parameter when that produces a clearer public test vocabulary.
+
+### unused-definition
+
+Triggers when no successfully parsed concrete feature step matches a definition. It is disabled when the feature corpus is absent or incomplete, because that run cannot prove non-use. Remove the definition, add the missing scenario, or suppress it when external/generated features intentionally provide the usage.
+
 Set a rule to `off`, `warning`, or `error` in configuration. The CLI also accepts `warn` as an alias for `warning`.
 
 `overlapping-matcher` complements `ambiguous-step`: ambiguity is proven by a discovered feature step, while overlap is proven from the definitions alone by synthesizing one step text each matcher accepts. A suite with no features, a generated corpus, or an overlap nothing exercises yet therefore still reports the defect before it first fails at runtime. A pair that an enabled `ambiguous-step` rule already proved is not reported twice, and witnesses are only synthesized for Cucumber Expressions — regular expressions are matched against but never reversed into a sample. Overlap work shares `maxCandidateComparisons` with the other definition-pair rules and retains at most 10,000 findings; reaching either bound marks the analysis incomplete.
