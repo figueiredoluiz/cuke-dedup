@@ -366,7 +366,7 @@ async function writeVariedHandlerScale(root, definitions) {
     const handlerVariant = Math.floor(index / (actors.length * resources.length)) % 4;
     const workflow = `${actor}${capitalize(resource)}`;
     const matcher = variedMatcher(index, actor, resource, state, channel);
-    const handler = variedHandler(index, resource, state, workflow, handlerVariant);
+    const handler = variedHandler(index, resource, workflow, handlerVariant);
     lines.push(
       `${registrations[index % registrations.length]}(${JSON.stringify(matcher)}, ${handler});`,
     );
@@ -408,16 +408,16 @@ function variedMatcher(index, actor, resource, state, channel) {
   }
 }
 
-function variedHandler(index, resource, state, workflow, variant) {
+function variedHandler(index, resource, workflow, variant) {
   switch (variant) {
     case 0:
       return `async ({ world }) => { const record = await world.${resource}.load(${index}); await ${workflow}Workflow.verify(record); }`;
     case 1:
       return `async function (context) { const record = await context.${resource}.findById(${index}); return ${workflow}Policy.assertState(record); }`;
     case 2:
-      return `({ services }) => services.${resource}.transition(${index}, ${JSON.stringify(state)})`;
+      return `({ services }) => services.${resource}.transition(${index}, "benchmark-state")`;
     default:
-      return `async ({ api }) => { await api.${resource}.update(${index}, { state: ${JSON.stringify(state)} }); await ${workflow}Audit.record(${index}); }`;
+      return `async ({ api }) => { await api.${resource}.update(${index}, { state: "benchmark-state" }); await ${workflow}Audit.record(${index}); }`;
   }
 }
 
