@@ -166,7 +166,7 @@ pub fn retain_changed_findings(findings: &mut Vec<Finding>, changed: &BTreeSet<P
 /// Schema version of the compact, reviewable baseline format.
 pub const BASELINE_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Accepted semantic finding fingerprints and their multiplicities.
 #[non_exhaustive]
@@ -187,6 +187,12 @@ impl BaselineFile {
     }
 
     fn empty() -> Self {
+        Self::new(BTreeMap::new())
+    }
+}
+
+impl Default for BaselineFile {
+    fn default() -> Self {
         Self::new(BTreeMap::new())
     }
 }

@@ -3,7 +3,7 @@ use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
 use cuke_dedup::model::SourceLocation;
 use cuke_dedup::model::{AnalysisResult, Rule, Severity};
-use cuke_dedup::modes::BaselineFile;
+use cuke_dedup::modes::{BaselineFile, BASELINE_SCHEMA_VERSION};
 use cuke_dedup::reporters::{
     render_html, render_json, render_jsonl, render_sarif, write_terminal, ExecutionMetrics,
     ReportContext,
@@ -105,6 +105,10 @@ fn extensible_public_outputs_use_stable_constructors() {
 
     let baseline = BaselineFile::new(BTreeMap::from([("finding".to_owned(), 1)]));
     assert_eq!(baseline.fingerprints["finding"], 1);
+
+    let default_baseline = BaselineFile::default();
+    assert_eq!(default_baseline.schema_version, BASELINE_SCHEMA_VERSION);
+    assert!(default_baseline.fingerprints.is_empty());
 
     assert_eq!(reporter_name(ReporterKind::Json), "json");
 }
