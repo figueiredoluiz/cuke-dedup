@@ -166,7 +166,8 @@ pub enum Rule {
 }
 
 impl Rule {
-    const DOCUMENTATION_BASE_URL: &'static str = "https://github.com/figueiredoluiz/cuke-dedup#";
+    const DOCUMENTATION_BASE_URL: &'static str =
+        "https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/rules.md#";
 
     /// Every rule in deterministic report order.
     pub const ALL: &'static [Rule] = &[
@@ -208,7 +209,7 @@ impl Rule {
         Self::DUPLICATION_THRESHOLD.contains(&self)
     }
 
-    /// Returns the rule-specific README URL used by diagnostics integrations.
+    /// Returns the rule-specific documentation URL used by diagnostics integrations.
     pub fn documentation_url(self) -> String {
         format!("{}{}", Self::DOCUMENTATION_BASE_URL, self.as_str())
     }
@@ -563,7 +564,10 @@ mod tests {
             assert_eq!(rule.to_string().parse::<Rule>(), Ok(rule));
             assert_eq!(
                 rule.documentation_url(),
-                format!("https://github.com/figueiredoluiz/cuke-dedup#{}", rule)
+                format!(
+                    "https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/rules.md#{}",
+                    rule
+                )
             );
         }
     }

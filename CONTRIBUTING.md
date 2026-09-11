@@ -92,4 +92,12 @@ Describe the user-visible problem, the chosen behavior, and the validation perfo
 
 Maintainers may ask for a smaller change when a pull request mixes unrelated parser, rule, reporter, and distribution behavior.
 
+## Release prerequisites
+
+Cargo, npm, the Git tag, and the GitHub release use one version. npm publication uses OIDC trusted
+publishing and never reads a long-lived registry token. Before a release, every package in the npm
+matrix must authorize the `figueiredoluiz/cuke-dedup` repository, `.github/workflows/release.yml`,
+and `npm` environment on npmjs.com, with direct `npm publish` allowed. The workflow rejects npm
+clients older than the trusted-publishing minimum.
+
 The project maintainer has final responsibility for scope, compatibility, and release decisions.

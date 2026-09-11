@@ -7,6 +7,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Changed
 
+- Reorganized the user documentation around a concise quick-start README and focused reference
+  guides for configuration, discovery, rules, reports, CI adoption, and safety limits.
 - **Breaking (reports and baselines):** JSON and JSONL reports now use schema version `2`, and
   semantic baselines use version `2`. Large exact-equivalence groups are represented by bounded
   cluster evidence instead of many pair records. Existing version `1` baselines are rejected for
