@@ -1,6 +1,8 @@
-use super::shared::{bounded_findings, convert_location, report_safe};
+use super::shared::{
+    bounded_findings, convert_location, report_safe, MAX_REPORTED_CLUSTER_MEMBERS,
+};
 use super::{CliReportMetadata, ReportContext};
-use crate::model::{stable_fingerprint, Severity, SourceLocation};
+use crate::model::{Severity, SourceLocation};
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -41,14 +43,10 @@ pub(super) fn render_sarif_context_with_metadata(
             let related = finding
                 .related
                 .iter()
+                .take(MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1))
                 .enumerate()
                 .map(|(index, location)| sarif_location(location, root, Some(index + 1)))
                 .collect::<Vec<_>>();
-            let fingerprint_input = std::iter::once(&finding.primary)
-                .chain(&finding.related)
-                .map(|location| location.display(root))
-                .collect::<Vec<_>>()
-                .join("|");
             serde_json::json!({
                 "ruleId": finding.rule.to_string(),
                 "level": match finding.severity {
@@ -60,14 +58,16 @@ pub(super) fn render_sarif_context_with_metadata(
                 "locations": [primary],
                 "relatedLocations": related,
                 "partialFingerprints": {
-                    "cukeDedupFingerprint/v1": stable_fingerprint(
-                        &format!("{}|{fingerprint_input}", finding.rule)
-                    )
+                    "cukeDedupFingerprint/v2": crate::modes::finding_fingerprint(finding)
                 },
                 "properties": {
                     "suggestedAction": report_safe(&finding.suggested_action),
                     "matcherSimilarity": finding.evidence.matcher_similarity,
                     "handlerSimilarity": finding.evidence.handler_similarity,
+                    "clusterSize": finding.evidence.cluster.as_ref().map(|cluster| cluster.member_count),
+                    "pairFindingsCollapsed": finding.evidence.cluster.as_ref().map(|cluster| cluster.pair_findings_collapsed),
+                    "clusterMembersTruncated": finding.evidence.cluster.as_ref().is_some_and(|cluster| cluster.member_count > MAX_REPORTED_CLUSTER_MEMBERS),
+                    "relatedLocationsTruncated": finding.related.len() > MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1),
                 }
             })
         })

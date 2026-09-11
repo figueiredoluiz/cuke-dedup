@@ -1,4 +1,7 @@
-use super::shared::{bounded_findings, count_label, report_safe, report_value_with_metadata};
+use super::shared::{
+    bounded_findings, count_label, report_safe, report_value_with_metadata,
+    MAX_REPORTED_CLUSTER_MEMBERS,
+};
 use super::{CliReportMetadata, ReportContext};
 use crate::model::{DefinitionComparison, MatcherDiff};
 use anyhow::{Context, Result};
@@ -55,9 +58,11 @@ pub(super) fn render_html_context_with_metadata(
     let truncated = selected.truncated;
     for finding in selected.findings {
         let location = finding.primary.display(root);
-        let related_locations = finding
+        let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
+        let mut related_locations = finding
             .related
             .iter()
+            .take(retained_related)
             .map(|related| {
                 format!(
                     r#"<li><code>{}</code></li>"#,
@@ -65,6 +70,12 @@ pub(super) fn render_html_context_with_metadata(
                 )
             })
             .collect::<String>();
+        if finding.related.len() > retained_related {
+            related_locations.push_str(&format!(
+                "<li>... {} more locations omitted</li>",
+                finding.related.len() - retained_related
+            ));
+        }
         let related = if related_locations.is_empty() {
             String::new()
         } else {

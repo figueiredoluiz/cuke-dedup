@@ -1,4 +1,4 @@
-use super::shared::{convert_location, report_safe, ReportLocation};
+use super::shared::{convert_location, report_safe, ReportLocation, MAX_REPORTED_CLUSTER_MEMBERS};
 use super::{
     CliReportMetadata, CorpusCensus, ExecutionMetrics, ReportContext, Summary, JSONL_SCHEMA_VERSION,
 };
@@ -25,6 +25,7 @@ struct JsonlFinding {
     message: String,
     primary: ReportLocation,
     related: Vec<ReportLocation>,
+    related_locations_truncated: bool,
     evidence: JsonlEvidence,
     suggested_action: String,
     suppression: Option<JsonlSuppression>,
@@ -40,6 +41,17 @@ struct JsonlEvidence {
     handler_evidence: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     comparison: Option<JsonlComparison>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cluster: Option<JsonlCluster>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonlCluster {
+    member_count: usize,
+    definition_fingerprints: Vec<String>,
+    pair_findings_collapsed: usize,
+    members_truncated: bool,
 }
 
 #[derive(Serialize)]
@@ -213,6 +225,23 @@ fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding
                 ),
             },
         });
+    let cluster = finding
+        .evidence
+        .cluster
+        .as_ref()
+        .map(|cluster| JsonlCluster {
+            member_count: cluster.member_count,
+            definition_fingerprints: cluster
+                .definition_fingerprints
+                .iter()
+                .take(MAX_REPORTED_CLUSTER_MEMBERS)
+                .cloned()
+                .collect(),
+            pair_findings_collapsed: cluster.pair_findings_collapsed,
+            members_truncated: cluster.members_truncated
+                || cluster.definition_fingerprints.len() > MAX_REPORTED_CLUSTER_MEMBERS,
+        });
+    let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
     let suggested_action = bounded_jsonl_text(
         &finding.suggested_action,
         "suggestedAction",
@@ -244,14 +273,17 @@ fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding
         related: finding
             .related
             .iter()
+            .take(retained_related)
             .map(|location| convert_location(location, context.root))
             .collect(),
+        related_locations_truncated: finding.related.len() > retained_related,
         evidence: JsonlEvidence {
             matcher_similarity: finding.evidence.matcher_similarity,
             handler_similarity: finding.evidence.handler_similarity,
             matcher_difference,
             handler_evidence,
             comparison,
+            cluster,
         },
         suggested_action,
         suppression,

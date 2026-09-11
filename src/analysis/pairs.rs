@@ -6,10 +6,11 @@ use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
 use crate::model::{
-    Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation, StepDefinition,
-    Suppression,
+    DefinitionCluster, Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation,
+    StepDefinition, Suppression,
 };
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
@@ -31,6 +32,7 @@ const MAX_TOTAL_PAIR_SIMILARITY_WORK: u64 = 1_000_000_000;
 const MAX_TOTAL_PAIR_SUPPRESSION_WORK: u64 = 100_000_000;
 const PAIR_LINEAR_SCAN_MULTIPLIER: u64 = 4;
 const HANDLER_SIMILARITY_GATE: f64 = 0.5;
+const MIN_CLUSTER_DEFINITIONS: usize = 5;
 
 #[derive(Clone, Copy)]
 enum PairSimilarityWork {
@@ -142,6 +144,7 @@ pub(super) fn analyze_definition_pairs(
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
 ) -> PairAnalysis {
+    let first_pair_finding = findings.len();
     let mut generated = definition_pair_candidates(definitions, config);
     let matcher_lengths = definitions
         .iter()
@@ -416,6 +419,7 @@ pub(super) fn analyze_definition_pairs(
     if evaluated < generated.candidates.len() {
         generated.mark_verification_truncated(evaluated);
     }
+    collapse_large_pair_findings(findings, first_pair_finding);
     let incomplete = generated.incompleteness(config);
     PairAnalysis {
         census: generated.census,
@@ -1433,10 +1437,159 @@ fn push_pair_finding(
             matcher_difference: finding.matcher_difference.into_owned(),
             handler_evidence: finding.handler_evidence.into_owned(),
             comparison: Some(definition_comparison(finding.left, finding.right)),
+            cluster: None,
         },
         suggested_action: finding.suggested_action.to_owned(),
         suppression,
     });
+}
+
+fn collapse_large_pair_findings(findings: &mut Vec<Finding>, first_pair_finding: usize) {
+    let pair_findings = findings.drain(first_pair_finding..).collect::<Vec<_>>();
+    let mut groups: BTreeMap<(Rule, Option<String>), Vec<usize>> = BTreeMap::new();
+    for (index, finding) in pair_findings.iter().enumerate() {
+        if supports_cluster_reporting(finding.rule)
+            && finding.evidence.comparison.is_some()
+            && finding.related.len() == 1
+        {
+            groups
+                .entry((
+                    finding.rule,
+                    finding
+                        .suppression
+                        .as_ref()
+                        .map(|suppression| suppression.reason.clone()),
+                ))
+                .or_default()
+                .push(index);
+        }
+    }
+
+    let mut collapsed = vec![false; pair_findings.len()];
+    let mut cluster_findings = Vec::new();
+    for edge_indices in groups.values() {
+        collapse_group_components(
+            &pair_findings,
+            edge_indices,
+            &mut collapsed,
+            &mut cluster_findings,
+        );
+    }
+    findings.extend(
+        pair_findings
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, finding)| (!collapsed[index]).then_some(finding)),
+    );
+    findings.extend(cluster_findings);
+}
+
+fn supports_cluster_reporting(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::DuplicateMatcher | Rule::NormalizedMatcher | Rule::DuplicateHandler
+    )
+}
+
+fn collapse_group_components(
+    findings: &[Finding],
+    edge_indices: &[usize],
+    collapsed: &mut [bool],
+    clusters: &mut Vec<Finding>,
+) {
+    let mut location_ids = HashMap::<SourceLocation, usize>::new();
+    for &edge_index in edge_indices {
+        let finding = &findings[edge_index];
+        for location in std::iter::once(&finding.primary).chain(&finding.related) {
+            let next_id = location_ids.len();
+            location_ids.entry(location.clone()).or_insert(next_id);
+        }
+    }
+    let mut components = DisjointSet::new(location_ids.len());
+    for &edge_index in edge_indices {
+        let finding = &findings[edge_index];
+        components.union(
+            location_ids[&finding.primary],
+            location_ids[&finding.related[0]],
+        );
+    }
+    let mut edges_by_component = BTreeMap::<usize, Vec<usize>>::new();
+    for &edge_index in edge_indices {
+        let root = components.find(location_ids[&findings[edge_index].primary]);
+        edges_by_component.entry(root).or_default().push(edge_index);
+    }
+    for component_edges in edges_by_component.values() {
+        let cluster = build_cluster_finding(findings, component_edges);
+        let Some(cluster) = cluster else {
+            continue;
+        };
+        for &edge_index in component_edges {
+            collapsed[edge_index] = true;
+        }
+        clusters.push(cluster);
+    }
+}
+
+fn build_cluster_finding(findings: &[Finding], edge_indices: &[usize]) -> Option<Finding> {
+    let mut fingerprints = HashMap::<SourceLocation, String>::new();
+    for &edge_index in edge_indices {
+        let finding = &findings[edge_index];
+        let comparison = finding.evidence.comparison.as_ref()?;
+        fingerprints
+            .entry(finding.primary.clone())
+            .or_insert_with(|| comparison.left_fingerprint.clone());
+        fingerprints
+            .entry(finding.related[0].clone())
+            .or_insert_with(|| comparison.right_fingerprint.clone());
+    }
+    if fingerprints.len() < MIN_CLUSTER_DEFINITIONS {
+        return None;
+    }
+    let mut locations = fingerprints.keys().cloned().collect::<Vec<_>>();
+    locations.sort_by(compare_locations);
+    let mut definition_fingerprints = fingerprints.into_values().collect::<Vec<_>>();
+    definition_fingerprints.sort();
+
+    let representative = &findings[edge_indices[0]];
+    let definition_count = locations.len();
+    Some(Finding {
+        rule: representative.rule,
+        severity: representative.severity,
+        message: format!(
+            "{definition_count} step definitions form a connected `{}` cluster",
+            representative.rule
+        ),
+        primary: locations.remove(0),
+        related: locations,
+        evidence: FindingEvidence {
+            matcher_similarity: None,
+            handler_similarity: None,
+            matcher_difference: format!(
+                "{} pair findings were collapsed into this cluster",
+                edge_indices.len()
+            ),
+            handler_evidence: "Every cluster member is listed as a primary or related location"
+                .to_owned(),
+            comparison: None,
+            cluster: Some(DefinitionCluster {
+                member_count: definition_count,
+                definition_fingerprints,
+                pair_findings_collapsed: edge_indices.len(),
+                members_truncated: false,
+            }),
+        },
+        suggested_action: representative.suggested_action.clone(),
+        suppression: representative.suppression.clone(),
+    })
+}
+
+fn compare_locations(left: &SourceLocation, right: &SourceLocation) -> Ordering {
+    left.path
+        .cmp(&right.path)
+        .then(left.line.cmp(&right.line))
+        .then(left.column.cmp(&right.column))
+        .then(left.end_line.cmp(&right.end_line))
+        .then(left.end_column.cmp(&right.end_column))
 }
 
 #[cfg(test)]
@@ -1455,6 +1608,93 @@ mod tests {
         )
         .unwrap()
         .remove(0)
+    }
+
+    fn pair_finding(
+        rule: Rule,
+        left: &StepDefinition,
+        right: &StepDefinition,
+        suppression: Option<&str>,
+    ) -> Finding {
+        Finding {
+            rule,
+            severity: Severity::Error,
+            message: "pair".to_owned(),
+            primary: left.location.clone(),
+            related: vec![right.location.clone()],
+            evidence: FindingEvidence {
+                matcher_similarity: Some(0.75),
+                handler_similarity: Some(0.75),
+                matcher_difference: "pair matcher evidence".to_owned(),
+                handler_evidence: "pair handler evidence".to_owned(),
+                comparison: Some(definition_comparison(left, right)),
+                cluster: None,
+            },
+            suggested_action: "review pair".to_owned(),
+            suppression: suppression.map(|reason| Suppression {
+                reason: reason.to_owned(),
+            }),
+        }
+    }
+
+    fn located_definitions(count: usize) -> Vec<StepDefinition> {
+        (0..count)
+            .map(|index| {
+                let mut definition = definition();
+                definition.location.path = PathBuf::from(format!("steps/{index}.ts"));
+                definition.matcher = format!("step {index}");
+                definition.normalized_matcher = definition.matcher.clone();
+                definition
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fuzzy_pair_evidence_is_never_collapsed_into_clusters() {
+        let definitions = located_definitions(5);
+        let mut findings = definitions
+            .windows(2)
+            .map(|pair| pair_finding(Rule::NearDuplicateStep, &pair[0], &pair[1], None))
+            .collect::<Vec<_>>();
+
+        collapse_large_pair_findings(&mut findings, 0);
+
+        assert_eq!(findings.len(), 4);
+        assert!(findings.iter().all(|finding| {
+            finding.evidence.comparison.is_some() && finding.evidence.cluster.is_none()
+        }));
+    }
+
+    #[test]
+    fn cluster_reporting_does_not_cross_suppression_partitions() {
+        let definitions = located_definitions(6);
+        let mut findings = vec![pair_finding(
+            Rule::DuplicateHandler,
+            &definitions[0],
+            &definitions[1],
+            Some("accepted legacy pair"),
+        )];
+        findings.extend(
+            definitions[1..]
+                .windows(2)
+                .map(|pair| pair_finding(Rule::DuplicateHandler, &pair[0], &pair[1], None)),
+        );
+
+        collapse_large_pair_findings(&mut findings, 0);
+
+        assert_eq!(findings.len(), 2);
+        let suppressed = findings
+            .iter()
+            .find(|finding| finding.suppression.is_some())
+            .unwrap();
+        assert!(suppressed.evidence.comparison.is_some());
+        assert_eq!(suppressed.related.len(), 1);
+        let active = findings
+            .iter()
+            .find(|finding| finding.suppression.is_none())
+            .unwrap();
+        assert_eq!(active.related.len(), 4);
+        assert_eq!(active.evidence.cluster.as_ref().unwrap().member_count, 5);
     }
 
     fn insert_blocking_candidates(definitions: &[StepDefinition], builder: &mut CandidateBuilder) {

@@ -2,8 +2,9 @@ use super::jsonl::JSONL_TEXT_LIMIT_CHARS;
 use super::*;
 use crate::config::{Config, ConfigOverrides, ReporterKind};
 use crate::model::{
-    AnalysisResult, DefinitionComparison, Finding, FindingEvidence, Framework, HandlerFingerprint,
-    MatcherDiff, MatcherKind, Rule, Severity, SourceLocation, StepDefinition, Suppression,
+    AnalysisResult, DefinitionCluster, DefinitionComparison, Finding, FindingEvidence, Framework,
+    HandlerFingerprint, MatcherDiff, MatcherKind, Rule, Severity, SourceLocation, StepDefinition,
+    Suppression,
 };
 use std::path::{Path, PathBuf};
 
@@ -64,6 +65,7 @@ fn result(root: &Path) -> AnalysisResult {
                         suffix: " are visible".to_owned(),
                     },
                 }),
+                cluster: None,
             },
             suggested_action: "Keep one".to_owned(),
             suppression: None,
@@ -79,7 +81,7 @@ fn json_uses_versioned_schema_and_relative_paths() {
         .message
         .push_str("\u{202e}\u{200b}\u{2060}\u{feff}\u{00ad}\u{e0001}\u{e007f}");
     let json = render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
-    assert!(json.contains("\"schemaVersion\": \"1\""));
+    assert!(json.contains("\"schemaVersion\": \"2\""));
     assert!(json.contains("\"path\": \"steps/a.ts\""));
     assert!(json.contains("\"leftHandler\": \"() => '</script><script>bad()</script>'\""));
     assert!(!json.contains("/repo/steps"));
@@ -161,6 +163,108 @@ fn jsonl_emits_self_contained_findings_and_a_final_summary() {
 }
 
 #[test]
+fn machine_reporters_preserve_cluster_evidence() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    analysis.findings[0].evidence.comparison = None;
+    analysis.findings[0].evidence.cluster = Some(DefinitionCluster {
+        member_count: 2,
+        definition_fingerprints: vec!["alpha".into(), "bravo".into()],
+        pair_findings_collapsed: 7,
+        members_truncated: false,
+    });
+    let context = ReportContext::new(&analysis, &root, 100.0);
+
+    let json: serde_json::Value = serde_json::from_str(&render_json(&context).unwrap()).unwrap();
+    let jsonl: serde_json::Value =
+        serde_json::from_str(render_jsonl(&context).unwrap().lines().next().unwrap()).unwrap();
+    for evidence in [&json["findings"][0]["evidence"], &jsonl["evidence"]] {
+        assert_eq!(
+            evidence["cluster"]["definitionFingerprints"],
+            serde_json::json!(["alpha", "bravo"])
+        );
+        assert_eq!(evidence["cluster"]["pairFindingsCollapsed"], 7);
+        assert!(evidence.get("comparison").is_none());
+    }
+}
+
+#[test]
+fn every_reporter_bounds_large_cluster_records_and_signals_omissions() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let member_count = 300;
+    analysis.findings[0].related = (1..member_count)
+        .map(|index| {
+            SourceLocation::new(root.join(format!("steps/member-{index}.ts")), 1, 1, 1, 10)
+        })
+        .collect();
+    analysis.findings[0].evidence.comparison = None;
+    analysis.findings[0].evidence.cluster = Some(DefinitionCluster {
+        member_count,
+        definition_fingerprints: (0..member_count)
+            .map(|index| format!("{index:016x}"))
+            .collect(),
+        pair_findings_collapsed: member_count - 1,
+        members_truncated: false,
+    });
+    let context = ReportContext::new(&analysis, &root, 100.0);
+
+    let json: serde_json::Value = serde_json::from_str(&render_json(&context).unwrap()).unwrap();
+    let finding = &json["findings"][0];
+    assert_eq!(
+        finding["related"].as_array().unwrap().len(),
+        super::shared::MAX_REPORTED_CLUSTER_MEMBERS - 1
+    );
+    assert_eq!(finding["relatedLocationsTruncated"], true);
+    assert_eq!(finding["evidence"]["cluster"]["memberCount"], member_count);
+    assert_eq!(
+        finding["evidence"]["cluster"]["definitionFingerprints"]
+            .as_array()
+            .unwrap()
+            .len(),
+        super::shared::MAX_REPORTED_CLUSTER_MEMBERS
+    );
+    assert_eq!(finding["evidence"]["cluster"]["membersTruncated"], true);
+
+    let jsonl = render_jsonl(&context).unwrap();
+    let jsonl_finding: serde_json::Value =
+        serde_json::from_str(jsonl.lines().next().unwrap()).unwrap();
+    assert_eq!(jsonl_finding["relatedLocationsTruncated"], true);
+    assert!(jsonl.lines().next().unwrap().len() < 20_000);
+
+    let html = render_html(&context).unwrap();
+    assert!(html.contains("more locations omitted"));
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    assert!(String::from_utf8(terminal)
+        .unwrap()
+        .contains("more locations omitted"));
+
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    let sarif_result = &sarif["runs"][0]["results"][0];
+    assert_eq!(
+        sarif_result["relatedLocations"].as_array().unwrap().len(),
+        super::shared::MAX_REPORTED_CLUSTER_MEMBERS - 1
+    );
+    assert_eq!(
+        sarif_result["properties"]["relatedLocationsTruncated"],
+        true
+    );
+
+    assert_eq!(analysis.findings[0].related.len(), member_count - 1);
+    assert_eq!(
+        analysis.findings[0]
+            .evidence
+            .cluster
+            .as_ref()
+            .unwrap()
+            .definition_fingerprints
+            .len(),
+        member_count
+    );
+}
+
+#[test]
 fn sarif_contains_only_active_findings_with_stable_locations() {
     let root = PathBuf::from("/repo");
     let mut analysis = result(&root);
@@ -186,7 +290,7 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
         "steps/a.ts"
     );
     assert!(
-        sarif["runs"][0]["results"][0]["partialFingerprints"]["cukeDedupFingerprint/v1"]
+        sarif["runs"][0]["results"][0]["partialFingerprints"]["cukeDedupFingerprint/v2"]
             .as_str()
             .is_some()
     );

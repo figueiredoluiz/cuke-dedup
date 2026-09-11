@@ -24,10 +24,10 @@ use std::fs;
 use std::io::Write;
 
 /// Schema version written into JSON and embedded HTML report data.
-pub const JSON_SCHEMA_VERSION: &str = "1";
+pub const JSON_SCHEMA_VERSION: &str = "2";
 
 /// Schema version written into each JSON Lines record.
-pub const JSONL_SCHEMA_VERSION: &str = "1";
+pub const JSONL_SCHEMA_VERSION: &str = "2";
 
 /// Writes every configured report and returns the paths of file-based reports.
 pub fn write_reports(

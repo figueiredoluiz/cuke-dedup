@@ -1,4 +1,4 @@
-use super::shared::{bounded_findings, count_label, terminal_safe};
+use super::shared::{bounded_findings, count_label, terminal_safe, MAX_REPORTED_CLUSTER_MEMBERS};
 use super::ReportContext;
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -38,11 +38,19 @@ pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Re
                 "    --> {}",
                 terminal_safe(&finding.primary.display(root))
             )?;
-            for related in &finding.related {
+            let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
+            for related in finding.related.iter().take(retained_related) {
                 writeln!(
                     writer,
                     "    related: {}",
                     terminal_safe(&related.display(root))
+                )?;
+            }
+            if finding.related.len() > retained_related {
+                writeln!(
+                    writer,
+                    "    related: ... {} more locations omitted",
+                    finding.related.len() - retained_related
                 )?;
             }
             if !finding.evidence.matcher_difference.is_empty() {
