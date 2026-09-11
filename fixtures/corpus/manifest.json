@@ -193,12 +193,12 @@
       "expectedExit": 0,
       "expected": {
         "definitions": 2,
-        "featureSteps": 0,
+        "featureSteps": 2,
         "duplicatedDefinitions": 2,
         "percentage": 100.0,
         "threshold": 100.0,
         "passed": true,
-        "byRule": {"duplicate-matcher": 1, "unused-definition": 2}
+        "byRule": {"duplicate-matcher": 1}
       }
     },
     {
@@ -299,6 +299,81 @@
         "threshold": 0.0,
         "passed": true,
         "byRule": {}
+      }
+    },
+    {
+      "name": "mixed-esm-and-cjs-registration-syntax",
+      "path": "mixed-esm-cjs",
+      "arguments": [],
+      "expectedExit": 1,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 0.0,
+        "passed": false,
+        "byRule": {"ambiguous-step": 1, "duplicate-matcher": 1}
+      }
+    },
+    {
+      "name": "mixed-framework-detection-is-per-file",
+      "path": "mixed-frameworks",
+      "arguments": [],
+      "expectedExit": 1,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 0.0,
+        "passed": false,
+        "byRule": {"ambiguous-step": 1, "duplicate-matcher": 1}
+      }
+    },
+    {
+      "name": "spanish-classic-gherkin-dialect",
+      "path": "spanish-dialect",
+      "arguments": [],
+      "expectedExit": 0,
+      "expected": {
+        "definitions": 1,
+        "featureSteps": 1,
+        "duplicatedDefinitions": 0,
+        "percentage": 0.0,
+        "threshold": 0.0,
+        "passed": true,
+        "byRule": {}
+      }
+    },
+    {
+      "name": "playwright-injected-fixture-handler-renames",
+      "path": "playwright-auth-fixtures",
+      "arguments": [],
+      "expectedExit": 1,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 2,
+        "duplicatedDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 0.0,
+        "passed": false,
+        "byRule": {"duplicate-handler": 1}
+      }
+    },
+    {
+      "name": "playwright-decorator-handler-fingerprints",
+      "path": "playwright-decorators",
+      "arguments": [],
+      "expectedExit": 1,
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 2,
+        "duplicatedDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 0.0,
+        "passed": false,
+        "byRule": {"duplicate-handler": 1}
       }
     }
   ]

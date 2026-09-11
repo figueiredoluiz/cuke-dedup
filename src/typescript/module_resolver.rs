@@ -1,7 +1,7 @@
 use super::ast::{
-    default_registration_exports, framework_for_module, import_module, is_star_export,
-    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
-    FRAMEWORK_MODULES, PLAYWRIGHT_MODULE, REGISTRATIONS,
+    framework_for_module, import_module, is_star_export, is_type_only_declaration,
+    is_type_only_specifier, push_named_children_reverse, registration_exports_for_framework,
+    registration_exports_for_module, RegistrationExports, FRAMEWORK_MODULES, PLAYWRIGHT_MODULE,
 };
 use super::node_text;
 use super::project_resolution::ProjectResolution;
@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
 const MAX_REEXPORT_DEPTH: usize = 16;
-type RegistrationExports = BTreeMap<String, String>;
 type CachedExports = (Option<RegistrationExports>, Framework);
 
 #[derive(Debug, Clone)]
@@ -186,7 +185,7 @@ fn resolve_exports(
         let (available, available_framework) =
             if FRAMEWORK_MODULES.contains(&reexport.module.as_str()) {
                 (
-                    default_registration_exports(),
+                    registration_exports_for_module(&reexport.module),
                     framework_for_module(&reexport.module),
                 )
             } else {
@@ -386,6 +385,7 @@ fn collect_create_bdd_bindings(
     }
 
     let directly_exported = is_directly_exported_variable(declarator);
+    let available = registration_exports_for_framework(Framework::PlaywrightBdd);
     let mut cursor = pattern.walk();
     for binding in pattern.named_children(&mut cursor) {
         let (registration, local) = match binding.kind() {
@@ -407,8 +407,8 @@ fn collect_create_bdd_bindings(
             }
             _ => continue,
         };
-        if REGISTRATIONS.contains(&registration) {
-            local_registrations.insert(local.to_owned(), registration.to_owned());
+        if let Some(registration) = available.get(registration) {
+            local_registrations.insert(local.to_owned(), registration.clone());
             if directly_exported {
                 direct_export_names.push((local.to_owned(), local.to_owned()));
             }
@@ -583,7 +583,11 @@ mod tests {
             resolve_exports(&importer, "./root", &boundary, &mut project, &mut state, 0).unwrap();
 
         assert_eq!(
-            resolved.exports.unwrap().get("Given").map(String::as_str),
+            resolved
+                .exports
+                .unwrap()
+                .get("Given")
+                .map(|export| export.canonical.as_str()),
             Some("Given")
         );
         assert_eq!(state.modules.len(), 1 + layers * 2);
@@ -637,7 +641,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            exports.exports.get("Given").map(String::as_str),
+            exports
+                .exports
+                .get("Given")
+                .map(|export| export.canonical.as_str()),
             Some("Given")
         );
         assert_eq!(exports.framework, Framework::CucumberJs);
@@ -688,7 +695,10 @@ mod tests {
             .count();
 
         assert_eq!(
-            exports.exports.get("Given").map(String::as_str),
+            exports
+                .exports
+                .get("Given")
+                .map(|export| export.canonical.as_str()),
             Some("Given")
         );
         assert_eq!(exports.framework, Framework::CucumberJs);
@@ -718,11 +728,19 @@ mod tests {
             resolve_exports(&importer, "./b", &boundary, &mut project, &mut state, 0).unwrap();
 
         assert_eq!(
-            from_a.exports.unwrap().get("Given").map(String::as_str),
+            from_a
+                .exports
+                .unwrap()
+                .get("Given")
+                .map(|export| export.canonical.as_str()),
             Some("Given")
         );
         assert_eq!(
-            from_b.exports.unwrap().get("Given").map(String::as_str),
+            from_b
+                .exports
+                .unwrap()
+                .get("Given")
+                .map(|export| export.canonical.as_str()),
             Some("Given")
         );
     }
@@ -839,7 +857,10 @@ mod tests {
             .resolution
             .unwrap();
         assert_eq!(
-            plain.exports.get("Given").map(String::as_str),
+            plain
+                .exports
+                .get("Given")
+                .map(|export| export.canonical.as_str()),
             Some("Given")
         );
 

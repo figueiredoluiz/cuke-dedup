@@ -1,5 +1,6 @@
 {
   "definitions": ["packages/**/*.ts"],
   "features": ["packages/**/*.feature"],
-  "threshold": 100
+  "threshold": 100,
+  "rules": { "ambiguous-step": "off" }
 }

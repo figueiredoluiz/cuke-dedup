@@ -127,7 +127,7 @@ pub(super) fn render_html_context_with_metadata(
         truncation_notice.push_str(&format!(
             r#"<p class="truncation-notice" role="alert">{}</p>"#,
             html_escape(
-                "Corpus is incomplete: a registration import could not be resolved statically, so some step definitions were never analyzed."
+                "Corpus is incomplete: one or more definition or feature inputs could not be represented fully, so some analysis was disabled or omitted."
             )
         ));
     }

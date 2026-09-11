@@ -499,6 +499,116 @@ fn unresolved_registration_calls_warn_and_expose_the_corpus_census() {
     assert_eq!(report["corpus"]["definitionsExtracted"], 0);
     assert_eq!(report["corpus"]["featureFiles"], 1);
     assert_eq!(report["corpus"]["featureFilesParsed"], 1);
+    assert_eq!(report["corpus"]["featureFilesWithoutSteps"], 0);
+}
+
+#[test]
+fn empty_converted_gherkin_markdown_marks_the_corpus_incomplete() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('una cuenta activa', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "features/account.feature.md",
+        "# Característica: Cuenta\n\n## Escenario: Disponible\n\n* Dado una cuenta activa\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    let assertion = command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json,jsonl,html,sarif"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unused-definition").not())
+        .stderr(predicate::str::contains(
+            "Gherkin Markdown file features/account.feature.md parsed successfully but produced 0 feature steps",
+        ));
+
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        report["summary"]["byRule"]["unused-definition"],
+        Value::Null
+    );
+    assert_eq!(report["corpus"]["featureFiles"], 1);
+    assert_eq!(report["corpus"]["featureFilesParsed"], 1);
+    assert_eq!(report["corpus"]["featureFilesWithoutSteps"], 1);
+    assert_eq!(report["corpus"]["incomplete"], true);
+
+    let jsonl = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
+    let final_record: Value =
+        serde_json::from_str(jsonl.lines().last().expect("JSONL summary record")).unwrap();
+    assert_eq!(final_record["corpus"]["featureFilesWithoutSteps"], 1);
+    assert_eq!(final_record["corpus"]["incomplete"], true);
+
+    let html =
+        fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.html")).unwrap();
+    assert!(html.contains("Corpus is incomplete"));
+    assert!(html.contains("\"featureFilesWithoutSteps\":1"));
+
+    let sarif: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.sarif")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["corpus"]["featureFilesWithoutSteps"],
+        1
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+        false
+    );
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "input extraction did not fully represent every discovered definition or feature file",
+        ));
+}
+
+#[test]
+fn valid_empty_classic_feature_does_not_hide_unused_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('used step', () => used());\nGiven('unused step', () => unused());\n",
+    );
+    write(
+        directory.path(),
+        "features/placeholder.feature",
+        "Feature: Planned work\n",
+    );
+    write(
+        directory.path(),
+        "features/active.feature",
+        "Feature: Active\n  Scenario: Current\n    Given used step\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("produced 0 feature steps").not());
+
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["summary"]["byRule"]["unused-definition"], 1);
+    assert_eq!(report["corpus"]["featureFilesWithoutSteps"], 0);
+    assert_eq!(report["corpus"]["incomplete"], false);
 }
 
 #[test]
@@ -1388,7 +1498,7 @@ fn an_unresolved_registration_import_marks_the_whole_run_incomplete() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "could not resolve every registration import",
+            "input extraction did not fully represent every discovered definition or feature file",
         ));
 
     write(
@@ -1403,7 +1513,7 @@ fn an_unresolved_registration_import_marks_the_whole_run_incomplete() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "could not resolve every registration import",
+            "input extraction did not fully represent every discovered definition or feature file",
         ));
 }
 

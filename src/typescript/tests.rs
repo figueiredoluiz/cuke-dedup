@@ -59,6 +59,379 @@ Then('the page is visible', () => cy.get('main').should('be.visible'));
 }
 
 #[test]
+fn extracts_supported_legacy_cucumber_registration_modules_in_esm_and_cjs() {
+    for (module, expected_framework) in [
+        ("cucumber", Framework::CucumberJs),
+        (
+            "cypress-cucumber-preprocessor/steps",
+            Framework::CypressCucumber,
+        ),
+    ] {
+        for (syntax, matcher) in [
+            (
+                format!(
+                    "import {{ Given as Setup }} from '{module}';\nSetup('esm {module}', () => work());"
+                ),
+                format!("esm {module}"),
+            ),
+            (
+                format!(
+                    "const legacy = require('{module}');\nlegacy.Given('cjs {module}', () => work());"
+                ),
+                format!("cjs {module}"),
+            ),
+        ] {
+            let definitions = extract_ts(&syntax);
+            assert_eq!(definitions.len(), 1, "{module}: {syntax}");
+            assert_eq!(definitions[0].matcher, matcher);
+            assert_eq!(definitions[0].registration, "Given");
+            assert_eq!(definitions[0].framework, expected_framework);
+        }
+    }
+}
+
+#[test]
+fn legacy_cypress_preprocessor_root_and_similar_prefixes_are_not_registration_modules() {
+    for module in [
+        "cypress-cucumber-preprocessor",
+        "cypress-cucumber-preprocessor/steps-extra",
+    ] {
+        let source = format!(
+            "import {{ Given as Setup }} from '{module}';\nSetup('not a registration export', () => work());"
+        );
+        assert!(extract_ts(&source).is_empty(), "{module}");
+    }
+}
+
+#[test]
+fn playwright_step_decorator_name_is_not_invented_for_other_framework_modules() {
+    for source in [
+        "import { Step } from '@cucumber/cucumber';\nStep('not exported', () => work());",
+        "const { Step } = require('@badeball/cypress-cucumber-preprocessor');\nStep('not exported', () => work());",
+    ] {
+        assert!(extract_ts(source).is_empty(), "{source}");
+    }
+
+    assert!(extract_ts(
+        "import { Fixture as Given } from 'playwright-bdd/decorators';\nGiven('not a step registration', () => work());"
+    )
+    .is_empty());
+}
+
+#[test]
+fn extracts_playwright_bdd_method_decorators_with_aliases_and_options() {
+    let source = r#"
+import { Fixture, Given as Setup, Step } from 'playwright-bdd/decorators';
+
+export class TodoSteps {
+  @Fixture('ignored fixture metadata')
+  page = {};
+
+  @Setup('a prepared todo', { timeout: 1000 })
+  async prepare({ page: localPage }) { await localPage.goto('/todos'); }
+
+  @Step(`the todo is visible`)
+  async verify({ page }) { await page.goto('/todos'); }
+}
+"#;
+
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(definitions[0].matcher, "a prepared todo");
+    assert_eq!(definitions[0].registration, "Given");
+    assert_eq!(definitions[1].matcher, "the todo is visible");
+    assert_eq!(definitions[1].registration, "Step");
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.framework == Framework::PlaywrightBdd));
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.handler.comparable));
+    assert_eq!(
+        definitions[0].handler.alpha_normalized,
+        definitions[1].handler.alpha_normalized
+    );
+    assert!(definitions[0]
+        .handler
+        .source_snippet
+        .contains("localPage.goto"));
+    assert!(!definitions[0].handler.source_snippet.contains("prepare"));
+}
+
+#[test]
+fn extracts_playwright_bdd_method_decorators_from_cjs_namespaces() {
+    let source = r#"
+const decorators = require('playwright-bdd/decorators');
+class WorkspaceSteps {
+  @decorators.Given('a CJS decorator')
+  async prepare() { await work(); }
+}
+"#;
+
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].matcher, "a CJS decorator");
+    assert_eq!(definitions[0].registration, "Given");
+    assert_eq!(definitions[0].framework, Framework::PlaywrightBdd);
+}
+
+#[test]
+fn extracts_playwright_bdd_method_decorators_with_javascript_grammar() {
+    let source = r#"
+import { Given } from 'playwright-bdd/decorators';
+class JavaScriptSteps {
+  @Given('a JavaScript decorator')
+  async prepare() { await work(); }
+}
+"#;
+    for extension in ["js", "jsx"] {
+        let source_file = SourceFile {
+            path: PathBuf::from(format!("features/steps/example.{extension}")),
+            language: SourceLanguage::JavaScript,
+        };
+        let extracted = extract_detailed(source, &source_file).unwrap();
+        assert!(extracted.diagnostics.is_empty(), "{extension}");
+        assert_eq!(extracted.definitions.len(), 1, "{extension}");
+        assert_eq!(extracted.definitions[0].matcher, "a JavaScript decorator");
+        assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+    }
+}
+
+#[test]
+fn unsupported_cjs_destructured_exports_shadow_ambient_registration_names() {
+    for source in [
+        r#"
+const { Fixture: Given } = require('playwright-bdd/decorators');
+Given('not a decorator registration', () => work());
+"#,
+        r#"
+const { unsupported: Given } = require('cypress-cucumber-preprocessor/steps');
+Given('not a legacy Cypress registration', () => work());
+"#,
+    ] {
+        assert!(extract_ts(source).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn call_and_decorator_registration_apis_are_not_interchangeable() {
+    let decorator_as_call = r#"
+import { Given } from 'playwright-bdd/decorators';
+Given('not an ordinary registration', () => work());
+"#;
+    assert!(extract_ts(decorator_as_call).is_empty());
+
+    let call_as_decorator = r#"
+import { createBdd } from 'playwright-bdd';
+const { Given } = createBdd();
+class InvalidSteps {
+  @Given('not a decorator registration')
+  async prepare() { await work(); }
+}
+"#;
+    assert!(extract_ts(call_as_decorator).is_empty());
+
+    let cucumber_call_as_decorator = r#"
+import { Given } from '@cucumber/cucumber';
+class InvalidCucumberSteps {
+  @Given('not a Cucumber decorator')
+  prepare() { work(); }
+}
+"#;
+    assert!(extract_ts(cucumber_call_as_decorator).is_empty());
+
+    let unsupported_create_bdd_export = r#"
+import { createBdd } from 'playwright-bdd';
+const { Step } = createBdd();
+Step('not exported by createBdd', () => work());
+"#;
+    assert!(extract_ts(unsupported_create_bdd_export).is_empty());
+}
+
+#[test]
+fn project_reexports_preserve_playwright_decorator_registration_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("decorators.ts"),
+        "export { Given as Setup } from 'playwright-bdd/decorators';\n",
+    )
+    .unwrap();
+    let path = directory.path().join("steps.ts");
+    let source = r#"
+import { Setup } from './decorators';
+class WorkspaceSteps {
+  @Setup('a re-exported decorator')
+  async prepare() { await work(); }
+}
+"#;
+    fs::write(&path, source).unwrap();
+    let source_file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(source, &source_file, &mut session).unwrap();
+    assert!(extracted.diagnostics.is_empty());
+    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(extracted.definitions[0].registration, "Given");
+    assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+}
+
+#[test]
+fn dynamic_playwright_bdd_decorator_matchers_warn_without_inventing_definitions() {
+    let source = r#"
+import { Given } from 'playwright-bdd/decorators';
+class DynamicSteps {
+  @Given(computeMatcher())
+  async prepare() { await work(); }
+}
+"#;
+    let file = file(SourceLanguage::TypeScript);
+    let extracted = extract_detailed(source, &file).unwrap();
+
+    assert!(extracted.definitions.is_empty());
+    assert!(extracted.diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("dynamic or unsupported step matcher")));
+}
+
+#[test]
+fn decorated_stub_methods_keep_the_existing_trivial_handler_guard() {
+    let source = r#"
+import { Given, Then } from 'playwright-bdd/decorators';
+class PendingSteps {
+  @Given('a pending setup')
+  async prepare() { await pending(); }
+
+  @Then('a pending result')
+  verify() { throw new Error('not implemented'); }
+}
+"#;
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 2);
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.handler.trivial));
+}
+
+#[test]
+fn decorated_method_fingerprints_include_runtime_declaration_semantics() {
+    let source = r#"
+import { Given, When, Then, Step } from 'playwright-bdd/decorators';
+class RuntimeSemantics {
+  @Given('async handler')
+  async asyncHandler(value) { return work(value); }
+
+  @When('sync handler')
+  syncHandler(value) { return work(value); }
+
+  @Then('first default')
+  withFirstDefault(value = first()) { return work(value); }
+
+  @Step('second default')
+  withSecondDefault(value = second()) { return work(value); }
+
+  @Given('renamed default one')
+  renamedDefaultOne(value = seed()) { return work(value); }
+
+  @When('renamed default two')
+  renamedDefaultTwo(renamed = seed()) { return work(renamed); }
+
+  @Then('static handler')
+  static staticHandler(value) { return work(value); }
+
+  @Step('instance handler')
+  instanceHandler(value) { return work(value); }
+
+  @Given('generator handler')
+  *generatorHandler(value) { return work(value); }
+}
+"#;
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 9);
+    assert_ne!(
+        definitions[0].handler.alpha_normalized, definitions[1].handler.alpha_normalized,
+        "async and sync methods are behaviorally distinct"
+    );
+    assert_ne!(
+        definitions[2].handler.alpha_normalized, definitions[3].handler.alpha_normalized,
+        "different default initializers must remain visible"
+    );
+    assert!(definitions[2]
+        .handler
+        .behavior_signature
+        .iter()
+        .any(|event| event == "call:first"));
+    assert!(!definitions[2].handler.trivial);
+    assert_eq!(
+        definitions[4].handler.alpha_normalized, definitions[5].handler.alpha_normalized,
+        "renaming a parameter must not change an equivalent defaulted handler"
+    );
+    assert_ne!(
+        definitions[6].handler.alpha_normalized, definitions[7].handler.alpha_normalized,
+        "static and instance methods are behaviorally distinct"
+    );
+    assert_ne!(
+        definitions[7].handler.alpha_normalized, definitions[8].handler.alpha_normalized,
+        "generator and ordinary methods are behaviorally distinct"
+    );
+}
+
+#[test]
+fn decorated_method_modifiers_are_detected_across_comments() {
+    let source = r#"
+import { Given, When, Then, Step } from 'playwright-bdd/decorators';
+class CommentedModifiers {
+  @Given('commented async')
+  async/**/commentedAsync(value) { return work(value); }
+
+  @When('ordinary sync')
+  ordinarySync(value) { return work(value); }
+
+  @Then('commented static')
+  static/* note */commentedStatic(value) { return work(value); }
+
+  @Step('ordinary instance')
+  ordinaryInstance(value) { return work(value); }
+}
+"#;
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 4);
+    assert_ne!(
+        definitions[0].handler.alpha_normalized,
+        definitions[1].handler.alpha_normalized
+    );
+    assert_ne!(
+        definitions[2].handler.alpha_normalized,
+        definitions[3].handler.alpha_normalized
+    );
+}
+
+#[test]
+fn malformed_decorator_registrations_warn_without_crossing_class_members() {
+    let source = r#"
+import { Given } from 'playwright-bdd/decorators';
+class InvalidSteps {
+  @Given()
+  emptyMatcher() { work(); }
+
+  @Given('not attached to a method')
+  value = 1;
+}
+"#;
+    let extracted = extract_detailed(source, &file(SourceLanguage::TypeScript)).unwrap();
+    assert!(extracted.definitions.is_empty());
+    assert!(extracted.diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("dynamic or unsupported step matcher")));
+    assert!(extracted.diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("dynamic or unsupported step handler")));
+}
+
+#[test]
 fn project_resolved_registrations_propagate_framework_metadata() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir_all(directory.path().join("support")).unwrap();
@@ -103,6 +476,86 @@ fn project_resolved_registrations_propagate_framework_metadata() {
         let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
         assert_eq!(extracted.definitions.len(), 1, "{module}");
         assert_eq!(extracted.definitions[0].framework, expected, "{module}");
+    }
+}
+
+#[test]
+fn mixed_framework_detection_is_scoped_to_each_source_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "playwright.steps.ts",
+            "import { createBdd } from 'playwright-bdd';\nconst { Given } = createBdd();\nGiven('playwright step', () => work());\n",
+            Framework::PlaywrightBdd,
+        ),
+        (
+            "cucumber.steps.ts",
+            "import { Given } from '@cucumber/cucumber';\nGiven('cucumber step', () => work());\n",
+            Framework::CucumberJs,
+        ),
+        (
+            "cypress.steps.ts",
+            "import { Given } from '@badeball/cypress-cucumber-preprocessor';\nGiven('cypress step', () => work());\n",
+            Framework::CypressCucumber,
+        ),
+    ];
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    for (name, source, expected) in cases {
+        let path = directory.path().join(name);
+        fs::write(&path, source).unwrap();
+        let source_file = SourceFile {
+            path,
+            language: SourceLanguage::TypeScript,
+        };
+        let extracted = extract_detailed_impl(source, &source_file, &mut session).unwrap();
+        assert_eq!(extracted.definitions.len(), 1, "{name}");
+        assert_eq!(extracted.definitions[0].framework, expected, "{name}");
+    }
+}
+
+#[test]
+fn mixed_framework_bindings_keep_per_registration_provenance_in_any_import_order() {
+    for imports in [
+        r#"
+import { Given as CypressGiven } from '@badeball/cypress-cucumber-preprocessor';
+import { Given as DecoratorGiven } from 'playwright-bdd/decorators';
+import { Then as CucumberThen } from '@cucumber/cucumber';
+"#,
+        r#"
+import { Then as CucumberThen } from '@cucumber/cucumber';
+import { Given as DecoratorGiven } from 'playwright-bdd/decorators';
+import { Given as CypressGiven } from '@badeball/cypress-cucumber-preprocessor';
+"#,
+    ] {
+        let source = format!(
+            r#"{imports}
+CypressGiven('a Cypress step', () => cy.visit('/'));
+CucumberThen('a Cucumber step', () => work());
+class MixedSteps {{
+  @DecoratorGiven('a Playwright decorator')
+  async prepare() {{ await work(); }}
+}}
+"#
+        );
+        let definitions = extract_ts(&source);
+        assert_eq!(definitions.len(), 3, "{source}");
+        let frameworks = definitions
+            .iter()
+            .map(|definition| (definition.matcher.as_str(), definition.framework))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            frameworks.get("a Cypress step"),
+            Some(&Framework::CypressCucumber)
+        );
+        assert_eq!(
+            frameworks.get("a Cucumber step"),
+            Some(&Framework::CucumberJs)
+        );
+        assert_eq!(
+            frameworks.get("a Playwright decorator"),
+            Some(&Framework::PlaywrightBdd)
+        );
     }
 }
 
@@ -881,7 +1334,7 @@ fn generator_handlers_are_extracted_and_comparable() {
 #[test]
 fn dynamic_matchers_and_handlers_emit_diagnostics_instead_of_disappearing() {
     let extracted = extract_detailed(
-        "Given(dynamicMatcher, () => work()); Given('wrapped', wrap(handler));",
+        "Given(dynamicMatcher, () => work()); Given('wrapped', wrap(handler)); Given('object handler', { timeout: 1 }); Given('missing handler');",
         &file(SourceLanguage::TypeScript),
     )
     .unwrap();

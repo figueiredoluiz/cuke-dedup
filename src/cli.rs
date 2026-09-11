@@ -167,6 +167,7 @@ struct ExtractedCorpus {
     feature_steps: Vec<crate::model::FeatureStep>,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
+    feature_files_without_steps: usize,
     incomplete: bool,
 }
 
@@ -175,6 +176,7 @@ struct AnalyzedCorpus {
     census: analysis::AnalysisCensus,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
+    feature_files_without_steps: usize,
     corpus_incomplete: bool,
     run_incomplete: bool,
 }
@@ -219,6 +221,7 @@ fn execute(cli: Cli) -> Result<i32> {
         &files,
         &changed_files,
         analyzed.parsed_feature_files,
+        analyzed.feature_files_without_steps,
     );
     let baseline_outcome = apply_baseline_mode(
         config,
@@ -350,6 +353,7 @@ fn extract_corpus(
         feature_steps: Vec::new(),
         definition_files_with_definitions: 0,
         parsed_feature_files: 0,
+        feature_files_without_steps: 0,
         incomplete: false,
     };
     extract_definitions(config, files, changed_files, diagnostics, &mut corpus);
@@ -462,7 +466,22 @@ fn extract_feature_steps(
         match gherkin::extract_file_with_format(&file.path, file.format) {
             Ok(extracted) => {
                 corpus.parsed_feature_files += 1;
-                corpus.feature_steps.extend(extracted);
+                if extracted.is_empty()
+                    && file.format == crate::gherkin::FeatureFormat::GherkinMarkdown
+                {
+                    corpus.feature_files_without_steps += 1;
+                    corpus.incomplete = true;
+                    let display = file
+                        .path
+                        .strip_prefix(&config.root)
+                        .unwrap_or(&file.path)
+                        .display();
+                    diagnostics.warnings.push(format!(
+                        "Gherkin Markdown file {display} parsed successfully but produced 0 feature steps; unused-definition findings are disabled for this incomplete corpus"
+                    ));
+                } else {
+                    corpus.feature_steps.extend(extracted);
+                }
             }
             // Changed definitions still depend on the full feature corpus for usage and ambiguity.
             Err(error) => diagnostics.errors.push(format!("{error:#}")),
@@ -502,6 +521,7 @@ fn analyze_corpus(
         feature_steps,
         definition_files_with_definitions,
         parsed_feature_files,
+        feature_files_without_steps,
         incomplete: corpus_incomplete,
     } = extracted;
     let (analysis, census, unmatched_suppressions) =
@@ -528,7 +548,7 @@ fn analyze_corpus(
         diagnostics.errors.extend(analysis.incomplete);
         if corpus_incomplete {
             diagnostics.errors.push(
-                "definition extraction could not resolve every registration import, so the analyzed corpus is incomplete".to_owned(),
+                "input extraction did not fully represent every discovered definition or feature file, so the analyzed corpus is incomplete".to_owned(),
             );
         }
     } else {
@@ -539,6 +559,7 @@ fn analyze_corpus(
         census,
         definition_files_with_definitions,
         parsed_feature_files,
+        feature_files_without_steps,
         corpus_incomplete,
         run_incomplete,
     })
@@ -549,8 +570,15 @@ fn apply_finding_modes(
     files: &discovery::DiscoveredFiles,
     changed_files: &Option<BTreeSet<PathBuf>>,
     parsed_feature_files: usize,
+    feature_files_without_steps: usize,
 ) {
-    if parsed_feature_files < files.features.len() || files.features.is_empty() {
+    // A converter can produce a syntactically valid but empty document when it fails to
+    // recognize markup or a dialect. Such an input cannot prove that a definition is unused,
+    // so use the same conservative suppression as a feature parse failure.
+    if parsed_feature_files < files.features.len()
+        || feature_files_without_steps > 0
+        || files.features.is_empty()
+    {
         result
             .findings
             .retain(|finding| finding.rule != Rule::UnusedDefinition);
@@ -612,6 +640,7 @@ fn write_reports(
         definitions_extracted: analyzed.result.definitions.len(),
         feature_files: files.features.len(),
         feature_files_parsed: analyzed.parsed_feature_files,
+        feature_files_without_steps: analyzed.feature_files_without_steps,
         incomplete: analyzed.corpus_incomplete,
     };
     let metrics = reporters::ExecutionMetrics {
