@@ -339,15 +339,11 @@ fn static_object_property(
     call_name: Option<&str>,
     property: &str,
 ) -> Result<LiteralProperty> {
-    let tree = parse_config_source(source, extension)?;
-
-    if let Some(call_name) = call_name {
-        let Some(object) = find_call_object(tree.root_node(), source, call_name) else {
-            return Ok(LiteralProperty::Missing);
-        };
-        return Ok(read_object_property(object, source, property));
+    if call_name.is_some() {
+        return static_object_property_path(source, extension, call_name, &[property]);
     }
 
+    let tree = parse_config_source(source, extension)?;
     let objects = collect_objects(tree.root_node());
     for object in &objects {
         if let Some(default) = property_node(*object, source, "default") {
