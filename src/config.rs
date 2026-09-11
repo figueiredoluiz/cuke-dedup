@@ -3,7 +3,8 @@
 use crate::framework_config;
 use crate::model::{Rule, Severity};
 use crate::resource_limits::{
-    is_input_limit_error, read_utf8, MAX_CONFIG_INPUT_BYTES, MAX_SUPPRESSION_REASON_CHARS,
+    is_input_limit_error, read_utf8, MAX_CANDIDATE_COMPARISONS, MAX_CONFIG_INPUT_BYTES,
+    MAX_STRUCTURAL_CLASS_COMPARISONS, MAX_SUPPRESSION_REASON_CHARS,
 };
 use anyhow::{bail, Context, Result};
 use globset::Glob;
@@ -19,9 +20,6 @@ const DEFAULT_EXCLUDES: [&str; 5] = [
     "**/test-results/**",
     "**/playwright-report/**",
 ];
-const DEFAULT_MAX_CANDIDATE_COMPARISONS: usize = 2_000_000;
-const DEFAULT_MAX_STRUCTURAL_CLASS_COMPARISONS: usize = 250_000;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 /// Destination format selected for analysis output.
@@ -376,8 +374,8 @@ impl Config {
             fail_on_incomplete: false,
             registrations: Vec::new(),
             parameter_types: BTreeMap::new(),
-            max_candidate_comparisons: DEFAULT_MAX_CANDIDATE_COMPARISONS,
-            max_structural_class_comparisons: DEFAULT_MAX_STRUCTURAL_CLASS_COMPARISONS,
+            max_candidate_comparisons: MAX_CANDIDATE_COMPARISONS,
+            max_structural_class_comparisons: MAX_STRUCTURAL_CLASS_COMPARISONS,
             no_metrics: false,
             rules,
             suppressions: Vec::new(),
@@ -524,12 +522,7 @@ impl Config {
                 bail!("registration `{name}` must be a JavaScript identifier");
             }
         }
-        if self.max_candidate_comparisons == 0 {
-            bail!("maxCandidateComparisons must be greater than zero");
-        }
-        if self.max_structural_class_comparisons == 0 {
-            bail!("maxStructuralClassComparisons must be greater than zero");
-        }
+        self.validate_analysis_limits()?;
         if self.output_from_project_config {
             validate_project_output(&self.root, &self.output)?;
         }
@@ -561,6 +554,26 @@ impl Config {
                     )
                 })?;
             }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_analysis_limits(&self) -> Result<()> {
+        if self.max_candidate_comparisons == 0 {
+            bail!("maxCandidateComparisons must be greater than zero");
+        }
+        if self.max_candidate_comparisons > MAX_CANDIDATE_COMPARISONS {
+            bail!(
+                "maxCandidateComparisons must not exceed the hard safety limit of {MAX_CANDIDATE_COMPARISONS}"
+            );
+        }
+        if self.max_structural_class_comparisons == 0 {
+            bail!("maxStructuralClassComparisons must be greater than zero");
+        }
+        if self.max_structural_class_comparisons > MAX_STRUCTURAL_CLASS_COMPARISONS {
+            bail!(
+                "maxStructuralClassComparisons must not exceed the hard safety limit of {MAX_STRUCTURAL_CLASS_COMPARISONS}"
+            );
         }
         Ok(())
     }
@@ -848,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_limits_are_configurable_and_must_be_positive() {
+    fn candidate_limits_can_be_lowered_but_cannot_bypass_hard_safety_ceilings() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join(".cuke-dedup.json"),
@@ -862,11 +875,19 @@ mod tests {
         for (invalid, expected) in [
             (
                 r#"{"maxCandidateComparisons":0}"#,
-                "maxCandidateComparisons",
+                "maxCandidateComparisons must be greater than zero",
             ),
             (
                 r#"{"maxStructuralClassComparisons":0}"#,
-                "maxStructuralClassComparisons",
+                "maxStructuralClassComparisons must be greater than zero",
+            ),
+            (
+                r#"{"maxCandidateComparisons":2000001}"#,
+                "maxCandidateComparisons must not exceed the hard safety limit of 2000000",
+            ),
+            (
+                r#"{"maxStructuralClassComparisons":250001}"#,
+                "maxStructuralClassComparisons must not exceed the hard safety limit of 250000",
             ),
         ] {
             fs::write(directory.path().join(".cuke-dedup.json"), invalid).unwrap();
@@ -875,6 +896,15 @@ mod tests {
                 .to_string()
                 .contains(expected));
         }
+
+        fs::write(
+            directory.path().join(".cuke-dedup.json"),
+            r#"{"maxCandidateComparisons":2000000,"maxStructuralClassComparisons":250000}"#,
+        )
+        .unwrap();
+        let exact_limits = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        assert_eq!(exact_limits.max_candidate_comparisons, 2_000_000);
+        assert_eq!(exact_limits.max_structural_class_comparisons, 250_000);
     }
 
     #[test]

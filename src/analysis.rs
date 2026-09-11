@@ -93,6 +93,7 @@ fn analyze_internal(
     AnalysisCensus,
     suppression::UnmatchedSuppressionOutcome,
 )> {
+    config.validate_analysis_limits()?;
     let mut findings = Vec::new();
     let suppressions = suppression::SuppressionIndex::new(config, &definitions);
     let pair_analysis =

@@ -77,11 +77,11 @@ struct CheckOptions {
     #[arg(long, global = true)]
     require_definitions: bool,
 
-    /// Maximum unique definition pairs retained for analysis.
+    /// Maximum unique definition pairs retained, up to the hard safety ceiling.
     #[arg(long, global = true, value_name = "COUNT", value_parser = parse_positive_usize)]
     max_candidate_comparisons: Option<usize>,
 
-    /// Maximum structural candidate proposals considered per handler class.
+    /// Maximum structural proposals per handler class, up to the hard safety ceiling.
     #[arg(long, global = true, value_name = "COUNT", value_parser = parse_positive_usize)]
     max_structural_class_comparisons: Option<usize>,
 
