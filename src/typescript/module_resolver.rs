@@ -1,5 +1,6 @@
 use super::ast::{
-    default_registration_exports, framework_for_module, import_module, push_named_children_reverse,
+    default_registration_exports, framework_for_module, import_module, is_star_export,
+    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
     FRAMEWORK_MODULES, PLAYWRIGHT_MODULE, REGISTRATIONS,
 };
 use super::node_text;
@@ -280,7 +281,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     while let Some(node) = stack.pop() {
         if node.kind() == "import_statement"
             && import_module(node, source) == Some(PLAYWRIGHT_MODULE)
-            && !is_type_only_import(node, source)
+            && !is_type_only_declaration(node)
         {
             collect_named_import_aliases(node, source, "createBdd", &mut create_bdd_aliases);
         }
@@ -302,13 +303,17 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     &mut direct_export_names,
                 );
             }
-            "export_statement" if !is_type_only_export(node, source) => {
+            "export_statement" if !is_type_only_declaration(node) => {
                 if let Some(module) = import_module(node, source) {
-                    reexports.push(Reexport {
-                        module: module.to_owned(),
-                        specifiers: export_specifiers(node, source),
-                        star: is_star_export(node, source),
-                    });
+                    let specifiers = export_specifiers(node, source);
+                    let star = is_star_export(node);
+                    if star || !specifiers.is_empty() {
+                        reexports.push(Reexport {
+                            module: module.to_owned(),
+                            specifiers,
+                            star,
+                        });
+                    }
                 } else {
                     direct_export_names.extend(export_specifiers(node, source));
                 }
@@ -347,9 +352,7 @@ fn collect_named_import_aliases(
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
-        if node.kind() == "import_specifier"
-            && !node_text(node, source).trim_start().starts_with("type ")
-        {
+        if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
             if let Some(name) = node.child_by_field_name("name") {
                 if node_text(name, source) == expected {
                     let alias = node
@@ -482,9 +485,7 @@ fn export_specifiers(export: Node<'_>, source: &[u8]) -> Vec<(String, String)> {
     let mut specifiers = Vec::new();
     let mut stack = vec![export];
     while let Some(node) = stack.pop() {
-        if node.kind() == "export_specifier"
-            && !node_text(node, source).trim_start().starts_with("type ")
-        {
+        if node.kind() == "export_specifier" && !is_type_only_specifier(node) {
             if let Some(name) = node.child_by_field_name("name") {
                 let imported = node_text(name, source);
                 let exported = node
@@ -496,42 +497,6 @@ fn export_specifiers(export: Node<'_>, source: &[u8]) -> Vec<(String, String)> {
         push_named_children_reverse(node, &mut stack);
     }
     specifiers
-}
-
-fn is_star_export(node: Node<'_>, source: &[u8]) -> bool {
-    node_text(node, source)
-        .trim_start()
-        .strip_prefix("export")
-        .and_then(|rest| rest.trim_start().strip_prefix('*'))
-        .is_some_and(|rest| rest.trim_start().starts_with("from"))
-}
-
-fn is_type_only_export(node: Node<'_>, source: &[u8]) -> bool {
-    node_text(node, source)
-        .trim_start()
-        .strip_prefix("export")
-        .is_some_and(|rest| {
-            let rest = rest.trim_start();
-            rest.strip_prefix("type").is_some_and(|after_type| {
-                after_type.is_empty()
-                    || after_type.starts_with(char::is_whitespace)
-                    || after_type.starts_with('{')
-            })
-        })
-}
-
-fn is_type_only_import(node: Node<'_>, source: &[u8]) -> bool {
-    node_text(node, source)
-        .trim_start()
-        .strip_prefix("import")
-        .is_some_and(|rest| {
-            let rest = rest.trim_start();
-            rest.strip_prefix("type").is_some_and(|after_type| {
-                after_type.is_empty()
-                    || after_type.starts_with(char::is_whitespace)
-                    || after_type.starts_with('{')
-            })
-        })
 }
 
 #[cfg(test)]
@@ -838,5 +803,60 @@ mod tests {
         let reason = outcome.reason.expect("static resolution reason");
         assert!(reason.contains("syntax errors"), "{reason}");
         assert!(reason.contains("refusing recovered exports"), "{reason}");
+    }
+
+    #[test]
+    fn namespace_star_exports_are_not_flattened_into_direct_registrations() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("package.json"), "{}").unwrap();
+        let importer = directory.path().join("steps.ts");
+        fs::write(&importer, "").unwrap();
+        fs::write(
+            directory.path().join("support.ts"),
+            "export { Given } from '@cucumber/cucumber';\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("plain.ts"),
+            "export /* comment */ * from './support';\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("namespace.ts"),
+            "export /* comment */ * as cucumber from './support';\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("types.ts"),
+            "export { type Config } from 'playwright-bdd';\n",
+        )
+        .unwrap();
+
+        let mut resolver = RegistrationResolver::for_root(directory.path());
+        let plain = resolver
+            .registration_exports(&importer, "./plain")
+            .unwrap()
+            .resolution
+            .unwrap();
+        assert_eq!(
+            plain.exports.get("Given").map(String::as_str),
+            Some("Given")
+        );
+
+        let namespace = resolver
+            .registration_exports(&importer, "./namespace")
+            .unwrap()
+            .resolution
+            .unwrap();
+        assert!(namespace.exports.is_empty());
+        assert_eq!(namespace.framework, Framework::Unknown);
+
+        let types = resolver
+            .registration_exports(&importer, "./types")
+            .unwrap()
+            .resolution
+            .unwrap();
+        assert!(types.exports.is_empty());
+        assert_eq!(types.framework, Framework::Unknown);
     }
 }

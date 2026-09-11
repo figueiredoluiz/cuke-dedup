@@ -1,7 +1,8 @@
 use super::ast::{
-    default_registration_exports, import_module, is_supported_module, push_named_children_reverse,
-    string_literal, CUCUMBER_MODULE, CYPRESS_MODULE, DEFAULT_REGISTRATIONS, PLAYWRIGHT_MODULE,
-    REGISTRATIONS,
+    default_registration_exports, export_has_runtime_bindings, import_has_runtime_bindings,
+    import_has_runtime_module_reference, import_module, is_supported_module,
+    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse, string_literal,
+    CUCUMBER_MODULE, CYPRESS_MODULE, DEFAULT_REGISTRATIONS, PLAYWRIGHT_MODULE, REGISTRATIONS,
 };
 use super::matcher::decode_js_string;
 use super::module_resolver::{merge_framework, RegistrationResolver};
@@ -168,7 +169,12 @@ pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
     let mut stack = vec![root];
     let mut cucumber = false;
     while let Some(node) = stack.pop() {
-        if matches!(node.kind(), "import_statement" | "export_statement") {
+        let runtime_module_reference = match node.kind() {
+            "import_statement" => import_has_runtime_module_reference(node),
+            "export_statement" => export_has_runtime_bindings(node),
+            _ => false,
+        };
+        if runtime_module_reference {
             if let Some(module) = import_module(node, source) {
                 match module {
                     PLAYWRIGHT_MODULE => return Framework::PlaywrightBdd,
@@ -213,7 +219,7 @@ pub(super) fn detect_registrations(
 
     while let Some(node) = stack.pop() {
         match node.kind() {
-            "import_statement" => {
+            "import_statement" if import_has_runtime_bindings(node) => {
                 let module = import_module(node, source);
                 let exports = match module {
                     Some(module) if is_supported_module(module) => {
@@ -240,7 +246,7 @@ pub(super) fn detect_registrations(
                     }
                     _ => None,
                 };
-                if !is_type_only_import(node, source)
+                if !is_type_only_declaration(node)
                     && exports.as_ref().is_some_and(|exports| !exports.is_empty())
                 {
                     collect_imports(
@@ -251,7 +257,7 @@ pub(super) fn detect_registrations(
                         &mut discovered.namespaces,
                     );
                 } else {
-                    if !is_type_only_import(node, source) && exports.is_none() {
+                    if !is_type_only_declaration(node) && exports.is_none() {
                         if let Some(module) = module {
                             collect_unresolved_imports(node, source, module, &mut discovered);
                         }
@@ -259,7 +265,10 @@ pub(super) fn detect_registrations(
                     collect_shadowing_imports(node, source, &mut discovered.shadowed_defaults);
                 }
             }
-            "export_statement" if import_module(node, source).is_some_and(is_supported_module) => {
+            "export_statement"
+                if export_has_runtime_bindings(node)
+                    && import_module(node, source).is_some_and(is_supported_module) =>
+            {
                 collect_exports(node, source, &mut discovered.aliases);
             }
             "variable_declarator" => {
@@ -505,7 +514,7 @@ fn collect_unresolved_imports(
     while let Some(node) = stack.pop() {
         match node.kind() {
             "import_specifier" => {
-                if node_text(node, source).trim_start().starts_with("type ") {
+                if is_type_only_specifier(node) {
                     continue;
                 }
                 let Some(name) = node.child_by_field_name("name") else {
@@ -545,7 +554,7 @@ fn collect_imports(
     while let Some(node) = stack.pop() {
         match node.kind() {
             "import_specifier" => {
-                if node_text(node, source).trim_start().starts_with("type ") {
+                if is_type_only_specifier(node) {
                     continue;
                 }
                 let Some(name) = node.child_by_field_name("name") else {
@@ -573,7 +582,7 @@ fn collect_imports(
 fn collect_exports(export: Node<'_>, source: &[u8], aliases: &mut BTreeMap<String, String>) {
     let mut stack = vec![export];
     while let Some(node) = stack.pop() {
-        if node.kind() == "export_specifier" {
+        if node.kind() == "export_specifier" && !is_type_only_specifier(node) {
             let Some(name) = node.child_by_field_name("name") else {
                 continue;
             };
@@ -596,7 +605,7 @@ fn collect_shadowing_imports(
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
-        if node.kind() == "import_specifier" {
+        if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
             let local = node
                 .child_by_field_name("alias")
                 .or_else(|| node.child_by_field_name("name"));
@@ -761,17 +770,4 @@ fn collect_pattern_aliases(
 
 fn is_identifier_character(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '_' | '$')
-}
-
-fn is_type_only_import(import: Node<'_>, source: &[u8]) -> bool {
-    let Some(after_import) = node_text(import, source)
-        .trim_start()
-        .strip_prefix("import")
-    else {
-        return false;
-    };
-    let after_import = after_import.trim_start();
-    after_import.strip_prefix("type").is_some_and(|rest| {
-        rest.is_empty() || rest.starts_with(char::is_whitespace) || rest.starts_with('{')
-    })
 }
