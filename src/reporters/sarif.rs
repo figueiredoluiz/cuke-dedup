@@ -31,7 +31,7 @@ pub(super) fn render_sarif_context_with_metadata(
                 "id": rule.to_string(),
                 "name": rule.to_string(),
                 "shortDescription": { "text": rule.to_string() },
-                "helpUri": "https://github.com/figueiredoluiz/cuke-dedup#rules",
+                "helpUri": rule.documentation_url(),
             })
         })
         .collect::<Vec<_>>();

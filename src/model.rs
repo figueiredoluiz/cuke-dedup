@@ -163,6 +163,8 @@ pub enum Rule {
 }
 
 impl Rule {
+    const DOCUMENTATION_BASE_URL: &'static str = "https://github.com/figueiredoluiz/cuke-dedup#";
+
     /// Every rule in deterministic report order.
     pub const ALL: [Rule; 8] = [
         Rule::DuplicateMatcher,
@@ -201,6 +203,11 @@ impl Rule {
     /// Returns whether error findings from this rule contribute to the duplication threshold.
     pub fn contributes_to_duplication_threshold(self) -> bool {
         Self::DUPLICATION_THRESHOLD.contains(&self)
+    }
+
+    /// Returns the rule-specific README URL used by diagnostics integrations.
+    pub fn documentation_url(self) -> String {
+        format!("{}{}", Self::DOCUMENTATION_BASE_URL, self.as_str())
     }
 }
 
@@ -527,6 +534,10 @@ mod tests {
     fn rule_names_are_stable_kebab_case() {
         for rule in Rule::ALL {
             assert_eq!(rule.to_string().parse::<Rule>(), Ok(rule));
+            assert_eq!(
+                rule.documentation_url(),
+                format!("https://github.com/figueiredoluiz/cuke-dedup#{}", rule)
+            );
         }
     }
 

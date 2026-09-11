@@ -280,6 +280,10 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
     assert_eq!(sarif["version"], "2.1.0");
     assert_eq!(sarif["runs"][0]["columnKind"], "unicodeCodePoints");
     assert_eq!(
+        sarif["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"],
+        "https://github.com/figueiredoluiz/cuke-dedup#duplicate-matcher"
+    );
+    assert_eq!(
         sarif["runs"][0]["invocations"][0]["executionSuccessful"],
         true
     );
@@ -294,6 +298,44 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
             .as_str()
             .is_some()
     );
+}
+
+#[test]
+fn every_sarif_rule_links_to_its_readme_section() {
+    let readme = include_str!("../../README.md");
+    let root = PathBuf::from("/repo");
+    let template = result(&root).findings.remove(0);
+    let mut analysis = result(&root);
+    analysis.findings = Rule::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, rule)| Finding {
+            rule,
+            primary: SourceLocation::new(root.join(format!("steps/rule-{index}.ts")), 1, 1, 1, 10),
+            ..template.clone()
+        })
+        .collect();
+
+    let sarif: serde_json::Value =
+        serde_json::from_str(&render_sarif(&ReportContext::new(&analysis, &root, 100.0)).unwrap())
+            .unwrap();
+    let descriptors = sarif["runs"][0]["tool"]["driver"]["rules"]
+        .as_array()
+        .unwrap();
+    assert_eq!(descriptors.len(), Rule::ALL.len());
+    for rule in Rule::ALL {
+        let heading = format!("### {}", rule.as_str());
+        assert_eq!(
+            readme.matches(&heading).count(),
+            1,
+            "README must contain exactly one stable heading for {rule}"
+        );
+        let descriptor = descriptors
+            .iter()
+            .find(|descriptor| descriptor["id"] == rule.as_str())
+            .unwrap();
+        assert_eq!(descriptor["helpUri"], rule.documentation_url());
+    }
 }
 
 #[test]
