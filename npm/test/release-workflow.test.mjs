@@ -33,3 +33,12 @@ test("npm packages are checked against checksummed release archives", () => {
   assert.match(workflow, /pattern: release-\*/);
   assert.match(workflow, /verify_npm_binaries\.py --binaries native --archives release-assets/);
 });
+
+test("npm publishing uses short-lived OIDC credentials only", () => {
+  assert.match(
+    workflow,
+    /publish-npm:[\s\S]*?permissions:\s*\n\s*contents: read\s*\n\s*id-token: write/,
+  );
+  assert.match(workflow, /check-npm-trusted-publishing\.mjs/);
+  assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN/);
+});
