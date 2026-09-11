@@ -151,12 +151,104 @@ struct CheckOptions {
     fail_on_new: Option<usize>,
 }
 
+struct Invocation {
+    config: Config,
+    options: CheckOptions,
+}
+
+#[derive(Default)]
+struct Diagnostics {
+    warnings: Vec<String>,
+    errors: Vec<String>,
+}
+
+struct ExtractedCorpus {
+    definitions: Vec<crate::model::StepDefinition>,
+    feature_steps: Vec<crate::model::FeatureStep>,
+    definition_files_with_definitions: usize,
+    parsed_feature_files: usize,
+    incomplete: bool,
+}
+
+struct AnalyzedCorpus {
+    result: crate::model::AnalysisResult,
+    census: analysis::AnalysisCensus,
+    definition_files_with_definitions: usize,
+    parsed_feature_files: usize,
+    corpus_incomplete: bool,
+    run_incomplete: bool,
+}
+
+struct PhaseTimings {
+    discovery_ms: f64,
+    parsing_ms: f64,
+    analysis_ms: f64,
+}
+
 /// Parses the process arguments, runs the configured analysis, and returns its exit code.
 pub fn run_cli() -> Result<i32> {
     execute(Cli::parse())
 }
 
 fn execute(cli: Cli) -> Result<i32> {
+    let invocation = resolve_invocation(cli)?;
+    let config = &invocation.config;
+    let options = &invocation.options;
+    if options.print_config {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(config)
+                .context("failed to serialize effective configuration")?
+        );
+        return Ok(0);
+    }
+    let changed_files = resolve_changed_files(config, options.changed_since.as_deref())?;
+    let discovery_started = Instant::now();
+    let files = discovery::discover(config)?;
+    let discovery_ms = elapsed_ms(discovery_started);
+
+    let parsing_started = Instant::now();
+    let mut diagnostics = discovery_diagnostics(config, &files, &changed_files);
+    let extracted = extract_corpus(config, &files, &changed_files, &mut diagnostics);
+    let parsing_ms = elapsed_ms(parsing_started);
+    let analysis_started = Instant::now();
+    let mut analyzed = analyze_corpus(config, extracted, &mut diagnostics)?;
+    let analysis_ms = elapsed_ms(analysis_started);
+    apply_finding_modes(
+        &mut analyzed.result,
+        &files,
+        &changed_files,
+        analyzed.parsed_feature_files,
+    );
+    let baseline_outcome = apply_baseline_mode(
+        config,
+        options,
+        &mut analyzed.result,
+        analyzed.run_incomplete,
+        &mut diagnostics,
+    )?;
+    write_reports(
+        config,
+        &files,
+        &analyzed,
+        &diagnostics,
+        PhaseTimings {
+            discovery_ms,
+            parsing_ms,
+            analysis_ms,
+        },
+    )?;
+    write_diagnostics(config, options, &files, &diagnostics)?;
+    determine_exit_code(
+        config,
+        options,
+        &analyzed.result,
+        baseline_outcome,
+        &diagnostics,
+    )
+}
+
+fn resolve_invocation(cli: Cli) -> Result<Invocation> {
     if cli.command.is_some() && cli.path.as_path() != Path::new(".") {
         bail!("do not place a path before `check`; use `cuke-dedup check <PATH>`");
     }
@@ -164,23 +256,23 @@ fn execute(cli: Cli) -> Result<i32> {
         Some(Command::Check { path }) => path,
         None => cli.path,
     };
-    let overrides = ConfigOverrides {
-        config_file: cli.options.config,
-        definitions: cli.options.definitions,
-        features: cli.options.features,
-        exclude: cli.options.exclude,
-        exclude_defaults: cli.options.no_default_excludes.then_some(false),
-        include_hidden: cli.options.include_hidden.then_some(true),
-        reporters: cli.options.reporters,
-        output: cli.options.output,
-        threshold: cli.options.threshold,
-        require_features: cli.options.require_features.then_some(true),
-        no_metrics: cli.options.no_metrics.then_some(true),
-        rules: cli.options.rules.into_iter().collect::<BTreeMap<_, _>>(),
-    };
+    let options = cli.options.clone();
     let config = Config::load_for_cli(
         &root,
-        overrides,
+        ConfigOverrides {
+            config_file: cli.options.config,
+            definitions: cli.options.definitions,
+            features: cli.options.features,
+            exclude: cli.options.exclude,
+            exclude_defaults: cli.options.no_default_excludes.then_some(false),
+            include_hidden: cli.options.include_hidden.then_some(true),
+            reporters: cli.options.reporters,
+            output: cli.options.output,
+            threshold: cli.options.threshold,
+            require_features: cli.options.require_features.then_some(true),
+            no_metrics: cli.options.no_metrics.then_some(true),
+            rules: cli.options.rules.into_iter().collect::<BTreeMap<_, _>>(),
+        },
         CliConfigOverrides {
             require_definitions: cli.options.require_definitions.then_some(true),
             fail_on_incomplete: cli.options.fail_on_incomplete.then_some(true),
@@ -188,41 +280,43 @@ fn execute(cli: Cli) -> Result<i32> {
             max_structural_class_comparisons: cli.options.max_structural_class_comparisons,
         },
     )?;
-    if cli.options.print_config {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&config)
-                .context("failed to serialize effective configuration")?
-        );
-        return Ok(0);
-    }
-    let changed_files = if let Some(base) = cli.options.changed_since.as_deref() {
-        modes::ensure_changed_root_is_trackable(&config.root)?;
-        Some(modes::git_changed_files(&config.root, base)?)
-    } else {
-        None
-    };
-    let discovery_started = Instant::now();
-    let files = discovery::discover(&config)?;
-    let discovery_ms = elapsed_ms(discovery_started);
+    Ok(Invocation { config, options })
+}
 
-    let parsing_started = Instant::now();
-    let mut definitions = Vec::new();
-    let mut definition_files_with_definitions = 0_usize;
-    let mut corpus_incomplete = false;
-    let mut operational_errors = files.errors.clone();
-    let mut operational_warnings = config.config_warnings.clone();
+fn resolve_changed_files(
+    config: &Config,
+    changed_since: Option<&str>,
+) -> Result<Option<BTreeSet<PathBuf>>> {
+    let Some(base) = changed_since else {
+        return Ok(None);
+    };
+    modes::ensure_changed_root_is_trackable(&config.root)?;
+    Ok(Some(modes::git_changed_files(&config.root, base)?))
+}
+
+fn discovery_diagnostics(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+    changed_files: &Option<BTreeSet<PathBuf>>,
+) -> Diagnostics {
+    let mut diagnostics = Diagnostics {
+        warnings: config.config_warnings.clone(),
+        errors: files.errors.clone(),
+    };
     for pattern in &files.unmatched_feature_patterns {
-        operational_warnings.push(format!(
+        diagnostics.warnings.push(format!(
             "feature pattern `{pattern}` from {} matched no files",
             config.feature_pattern_origin
         ));
     }
     for pattern in &files.unmatched_definition_patterns {
-        operational_warnings.push(format!("definition pattern `{pattern}` matched no files"));
+        diagnostics
+            .warnings
+            .push(format!("definition pattern `{pattern}` matched no files"));
     }
     if files.definitions.is_empty() && config.definitions.is_empty() {
-        operational_warnings
+        diagnostics
+            .warnings
             .push("automatic discovery found no supported step-definition source files".to_owned());
     }
     if files.features.is_empty() {
@@ -231,17 +325,45 @@ fn execute(cli: Cli) -> Result<i32> {
             config.feature_pattern_origin
         );
         if config.require_features {
-            operational_errors.push(message);
+            diagnostics.errors.push(message);
         } else if !files.definitions.is_empty() {
-            operational_warnings.push(message);
+            diagnostics.warnings.push(message);
         }
     }
     if changed_files.as_ref().is_some_and(BTreeSet::is_empty) {
-        operational_warnings.push(
+        diagnostics.warnings.push(
             "--changed-since found no tracked or untracked files; no findings will be reported"
                 .to_owned(),
         );
     }
+    diagnostics
+}
+
+fn extract_corpus(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+    changed_files: &Option<BTreeSet<PathBuf>>,
+    diagnostics: &mut Diagnostics,
+) -> ExtractedCorpus {
+    let mut corpus = ExtractedCorpus {
+        definitions: Vec::new(),
+        feature_steps: Vec::new(),
+        definition_files_with_definitions: 0,
+        parsed_feature_files: 0,
+        incomplete: false,
+    };
+    extract_definitions(config, files, changed_files, diagnostics, &mut corpus);
+    extract_feature_steps(config, files, diagnostics, &mut corpus);
+    corpus
+}
+
+fn extract_definitions(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+    changed_files: &Option<BTreeSet<PathBuf>>,
+    diagnostics: &mut Diagnostics,
+    corpus: &mut ExtractedCorpus,
+) {
     let mut extraction_session = source_adapter::SourceExtractionSession::with_registrations(
         &config.root,
         &config.registrations,
@@ -254,53 +376,32 @@ fn execute(cli: Cli) -> Result<i32> {
         {
             Ok(extracted) => {
                 if !extracted.definitions.is_empty() {
-                    definition_files_with_definitions += 1;
+                    corpus.definition_files_with_definitions += 1;
                 }
-                definitions.extend(extracted.definitions);
-                let changed_or_full_run = changed_files
-                    .as_ref()
-                    .is_none_or(|changed| changed.contains(&file.path));
-                for diagnostic in extracted.diagnostics {
-                    let message = format!(
-                        "{}: {}",
-                        diagnostic.location.display(&config.root),
-                        diagnostic.message
-                    );
-                    let completeness = source_adapter::is_completeness_diagnostic(&diagnostic);
-                    // A registration import that could not be resolved hides every definition it
-                    // would have introduced, so the corpus is a subset of a complete run
-                    // regardless of which files changed.
-                    corpus_incomplete |= completeness;
-                    match diagnostic.level {
-                        ExtractionDiagnosticLevel::Warning
-                            if changed_or_full_run || completeness =>
-                        {
-                            operational_warnings.push(message)
-                        }
-                        ExtractionDiagnosticLevel::Warning => {}
-                        // Extraction errors can mean definitions were omitted. They remain fatal
-                        // for unchanged files because those definitions still participate in
-                        // comparisons involving changed files.
-                        ExtractionDiagnosticLevel::Error => operational_errors.push(message),
-                    }
-                }
+                corpus.definitions.extend(extracted.definitions);
+                collect_extraction_diagnostics(
+                    config,
+                    file,
+                    changed_files,
+                    extracted.diagnostics,
+                    diagnostics,
+                    &mut corpus.incomplete,
+                );
             }
             // Every discovered source contributes to cross-file definition comparisons, even
-            // when changed mode later filters the findings. Skipping any unreadable source could
-            // therefore turn an incomplete run into a false pass.
-            Err(error) => {
-                operational_errors.push(format!("{error:#}"));
-            }
+            // when changed mode later filters findings. Skipping an unreadable source could turn
+            // an incomplete run into a false pass.
+            Err(error) => diagnostics.errors.push(format!("{error:#}")),
         }
     }
-    definitions.sort_by(|left, right| {
+    corpus.definitions.sort_by(|left, right| {
         left.location
             .path
             .cmp(&right.location.path)
             .then(left.location.line.cmp(&right.location.line))
             .then(left.location.column.cmp(&right.location.column))
     });
-    if definitions.is_empty() {
+    if corpus.definitions.is_empty() {
         let message = if files.definitions.is_empty() {
             "no step definitions were extracted because no definition source files were discovered"
                 .to_owned()
@@ -311,201 +412,296 @@ fn execute(cli: Cli) -> Result<i32> {
             )
         };
         if config.require_definitions {
-            operational_errors.push(message);
+            diagnostics.errors.push(message);
         } else if !files.definitions.is_empty() {
-            operational_warnings.push(message);
+            diagnostics.warnings.push(message);
         }
     }
-    let mut feature_steps = Vec::new();
-    let mut parsed_feature_files = 0_usize;
+}
+
+fn collect_extraction_diagnostics(
+    config: &Config,
+    file: &source_adapter::SourceFile,
+    changed_files: &Option<BTreeSet<PathBuf>>,
+    extracted: Vec<source_adapter::ExtractionDiagnostic>,
+    diagnostics: &mut Diagnostics,
+    corpus_incomplete: &mut bool,
+) {
+    let changed_or_full_run = changed_files
+        .as_ref()
+        .is_none_or(|changed| changed.contains(&file.path));
+    for diagnostic in extracted {
+        let message = format!(
+            "{}: {}",
+            diagnostic.location.display(&config.root),
+            diagnostic.message
+        );
+        let completeness = source_adapter::is_completeness_diagnostic(&diagnostic);
+        // An unresolved registration import hides every definition it would have introduced, so
+        // the corpus is incomplete regardless of which files changed.
+        *corpus_incomplete |= completeness;
+        match diagnostic.level {
+            ExtractionDiagnosticLevel::Warning if changed_or_full_run || completeness => {
+                diagnostics.warnings.push(message);
+            }
+            ExtractionDiagnosticLevel::Warning => {}
+            // Extraction errors can mean definitions were omitted. They remain fatal for
+            // unchanged files because those definitions still participate in changed-file pairs.
+            ExtractionDiagnosticLevel::Error => diagnostics.errors.push(message),
+        }
+    }
+}
+
+fn extract_feature_steps(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+    diagnostics: &mut Diagnostics,
+    corpus: &mut ExtractedCorpus,
+) {
     for file in &files.features {
         match gherkin::extract_file_with_format(&file.path, file.format) {
             Ok(extracted) => {
-                parsed_feature_files += 1;
-                feature_steps.extend(extracted);
+                corpus.parsed_feature_files += 1;
+                corpus.feature_steps.extend(extracted);
             }
-            // Changed definitions are still compared against the complete feature corpus. Any
-            // skipped feature can hide usage or ambiguity involving those definitions.
-            Err(error) => {
-                operational_errors.push(format!("{error:#}"));
-            }
+            // Changed definitions still depend on the full feature corpus for usage and ambiguity.
+            Err(error) => diagnostics.errors.push(format!("{error:#}")),
         }
     }
-    if !files.features.is_empty() && parsed_feature_files < files.features.len() {
-        let message = if parsed_feature_files == 0 {
+    if !files.features.is_empty() && corpus.parsed_feature_files < files.features.len() {
+        let message = if corpus.parsed_feature_files == 0 {
             "no discovered feature file was parsed successfully; unused-definition findings are disabled for this incomplete corpus".to_owned()
         } else {
             format!(
                 "{} discovered feature file(s) could not be parsed; unused-definition findings are disabled for this incomplete corpus",
-                files.features.len() - parsed_feature_files
+                files.features.len() - corpus.parsed_feature_files
             )
         };
         if config.require_features {
-            operational_errors.push(message);
+            diagnostics.errors.push(message);
         } else if !files.definitions.is_empty() {
-            operational_warnings.push(message);
+            diagnostics.warnings.push(message);
         }
     }
-    feature_steps.sort_by(|left, right| {
+    corpus.feature_steps.sort_by(|left, right| {
         left.location
             .path
             .cmp(&right.location.path)
             .then(left.location.line.cmp(&right.location.line))
             .then(left.location.column.cmp(&right.location.column))
     });
-    let parsing_ms = elapsed_ms(parsing_started);
+}
 
-    let analysis_started = Instant::now();
-    let (analysis, analysis_census, unmatched_suppressions) =
-        analysis::analyze_for_cli(definitions, feature_steps, &config)?;
+fn analyze_corpus(
+    config: &Config,
+    extracted: ExtractedCorpus,
+    diagnostics: &mut Diagnostics,
+) -> Result<AnalyzedCorpus> {
+    let ExtractedCorpus {
+        definitions,
+        feature_steps,
+        definition_files_with_definitions,
+        parsed_feature_files,
+        incomplete: corpus_incomplete,
+    } = extracted;
+    let (analysis, census, unmatched_suppressions) =
+        analysis::analyze_for_cli(definitions, feature_steps, config)?;
     for index in unmatched_suppressions.indices {
         let suppression = &config.suppressions[index];
-        operational_warnings.push(format!(
+        diagnostics.warnings.push(format!(
             "suppression {} for {} matched no step definitions",
             index + 1,
             suppression.rule
         ));
     }
     if unmatched_suppressions.truncated {
-        operational_warnings.push(
+        diagnostics.warnings.push(
             "unmatched suppression validation stopped after its safety limit; analysis findings are unaffected"
                 .to_owned(),
         );
     }
+
     // Bounded work that could not finish makes findings a subset of a complete run, but every
-    // finding that is present is still valid and the report is still worth reading. Report it
-    // loudly without claiming the analyzer failed; `--fail-on-incomplete` restores strictness for
-    // gates that must refuse partial coverage.
+    // reported finding remains valid. `--fail-on-incomplete` restores strict CI gating.
     let run_incomplete = corpus_incomplete || !analysis.incomplete.is_empty();
     if config.fail_on_incomplete {
-        operational_errors.extend(analysis.incomplete);
+        diagnostics.errors.extend(analysis.incomplete);
         if corpus_incomplete {
-            operational_errors.push(
+            diagnostics.errors.push(
                 "definition extraction could not resolve every registration import, so the analyzed corpus is incomplete".to_owned(),
             );
         }
     } else {
-        operational_warnings.extend(analysis.incomplete);
+        diagnostics.warnings.extend(analysis.incomplete);
     }
-    let mut result = analysis.result;
-    let analysis_ms = elapsed_ms(analysis_started);
+    Ok(AnalyzedCorpus {
+        result: analysis.result,
+        census,
+        definition_files_with_definitions,
+        parsed_feature_files,
+        corpus_incomplete,
+        run_incomplete,
+    })
+}
+
+fn apply_finding_modes(
+    result: &mut crate::model::AnalysisResult,
+    files: &discovery::DiscoveredFiles,
+    changed_files: &Option<BTreeSet<PathBuf>>,
+    parsed_feature_files: usize,
+) {
     if parsed_feature_files < files.features.len() || files.features.is_empty() {
         result
             .findings
             .retain(|finding| finding.rule != Rule::UnusedDefinition);
     }
-    if let Some(changed) = &changed_files {
+    if let Some(changed) = changed_files {
         modes::retain_changed_findings(&mut result.findings, changed);
     }
-    let mut baseline_outcome = None;
-    if let Some(path) = &cli.options.baseline {
-        let path = if path.is_absolute() {
-            path.clone()
-        } else {
-            config.root.join(path)
-        };
-        if cli.options.update_baseline && (run_incomplete || !operational_errors.is_empty()) {
-            operational_warnings.push(format!(
-                "baseline {} was not updated because analysis is incomplete",
-                path.display()
-            ));
-        } else {
-            let outcome = if cli.options.update_baseline {
-                modes::update_baseline(&mut result.findings, &path)?
-            } else {
-                modes::apply_baseline(&mut result.findings, &path)?
-            };
-            if cli.options.update_baseline {
-                operational_warnings.push(format!(
-                    "updated baseline {}: {} added, {} removed, {} total",
-                    path.display(),
-                    outcome.added,
-                    outcome.removed,
-                    outcome.suppressed
-                ));
-            }
-            baseline_outcome = Some(outcome);
-        }
+}
+
+fn apply_baseline_mode(
+    config: &Config,
+    options: &CheckOptions,
+    result: &mut crate::model::AnalysisResult,
+    run_incomplete: bool,
+    diagnostics: &mut Diagnostics,
+) -> Result<Option<modes::BaselineOutcome>> {
+    let Some(path) = &options.baseline else {
+        return Ok(None);
+    };
+    let path = if path.is_absolute() {
+        path.clone()
+    } else {
+        config.root.join(path)
+    };
+    if options.update_baseline && (run_incomplete || !diagnostics.errors.is_empty()) {
+        diagnostics.warnings.push(format!(
+            "baseline {} was not updated because analysis is incomplete",
+            path.display()
+        ));
+        return Ok(None);
     }
+    let outcome = if options.update_baseline {
+        modes::update_baseline(&mut result.findings, &path)?
+    } else {
+        modes::apply_baseline(&mut result.findings, &path)?
+    };
+    if options.update_baseline {
+        diagnostics.warnings.push(format!(
+            "updated baseline {}: {} added, {} removed, {} total",
+            path.display(),
+            outcome.added,
+            outcome.removed,
+            outcome.suppressed
+        ));
+    }
+    Ok(Some(outcome))
+}
+
+fn write_reports(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+    analyzed: &AnalyzedCorpus,
+    diagnostics: &Diagnostics,
+    timings: PhaseTimings,
+) -> Result<()> {
     let corpus = reporters::CorpusCensus {
         definition_files: files.definitions.len(),
-        definition_files_with_definitions,
-        definitions_extracted: result.definitions.len(),
+        definition_files_with_definitions: analyzed.definition_files_with_definitions,
+        definitions_extracted: analyzed.result.definitions.len(),
         feature_files: files.features.len(),
-        feature_files_parsed: parsed_feature_files,
-        incomplete: corpus_incomplete,
+        feature_files_parsed: analyzed.parsed_feature_files,
+        incomplete: analyzed.corpus_incomplete,
     };
     let metrics = reporters::ExecutionMetrics {
         definition_files: files.definitions.len(),
         feature_files: files.features.len(),
         files_discovered: files.definitions.len() + files.features.len(),
-        discovery_ms,
-        parsing_ms,
-        analysis_ms,
+        discovery_ms: timings.discovery_ms,
+        parsing_ms: timings.parsing_ms,
+        analysis_ms: timings.analysis_ms,
     };
     let report_metadata = reporters::CliReportMetadata {
         corpus: &corpus,
-        analysis: &analysis_census,
+        analysis: &analyzed.census,
         // SARIF consumers treat a successful invocation as proof the tool covered its input.
-        // A run that could not analyze the complete corpus has not, so it reports an
-        // unsuccessful invocation alongside the census that explains which limit applied.
-        execution_successful: operational_errors.is_empty() && !run_incomplete,
+        execution_successful: diagnostics.errors.is_empty() && !analyzed.run_incomplete,
     };
     let mut stdout = io::stdout().lock();
     reporters::write_cli_reports(
-        &result,
-        &config,
+        &analyzed.result,
+        config,
         (!config.no_metrics).then_some(&metrics),
         &report_metadata,
         &mut stdout,
     )?;
-    if cli.options.explain_discovery
-        || !operational_warnings.is_empty()
-        || !operational_errors.is_empty()
+    Ok(())
+}
+
+fn write_diagnostics(
+    config: &Config,
+    options: &CheckOptions,
+    files: &discovery::DiscoveredFiles,
+    diagnostics: &Diagnostics,
+) -> Result<()> {
+    if !options.explain_discovery
+        && diagnostics.warnings.is_empty()
+        && diagnostics.errors.is_empty()
     {
-        let mut stderr = io::stderr().lock();
-        if cli.options.explain_discovery {
+        return Ok(());
+    }
+    let mut stderr = io::stderr().lock();
+    if options.explain_discovery {
+        writeln!(
+            stderr,
+            "cuke-dedup: feature patterns: {} ({})",
+            config.features.join(", "),
+            config.feature_pattern_origin
+        )?;
+        for file in &files.features {
+            let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
             writeln!(
                 stderr,
-                "cuke-dedup: feature patterns: {} ({})",
-                config.features.join(", "),
-                config.feature_pattern_origin
+                "cuke-dedup: feature {} [{}] via {}",
+                relative.display(),
+                file.format.as_str(),
+                file.pattern
             )?;
-            for file in &files.features {
-                let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
-                writeln!(
-                    stderr,
-                    "cuke-dedup: feature {} [{}] via {}",
-                    relative.display(),
-                    file.format.as_str(),
-                    file.pattern
-                )?;
-            }
-            for file in &files.definitions {
-                let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
-                writeln!(stderr, "cuke-dedup: definition {}", relative.display())?;
-            }
         }
-        for warning in operational_warnings {
-            writeln!(stderr, "cuke-dedup: warning: {warning}")?;
-        }
-        for error in &operational_errors {
-            writeln!(stderr, "cuke-dedup: {error}")?;
+        for file in &files.definitions {
+            let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
+            writeln!(stderr, "cuke-dedup: definition {}", relative.display())?;
         }
     }
-    if !operational_errors.is_empty() {
+    for warning in &diagnostics.warnings {
+        writeln!(stderr, "cuke-dedup: warning: {warning}")?;
+    }
+    for error in &diagnostics.errors {
+        writeln!(stderr, "cuke-dedup: {error}")?;
+    }
+    Ok(())
+}
+
+fn determine_exit_code(
+    config: &Config,
+    options: &CheckOptions,
+    result: &crate::model::AnalysisResult,
+    baseline: Option<modes::BaselineOutcome>,
+    diagnostics: &Diagnostics,
+) -> Result<i32> {
+    if !diagnostics.errors.is_empty() {
         return Ok(2);
     }
-    let duplication = DuplicationThreshold::from_result(&result, config.threshold);
+    let duplication = DuplicationThreshold::from_result(result, config.threshold);
     let has_non_duplication_errors = result.findings.iter().any(|finding| {
         finding.is_active()
             && finding.severity == Severity::Error
             && !finding.rule.contributes_to_duplication_threshold()
     });
-    let new_findings_exceeded = cli
-        .options
+    let new_findings_exceeded = options
         .fail_on_new
-        .is_some_and(|limit| baseline_outcome.is_some_and(|outcome| outcome.new_findings > limit));
+        .is_some_and(|limit| baseline.is_some_and(|outcome| outcome.new_findings > limit));
     Ok(i32::from(
         has_non_duplication_errors || !duplication.passed || new_findings_exceeded,
     ))
