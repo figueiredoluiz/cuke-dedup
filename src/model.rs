@@ -50,6 +50,7 @@ impl SourceLocation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// Syntax used by a step definition matcher.
+#[non_exhaustive]
 pub enum MatcherKind {
     /// A Cucumber Expression such as `I have {int} items`.
     CucumberExpression,
@@ -60,6 +61,7 @@ pub enum MatcherKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// Step-definition framework inferred from a source file.
+#[non_exhaustive]
 pub enum Framework {
     /// Cucumber.js registration APIs.
     CucumberJs,
@@ -143,6 +145,7 @@ pub struct FeatureStep {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// Stable identifier for an analyzer rule.
+#[non_exhaustive]
 pub enum Rule {
     /// Two definitions have the same effective matcher.
     DuplicateMatcher,
@@ -238,6 +241,7 @@ impl FromStr for Rule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 /// Configured impact of a finding.
+#[non_exhaustive]
 pub enum Severity {
     /// Rule evaluation is disabled.
     Off,
@@ -275,6 +279,7 @@ impl FromStr for Severity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Human- and machine-readable evidence supporting a finding.
+#[non_exhaustive]
 pub struct FindingEvidence {
     /// Matcher similarity score from zero to one, when applicable.
     pub matcher_similarity: Option<f64>,
@@ -295,6 +300,7 @@ pub struct FindingEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Stable semantic identity and size information for a clustered finding.
+#[non_exhaustive]
 pub struct DefinitionCluster {
     /// Total number of definitions represented by the cluster.
     pub member_count: usize,
@@ -311,6 +317,7 @@ pub struct DefinitionCluster {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Side-by-side matcher and handler content for a pair finding.
+#[non_exhaustive]
 pub struct DefinitionComparison {
     /// Location-independent semantic fingerprint of the left definition.
     pub left_fingerprint: String,
@@ -331,6 +338,7 @@ pub struct DefinitionComparison {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Common and differing segments of two matcher strings.
+#[non_exhaustive]
 pub struct MatcherDiff {
     /// Shared matcher prefix.
     pub prefix: String,
@@ -345,6 +353,7 @@ pub struct MatcherDiff {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Reason that a finding is excluded from active totals.
+#[non_exhaustive]
 pub struct Suppression {
     /// Human-readable suppression justification.
     pub reason: String,
@@ -352,6 +361,7 @@ pub struct Suppression {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 /// One rule diagnostic produced by analysis.
+#[non_exhaustive]
 pub struct Finding {
     /// Rule that produced the finding.
     pub rule: Rule,
@@ -380,6 +390,7 @@ impl Finding {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Extracted inputs and deterministically ordered analyzer findings.
+#[non_exhaustive]
 pub struct AnalysisResult {
     /// Extracted definition corpus.
     pub definitions: Vec<StepDefinition>,
@@ -389,9 +400,25 @@ pub struct AnalysisResult {
     pub findings: Vec<Finding>,
 }
 
+impl AnalysisResult {
+    /// Creates a result from extracted inputs and analyzer findings.
+    pub fn new(
+        definitions: Vec<StepDefinition>,
+        feature_steps: Vec<FeatureStep>,
+        findings: Vec<Finding>,
+    ) -> Self {
+        Self {
+            definitions,
+            feature_steps,
+            findings,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Result of applying a percentage-based tolerance to active duplication errors.
+#[non_exhaustive]
 pub struct DuplicationThreshold {
     /// Maximum duplicated-definition percentage allowed by configuration.
     pub threshold: f64,

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Measured execution phases and discovered input counts for one CLI run.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionMetrics {
@@ -20,6 +21,26 @@ pub struct ExecutionMetrics {
     pub parsing_ms: f64,
     /// Time spent evaluating analysis rules.
     pub analysis_ms: f64,
+}
+
+impl ExecutionMetrics {
+    /// Creates execution metrics and derives the combined discovered-file count.
+    pub fn new(
+        definition_files: usize,
+        feature_files: usize,
+        discovery_ms: f64,
+        parsing_ms: f64,
+        analysis_ms: f64,
+    ) -> Self {
+        Self {
+            definition_files,
+            feature_files,
+            files_discovered: definition_files.saturating_add(feature_files),
+            discovery_ms,
+            parsing_ms,
+            analysis_ms,
+        }
+    }
 }
 
 /// Deterministic input and extraction counts for one CLI run.
@@ -56,6 +77,7 @@ pub(crate) struct CliReportMetadata<'a> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// Aggregate counts shared by every report format.
+#[non_exhaustive]
 pub struct Summary {
     /// Number of extracted step definitions.
     pub definitions_analyzed: usize,
@@ -116,6 +138,7 @@ impl Summary {
 }
 
 /// Shared, precomputed input passed to every report renderer.
+#[non_exhaustive]
 pub struct ReportContext<'a> {
     /// Complete analysis result, including suppressed findings.
     pub result: &'a AnalysisResult,

@@ -169,6 +169,7 @@ pub const BASELINE_SCHEMA_VERSION: u32 = 2;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Accepted semantic finding fingerprints and their multiplicities.
+#[non_exhaustive]
 pub struct BaselineFile {
     /// Baseline format version.
     pub schema_version: u32,
@@ -177,16 +178,22 @@ pub struct BaselineFile {
 }
 
 impl BaselineFile {
-    fn empty() -> Self {
+    /// Creates a baseline using the current schema version.
+    pub fn new(fingerprints: BTreeMap<String, usize>) -> Self {
         Self {
             schema_version: BASELINE_SCHEMA_VERSION,
-            fingerprints: BTreeMap::new(),
+            fingerprints,
         }
+    }
+
+    fn empty() -> Self {
+        Self::new(BTreeMap::new())
     }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 /// Effect of applying or rewriting a baseline.
+#[non_exhaustive]
 pub struct BaselineOutcome {
     /// Findings matched and suppressed by the baseline.
     pub suppressed: usize,

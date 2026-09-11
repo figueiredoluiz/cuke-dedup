@@ -34,6 +34,7 @@ pub(crate) struct AnalysisCensus {
 ///
 /// Callers that need to render partial results before failing should use
 /// [`analyze_with_diagnostics`]. Callers that only accept complete analysis can use [`analyze`].
+#[non_exhaustive]
 pub struct AnalysisOutcome {
     /// Findings and analyzed inputs available before completeness handling.
     pub result: AnalysisResult,

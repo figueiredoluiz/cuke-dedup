@@ -1,15 +1,29 @@
 use cuke_dedup::analysis::{analyze, analyze_with_diagnostics};
 use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+use cuke_dedup::model::SourceLocation;
 use cuke_dedup::model::{AnalysisResult, Rule, Severity};
+use cuke_dedup::modes::BaselineFile;
 use cuke_dedup::reporters::{
     render_html, render_json, render_jsonl, render_sarif, write_terminal, ExecutionMetrics,
     ReportContext,
 };
+use cuke_dedup::source_adapter::{Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel};
 use cuke_dedup::typescript;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+
+fn reporter_name(reporter: ReporterKind) -> &'static str {
+    match reporter {
+        ReporterKind::Terminal => "terminal",
+        ReporterKind::Json => "json",
+        ReporterKind::Jsonl => "jsonl",
+        ReporterKind::Html => "html",
+        ReporterKind::Sarif => "sarif",
+        _ => "future reporter",
+    }
+}
 
 #[test]
 fn external_callers_can_preserve_partial_results_and_operational_diagnostics() {
@@ -61,7 +75,7 @@ fn sessionless_file_extraction_uses_the_nearest_package_boundary() {
 }
 
 #[test]
-fn completeness_reporting_preserves_existing_public_struct_construction() {
+fn extensible_public_outputs_use_stable_constructors() {
     let overrides = ConfigOverrides {
         config_file: None,
         definitions: None,
@@ -78,25 +92,27 @@ fn completeness_reporting_preserves_existing_public_struct_construction() {
     };
     assert_eq!(overrides.reporters, Some(vec![ReporterKind::Json]));
 
-    let metrics = ExecutionMetrics {
-        definition_files: 1,
-        feature_files: 2,
-        files_discovered: 3,
-        discovery_ms: 1.0,
-        parsing_ms: 2.0,
-        analysis_ms: 3.0,
-    };
+    let metrics = ExecutionMetrics::new(1, 2, 1.0, 2.0, 3.0);
     assert_eq!(metrics.files_discovered, 3);
+
+    let diagnostic = ExtractionDiagnostic::new(
+        ExtractionDiagnosticLevel::Warning,
+        SourceLocation::new("steps.ts", 1, 1, 1, 2),
+        "dynamic matcher",
+    );
+    let extraction = Extraction::new(Vec::new(), vec![diagnostic]);
+    assert_eq!(extraction.diagnostics.len(), 1);
+
+    let baseline = BaselineFile::new(BTreeMap::from([("finding".to_owned(), 1)]));
+    assert_eq!(baseline.fingerprints["finding"], 1);
+
+    assert_eq!(reporter_name(ReporterKind::Json), "json");
 }
 
 #[test]
 fn report_context_is_the_single_public_rendering_entry_point() {
     let root = PathBuf::from("/repo");
-    let result = AnalysisResult {
-        definitions: Vec::new(),
-        feature_steps: Vec::new(),
-        findings: Vec::new(),
-    };
+    let result = AnalysisResult::new(Vec::new(), Vec::new(), Vec::new());
     let context = ReportContext::new(&result, &root, 5.0);
 
     assert!(render_json(&context)
