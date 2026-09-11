@@ -70,6 +70,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Fixed
 
+- Repository-owned CodeQL analysis excludes the intentionally malformed JavaScript parser fixture
+  from extraction while preserving extended security queries for every supported project language.
 - Analyzing a single package whose imports resolve outside it no longer fails the run; the
   unresolved specifier is reported as a source-localized warning naming its cause.
 - Registration modules the filesystem refuses to read remain operational failures, matching how
