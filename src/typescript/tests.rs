@@ -735,7 +735,6 @@ fn resolves_supported_registration_import_shapes_and_alias_chains() {
 fn runtime_absent_and_shadowed_registrations_are_ignored() {
     for source in [
         "import type { given } from '@cucumber/cucumber'; given('phantom', () => work());",
-        "import  type  { Given } from './support/world'; Given('phantom', () => work());",
         "function Given(name, handler) { return handler; } Given('phantom', () => work());",
         "const Given = (name, handler) => handler; Given('phantom', () => work());",
         "let Given; Given = wrap; Given('phantom', () => work());",
@@ -745,6 +744,59 @@ fn runtime_absent_and_shadowed_registrations_are_ignored() {
     ] {
         let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
         assert!(definitions.is_empty(), "source: {source}");
+    }
+}
+
+#[test]
+fn type_only_imports_neither_resolve_modules_nor_shadow_runtime_globals() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("broken.ts"),
+        "export { Given } from '@cucumber/cucumber'; const broken = ;\n",
+    )
+    .unwrap();
+    let path = directory.path().join("steps.ts");
+    let source = r#"
+import /* comment */ type { Given } from './broken';
+import { type Then } from './missing';
+Given('ambient runtime registration', () => work());
+"#;
+    fs::write(&path, source).unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let extracted = extract_detailed_impl(
+        source,
+        &SourceFile {
+            path,
+            language: SourceLanguage::TypeScript,
+        },
+        &mut session,
+    )
+    .unwrap();
+
+    assert!(extracted.diagnostics.is_empty());
+    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(
+        extracted.definitions[0].matcher,
+        "ambient runtime registration"
+    );
+    assert_eq!(extracted.definitions[0].framework, Framework::Unknown);
+}
+
+#[test]
+fn side_effect_framework_imports_preserve_runtime_framework_metadata() {
+    for (module, expected) in [
+        ("@cucumber/cucumber", Framework::CucumberJs),
+        (
+            "@badeball/cypress-cucumber-preprocessor",
+            Framework::CypressCucumber,
+        ),
+    ] {
+        let definitions = extract_ts(&format!(
+            "import '{module}';\nGiven('side effect framework', () => work());\n"
+        ));
+        assert_eq!(definitions.len(), 1, "{module}");
+        assert_eq!(definitions[0].framework, expected, "{module}");
     }
 }
 
@@ -1158,7 +1210,11 @@ fn wrapper_inference_resolves_long_chains_without_quadratic_work() {
 fn registration_discovery_covers_static_alias_and_shadowing_forms() {
     let source = r#"
 import type { Given as TypeGiven } from '@cucumber/cucumber';
+import /* comment before the modifier */ type { Given as CommentTypeGiven } from '@cucumber/cucumber';
+import { type Then as SpecifierTypeThen } from '@cucumber/cucumber';
 import { Given as ImportedGiven } from '@cucumber/cucumber';
+export /* comment before the modifier */ type { When as ExportedTypeWhen } from '@cucumber/cucumber';
+export { type Then as ExportedSpecifierTypeThen } from '@cucumber/cucumber';
 const cucumber = require('@cucumber/cucumber');
 const { When: RequiredWhen, Then } = require('@cucumber/cucumber');
 const { Given: NamespaceGiven } = cucumber;
@@ -1180,15 +1236,27 @@ AliasGiven('alias', () => work());
 AssignedGiven('assigned', () => work());
 wrapped('wrapped', () => work());
 TypeGiven('type only', () => work());
+CommentTypeGiven('commented type only', () => work());
+SpecifierTypeThen('specifier type only', () => work());
+ExportedTypeWhen('exported type only', () => work());
+ExportedSpecifierTypeThen('exported specifier type only', () => work());
 "#;
     let definitions = extract_ts(source);
     assert_eq!(definitions.len(), 9);
     assert!(definitions
         .iter()
         .all(|definition| definition.framework == Framework::CucumberJs));
-    assert!(!definitions
-        .iter()
-        .any(|definition| definition.matcher == "type only"));
+    for matcher in [
+        "type only",
+        "commented type only",
+        "specifier type only",
+        "exported type only",
+        "exported specifier type only",
+    ] {
+        assert!(!definitions
+            .iter()
+            .any(|definition| definition.matcher == matcher));
+    }
 
     let create_bdd = extract_ts(
         "const factory = createBdd(); const { Given } = factory; Given('bdd', () => work());",
