@@ -8,7 +8,10 @@ use cuke_dedup::reporters::{
     render_html, render_json, render_jsonl, render_sarif, write_terminal, ExecutionMetrics,
     ReportContext,
 };
-use cuke_dedup::source_adapter::{Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel};
+use cuke_dedup::source_adapter::{
+    Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapterRegistration,
+    SOURCE_ADAPTER_REGISTRY,
+};
 use cuke_dedup::typescript;
 use std::collections::BTreeMap;
 use std::fs;
@@ -109,6 +112,14 @@ fn extensible_public_outputs_use_stable_constructors() {
     let default_baseline = BaselineFile::default();
     assert_eq!(default_baseline.schema_version, BASELINE_SCHEMA_VERSION);
     assert!(default_baseline.fingerprints.is_empty());
+
+    let registration =
+        SourceAdapterRegistration::new(".custom", SOURCE_ADAPTER_REGISTRY[0].adapter);
+    assert_eq!(registration.suffix, ".custom");
+
+    let all_rules: &[Rule] = Rule::ALL;
+    let duplication_rules: &[Rule] = Rule::DUPLICATION_THRESHOLD;
+    assert!(all_rules.len() > duplication_rules.len());
 
     assert_eq!(reporter_name(ReporterKind::Json), "json");
 }

@@ -313,7 +313,8 @@ fn every_sarif_rule_links_to_its_readme_section() {
     let template = result(&root).findings.remove(0);
     let mut analysis = result(&root);
     analysis.findings = Rule::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .enumerate()
         .map(|(index, rule)| Finding {
             rule,
@@ -329,7 +330,7 @@ fn every_sarif_rule_links_to_its_readme_section() {
         .as_array()
         .unwrap();
     assert_eq!(descriptors.len(), Rule::ALL.len());
-    for rule in Rule::ALL {
+    for &rule in Rule::ALL {
         let heading = format!("### {}", rule.as_str());
         assert_eq!(
             readme.matches(&heading).count(),

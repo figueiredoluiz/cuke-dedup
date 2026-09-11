@@ -169,7 +169,7 @@ impl Rule {
     const DOCUMENTATION_BASE_URL: &'static str = "https://github.com/figueiredoluiz/cuke-dedup#";
 
     /// Every rule in deterministic report order.
-    pub const ALL: [Rule; 8] = [
+    pub const ALL: &'static [Rule] = &[
         Rule::DuplicateMatcher,
         Rule::NormalizedMatcher,
         Rule::AmbiguousStep,
@@ -181,7 +181,7 @@ impl Rule {
     ];
 
     /// Rules whose active error findings contribute to the duplication threshold.
-    pub const DUPLICATION_THRESHOLD: [Rule; 5] = [
+    pub const DUPLICATION_THRESHOLD: &'static [Rule] = &[
         Rule::DuplicateMatcher,
         Rule::NormalizedMatcher,
         Rule::DuplicateHandler,
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn rule_names_are_stable_kebab_case() {
-        for rule in Rule::ALL {
+        for &rule in Rule::ALL {
             assert_eq!(rule.to_string().parse::<Rule>(), Ok(rule));
             assert_eq!(
                 rule.documentation_url(),
