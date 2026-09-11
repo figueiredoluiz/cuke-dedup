@@ -154,13 +154,277 @@ pub(super) fn fingerprint_handler(
     source: &[u8],
     comparable: bool,
 ) -> HandlerFingerprint {
-    let raw = node_text(handler, source);
     let declared = declared_identifiers(handler, source);
+    fingerprint_node(handler, bound_arguments, source, comparable, &declared)
+}
+
+/// Fingerprints a decorated class method without its name or decorator metadata.
+///
+/// Parameters and runtime modifiers remain part of the fingerprint: default initializers execute
+/// at call time, and `async`/generator/static/accessor methods can behave differently even when
+/// their bodies are textually identical.
+pub(super) fn fingerprint_method_handler(
+    method: Node<'_>,
+    source: &[u8],
+) -> Option<HandlerFingerprint> {
+    debug_assert_eq!(method.kind(), "method_definition");
+    let name = method.child_by_field_name("name")?;
+    let parameters = method.child_by_field_name("parameters")?;
+    let body = method.child_by_field_name("body")?;
+    let mut identifiers = BTreeSet::new();
+    collect_parameter_bindings(parameters, source, &mut identifiers);
+    collect_declared_locals(body, source, &mut identifiers);
+    let declared = identifier_map(identifiers);
+
+    // Direct grammar tokens remain stable when comments separate a modifier from the name.
+    // TypeScript accessibility and `override` nodes are deliberately ignored because they cannot
+    // change execution behavior.
+    let mut runtime_modifiers = Vec::new();
+    for index in 0..method.child_count() {
+        let child = method.child(index)?;
+        if child.start_byte() >= name.start_byte() {
+            break;
+        }
+        if !child.is_extra() && matches!(child.kind(), "static" | "async" | "*" | "get" | "set") {
+            runtime_modifiers.push(child.kind());
+        }
+    }
+    let modifier = runtime_modifiers.join(" ");
+    let semantic_prefix = if modifier.is_empty() {
+        "instance sync".to_owned()
+    } else {
+        modifier
+    };
+
+    let raw_parameters = node_text(parameters, source);
+    let raw_body = node_text(body, source);
+    let exact = format!("{semantic_prefix}\0{raw_parameters}\0{raw_body}");
+    let normalized = method_representation(
+        &semantic_prefix,
+        parameters,
+        body,
+        source,
+        &declared,
+        AstMode::Normalized,
+    );
+    let alpha = method_representation(
+        &semantic_prefix,
+        parameters,
+        body,
+        source,
+        &declared,
+        AstMode::Alpha,
+    );
+    let structural = method_representation(
+        &semantic_prefix,
+        parameters,
+        body,
+        source,
+        &declared,
+        AstMode::Structural,
+    );
+    let mut signature = vec![format!("method:{semantic_prefix}")];
+    signature.extend(behavior_signature(parameters, source, &declared));
+    signature.extend(behavior_signature(body, source, &declared));
+    let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
+
+    Some(HandlerFingerprint {
+        exact: stable_fingerprint(&exact),
+        normalized: stable_fingerprint(&normalized),
+        alpha_normalized: stable_fingerprint(&alpha),
+        structural: stable_fingerprint(&structural),
+        behavior_signature: signature,
+        source_snippet: bounded_source_snippet(&source_snippet),
+        comparable: true,
+        // A default initializer executes before the body. Treating an empty method with one as a
+        // stub would hide real behavior and could recreate pending-handler finding storms.
+        trivial: !has_parameter_initializer(parameters) && is_trivial_handler(body, source),
+    })
+}
+
+fn method_representation(
+    semantic_prefix: &str,
+    parameters: Node<'_>,
+    body: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+    mode: AstMode,
+) -> String {
+    let parameters = match mode {
+        AstMode::Normalized => serialize_ast(parameters, source, declared, mode),
+        AstMode::Alpha | AstMode::Structural => {
+            serialize_parameter_semantics(parameters, source, declared, mode)
+        }
+    };
+    format!(
+        "{semantic_prefix}\0{}\0{}",
+        parameters,
+        serialize_ast(body, source, declared, mode)
+    )
+}
+
+fn serialize_parameter_semantics(
+    parameters: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+    mode: AstMode,
+) -> String {
+    enum Event<'tree> {
+        Visit(Node<'tree>),
+        Text(String),
+        Close,
+    }
+
+    let mut output = String::new();
+    let mut stack = vec![Event::Visit(parameters)];
+    while let Some(event) = stack.pop() {
+        match event {
+            Event::Text(text) => output.push_str(&text),
+            Event::Close => output.push(')'),
+            Event::Visit(node) => match node.kind() {
+                "type_annotation" => {}
+                "required_parameter" | "optional_parameter" => {
+                    let binding = node
+                        .child_by_field_name("name")
+                        .or_else(|| node.child_by_field_name("pattern"));
+                    let initializer = node.child_by_field_name("value");
+                    output.push('(');
+                    output.push_str(node.kind());
+                    stack.push(Event::Close);
+                    if let Some(initializer) = initializer {
+                        stack.push(Event::Text(serialize_ast(
+                            initializer,
+                            source,
+                            declared,
+                            mode,
+                        )));
+                        stack.push(Event::Text("=".to_owned()));
+                    }
+                    if let Some(binding) = binding {
+                        stack.push(Event::Visit(binding));
+                    }
+                }
+                "identifier" => output.push_str("binding"),
+                "shorthand_property_identifier_pattern" => {
+                    output.push_str("property:");
+                    output.push_str(node_text(node, source));
+                    output.push_str("(binding)");
+                }
+                "pair_pattern" => {
+                    let (Some(key), Some(value)) = (
+                        node.child_by_field_name("key"),
+                        node.child_by_field_name("value"),
+                    ) else {
+                        continue;
+                    };
+                    output.push_str("property:");
+                    output.push_str(node_text(key, source));
+                    output.push('(');
+                    stack.push(Event::Close);
+                    stack.push(Event::Visit(value));
+                }
+                "assignment_pattern" | "object_assignment_pattern" => {
+                    let left = node
+                        .child_by_field_name("left")
+                        .or_else(|| node.named_child(0));
+                    let right = node
+                        .child_by_field_name("right")
+                        .or_else(|| node.child_by_field_name("value"))
+                        .or_else(|| node.named_child(1));
+                    let (Some(left), Some(right)) = (left, right) else {
+                        continue;
+                    };
+                    output.push_str("default(");
+                    stack.push(Event::Close);
+                    stack.push(Event::Text(serialize_ast(right, source, declared, mode)));
+                    stack.push(Event::Text("=".to_owned()));
+                    stack.push(Event::Visit(left));
+                }
+                _ => {
+                    let mut cursor = node.walk();
+                    let children: Vec<_> = node
+                        .named_children(&mut cursor)
+                        .filter(|child| child.kind() != "type_annotation")
+                        .collect();
+                    output.push('(');
+                    output.push_str(node.kind());
+                    stack.push(Event::Close);
+                    for child in children.into_iter().rev() {
+                        stack.push(Event::Visit(child));
+                    }
+                }
+            },
+        }
+    }
+    output
+}
+
+fn has_parameter_initializer(parameters: Node<'_>) -> bool {
+    let mut stack = vec![parameters];
+    while let Some(node) = stack.pop() {
+        if matches!(
+            node.kind(),
+            "assignment_pattern" | "object_assignment_pattern"
+        ) || matches!(node.kind(), "required_parameter" | "optional_parameter")
+            && node.child_by_field_name("value").is_some()
+        {
+            return true;
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+    false
+}
+
+fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+    let mut stack = vec![parameters];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "identifier" | "shorthand_property_identifier_pattern" => {
+                output.insert(node_text(node, source).to_owned());
+            }
+            // Only the left side introduces a binding; traversing the initializer would alpha-
+            // rename external calls such as `first()` and `second()` into a false match.
+            "assignment_pattern" | "object_assignment_pattern" => {
+                if let Some(left) = node
+                    .child_by_field_name("left")
+                    .or_else(|| node.named_child(0))
+                {
+                    stack.push(left);
+                }
+            }
+            "required_parameter" | "optional_parameter" => {
+                if let Some(binding) = node
+                    .child_by_field_name("name")
+                    .or_else(|| node.child_by_field_name("pattern"))
+                {
+                    stack.push(binding);
+                }
+            }
+            // Object keys are property names. Only the value side binds a local identifier.
+            "pair_pattern" => {
+                if let Some(value) = node.child_by_field_name("value") {
+                    stack.push(value);
+                }
+            }
+            "type_annotation" => {}
+            _ => push_named_children_reverse(node, &mut stack),
+        }
+    }
+}
+
+fn fingerprint_node(
+    handler: Node<'_>,
+    bound_arguments: Option<Node<'_>>,
+    source: &[u8],
+    comparable: bool,
+    declared: &BTreeMap<String, String>,
+) -> HandlerFingerprint {
+    let raw = node_text(handler, source);
     let mut exact = raw.to_owned();
-    let mut normalized = serialize_ast(handler, source, &declared, AstMode::Normalized);
-    let mut alpha = serialize_ast(handler, source, &declared, AstMode::Alpha);
-    let mut structural = serialize_ast(handler, source, &declared, AstMode::Structural);
-    let mut signature = behavior_signature(handler, source, &declared);
+    let mut normalized = serialize_ast(handler, source, declared, AstMode::Normalized);
+    let mut alpha = serialize_ast(handler, source, declared, AstMode::Alpha);
+    let mut structural = serialize_ast(handler, source, declared, AstMode::Structural);
+    let mut signature = behavior_signature(handler, source, declared);
     let mut source_snippet = raw.to_owned();
     if let Some(arguments) = bound_arguments {
         let no_declarations = BTreeMap::new();
@@ -199,18 +463,23 @@ fn append_bound_context(target: &mut String, arguments: &str) {
 }
 
 fn is_trivial_handler(handler: Node<'_>, source: &[u8]) -> bool {
-    if !matches!(
-        handler.kind(),
-        "arrow_function"
-            | "function_expression"
-            | "generator_function"
-            | "function_declaration"
-            | "generator_function_declaration"
-    ) {
-        return false;
-    }
-    let Some(body) = handler.child_by_field_name("body") else {
-        return false;
+    let body = if handler.kind() == "statement_block" {
+        handler
+    } else {
+        if !matches!(
+            handler.kind(),
+            "arrow_function"
+                | "function_expression"
+                | "generator_function"
+                | "function_declaration"
+                | "generator_function_declaration"
+        ) {
+            return false;
+        }
+        let Some(body) = handler.child_by_field_name("body") else {
+            return false;
+        };
+        body
     };
     if body.kind() != "statement_block" {
         return is_stub_expression(body, source);
@@ -352,6 +621,10 @@ fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, St
         collect_identifier_text(parameters, source, &mut identifiers);
     }
     collect_declared_locals(handler, source, &mut identifiers);
+    identifier_map(identifiers)
+}
+
+fn identifier_map(identifiers: BTreeSet<String>) -> BTreeMap<String, String> {
     identifiers
         .into_iter()
         .enumerate()

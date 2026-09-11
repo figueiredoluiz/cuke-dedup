@@ -134,6 +134,58 @@
           ]
         }
       ]
+    },
+    {
+      "name": "legacy-cucumber-registration-modules",
+      "path": "legacy-cucumber-modules",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "legacy cucumber registration",
+            "legacy cucumber registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "legacy-cypress-steps-entrypoint",
+      "path": "legacy-cypress-steps",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "legacy Cypress registration",
+            "legacy Cypress registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "playwright-bdd-decorator-registrations",
+      "path": "playwright-decorators",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "decorated workspace registration",
+            "decorated workspace registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "empty-markdown-does-not-prove-unused-definitions",
+      "path": "empty-markdown-dialect",
+      "expectedDefinitions": 1,
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
     }
   ]
 }

@@ -59,7 +59,13 @@ pub(crate) fn detect(
         }
     }
 
-    if package_has_dependency(package, "@badeball/cypress-cucumber-preprocessor") {
+    if package_has_any_dependency(
+        package,
+        &[
+            "@badeball/cypress-cucumber-preprocessor",
+            "cypress-cucumber-preprocessor",
+        ],
+    ) {
         for name in CYPRESS_CONFIGS {
             let path = root.join(name);
             if path.is_file() {
@@ -77,7 +83,7 @@ pub(crate) fn detect(
         }
     }
 
-    if package_has_dependency(package, "@cucumber/cucumber") {
+    if package_has_any_dependency(package, &["@cucumber/cucumber", "cucumber"]) {
         return Ok(Some(FrameworkFeatures {
             patterns: vec![CUCUMBER_DEFAULT.to_owned()],
             source: root.join("package.json"),
@@ -86,6 +92,12 @@ pub(crate) fn detect(
         }));
     }
     Ok(None)
+}
+
+fn package_has_any_dependency(package: Option<&JsonValue>, names: &[&str]) -> bool {
+    names
+        .iter()
+        .any(|name| package_has_dependency(package, name))
 }
 
 fn cypress_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
@@ -596,6 +608,31 @@ mod tests {
         });
         let detected = detect(cucumber.path(), Some(&package)).unwrap().unwrap();
         assert_eq!(detected.patterns, [CUCUMBER_DEFAULT]);
+
+        let legacy_cucumber = tempfile::tempdir().unwrap();
+        let package = serde_json::json!({
+            "devDependencies": {"cucumber": "6"}
+        });
+        let detected = detect(legacy_cucumber.path(), Some(&package))
+            .unwrap()
+            .unwrap();
+        assert_eq!(detected.patterns, [CUCUMBER_DEFAULT]);
+
+        let legacy_cypress = tempfile::tempdir().unwrap();
+        fs::write(
+            legacy_cypress.path().join("cypress.config.js"),
+            "export default defineConfig({ e2e: { specPattern: 'legacy/**/*.feature' } });",
+        )
+        .unwrap();
+        let package = serde_json::json!({
+            "dependencies": {"cypress-cucumber-preprocessor": "4"}
+        });
+        let detected = detect(legacy_cypress.path(), Some(&package))
+            .unwrap()
+            .unwrap();
+        assert_eq!(detected.framework, "Cypress Cucumber");
+        assert_eq!(detected.patterns, ["legacy/**/*.feature"]);
+
         assert!(detect(tempfile::tempdir().unwrap().path(), None)
             .unwrap()
             .is_none());

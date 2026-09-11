@@ -403,6 +403,7 @@ fn buffered_reports_cap_findings_and_signal_truncation() {
         definitions_extracted: analysis.definitions.len(),
         feature_files: 0,
         feature_files_parsed: 0,
+        feature_files_without_steps: 0,
         incomplete: false,
     };
     let incomplete = crate::analysis::AnalysisCensus {

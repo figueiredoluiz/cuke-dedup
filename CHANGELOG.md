@@ -40,6 +40,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
   `fail-on-incomplete` input.
 - A `corpus.incomplete` flag in machine reports and a matching HTML alert when a registration
   import could not be resolved statically.
+- Legacy Cucumber.js and Cypress Cucumber registration entrypoints, plus Playwright-BDD
+  class-method decorator registrations.
+- A `corpus.featureFilesWithoutSteps` census field for converted Gherkin Markdown inputs that
+  yielded no concrete steps.
 
 ### Security
 
@@ -74,6 +78,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
   silently restoring the definitions-by-steps fallback loop.
 - npm release validation now covers `package-lock.json`, including the root package, platform
   workspaces, and optional dependency versions.
+- Gherkin Markdown that converts to an empty feature document now marks the corpus incomplete and
+  disables `unused-definition` instead of producing false non-use findings.
 
 ## [0.1.1] - 2026-09-08
 

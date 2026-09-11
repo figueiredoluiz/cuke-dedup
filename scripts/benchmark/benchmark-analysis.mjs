@@ -292,7 +292,10 @@ async function writeSingleFileProfile(root, definitions, profile) {
     join(root, "steps.ts"),
     source(definitions, sharedStructure, sharedHandler),
   );
-  await writeFile(join(root, "suite.feature"), "Feature: Benchmark\n  Scenario: Corpus\n");
+  await writeFile(
+    join(root, "suite.feature"),
+    "Feature: Benchmark\n  Scenario: Corpus\n    Given a benchmark sentinel\n",
+  );
   if (sharedHandler || candidateLimit) {
     const rules = {};
     if (sharedHandler) rules["near-duplicate-step"] = "off";
@@ -309,7 +312,7 @@ async function writeSingleFileProfile(root, definitions, profile) {
   return {
     packages: 1,
     definitions,
-    featureSteps: 0,
+    featureSteps: 1,
     definitionFiles: 1,
     featureFiles: 1,
     candidatePairs: sharedHandler
@@ -372,7 +375,7 @@ async function writeVariedHandlerScale(root, definitions) {
   await writeFile(join(root, "steps.ts"), `${lines.join("\n")}\n`);
   await writeFile(
     join(root, "suite.feature"),
-    "Feature: Varied handler benchmark\n  Scenario: Census only\n",
+    "Feature: Varied handler benchmark\n  Scenario: Census only\n    Given a benchmark sentinel\n",
   );
   await writeFile(
     join(root, ".cuke-dedup.json"),
@@ -382,7 +385,7 @@ async function writeVariedHandlerScale(root, definitions) {
   return {
     packages: 1,
     definitions,
-    featureSteps: 0,
+    featureSteps: 1,
     definitionFiles: 1,
     featureFiles: 1,
     findingCount: null,

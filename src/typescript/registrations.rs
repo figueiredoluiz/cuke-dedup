@@ -1,8 +1,9 @@
 use super::ast::{
-    default_registration_exports, export_has_runtime_bindings, import_has_runtime_bindings,
+    export_has_runtime_bindings, framework_for_module, import_has_runtime_bindings,
     import_has_runtime_module_reference, import_module, is_supported_module,
-    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse, string_literal,
-    CUCUMBER_MODULE, CYPRESS_MODULE, DEFAULT_REGISTRATIONS, PLAYWRIGHT_MODULE, REGISTRATIONS,
+    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
+    registration_exports_for_framework, registration_exports_for_module, string_literal,
+    RegistrationExport, RegistrationExports, DEFAULT_REGISTRATIONS, REGISTRATIONS,
 };
 use super::matcher::decode_js_string;
 use super::module_resolver::{merge_framework, RegistrationResolver};
@@ -23,8 +24,8 @@ pub(super) struct UnresolvedModuleReason {
 }
 
 pub(super) struct RegistrationNames {
-    aliases: BTreeMap<String, String>,
-    namespaces: BTreeMap<String, BTreeMap<String, String>>,
+    aliases: RegistrationExports,
+    namespaces: BTreeMap<String, RegistrationExports>,
     unresolved_aliases: BTreeMap<String, String>,
     unresolved_namespaces: BTreeMap<String, String>,
     /// Why a specifier could not be resolved statically, keyed by module specifier.
@@ -42,8 +43,8 @@ pub(super) enum RegistrationCallee<'tree, 'source> {
 
 #[derive(Default)]
 struct RegistrationDiscovery<'tree> {
-    aliases: BTreeMap<String, String>,
-    namespaces: BTreeMap<String, BTreeMap<String, String>>,
+    aliases: RegistrationExports,
+    namespaces: BTreeMap<String, RegistrationExports>,
     assignments: Vec<(String, String)>,
     namespace_destructures: Vec<(Node<'tree>, String)>,
     shadowed_defaults: BTreeSet<String>,
@@ -67,21 +68,46 @@ pub(super) fn registration_name(
     function: Node<'_>,
     source: &[u8],
     registrations: &RegistrationNames,
-) -> Option<(String, String)> {
-    match registration_callee(function, source)? {
-        RegistrationCallee::Identifier(name) => registrations
-            .aliases
-            .get(name)
-            .cloned()
-            .map(|registration| (node_text(function, source).to_owned(), registration)),
-        RegistrationCallee::Property { object, name } => {
-            let exports = registrations.namespaces.get(node_text(object, source))?;
-            exports
-                .get(name.as_ref())
-                .cloned()
-                .map(|registration| (node_text(function, source).to_owned(), registration))
-        }
-    }
+) -> Option<(String, String, Framework)> {
+    let (callee, registration) = registration_binding(function, source, registrations)?;
+    (!registration.decorator).then(|| {
+        (
+            callee,
+            registration.canonical.clone(),
+            registration.framework,
+        )
+    })
+}
+
+/// Resolves only registrations exported as class-method decorators.
+pub(super) fn decorator_registration_name(
+    function: Node<'_>,
+    source: &[u8],
+    registrations: &RegistrationNames,
+) -> Option<(String, String, Framework)> {
+    let (callee, registration) = registration_binding(function, source, registrations)?;
+    registration.decorator.then(|| {
+        (
+            callee,
+            registration.canonical.clone(),
+            registration.framework,
+        )
+    })
+}
+
+fn registration_binding<'a>(
+    function: Node<'_>,
+    source: &[u8],
+    registrations: &'a RegistrationNames,
+) -> Option<(String, &'a RegistrationExport)> {
+    let registration = match registration_callee(function, source)? {
+        RegistrationCallee::Identifier(name) => registrations.aliases.get(name),
+        RegistrationCallee::Property { object, name } => registrations
+            .namespaces
+            .get(node_text(object, source))?
+            .get(name.as_ref()),
+    }?;
+    Some((node_text(function, source).to_owned(), registration))
 }
 
 /// Returns why `module` could not be resolved statically, when a specific cause was recorded.
@@ -167,7 +193,7 @@ fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<'_>> {
 
 pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
     let mut stack = vec![root];
-    let mut cucumber = false;
+    let mut framework = Framework::Unknown;
     while let Some(node) = stack.pop() {
         let runtime_module_reference = match node.kind() {
             "import_statement" => import_has_runtime_module_reference(node),
@@ -176,33 +202,22 @@ pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
         };
         if runtime_module_reference {
             if let Some(module) = import_module(node, source) {
-                match module {
-                    PLAYWRIGHT_MODULE => return Framework::PlaywrightBdd,
-                    CYPRESS_MODULE => return Framework::CypressCucumber,
-                    CUCUMBER_MODULE => cucumber = true,
-                    _ => {}
-                }
+                framework = merge_framework(framework, framework_for_module(module));
             }
         } else if node.kind() == "call_expression" {
             if call_name(node, source) == Some("createBdd") {
-                return Framework::PlaywrightBdd;
+                framework = merge_framework(framework, Framework::PlaywrightBdd);
             }
             if call_name(node, source) == Some("require") {
-                match call_string_argument(node, source) {
-                    Some(PLAYWRIGHT_MODULE) => return Framework::PlaywrightBdd,
-                    Some(CYPRESS_MODULE) => return Framework::CypressCucumber,
-                    Some(CUCUMBER_MODULE) => cucumber = true,
-                    _ => {}
+                if let Some(evidence) = call_string_argument(node, source).map(framework_for_module)
+                {
+                    framework = merge_framework(framework, evidence);
                 }
             }
         }
         push_named_children_reverse(node, &mut stack);
     }
-    if cucumber {
-        Framework::CucumberJs
-    } else {
-        Framework::Unknown
-    }
+    framework
 }
 
 pub(super) fn detect_registrations(
@@ -223,7 +238,7 @@ pub(super) fn detect_registrations(
                 let module = import_module(node, source);
                 let exports = match module {
                     Some(module) if is_supported_module(module) => {
-                        Some(default_registration_exports())
+                        Some(registration_exports_for_module(module))
                     }
                     Some(module) => {
                         let outcome = resolver.registration_exports(file_path, module)?;
@@ -256,20 +271,24 @@ pub(super) fn detect_registrations(
                         &mut discovered.aliases,
                         &mut discovered.namespaces,
                     );
-                } else {
-                    if !is_type_only_declaration(node) && exports.is_none() {
-                        if let Some(module) = module {
-                            collect_unresolved_imports(node, source, module, &mut discovered);
-                        }
+                } else if !is_type_only_declaration(node) && exports.is_none() {
+                    if let Some(module) = module {
+                        collect_unresolved_imports(node, source, module, &mut discovered);
                     }
-                    collect_shadowing_imports(node, source, &mut discovered.shadowed_defaults);
                 }
+                // Every runtime import owns its local bindings, including unsupported exports
+                // from an otherwise known module. Otherwise `Fixture as Given`, for example,
+                // would accidentally re-enable the ambient `Given` fallback.
+                collect_shadowing_imports(node, source, &mut discovered.shadowed_defaults);
             }
             "export_statement"
                 if export_has_runtime_bindings(node)
                     && import_module(node, source).is_some_and(is_supported_module) =>
             {
-                collect_exports(node, source, &mut discovered.aliases);
+                if let Some(module) = import_module(node, source) {
+                    let available = registration_exports_for_module(module);
+                    collect_exports(node, source, &available, &mut discovered.aliases);
+                }
             }
             "variable_declarator" => {
                 collect_variable_registration(node, source, effective_framework, &mut discovered)
@@ -302,7 +321,14 @@ pub(super) fn detect_registrations(
 
     for name in DEFAULT_REGISTRATIONS {
         if !discovered.shadowed_defaults.contains(name) && !discovered.aliases.contains_key(name) {
-            discovered.aliases.insert(name.to_owned(), name.to_owned());
+            discovered.aliases.insert(
+                name.to_owned(),
+                RegistrationExport {
+                    canonical: name.to_owned(),
+                    decorator: false,
+                    framework: effective_framework,
+                },
+            );
         }
     }
 
@@ -325,7 +351,11 @@ pub(super) fn detect_registrations(
         discovered
             .aliases
             .entry(name.clone())
-            .or_insert_with(|| name.clone());
+            .or_insert_with(|| RegistrationExport {
+                canonical: name.clone(),
+                decorator: false,
+                framework: effective_framework,
+            });
     }
     resolve_wrapper_candidates(&mut discovered);
 
@@ -546,9 +576,9 @@ fn collect_unresolved_imports(
 fn collect_imports(
     import: Node<'_>,
     source: &[u8],
-    exports: &BTreeMap<String, String>,
-    aliases: &mut BTreeMap<String, String>,
-    namespaces: &mut BTreeMap<String, BTreeMap<String, String>>,
+    exports: &RegistrationExports,
+    aliases: &mut RegistrationExports,
+    namespaces: &mut BTreeMap<String, RegistrationExports>,
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
@@ -579,7 +609,12 @@ fn collect_imports(
     }
 }
 
-fn collect_exports(export: Node<'_>, source: &[u8], aliases: &mut BTreeMap<String, String>) {
+fn collect_exports(
+    export: Node<'_>,
+    source: &[u8],
+    available: &RegistrationExports,
+    aliases: &mut RegistrationExports,
+) {
     let mut stack = vec![export];
     while let Some(node) = stack.pop() {
         if node.kind() == "export_specifier" && !is_type_only_specifier(node) {
@@ -587,11 +622,11 @@ fn collect_exports(export: Node<'_>, source: &[u8], aliases: &mut BTreeMap<Strin
                 continue;
             };
             let original = node_text(name, source);
-            if REGISTRATIONS.contains(&original) {
+            if let Some(registration) = available.get(original) {
                 let alias = node
                     .child_by_field_name("alias")
                     .map_or(original, |alias| node_text(alias, source));
-                aliases.insert(alias.to_owned(), original.to_owned());
+                aliases.insert(alias.to_owned(), registration.clone());
             }
         }
         push_named_children_reverse(node, &mut stack);
@@ -629,6 +664,9 @@ fn collect_variable_registration<'tree>(
     let Some(name) = declaration.child_by_field_name("name") else {
         return;
     };
+    if name.kind() == "object_pattern" {
+        shadow_pattern_defaults(name, source, &mut discovered.shadowed_defaults);
+    }
     let Some(value) = declaration.child_by_field_name("value") else {
         shadow_default_name(name, source, &mut discovered.shadowed_defaults);
         return;
@@ -640,7 +678,9 @@ fn collect_variable_registration<'tree>(
             && call_string_argument(value, source).is_some_and(is_supported_module);
         let create_bdd = framework == Framework::PlaywrightBdd && function == Some("createBdd");
         if supported_require || create_bdd {
-            let exports = default_registration_exports();
+            let exports = call_string_argument(value, source)
+                .map(registration_exports_for_module)
+                .unwrap_or_else(|| registration_exports_for_framework(Framework::PlaywrightBdd));
             match name.kind() {
                 "object_pattern" => {
                     collect_pattern_aliases(name, source, &exports, &mut discovered.aliases)
@@ -708,10 +748,43 @@ fn shadow_named_declaration(
 }
 
 fn shadow_default_name(name: Node<'_>, source: &[u8], shadowed_defaults: &mut BTreeSet<String>) {
-    if name.kind() == "identifier" || name.kind() == "type_identifier" {
+    if matches!(
+        name.kind(),
+        "identifier" | "type_identifier" | "shorthand_property_identifier_pattern"
+    ) {
         let name = node_text(name, source);
         if DEFAULT_REGISTRATIONS.contains(&name) {
             shadowed_defaults.insert(name.to_owned());
+        }
+    }
+}
+
+fn shadow_pattern_defaults(
+    pattern: Node<'_>,
+    source: &[u8],
+    shadowed_defaults: &mut BTreeSet<String>,
+) {
+    let mut stack = vec![pattern];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "identifier" | "shorthand_property_identifier_pattern" => {
+                shadow_default_name(node, source, shadowed_defaults);
+            }
+            // The key names an object property; only the value introduces a local binding.
+            "pair_pattern" => {
+                if let Some(value) = node.child_by_field_name("value") {
+                    stack.push(value);
+                }
+            }
+            "assignment_pattern" | "object_assignment_pattern" => {
+                if let Some(left) = node
+                    .child_by_field_name("left")
+                    .or_else(|| node.named_child(0))
+                {
+                    stack.push(left);
+                }
+            }
+            _ => push_named_children_reverse(node, &mut stack),
         }
     }
 }
@@ -739,8 +812,8 @@ fn first_named_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>>
 fn collect_pattern_aliases(
     pattern: Node<'_>,
     source: &[u8],
-    exports: &BTreeMap<String, String>,
-    aliases: &mut BTreeMap<String, String>,
+    exports: &RegistrationExports,
+    aliases: &mut RegistrationExports,
 ) {
     let mut cursor = pattern.walk();
     for child in pattern.named_children(&mut cursor) {

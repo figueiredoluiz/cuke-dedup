@@ -9,11 +9,21 @@ use crate::model::Framework;
 use std::collections::BTreeMap;
 use tree_sitter::Node;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RegistrationExport {
+    pub(super) canonical: String,
+    pub(super) decorator: bool,
+    pub(super) framework: Framework,
+}
+
+pub(super) type RegistrationExports = BTreeMap<String, RegistrationExport>;
+
 /// Every registration name CukeDedup understands, including lowercase aliases.
-pub(super) const REGISTRATIONS: [&str; 7] = [
+pub(super) const REGISTRATIONS: [&str; 8] = [
     "Given",
     "When",
     "Then",
+    "Step",
     "defineStep",
     "given",
     "when",
@@ -27,12 +37,26 @@ pub(super) const REGISTRATIONS: [&str; 7] = [
 pub(super) const DEFAULT_REGISTRATIONS: [&str; 4] = ["Given", "When", "Then", "defineStep"];
 
 pub(super) const CUCUMBER_MODULE: &str = "@cucumber/cucumber";
+pub(super) const LEGACY_CUCUMBER_MODULE: &str = "cucumber";
 pub(super) const PLAYWRIGHT_MODULE: &str = "playwright-bdd";
+pub(super) const PLAYWRIGHT_DECORATORS_MODULE: &str = "playwright-bdd/decorators";
 pub(super) const CYPRESS_MODULE: &str = "@badeball/cypress-cucumber-preprocessor";
+pub(super) const LEGACY_CYPRESS_STEPS_MODULE: &str = "cypress-cucumber-preprocessor/steps";
 
 /// Modules whose registration exports CukeDedup knows without resolving them.
-pub(super) const FRAMEWORK_MODULES: [&str; 3] =
-    [CUCUMBER_MODULE, PLAYWRIGHT_MODULE, CYPRESS_MODULE];
+///
+/// Package subpaths are listed exactly. Prefix matching would let an unrelated package such as
+/// `playwright-bdd/decorators-extra` or a private suffix masquerade as a known registration API.
+/// The legacy Cypress package root is deliberately absent because it exports the file
+/// preprocessor, while its documented `/steps` entrypoint exports step registrations.
+pub(super) const FRAMEWORK_MODULES: [&str; 6] = [
+    CUCUMBER_MODULE,
+    LEGACY_CUCUMBER_MODULE,
+    PLAYWRIGHT_MODULE,
+    PLAYWRIGHT_DECORATORS_MODULE,
+    CYPRESS_MODULE,
+    LEGACY_CYPRESS_STEPS_MODULE,
+];
 
 /// Returns whether `module` is a framework whose exports are known without resolution.
 pub(super) fn is_supported_module(module: &str) -> bool {
@@ -42,18 +66,52 @@ pub(super) fn is_supported_module(module: &str) -> bool {
 /// Returns the framework a supported module identifies.
 pub(super) fn framework_for_module(module: &str) -> Framework {
     match module {
-        PLAYWRIGHT_MODULE => Framework::PlaywrightBdd,
-        CYPRESS_MODULE => Framework::CypressCucumber,
-        CUCUMBER_MODULE => Framework::CucumberJs,
+        PLAYWRIGHT_MODULE | PLAYWRIGHT_DECORATORS_MODULE => Framework::PlaywrightBdd,
+        CYPRESS_MODULE | LEGACY_CYPRESS_STEPS_MODULE => Framework::CypressCucumber,
+        CUCUMBER_MODULE | LEGACY_CUCUMBER_MODULE => Framework::CucumberJs,
         _ => Framework::Unknown,
     }
 }
 
-/// Returns the identity export map for every known registration name.
-pub(super) fn default_registration_exports() -> BTreeMap<String, String> {
+/// Returns the ordinary registration exports attributed to one framework.
+pub(super) fn registration_exports_for_framework(framework: Framework) -> RegistrationExports {
     REGISTRATIONS
         .into_iter()
-        .map(|name| (name.to_owned(), name.to_owned()))
+        .filter(|name| *name != "Step")
+        .map(|name| {
+            (
+                name.to_owned(),
+                RegistrationExport {
+                    canonical: name.to_owned(),
+                    decorator: false,
+                    framework,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Returns the registration exports known for one exact framework entrypoint.
+///
+/// `Step` is a Playwright-BDD decorator export, not a general registration export. Keeping it on
+/// that exact subpath avoids inventing imports from the other supported packages.
+pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExports {
+    let framework = framework_for_module(module);
+    if module != PLAYWRIGHT_DECORATORS_MODULE {
+        return registration_exports_for_framework(framework);
+    }
+    ["Given", "When", "Then", "Step"]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_owned(),
+                RegistrationExport {
+                    canonical: name.to_owned(),
+                    decorator: true,
+                    framework,
+                },
+            )
+        })
         .collect()
 }
 
@@ -201,14 +259,31 @@ mod tests {
     fn framework_module_table_agrees_with_its_named_constants() {
         assert_eq!(
             FRAMEWORK_MODULES,
-            [CUCUMBER_MODULE, PLAYWRIGHT_MODULE, CYPRESS_MODULE]
+            [
+                CUCUMBER_MODULE,
+                LEGACY_CUCUMBER_MODULE,
+                PLAYWRIGHT_MODULE,
+                PLAYWRIGHT_DECORATORS_MODULE,
+                CYPRESS_MODULE,
+                LEGACY_CYPRESS_STEPS_MODULE,
+            ]
         );
         for module in FRAMEWORK_MODULES {
             assert!(is_supported_module(module), "{module}");
             assert_ne!(framework_for_module(module), Framework::Unknown, "{module}");
         }
-        assert!(!is_supported_module("cucumber"));
-        assert_eq!(framework_for_module("cucumber"), Framework::Unknown);
+        for unsupported in [
+            "cypress-cucumber-preprocessor",
+            "cypress-cucumber-preprocessor/steps-extra",
+            "playwright-bdd/decorators-extra",
+        ] {
+            assert!(!is_supported_module(unsupported), "{unsupported}");
+            assert_eq!(
+                framework_for_module(unsupported),
+                Framework::Unknown,
+                "{unsupported}"
+            );
+        }
     }
 
     #[test]
@@ -221,7 +296,12 @@ mod tests {
             assert!(REGISTRATIONS.contains(&name));
             assert!(!DEFAULT_REGISTRATIONS.contains(&name));
         }
-        assert_eq!(default_registration_exports().len(), REGISTRATIONS.len());
+        assert_eq!(
+            registration_exports_for_framework(Framework::Unknown).len() + 1,
+            REGISTRATIONS.len()
+        );
+        assert!(!registration_exports_for_framework(Framework::Unknown).contains_key("Step"));
+        assert!(registration_exports_for_module(PLAYWRIGHT_DECORATORS_MODULE).contains_key("Step"));
     }
 
     #[test]

@@ -9,7 +9,8 @@ mod registrations;
 mod suppression;
 
 use self::handler::{
-    bind_arguments, collect_handler_bindings, fingerprint_handler, resolve_handler, HandlerBinding,
+    bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
+    resolve_handler, HandlerBinding,
 };
 #[cfg(test)]
 use self::handler::{bounded_source_snippet, MAX_HANDLER_SNIPPET_CHARS};
@@ -22,8 +23,8 @@ use self::matcher::{
 };
 use self::module_resolver::RegistrationResolver;
 use self::registrations::{
-    detect_framework, detect_registrations, registration_callee, registration_name,
-    unresolved_registration_module, RegistrationCallee, RegistrationNames,
+    decorator_registration_name, detect_framework, detect_registrations, registration_callee,
+    registration_name, unresolved_registration_module, RegistrationCallee, RegistrationNames,
 };
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
@@ -284,7 +285,15 @@ fn collect_calls<'tree>(
                     }
                 }
             }
-            if let Some(definition) = extract_call(node, context, diagnostics) {
+            let definition = if node
+                .parent()
+                .is_some_and(|parent| parent.kind() == "decorator")
+            {
+                extract_decorator(node, context, diagnostics)
+            } else {
+                extract_call(node, context, diagnostics)
+            };
+            if let Some(definition) = definition {
                 definitions.push(definition);
             }
         }
@@ -304,7 +313,9 @@ fn unresolved_registration_call<'a>(
     context: &'a AdapterContext<'_, '_>,
 ) -> Option<UnresolvedRegistration<'a>> {
     let function = call.child_by_field_name("function")?;
-    if registration_name(function, context.source, context.registrations).is_some() {
+    if registration_name(function, context.source, context.registrations).is_some()
+        || decorator_registration_name(function, context.source, context.registrations).is_some()
+    {
         return None;
     }
     if let Some(module) =
@@ -344,7 +355,8 @@ fn extract_call<'tree>(
 ) -> Option<StepDefinition> {
     let source = context.source;
     let function = call.child_by_field_name("function")?;
-    let (callee, registration) = registration_name(function, source, context.registrations)?;
+    let (callee, registration, registration_framework) =
+        registration_name(function, source, context.registrations)?;
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
     let arguments: Vec<_> = arguments.named_children(&mut cursor).collect();
@@ -352,37 +364,8 @@ fn extract_call<'tree>(
         return None;
     }
     let matcher_node = arguments[0];
-    let (matcher, matcher_kind, matcher_flags) = match matcher_value(matcher_node, source) {
-        Some(value) => value,
-        None if matcher_node.kind() == "string" => {
-            diagnostics.push(ExtractionDiagnostic {
-                level: ExtractionDiagnosticLevel::Error,
-                location: node_location(context.file, matcher_node, source),
-                message: "invalid JavaScript escape sequence in step matcher".to_owned(),
-            });
-            return None;
-        }
-        None => {
-            diagnostics.push(ExtractionDiagnostic {
-                level: ExtractionDiagnosticLevel::Warning,
-                location: node_location(context.file, matcher_node, source),
-                message: "dynamic or unsupported step matcher cannot be analyzed statically"
-                    .to_owned(),
-            });
-            return None;
-        }
-    };
-    if matcher_kind == MatcherKind::RegularExpression {
-        match rust_regex_support(&matcher, &matcher_flags) {
-            RegexSupport::Unsupported => diagnostics.push(ExtractionDiagnostic {
-                level: ExtractionDiagnosticLevel::Warning,
-                location: node_location(context.file, matcher_node, source),
-                message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
-            }),
-            // The analysis phase emits one run-level operational error after reports are written.
-            RegexSupport::ResourceLimit | RegexSupport::Supported => {}
-        }
-    }
+    let (matcher, matcher_kind, matcher_flags) =
+        extract_matcher(matcher_node, context, diagnostics)?;
     let handler = arguments.iter().rev().copied().find(|node| {
         matches!(
             node.kind(),
@@ -419,7 +402,7 @@ fn extract_call<'tree>(
         matcher_kind,
         matcher_flags,
         handler: fingerprint_handler(handler, bound_arguments, source, comparable),
-        framework: context.framework,
+        framework: effective_registration_framework(registration_framework, context.framework),
         registration: if registration.is_empty() {
             callee
         } else {
@@ -433,6 +416,134 @@ fn extract_call<'tree>(
             diagnostics,
         ),
     })
+}
+
+fn extract_decorator<'tree>(
+    call: Node<'tree>,
+    context: &AdapterContext<'_, 'tree>,
+    diagnostics: &mut Vec<ExtractionDiagnostic>,
+) -> Option<StepDefinition> {
+    let source = context.source;
+    let function = call.child_by_field_name("function")?;
+    let (callee, registration, registration_framework) =
+        decorator_registration_name(function, source, context.registrations)?;
+    // `arguments` is a required field of a tree-sitter call_expression.
+    let arguments = call.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let Some(matcher_node) = arguments.named_children(&mut cursor).next() else {
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location: node_location(context.file, call, source),
+            message: "dynamic or unsupported step matcher cannot be analyzed statically".to_owned(),
+        });
+        return None;
+    };
+    let (matcher, matcher_kind, matcher_flags) =
+        extract_matcher(matcher_node, context, diagnostics)?;
+    let Some(method) = decorated_method(call) else {
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location: node_location(context.file, call, source),
+            message: "dynamic or unsupported step handler cannot be compared statically".to_owned(),
+        });
+        return None;
+    };
+    let Some(handler) = fingerprint_method_handler(method, source) else {
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location: node_location(context.file, method, source),
+            message: "dynamic or unsupported step handler cannot be compared statically".to_owned(),
+        });
+        return None;
+    };
+    Some(StepDefinition {
+        normalized_matcher: normalize_matcher_with_flags(&matcher, matcher_kind, &matcher_flags),
+        matcher,
+        matcher_kind,
+        matcher_flags,
+        handler,
+        framework: effective_registration_framework(registration_framework, context.framework),
+        registration: if registration.is_empty() {
+            callee
+        } else {
+            registration
+        },
+        location: node_location(context.file, call, source),
+        inline_suppressions: inline_suppressions(
+            call,
+            context.source_lines,
+            context.file,
+            diagnostics,
+        ),
+    })
+}
+
+/// Resolves a decorator to the class method it decorates without crossing another class member.
+/// Tree-sitter represents decorators as siblings immediately before their member, so skipping
+/// only consecutive decorator siblings keeps the association structural and unambiguous.
+fn decorated_method(call: Node<'_>) -> Option<Node<'_>> {
+    let decorator = call
+        .parent()
+        .filter(|parent| parent.kind() == "decorator")?;
+    if let Some(method) = decorator
+        .parent()
+        .filter(|parent| parent.kind() == "method_definition")
+    {
+        return Some(method);
+    }
+    let mut sibling = decorator.next_named_sibling()?;
+    while sibling.kind() == "decorator" {
+        sibling = sibling.next_named_sibling()?;
+    }
+    (sibling.kind() == "method_definition").then_some(sibling)
+}
+
+fn effective_registration_framework(binding: Framework, file: Framework) -> Framework {
+    if binding == Framework::Unknown {
+        file
+    } else {
+        binding
+    }
+}
+
+fn extract_matcher(
+    matcher_node: Node<'_>,
+    context: &AdapterContext<'_, '_>,
+    diagnostics: &mut Vec<ExtractionDiagnostic>,
+) -> Option<(String, MatcherKind, String)> {
+    let source = context.source;
+    let (matcher, matcher_kind, matcher_flags) = match matcher_value(matcher_node, source) {
+        Some(value) => value,
+        None if matcher_node.kind() == "string" => {
+            diagnostics.push(ExtractionDiagnostic {
+                level: ExtractionDiagnosticLevel::Error,
+                location: node_location(context.file, matcher_node, source),
+                message: "invalid JavaScript escape sequence in step matcher".to_owned(),
+            });
+            return None;
+        }
+        None => {
+            diagnostics.push(ExtractionDiagnostic {
+                level: ExtractionDiagnosticLevel::Warning,
+                location: node_location(context.file, matcher_node, source),
+                message: "dynamic or unsupported step matcher cannot be analyzed statically"
+                    .to_owned(),
+            });
+            return None;
+        }
+    };
+    if matcher_kind == MatcherKind::RegularExpression {
+        match rust_regex_support(&matcher, &matcher_flags) {
+            RegexSupport::Unsupported => diagnostics.push(ExtractionDiagnostic {
+                level: ExtractionDiagnosticLevel::Warning,
+                location: node_location(context.file, matcher_node, source),
+                message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
+            }),
+            // The analysis phase emits one run-level operational error after reports are written.
+            RegexSupport::ResourceLimit | RegexSupport::Supported => {}
+        }
+    }
+    Some((matcher, matcher_kind, matcher_flags))
 }
 
 fn node_location(file: &SourceFile, node: Node<'_>, source: &[u8]) -> SourceLocation {
