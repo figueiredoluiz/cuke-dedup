@@ -10,7 +10,7 @@ test("CodeQL default setup excludes the intentionally malformed fixture", () => 
   assert.equal(existsSync(defaultSetupConfig), true);
   assert.equal(existsSync(legacyConfig), false);
 
-  const configuration = readFileSync(defaultSetupConfig, "utf8");
+  const configuration = readFileSync(defaultSetupConfig, "utf8").replaceAll("\r\n", "\n");
   assert.match(configuration, /^paths-ignore:\n(?:  .*\n)*  - fixtures\/corpus\/malformed-matcher\/steps\.js$/m);
   assert.equal(existsSync(malformedFixture), true);
 });
