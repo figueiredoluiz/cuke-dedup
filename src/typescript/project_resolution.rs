@@ -876,7 +876,11 @@ fn optional_string(
 fn compile_workspace_globs(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        if pattern.starts_with('!') || Path::new(pattern).is_absolute() {
+        // package.json workspace patterns always use slash-separated portable syntax. A leading
+        // slash must therefore be rejected even on Windows, where Path::is_absolute only treats
+        // drive- or UNC-prefixed paths as absolute.
+        if pattern.starts_with('!') || pattern.starts_with('/') || Path::new(pattern).is_absolute()
+        {
             bail!("workspace pattern `{pattern}` is not a supported contained positive glob");
         }
         builder.add(
