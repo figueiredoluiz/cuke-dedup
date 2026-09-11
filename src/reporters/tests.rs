@@ -313,7 +313,8 @@ fn every_sarif_rule_links_to_its_readme_section() {
     let template = result(&root).findings.remove(0);
     let mut analysis = result(&root);
     analysis.findings = Rule::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .enumerate()
         .map(|(index, rule)| Finding {
             rule,
@@ -329,7 +330,7 @@ fn every_sarif_rule_links_to_its_readme_section() {
         .as_array()
         .unwrap();
     assert_eq!(descriptors.len(), Rule::ALL.len());
-    for rule in Rule::ALL {
+    for &rule in Rule::ALL {
         let heading = format!("### {}", rule.as_str());
         assert_eq!(
             readme.matches(&heading).count(),
@@ -677,14 +678,7 @@ fn public_report_writer_uses_one_context_for_every_configured_format() {
     )
     .unwrap();
     let analysis = result(&config.root);
-    let metrics = ExecutionMetrics {
-        definition_files: 1,
-        feature_files: 1,
-        files_discovered: 2,
-        discovery_ms: 1.0,
-        parsing_ms: 2.0,
-        analysis_ms: 3.0,
-    };
+    let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
     let context = ReportContext::with_metrics(&analysis, &config.root, 50.0, &metrics);
     let mut terminal = Vec::new();
     let written = write_reports(&context, &config, &mut terminal).unwrap();

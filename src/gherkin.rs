@@ -17,6 +17,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// Gherkin source syntax selected for a discovered feature file.
+#[non_exhaustive]
 pub enum FeatureFormat {
     /// Classic `.feature` syntax.
     Gherkin,

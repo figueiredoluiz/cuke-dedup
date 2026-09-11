@@ -644,14 +644,13 @@ fn write_reports(
         feature_files_without_steps: analyzed.feature_files_without_steps,
         incomplete: analyzed.corpus_incomplete,
     };
-    let metrics = reporters::ExecutionMetrics {
-        definition_files: files.definitions.len(),
-        feature_files: files.features.len(),
-        files_discovered: files.definitions.len() + files.features.len(),
-        discovery_ms: timings.discovery_ms,
-        parsing_ms: timings.parsing_ms,
-        analysis_ms: timings.analysis_ms,
-    };
+    let metrics = reporters::ExecutionMetrics::new(
+        files.definitions.len(),
+        files.features.len(),
+        timings.discovery_ms,
+        timings.parsing_ms,
+        timings.analysis_ms,
+    );
     let report_metadata = reporters::CliReportMetadata {
         corpus: &corpus,
         analysis: &analyzed.census,
