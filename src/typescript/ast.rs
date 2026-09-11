@@ -12,8 +12,15 @@ use tree_sitter::Node;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RegistrationExport {
     pub(super) canonical: String,
-    pub(super) decorator: bool,
+    pub(super) kind: RegistrationExportKind,
     pub(super) framework: Framework,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegistrationExportKind {
+    Call,
+    Decorator,
+    Factory,
 }
 
 pub(super) type RegistrationExports = BTreeMap<String, RegistrationExport>;
@@ -83,7 +90,7 @@ pub(super) fn registration_exports_for_framework(framework: Framework) -> Regist
                 name.to_owned(),
                 RegistrationExport {
                     canonical: name.to_owned(),
-                    decorator: false,
+                    kind: RegistrationExportKind::Call,
                     framework,
                 },
             )
@@ -98,7 +105,18 @@ pub(super) fn registration_exports_for_framework(framework: Framework) -> Regist
 pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExports {
     let framework = framework_for_module(module);
     if module != PLAYWRIGHT_DECORATORS_MODULE {
-        return registration_exports_for_framework(framework);
+        let mut exports = registration_exports_for_framework(framework);
+        if module == PLAYWRIGHT_MODULE {
+            exports.insert(
+                "createBdd".to_owned(),
+                RegistrationExport {
+                    canonical: "createBdd".to_owned(),
+                    kind: RegistrationExportKind::Factory,
+                    framework,
+                },
+            );
+        }
+        return exports;
     }
     ["Given", "When", "Then", "Step"]
         .into_iter()
@@ -107,7 +125,7 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
                 name.to_owned(),
                 RegistrationExport {
                     canonical: name.to_owned(),
-                    decorator: true,
+                    kind: RegistrationExportKind::Decorator,
                     framework,
                 },
             )

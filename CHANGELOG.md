@@ -80,6 +80,12 @@ All notable changes to CukeDedup are documented in this file. The project follow
   workspaces, and optional dependency versions.
 - Gherkin Markdown that converts to an empty feature document now marks the corpus incomplete and
   disables `unused-definition` instead of producing false non-use findings.
+- Non-authoritative Cucumber Expression fallbacks and JavaScript regular expressions using the
+  Unicode-sets `v` flag can no longer produce false unused or ambiguity conclusions.
+- Playwright-BDD factory aliases now require trusted ESM or CommonJS import evidence, and local
+  registration barrels preserve imported framework bindings across recoverable resolver errors.
+- Static overlap witness scans are bounded before index evaluation, handler behavior signatures
+  normalize renamed receivers, and SARIF preserves pre-truncated cluster metadata.
 
 ## [0.1.1] - 2026-09-08
 

@@ -113,6 +113,17 @@ impl MatcherIndex {
         }));
         output.sort_unstable();
     }
+
+    /// Work units required before a witness can be matched against this index.
+    ///
+    /// Each RegexSet performs one automaton scan; definitions that could not join a set require
+    /// one individual regex scan. Charging this before matching closes the no-candidate case,
+    /// where prior pair budgets never advanced despite repeatedly scanning the complete index.
+    fn scan_work(&self) -> usize {
+        self.sets
+            .len()
+            .saturating_add(self.fallback_definitions.len())
+    }
 }
 
 enum CucumberRegexExpression {
@@ -186,12 +197,15 @@ pub(super) fn analyze_feature_usage(
         .map(|definition| compile_matcher(definition, &config.parameter_types))
         .unzip();
     let mut incomplete: Vec<String> = incomplete.into_iter().flatten().collect();
-    // Definitions with syntax unsupported by Rust's regex engine cannot be proven unused.
-    // Treat them as indeterminate instead of emitting a guaranteed false positive.
+    // Definitions whose matcher cannot be modeled authoritatively cannot be proven unused.
+    // A permissive fallback may still fail to match the available feature corpus, so both
+    // uncompiled and non-authoritative matchers remain indeterminate.
     let mut used: BTreeSet<_> = compiled
         .iter()
         .enumerate()
-        .filter_map(|(index, matcher)| matcher.regex.is_none().then_some(index))
+        .filter_map(|(index, matcher)| {
+            (matcher.regex.is_none() || !matcher.authoritative).then_some(index)
+        })
         .collect();
     let index = MatcherIndex::build(&compiled);
     let mut ambiguities: BTreeMap<_, (&FeatureStep, BTreeSet<usize>, usize)> = BTreeMap::new();
@@ -347,6 +361,8 @@ fn analyze_matcher_overlap(
     let mut evaluated = 0_usize;
     let mut proposal_work = 0_usize;
     let proposal_budget = work_budget.saturating_mul(OVERLAP_PROPOSAL_WORK_MULTIPLIER);
+    let mut witness_scan_work = 0_usize;
+    let witness_scan_budget = proposal_budget;
     let mut retained = 0_usize;
     let mut truncated = false;
     let mut suppression_work = 0_u64;
@@ -364,6 +380,12 @@ fn analyze_matcher_overlap(
         let Some(witness) = witness_for(definition, &config.parameter_types) else {
             continue;
         };
+        let scan_work = index.scan_work();
+        if scan_work > witness_scan_budget.saturating_sub(witness_scan_work) {
+            truncated = true;
+            break;
+        }
+        witness_scan_work += scan_work;
         index.matches(compiled, &witness, &mut matches);
         for right in matches.iter().copied() {
             if right == left || !compiled[right].authoritative {
@@ -623,10 +645,19 @@ fn compile_matcher(
                     Some(regex_limit_message(definition)),
                 );
             }
-            let expression = crate::typescript::rust_regex_expression(
+            let Some(expression) = crate::typescript::rust_regex_expression(
                 &definition.matcher,
                 &definition.matcher_flags,
-            );
+            ) else {
+                return (
+                    CompiledMatcher {
+                        regex: None,
+                        expression: None,
+                        authoritative: false,
+                    },
+                    None,
+                );
+            };
             let (regex, error) = compile_definition_regex(&expression, definition);
             (
                 CompiledMatcher {
@@ -940,6 +971,47 @@ mod tests {
     }
 
     #[test]
+    fn matcher_overlap_charges_index_scans_before_candidate_generation() {
+        let definitions = definitions(
+            "Given('value {first}', () => first());\n\
+             Given('value {second}', () => second());\n\
+             Given('value {third}', () => third());\n\
+             Given('value {fourth}', () => fourth());\n\
+             Given('value {fifth}', () => fifth());",
+        );
+        let (_directory, mut config) = config();
+        for name in ["first", "second", "third", "fourth", "fifth"] {
+            config
+                .parameter_types
+                .insert(name.to_owned(), format!("{name}-only"));
+        }
+        let compiled = definitions
+            .iter()
+            .map(|definition| compile_matcher(definition, &config.parameter_types).0)
+            .collect::<Vec<_>>();
+        let index = MatcherIndex::build_with_limits(&compiled, 32, 32);
+        assert!(index.scan_work() > OVERLAP_PROPOSAL_WORK_MULTIPLIER);
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut findings = Vec::new();
+
+        let outcome = analyze_matcher_overlap(
+            &definitions,
+            &compiled,
+            &index,
+            &ProvenAmbiguities::new(definitions.len()),
+            &config,
+            &suppressions,
+            &mut findings,
+            1,
+        );
+
+        assert_eq!(outcome.census.evaluated, 0);
+        assert_eq!(outcome.census.skipped, 1);
+        assert!(outcome.incomplete.is_some());
+        assert!(findings.is_empty());
+    }
+
+    #[test]
     fn reverse_witnesses_do_not_consume_the_unique_pair_budget_twice() {
         let definitions = definitions(
             "Given('value {first}', () => first());\n\
@@ -1118,6 +1190,31 @@ mod tests {
             &suppressions,
             &mut findings,
         );
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn non_authoritative_matchers_cannot_prove_a_definition_unused() {
+        let mut extracted = definitions("Given('a {projectType}', () => work());");
+        extracted.push(definitions("Given(/^value$/v, () => work());").remove(0));
+        let (_directory, mut config) = config();
+        config
+            .rules
+            .insert(Rule::UnusedDefinition, Severity::Warning);
+        let suppressions = SuppressionIndex::new(&config, &extracted);
+        let mut findings = Vec::new();
+
+        let outcome =
+            analyze_feature_usage(&extracted, &[], &config, &suppressions, &mut findings, 100);
+        analyze_unused(
+            &extracted,
+            &outcome.used,
+            &config,
+            &suppressions,
+            &mut findings,
+        );
+
+        assert_eq!(outcome.used, [0, 1].into_iter().collect());
         assert!(findings.is_empty());
     }
 

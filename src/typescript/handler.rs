@@ -1,7 +1,7 @@
 use super::ast::push_named_children_reverse;
 use super::node_text;
 use crate::model::{stable_fingerprint, HandlerFingerprint};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use tree_sitter::Node;
 
 #[derive(Clone, Copy)]
@@ -171,7 +171,7 @@ pub(super) fn fingerprint_method_handler(
     let name = method.child_by_field_name("name")?;
     let parameters = method.child_by_field_name("parameters")?;
     let body = method.child_by_field_name("body")?;
-    let mut identifiers = BTreeSet::new();
+    let mut identifiers = Vec::new();
     collect_parameter_bindings(parameters, source, &mut identifiers);
     collect_declared_locals(body, source, &mut identifiers);
     let declared = identifier_map(identifiers);
@@ -375,12 +375,12 @@ fn has_parameter_initializer(parameters: Node<'_>) -> bool {
     false
 }
 
-fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut Vec<String>) {
     let mut stack = vec![parameters];
     while let Some(node) = stack.pop() {
         match node.kind() {
             "identifier" | "shorthand_property_identifier_pattern" => {
-                output.insert(node_text(node, source).to_owned());
+                push_identifier(output, node_text(node, source));
             }
             // Only the left side introduces a binding; traversing the initializer would alpha-
             // rename external calls such as `first()` and `second()` into a false match.
@@ -608,7 +608,7 @@ pub(super) fn bounded_source_snippet(source: &str) -> String {
 }
 
 fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
-    let mut identifiers = BTreeSet::new();
+    let mut identifiers = Vec::new();
     if matches!(
         handler.kind(),
         "function_declaration" | "generator_function_declaration"
@@ -617,14 +617,20 @@ fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, St
             collect_identifier_text(name, source, &mut identifiers);
         }
     }
-    if let Some(parameters) = handler.child_by_field_name("parameters") {
-        collect_identifier_text(parameters, source, &mut identifiers);
+    if let Some(parameters) = handler
+        .child_by_field_name("parameters")
+        .or_else(|| handler.child_by_field_name("parameter"))
+    {
+        // Initializers execute in the surrounding scope; only the binding side belongs in the
+        // alpha map. Otherwise an external call such as `makePage()` is renamed differently when
+        // the local parameter itself is renamed.
+        collect_parameter_bindings(parameters, source, &mut identifiers);
     }
     collect_declared_locals(handler, source, &mut identifiers);
     identifier_map(identifiers)
 }
 
-fn identifier_map(identifiers: BTreeSet<String>) -> BTreeMap<String, String> {
+fn identifier_map(identifiers: Vec<String>) -> BTreeMap<String, String> {
     identifiers
         .into_iter()
         .enumerate()
@@ -632,7 +638,7 @@ fn identifier_map(identifiers: BTreeSet<String>) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut Vec<String>) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         if node.kind() == "variable_declarator" {
@@ -644,16 +650,22 @@ fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut BTreeSet<
     }
 }
 
-fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut Vec<String>) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         if matches!(
             node.kind(),
             "identifier" | "shorthand_property_identifier_pattern"
         ) {
-            output.insert(node_text(node, source).to_owned());
+            push_identifier(output, node_text(node, source));
         }
         push_named_children_reverse(node, &mut stack);
+    }
+}
+
+fn push_identifier(output: &mut Vec<String>, identifier: &str) {
+    if !output.iter().any(|existing| existing == identifier) {
+        output.push(identifier.to_owned());
     }
 }
 
@@ -787,7 +799,7 @@ fn call_behavior_event(
             function.child_by_field_name("object"),
             function.child_by_field_name("property"),
         ) {
-            if let Some(receiver) = static_call_receiver(object, source) {
+            if let Some(receiver) = static_call_receiver(object, source, declared) {
                 return format!("call:{receiver}#{}", node_text(property, source));
             }
         }
@@ -798,23 +810,33 @@ fn call_behavior_event(
     )
 }
 
-fn static_call_receiver(node: Node<'_>, source: &[u8]) -> Option<String> {
+fn static_call_receiver(
+    node: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+) -> Option<String> {
     match node.kind() {
-        "identifier" | "this" | "super" => Some(node_text(node, source).to_owned()),
+        "identifier" => {
+            let name = node_text(node, source);
+            Some(declared.get(name).map_or(name, String::as_str).to_owned())
+        }
+        "this" | "super" => Some(node_text(node, source).to_owned()),
         "parenthesized_expression" | "await_expression" => {
-            static_call_receiver(node.named_child(0)?, source)
+            static_call_receiver(node.named_child(0)?, source, declared)
         }
         "member_expression" => {
-            let object = static_call_receiver(node.child_by_field_name("object")?, source)?;
+            let object =
+                static_call_receiver(node.child_by_field_name("object")?, source, declared)?;
             let property = node.child_by_field_name("property")?;
             Some(format!("{object}.{}", node_text(property, source)))
         }
         "call_expression" => {
             let function = node.child_by_field_name("function")?;
             if function.kind() == "member_expression" {
-                static_call_receiver(function.child_by_field_name("object")?, source)
+                static_call_receiver(function.child_by_field_name("object")?, source, declared)
             } else if function.kind() == "identifier" {
-                Some(node_text(function, source).to_owned())
+                let name = node_text(function, source);
+                Some(declared.get(name).map_or(name, String::as_str).to_owned())
             } else {
                 None
             }

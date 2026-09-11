@@ -515,6 +515,28 @@ fn mixed_framework_detection_is_scoped_to_each_source_file() {
 }
 
 #[test]
+fn playwright_bdd_factory_requires_import_evidence_and_supports_aliases() {
+    for source in [
+        "import { createBdd as makeBdd } from 'playwright-bdd';\n\
+         const { Given } = makeBdd();\nGiven('aliased esm', () => work());",
+        "const { createBdd: makeBdd } = require('playwright-bdd');\n\
+         const { Given } = makeBdd();\nGiven('aliased cjs', () => work());",
+        "const { createBdd } = require('playwright-bdd');\n\
+         const { Given } = createBdd();\nGiven('shorthand cjs', () => work());",
+    ] {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert_eq!(definitions[0].framework, Framework::PlaywrightBdd);
+    }
+
+    let unrelated = extract_ts(
+        "const createBdd = () => ({ Given: () => {} });\n\
+         const { Given } = createBdd();\nGiven('not a step', () => work());",
+    );
+    assert!(unrelated.is_empty());
+}
+
+#[test]
 fn mixed_framework_bindings_keep_per_registration_provenance_in_any_import_order() {
     for imports in [
         r#"
@@ -608,6 +630,168 @@ Then('the result is visible', () => verify());
         .definitions
         .iter()
         .all(|definition| definition.framework == Framework::PlaywrightBdd));
+}
+
+#[test]
+fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
+    for (name, fixture) in [
+        (
+            "alias",
+            "const { createBdd: makeBdd } = require('playwright-bdd');\n\
+             export const { Given } = makeBdd(test);\n",
+        ),
+        (
+            "shorthand",
+            "const { createBdd } = require('playwright-bdd');\n\
+             export const { Given } = createBdd(test);\n",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("package.json"), "{}").unwrap();
+        fs::write(directory.path().join("fixture.ts"), fixture).unwrap();
+        let path = directory.path().join(format!("{name}.steps.ts"));
+        fs::write(
+            &path,
+            "import { Given } from './fixture';\nGiven('from cjs fixture', () => work());\n",
+        )
+        .unwrap();
+        let file = SourceFile {
+            path,
+            language: SourceLanguage::TypeScript,
+        };
+        let source = fs::read_to_string(&file.path).unwrap();
+        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+        let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+
+        assert!(extracted.diagnostics.is_empty(), "{name}");
+        assert_eq!(extracted.definitions.len(), 1, "{name}");
+        assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+    }
+}
+
+#[test]
+fn project_resolves_reexported_runtime_registration_imports() {
+    for source in [
+        "import { Given as Setup } from '@cucumber/cucumber';\nexport { Setup as Given };\n",
+        "const { Given: Setup } = require('@cucumber/cucumber');\nexport { Setup as Given };\n",
+        "const { Given } = require('@cucumber/cucumber');\nexport { Given };\n",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("package.json"), "{}").unwrap();
+        fs::write(directory.path().join("barrel.ts"), source).unwrap();
+        let path = directory.path().join("example.steps.ts");
+        fs::write(
+            &path,
+            "import { Given } from './barrel';\nGiven('through import barrel', () => work());\n",
+        )
+        .unwrap();
+        let file = SourceFile {
+            path,
+            language: SourceLanguage::TypeScript,
+        };
+        let source = fs::read_to_string(&file.path).unwrap();
+        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+        let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+
+        assert!(extracted.diagnostics.is_empty(), "{source}");
+        assert_eq!(extracted.definitions.len(), 1, "{source}");
+        assert_eq!(extracted.definitions[0].framework, Framework::CucumberJs);
+    }
+}
+
+#[test]
+fn project_resolves_chained_import_then_export_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("registration-source.ts"),
+        "export { Given } from '@cucumber/cucumber';\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("registration-barrel.ts"),
+        "import { Given as Setup } from './registration-source';\nexport { Setup as Given };\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("factory-source.ts"),
+        "export { createBdd } from 'playwright-bdd';\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("factory-barrel.ts"),
+        "import { createBdd as makeBdd } from './factory-source';\nexport { makeBdd };\n",
+    )
+    .unwrap();
+    let path = directory.path().join("example.steps.ts");
+    fs::write(
+        &path,
+        r#"
+import { Given as CucumberGiven } from './registration-barrel';
+import { makeBdd as buildBdd } from './factory-barrel';
+const { Given: PlaywrightGiven } = buildBdd(test);
+CucumberGiven('through a registration chain', () => prepare());
+PlaywrightGiven('through a factory chain', () => act());
+"#,
+    )
+    .unwrap();
+    let file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let source = fs::read_to_string(&file.path).unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+
+    assert!(extracted.diagnostics.is_empty());
+    assert_eq!(extracted.definitions.len(), 2);
+    assert_eq!(extracted.definitions[0].framework, Framework::CucumberJs);
+    assert_eq!(extracted.definitions[1].framework, Framework::PlaywrightBdd);
+}
+
+#[test]
+fn module_resolution_clears_active_paths_after_recoverable_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    let module = directory.path().join("fixture.ts");
+    fs::write(&module, "export { Given from '@cucumber/cucumber';\n").unwrap();
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let first_path = directory.path().join("first.steps.ts");
+    fs::write(
+        &first_path,
+        "import { Given } from './fixture';\nGiven('first attempt', () => work());\n",
+    )
+    .unwrap();
+    let first_file = SourceFile {
+        path: first_path,
+        language: SourceLanguage::TypeScript,
+    };
+    let first_source = fs::read_to_string(&first_file.path).unwrap();
+    let first = extract_detailed_impl(&first_source, &first_file, &mut session).unwrap();
+    assert!(first.definitions.is_empty());
+    assert!(!first.diagnostics.is_empty());
+
+    fs::write(&module, "export { Given } from '@cucumber/cucumber';\n").unwrap();
+    let second_path = directory.path().join("second.steps.ts");
+    fs::write(
+        &second_path,
+        "import { Given } from './fixture';\nGiven('second attempt', () => work());\n",
+    )
+    .unwrap();
+    let second_file = SourceFile {
+        path: second_path,
+        language: SourceLanguage::TypeScript,
+    };
+    let second_source = fs::read_to_string(&second_file.path).unwrap();
+    let second = extract_detailed_impl(&second_source, &second_file, &mut session).unwrap();
+
+    assert!(second.diagnostics.is_empty());
+    assert_eq!(second.definitions.len(), 1);
+    assert_eq!(second.definitions[0].framework, Framework::CucumberJs);
 }
 
 #[test]
@@ -881,7 +1065,7 @@ fn behavior_signatures_canonicalize_calls_without_treating_await_as_behavior() {
         Case {
             name: "receiver identity",
             source: "Given('step', async ({ audit }) => { await audit.click(); });",
-            expected: &["call:audit#click"],
+            expected: &["call:v0#click"],
         },
     ] {
         let definition = extract(case.source, &file(SourceLanguage::TypeScript))
@@ -893,6 +1077,69 @@ fn behavior_signatures_canonicalize_calls_without_treating_await_as_behavior() {
             case.name
         );
     }
+}
+
+#[test]
+fn behavior_signatures_alpha_normalize_declared_receivers() {
+    let definitions = extract_ts(
+        "Given('first', async (page) => { await page.goto('/'); });\n\
+         Given('second', async (browser) => { await browser.goto('/'); });\n\
+         Given('third', page => page.goto('/'));\n\
+         Given('fourth', browser => browser.goto('/'));",
+    );
+    assert_eq!(definitions.len(), 4);
+    assert_eq!(
+        definitions[0].handler.alpha_normalized,
+        definitions[1].handler.alpha_normalized
+    );
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+    assert_eq!(definitions[0].handler.behavior_signature, ["call:v0#goto"]);
+    assert_eq!(
+        definitions[2].handler.alpha_normalized,
+        definitions[3].handler.alpha_normalized
+    );
+    assert_eq!(definitions[2].handler.behavior_signature, ["call:v0#goto"]);
+}
+
+#[test]
+fn alpha_fingerprints_assign_identifiers_by_declaration_order() {
+    let definitions = extract_ts(
+        "Given('first', (z, a) => z.goto(a));\n\
+         Given('second', (b, y) => b.goto(y));",
+    );
+
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(
+        definitions[0].handler.alpha_normalized,
+        definitions[1].handler.alpha_normalized
+    );
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+}
+
+#[test]
+fn defaulted_destructured_parameters_preserve_initializer_behavior() {
+    let definitions = extract_ts(
+        "Given('first', ({ page: browser = makePage() } = {}) => browser.goto('/'));\n\
+         Given('second', ({ page: tab = makePage() } = {}) => tab.goto('/'));",
+    );
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        ["call:makePage", "call:v0#goto"]
+    );
+    assert!(definitions
+        .iter()
+        .all(|definition| !definition.handler.trivial));
 }
 
 #[test]
@@ -1711,11 +1958,10 @@ ExportedSpecifierTypeThen('exported specifier type only', () => work());
             .any(|definition| definition.matcher == matcher));
     }
 
-    let create_bdd = extract_ts(
-        "const factory = createBdd(); const { Given } = factory; Given('bdd', () => work());",
+    let untrusted_create_bdd = extract_ts(
+        "const factory = createBdd(); const { Given } = factory; Given('not bdd', () => work());",
     );
-    assert_eq!(create_bdd.len(), 1);
-    assert_eq!(create_bdd[0].framework, Framework::PlaywrightBdd);
+    assert!(untrusted_create_bdd.is_empty());
 }
 
 #[test]

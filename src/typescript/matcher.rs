@@ -113,20 +113,27 @@ pub(super) enum RegexSupport {
 /// Extraction and usage analysis must agree on this text exactly: extraction uses it to decide
 /// whether a definition is analyzable, and usage analysis uses it to match feature steps. Two
 /// copies could drift and report a limitation the analyzer did not actually hit.
-pub(crate) fn rust_regex_expression(matcher: &str, flags: &str) -> String {
+pub(crate) fn rust_regex_expression(matcher: &str, flags: &str) -> Option<String> {
+    // JavaScript's `v` flag enables Unicode set notation and changes character-class semantics.
+    // Rust's regex engine has no equivalent, so no Rust expression is authoritative for it.
+    if flags.contains('v') {
+        return None;
+    }
     let flags: String = flags
         .chars()
         .filter(|flag| matches!(flag, 'i' | 'm' | 's' | 'u'))
         .collect();
     if flags.is_empty() {
-        matcher.to_owned()
+        Some(matcher.to_owned())
     } else {
-        format!("(?{flags}:{matcher})")
+        Some(format!("(?{flags}:{matcher})"))
     }
 }
 
 pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
-    let expression = rust_regex_expression(matcher, flags);
+    let Some(expression) = rust_regex_expression(matcher, flags) else {
+        return RegexSupport::Unsupported;
+    };
     match compile_regex(&expression) {
         Ok(_) => RegexSupport::Supported,
         Err(regex::Error::CompiledTooBig(_)) => RegexSupport::ResourceLimit,
@@ -307,10 +314,18 @@ mod tests {
 
     #[test]
     fn regex_normalization_preserves_semantics_while_canonicalizing_equivalence() {
-        assert_eq!(rust_regex_expression("^value$", "gymi"), "(?mi:^value$)");
-        assert_eq!(rust_regex_expression("^value$", "gy"), "^value$");
+        assert_eq!(
+            rust_regex_expression("^value$", "gymi").as_deref(),
+            Some("(?mi:^value$)")
+        );
+        assert_eq!(
+            rust_regex_expression("^value$", "gy").as_deref(),
+            Some("^value$")
+        );
+        assert_eq!(rust_regex_expression("[a&&b]", "v"), None);
         assert_eq!(rust_regex_support("^value$", ""), RegexSupport::Supported);
         assert_eq!(rust_regex_support("(", ""), RegexSupport::Unsupported);
+        assert_eq!(rust_regex_support("[a&&b]", "v"), RegexSupport::Unsupported);
         assert_eq!(semantic_regex_flags("uugmisy"), "imsu");
         assert_eq!(
             normalize_matcher_with_flags("(?<name>a)\\s+b", MatcherKind::RegularExpression, "mi"),

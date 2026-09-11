@@ -1,7 +1,8 @@
 use super::ast::{
-    framework_for_module, import_module, is_star_export, is_type_only_declaration,
-    is_type_only_specifier, push_named_children_reverse, registration_exports_for_framework,
-    registration_exports_for_module, RegistrationExports, FRAMEWORK_MODULES, PLAYWRIGHT_MODULE,
+    framework_for_module, import_has_runtime_bindings, import_module, is_star_export,
+    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
+    registration_exports_for_framework, registration_exports_for_module, string_literal,
+    RegistrationExports, FRAMEWORK_MODULES,
 };
 use super::node_text;
 use super::project_resolution::ProjectResolution;
@@ -160,8 +161,28 @@ fn resolve_exports(
             cacheable: false,
         });
     }
+    let resolved = resolve_active_exports(&path, boundary, project, state, depth);
+    // Resolution failures are converted to source-local diagnostics by the caller. Always clear
+    // the active-path marker before propagating one, or a later independent import is mistaken
+    // for a cycle and silently loses registrations.
+    state.active.remove(&path);
+    let resolved = resolved?;
+    if resolved.cacheable {
+        state
+            .exports
+            .insert(cache_key, (resolved.exports.clone(), resolved.framework));
+    }
+    Ok(resolved)
+}
+
+fn resolve_active_exports(
+    path: &Path,
+    boundary: &Path,
+    project: &mut ProjectResolution,
+    state: &mut ResolutionState,
+    depth: usize,
+) -> Result<ResolvedExports> {
     if state.resolutions_started >= MAX_REGISTRATION_RESOLUTION_STATES {
-        state.active.remove(&path);
         bail!(
             "registration module graph exceeds the {}-state resolution limit",
             MAX_REGISTRATION_RESOLUTION_STATES
@@ -169,9 +190,7 @@ fn resolve_exports(
     }
     state.resolutions_started += 1;
 
-    let Some(module) = load_module(&path, state)? else {
-        state.active.remove(&path);
-        state.exports.insert(cache_key, (None, Framework::Unknown));
+    let Some(module) = load_module(path, state)? else {
         return Ok(ResolvedExports {
             exports: None,
             framework: Framework::Unknown,
@@ -190,7 +209,7 @@ fn resolve_exports(
                 )
             } else {
                 let resolved =
-                    resolve_exports(&path, &reexport.module, boundary, project, state, depth + 1)?;
+                    resolve_exports(path, &reexport.module, boundary, project, state, depth + 1)?;
                 cacheable &= resolved.cacheable;
                 (resolved.exports.unwrap_or_default(), resolved.framework)
             };
@@ -204,15 +223,8 @@ fn resolve_exports(
             exports.extend(available);
         }
     }
-    state.active.remove(&path);
-    let exports = Some(exports);
-    if cacheable {
-        state
-            .exports
-            .insert(cache_key, (exports.clone(), framework));
-    }
     Ok(ResolvedExports {
-        exports,
+        exports: Some(exports),
         framework,
         cacheable,
     })
@@ -276,18 +288,44 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
 fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     let source = source.as_bytes();
     let mut create_bdd_aliases = BTreeSet::new();
+    let mut local_registrations = RegistrationExports::new();
+    let mut imported_bindings = BTreeMap::new();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
-        if node.kind() == "import_statement"
-            && import_module(node, source) == Some(PLAYWRIGHT_MODULE)
-            && !is_type_only_declaration(node)
-        {
-            collect_named_import_aliases(node, source, "createBdd", &mut create_bdd_aliases);
+        match node.kind() {
+            "import_statement" if import_has_runtime_bindings(node) => {
+                if let Some(module) = import_module(node, source) {
+                    collect_imported_binding_origins(node, source, module, &mut imported_bindings);
+                    if FRAMEWORK_MODULES.contains(&module) {
+                        let available = registration_exports_for_module(module);
+                        collect_imported_registrations(
+                            node,
+                            source,
+                            &available,
+                            &mut local_registrations,
+                        );
+                    }
+                    collect_factory_aliases(
+                        node,
+                        source,
+                        &registration_exports_for_module(module),
+                        &mut create_bdd_aliases,
+                    );
+                }
+            }
+            "variable_declarator" if is_top_level_variable(node) => {
+                collect_commonjs_imports(
+                    node,
+                    source,
+                    &mut create_bdd_aliases,
+                    &mut local_registrations,
+                );
+            }
+            _ => {}
         }
         push_named_children_reverse(node, &mut stack);
     }
 
-    let mut local_registrations = RegistrationExports::new();
     let mut direct_export_names = Vec::new();
     let mut reexports = Vec::new();
     let mut stack = vec![tree.root_node()];
@@ -322,20 +360,26 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
         push_named_children_reverse(node, &mut stack);
     }
 
-    let direct_exports = direct_export_names
-        .into_iter()
-        .filter_map(|(local, exported)| {
-            local_registrations
-                .get(&local)
-                .cloned()
-                .map(|registration| (exported, registration))
-        })
-        .collect::<RegistrationExports>();
-    let framework = if direct_exports.is_empty() {
-        Framework::Unknown
-    } else {
-        Framework::PlaywrightBdd
-    };
+    let mut direct_exports = RegistrationExports::new();
+    for (local, exported) in direct_export_names {
+        if let Some(registration) = local_registrations.get(&local).cloned() {
+            direct_exports.insert(exported, registration);
+        } else if let Some((module, imported)) = imported_bindings.get(&local) {
+            // `import { Given as Setup } from './a'; export { Setup as Given }` is semantically
+            // a re-export even though its syntax is split across two statements. Keeping the
+            // module edge preserves provenance through arbitrarily chained local barrels.
+            reexports.push(Reexport {
+                module: module.clone(),
+                specifiers: vec![(imported.clone(), exported)],
+                star: false,
+            });
+        }
+    }
+    let framework = direct_exports
+        .values()
+        .fold(Framework::Unknown, |current, export| {
+            merge_framework(current, export.framework)
+        });
     ModuleFacts {
         reexports,
         direct_exports,
@@ -343,25 +387,157 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     }
 }
 
-fn collect_named_import_aliases(
+fn collect_imported_registrations(
     import: Node<'_>,
     source: &[u8],
-    expected: &str,
+    available: &RegistrationExports,
+    local_registrations: &mut RegistrationExports,
+) {
+    let mut stack = vec![import];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
+            if let Some(name) = node.child_by_field_name("name") {
+                let imported = node_text(name, source);
+                if let Some(registration) = available.get(imported) {
+                    let local = node
+                        .child_by_field_name("alias")
+                        .map_or(imported, |alias| node_text(alias, source));
+                    local_registrations.insert(local.to_owned(), registration.clone());
+                }
+            }
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+}
+
+fn collect_imported_binding_origins(
+    import: Node<'_>,
+    source: &[u8],
+    module: &str,
+    origins: &mut BTreeMap<String, (String, String)>,
+) {
+    let mut stack = vec![import];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
+            if let Some(name) = node.child_by_field_name("name") {
+                let imported = node_text(name, source);
+                let local = node
+                    .child_by_field_name("alias")
+                    .map_or(imported, |alias| node_text(alias, source));
+                origins.insert(local.to_owned(), (module.to_owned(), imported.to_owned()));
+            }
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+}
+
+fn collect_factory_aliases(
+    import: Node<'_>,
+    source: &[u8],
+    available: &RegistrationExports,
     aliases: &mut BTreeSet<String>,
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
         if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
             if let Some(name) = node.child_by_field_name("name") {
-                if node_text(name, source) == expected {
-                    let alias = node
+                let imported = node_text(name, source);
+                if available.get(imported).is_some_and(|export| {
+                    export.kind == super::ast::RegistrationExportKind::Factory
+                }) {
+                    let local = node
                         .child_by_field_name("alias")
-                        .map_or(expected, |alias| node_text(alias, source));
-                    aliases.insert(alias.to_owned());
+                        .map_or(imported, |alias| node_text(alias, source));
+                    aliases.insert(local.to_owned());
                 }
             }
         }
         push_named_children_reverse(node, &mut stack);
+    }
+}
+
+fn collect_commonjs_imports(
+    declarator: Node<'_>,
+    source: &[u8],
+    create_bdd_aliases: &mut BTreeSet<String>,
+    local_registrations: &mut RegistrationExports,
+) {
+    let (Some(pattern), Some(value)) = (
+        declarator.child_by_field_name("name"),
+        declarator.child_by_field_name("value"),
+    ) else {
+        return;
+    };
+    if pattern.kind() != "object_pattern" || call_identifier(value, source) != Some("require") {
+        return;
+    }
+    let Some(module) = call_string_argument(value, source) else {
+        return;
+    };
+    if FRAMEWORK_MODULES.contains(&module) {
+        collect_pattern_registrations(
+            pattern,
+            source,
+            &registration_exports_for_module(module),
+            local_registrations,
+        );
+    }
+    if module == super::ast::PLAYWRIGHT_MODULE {
+        collect_pattern_alias(pattern, source, "createBdd", create_bdd_aliases);
+    }
+}
+
+fn collect_pattern_registrations(
+    pattern: Node<'_>,
+    source: &[u8],
+    available: &RegistrationExports,
+    local_registrations: &mut RegistrationExports,
+) {
+    let mut cursor = pattern.walk();
+    for binding in pattern.named_children(&mut cursor) {
+        let (imported, local) = pattern_binding(binding, source);
+        if let (Some(imported), Some(local)) = (imported, local) {
+            if let Some(registration) = available.get(imported) {
+                local_registrations.insert(local.to_owned(), registration.clone());
+            }
+        }
+    }
+}
+
+fn collect_pattern_alias(
+    pattern: Node<'_>,
+    source: &[u8],
+    expected: &str,
+    aliases: &mut BTreeSet<String>,
+) {
+    let mut cursor = pattern.walk();
+    for binding in pattern.named_children(&mut cursor) {
+        let (imported, local) = pattern_binding(binding, source);
+        if imported == Some(expected) {
+            if let Some(local) = local {
+                aliases.insert(local.to_owned());
+            }
+        }
+    }
+}
+
+fn pattern_binding<'a>(binding: Node<'_>, source: &'a [u8]) -> (Option<&'a str>, Option<&'a str>) {
+    match binding.kind() {
+        "shorthand_property_identifier_pattern" => {
+            let name = node_text(binding, source);
+            (Some(name), Some(name))
+        }
+        "pair_pattern" => {
+            let key = binding.child_by_field_name("key");
+            let value = binding.child_by_field_name("value");
+            match (key, value) {
+                (Some(key), Some(value)) if value.kind() == "identifier" => {
+                    (Some(node_text(key, source)), Some(node_text(value, source)))
+                }
+                _ => (None, None),
+            }
+        }
+        _ => (None, None),
     }
 }
 
@@ -441,6 +617,13 @@ fn call_identifier<'a>(mut call: Node<'_>, source: &'a [u8]) -> Option<&'a str> 
         function = function.named_child(0)?;
     }
     (function.kind() == "identifier").then(|| node_text(function, source))
+}
+
+fn call_string_argument<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    let arguments = call.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let argument = arguments.named_children(&mut cursor).next()?;
+    string_literal(argument, source)
 }
 
 fn is_top_level_variable(declarator: Node<'_>) -> bool {
