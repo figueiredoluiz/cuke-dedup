@@ -92,11 +92,18 @@ if [[ "$check_dependencies" == "1" ]]; then
   fi
   if ! cargo deny --version >/dev/null 2>&1; then
     echo "cargo-deny is required by the full gate and when Rust dependency policy files change." >&2
-    echo "Install it with: cargo +stable install cargo-deny --locked" >&2
+    echo "Install it with: cargo +stable install cargo-deny --version 0.20.2 --locked" >&2
+    exit 1
+  fi
+  if ! cargo shear --version >/dev/null 2>&1; then
+    echo "cargo-shear is required by the full gate and when Rust dependency files change." >&2
+    echo "Install it with: cargo +stable install cargo-shear --version 1.13.4 --locked" >&2
     exit 1
   fi
   cargo audit --deny warnings
   cargo audit --deny warnings --file fuzz/Cargo.lock
   cargo deny check advisories bans licenses sources
   cargo deny --manifest-path fuzz/Cargo.toml check advisories bans licenses sources
+  cargo shear --deny-warnings
+  (cd fuzz && cargo shear --deny-warnings)
 fi
