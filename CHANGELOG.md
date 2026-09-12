@@ -5,6 +5,13 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Changed
+
+- Release binaries abort on panic and ship without a symbol table, which reduces the published
+  archive for each platform by about 21 percent, from 2,499,615 to 1,972,110 bytes on
+  `aarch64-apple-darwin`, with no measured analysis slowdown. Only the binaries this project
+  distributes are affected; a crate depending on CukeDedup keeps its own release profile.
+
 ### Fixed
 
 - Near-duplicate analysis now distinguishes assertions targeting different properties, expecting
