@@ -654,8 +654,11 @@ export const expect = createAssertionFactory();
     .unwrap();
     let path = directory.path().join("steps/example.steps.ts");
     let source = r#"
-import { Then, expect } from '~/fixtures/test';
+import { Then } from '~/fixtures/test';
+import { expect } from '~/fixtures/test';
+import * as api from '~/fixtures/test';
 Then('a facade assertion', ({ state }) => expect(state).toBe('ready'));
+api.Then('a facade namespace is not assertion provenance', ({ state }) => api.expect(state).toBe('ready'));
 "#;
     fs::write(&path, source).unwrap();
     let file = SourceFile {
@@ -667,11 +670,16 @@ Then('a facade assertion', ({ state }) => expect(state).toBe('ready'));
     let extracted = extract_detailed_impl(source, &file, &mut session).unwrap();
 
     assert!(extracted.diagnostics.is_empty());
-    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(extracted.definitions.len(), 2);
     assert_eq!(extracted.definitions[0].handler.behavior_signature.len(), 1);
     assert!(
         extracted.definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:")
     );
+    assert!(extracted.definitions[1]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|event| !event.starts_with("assert:")));
 }
 
 #[test]
@@ -1279,7 +1287,11 @@ Then('default assertion import', ({ state }) => check(state).toBe('ready'));
     for source in cases {
         let definitions = extract_ts(source);
         assert_eq!(definitions.len(), 1, "{source}");
-        assert_eq!(definitions[0].handler.behavior_signature.len(), 1);
+        assert_eq!(
+            definitions[0].handler.behavior_signature.len(),
+            1,
+            "{source}"
+        );
         assert!(
             definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
             "{source}: {:?}",
@@ -1320,6 +1332,19 @@ const expect = makeAssertionFactory();
 Then('shadowed by variable', ({ state }) => expect(state).toBe('ready'));
 "#,
         r#"
+if (enabled) { var expect = makeAssertionFactory(); }
+Then('shadowed by module var hoisting', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+for (var expect of factories) { consume(expect); }
+Then('shadowed by module loop var hoisting', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+if (enabled) { var require = makeLoader(); }
+const { expect: check } = require('@playwright/test');
+Then('shadowed module require var has no provenance', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
 function expect(value) { return makeAssertion(value); }
 Then('shadowed by declaration', ({ state }) => expect(state).toBe('ready'));
 "#,
@@ -1335,8 +1360,55 @@ import { expect as check } from '@playwright/test';
 Then('trusted alias shadowed by parameter', (check, state) => check(state).toBe('ready'));
 "#,
         r#"
-try { work(); } catch (expect) { recover(expect); }
-Then('shadowed by catch binding', ({ state }) => expect(state).toBe('ready'));
+import { expect as check } from '@playwright/test';
+Then('trusted alias shadowed by one parameter', check => check(state).toBe('ready'));
+"#,
+        r#"
+function helper() {
+  const { expect: check } = require('@playwright/test');
+  return check;
+}
+Then('nested trusted binding does not leak', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
+function require() { return unrelatedModule(); }
+const { expect: check } = require('@playwright/test');
+Then('shadowed require has no provenance', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
+Then('named function expression shadows ambient', function expect(state) {
+  expect(state).toBe('ready');
+});
+"#,
+        r#"
+Then('shadowed by catch binding', async ({ state }) => {
+  try { await work(); } catch (expect) { expect(state).toBe('ready'); }
+});
+"#,
+        r#"
+Then('shadowed by loop binding', ({ state, factories }) => {
+  for (const expect of factories) { expect(state).toBe('ready'); }
+});
+"#,
+        r#"
+Then('shadowed by function var binding', ({ state, enabled }) => {
+  if (enabled) { var expect = makeAssertionFactory(); }
+  expect(state).toBe('ready');
+});
+"#,
+        r#"
+Then('shadowed by function loop var binding', ({ state, factories }) => {
+  for (var expect of factories) { consume(expect); }
+  expect(state).toBe('ready');
+});
+"#,
+        r#"
+Then('shadowed across switch cases', ({ state }) => {
+  switch (state.kind) {
+    case 'local': let expect = makeAssertionFactory(); break;
+    case 'assert': expect(state).toBe('ready'); break;
+  }
+});
 "#,
         r#"
 ({ expect } = assertionFactories);
@@ -1357,6 +1429,228 @@ Then('shadowed by runtime enum', ({ state }) => expect(state).toBe('ready'));
                 .behavior_signature
                 .iter()
                 .all(|event| !event.starts_with("assert:")),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
+fn handler_local_shadows_do_not_disable_assertions_in_other_handlers() {
+    let cases = [
+        r#"
+const { expect: check } = require('@playwright/test');
+function helper(require) { return require('local-helper'); }
+Then('module CJS assertion remains trusted', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
+import { expect as check } from '@playwright/test';
+const helper = check => check;
+Then('module ESM assertion remains trusted', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
+Then('local function name is shadowed', function expect(state) {
+  expect(state).toBe('ready');
+});
+Then('ambient assertion remains trusted elsewhere', ({ state }) => expect(state).toBe('ready'));
+"#,
+    ];
+
+    for source in cases {
+        let definitions = extract_ts(source);
+        let trusted = definitions.last().expect("assertion step");
+        assert!(
+            trusted
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("assert:")),
+            "{source}: {:?}",
+            trusted.handler.behavior_signature
+        );
+        if definitions.len() == 2 {
+            assert!(definitions[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")));
+        }
+    }
+}
+
+#[test]
+fn nested_scope_shadows_do_not_disable_outer_assertions_in_the_same_handler() {
+    let definition = extract_ts(
+        r#"
+Then('outer assertion remains trusted', ({ state }) => {
+  expect(state).toBe('ready');
+  function helper(expect) { return expect(state).toBe('local'); }
+});
+"#,
+    )
+    .remove(0);
+
+    assert_eq!(
+        definition
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn property_and_lexically_resolved_assignments_preserve_assertion_provenance() {
+    let cases = [
+        r#"
+import * as pw from '@playwright/test';
+Then('namespace property assignment', ({ state }) => {
+  pw.someConfig = true;
+  pw.expect(state).toBe('ready');
+});
+"#,
+        r#"
+Then('bare assertion property assignment', ({ state }) => {
+  expect.custom = true;
+  expect(state).toBe('ready');
+});
+"#,
+        r#"
+Then('destructured assertion property assignment', ({ state, source }) => {
+  ({ value: expect.custom } = source);
+  expect(state).toBe('ready');
+});
+"#,
+        r#"
+import * as pw from '@playwright/test';
+Then('array namespace property assignment', ({ state, source }) => {
+  [pw.value] = source;
+  pw.expect(state).toBe('ready');
+});
+"#,
+        r#"
+{ let expect; expect = makeAssertionFactory(); }
+Then('block assignment stays local', ({ state }) => expect(state).toBe('ready'));
+"#,
+    ];
+
+    for source in cases {
+        let definition = extract_ts(source).remove(0);
+        assert!(
+            definition
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("assert:")),
+            "{source}: {:?}",
+            definition.handler.behavior_signature
+        );
+    }
+
+    let definition = extract_ts(
+        r#"
+function mutate() { expect = makeAssertionFactory(); }
+Then('unresolved outer mutation is conservative', ({ state }) => expect(state).toBe('ready'));
+"#,
+    )
+    .remove(0);
+    assert!(definition
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|event| !event.starts_with("assert:")));
+}
+
+#[test]
+fn javascript_using_loop_bindings_shadow_ambient_expect() {
+    let source = r#"
+Then('using loop binding', ({ state, resources }) => {
+  for (using expect of resources) { expect(state).toBe('ready'); }
+});
+"#;
+    let definitions = extract(source, &file(SourceLanguage::JavaScript)).unwrap();
+    assert_eq!(definitions.len(), 1);
+    assert!(definitions[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|event| !event.starts_with("assert:")));
+}
+
+#[test]
+fn runtime_class_names_shadow_ambient_expect_only_inside_the_class() {
+    for class in [
+        "class expect",
+        "const Wrapper = class expect",
+        "abstract class expect",
+    ] {
+        let source = format!(
+            r#"
+import {{ Then }} from 'playwright-bdd/decorators';
+import {{ Given }} from '@cucumber/cucumber';
+{class} {{
+  @Then('class name is runtime binding')
+  verify(state) {{ expect(state).toBe('ready'); }}
+}}
+Given('ambient remains trusted outside the class', ({{ state }}) => expect(state).toBe('ready'));
+"#
+        );
+        let definitions = extract_ts(&source);
+        assert_eq!(definitions.len(), 2, "{source}");
+        assert!(
+            definitions[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+        assert_eq!(
+            definitions[1]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("assert:")),
+            class.starts_with("const "),
+            "{source}: {:?}",
+            definitions[1].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
+fn block_and_class_static_bindings_stay_within_their_lexical_scopes() {
+    let cases = [
+        r#"
+{ class expect {} }
+Then('block class does not shadow ambient assertion', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+{ function expect(value) { return value; } }
+Then('block function does not shadow ambient assertion', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+Then('class static var stays local', ({ state }) => {
+  class Helper { static { var expect = makeAssertionFactory(); consume(expect); } }
+  expect(state).toBe('ready');
+});
+"#,
+    ];
+
+    for source in cases {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert_eq!(
+            definitions[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .filter(|event| event.starts_with("assert:"))
+                .count(),
+            1,
             "{source}: {:?}",
             definitions[0].handler.behavior_signature
         );
@@ -1404,10 +1698,18 @@ Then('standalone CJS binding', ({ state }) => check(state).toBe('ready'));
 const { expect } = require('@playwright/test');
 Then('shorthand CJS binding', ({ state }) => expect(state).toBe('ready'));
 "#,
+        r#"
+import check = require('expect');
+Then('TypeScript import require binding', ({ state }) => check(state).toBe('ready'));
+"#,
     ] {
         let definitions = extract_ts(source);
         assert_eq!(definitions.len(), 1, "{source}");
-        assert_eq!(definitions[0].handler.behavior_signature.len(), 1);
+        assert_eq!(
+            definitions[0].handler.behavior_signature.len(),
+            1,
+            "{source}"
+        );
         assert!(
             definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
             "{source}: {:?}",
@@ -1417,7 +1719,7 @@ Then('shorthand CJS binding', ({ state }) => expect(state).toBe('ready'));
 }
 
 #[test]
-fn decorated_method_behavior_does_not_include_synthetic_method_events() {
+fn decorated_method_metadata_does_not_inflate_executable_behavior_similarity() {
     let definitions = extract_ts(
         r#"
 import { Given } from 'playwright-bdd/decorators';
@@ -1434,8 +1736,9 @@ class StatusSteps {
 
     assert_eq!(definitions.len(), 2);
     assert!(definitions.iter().all(|definition| {
-        definition.handler.behavior_signature.len() == 1
-            && definition.handler.behavior_signature[0].starts_with("assert:expect#toBe:")
+        definition.handler.behavior_signature.len() == 2
+            && definition.handler.behavior_signature[0] == "method:instance sync"
+            && definition.handler.behavior_signature[1].starts_with("assert:expect#toBe:")
     }));
     assert_ne!(
         definitions[0].handler.behavior_signature,

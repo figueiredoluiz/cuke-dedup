@@ -235,10 +235,13 @@ pub(super) fn fingerprint_method_handler(
         &declared,
         AstMode::Structural,
     );
-    // Method syntax affects exact/normalized fingerprints, but is not itself an executed
-    // behavior. Including a synthetic `method:*` event made any two decorated methods appear to
-    // share 50% behavior when each contained one conflicting assertion.
-    let mut signature = behavior_signature(parameters, source, &declared, assertions);
+    // Preserve invocation semantics for compatibility checks. Similarity removes this metadata
+    // before measuring executed behavior so two one-assertion methods do not gain artificial
+    // 50% overlap merely because both are methods.
+    let mut signature = vec![format!("method:{semantic_prefix}")];
+    signature.extend(behavior_signature(
+        parameters, source, &declared, assertions,
+    ));
     signature.extend(behavior_signature(body, source, &declared, assertions));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
 

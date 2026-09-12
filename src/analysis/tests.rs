@@ -1419,6 +1419,60 @@ Then('the account status indicator shows the final condition', async ({ page }) 
 }
 
 #[test]
+fn decorated_method_metadata_does_not_create_near_duplicate_findings() {
+    let definitions = definitions(
+        r#"
+import { Then } from 'playwright-bdd/decorators';
+import { expect } from '@playwright/test';
+class StatusSteps {
+  @Then('the account status indicator shows the first condition')
+  first({ state }) { expect(state).toBe('ready'); }
+
+  @Then('the account status indicator shows the final condition')
+  second({ state }) { expect(state).toBe('idle'); }
+}
+"#,
+    );
+    assert_eq!(definitions.len(), 2);
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    assert_eq!(handler_similarity(&definitions[0], &definitions[1]), 0.0);
+
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn incompatible_decorated_method_semantics_veto_near_duplicate_findings() {
+    let definitions = definitions(
+        r#"
+import { Then } from 'playwright-bdd/decorators';
+import { expect } from '@playwright/test';
+class StatusSteps {
+  @Then('the account status indicator is visible')
+  first({ state }) { expect(state).toBeVisible(); }
+
+  @Then('the account status indicator is now visible')
+  async second({ state }) { expect(state).toBeVisible(); }
+}
+"#,
+    );
+    assert_eq!(definitions.len(), 2);
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    assert_eq!(handler_similarity(&definitions[0], &definitions[1]), 0.0);
+
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
 fn pair_evidence_retains_source_and_unicode_safe_matcher_delta() {
     let definitions = definitions(
         r#"

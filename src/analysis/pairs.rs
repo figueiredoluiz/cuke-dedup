@@ -1,6 +1,7 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::similarity::{
-    handler_similarity_with_relationship, is_near_matcher, matcher_similarity, round_score,
+    handler_runtime_compatible, handler_similarity_with_relationship, is_near_matcher,
+    matcher_similarity, round_score,
 };
 use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
@@ -248,7 +249,7 @@ pub(super) fn analyze_definition_pairs(
         {
             break;
         }
-        let handler_similarity = if handler_is_needed {
+        let handler_similarity = if handler_is_needed && handler_runtime_compatible(left, right) {
             handler_similarity_with_relationship(
                 same_handler,
                 relationships.same_structure,
@@ -540,6 +541,7 @@ fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
                 .handler
                 .behavior_signature
                 .iter()
+                .filter(|event| !event.starts_with("method:"))
                 .map(|event| intern_class(&mut events, event.as_str()))
                 .collect()
         })

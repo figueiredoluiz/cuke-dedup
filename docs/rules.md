@@ -57,8 +57,12 @@ Matcher wording is close and meaningful handlers share at least 50% ordered beha
 compatible structural or canonical-call evidence. Similar prose alone and unrelated actions do
 not qualify. Review the pair and consolidate only when both definitions express the same behavior.
 
-When handlers are not structurally equivalent, they must share a canonical call action, including
-direct and fluent forms such as `page.click()` and `page.locator(...).click()`.
+When handlers are not structurally equivalent, they must share canonical action evidence: either
+a call action, including direct and fluent forms such as `page.click()` and
+`page.locator(...).click()`, or an assertion with the same matcher and subject shape. Expected
+assertion values and polarity remain semantic during final similarity verification.
+Decorated class methods must also have compatible runtime-affecting semantics: async versus sync,
+static versus instance, generator, getter, and setter differences veto a near-duplicate match.
 
 ### parameterization-candidate
 

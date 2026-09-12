@@ -179,6 +179,11 @@ pub(super) fn import_has_runtime_bindings(node: Node<'_>) -> bool {
     if is_type_only_declaration(node) {
         return false;
     }
+    // TypeScript's `import value = require("module")` places the require clause directly under
+    // the import statement rather than inside an `import_clause` node.
+    if direct_named_child(node, "import_require_clause").is_some() {
+        return true;
+    }
     let Some(clause) = direct_named_child(node, "import_clause") else {
         return false;
     };
@@ -367,6 +372,11 @@ export * as runtime from "runtime";
         assert!(export_has_runtime_bindings(declarations[5]));
         assert!(export_has_runtime_bindings(declarations[6]));
         assert!(export_has_runtime_bindings(declarations[7]));
+
+        let import_require = parse_typescript("import check = require('expect');");
+        assert!(import_has_runtime_bindings(
+            import_require.root_node().named_child(0).unwrap()
+        ));
 
         let mut stack = vec![declarations[2]];
         let mut specifiers = Vec::new();
