@@ -540,6 +540,13 @@ fn assignment_target(node: Node<'_>) -> Option<Node<'_>> {
             node.child_by_field_name("left")
         }
         "update_expression" => node.child_by_field_name("argument"),
+        "unary_expression"
+            if node
+                .child_by_field_name("operator")
+                .is_some_and(|op| op.kind() == "delete") =>
+        {
+            node.child_by_field_name("argument")
+        }
         "for_in_statement" => node
             .child_by_field_name("left")
             .filter(|left| loop_binding_keyword(node, *left).is_none()),

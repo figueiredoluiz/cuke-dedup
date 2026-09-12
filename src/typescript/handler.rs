@@ -723,6 +723,7 @@ struct LocalConstant {
     structural: String,
     safe: bool,
     parameter: bool,
+    lexical: bool,
 }
 
 #[derive(Default)]
@@ -756,6 +757,7 @@ impl LocalConstants {
                                 structural: String::new(),
                                 safe: true,
                                 parameter: true,
+                                lexical: false,
                             });
                     }
                 }
@@ -771,6 +773,22 @@ impl LocalConstants {
                     let mut names = Vec::new();
                     collect_parameter_bindings(name, source, &mut names);
                     for binding_name in names {
+                        let lexical =
+                            declaration.is_none_or(|d| d.kind() != "variable_declaration");
+                        if !lexical
+                            && node.child_by_field_name("value").is_none()
+                            && constants
+                                .bindings
+                                .get(&binding_name)
+                                .is_some_and(|entries| {
+                                    entries.iter().any(|b| {
+                                        b.scope_start == scope.start_byte()
+                                            && b.scope_end == scope.end_byte()
+                                    })
+                                })
+                        {
+                            continue;
+                        }
                         constants
                             .bindings
                             .entry(binding_name)
@@ -783,6 +801,7 @@ impl LocalConstants {
                                 structural: String::new(),
                                 safe: false,
                                 parameter: false,
+                                lexical,
                             });
                     }
                     // Destructuring is a shadow too, but is not a proven primitive constant.
@@ -846,6 +865,7 @@ impl LocalConstants {
                         structural,
                         safe,
                         parameter: false,
+                        lexical: binding.lexical,
                     };
                 }
             });
@@ -874,9 +894,15 @@ impl LocalConstants {
             .min_by(|left, right| {
                 let left_width = left.scope_end.saturating_sub(left.scope_start);
                 let right_width = right.scope_end.saturating_sub(right.scope_start);
-                left_width
-                    .cmp(&right_width)
-                    .then_with(|| right.declaration_start.cmp(&left.declaration_start))
+                left_width.cmp(&right_width).then_with(|| {
+                    let rank = |b: &LocalConstant| {
+                        (
+                            b.lexical || b.declaration_start <= use_site.start_byte(),
+                            b.declaration_start,
+                        )
+                    };
+                    rank(right).cmp(&rank(left))
+                })
             })
             .filter(|binding| binding.declaration_start <= use_site.start_byte())
     }
@@ -1061,8 +1087,8 @@ fn behavior_signature(
     signature
 }
 
-fn collect_behavior(
-    node: Node<'_>,
+fn collect_behavior<'tree>(
+    node: Node<'tree>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
@@ -1070,18 +1096,40 @@ fn collect_behavior(
     output: &mut Vec<String>,
 ) {
     let root_id = node.id();
-    let mut stack = vec![node];
-    while let Some(node) = stack.pop() {
-        // Nested functions have their own execution; calls are not evaluated here.
-        if node.id() != root_id && is_function_like(node) {
-            continue;
+    let mut stack = vec![(node, false)];
+    let push_children = |node: Node<'tree>, deferred, stack: &mut Vec<_>| {
+        let start = stack.len();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            stack.push((child, deferred));
         }
+        stack[start..].reverse();
+    };
+    while let Some((node, deferred)) = stack.pop() {
+        if node.id() != root_id && is_function_like(node) {
+            let mut parent = node.parent();
+            while parent
+                .is_some_and(|p| super::registrations::unwrap_registration_callee(p) == Some(node))
+            {
+                parent = parent.and_then(|p| p.parent());
+            }
+            if !parent.is_some_and(|p| matches!(p.kind(), "arguments" | "call_expression")) {
+                continue;
+            }
+        }
+        // Retain syntactic call evidence in callbacks without promoting their assertions
+        // to executed behavior. Dropping the body makes unrelated callbacks look identical.
+        let deferred = deferred || (node.id() != root_id && is_function_like(node));
         match node.kind() {
             "call_expression" => {
                 if let Some(event) =
                     assertion_behavior_event(node, source, declared, assertions, local_constants)
                 {
-                    output.push(event);
+                    if deferred && event != UNRESOLVED_ASSERTION {
+                        output.push(format!("deferred-{event}"));
+                    } else {
+                        output.push(event);
+                    }
                     // Treat the complete assertion as one atomic behavior event. Its subject and
                     // expected values are already fingerprinted, so traversing its children would
                     // count subject calls such as `page.locator()` a second time and make overlap
@@ -1113,9 +1161,9 @@ fn collect_behavior(
                             continue;
                         }
                         // Record the executed body, not an extra generic wrapper-call event.
-                        push_named_children_reverse(invoked, &mut stack);
+                        push_children(invoked, deferred, &mut stack);
                         if let Some(arguments) = node.child_by_field_name("arguments") {
-                            push_named_children_reverse(arguments, &mut stack);
+                            push_children(arguments, deferred, &mut stack);
                         }
                         continue;
                     }
@@ -1128,7 +1176,7 @@ fn collect_behavior(
             }
             _ => {}
         }
-        push_named_children_reverse(node, &mut stack);
+        push_children(node, deferred, &mut stack);
     }
 }
 

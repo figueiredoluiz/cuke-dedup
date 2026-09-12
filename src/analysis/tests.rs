@@ -108,6 +108,26 @@ fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
 #[test]
 fn future_local_declarations_do_not_expose_outer_assertion_values() {
     for (body, comparable) in [
+        (
+            "expect(state).toBe(expected); var expected = 'ready';",
+            true,
+        ),
+        ("var expected; expect(state).toBe(expected);", true),
+        (
+            "var expected = external; expect(state).toBe(expected);",
+            false,
+        ),
+        (
+            "{ expect(state).toBe(expected); let expected = 'ready'; }",
+            false,
+        ),
+    ] {
+        let defs = definitions(&format!(
+            "Then('state', ({{state, expected}}) => {{ {body} }});"
+        ));
+        assert_eq!(defs[0].handler.comparable, comparable, "{body}");
+    }
+    for (body, comparable) in [
         ("const expected = 'ready'; { expect(state).toBe(expected); const expected = 'idle'; }", false),
         ("const expected = 'ready'; { const copy = expected; const expected = 'idle'; expect(state).toBe(copy); }", false),
         ("const expected = 'ready'; { expect(state).toBe(expected); let expected; }", false),
@@ -377,6 +397,14 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
     let cjs =
         "const {Then} = require('@cucumber/cucumber'); const api = require('@playwright/test');";
     for (prefix, mutation, trusted) in [
+        (valid, "const other = api; delete other.expect;", false),
+        (cjs, "delete api['expect'];", false),
+        (valid, "const other = api; delete other.other;", true),
+        (
+            valid,
+            "function local(api) { const other = api; delete other.expect; }",
+            true,
+        ),
         (
             valid,
             "const other = api; other.expect = replacement;",
@@ -755,6 +783,80 @@ fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
     assert_eq!(arguments[0].handler.behavior_signature.len(), 2);
     assert_eq!(arguments[0].handler.behavior_signature[0], "call:prepare");
     assert!(arguments[0].handler.behavior_signature[1].starts_with("assert:"));
+}
+
+#[test]
+fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
+    let (_directory, config) = config();
+    for callback in ["async () =>", "async function ()", "function* ()"] {
+        for (left_wrapper, right_wrapper, right_calls, expected) in [
+            (
+                "withTransaction",
+                "withTransaction",
+                "loadOrder(); applyShipping(); commit();",
+                false,
+            ),
+            (
+                "alpha",
+                "beta",
+                "loadCart(); applyDiscount(); save();",
+                true,
+            ),
+        ] {
+            let defs = definitions(&format!(
+                "When('the admin applies the discount rule', () => {{ {left_wrapper}({callback} {{ loadCart(); applyDiscount(); save(); }}); }});\nWhen('the admin applies the shipping rule', () => {{ {right_wrapper}({callback} {{ {right_calls} }}); }});"
+            ));
+            assert_eq!(defs[0].handler.behavior_signature.len(), 4);
+            assert_eq!(defs[1].handler.behavior_signature.len(), 4);
+            for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                let result = analyze(pair, Vec::new(), &config).unwrap();
+                assert_eq!(
+                    result
+                        .findings
+                        .iter()
+                        .any(|f| f.rule == Rule::NearDuplicateStep),
+                    expected,
+                    "{callback} {left_wrapper} {right_wrapper} {right_calls}"
+                );
+                assert!(!result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateHandler));
+            }
+        }
+    }
+    for body in [
+        "register(() => { (() => expect(state).toBe('ready'))(); });",
+        "register(((function () { load(); render(); }) as Callback));",
+        "register(() => nested(() => load()));",
+    ] {
+        let defs = definitions(&format!("Then('callback example', () => {{ {body} }});"));
+        assert!(defs[0].handler.behavior_signature.len() > 1, "{body}");
+        assert!(
+            defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|e| !e.starts_with("assert:")),
+            "{body}"
+        );
+    }
+    let conflicting = definitions(
+        "Then('callback expects ready', ({state}) => register(() => expect(state).toBe('ready'))); Then('callback expects idle', ({state}) => register(() => expect(state).toBe('idle')));",
+    );
+    assert_ne!(
+        conflicting[0].handler.behavior_signature,
+        conflicting[1].handler.behavior_signature
+    );
+    assert!(conflicting.iter().all(|definition| definition
+        .handler
+        .behavior_signature
+        .iter()
+        .any(|event| event.starts_with("deferred-assert:"))));
+    let unresolved = definitions(
+        "Then('callback unresolved', ({state}) => register(() => expect(state).toBe(external)));",
+    );
+    assert!(!unresolved[0].handler.comparable);
 }
 
 #[test]

@@ -4,6 +4,24 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "review-gap-callback-call-evidence",
+      "path": "review-gaps",
+      "arguments": ["--definitions", "callbacks.ts"],
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the invoice grid is refreshed", "the invoice list is refreshed"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the admin applies the discount rule", "the admin applies the shipping rule"]
+        }
+      ]
+    },
+    {
       "name": "review-gap-namespace-alias",
       "path": "review-gaps",
       "arguments": [
