@@ -131,6 +131,9 @@ impl AssertionBindings {
     }
 
     pub(super) fn is_factory(&self, node: Node<'_>, source: &[u8]) -> bool {
+        let Some(node) = super::registrations::unwrap_registration_callee(node) else {
+            return false;
+        };
         if node.kind() == "identifier" {
             let name = node_text(node, source);
             return self.identifiers.contains(name) && !self.is_locally_shadowed(node, name);
@@ -139,7 +142,8 @@ impl AssertionBindings {
             return false;
         }
         let (Some(object), Some(property)) = (
-            node.child_by_field_name("object"),
+            node.child_by_field_name("object")
+                .and_then(super::registrations::unwrap_registration_callee),
             node.child_by_field_name("property"),
         ) else {
             return false;
@@ -183,7 +187,9 @@ impl AssertionBindings {
                     let Some(name) = node.child_by_field_name("name") else {
                         continue;
                     };
-                    if node_text(name, source) == "expect" {
+                    if node_text(name, source) == "expect"
+                        || (module == "expect" && node_text(name, source) == "default")
+                    {
                         let local = node.child_by_field_name("alias").unwrap_or(name);
                         let local = node_text(local, source).to_owned();
                         self.identifiers.insert(local.clone());

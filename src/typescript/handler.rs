@@ -1211,7 +1211,9 @@ fn find_expect_invocation<'tree>(
     for _ in 0..MAX_ASSERTION_CHAIN_DEPTH {
         match current.kind() {
             "call_expression" => {
-                let function = current.child_by_field_name("function")?;
+                let function = super::registrations::unwrap_registration_callee(
+                    current.child_by_field_name("function")?,
+                )?;
                 if assertions.is_factory(function, source) {
                     return Some(current);
                 }

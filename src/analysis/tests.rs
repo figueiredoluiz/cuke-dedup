@@ -45,6 +45,67 @@ fn public_analysis_rejects_mutated_configs_above_hard_safety_ceilings() {
 }
 
 #[test]
+fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
+    for (import, factory, trusted) in [
+        ("import {default as check} from 'expect';", "check", true),
+        ("const check = require('expect');", "(check)", true),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "(check as any)",
+            true,
+        ),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "check!",
+            true,
+        ),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "(check satisfies Function)",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            "((api as PW).expect)",
+            true,
+        ),
+        (
+            "import {default as check} from '@playwright/test';",
+            "check",
+            false,
+        ),
+        (
+            "import {default as check} from 'unrelated';",
+            "(check)",
+            false,
+        ),
+        (
+            "import type {default as check} from 'expect';",
+            "check",
+            false,
+        ),
+    ] {
+        let defs = definitions(&format!("{import} Then('parcel is ready', ({{state}}) => {factory}(state).toBe('ready')); Then('parcel is idle', ({{state}}) => {factory}(state).toBe('idle'));"));
+        assert_eq!(defs.len(), 2, "{import} {factory}");
+        assert_eq!(
+            defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e.starts_with("assert:")),
+            trusted,
+            "{import} {factory}"
+        );
+        if trusted {
+            assert_ne!(
+                defs[0].handler.behavior_signature,
+                defs[1].handler.behavior_signature
+            );
+        }
+    }
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"
