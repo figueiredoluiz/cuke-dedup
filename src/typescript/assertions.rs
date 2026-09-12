@@ -294,6 +294,16 @@ fn resolved_facade_modules(
         }
         super::ast::push_named_children_reverse(node, &mut stack);
     }
+    let paths: BTreeSet<_> = modules
+        .iter()
+        .filter_map(|module| registrations.module_paths.get(module))
+        .collect();
+    modules.extend(
+        registrations
+            .module_paths
+            .iter()
+            .filter_map(|(module, path)| paths.contains(path).then_some(module.clone())),
+    );
     modules
 }
 
@@ -706,7 +716,7 @@ fn is_local_scope(node: Node<'_>) -> bool {
     )
 }
 
-fn nearest_function_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
+pub(super) fn nearest_function_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     while let Some(candidate) = node {
         if matches!(
             candidate.kind(),

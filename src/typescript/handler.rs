@@ -721,6 +721,8 @@ struct LocalConstant {
     scope_end: usize,
     alpha: String,
     structural: String,
+    safe: bool,
+    parameter: bool,
 }
 
 #[derive(Default)]
@@ -734,26 +736,46 @@ impl LocalConstants {
         let mut pending = Vec::new();
         let mut stack = vec![handler];
         while let Some(node) = stack.pop() {
-            if node.id() != handler.id() && is_function_like(node) {
-                continue;
+            if is_function_like(node) {
+                if let Some(parameters) = node
+                    .child_by_field_name("parameters")
+                    .or_else(|| node.child_by_field_name("parameter"))
+                {
+                    let mut names = Vec::new();
+                    collect_parameter_bindings(parameters, source, &mut names);
+                    for name in names {
+                        constants
+                            .bindings
+                            .entry(name)
+                            .or_default()
+                            .push(LocalConstant {
+                                declaration_start: node.start_byte(),
+                                scope_start: node.start_byte(),
+                                scope_end: node.end_byte(),
+                                alpha: String::new(),
+                                structural: String::new(),
+                                safe: true,
+                                parameter: true,
+                            });
+                    }
+                }
             }
             if node.kind() == "variable_declarator" {
                 let declaration = node.parent();
-                if declaration.is_some_and(is_const_declaration) {
-                    if let (Some(name), Some(value), Some(scope)) = (
-                        node.child_by_field_name("name")
-                            .filter(|name| name.kind() == "identifier"),
-                        node.child_by_field_name("value"),
-                        local_constant_scope(node.parent(), handler),
-                    ) {
-                        pending.push((
-                            node_text(name, source).to_owned(),
-                            node.start_byte(),
-                            scope.start_byte(),
-                            scope.end_byte(),
-                            value,
-                        ));
-                    }
+                if let (Some(name), Some(value), Some(scope)) = (
+                    node.child_by_field_name("name")
+                        .filter(|name| name.kind() == "identifier"),
+                    node.child_by_field_name("value"),
+                    local_constant_scope(node.parent(), handler),
+                ) {
+                    pending.push((
+                        node_text(name, source).to_owned(),
+                        node.start_byte(),
+                        scope.start_byte(),
+                        scope.end_byte(),
+                        value,
+                        declaration.is_some_and(is_const_declaration),
+                    ));
                 }
             }
             push_named_children_reverse(node, &mut stack);
@@ -761,8 +783,16 @@ impl LocalConstants {
         // Declaration order makes earlier immutable constants available while serializing later
         // initializers. This preserves semantics through bounded alias chains without recursive
         // AST traversal; forward references remain unresolved because they are invalid at runtime.
-        pending.sort_by_key(|(_, declaration_start, _, _, _)| *declaration_start);
-        for (name, declaration_start, scope_start, scope_end, value) in pending {
+        pending.sort_by_key(|(_, declaration_start, _, _, _, _)| *declaration_start);
+        for (name, declaration_start, scope_start, scope_end, value, immutable) in pending {
+            let safe = immutable
+                && match value.kind() {
+                    "string" | "number" | "true" | "false" | "null" | "undefined" => true,
+                    "identifier" => constants
+                        .binding(node_text(value, source), value)
+                        .is_some_and(|binding| binding.safe),
+                    _ => false,
+                };
             let alpha = stable_fingerprint(&serialize_assertion_value(
                 value,
                 source,
@@ -787,12 +817,24 @@ impl LocalConstants {
                     scope_end,
                     alpha,
                     structural,
+                    safe,
+                    parameter: false,
                 });
         }
         constants
     }
 
     fn resolve(&self, name: &str, use_site: Node<'_>, mode: AstMode) -> Option<&str> {
+        let binding = self
+            .binding(name, use_site)
+            .filter(|binding| !binding.parameter)?;
+        Some(match mode {
+            AstMode::Alpha | AstMode::Normalized => binding.alpha.as_str(),
+            AstMode::Structural => binding.structural.as_str(),
+        })
+    }
+
+    fn binding(&self, name: &str, use_site: Node<'_>) -> Option<&LocalConstant> {
         self.bindings
             .get(name)?
             .iter()
@@ -807,13 +849,6 @@ impl LocalConstants {
                 left_width
                     .cmp(&right_width)
                     .then_with(|| right.declaration_start.cmp(&left.declaration_start))
-            })
-            .map(|binding| match mode {
-                AstMode::Alpha => binding.alpha.as_str(),
-                AstMode::Structural => binding.structural.as_str(),
-                // Assertion values currently use only semantic modes. Returning the normalized
-                // alpha form keeps this helper total if another caller is added later.
-                AstMode::Normalized => binding.alpha.as_str(),
             })
     }
 }
@@ -843,6 +878,9 @@ fn local_constant_scope<'tree>(
     mut node: Option<Node<'tree>>,
     handler: Node<'tree>,
 ) -> Option<Node<'tree>> {
+    if node.is_some_and(|declaration| declaration.kind() == "variable_declaration") {
+        return super::assertions::nearest_function_scope(node);
+    }
     while let Some(candidate) = node {
         if candidate.id() == handler.id() {
             return Some(candidate);
@@ -973,7 +1011,7 @@ fn collect_behavior(
     let root_id = node.id();
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
-        // Match constant collection: nested functions have their own bindings and execution.
+        // Nested functions have their own execution; calls are not evaluated here.
         if node.id() != root_id && is_function_like(node) {
             continue;
         }
@@ -1049,10 +1087,9 @@ fn assertion_behavior_event(
     let mut pending = vec![expected];
     while let Some(value) = pending.pop() {
         if matches!(value.kind(), "identifier" | "shorthand_property_identifier")
-            && !declared.contains_key(node_text(value, source))
-            && local_constants
-                .resolve(node_text(value, source), value, AstMode::Alpha)
-                .is_none()
+            && !local_constants
+                .binding(node_text(value, source), value)
+                .is_some_and(|binding| binding.safe)
         {
             return Some(UNRESOLVED_ASSERTION.to_owned());
         }

@@ -696,6 +696,24 @@ Given('an unrelated module is not assertion provenance', ({ state }) => localChe
         .behavior_signature
         .iter()
         .all(|event| !event.starts_with("assert:")));
+    for specifier in [
+        "../fixtures/test",
+        "../fixtures/test.ts",
+        "~/fixtures/test.ts",
+    ] {
+        let split_source = source.replace(
+            "import { expect } from '~/fixtures/test';",
+            &format!("import {{ expect }} from '{specifier}';"),
+        );
+        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+        let split = extract_detailed_impl(&split_source, &file, &mut session).unwrap();
+        assert!(split.diagnostics.is_empty());
+        assert_eq!(
+            split.definitions[0].handler.behavior_signature,
+            extracted.definitions[0].handler.behavior_signature,
+            "{specifier}"
+        );
+    }
 }
 
 #[test]

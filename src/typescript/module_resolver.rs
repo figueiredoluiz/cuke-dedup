@@ -52,6 +52,7 @@ struct ResolvedExports {
 
 #[derive(Debug)]
 pub(super) struct RegistrationResolution {
+    pub(super) module_path: Option<PathBuf>,
     pub(super) exports: RegistrationExports,
     pub(super) framework: Framework,
 }
@@ -103,6 +104,11 @@ impl RegistrationResolver {
         ) {
             Ok(resolved) => Ok(RegistrationOutcome {
                 resolution: resolved.exports.map(|exports| RegistrationResolution {
+                    module_path: self
+                        .project
+                        .resolve(importer, specifier, &boundary)
+                        .ok()
+                        .flatten(),
                     exports,
                     framework: resolved.framework,
                 }),

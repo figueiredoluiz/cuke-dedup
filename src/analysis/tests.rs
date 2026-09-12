@@ -114,6 +114,13 @@ fn exact_handlers_require_compatible_assertion_provenance_across_files() {
 fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
     let (_directory, config) = config();
     for (prefix, body, expected_duplicates) in [
+        ("function getExpected() { return VALUE; }", "() => { const expected = getExpected(); expect(state).toBe(expected); }", 0),
+        ("const external = VALUE;", "() => { const expected = external; expect(state).toBe(expected); }", 0),
+        ("const expected = VALUE;", "() => { { const expected = 'local'; } expect(state).toBe(expected); }", 0),
+        ("function getExpected() { return VALUE; }", "(expected) => { { var expected = getExpected(); } expect(state).toBe(expected); }", 0),
+        ("", "() => expect(state).toSatisfy(actual => actual > 0)", 1),
+        ("const external = VALUE;", "() => expect(state).toSatisfy(actual => actual === external)", 0),
+        ("", "() => { const expected = 'ready'; const alias = expected; expect(state).toBe(alias); }", 1),
         (
             "const expected = VALUE;",
             "() => expect(state).toBe(expected)",

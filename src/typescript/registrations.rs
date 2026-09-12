@@ -25,6 +25,7 @@ pub(super) struct UnresolvedModuleReason {
 }
 
 pub(super) struct RegistrationNames {
+    pub(super) module_paths: BTreeMap<String, std::path::PathBuf>,
     aliases: RegistrationExports,
     namespaces: BTreeMap<String, RegistrationExports>,
     unresolved_aliases: BTreeMap<String, String>,
@@ -240,6 +241,7 @@ pub(super) fn detect_registrations(
         ..RegistrationDiscovery::default()
     };
     let mut effective_framework = framework;
+    let mut module_paths = BTreeMap::new();
     let mut stack = vec![root];
 
     while let Some(node) = stack.pop() {
@@ -264,6 +266,9 @@ pub(super) fn detect_registrations(
                                 });
                         }
                         outcome.resolution.map(|resolution| {
+                            if let Some(path) = resolution.module_path {
+                                module_paths.insert(module.to_owned(), path);
+                            }
                             effective_framework =
                                 merge_framework(effective_framework, resolution.framework);
                             resolution.exports
@@ -369,6 +374,7 @@ pub(super) fn detect_registrations(
     resolve_wrapper_candidates(&mut discovered);
 
     Ok(RegistrationNames {
+        module_paths,
         aliases: discovered.aliases,
         namespaces: discovered.namespaces,
         unresolved_aliases: discovered.unresolved_aliases,
