@@ -7,6 +7,7 @@ use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
 const UNRESOLVED_ASSERTION: &str = "assert:unresolved";
+const DEFERRED_UNRESOLVED_ASSERTION: &str = "deferred-assert:unresolved";
 
 #[derive(Clone, Copy)]
 pub(super) struct HandlerBinding<'tree> {
@@ -256,7 +257,7 @@ pub(super) fn fingerprint_method_handler(
         &local_constants,
     ));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
-    let comparable = !signature.iter().any(|event| event == UNRESOLVED_ASSERTION);
+    let comparable = !signature.iter().any(|event| is_unresolved_assertion(event));
 
     Some(HandlerFingerprint {
         exact: stable_fingerprint(&exact),
@@ -483,7 +484,7 @@ fn fingerprint_node(
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
-    let comparable = comparable && !signature.iter().any(|event| event == UNRESOLVED_ASSERTION);
+    let comparable = comparable && !signature.iter().any(|event| is_unresolved_assertion(event));
     HandlerFingerprint {
         exact: stable_fingerprint(&exact),
         normalized: stable_fingerprint(&normalized),
@@ -734,6 +735,24 @@ struct LocalConstants {
 impl LocalConstants {
     fn collect(handler: Node<'_>, source: &[u8], declared: &BTreeMap<String, String>) -> Self {
         let mut constants = Self::default();
+        let mut ancestor = handler.parent();
+        while let Some(node) = ancestor {
+            if matches!(
+                node.kind(),
+                "class" | "class_declaration" | "abstract_class_declaration"
+            ) {
+                if let Some(name) = node.child_by_field_name("name") {
+                    constants.insert_unresolved_shadow(
+                        name,
+                        source,
+                        node.start_byte(),
+                        node,
+                        false,
+                    );
+                }
+            }
+            ancestor = node.parent();
+        }
         let mut pending = Vec::new();
         let mut stack = vec![handler];
         while let Some(node) = stack.pop() {
@@ -772,6 +791,9 @@ impl LocalConstants {
                         .zip(local_constant_scope(node.parent(), handler))
                         .map(|(name, scope)| (name, scope, scope.start_byte(), false))
                 }
+                "function_expression" | "generator_function" | "class" => node
+                    .child_by_field_name("name")
+                    .map(|name| (name, node, node.start_byte(), false)),
                 "catch_clause" => node
                     .child_by_field_name("parameter")
                     .map(|parameter| (parameter, node, node.start_byte(), false)),
@@ -964,6 +986,16 @@ fn is_function_like(node: Node<'_>) -> bool {
             | "arrow_function"
             | "method_definition"
     )
+}
+
+fn is_unresolved_assertion(event: &str) -> bool {
+    matches!(event, UNRESOLVED_ASSERTION | DEFERRED_UNRESOLVED_ASSERTION)
+}
+
+fn has_function_parameters(node: Node<'_>) -> bool {
+    node.child_by_field_name("parameters")
+        .is_some_and(|parameters| parameters.named_child_count() > 0)
+        || node.child_by_field_name("parameter").is_some()
 }
 
 fn is_const_declaration(declaration: Node<'_>) -> bool {
@@ -1159,17 +1191,19 @@ fn collect_behavior<'tree>(
     output: &mut Vec<String>,
 ) {
     let root_id = node.id();
-    let mut stack = vec![(node, false)];
-    let push_children = |node: Node<'tree>, deferred, stack: &mut Vec<_>| {
-        let start = stack.len();
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            stack.push((child, deferred));
-        }
-        stack[start..].reverse();
-    };
-    while let Some((node, deferred)) = stack.pop() {
-        if node.id() != root_id && is_function_like(node) {
+    let mut stack = vec![(node, false, false)];
+    let push_children =
+        |node: Node<'tree>, deferred, unresolved_callback_parameters, stack: &mut Vec<_>| {
+            let start = stack.len();
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                stack.push((child, deferred, unresolved_callback_parameters));
+            }
+            stack[start..].reverse();
+        };
+    while let Some((node, deferred, unresolved_callback_parameters)) = stack.pop() {
+        let nested_function = node.id() != root_id && is_function_like(node);
+        if nested_function {
             let mut parent = node.parent();
             while parent
                 .is_some_and(|p| super::registrations::unwrap_registration_callee(p) == Some(node))
@@ -1182,14 +1216,28 @@ fn collect_behavior<'tree>(
         }
         // Retain syntactic call evidence in callbacks without promoting their assertions
         // to executed behavior. Dropping the body makes unrelated callbacks look identical.
-        let deferred = deferred || (node.id() != root_id && is_function_like(node));
+        let deferred = deferred || nested_function;
+        let parameterized_callback = nested_function && has_function_parameters(node);
+        if parameterized_callback {
+            // Callback arguments are not evaluated, so any runtime parameter can change the
+            // callback's behavior even when its body contains no recognized assertion.
+            output.push(DEFERRED_UNRESOLVED_ASSERTION.to_owned());
+        }
+        let unresolved_callback_parameters =
+            unresolved_callback_parameters || parameterized_callback;
         match node.kind() {
             "call_expression" => {
                 if let Some(event) =
                     assertion_behavior_event(node, source, declared, assertions, local_constants)
                 {
-                    if deferred && event != UNRESOLVED_ASSERTION {
-                        output.push(format!("deferred-{event}"));
+                    if unresolved_callback_parameters {
+                        // The callback-level marker already makes this handler non-comparable.
+                    } else if deferred {
+                        output.push(if event == UNRESOLVED_ASSERTION {
+                            DEFERRED_UNRESOLVED_ASSERTION.to_owned()
+                        } else {
+                            format!("deferred-{event}")
+                        });
                     } else {
                         output.push(event);
                     }
@@ -1215,18 +1263,24 @@ fn collect_behavior<'tree>(
                     }
                     if matches!(invoked.kind(), "arrow_function" | "function_expression") {
                         // Parameter substitution is not evaluated; do not invent equal values.
-                        if invoked
-                            .child_by_field_name("parameters")
-                            .is_some_and(|p| p.named_child_count() > 0)
-                            || invoked.child_by_field_name("parameter").is_some()
-                        {
+                        if has_function_parameters(invoked) {
                             output.push(UNRESOLVED_ASSERTION.to_owned());
                             continue;
                         }
                         // Record the executed body, not an extra generic wrapper-call event.
-                        push_children(invoked, deferred, &mut stack);
+                        push_children(
+                            invoked,
+                            deferred,
+                            unresolved_callback_parameters,
+                            &mut stack,
+                        );
                         if let Some(arguments) = node.child_by_field_name("arguments") {
-                            push_children(arguments, deferred, &mut stack);
+                            push_children(
+                                arguments,
+                                deferred,
+                                unresolved_callback_parameters,
+                                &mut stack,
+                            );
                         }
                         continue;
                     }
@@ -1239,7 +1293,7 @@ fn collect_behavior<'tree>(
             }
             _ => {}
         }
-        push_children(node, deferred, &mut stack);
+        push_children(node, deferred, unresolved_callback_parameters, &mut stack);
     }
 }
 

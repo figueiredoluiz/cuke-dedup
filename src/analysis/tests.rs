@@ -161,6 +161,15 @@ fn future_local_declarations_do_not_expose_outer_assertion_values() {
         let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => {{ {body} }});"));
         assert_eq!(defs[0].handler.comparable, comparable, "{body}");
     }
+    for callback in ["function expected()", "function* expected()"] {
+        let defs = definitions(&format!(
+            "Then('state', ({{state}}) => {{ const expected = 'ready'; register({callback} {{ expect(state).toBe(expected); }}); }});"
+        ));
+        assert!(!defs[0].handler.comparable, "{callback}");
+    }
+    let defs = definitions("Then('state', ({state, expected}) => { const Box = class expected { static check = expect(state).toBe(expected); }; use(Box); });");
+    assert_eq!(defs.len(), 1);
+    assert!(!defs[0].handler.comparable);
 }
 
 #[test]
@@ -942,6 +951,29 @@ fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
         "Then('callback unresolved', ({state}) => register(() => expect(state).toBe(external)));",
     );
     assert!(!unresolved[0].handler.comparable);
+    for callback in ["value =>", "function (value)", "function* (value)"] {
+        let unresolved = definitions(&format!(
+            "Then('parameterized callback', ({{state}}) => register({callback} {{ expect(state).toBe(value); }}, externalValue));"
+        ));
+        assert!(!unresolved[0].handler.comparable, "{callback}");
+        assert!(
+            unresolved[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event == "deferred-assert:unresolved"),
+            "{callback}"
+        );
+    }
+    let unresolved_without_assertion = definitions(
+        "Then('parameterized callback', () => register(value => save(value), externalValue));",
+    );
+    assert!(!unresolved_without_assertion[0].handler.comparable);
+    assert!(unresolved_without_assertion[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .any(|event| event == "deferred-assert:unresolved"));
 }
 
 #[test]
@@ -2305,6 +2337,33 @@ Then('the account status indicator shows the final condition', async ({ page }) 
     let (_directory, config) = config();
     let result = analyze(definitions, Vec::new(), &config).unwrap();
     assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn mostly_matching_ordered_behavior_remains_a_near_duplicate_candidate() {
+    let assertions = |last| {
+        (0..10)
+            .map(|index| {
+                let expected = if index == 9 { last } else { "shared" };
+                format!("expect(state.field{index}).toBe('{expected}');")
+            })
+            .collect::<String>()
+    };
+    let definitions = definitions(&format!(
+        "Then('the account workflow is ready', ({{state}}) => {{ {} }}); Then('the account workflow is nearly ready', ({{state}}) => {{ {} }});",
+        assertions("first"),
+        assertions("second")
+    ));
+    assert_eq!(
+        definitions[0].handler.structural,
+        definitions[1].handler.structural
+    );
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(result
         .findings
         .iter()
         .any(|finding| finding.rule == Rule::NearDuplicateStep));

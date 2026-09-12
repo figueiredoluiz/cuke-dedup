@@ -1055,8 +1055,8 @@ fn can_reach_handler_similarity_gate(
     left_anchor_events: &[usize],
     right_anchor_events: &[usize],
 ) -> bool {
-    if relationships.same_handler_structure {
-        return left_ordered_events == right_ordered_events;
+    if relationships.same_handler_structure && left_ordered_events == right_ordered_events {
+        return true;
     }
     let longest = left_events.len().max(right_events.len());
     if longest == 0 {
@@ -1984,9 +1984,9 @@ mod tests {
             &[1],
             &[2],
         ));
-        // The exact-structure shortcut preserves execution order rather than comparing only the
-        // sorted event multiset.
-        assert!(!can_reach_handler_similarity_gate(
+        // Reordered events cannot use the exact-sequence shortcut, but the multiset overlap remains
+        // a safe upper bound: final ordered similarity decides whether the candidate is retained.
+        assert!(can_reach_handler_similarity_gate(
             classes.relationships(0, 1),
             &[1, 2, 3],
             &[3, 2, 1],
@@ -1994,6 +1994,15 @@ mod tests {
             &[1, 2, 3],
             &[1, 2, 3],
             &[1, 2, 3],
+        ));
+        assert!(can_reach_handler_similarity_gate(
+            classes.relationships(0, 1),
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+            &[1],
+            &[1],
         ));
         assert!(can_reach_handler_similarity_gate(
             classes.relationships(0, 1),
