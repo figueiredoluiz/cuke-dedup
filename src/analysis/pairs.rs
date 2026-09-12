@@ -251,7 +251,7 @@ pub(super) fn analyze_definition_pairs(
         let handler_similarity = if handler_is_needed {
             handler_similarity_with_relationship(
                 same_handler,
-                relationships.same_handler_structure,
+                relationships.same_structure,
                 &behavior_events[left_index],
                 &behavior_events[right_index],
             )
@@ -433,7 +433,7 @@ fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> 
             matrix_work(input.left_matcher_length, input.right_matcher_length)
         }
         PairSimilarityWork::Handler
-            if !input.relationships.same_handler && !input.relationships.same_handler_structure =>
+            if !input.relationships.same_handler && !input.relationships.same_structure =>
         {
             matrix_work(
                 input.left.handler.behavior_signature.len(),
@@ -546,21 +546,35 @@ fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
         .collect()
 }
 
-fn behavior_call_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
+fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
     let mut events = HashMap::new();
     definitions
         .iter()
         .map(|definition| {
-            let mut calls = definition
+            let mut anchors = definition
                 .handler
                 .behavior_signature
                 .iter()
-                .filter(|event| event.starts_with("call:"))
-                .map(|event| intern_class(&mut events, event.as_str()))
+                .filter_map(|event| {
+                    if event.starts_with("call:") {
+                        Some(Cow::Borrowed(event.as_str()))
+                    } else if event.starts_with("assert:") {
+                        // Assertion values are semantic during final similarity verification, but
+                        // candidate blocking only needs the assertion shape. Removing the final
+                        // expected-arguments fingerprint lets potentially related assertions reach
+                        // verification without allowing conflicting values to count as overlap.
+                        event
+                            .rsplit_once(':')
+                            .map(|(shape, _)| Cow::Owned(shape.to_owned()))
+                    } else {
+                        None
+                    }
+                })
+                .map(|event| intern_class(&mut events, event))
                 .collect::<Vec<_>>();
-            calls.sort_unstable();
-            calls.dedup();
-            calls
+            anchors.sort_unstable();
+            anchors.dedup();
+            anchors
         })
         .collect()
 }
@@ -599,7 +613,7 @@ pub(super) fn definition_pair_candidates(
 ) -> CandidateGeneration {
     let comparison_classes = comparison_classes(definitions);
     let behavior_events = behavior_event_ids(definitions);
-    let behavior_call_events = behavior_call_event_ids(definitions);
+    let behavior_anchor_events = behavior_anchor_event_ids(definitions);
     let mut normalized_matchers: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
     let mut handlers: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
@@ -775,7 +789,7 @@ pub(super) fn definition_pair_candidates(
         definitions,
         &comparison_classes,
         &behavior_events,
-        &behavior_call_events,
+        &behavior_anchor_events,
         &mut builder,
     );
     let census = builder.census(truncated_structural_classes.len());
@@ -830,7 +844,7 @@ fn insert_matcher_blocking_candidates(
     definitions: &[StepDefinition],
     classes: &ComparisonClasses,
     behavior_events: &[Vec<usize>],
-    behavior_call_events: &[Vec<usize>],
+    behavior_anchor_events: &[Vec<usize>],
     builder: &mut CandidateBuilder,
 ) {
     let mut shingle_count = 0_usize;
@@ -896,7 +910,7 @@ fn insert_matcher_blocking_candidates(
                 if !consider_matcher_blocking_pair(
                     classes,
                     &sorted_events,
-                    behavior_call_events,
+                    behavior_anchor_events,
                     posting.indices[left_offset],
                     posting.indices[right_offset],
                     &mut considered_pairs,
@@ -932,7 +946,7 @@ fn insert_matcher_blocking_candidates(
             if !consider_matcher_blocking_pair(
                 classes,
                 &sorted_events,
-                behavior_call_events,
+                behavior_anchor_events,
                 pair[0],
                 pair[1],
                 &mut considered_pairs,
@@ -1024,8 +1038,8 @@ fn can_reach_handler_similarity_gate(
     relationships: PairRelationships,
     left_events: &[usize],
     right_events: &[usize],
-    left_call_events: &[usize],
-    right_call_events: &[usize],
+    left_anchor_events: &[usize],
+    right_anchor_events: &[usize],
 ) -> bool {
     if relationships.same_handler_structure {
         return true;
@@ -1034,7 +1048,7 @@ fn can_reach_handler_similarity_gate(
     if longest == 0 {
         return false;
     }
-    if !sorted_events_overlap(left_call_events, right_call_events) {
+    if !sorted_events_overlap(left_anchor_events, right_anchor_events) {
         return false;
     }
     let mut overlap = 0_usize;
@@ -1079,7 +1093,7 @@ fn sorted_events_overlap(left: &[usize], right: &[usize]) -> bool {
 fn consider_matcher_blocking_pair(
     classes: &ComparisonClasses,
     sorted_events: &[Vec<usize>],
-    call_events: &[Vec<usize>],
+    anchor_events: &[Vec<usize>],
     left: usize,
     right: usize,
     considered_pairs: &mut HashSet<(usize, usize)>,
@@ -1104,7 +1118,7 @@ fn consider_matcher_blocking_pair(
     try_insert_matcher_blocking_candidate(
         relationships,
         sorted_events,
-        call_events,
+        anchor_events,
         left,
         right,
         event_work,
@@ -1115,7 +1129,7 @@ fn consider_matcher_blocking_pair(
 fn try_insert_matcher_blocking_candidate(
     relationships: PairRelationships,
     sorted_events: &[Vec<usize>],
-    call_events: &[Vec<usize>],
+    anchor_events: &[Vec<usize>],
     left: usize,
     right: usize,
     event_work: &mut u64,
@@ -1129,8 +1143,8 @@ fn try_insert_matcher_blocking_candidate(
         sorted_events[left]
             .len()
             .saturating_add(sorted_events[right].len())
-            .saturating_add(call_events[left].len())
-            .saturating_add(call_events[right].len()),
+            .saturating_add(anchor_events[left].len())
+            .saturating_add(anchor_events[right].len()),
     )
     .unwrap_or(u64::MAX);
     *event_work = event_work.saturating_add(work);
@@ -1142,8 +1156,8 @@ fn try_insert_matcher_blocking_candidate(
         relationships,
         &sorted_events[left],
         &sorted_events[right],
-        &call_events[left],
-        &call_events[right],
+        &anchor_events[left],
+        &anchor_events[right],
     ) && builder.insert(CandidateSource::MatcherBlocking, left, right) == InsertOutcome::Limit
     {
         return false;
@@ -1700,8 +1714,8 @@ mod tests {
     fn insert_blocking_candidates(definitions: &[StepDefinition], builder: &mut CandidateBuilder) {
         let classes = comparison_classes(definitions);
         let events = behavior_event_ids(definitions);
-        let call_events = behavior_call_event_ids(definitions);
-        insert_matcher_blocking_candidates(definitions, &classes, &events, &call_events, builder);
+        let anchor_events = behavior_anchor_event_ids(definitions);
+        insert_matcher_blocking_candidates(definitions, &classes, &events, &anchor_events, builder);
     }
 
     #[test]
@@ -1783,13 +1797,13 @@ mod tests {
         sorted_events
             .iter_mut()
             .for_each(|events| events.sort_unstable());
-        let call_events = behavior_call_event_ids(&definitions);
+        let anchor_events = behavior_anchor_event_ids(&definitions);
         let mut event_work = MAX_MATCHER_BLOCKING_EVENT_WORK;
         let mut builder = CandidateBuilder::new(usize::MAX);
         assert!(!try_insert_matcher_blocking_candidate(
             relationships,
             &sorted_events,
-            &call_events,
+            &anchor_events,
             0,
             1,
             &mut event_work,
@@ -1859,14 +1873,14 @@ mod tests {
             let classes = comparison_classes(&definitions);
             let mut events = behavior_event_ids(&definitions);
             events.iter_mut().for_each(|events| events.sort_unstable());
-            let call_events = behavior_call_event_ids(&definitions);
+            let anchor_events = behavior_anchor_event_ids(&definitions);
             assert_eq!(
                 can_reach_handler_similarity_gate(
                     classes.relationships(0, 1),
                     &events[0],
                     &events[1],
-                    &call_events[0],
-                    &call_events[1],
+                    &anchor_events[0],
+                    &anchor_events[1],
                 ),
                 expected
             );
@@ -2170,18 +2184,37 @@ mod tests {
             ),
             0
         );
-        for relationships in [
-            PairRelationships {
-                same_handler: true,
-                ..unrelated
-            },
-            PairRelationships {
-                same_handler_structure: true,
-                ..unrelated
-            },
-        ] {
-            assert_eq!(work(relationships, PairSimilarityWork::Handler), 0);
-        }
+        assert_eq!(
+            work(
+                PairRelationships {
+                    same_handler: true,
+                    ..unrelated
+                },
+                PairSimilarityWork::Handler
+            ),
+            0
+        );
+        assert_eq!(
+            work(
+                PairRelationships {
+                    same_handler_structure: true,
+                    ..unrelated
+                },
+                PairSimilarityWork::Handler
+            ),
+            matrix_work(2, 3)
+        );
+        assert_eq!(
+            work(
+                PairRelationships {
+                    same_handler_structure: true,
+                    same_structure: true,
+                    ..unrelated
+                },
+                PairSimilarityWork::Handler
+            ),
+            0
+        );
 
         let mut total = 0;
         assert!(charge_work(&mut total, 5, 5));

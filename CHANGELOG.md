@@ -3,6 +3,14 @@
 All notable changes to CukeDedup are documented in this file. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Near-duplicate analysis now distinguishes assertions targeting different properties, expecting
+  different values, or using opposite chains such as `expect(...).not`, while retaining
+  assertion-only duplicate candidates and avoiding misleading handler-overlap warnings.
+
 ## [0.2.0] - 2026-09-10
 
 ### Changed

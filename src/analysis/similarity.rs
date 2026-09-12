@@ -83,7 +83,8 @@ fn prefixed_opposites(positive: &str, negative: &str) -> bool {
 pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
     handler_similarity_with_relationship(
         left.handler.alpha_normalized == right.handler.alpha_normalized,
-        left.handler.structural == right.handler.structural,
+        left.handler.structural == right.handler.structural
+            && left.handler.behavior_signature == right.handler.behavior_signature,
         &left.handler.behavior_signature,
         &right.handler.behavior_signature,
     )

@@ -4,6 +4,8 @@ use crate::model::{stable_fingerprint, HandlerFingerprint};
 use std::collections::BTreeMap;
 use tree_sitter::Node;
 
+const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
+
 #[derive(Clone, Copy)]
 pub(super) struct HandlerBinding<'tree> {
     declaration: Node<'tree>,
@@ -771,6 +773,14 @@ fn collect_behavior(
     while let Some(node) = stack.pop() {
         match node.kind() {
             "call_expression" => {
+                if let Some(event) = assertion_behavior_event(node, source, declared) {
+                    output.push(event);
+                    // Treat the complete assertion as one atomic behavior event. Its subject and
+                    // expected values are already fingerprinted, so traversing its children would
+                    // count subject calls such as `page.locator()` a second time and make overlap
+                    // depend on incidental expression complexity.
+                    continue;
+                }
                 if let Some(function) = node.child_by_field_name("function") {
                     output.push(call_behavior_event(function, source, declared));
                 }
@@ -783,6 +793,94 @@ fn collect_behavior(
         }
         push_named_children_reverse(node, &mut stack);
     }
+}
+
+/// Describes an assertion by its terminal matcher, modifiers, and asserted subject.
+///
+/// A generic call shape such as `expect#toHaveValue` is not enough to establish shared
+/// behavior: assertions against two different controls are distinct, and `.not` reverses the
+/// meaning of an otherwise identical assertion. Expected matcher arguments remain semantic so
+/// assertions for conflicting values do not collapse into the same near-duplicate behavior.
+/// Literal normalization remains confined to the separate structural fingerprint.
+fn assertion_behavior_event(
+    call: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+) -> Option<String> {
+    let function = call.child_by_field_name("function")?;
+    if function.kind() != "member_expression" {
+        return None;
+    }
+    let method = function.child_by_field_name("property")?;
+
+    let mut modifiers = Vec::new();
+    let invocation = find_expect_invocation(
+        function.child_by_field_name("object")?,
+        source,
+        &mut modifiers,
+    )?;
+    modifiers.reverse();
+    let arguments = invocation.child_by_field_name("arguments")?;
+    let subject = arguments.named_child(0)?;
+    // Structural mode retains member and call identities while normalizing local bindings and
+    // literal values. This distinguishes `form.title` from `form.date` without hiding the
+    // existing parameterization signal for `page.locator("#one")` versus `"#two"`.
+    let subject = serialize_ast(subject, source, declared, AstMode::Structural);
+    let expected = call.child_by_field_name("arguments")?;
+    // Alpha mode canonicalizes parameter and local names while retaining literal values and
+    // member identities. The whole arguments node is included to preserve matcher arity.
+    let expected = serialize_ast(expected, source, declared, AstMode::Alpha);
+    let qualifier = if modifiers.is_empty() {
+        "expect".to_owned()
+    } else {
+        format!("expect.{}", modifiers.join("."))
+    };
+    Some(format!(
+        "assert:{qualifier}#{}:{}:{}",
+        node_text(method, source),
+        stable_fingerprint(&subject),
+        stable_fingerprint(&expected)
+    ))
+}
+
+fn find_expect_invocation<'tree>(
+    node: Node<'tree>,
+    source: &[u8],
+    modifiers: &mut Vec<String>,
+) -> Option<Node<'tree>> {
+    let mut current = node;
+    for _ in 0..MAX_ASSERTION_CHAIN_DEPTH {
+        match current.kind() {
+            "call_expression" => {
+                let function = current.child_by_field_name("function")?;
+                if function.kind() == "identifier" && node_text(function, source) == "expect" {
+                    return Some(current);
+                }
+                if function.kind() == "member_expression" {
+                    let object = function.child_by_field_name("object")?;
+                    let property = function.child_by_field_name("property")?;
+                    if object.kind() == "identifier"
+                        && node_text(object, source) == "expect"
+                        && matches!(node_text(property, source), "soft" | "poll")
+                    {
+                        modifiers.push(node_text(property, source).to_owned());
+                        return Some(current);
+                    }
+                }
+                return None;
+            }
+            "member_expression" => {
+                let property = current.child_by_field_name("property")?;
+                modifiers.push(node_text(property, source).to_owned());
+                current = current.child_by_field_name("object")?;
+            }
+            "parenthesized_expression" | "await_expression" => {
+                current = current.named_child(0)?;
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn call_behavior_event(

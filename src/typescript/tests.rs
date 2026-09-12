@@ -1105,6 +1105,111 @@ fn behavior_signatures_alpha_normalize_declared_receivers() {
 }
 
 #[test]
+fn behavior_signatures_preserve_assertion_subjects_and_polarity() {
+    let definitions = extract_ts(
+        r#"
+Then('primary value', async ({ page }, expected) => {
+  await expect(new Form(page).primaryInput).toHaveValue(expected);
+});
+Then('secondary value', async ({ page }, expected) => {
+  await expect(new Form(page).secondaryInput).toHaveValue(expected);
+});
+Then('panel active', async ({ page }) => {
+  await expect(new Navigation(page).panel).toHaveClass(/active/);
+});
+Then('panel inactive', async ({ page }) => {
+  await expect(new Navigation(page).panel).not.toHaveClass(/active/);
+});
+Then('status active', async ({ page }) => {
+  await expect(new Navigation(page).status).toBe('active');
+});
+Then('status inactive', async ({ page }) => {
+  await expect(new Navigation(page).status).toBe('inactive');
+});
+"#,
+    );
+
+    assert_eq!(definitions.len(), 6);
+    assert_ne!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+    assert_ne!(
+        definitions[2].handler.behavior_signature,
+        definitions[3].handler.behavior_signature
+    );
+    assert_ne!(
+        definitions[4].handler.behavior_signature,
+        definitions[5].handler.behavior_signature
+    );
+    assert!(definitions.iter().all(|definition| {
+        definition.handler.behavior_signature.len() == 1
+            && definition.handler.behavior_signature[0].starts_with("assert:expect")
+    }));
+    assert!(definitions[3].handler.behavior_signature[0].contains(".not#toHaveClass"));
+}
+
+#[test]
+fn behavior_signatures_still_alpha_normalize_assertion_subject_locals() {
+    let definitions = extract_ts(
+        r#"
+Then('first assertion', async ({ page }) => {
+  const item = page.locator('#status');
+  await expect(item).toBeVisible();
+});
+Then('second assertion', async ({ page }) => {
+  const element = page.locator('#status');
+  await expect(element).toBeVisible();
+});
+"#,
+    );
+
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+}
+
+#[test]
+fn behavior_signatures_cover_supported_expect_variants_and_incomplete_chains() {
+    let definitions = extract_ts(
+        r#"
+Then('soft assertion', async ({ page }) => {
+  await expect.soft(page.locator('#status')).toBeVisible();
+});
+Then('polled assertion', async ({ state }) => {
+  await expect.poll(() => state.value).toBe('ready');
+});
+Then('standalone expect call', ({ value }) => {
+  expect(value);
+});
+Then('missing assertion subject', () => {
+  expect().toBeVisible();
+});
+"#,
+    );
+
+    assert_eq!(definitions.len(), 4);
+    assert_eq!(definitions[0].handler.behavior_signature.len(), 1);
+    assert!(definitions[0].handler.behavior_signature[0].starts_with("assert:expect.soft#"));
+    assert_eq!(definitions[1].handler.behavior_signature.len(), 1);
+    assert!(definitions[1].handler.behavior_signature[0].starts_with("assert:expect.poll#"));
+    assert_eq!(definitions[2].handler.behavior_signature, ["call:expect"]);
+    assert_eq!(
+        definitions[3].handler.behavior_signature,
+        ["call:expect#toBeVisible", "call:expect"]
+    );
+
+    let deep_chain = format!(
+        "Then('bounded chain', ({{ value }}) => expect(value){}.toBeVisible());",
+        ".not".repeat(20)
+    );
+    let definition = extract_ts(&deep_chain).remove(0);
+    assert!(!definition.handler.behavior_signature.is_empty());
+}
+
+#[test]
 fn alpha_fingerprints_assign_identifiers_by_declaration_order() {
     let definitions = extract_ts(
         "Given('first', (z, a) => z.goto(a));\n\

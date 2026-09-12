@@ -1042,14 +1042,24 @@ fn handler_similarity_contract_is_table_driven() {
             1.0,
         ),
         (
-            "structural equivalence",
+            "structural and behavioral equivalence",
+            "left",
+            "right",
+            "same",
+            "same",
+            vec!["open"],
+            vec!["open"],
+            0.95,
+        ),
+        (
+            "structural equivalence with conflicting behavior",
             "left",
             "right",
             "same",
             "same",
             vec!["open"],
             vec!["close"],
-            0.95,
+            0.0,
         ),
         (
             "ordered behavior overlap",
@@ -1314,6 +1324,98 @@ Then('the item is hidden', async () => { await expect(item).not.toBeVisible(); }
         .findings
         .iter()
         .any(|finding| finding.rule == Rule::DuplicateHandler));
+}
+
+#[test]
+fn similar_matchers_on_different_assertion_subjects_are_not_near_duplicates() {
+    let definitions = definitions(
+        r#"
+Then('the settings panel shows the primary account field', async ({ page }, expected) => {
+  await expect(new AccountForm(page).primaryInput).toHaveValue(expected);
+});
+Then('the settings panel shows the secondary account field', async ({ page }, expected) => {
+  await expect(new AccountForm(page).secondaryInput).toHaveValue(expected);
+});
+"#,
+    );
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn similar_matchers_with_opposite_assertion_chains_are_not_near_duplicates() {
+    let definitions = definitions(
+        r#"
+Then('the navigation drawer state indicator is collapsed', async ({ page }) => {
+  await expect(new Navigation(page).drawer).toHaveClass(/collapsed/);
+});
+Then('the navigation drawer state indicator is expanded', async ({ page }) => {
+  await expect(new Navigation(page).drawer).not.toHaveClass(/collapsed/);
+});
+"#,
+    );
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn assertion_only_handlers_reach_near_duplicate_verification() {
+    let definitions = definitions(
+        r#"
+Then('the account badge is visible', async ({ page }) => {
+  await expect(new AccountPage(page).badge).toBeVisible();
+});
+Then('the account badge is now visible', async ({ page }) =>
+  expect(new AccountPage(page).badge).toBeVisible()
+);
+"#,
+    );
+    assert_ne!(
+        definitions[0].handler.structural,
+        definitions[1].handler.structural
+    );
+    let (_directory, config) = config();
+    let candidates = definition_pair_candidates(&definitions, &config);
+    assert_eq!(
+        candidates.census.candidate_sources["matcherBlocking"].evaluated,
+        1
+    );
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn conflicting_assertion_values_are_not_near_duplicates() {
+    let definitions = definitions(
+        r#"
+Then('the account status indicator shows the first condition', async ({ page }) => {
+  await expect(new AccountPage(page).status).toBe('ready');
+});
+Then('the account status indicator shows the final condition', async ({ page }) => {
+  await expect(new AccountPage(page).status).toBe('idle');
+});
+"#,
+    );
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
 #[test]
