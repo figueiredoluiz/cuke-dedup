@@ -138,9 +138,9 @@
     {
       "name": "assertion-subjects-and-chains-preserve-precision",
       "path": "assertion-precision",
-      "expectedDefinitions": 12,
+      "expectedDefinitions": 14,
       "expectedCandidateSources": {
-        "matcherBlocking": 4
+        "matcherBlocking": 5
       },
       "expectedFindings": [
         {
@@ -178,6 +178,13 @@
           "matchers": [
             "the profile state indicator shows the first condition",
             "the profile state indicator shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the local account status shows the first condition",
+            "the local account status shows the final condition"
           ]
         },
         {

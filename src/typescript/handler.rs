@@ -235,14 +235,25 @@ pub(super) fn fingerprint_method_handler(
         &declared,
         AstMode::Structural,
     );
+    let local_constants = LocalConstants::collect(method, source, &declared);
     // Preserve invocation semantics for compatibility checks. Similarity removes this metadata
     // before measuring executed behavior so two one-assertion methods do not gain artificial
     // 50% overlap merely because both are methods.
     let mut signature = vec![format!("method:{semantic_prefix}")];
     signature.extend(behavior_signature(
-        parameters, source, &declared, assertions,
+        parameters,
+        source,
+        &declared,
+        assertions,
+        &local_constants,
     ));
-    signature.extend(behavior_signature(body, source, &declared, assertions));
+    signature.extend(behavior_signature(
+        body,
+        source,
+        &declared,
+        assertions,
+        &local_constants,
+    ));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
 
     Some(HandlerFingerprint {
@@ -442,7 +453,8 @@ fn fingerprint_node(
     let mut normalized = serialize_ast(handler, source, declared, AstMode::Normalized);
     let mut alpha = serialize_ast(handler, source, declared, AstMode::Alpha);
     let mut structural = serialize_ast(handler, source, declared, AstMode::Structural);
-    let mut signature = behavior_signature(handler, source, declared, assertions);
+    let local_constants = LocalConstants::collect(handler, source, declared);
+    let mut signature = behavior_signature(handler, source, declared, assertions, &local_constants);
     let mut source_snippet = raw.to_owned();
     if let Some(arguments) = bound_arguments {
         let no_declarations = BTreeMap::new();
@@ -464,6 +476,7 @@ fn fingerprint_node(
             source,
             &no_declarations,
             assertions,
+            &LocalConstants::default(),
         ));
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
@@ -699,6 +712,156 @@ enum AstMode {
     Structural,
 }
 
+struct LocalConstant {
+    declaration_start: usize,
+    scope_start: usize,
+    scope_end: usize,
+    alpha: String,
+    structural: String,
+}
+
+#[derive(Default)]
+struct LocalConstants {
+    bindings: BTreeMap<String, Vec<LocalConstant>>,
+}
+
+impl LocalConstants {
+    fn collect(handler: Node<'_>, source: &[u8], declared: &BTreeMap<String, String>) -> Self {
+        let mut constants = Self::default();
+        let mut pending = Vec::new();
+        let mut stack = vec![handler];
+        while let Some(node) = stack.pop() {
+            if node.id() != handler.id() && is_function_like(node) {
+                continue;
+            }
+            if node.kind() == "variable_declarator" {
+                let declaration = node.parent();
+                if declaration.is_some_and(is_const_declaration) {
+                    if let (Some(name), Some(value), Some(scope)) = (
+                        node.child_by_field_name("name")
+                            .filter(|name| name.kind() == "identifier"),
+                        node.child_by_field_name("value"),
+                        local_constant_scope(node.parent(), handler),
+                    ) {
+                        pending.push((
+                            node_text(name, source).to_owned(),
+                            node.start_byte(),
+                            scope.start_byte(),
+                            scope.end_byte(),
+                            value,
+                        ));
+                    }
+                }
+            }
+            push_named_children_reverse(node, &mut stack);
+        }
+        // Declaration order makes earlier immutable constants available while serializing later
+        // initializers. This preserves semantics through bounded alias chains without recursive
+        // AST traversal; forward references remain unresolved because they are invalid at runtime.
+        pending.sort_by_key(|(_, declaration_start, _, _, _)| *declaration_start);
+        for (name, declaration_start, scope_start, scope_end, value) in pending {
+            let alpha = stable_fingerprint(&serialize_assertion_value(
+                value,
+                source,
+                declared,
+                AstMode::Alpha,
+                &constants,
+            ));
+            let structural = stable_fingerprint(&serialize_assertion_value(
+                value,
+                source,
+                declared,
+                AstMode::Structural,
+                &constants,
+            ));
+            constants
+                .bindings
+                .entry(name)
+                .or_default()
+                .push(LocalConstant {
+                    declaration_start,
+                    scope_start,
+                    scope_end,
+                    alpha,
+                    structural,
+                });
+        }
+        constants
+    }
+
+    fn resolve(&self, name: &str, use_site: Node<'_>, mode: AstMode) -> Option<&str> {
+        self.bindings
+            .get(name)?
+            .iter()
+            .filter(|binding| {
+                binding.declaration_start <= use_site.start_byte()
+                    && binding.scope_start <= use_site.start_byte()
+                    && binding.scope_end >= use_site.end_byte()
+            })
+            .min_by(|left, right| {
+                let left_width = left.scope_end.saturating_sub(left.scope_start);
+                let right_width = right.scope_end.saturating_sub(right.scope_start);
+                left_width
+                    .cmp(&right_width)
+                    .then_with(|| right.declaration_start.cmp(&left.declaration_start))
+            })
+            .map(|binding| match mode {
+                AstMode::Alpha => binding.alpha.as_str(),
+                AstMode::Structural => binding.structural.as_str(),
+                // Assertion values currently use only semantic modes. Returning the normalized
+                // alpha form keeps this helper total if another caller is added later.
+                AstMode::Normalized => binding.alpha.as_str(),
+            })
+    }
+}
+
+fn is_function_like(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "function_declaration"
+            | "generator_function_declaration"
+            | "function_expression"
+            | "generator_function"
+            | "arrow_function"
+            | "method_definition"
+    )
+}
+
+fn is_const_declaration(declaration: Node<'_>) -> bool {
+    declaration.kind() == "lexical_declaration"
+        && (0..declaration.child_count()).any(|index| {
+            declaration
+                .child(index)
+                .is_some_and(|child| !child.is_named() && child.kind() == "const")
+        })
+}
+
+fn local_constant_scope<'tree>(
+    mut node: Option<Node<'tree>>,
+    handler: Node<'tree>,
+) -> Option<Node<'tree>> {
+    while let Some(candidate) = node {
+        if candidate.id() == handler.id() {
+            return Some(candidate);
+        }
+        if matches!(
+            candidate.kind(),
+            "statement_block"
+                | "for_statement"
+                | "for_in_statement"
+                | "switch_body"
+                | "catch_clause"
+        ) {
+            return Some(candidate);
+        }
+        if is_function_like(candidate) {
+            return None;
+        }
+        node = candidate.parent();
+    }
+    None
+}
+
 fn serialize_ast(
     node: Node<'_>,
     source: &[u8],
@@ -779,9 +942,17 @@ fn behavior_signature(
     source: &[u8],
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
+    local_constants: &LocalConstants,
 ) -> Vec<String> {
     let mut signature = Vec::new();
-    collect_behavior(handler, source, declared, assertions, &mut signature);
+    collect_behavior(
+        handler,
+        source,
+        declared,
+        assertions,
+        local_constants,
+        &mut signature,
+    );
     signature
 }
 
@@ -790,13 +961,16 @@ fn collect_behavior(
     source: &[u8],
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
+    local_constants: &LocalConstants,
     output: &mut Vec<String>,
 ) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         match node.kind() {
             "call_expression" => {
-                if let Some(event) = assertion_behavior_event(node, source, declared, assertions) {
+                if let Some(event) =
+                    assertion_behavior_event(node, source, declared, assertions, local_constants)
+                {
                     output.push(event);
                     // Treat the complete assertion as one atomic behavior event. Its subject and
                     // expected values are already fingerprinted, so traversing its children would
@@ -830,6 +1004,7 @@ fn assertion_behavior_event(
     source: &[u8],
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
+    local_constants: &LocalConstants,
 ) -> Option<String> {
     let function = call.child_by_field_name("function")?;
     if function.kind() != "member_expression" {
@@ -850,11 +1025,18 @@ fn assertion_behavior_event(
     // Structural mode retains member and call identities while normalizing local bindings and
     // literal values. This distinguishes `form.title` from `form.date` without hiding the
     // existing parameterization signal for `page.locator("#one")` versus `"#two"`.
-    let subject = serialize_ast(subject, source, declared, AstMode::Structural);
+    let subject = serialize_assertion_value(
+        subject,
+        source,
+        declared,
+        AstMode::Structural,
+        local_constants,
+    );
     let expected = call.child_by_field_name("arguments")?;
     // Alpha mode canonicalizes parameter and local names while retaining literal values and
     // member identities. The whole arguments node is included to preserve matcher arity.
-    let expected = serialize_ast(expected, source, declared, AstMode::Alpha);
+    let expected =
+        serialize_assertion_value(expected, source, declared, AstMode::Alpha, local_constants);
     let qualifier = if modifiers.is_empty() {
         "expect".to_owned()
     } else {
@@ -866,6 +1048,33 @@ fn assertion_behavior_event(
         stable_fingerprint(&subject),
         stable_fingerprint(&expected)
     ))
+}
+
+fn serialize_assertion_value(
+    node: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+    mode: AstMode,
+    local_constants: &LocalConstants,
+) -> String {
+    let mut serialized = serialize_ast(node, source, declared, mode);
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if matches!(
+            current.kind(),
+            "identifier" | "shorthand_property_identifier"
+        ) {
+            if let Some(initializer) =
+                local_constants.resolve(node_text(current, source), current, mode)
+            {
+                serialized.push_str("\0const:");
+                serialized.push_str(initializer);
+            }
+            continue;
+        }
+        push_named_children_reverse(current, &mut stack);
+    }
+    serialized
 }
 
 fn find_expect_invocation<'tree>(
@@ -899,8 +1108,16 @@ fn find_expect_invocation<'tree>(
                 modifiers.push(node_text(property, source).to_owned());
                 current = current.child_by_field_name("object")?;
             }
-            "parenthesized_expression" | "await_expression" => {
+            "parenthesized_expression"
+            | "await_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression" => {
                 current = current.named_child(0)?;
+            }
+            "type_assertion" => {
+                let last = u32::try_from(current.named_child_count().checked_sub(1)?).ok()?;
+                current = current.named_child(last)?;
             }
             _ => return None,
         }

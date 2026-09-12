@@ -42,6 +42,16 @@ Then("the profile state indicator shows the final condition", async ({ page }) =
   await check(new ProfilePage(page).state).toBe("idle");
 });
 
+Then("the local account status shows the first condition", async ({ page }) => {
+  const expected = "ready";
+  await expect(new AccountPage(page).status).toBe(expected);
+});
+
+Then("the local account status shows the final condition", async ({ page }) => {
+  const expected = "idle";
+  await expect(new AccountPage(page).status).toBe(expected);
+});
+
 class DecoratedStatusSteps {
   @Given("the decorated status shows the first condition")
   first({ page }) {

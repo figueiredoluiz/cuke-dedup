@@ -8,8 +8,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
 ### Fixed
 
 - Near-duplicate analysis now distinguishes assertions targeting different properties, expecting
-  different values, or using opposite chains such as `expect(...).not`, while retaining
-  assertion-only duplicate candidates and avoiding misleading handler-overlap warnings.
+  different inline or immutable local values, or using opposite chains such as `expect(...).not`,
+  while retaining assertion-only duplicate candidates and avoiding misleading handler-overlap
+  warnings. Assertion provenance now also respects TypeScript runtime namespaces, erased
+  declarations, namespace bindings, and wrapped assertion expressions.
 
 ## [0.2.0] - 2026-09-10
 

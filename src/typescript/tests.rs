@@ -652,13 +652,24 @@ export const expect = createAssertionFactory();
 "#,
     )
     .unwrap();
+    fs::write(
+        directory.path().join("fixtures/lookalike.ts"),
+        r#"
+export const Then = makeLocalCallback();
+export const expect = makeLocalAssertionFactory();
+"#,
+    )
+    .unwrap();
     let path = directory.path().join("steps/example.steps.ts");
     let source = r#"
 import { Then } from '~/fixtures/test';
 import { expect } from '~/fixtures/test';
 import * as api from '~/fixtures/test';
+import { Given } from '@cucumber/cucumber';
+import { Then as helper, expect as localCheck } from '~/fixtures/lookalike';
 Then('a facade assertion', ({ state }) => expect(state).toBe('ready'));
 api.Then('a facade namespace is not assertion provenance', ({ state }) => api.expect(state).toBe('ready'));
+Given('an unrelated module is not assertion provenance', ({ state }) => localCheck(state).toBe('ready'));
 "#;
     fs::write(&path, source).unwrap();
     let file = SourceFile {
@@ -670,12 +681,17 @@ api.Then('a facade namespace is not assertion provenance', ({ state }) => api.ex
     let extracted = extract_detailed_impl(source, &file, &mut session).unwrap();
 
     assert!(extracted.diagnostics.is_empty());
-    assert_eq!(extracted.definitions.len(), 2);
+    assert_eq!(extracted.definitions.len(), 3);
     assert_eq!(extracted.definitions[0].handler.behavior_signature.len(), 1);
     assert!(
         extracted.definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:")
     );
     assert!(extracted.definitions[1]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|event| !event.starts_with("assert:")));
+    assert!(extracted.definitions[2]
         .handler
         .behavior_signature
         .iter()
@@ -1222,6 +1238,80 @@ Then('second assertion', async ({ page }) => {
 }
 
 #[test]
+fn assertion_values_resolve_safe_local_constant_initializers() {
+    let definitions = extract_ts(
+        r#"
+Then('first subject', ({ page }) => {
+  const target = new Form(page).primaryInput;
+  expect(target).toHaveValue('ready');
+});
+Then('second subject', ({ page }) => {
+  const target = new Form(page).secondaryInput;
+  expect(target).toHaveValue('ready');
+});
+Then('first expected value', ({ state }) => {
+  const expected = 'ready';
+  expect(state).toBe(expected);
+});
+Then('second expected value', ({ state }) => {
+  const expected = 'idle';
+  expect(state).toBe(expected);
+});
+Then('renamed equivalent constant', ({ state }) => {
+  const wanted = 'ready';
+  expect(state).toBe(wanted);
+});
+Then('chained ready constant', ({ state }) => {
+  const base = 'ready';
+  const expected = base;
+  expect(state).toBe(expected);
+});
+Then('chained idle constant', ({ state }) => {
+  const base = 'idle';
+  const expected = base;
+  expect(state).toBe(expected);
+});
+"#,
+    );
+
+    assert_eq!(definitions.len(), 7);
+    assert_ne!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+    assert_ne!(
+        definitions[2].handler.behavior_signature,
+        definitions[3].handler.behavior_signature
+    );
+    assert_eq!(
+        definitions[2].handler.behavior_signature,
+        definitions[4].handler.behavior_signature
+    );
+    assert_ne!(
+        definitions[5].handler.behavior_signature,
+        definitions[6].handler.behavior_signature
+    );
+}
+
+#[test]
+fn assertion_chains_unwrap_typescript_expression_wrappers() {
+    for source in [
+        "Then('as wrapper', ({ state }) => (expect(state) as any).toBe('ready'));",
+        "Then('satisfies wrapper', ({ state }) => (expect(state) satisfies Assertion).toBe('ready'));",
+        "Then('non-null wrapper', ({ state }) => expect(state)!.toBe('ready'));",
+        "Then('type assertion wrapper', ({ state }) => (<Assertion>expect(state)).toBe('ready'));",
+    ] {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert!(
+            definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
 fn behavior_signatures_cover_supported_expect_variants_and_incomplete_chains() {
     let definitions = extract_ts(
         r#"
@@ -1431,6 +1521,92 @@ Then('shadowed by runtime enum', ({ state }) => expect(state).toBe('ready'));
                 .all(|event| !event.starts_with("assert:")),
             "{source}: {:?}",
             definitions[0].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
+fn typescript_runtime_and_erased_declarations_have_distinct_assertion_shadowing() {
+    let cases = [
+        (
+            r#"
+namespace expect { export const custom = true; }
+Then('runtime namespace shadows ambient', ({ state }) => expect(state).toBe('ready'));
+"#,
+            false,
+        ),
+        (
+            r#"
+module expect { export const custom = true; }
+Then('runtime module shadows ambient', ({ state }) => expect(state).toBe('ready'));
+"#,
+            false,
+        ),
+        (
+            r#"
+declare namespace expect { const custom: boolean; }
+Then('declared namespace is erased', ({ state }) => expect(state).toBe('ready'));
+"#,
+            true,
+        ),
+        (
+            r#"
+declare const expect: AssertionFactory;
+Then('declared constant is erased', ({ state }) => expect(state).toBe('ready'));
+"#,
+            true,
+        ),
+    ];
+
+    for (source, expected_assertion) in cases {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert_eq!(
+            definitions[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("assert:")),
+            expected_assertion,
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
+fn assertion_namespaces_named_expect_do_not_restore_the_callable_ambient() {
+    for source in [
+        r#"
+import * as expect from '@playwright/test';
+Then('ESM namespace occupies expect', ({ state }) => expect(state).toBe('ready'));
+Then('ESM namespace property remains trusted', ({ state }) => expect.expect(state).toBe('ready'));
+"#,
+        r#"
+const expect = require('@playwright/test');
+Then('CJS namespace occupies expect', ({ state }) => expect(state).toBe('ready'));
+Then('CJS namespace property remains trusted', ({ state }) => expect.expect(state).toBe('ready'));
+"#,
+    ] {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 2, "{source}");
+        assert!(
+            definitions[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+        assert!(
+            definitions[1]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("assert:")),
+            "{source}: {:?}",
+            definitions[1].handler.behavior_signature
         );
     }
 }

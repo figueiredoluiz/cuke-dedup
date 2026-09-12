@@ -81,6 +81,13 @@ impl AssertionBindings {
                         collect_binding_names(name, source, &mut shadowed);
                     }
                 }
+                "internal_module" | "module"
+                    if !is_erased_declaration(node) && is_module_declaration(node) =>
+                {
+                    if let Some(name) = node.child_by_field_name("name") {
+                        collect_binding_names(name, source, &mut shadowed);
+                    }
+                }
                 "assignment_expression" => {
                     if let Some(left) = node.child_by_field_name("left") {
                         if matches!(
@@ -111,7 +118,10 @@ impl AssertionBindings {
             .namespaces
             .retain(|namespace| !shadowed.contains(namespace));
         // With no runtime declaration, retain the conventional ambient Jest/Playwright global.
-        if !shadowed.contains("expect") {
+        // A trusted namespace called `expect` still occupies the runtime name and is not itself
+        // callable. Do not restore the ambient callable merely because the namespace provenance
+        // is trusted; `expect.expect(...)` remains recognized through `namespaces`.
+        if !shadowed.contains("expect") && !bindings.namespaces.contains("expect") {
             bindings.identifiers.insert("expect".to_owned());
         }
         bindings.shadow_ranges = shadow_ranges;
@@ -440,6 +450,11 @@ fn module_runtime_binding_exists(
             {
                 node.child_by_field_name("name")
             }
+            "internal_module" | "module"
+                if !is_erased_declaration(node) && is_module_declaration(node) =>
+            {
+                node.child_by_field_name("name")
+            }
             "assignment_expression" => node.child_by_field_name("left").filter(|left| {
                 matches!(
                     left.kind(),
@@ -560,6 +575,16 @@ fn collect_scoped_bindings(root: Node<'_>, source: &[u8]) -> BTreeMap<String, Ve
                 }
             }
             "enum_declaration" if !is_module_declaration(node) => {
+                if let (Some(scope), Some(name)) = (
+                    nearest_lexical_scope(node.parent()),
+                    node.child_by_field_name("name"),
+                ) {
+                    add_scope_binding(&mut scopes, scope, name, source);
+                }
+            }
+            "internal_module" | "module"
+                if !is_erased_declaration(node) && !is_module_declaration(node) =>
+            {
                 if let (Some(scope), Some(name)) = (
                     nearest_lexical_scope(node.parent()),
                     node.child_by_field_name("name"),
@@ -735,12 +760,30 @@ fn is_top_level_variable(declarator: Node<'_>) -> bool {
 }
 
 fn is_module_declaration(node: Node<'_>) -> bool {
-    match node.parent() {
-        Some(parent) if parent.kind() == "program" => true,
-        Some(parent) if parent.kind() == "export_statement" => parent
-            .parent()
-            .is_some_and(|ancestor| ancestor.kind() == "program"),
-        _ => false,
+    let mut parent = node.parent();
+    while let Some(candidate) = parent {
+        match candidate.kind() {
+            "program" => return true,
+            // These grammar wrappers do not introduce a lexical scope for the declaration.
+            "expression_statement" | "export_statement" => parent = candidate.parent(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn is_erased_declaration(mut node: Node<'_>) -> bool {
+    loop {
+        if node.kind() == "ambient_declaration" {
+            return true;
+        }
+        if node.kind() == "program" {
+            return false;
+        }
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        node = parent;
     }
 }
 

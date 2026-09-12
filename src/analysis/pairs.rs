@@ -910,6 +910,7 @@ fn insert_matcher_blocking_candidates(
         for left_offset in 0..posting.indices.len() {
             for right_offset in left_offset + 1..posting.indices.len() {
                 if !consider_matcher_blocking_pair(
+                    definitions,
                     classes,
                     &sorted_events,
                     behavior_anchor_events,
@@ -946,6 +947,7 @@ fn insert_matcher_blocking_candidates(
                 continue;
             }
             if !consider_matcher_blocking_pair(
+                definitions,
                 classes,
                 &sorted_events,
                 behavior_anchor_events,
@@ -1093,6 +1095,7 @@ fn sorted_events_overlap(left: &[usize], right: &[usize]) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 fn consider_matcher_blocking_pair(
+    definitions: &[StepDefinition],
     classes: &ComparisonClasses,
     sorted_events: &[Vec<usize>],
     anchor_events: &[Vec<usize>],
@@ -1110,6 +1113,13 @@ fn consider_matcher_blocking_pair(
         || builder.candidates.contains_key(&pair)
         || !considered_pairs.insert(pair)
     {
+        return true;
+    }
+    // Exact/normalized matcher and structural sources have their own rule semantics. For fuzzy
+    // matcher blocking, incompatible decorated methods can never reach the final similarity gate;
+    // discard them before charging proposal/event work so they cannot displace useful candidates
+    // under a bounded analysis budget.
+    if !handler_runtime_compatible(&definitions[left], &definitions[right]) {
         return true;
     }
     *proposal_work = proposal_work.saturating_add(1);
@@ -1902,6 +1912,34 @@ mod tests {
             &empty_events,
             &empty_events,
         ));
+
+        let mut sync_method = definitions[0].clone();
+        sync_method.matcher = "the account status is ready".to_owned();
+        sync_method.normalized_matcher = sync_method.matcher.clone();
+        sync_method.handler.alpha_normalized = "sync-alpha".to_owned();
+        sync_method.handler.structural = "sync-structure".to_owned();
+        sync_method.handler.behavior_signature = vec![
+            "method:instance sync".to_owned(),
+            "assert:expect#toBe:subject:value".to_owned(),
+        ];
+        let mut async_method = sync_method.clone();
+        async_method.matcher = "the account status is steady".to_owned();
+        async_method.normalized_matcher = async_method.matcher.clone();
+        async_method.handler.alpha_normalized = "async-alpha".to_owned();
+        async_method.handler.structural = "async-structure".to_owned();
+        async_method.handler.behavior_signature[0] = "method:instance async".to_owned();
+        let definitions = [sync_method, async_method];
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        insert_blocking_candidates(&definitions, &mut builder);
+        assert!(builder.candidates.is_empty());
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].evaluated,
+            0
+        );
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            0
+        );
     }
 
     #[test]

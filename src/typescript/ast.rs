@@ -389,4 +389,33 @@ export * as runtime from "runtime";
         assert!(is_type_only_specifier(specifiers[0]));
         assert!(!is_type_only_specifier(specifiers[1]));
     }
+
+    #[test]
+    fn typescript_namespace_parse_shapes_are_pinned() {
+        for (source, expected_shape) in [
+            (
+                "namespace expect { export const custom = true; }",
+                "(expression_statement (internal_module",
+            ),
+            (
+                "module expect { export const custom = true; }",
+                "(module name:",
+            ),
+            (
+                "declare namespace expect { const custom: boolean; }",
+                "(ambient_declaration (internal_module",
+            ),
+            (
+                "declare const expect: AssertionFactory;",
+                "(ambient_declaration (lexical_declaration",
+            ),
+        ] {
+            let tree = parse_typescript(source);
+            assert!(
+                tree.root_node().to_sexp().contains(expected_shape),
+                "{source}: {}",
+                tree.root_node().to_sexp()
+            );
+        }
+    }
 }
