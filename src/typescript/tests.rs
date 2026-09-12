@@ -1915,6 +1915,29 @@ Then('TypeScript import require binding', ({ state }) => check(state).toBe('read
 }
 
 #[test]
+fn ambient_variable_declarations_do_not_shadow_runtime_assertion_provenance() {
+    for source in [
+        r#"
+declare var expect: unknown;
+Then('ambient expect remains available', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+declare var require: unknown;
+const { expect } = require('@playwright/test');
+Then('CommonJS expect remains available', ({ state }) => expect(state).toBe('ready'));
+"#,
+    ] {
+        let definitions = extract_ts(source);
+
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert!(
+            definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn decorated_method_metadata_does_not_inflate_executable_behavior_similarity() {
     let definitions = extract_ts(
         r#"

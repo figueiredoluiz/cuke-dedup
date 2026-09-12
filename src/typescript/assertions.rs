@@ -679,6 +679,7 @@ fn is_module_var(declarator: Node<'_>) -> bool {
     declarator
         .parent()
         .is_some_and(|declaration| declaration.kind() == "variable_declaration")
+        && !is_erased_declaration(declarator)
         && nearest_function_scope(declarator.parent()).is_none()
 }
 
