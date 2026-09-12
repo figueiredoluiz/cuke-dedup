@@ -1,6 +1,6 @@
 {
   "name": "cuke-dedup",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Static analysis for duplicate and reusable Cucumber step definitions",
   "type": "module",
   "bin": {
@@ -21,6 +21,7 @@
     "test": "node --test npm/test/*.test.mjs",
     "skills:check": "node scripts/check/check-agent-skills.mjs",
     "check:versions": "node scripts/check/check-release-version.mjs",
+    "bump:version": "node scripts/release/bump-version.mjs",
     "pack:check": "npm pack --dry-run",
     "corpus:check": "node scripts/check/check-corpus.mjs",
     "benchmark": "node scripts/benchmark/benchmark-analysis.mjs"
@@ -46,13 +47,13 @@
     "npm/platforms/*"
   ],
   "optionalDependencies": {
-    "cuke-dedup-darwin-arm64": "0.2.0",
-    "cuke-dedup-darwin-x64": "0.2.0",
-    "cuke-dedup-linux-arm64-gnu": "0.2.0",
-    "cuke-dedup-linux-arm64-musl": "0.2.0",
-    "cuke-dedup-linux-x64-gnu": "0.2.0",
-    "cuke-dedup-linux-x64-musl": "0.2.0",
-    "cuke-dedup-windows-arm64-msvc": "0.2.0",
-    "cuke-dedup-windows-x64-msvc": "0.2.0"
+    "cuke-dedup-darwin-arm64": "0.2.1",
+    "cuke-dedup-darwin-x64": "0.2.1",
+    "cuke-dedup-linux-arm64-gnu": "0.2.1",
+    "cuke-dedup-linux-arm64-musl": "0.2.1",
+    "cuke-dedup-linux-x64-gnu": "0.2.1",
+    "cuke-dedup-linux-x64-musl": "0.2.1",
+    "cuke-dedup-windows-arm64-msvc": "0.2.1",
+    "cuke-dedup-windows-x64-msvc": "0.2.1"
   }
 }

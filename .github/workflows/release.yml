@@ -6,7 +6,7 @@ on:
       version:
         description: Package version used in artifact names
         required: true
-        default: 0.2.0
+        default: 0.2.1
         type: string
       publish_release:
         description: Create a GitHub release and enable configured registry publishing

@@ -5,6 +5,27 @@ use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
+/// Git exports `GIT_DIR`, `GIT_INDEX_FILE`, and friends to the processes it spawns. When this
+/// suite runs from a Git hook, those variables outrank the `current_dir` and `-C` of a nested
+/// invocation, so a fixture's `git add` would stage temporary paths into the real repository's
+/// index and mark every tracked file deleted. Strip that environment instead.
+fn fixture_git() -> ProcessCommand {
+    let mut command = ProcessCommand::new("git");
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+        "GIT_CEILING_DIRECTORIES",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
 fn write(root: &Path, relative: &str, contents: &str) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -658,7 +679,7 @@ fn unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files() 
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -1201,7 +1222,7 @@ fn static_project_config_errors_survive_changed_mode_and_every_reporter() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -1698,7 +1719,7 @@ fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -1732,7 +1753,7 @@ fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -1762,7 +1783,7 @@ fn an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -1795,7 +1816,7 @@ fn a_malformed_unchanged_definition_cannot_make_changed_analysis_pass() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -1830,7 +1851,7 @@ fn changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2326,7 +2347,7 @@ fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2338,7 +2359,7 @@ fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
         "steps/café changed.ts",
         "Given('shared step', () => { changed(); });\n",
     );
-    assert!(ProcessCommand::new("git")
+    assert!(fixture_git()
         .args(["add", "steps/café changed.ts"])
         .current_dir(directory.path())
         .status()
@@ -2380,7 +2401,7 @@ fn changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2413,7 +2434,7 @@ fn changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2452,7 +2473,7 @@ fn changed_since_handles_an_untracked_file_with_a_newline() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2493,7 +2514,7 @@ fn changed_since_handles_an_untracked_non_utf8_file() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2531,7 +2552,7 @@ fn changed_since_rejects_a_gitignored_analysis_root() {
         vec!["add", ".gitignore"],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2563,7 +2584,7 @@ fn changed_since_disables_unused_findings_but_fails_when_no_feature_parses() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2842,7 +2863,7 @@ fn changed_since_fails_closed_on_unchanged_feature_parse_errors() {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(ProcessCommand::new("git")
+        assert!(fixture_git()
             .args(args)
             .current_dir(directory.path())
             .status()
@@ -2990,4 +3011,57 @@ fn path_before_check_is_rejected_and_discovery_flags_are_applied() {
         .stdout(predicate::str::contains(
             "Analyzed 1 definition and 1 feature step",
         ));
+}
+
+/// Git hooks receive `GIT_DIR` and friends pointing at the repository that launched them. Those
+/// variables outrank `-C`, so a leaked environment would silently make changed-files mode describe
+/// the hook's repository instead of the analyzed root.
+#[test]
+fn changed_files_mode_ignores_an_inherited_git_environment() {
+    let decoy = tempfile::tempdir().unwrap();
+    write(decoy.path(), "sentinel.txt", "sentinel\n");
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(fixture_git()
+            .args(args)
+            .current_dir(decoy.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    // The analyzed root is deliberately not a repository, so the only way this can succeed is by
+    // resolving the decoy from the environment.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('shared step', () => work());\n",
+    );
+
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .env("GIT_DIR", decoy.path().join(".git"))
+        .env("GIT_WORK_TREE", decoy.path())
+        .env("GIT_INDEX_FILE", decoy.path().join(".git/index"))
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "changed-files mode requires a Git repository",
+        ));
+
+    // The decoy's index must be untouched by the analysis.
+    let tracked = fixture_git()
+        .args(["ls-files"])
+        .current_dir(decoy.path())
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&tracked.stdout), "sentinel.txt\n");
 }

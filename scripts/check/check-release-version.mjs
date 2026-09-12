@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+import { findActionPins } from "../release/version-sites.mjs";
+
 const prebuilt = JSON.parse(await readFile("npm/prebuilt-targets.json", "utf8"));
 const manifests = [
   "package.json",
@@ -74,6 +76,30 @@ for (const [path, manifest] of packages.slice(1)) {
     cargoVersion,
     `package-lock.json ${lockPath} version differs from Cargo.toml`,
   );
+}
+
+const fuzzCargo = await readFile("fuzz/Cargo.toml", "utf8");
+const fuzzPin = fuzzCargo.match(
+  /^cuke-dedup = \{ path = "\.\.", version = "=([^"]+)" \}$/m,
+)?.[1];
+assert(fuzzPin, "fuzz/Cargo.toml cuke-dedup pin was not found");
+assert.equal(fuzzPin, cargoVersion, "fuzz/Cargo.toml pin differs from Cargo.toml");
+
+for (const path of ["Cargo.lock", "fuzz/Cargo.lock"]) {
+  const lockfile = await readFile(path, "utf8");
+  const locked = lockfile.match(/^name = "cuke-dedup"\nversion = "([^"]+)"$/m)?.[1];
+  assert(locked, `${path} cuke-dedup entry was not found`);
+  assert.equal(locked, cargoVersion, `${path} version differs from Cargo.toml`);
+}
+
+// Discovered, not listed, so a pin added to a new guide is verified without registering it here.
+// `bump-version.mjs` rewrites whatever this same helper finds.
+const documentedPins = await findActionPins();
+assert(documentedPins.length > 0, "no documented Action version pins were found");
+for (const { path, versions } of documentedPins) {
+  for (const pinned of versions) {
+    assert.equal(pinned, cargoVersion, `${path} Action pin @v${pinned} differs from Cargo.toml`);
+  }
 }
 
 const expectedVersion = process.env.EXPECTED_VERSION;

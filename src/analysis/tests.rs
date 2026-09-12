@@ -523,6 +523,74 @@ fn assertion_precision_covers_member_require_iifes_and_factory_options() {
     }
 }
 
+/// A parameterized immediately-invoked function keeps the ordinary call boundary because its
+/// arguments are never substituted, so its body is not read. The handler must stay comparable
+/// regardless: marking it unresolved suppresses every handler rule for that definition, which
+/// hides an exact duplicate and loses recall on an error-severity rule.
+#[test]
+fn parameterized_invocations_stay_comparable_for_duplicate_detection() {
+    let (_directory, config) = config();
+    for body in [
+        "() => { ((target) => expect(target.status).toBe(VALUE))(state); }",
+        "() => { (function (target) { expect(target.status).toBe(VALUE); })(state); }",
+        "async () => { await (async (target) => expect(target.status).toBe(VALUE))(state); }",
+    ] {
+        for same in [false, true] {
+            let source = format!(
+                "Then('the current state is verified', {}); Then('the current state is verified now', {});",
+                body.replace("VALUE", "'ready'"),
+                body.replace("VALUE", if same { "'ready'" } else { "'idle'" })
+            );
+            let extracted = definitions(&source);
+            assert_eq!(extracted.len(), 2, "{source}");
+            assert!(
+                extracted
+                    .iter()
+                    .all(|definition| definition.handler.comparable),
+                "{source}: a parameterized invocation must not disable handler comparison"
+            );
+            let result = analyze(extracted, Vec::new(), &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .any(|finding| finding.rule == Rule::DuplicateHandler),
+                same,
+                "{source}: {:?}",
+                result.findings
+            );
+        }
+    }
+
+    // Staying comparable must not equate invocations that pass different arguments. The body is
+    // never read, so the exact and normalized fingerprints are what keep these apart.
+    for (left, right) in [
+        (
+            "((target) => expect(target.status).toBe('ready'))(page)",
+            "((target) => expect(target.status).toBe('ready'))(page.sidebar)",
+        ),
+        (
+            "((value) => expect(state).toBe(value))(100)",
+            "((value) => expect(state).toBe(value))(5000)",
+        ),
+    ] {
+        let source = format!(
+            "Then('the first reading holds', () => {{ {left}; }});              Then('the second reading holds', () => {{ {right}; }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|finding| finding.rule == Rule::DuplicateHandler),
+            "{source}: {:?}",
+            result.findings
+        );
+    }
+}
+
 #[test]
 fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
     for (prefix, body) in [
@@ -550,13 +618,25 @@ fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
         ));
         assert!(!extracted[0].handler.comparable, "{options}");
     }
+    // A parameterized invocation must not contribute an assertion event, because its arguments
+    // are not substituted and callback parameters count as safe value bindings. Asserting on the
+    // absence of the event rather than on `comparable` keeps the guarantee while leaving the
+    // handler eligible for the rules that compare whole implementations; see
+    // `parameterized_invocations_stay_comparable_for_duplicate_detection`.
     for invocation in [
         "((value) => expect(state).toBe(value))(100)",
         "(value => expect(state).toBe(value))(100)",
         "((value = 100) => expect(state).toBe(value))()",
     ] {
         let extracted = definitions(&format!("Then('state', () => {{ {invocation}; }});"));
-        assert!(!extracted[0].handler.comparable, "{invocation}");
+        assert!(
+            extracted[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")),
+            "{invocation}"
+        );
     }
     let named = definitions("Then('one', () => { (function first() { expect(state).toBe('ready'); })(); }); Then('two', () => { (function second() { expect(state).toBe('ready'); })(); });");
     assert_eq!(
