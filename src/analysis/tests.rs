@@ -308,6 +308,63 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
     let cjs =
         "const {Then} = require('@cucumber/cucumber'); const api = require('@playwright/test');";
     for (prefix, mutation, trusted) in [
+        (
+            valid,
+            "const other = api; other.expect = replacement;",
+            false,
+        ),
+        (cjs, "const other = api; other.expect = replacement;", false),
+        (
+            valid,
+            "const other = (api as PW); const last = other; [last.expect] = replacements;",
+            false,
+        ),
+        (valid, "let other; other = api; other['expect']++;", false),
+        (
+            valid,
+            "function mutate() { const other = api; other.expect = replacement; }",
+            false,
+        ),
+        (
+            valid,
+            "const other = api; function mutate() { other.expect = replacement; }",
+            false,
+        ),
+        (
+            valid,
+            "const other = api; function local(other) { other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "function local(api) { const other = api; other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "const other = api; { const other = local; other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "let other = api; other = local; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other = api; let last = other; other = last; last.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "const other = api; other.unrelated = replacement;",
+            true,
+        ),
+        (
+            valid,
+            "type other = unknown; const other = api; other.expect = replacement;",
+            false,
+        ),
         (valid, "", true),
         (valid, "(api).expect = replacement;", false),
         (valid, "(api as PW).expect = replacement;", false),

@@ -4,6 +4,38 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "review-gap-namespace-alias",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "alias.ts,control.ts"
+      ],
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
       "name": "review-gap-named-default",
       "path": "review-gaps",
       "arguments": [

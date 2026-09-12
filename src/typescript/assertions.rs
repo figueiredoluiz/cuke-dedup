@@ -30,7 +30,9 @@ impl AssertionBindings {
         registrations: &RegistrationNames,
     ) -> Self {
         let facade_modules = resolved_facade_modules(root, source, registrations);
-        let shadow_ranges = collect_scoped_bindings(root, source);
+        let (scopes, scope_ranges) = collect_binding_scopes(root, source);
+        let alias_writes = namespace_alias_writes(root, source, &scopes);
+        let shadow_ranges = collect_scoped_bindings(scopes, scope_ranges);
         let require_shadowed =
             module_runtime_binding_exists(root, source, "require", &shadow_ranges);
         let mut bindings = Self::default();
@@ -113,6 +115,7 @@ impl AssertionBindings {
         // file, matching step-registration discovery. A false negative is safer than assigning
         // assertion semantics to an unrelated function and manufacturing similarity evidence.
         shadowed.extend(factory_writes.intersection(&bindings.namespaces).cloned());
+        shadowed.extend(alias_writes.intersection(&bindings.namespaces).cloned());
         bindings
             .identifiers
             .retain(|identifier| !shadowed.contains(identifier));
@@ -558,7 +561,76 @@ fn module_runtime_binding_exists(
     false
 }
 
-fn collect_scoped_bindings(root: Node<'_>, source: &[u8]) -> BTreeMap<String, Vec<(usize, usize)>> {
+type BindingScopes = BTreeMap<usize, BTreeSet<String>>;
+type ScopeRanges = BTreeMap<usize, (usize, usize)>;
+
+fn namespace_alias_writes(
+    root: Node<'_>,
+    source: &[u8],
+    scopes: &BindingScopes,
+) -> BTreeSet<String> {
+    // A may-alias graph only removes trust; it never promotes an alias to an assertion
+    // factory. Keep prior assignments conservatively and identify lexical bindings, not
+    // spellings, so a shadowed local receiver cannot contaminate a module namespace.
+    let key = |name: &str, mut node: Node<'_>| loop {
+        if scopes
+            .get(&node.id())
+            .is_some_and(|names| names.contains(name))
+        {
+            return (node.id(), name.to_owned());
+        }
+        let Some(parent) = node.parent() else {
+            return (root.id(), name.to_owned());
+        };
+        node = parent;
+    };
+    let mut aliases = BTreeMap::<_, BTreeSet<_>>::new();
+    let mut writes = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let edge = match node.kind() {
+            "variable_declarator" => node
+                .child_by_field_name("name")
+                .zip(node.child_by_field_name("value")),
+            "assignment_expression" => node
+                .child_by_field_name("left")
+                .zip(node.child_by_field_name("right")),
+            _ => None,
+        };
+        if let Some((left, right)) = edge {
+            if let Some(right) = super::registrations::unwrap_registration_callee(right) {
+                if left.kind() == "identifier" && right.kind() == "identifier" {
+                    aliases
+                        .entry(key(node_text(left, source), left))
+                        .or_default()
+                        .insert(key(node_text(right, source), right));
+                }
+            }
+        }
+        if let Some(target) = assignment_target(node) {
+            let mut receivers = BTreeSet::new();
+            collect_assignment_targets(target, source, &mut BTreeSet::new(), &mut receivers);
+            writes.extend(receivers.into_iter().map(|name| key(&name, node)));
+        }
+        super::ast::push_named_children_reverse(node, &mut stack);
+    }
+    let mut visited = BTreeSet::new();
+    let mut modules = BTreeSet::new();
+    while let Some(binding) = writes.pop() {
+        if !visited.insert(binding.clone()) {
+            continue;
+        }
+        if binding.0 == root.id() {
+            modules.insert(binding.1.clone());
+        }
+        if let Some(sources) = aliases.get(&binding) {
+            writes.extend(sources.iter().cloned());
+        }
+    }
+    modules
+}
+
+fn collect_binding_scopes(root: Node<'_>, source: &[u8]) -> (BindingScopes, ScopeRanges) {
     let mut scopes = BTreeMap::<usize, BTreeSet<String>>::new();
     let mut scope_ranges = BTreeMap::new();
     let mut stack = vec![root];
@@ -675,6 +747,13 @@ fn collect_scoped_bindings(root: Node<'_>, source: &[u8]) -> BTreeMap<String, Ve
         }
         super::ast::push_named_children_reverse(node, &mut stack);
     }
+    (scopes, scope_ranges)
+}
+
+fn collect_scoped_bindings(
+    scopes: BindingScopes,
+    scope_ranges: ScopeRanges,
+) -> BTreeMap<String, Vec<(usize, usize)>> {
     let mut ranges = BTreeMap::<String, Vec<(usize, usize)>>::new();
     for (scope, names) in scopes {
         let Some(range) = scope_ranges.get(&scope).copied() else {
