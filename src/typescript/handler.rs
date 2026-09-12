@@ -793,20 +793,23 @@ impl LocalConstants {
                         .is_some_and(|binding| binding.safe),
                     _ => false,
                 };
-            let alpha = stable_fingerprint(&serialize_assertion_value(
-                value,
-                source,
-                declared,
-                AstMode::Alpha,
-                &constants,
-            ));
-            let structural = stable_fingerprint(&serialize_assertion_value(
-                value,
-                source,
-                declared,
-                AstMode::Structural,
-                &constants,
-            ));
+            let fingerprint = |mode| {
+                // Reuse the value digest across aliases instead of hashing the alias spelling.
+                if safe && value.kind() == "identifier" {
+                    if let Some(resolved) = constants.resolve(node_text(value, source), value, mode)
+                    {
+                        return resolved.to_owned();
+                    }
+                }
+                let serialized = if safe {
+                    serialize_ast(value, source, declared, mode)
+                } else {
+                    serialize_assertion_value(value, source, declared, mode, &constants)
+                };
+                stable_fingerprint(&serialized)
+            };
+            let alpha = fingerprint(AstMode::Alpha);
+            let structural = fingerprint(AstMode::Structural);
             constants
                 .bindings
                 .entry(name)
@@ -912,6 +915,16 @@ fn serialize_ast(
     declared: &BTreeMap<String, String>,
     mode: AstMode,
 ) -> String {
+    serialize_ast_with_constants(node, source, declared, mode, None)
+}
+
+fn serialize_ast_with_constants(
+    node: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+    mode: AstMode,
+    constants: Option<&LocalConstants>,
+) -> String {
     enum Event<'tree> {
         Visit(Node<'tree>, bool),
         Close,
@@ -927,6 +940,28 @@ fn serialize_ast(
                 }
                 if prefixed {
                     output.push(' ');
+                }
+                if let Some(constants) = constants {
+                    // Substitute at the use site so inline and local values retain identical shape.
+                    let shorthand = node.kind() == "shorthand_property_identifier";
+                    let resolved = (node.kind() == "identifier" || shorthand)
+                        .then(|| constants.resolve(node_text(node, source), node, mode))
+                        .flatten();
+                    let literal = matches!(
+                        node.kind(),
+                        "string" | "number" | "true" | "false" | "null" | "undefined"
+                    );
+                    if resolved.is_some() || literal {
+                        let fingerprint = resolved.map(str::to_owned).unwrap_or_else(|| {
+                            stable_fingerprint(&serialize_ast(node, source, declared, mode))
+                        });
+                        if shorthand {
+                            // A shorthand carries both a property key and a resolved value.
+                            output.push_str(&format!("<key:{}>", node_text(node, source)));
+                        }
+                        output.push_str(&format!("<value:{fingerprint}>"));
+                        continue;
+                    }
                 }
                 if matches!(mode, AstMode::Structural)
                     && matches!(
@@ -1163,24 +1198,7 @@ fn serialize_assertion_value(
     mode: AstMode,
     local_constants: &LocalConstants,
 ) -> String {
-    let mut serialized = serialize_ast(node, source, declared, mode);
-    let mut stack = vec![node];
-    while let Some(current) = stack.pop() {
-        if matches!(
-            current.kind(),
-            "identifier" | "shorthand_property_identifier"
-        ) {
-            if let Some(initializer) =
-                local_constants.resolve(node_text(current, source), current, mode)
-            {
-                serialized.push_str("\0const:");
-                serialized.push_str(initializer);
-            }
-            continue;
-        }
-        push_named_children_reverse(current, &mut stack);
-    }
-    serialized
+    serialize_ast_with_constants(node, source, declared, mode, Some(local_constants))
 }
 
 fn find_expect_invocation<'tree>(

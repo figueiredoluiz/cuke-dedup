@@ -4,6 +4,195 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "precision-import-esm",
+      "path": "precision-import-esm",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-import-cjs",
+      "path": "precision-import-cjs",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-external-values",
+      "path": "precision-external-values",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-local-values",
+      "path": "precision-local-values",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-inline-local",
+      "path": "precision-inline-local",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-nested-shadow",
+      "path": "precision-nested-shadow",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-erased-runtime",
+      "path": "precision-erased-runtime",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-decorator-values",
+      "path": "precision-decorator-values",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-mixed-positive",
+      "path": "precision-mixed-positive",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-renamed-local",
+      "path": "precision-renamed-local",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ]
+    },
+    {
       "name": "exact-match-remains-detectable",
       "path": "exact-match",
       "expectedDefinitions": 2,
@@ -140,7 +329,7 @@
       "path": "assertion-precision",
       "expectedDefinitions": 14,
       "expectedCandidateSources": {
-        "matcherBlocking": 5
+        "matcherBlocking": 7
       },
       "expectedFindings": [
         {
