@@ -1051,7 +1051,7 @@ fn can_reach_handler_similarity_gate(
     left_anchor_events: &[usize],
     right_anchor_events: &[usize],
 ) -> bool {
-    if relationships.same_handler_structure {
+    if relationships.same_handler_structure && left_events == right_events {
         return true;
     }
     let longest = left_events.len().max(right_events.len());
@@ -1911,6 +1911,14 @@ mod tests {
         let classes = comparison_classes(&definitions);
         assert!(!classes.relationships(0, 1).same_handler);
         assert!(classes.relationships(0, 1).same_handler_structure);
+        // Equal AST shapes cannot bypass conflicting assertion behavior before insertion.
+        assert!(!can_reach_handler_similarity_gate(
+            classes.relationships(0, 1),
+            &[1],
+            &[2],
+            &[1],
+            &[2],
+        ));
         assert!(can_reach_handler_similarity_gate(
             classes.relationships(0, 1),
             &empty_events,

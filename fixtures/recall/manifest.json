@@ -168,6 +168,96 @@
       ]
     },
     {
+      "name": "review-gap-candidate-filter",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "candidates.ts"
+      ],
+      "expectedDefinitions": 4,
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      },
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "review-gap-candidate-small-budget",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "candidates.ts",
+        "--max-candidate-comparisons",
+        "1"
+      ],
+      "expectedDefinitions": 4,
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      },
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
       "name": "precision-import-esm",
       "path": "precision-import-esm",
       "expectedDefinitions": 2,
@@ -493,7 +583,7 @@
       "path": "assertion-precision",
       "expectedDefinitions": 14,
       "expectedCandidateSources": {
-        "matcherBlocking": 7
+        "matcherBlocking": 3
       },
       "expectedFindings": [
         {
