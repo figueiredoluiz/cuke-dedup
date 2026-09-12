@@ -177,6 +177,126 @@ fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
 }
 
 #[test]
+fn assertion_precision_covers_member_require_iifes_and_factory_options() {
+    let (_directory, config) = config();
+    for (prefix, body) in [
+        (
+            "const check = require('@playwright/test').expect;",
+            "() => check(state).toBe(VALUE)",
+        ),
+        (
+            "const check = require('@jest/globals').expect;",
+            "() => check(state).toBe(VALUE)",
+        ),
+        (
+            "const check = require('expect').expect;",
+            "() => check(state).toBe(VALUE)",
+        ),
+        ("", "() => { (() => expect(state).toBe(VALUE))(); }"),
+        (
+            "",
+            "() => { (function () { expect(state).toBe(VALUE); })(); }",
+        ),
+        (
+            "",
+            "async () => { await (async () => expect(state).toBe(VALUE))(); }",
+        ),
+        (
+            "",
+            "() => { ((() => expect(state).toBe(VALUE)) as (() => void))(); }",
+        ),
+        (
+            "",
+            "() => expect.poll(() => state, { timeout: VALUE }).toBe('ready')",
+        ),
+        (
+            "",
+            "() => expect.poll(() => state, { intervals: [VALUE] }).toBe('ready')",
+        ),
+    ] {
+        for same in [false, true] {
+            let source = format!(
+                "{prefix} Then('the current state is verified', {}); Then('the current state is verified now', {});",
+                body.replace("VALUE", "100"), body.replace("VALUE", if same { "100" } else { "5000" })
+            );
+            let extracted = definitions(&source);
+            assert_eq!(extracted.len(), 2, "{source}");
+            assert_eq!(
+                extracted[0].handler.behavior_signature == extracted[1].handler.behavior_signature,
+                same,
+                "{source}"
+            );
+            let result = analyze(extracted, Vec::new(), &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateHandler),
+                same,
+                "{source}"
+            );
+            if !same {
+                assert!(
+                    !result.findings.iter().any(|f| matches!(
+                        f.rule,
+                        Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+                    )),
+                    "{source}: {:?}",
+                    result.findings
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
+    for (prefix, body) in [
+        ("const check = require('unrelated').expect;", "() => check(state).toBe('ready')"),
+        ("const check = require('@playwright/test').other;", "() => check(state).toBe('ready')"),
+        ("const { expect: check } = require('@playwright/test').expect;", "() => check(state).toBe('ready')"),
+        ("function require(name) { return custom; } const check = require('@playwright/test').expect;", "() => check(state).toBe('ready')"),
+        ("const check = require('@playwright/test').expect;", "(check) => check(state).toBe('ready')"),
+        ("", "() => { register(() => expect(state).toBe('ready')); }"),
+        ("", "() => { const callback = () => expect(state).toBe('ready'); register(callback); }"),
+        ("", "() => { (function* () { expect(state).toBe('ready'); })(); }"),
+    ] {
+        let source = format!("{prefix} Then('state', {body});");
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 1, "{source}");
+        assert!(extracted[0].handler.behavior_signature.iter().all(|event| !event.starts_with("assert:")), "{source}");
+    }
+    for options in [
+        "external",
+        "{ timeout: external }",
+        "{ intervals: [external] }",
+    ] {
+        let extracted = definitions(&format!(
+            "Then('state', () => expect.poll(() => state, {options}).toBe('ready'));"
+        ));
+        assert!(!extracted[0].handler.comparable, "{options}");
+    }
+    for invocation in [
+        "((value) => expect(state).toBe(value))(100)",
+        "(value => expect(state).toBe(value))(100)",
+        "((value = 100) => expect(state).toBe(value))()",
+    ] {
+        let extracted = definitions(&format!("Then('state', () => {{ {invocation}; }});"));
+        assert!(!extracted[0].handler.comparable, "{invocation}");
+    }
+    let named = definitions("Then('one', () => { (function first() { expect(state).toBe('ready'); })(); }); Then('two', () => { (function second() { expect(state).toBe('ready'); })(); });");
+    assert_eq!(
+        named[0].handler.behavior_signature,
+        named[1].handler.behavior_signature
+    );
+    let arguments =
+        definitions("Then('state', () => { (() => expect(state).toBe('ready'))(prepare()); });");
+    assert_eq!(arguments[0].handler.behavior_signature.len(), 2);
+    assert_eq!(arguments[0].handler.behavior_signature[0], "call:prepare");
+    assert!(arguments[0].handler.behavior_signature[1].starts_with("assert:"));
+}
+
+#[test]
 fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     let mut unrelated_source = String::new();
     for index in 0..100 {

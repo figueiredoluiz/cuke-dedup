@@ -1028,6 +1028,36 @@ fn collect_behavior(
                     continue;
                 }
                 if let Some(function) = node.child_by_field_name("function") {
+                    let mut invoked = function;
+                    while matches!(
+                        invoked.kind(),
+                        "parenthesized_expression"
+                            | "as_expression"
+                            | "satisfies_expression"
+                            | "non_null_expression"
+                    ) {
+                        let Some(inner) = invoked.named_child(0) else {
+                            break;
+                        };
+                        invoked = inner;
+                    }
+                    if matches!(invoked.kind(), "arrow_function" | "function_expression") {
+                        // Parameter substitution is not evaluated; do not invent equal values.
+                        if invoked
+                            .child_by_field_name("parameters")
+                            .is_some_and(|p| p.named_child_count() > 0)
+                            || invoked.child_by_field_name("parameter").is_some()
+                        {
+                            output.push(UNRESOLVED_ASSERTION.to_owned());
+                            continue;
+                        }
+                        // Record the executed body, not an extra generic wrapper-call event.
+                        push_named_children_reverse(invoked, &mut stack);
+                        if let Some(arguments) = node.child_by_field_name("arguments") {
+                            push_named_children_reverse(arguments, &mut stack);
+                        }
+                        continue;
+                    }
                     output.push(call_behavior_event(function, source, declared));
                 }
             }
@@ -1085,6 +1115,9 @@ fn assertion_behavior_event(
     // An external name is not proof of an equal value across files. Preserve extraction and
     // matcher checks, but decline handler equivalence rather than invent module resolution.
     let mut pending = vec![expected];
+    let mut cursor = arguments.walk();
+    let configuration: Vec<_> = arguments.named_children(&mut cursor).skip(1).collect();
+    pending.extend(configuration.iter().copied());
     while let Some(value) = pending.pop() {
         if matches!(value.kind(), "identifier" | "shorthand_property_identifier")
             && !local_constants
@@ -1097,8 +1130,19 @@ fn assertion_behavior_event(
     }
     // Alpha mode canonicalizes parameter and local names while retaining literal values and
     // member identities. The whole arguments node is included to preserve matcher arity.
-    let expected =
+    let mut expected =
         serialize_assertion_value(expected, source, declared, AstMode::Alpha, local_constants);
+    // Factory options affect execution, unlike structural literal normalization.
+    for option in configuration {
+        expected.push_str("\0factory-option:");
+        expected.push_str(&serialize_assertion_value(
+            option,
+            source,
+            declared,
+            AstMode::Alpha,
+            local_constants,
+        ));
+    }
     let qualifier = if modifiers.is_empty() {
         "expect".to_owned()
     } else {

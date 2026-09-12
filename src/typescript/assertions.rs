@@ -237,14 +237,24 @@ impl AssertionBindings {
         ) else {
             return trusted;
         };
-        let Some(module) = required_module(value, source) else {
+        let member_expect = name.kind() == "identifier"
+            && value.kind() == "member_expression"
+            && value
+                .child_by_field_name("property")
+                .is_some_and(|property| node_text(property, source) == "expect");
+        let required = if member_expect {
+            value.child_by_field_name("object").unwrap_or(value)
+        } else {
+            value
+        };
+        let Some(module) = required_module(required, source) else {
             return trusted;
         };
         if !ASSERTION_MODULES.contains(&module) {
             return trusted;
         }
         match name.kind() {
-            "identifier" if module == "expect" => {
+            "identifier" if module == "expect" || member_expect => {
                 let local = node_text(name, source).to_owned();
                 self.identifiers.insert(local.clone());
                 trusted.insert(local);
