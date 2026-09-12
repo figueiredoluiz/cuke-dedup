@@ -429,10 +429,21 @@ fn collect_assignment_targets(
             "member_expression" | "subscript_expression" => {
                 let property = node
                     .child_by_field_name("property")
+                    .filter(|property| !node_text(*property, source).contains('\\'))
                     .map(|property| node_text(property, source).to_owned())
                     .or_else(|| {
                         node.child_by_field_name("index").and_then(|index| {
-                            super::matcher::decode_js_string(node_text(index, source))
+                            let text = node_text(index, source);
+                            // Legacy numeric escapes are unsupported by the shared decoder.
+                            // Unknown keys must invalidate trust, not look like unrelated keys.
+                            if text
+                                .as_bytes()
+                                .windows(2)
+                                .any(|p| p[0] == b'\\' && p[1].is_ascii_digit())
+                            {
+                                return None;
+                            }
+                            super::matcher::decode_js_string(text)
                         })
                     });
                 if property.is_none_or(|property| property == "expect") {
