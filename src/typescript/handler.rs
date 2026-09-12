@@ -1180,6 +1180,14 @@ fn assertion_behavior_event(
     let configuration: Vec<_> = arguments.named_children(&mut cursor).skip(1).collect();
     pending.extend(configuration.iter().copied());
     while let Some(value) = pending.pop() {
+        // Only known builders on a trusted assertion factory are syntax, not external
+        // values. Their arguments still need the same conservative value validation.
+        if assertions.is_asymmetric_matcher(value, source) {
+            if let Some(arguments) = value.child_by_field_name("arguments") {
+                pending.push(arguments);
+            }
+            continue;
+        }
         if matches!(value.kind(), "identifier" | "shorthand_property_identifier")
             && !local_constants
                 .binding(node_text(value, source), value)

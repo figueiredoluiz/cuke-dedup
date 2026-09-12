@@ -124,6 +124,57 @@ fn future_local_declarations_do_not_expose_outer_assertion_values() {
 }
 
 #[test]
+fn nested_assertion_builders_validate_their_origin_and_arguments() {
+    for (prefix, expected, comparable) in [
+        ("", "expect.objectContaining({role: 'admin'})", true),
+        ("", "expect.not.objectContaining({role: 'admin'})", true),
+        (
+            "",
+            "expect.arrayContaining([expect.stringContaining('admin')])",
+            true,
+        ),
+        ("", "expect.objectContaining({role: external})", false),
+        ("", "expect.unknownBuilder({role: 'admin'})", false),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "check.objectContaining({role: 'admin'})",
+            true,
+        ),
+        (
+            "import {expect as check} from 'unrelated';",
+            "check.objectContaining({role: 'admin'})",
+            false,
+        ),
+        (
+            "const check = custom;",
+            "check.objectContaining({role: 'admin'})",
+            false,
+        ),
+    ] {
+        let defs = definitions(&format!("{prefix} Then('parcel is ready', ({{state}}) => expect(state).toEqual({expected})); Then('shipment readiness confirmed', ({{state}}) => expect(state).toEqual({expected}));"));
+        assert_eq!(
+            defs[0].handler.comparable, comparable,
+            "{prefix} {expected}"
+        );
+        let (_dir, cfg) = config();
+        let result = analyze(defs, Vec::new(), &cfg).unwrap();
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule == Rule::DuplicateHandler),
+            comparable,
+            "{prefix} {expected}"
+        );
+    }
+    let defs = definitions("Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('parcel is now ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'guest'})));");
+    assert_ne!(
+        defs[0].handler.behavior_signature,
+        defs[1].handler.behavior_signature
+    );
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"

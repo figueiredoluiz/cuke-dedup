@@ -158,6 +158,52 @@ impl AssertionBindings {
             && node_text(property, source) == "expect"
     }
 
+    pub(super) fn is_asymmetric_matcher(&self, node: Node<'_>, source: &[u8]) -> bool {
+        if node.kind() != "call_expression" {
+            return false;
+        }
+        let Some(function) = node
+            .child_by_field_name("function")
+            .and_then(super::registrations::unwrap_registration_callee)
+        else {
+            return false;
+        };
+        if function.kind() != "member_expression" {
+            return false;
+        }
+        let (Some(mut object), Some(property)) = (
+            function
+                .child_by_field_name("object")
+                .and_then(super::registrations::unwrap_registration_callee),
+            function.child_by_field_name("property"),
+        ) else {
+            return false;
+        };
+        if !matches!(
+            node_text(property, source),
+            "objectContaining"
+                | "arrayContaining"
+                | "stringContaining"
+                | "stringMatching"
+                | "anything"
+                | "any"
+                | "closeTo"
+        ) {
+            return false;
+        }
+        if object.kind() == "member_expression"
+            && object
+                .child_by_field_name("property")
+                .is_some_and(|property| node_text(property, source) == "not")
+        {
+            let Some(base) = object.child_by_field_name("object") else {
+                return false;
+            };
+            object = base;
+        }
+        self.is_factory(object, source)
+    }
+
     fn is_locally_shadowed(&self, node: Node<'_>, expected: &str) -> bool {
         position_is_shadowed(&self.shadow_ranges, expected, node)
     }

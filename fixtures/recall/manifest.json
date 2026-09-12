@@ -150,6 +150,24 @@
       ]
     },
     {
+      "name": "review-gap-nested-matcher",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "nested.ts"
+      ],
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ]
+    },
+    {
       "name": "precision-import-esm",
       "path": "precision-import-esm",
       "expectedDefinitions": 2,
