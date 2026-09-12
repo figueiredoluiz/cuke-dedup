@@ -121,6 +121,26 @@ fn future_local_declarations_do_not_expose_outer_assertion_values() {
             "{ expect(state).toBe(expected); let expected = 'ready'; }",
             false,
         ),
+        (
+            "const expected = 'ready'; { expect(state).toBe(expected); class expected {} }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { expect(state).toBe(expected); function expected() {} }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { expect(state).toBe(expected); enum expected { value } }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; try {} catch (expected) { expect(state).toBe(expected); }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { type expected = string; expect(state).toBe(expected); }",
+            true,
+        ),
     ] {
         let defs = definitions(&format!(
             "Then('state', ({{state, expected}}) => {{ {body} }});"
@@ -188,6 +208,17 @@ fn nested_assertion_builders_validate_their_origin_and_arguments() {
         );
     }
     let defs = definitions("Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('parcel is now ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'guest'})));");
+    assert_ne!(
+        defs[0].handler.behavior_signature,
+        defs[1].handler.behavior_signature
+    );
+
+    let defs = definitions("import {expect as check} from '@playwright/test'; Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('shipment readiness confirmed', ({state}) => check(state).toEqual((check as any).objectContaining({role: 'admin'})));");
+    assert_eq!(
+        defs[0].handler.behavior_signature,
+        defs[1].handler.behavior_signature
+    );
+    let defs = definitions("Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('shipment readiness confirmed', ({state}) => expect(state).toEqual(expect.not.objectContaining({role: 'admin'})));");
     assert_ne!(
         defs[0].handler.behavior_signature,
         defs[1].handler.behavior_signature

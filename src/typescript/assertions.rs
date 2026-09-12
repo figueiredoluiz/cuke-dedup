@@ -159,17 +159,22 @@ impl AssertionBindings {
     }
 
     pub(super) fn is_asymmetric_matcher(&self, node: Node<'_>, source: &[u8]) -> bool {
+        self.asymmetric_matcher(node, source).is_some()
+    }
+
+    pub(super) fn asymmetric_matcher<'source>(
+        &self,
+        node: Node<'_>,
+        source: &'source [u8],
+    ) -> Option<(bool, &'source str)> {
         if node.kind() != "call_expression" {
-            return false;
+            return None;
         }
-        let Some(function) = node
+        let function = node
             .child_by_field_name("function")
-            .and_then(super::registrations::unwrap_registration_callee)
-        else {
-            return false;
-        };
+            .and_then(super::registrations::unwrap_registration_callee)?;
         if function.kind() != "member_expression" {
-            return false;
+            return None;
         }
         let (Some(mut object), Some(property)) = (
             function
@@ -177,10 +182,11 @@ impl AssertionBindings {
                 .and_then(super::registrations::unwrap_registration_callee),
             function.child_by_field_name("property"),
         ) else {
-            return false;
+            return None;
         };
+        let matcher = node_text(property, source);
         if !matches!(
-            node_text(property, source),
+            matcher,
             "objectContaining"
                 | "arrayContaining"
                 | "stringContaining"
@@ -189,19 +195,20 @@ impl AssertionBindings {
                 | "any"
                 | "closeTo"
         ) {
-            return false;
+            return None;
         }
+        let mut negated = false;
         if object.kind() == "member_expression"
             && object
                 .child_by_field_name("property")
                 .is_some_and(|property| node_text(property, source) == "not")
         {
-            let Some(base) = object.child_by_field_name("object") else {
-                return false;
-            };
+            let base = object.child_by_field_name("object")?;
             object = base;
+            negated = true;
         }
         self.is_factory(object, source)
+            .then_some((negated, matcher))
     }
 
     fn is_locally_shadowed(&self, node: Node<'_>, expected: &str) -> bool {

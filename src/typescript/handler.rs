@@ -762,6 +762,24 @@ impl LocalConstants {
                     }
                 }
             }
+            let declaration_shadow = match node.kind() {
+                "class_declaration" | "abstract_class_declaration" => node
+                    .child_by_field_name("name")
+                    .zip(local_constant_scope(node.parent(), handler))
+                    .map(|(name, scope)| (name, scope, node.start_byte(), true)),
+                "function_declaration" | "generator_function_declaration" | "enum_declaration" => {
+                    node.child_by_field_name("name")
+                        .zip(local_constant_scope(node.parent(), handler))
+                        .map(|(name, scope)| (name, scope, scope.start_byte(), false))
+                }
+                "catch_clause" => node
+                    .child_by_field_name("parameter")
+                    .map(|parameter| (parameter, node, node.start_byte(), false)),
+                _ => None,
+            };
+            if let Some((name, scope, declaration_start, lexical)) = declaration_shadow {
+                constants.insert_unresolved_shadow(name, source, declaration_start, scope, lexical);
+            }
             if node.kind() == "variable_declarator" {
                 let declaration = node.parent();
                 if let (Some(name), Some(scope)) = (
@@ -873,6 +891,34 @@ impl LocalConstants {
         constants
     }
 
+    fn insert_unresolved_shadow(
+        &mut self,
+        pattern: Node<'_>,
+        source: &[u8],
+        declaration_start: usize,
+        scope: Node<'_>,
+        lexical: bool,
+    ) {
+        let mut names = Vec::new();
+        if pattern.kind() == "type_identifier" {
+            push_identifier(&mut names, node_text(pattern, source));
+        } else {
+            collect_parameter_bindings(pattern, source, &mut names);
+        }
+        for name in names {
+            self.bindings.entry(name).or_default().push(LocalConstant {
+                declaration_start,
+                scope_start: scope.start_byte(),
+                scope_end: scope.end_byte(),
+                alpha: String::new(),
+                structural: String::new(),
+                safe: false,
+                parameter: false,
+                lexical,
+            });
+        }
+    }
+
     fn resolve(&self, name: &str, use_site: Node<'_>, mode: AstMode) -> Option<&str> {
         let binding = self
             .binding(name, use_site)
@@ -967,7 +1013,7 @@ fn serialize_ast(
     declared: &BTreeMap<String, String>,
     mode: AstMode,
 ) -> String {
-    serialize_ast_with_constants(node, source, declared, mode, None)
+    serialize_ast_with_constants(node, source, declared, mode, None, None)
 }
 
 fn serialize_ast_with_constants(
@@ -976,6 +1022,7 @@ fn serialize_ast_with_constants(
     declared: &BTreeMap<String, String>,
     mode: AstMode,
     constants: Option<&LocalConstants>,
+    assertions: Option<&AssertionBindings>,
 ) -> String {
     enum Event<'tree> {
         Visit(Node<'tree>, bool),
@@ -992,6 +1039,22 @@ fn serialize_ast_with_constants(
                 }
                 if prefixed {
                     output.push(' ');
+                }
+                if let Some((negated, matcher)) =
+                    assertions.and_then(|bindings| bindings.asymmetric_matcher(node, source))
+                {
+                    output.push_str("(asymmetric_matcher:");
+                    if negated {
+                        output.push_str("not.");
+                    }
+                    output.push_str(matcher);
+                    if let Some(arguments) = node.child_by_field_name("arguments") {
+                        stack.push(Event::Close);
+                        stack.push(Event::Visit(arguments, true));
+                    } else {
+                        output.push(')');
+                    }
+                    continue;
                 }
                 if let Some(constants) = constants {
                     // Substitute at the use site so inline and local values retain identical shape.
@@ -1247,8 +1310,14 @@ fn assertion_behavior_event(
     }
     // Alpha mode canonicalizes parameter and local names while retaining literal values and
     // member identities. The whole arguments node is included to preserve matcher arity.
-    let mut expected =
-        serialize_assertion_value(expected, source, declared, AstMode::Alpha, local_constants);
+    let mut expected = serialize_assertion_expected(
+        expected,
+        source,
+        declared,
+        AstMode::Alpha,
+        local_constants,
+        assertions,
+    );
     // Factory options affect execution, unlike structural literal normalization.
     for option in configuration {
         expected.push_str("\0factory-option:");
@@ -1280,7 +1349,25 @@ fn serialize_assertion_value(
     mode: AstMode,
     local_constants: &LocalConstants,
 ) -> String {
-    serialize_ast_with_constants(node, source, declared, mode, Some(local_constants))
+    serialize_ast_with_constants(node, source, declared, mode, Some(local_constants), None)
+}
+
+fn serialize_assertion_expected(
+    node: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+    mode: AstMode,
+    local_constants: &LocalConstants,
+    assertions: &AssertionBindings,
+) -> String {
+    serialize_ast_with_constants(
+        node,
+        source,
+        declared,
+        mode,
+        Some(local_constants),
+        Some(assertions),
+    )
 }
 
 fn find_expect_invocation<'tree>(

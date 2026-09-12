@@ -1126,19 +1126,16 @@ fn consider_matcher_blocking_pair(
     {
         return true;
     }
-    // Exact/normalized matcher and structural sources have their own rule semantics. For fuzzy
-    // matcher blocking, incompatible decorated methods can never reach the final similarity gate;
-    // discard them before charging proposal/event work so they cannot displace useful candidates
-    // under a bounded analysis budget.
-    if !handler_runtime_compatible(&definitions[left], &definitions[right]) {
-        return true;
-    }
-    // Charge every enumerated proposal before inspecting behavior. Moving rejection ahead of this
-    // bound would let adversarial high-frequency postings restore an unbounded quadratic scan.
+    // Charge every unique enumerated proposal before any semantic rejection. Otherwise a large
+    // posting of runtime-incompatible handlers could grow `considered_pairs` quadratically without
+    // ever reaching the safety bound.
     *proposal_work = proposal_work.saturating_add(1);
     if *proposal_work > MAX_MATCHER_BLOCKING_PROPOSAL_WORK {
         builder.skip(CandidateSource::MatcherBlocking, 1);
         return false;
+    }
+    if !handler_runtime_compatible(&definitions[left], &definitions[right]) {
+        return true;
     }
     try_insert_matcher_blocking_candidate(
         relationships,
@@ -1848,6 +1845,46 @@ mod tests {
             &mut event_work,
             &mut builder
         ));
+        assert_eq!(
+            builder.sources[&CandidateSource::MatcherBlocking].skipped,
+            1
+        );
+
+        let mut left = definition();
+        left.handler.behavior_signature = vec!["method:instance async".to_owned()];
+        let mut right = definition();
+        right.matcher = "abd".to_owned();
+        right.normalized_matcher = "abd".to_owned();
+        right.handler.alpha_normalized = "different-alpha".to_owned();
+        right.handler.structural = "different-structure".to_owned();
+        right.handler.behavior_signature = vec!["method:instance sync".to_owned()];
+        let definitions = [left, right];
+        let classes = comparison_classes(&definitions);
+        let events = behavior_event_ids(&definitions);
+        let mut sorted_events = events.clone();
+        sorted_events
+            .iter_mut()
+            .for_each(|events| events.sort_unstable());
+        let anchor_events = behavior_anchor_event_ids(&definitions);
+        let mut considered = HashSet::new();
+        let mut proposal_work = MAX_MATCHER_BLOCKING_PROPOSAL_WORK;
+        let mut event_work = 0;
+        let mut builder = CandidateBuilder::new(usize::MAX);
+        assert!(!consider_matcher_blocking_pair(
+            &definitions,
+            &classes,
+            &events,
+            &sorted_events,
+            &anchor_events,
+            0,
+            1,
+            &mut considered,
+            &mut proposal_work,
+            &mut event_work,
+            &mut builder,
+        ));
+        assert_eq!(proposal_work, MAX_MATCHER_BLOCKING_PROPOSAL_WORK + 1);
+        assert_eq!(event_work, 0);
         assert_eq!(
             builder.sources[&CandidateSource::MatcherBlocking].skipped,
             1
