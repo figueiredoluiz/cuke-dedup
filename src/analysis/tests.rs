@@ -303,6 +303,61 @@ fn reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory() {
 }
 
 #[test]
+fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
+    for prefix in [
+        "import * as api from '@playwright/test';",
+        "const api = require('@playwright/test');",
+    ] {
+        for (alias, trusted) in [
+            ("const check = api['expect'];", false),
+            ("const check = (api as any)[\"expect\"];", false),
+            ("const { expect: check } = api;", false),
+            ("const { 'expect': check } = api;", false),
+            ("const { ['expect']: check } = api;", false),
+            (r"const { 'ex\u0070ect': check } = api;", false),
+            ("let check; ({ expect: check } = api);", false),
+            ("const check = api.other;", true),
+            ("const { other: check } = api;", true),
+        ] {
+            let defs = definitions(&format!("{prefix} {alias} check.objectContaining = replacement; Then('state', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
+            assert_eq!(defs[0].handler.comparable, trusted, "{prefix} {alias}");
+        }
+        let defs = definitions(&format!("{prefix} function local(api) {{ const {{ expect: check }} = api; check.objectContaining = replacement; }} Then('state', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
+        assert!(defs[0].handler.comparable, "{prefix}");
+    }
+}
+
+#[test]
+fn direct_generator_calls_do_not_contribute_suspended_body_events() {
+    for generator in ["function*", "async function*"] {
+        for body in ["expect(state).toBe('ready');", "save(state); yield state;"] {
+            let defs = definitions(&format!(
+                "Then('state', ({{state}}) => {{ ({generator} () {{ {body} }})(); }});"
+            ));
+            assert!(
+                defs[0].handler.behavior_signature.is_empty(),
+                "{generator} {body}"
+            );
+        }
+        let defs = definitions(&format!("Then('state', () => {{ ({generator} (value = initialize()) {{ save(value); }})(prepare()); }});"));
+        assert_eq!(
+            defs[0].handler.behavior_signature,
+            ["assert:unresolved", "call:prepare"]
+        );
+        assert!(!defs[0].handler.comparable);
+        let defs = definitions(&format!("Then('state', ({{state}}) => register({generator} () {{ expect(state).toBe('ready'); }}));"));
+        assert!(
+            defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("deferred-assert:")),
+            "{generator}"
+        );
+    }
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"

@@ -721,29 +721,33 @@ fn namespace_alias_writes(
             _ => None,
         };
         if let Some((left, right)) = edge {
-            if let Some(mut right) = super::registrations::unwrap_registration_callee(right) {
-                // A matcher write through an alias of `api.expect` or `expect.not`
-                // also mutates the original factory's members.
-                if matcher_members
-                    && right.kind() == "member_expression"
-                    && right
-                        .child_by_field_name("property")
-                        .is_some_and(|property| {
-                            matches!(node_text(property, source), "expect" | "not")
-                        })
-                {
-                    if let Some(object) = right
-                        .child_by_field_name("object")
-                        .and_then(super::registrations::unwrap_registration_callee)
-                    {
-                        right = object;
-                    }
+            if let Some(right) = super::registrations::unwrap_registration_callee(right) {
+                let mut locals = BTreeSet::new();
+                let mut owners = BTreeSet::new();
+                if left.kind() == "identifier" {
+                    locals.insert(node_text(left, source).to_owned());
+                } else if matcher_members && left.kind() == "object_pattern" {
+                    collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new());
                 }
-                if left.kind() == "identifier" && right.kind() == "identifier" {
-                    aliases
-                        .entry(key(node_text(left, source), left))
-                        .or_default()
-                        .insert(key(node_text(right, source), right));
+                if right.kind() == "identifier" {
+                    owners.insert(node_text(right, source).to_owned());
+                } else if matcher_members {
+                    // Reuse member decoding so dot and computed aliases have the same owner.
+                    collect_assignment_targets(
+                        right,
+                        source,
+                        &mut BTreeSet::new(),
+                        &mut owners,
+                        true,
+                    );
+                }
+                for local in locals {
+                    for owner in &owners {
+                        aliases
+                            .entry(key(&local, left))
+                            .or_default()
+                            .insert(key(owner, right));
+                    }
                 }
             }
         }
@@ -1130,7 +1134,16 @@ fn collect_expect_pattern(
                 ) else {
                     continue;
                 };
-                if node_text(key, source) == "expect" && value.kind() == "identifier" {
+                let key = if key.kind() == "computed_property_name" {
+                    key.named_child(0).unwrap_or(key)
+                } else {
+                    key
+                };
+                if (node_text(key, source) == "expect"
+                    || super::matcher::decode_js_string(node_text(key, source)).as_deref()
+                        == Some("expect"))
+                    && value.kind() == "identifier"
+                {
                     let local = node_text(value, source).to_owned();
                     identifiers.insert(local.clone());
                     trusted.insert(local);

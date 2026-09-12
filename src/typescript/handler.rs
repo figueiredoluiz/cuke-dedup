@@ -1263,6 +1263,22 @@ fn collect_behavior<'tree>(
                         };
                         invoked = inner;
                     }
+                    if invoked.kind() == "generator_function" {
+                        // Arguments run now; the body stays suspended. Parameter initialization
+                        // is unresolved, as for other parameterized inline functions.
+                        if has_function_parameters(invoked) {
+                            output.push(UNRESOLVED_ASSERTION.to_owned());
+                        }
+                        if let Some(evaluated) = node.child_by_field_name("arguments") {
+                            push_children(
+                                evaluated,
+                                deferred,
+                                unresolved_callback_parameters,
+                                &mut stack,
+                            );
+                        }
+                        continue;
+                    }
                     if matches!(invoked.kind(), "arrow_function" | "function_expression") {
                         // Parameter substitution is not evaluated; do not invent equal values.
                         if has_function_parameters(invoked) {
