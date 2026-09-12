@@ -235,6 +235,74 @@ fn nested_assertion_builders_validate_their_origin_and_arguments() {
 }
 
 #[test]
+fn unresolved_subject_shadows_do_not_collapse_to_empty_values() {
+    for declarations in [
+        "class First {} class Second {}",
+        "function First() {} function Second() {}",
+        "enum First { Ready } enum Second { Idle }",
+    ] {
+        let defs = definitions(&format!(
+            "Then('subject', () => {{ {declarations} expect(First).toBe('ready'); expect(Second).toBe('ready'); }});"
+        ));
+        let events: Vec<_> = defs[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .collect();
+        assert_eq!(events.len(), 2, "{declarations}");
+        assert_ne!(events[0], events[1], "{declarations}");
+    }
+}
+
+#[test]
+fn reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory() {
+    for (prefix, factory) in [
+        ("", "expect"),
+        (
+            "import { expect as check } from '@playwright/test';",
+            "check",
+        ),
+        ("const api = require('@playwright/test');", "api.expect"),
+    ] {
+        for (mutation, trusted) in [
+            ("FACTORY.objectContaining = replacement;", false),
+            ("FACTORY.not = replacement;", false),
+            ("FACTORY.not.objectContaining = replacement;", false),
+            ("FACTORY['not'].objectContaining = replacement;", false),
+            ("FACTORY['objectContaining'] = replacement;", false),
+            ("delete FACTORY.objectContaining;", false),
+            (
+                "const alias = FACTORY; alias.objectContaining = replacement;",
+                false,
+            ),
+            ("FACTORY.unrelated = replacement;", true),
+            (
+                "function local(expect) { expect.objectContaining = replacement; }",
+                true,
+            ),
+            ("", true),
+        ] {
+            let mutation = mutation.replace("FACTORY", factory);
+            let defs = definitions(&format!(
+                "{prefix} {mutation} Then('nested', ({{state}}) => {factory}(state).toEqual({factory}.objectContaining({{role: 'admin'}}))); Then('direct', ({{state}}) => {factory}(state).toBe('ready'));"
+            ));
+            assert_eq!(defs.len(), 2, "{factory} {mutation}");
+            assert_eq!(defs[0].handler.comparable, trusted, "{factory} {mutation}");
+            assert!(defs[1].handler.comparable, "{factory} {mutation}");
+            assert!(
+                defs[1]
+                    .handler
+                    .behavior_signature
+                    .iter()
+                    .any(|event| event.starts_with("assert:")),
+                "{factory} {mutation}"
+            );
+        }
+    }
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"

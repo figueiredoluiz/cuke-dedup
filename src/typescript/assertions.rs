@@ -21,6 +21,7 @@ pub(super) struct AssertionBindings {
     identifiers: BTreeSet<String>,
     namespaces: BTreeSet<String>,
     shadow_ranges: BTreeMap<String, Vec<(usize, usize)>>,
+    mutated_matcher_factories: BTreeSet<String>,
 }
 
 impl AssertionBindings {
@@ -31,7 +32,8 @@ impl AssertionBindings {
     ) -> Self {
         let facade_modules = resolved_facade_modules(root, source, registrations);
         let (scopes, scope_ranges) = collect_binding_scopes(root, source);
-        let alias_writes = namespace_alias_writes(root, source, &scopes);
+        let alias_writes = namespace_alias_writes(root, source, &scopes, false);
+        let mutated_matcher_factories = namespace_alias_writes(root, source, &scopes, true);
         let shadow_ranges = collect_scoped_bindings(scopes, scope_ranges);
         let require_shadowed =
             module_runtime_binding_exists(root, source, "require", &shadow_ranges);
@@ -95,7 +97,7 @@ impl AssertionBindings {
                     if let Some(left) = assignment_target(node) {
                         let mut assigned = BTreeSet::new();
                         let mut writes = BTreeSet::new();
-                        collect_assignment_targets(left, source, &mut assigned, &mut writes);
+                        collect_assignment_targets(left, source, &mut assigned, &mut writes, false);
                         factory_writes.extend(
                             writes
                                 .into_iter()
@@ -130,6 +132,7 @@ impl AssertionBindings {
             bindings.identifiers.insert("expect".to_owned());
         }
         bindings.shadow_ranges = shadow_ranges;
+        bindings.mutated_matcher_factories = mutated_matcher_factories;
         bindings
     }
 
@@ -207,8 +210,17 @@ impl AssertionBindings {
             object = base;
             negated = true;
         }
-        self.is_factory(object, source)
-            .then_some((negated, matcher))
+        let mut receiver = super::registrations::unwrap_registration_callee(object)?;
+        while receiver.kind() == "member_expression" {
+            receiver = super::registrations::unwrap_registration_callee(
+                receiver.child_by_field_name("object")?,
+            )?;
+        }
+        (self.is_factory(object, source)
+            && !self
+                .mutated_matcher_factories
+                .contains(node_text(receiver, source)))
+        .then_some((negated, matcher))
     }
 
     fn is_locally_shadowed(&self, node: Node<'_>, expected: &str) -> bool {
@@ -489,6 +501,7 @@ fn collect_assignment_targets(
     source: &[u8],
     output: &mut BTreeSet<String>,
     factory_writes: &mut BTreeSet<String>,
+    matcher_members: bool,
 ) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -517,13 +530,32 @@ fn collect_assignment_targets(
                             super::matcher::decode_js_string(text)
                         })
                     });
-                if property.is_none_or(|property| property == "expect") {
+                if property.is_none_or(|property| {
+                    property == "expect"
+                        || matcher_members
+                            && matches!(
+                                property.as_str(),
+                                "not"
+                                    | "objectContaining"
+                                    | "arrayContaining"
+                                    | "stringContaining"
+                                    | "stringMatching"
+                                    | "anything"
+                                    | "any"
+                                    | "closeTo"
+                            )
+                }) {
                     if let Some(object) = node
                         .child_by_field_name("object")
                         .and_then(super::registrations::unwrap_registration_callee)
-                        .filter(|object| object.kind() == "identifier")
                     {
-                        factory_writes.insert(node_text(object, source).to_owned());
+                        if matcher_members
+                            && matches!(object.kind(), "member_expression" | "subscript_expression")
+                        {
+                            stack.push(object);
+                        } else if object.kind() == "identifier" {
+                            factory_writes.insert(node_text(object, source).to_owned());
+                        }
                     }
                 }
                 continue;
@@ -617,7 +649,13 @@ fn module_runtime_binding_exists(
         if let Some(pattern) = pattern {
             let mut names = BTreeSet::new();
             if assignment.is_some() {
-                collect_assignment_targets(pattern, source, &mut names, &mut BTreeSet::new());
+                collect_assignment_targets(
+                    pattern,
+                    source,
+                    &mut names,
+                    &mut BTreeSet::new(),
+                    false,
+                );
             } else {
                 collect_binding_names(pattern, source, &mut names);
             }
@@ -637,6 +675,7 @@ fn namespace_alias_writes(
     root: Node<'_>,
     source: &[u8],
     scopes: &BindingScopes,
+    matcher_members: bool,
 ) -> BTreeSet<String> {
     // A may-alias graph only removes trust; it never promotes an alias to an assertion
     // factory. Keep prior assignments conservatively and identify lexical bindings, not
@@ -682,7 +721,24 @@ fn namespace_alias_writes(
             _ => None,
         };
         if let Some((left, right)) = edge {
-            if let Some(right) = super::registrations::unwrap_registration_callee(right) {
+            if let Some(mut right) = super::registrations::unwrap_registration_callee(right) {
+                // A matcher write through an alias of `api.expect` or `expect.not`
+                // also mutates the original factory's members.
+                if matcher_members
+                    && right.kind() == "member_expression"
+                    && right
+                        .child_by_field_name("property")
+                        .is_some_and(|property| {
+                            matches!(node_text(property, source), "expect" | "not")
+                        })
+                {
+                    if let Some(object) = right
+                        .child_by_field_name("object")
+                        .and_then(super::registrations::unwrap_registration_callee)
+                    {
+                        right = object;
+                    }
+                }
                 if left.kind() == "identifier" && right.kind() == "identifier" {
                     aliases
                         .entry(key(node_text(left, source), left))
@@ -693,7 +749,13 @@ fn namespace_alias_writes(
         }
         if let Some(target) = assignment_target(node) {
             let mut receivers = BTreeSet::new();
-            collect_assignment_targets(target, source, &mut BTreeSet::new(), &mut receivers);
+            collect_assignment_targets(
+                target,
+                source,
+                &mut BTreeSet::new(),
+                &mut receivers,
+                matcher_members,
+            );
             writes.extend(receivers.into_iter().map(|name| key(&name, node)));
         }
         super::ast::push_named_children_reverse(node, &mut stack);

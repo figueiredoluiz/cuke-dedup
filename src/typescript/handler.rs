@@ -945,10 +945,12 @@ impl LocalConstants {
         let binding = self
             .binding(name, use_site)
             .filter(|binding| !binding.parameter)?;
-        Some(match mode {
+        let fingerprint = match mode {
             AstMode::Alpha | AstMode::Normalized => binding.alpha.as_str(),
             AstMode::Structural => binding.structural.as_str(),
-        })
+        };
+        // Shadow placeholders have no resolved value; retain their identifier in the AST.
+        (!fingerprint.is_empty()).then_some(fingerprint)
     }
 
     fn binding(&self, name: &str, use_site: Node<'_>) -> Option<&LocalConstant> {
