@@ -92,6 +92,32 @@ Describe the user-visible problem, the chosen behavior, and the validation perfo
 
 Maintainers may ask for a smaller change when a pull request mixes unrelated parser, rule, reporter, and distribution behavior.
 
+## Releasing
+
+The version appears in both Cargo manifests, both Cargo lockfiles, the root and eight platform npm
+manifests, the npm lockfile, the `action.yml` and `release.yml` version inputs, and the Action pin
+in `README.md` and `docs/ci-and-baselines.md`. Never edit those by hand. Bump them together:
+
+```bash
+npm run bump:version -- 0.3.0
+```
+
+The script reads the current version from `Cargo.toml`, rewrites every dependent site, promotes the
+accumulated `## [Unreleased]` changelog notes into a dated section with a compare link, and opens a
+fresh `Unreleased` heading. It refuses to run when a target file no longer matches its expected
+version site or when `Unreleased` is empty, so silent drift fails the bump instead of producing a
+half-updated tree. Pass `RELEASE_DATE=YYYY-MM-DD` to override the changelog date.
+
+Then confirm and commit:
+
+```bash
+npm run check:versions
+git diff
+```
+
+`check:versions` also runs in the development gate and in CI, where `EXPECTED_VERSION` and
+`RELEASE_TAG` additionally pin the agreed version to the dispatched release and its tag.
+
 ## Release prerequisites
 
 Cargo, npm, the Git tag, and the GitHub release use one version. npm publication uses OIDC trusted
