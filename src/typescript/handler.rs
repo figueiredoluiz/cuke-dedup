@@ -943,7 +943,8 @@ fn serialize_ast_with_constants(
                 }
                 if let Some(constants) = constants {
                     // Substitute at the use site so inline and local values retain identical shape.
-                    let resolved = (node.kind() == "identifier")
+                    let shorthand = node.kind() == "shorthand_property_identifier";
+                    let resolved = (node.kind() == "identifier" || shorthand)
                         .then(|| constants.resolve(node_text(node, source), node, mode))
                         .flatten();
                     let literal = matches!(
@@ -954,6 +955,10 @@ fn serialize_ast_with_constants(
                         let fingerprint = resolved.map(str::to_owned).unwrap_or_else(|| {
                             stable_fingerprint(&serialize_ast(node, source, declared, mode))
                         });
+                        if shorthand {
+                            // A shorthand carries both a property key and a resolved value.
+                            output.push_str(&format!("<key:{}>", node_text(node, source)));
+                        }
                         output.push_str(&format!("<value:{fingerprint}>"));
                         continue;
                     }

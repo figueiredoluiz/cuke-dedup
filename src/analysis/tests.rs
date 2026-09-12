@@ -241,6 +241,66 @@ fn inline_and_local_assertion_values_share_behavior_without_losing_value_precisi
 }
 
 #[test]
+fn shorthand_assertions_preserve_property_keys_and_local_values() {
+    let (_directory, config) = config();
+    for (left, right, expected_duplicate) in [
+        (
+            "const expected = 'ready';",
+            "const expected = 'idle';",
+            false,
+        ),
+        (
+            "const expected = 'ready';",
+            "const expected = 'ready';",
+            true,
+        ),
+        ("const expected = 'ready';", "const other = 'ready';", false),
+        (
+            "const expected = external;",
+            "const expected = external;",
+            false,
+        ),
+        ("let expected = 'ready';", "let expected = 'idle';", false),
+        (
+            "{ const expected = 'ready'; }",
+            "{ const expected = 'idle'; }",
+            false,
+        ),
+    ] {
+        let right_key = if right.contains("other") {
+            "other"
+        } else {
+            "expected"
+        };
+        let source = format!("Then('the parcel status is verified', ({{ state }}) => {{ {left} expect(state).toEqual({{ expected }}); }}); Then('the parcel status is now verified', ({{ state }}) => {{ {right} expect(state).toEqual({{ {right_key} }}); }});");
+        let extracted = definitions(&source);
+        for definitions in [extracted.clone(), extracted.into_iter().rev().collect()] {
+            let result = analyze(definitions, Vec::new(), &config).unwrap();
+            let findings: Vec<_> = result
+                .findings
+                .iter()
+                .filter(|f| {
+                    matches!(
+                        f.rule,
+                        Rule::DuplicateHandler
+                            | Rule::NearDuplicateStep
+                            | Rule::ParameterizationCandidate
+                    )
+                })
+                .collect();
+            assert_eq!(
+                findings.len(),
+                if expected_duplicate { 2 } else { 0 },
+                "{source}: {findings:?}"
+            );
+            if expected_duplicate {
+                assert_eq!(findings[0].rule, Rule::DuplicateHandler);
+            }
+        }
+    }
+}
+
+#[test]
 fn assertion_precision_covers_member_require_iifes_and_factory_options() {
     let (_directory, config) = config();
     for (prefix, body) in [
