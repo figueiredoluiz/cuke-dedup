@@ -918,6 +918,7 @@ fn insert_matcher_blocking_candidates(
                 if !consider_matcher_blocking_pair(
                     definitions,
                     classes,
+                    behavior_events,
                     &sorted_events,
                     behavior_anchor_events,
                     posting.indices[left_offset],
@@ -955,6 +956,7 @@ fn insert_matcher_blocking_candidates(
             if !consider_matcher_blocking_pair(
                 definitions,
                 classes,
+                behavior_events,
                 &sorted_events,
                 behavior_anchor_events,
                 pair[0],
@@ -1046,13 +1048,15 @@ fn covered_by_structural_source(relationships: PairRelationships) -> bool {
 
 fn can_reach_handler_similarity_gate(
     relationships: PairRelationships,
+    left_ordered_events: &[usize],
+    right_ordered_events: &[usize],
     left_events: &[usize],
     right_events: &[usize],
     left_anchor_events: &[usize],
     right_anchor_events: &[usize],
 ) -> bool {
-    if relationships.same_handler_structure && left_events == right_events {
-        return true;
+    if relationships.same_handler_structure {
+        return left_ordered_events == right_ordered_events;
     }
     let longest = left_events.len().max(right_events.len());
     if longest == 0 {
@@ -1103,6 +1107,7 @@ fn sorted_events_overlap(left: &[usize], right: &[usize]) -> bool {
 fn consider_matcher_blocking_pair(
     definitions: &[StepDefinition],
     classes: &ComparisonClasses,
+    behavior_events: &[Vec<usize>],
     sorted_events: &[Vec<usize>],
     anchor_events: &[Vec<usize>],
     left: usize,
@@ -1128,6 +1133,8 @@ fn consider_matcher_blocking_pair(
     if !handler_runtime_compatible(&definitions[left], &definitions[right]) {
         return true;
     }
+    // Charge every enumerated proposal before inspecting behavior. Moving rejection ahead of this
+    // bound would let adversarial high-frequency postings restore an unbounded quadratic scan.
     *proposal_work = proposal_work.saturating_add(1);
     if *proposal_work > MAX_MATCHER_BLOCKING_PROPOSAL_WORK {
         builder.skip(CandidateSource::MatcherBlocking, 1);
@@ -1135,8 +1142,11 @@ fn consider_matcher_blocking_pair(
     }
     try_insert_matcher_blocking_candidate(
         relationships,
-        sorted_events,
-        anchor_events,
+        BehaviorEventViews {
+            ordered: behavior_events,
+            sorted: sorted_events,
+            anchors: anchor_events,
+        },
         left,
         right,
         event_work,
@@ -1144,10 +1154,16 @@ fn consider_matcher_blocking_pair(
     )
 }
 
+#[derive(Clone, Copy)]
+struct BehaviorEventViews<'a> {
+    ordered: &'a [Vec<usize>],
+    sorted: &'a [Vec<usize>],
+    anchors: &'a [Vec<usize>],
+}
+
 fn try_insert_matcher_blocking_candidate(
     relationships: PairRelationships,
-    sorted_events: &[Vec<usize>],
-    anchor_events: &[Vec<usize>],
+    events: BehaviorEventViews<'_>,
     left: usize,
     right: usize,
     event_work: &mut u64,
@@ -1158,11 +1174,11 @@ fn try_insert_matcher_blocking_candidate(
         return false;
     }
     let work = u64::try_from(
-        sorted_events[left]
+        events.sorted[left]
             .len()
-            .saturating_add(sorted_events[right].len())
-            .saturating_add(anchor_events[left].len())
-            .saturating_add(anchor_events[right].len()),
+            .saturating_add(events.sorted[right].len())
+            .saturating_add(events.anchors[left].len())
+            .saturating_add(events.anchors[right].len()),
     )
     .unwrap_or(u64::MAX);
     *event_work = event_work.saturating_add(work);
@@ -1172,10 +1188,12 @@ fn try_insert_matcher_blocking_candidate(
     }
     if can_reach_handler_similarity_gate(
         relationships,
-        &sorted_events[left],
-        &sorted_events[right],
-        &anchor_events[left],
-        &anchor_events[right],
+        &events.ordered[left],
+        &events.ordered[right],
+        &events.sorted[left],
+        &events.sorted[right],
+        &events.anchors[left],
+        &events.anchors[right],
     ) && builder.insert(CandidateSource::MatcherBlocking, left, right) == InsertOutcome::Limit
     {
         return false;
@@ -1820,8 +1838,11 @@ mod tests {
         let mut builder = CandidateBuilder::new(usize::MAX);
         assert!(!try_insert_matcher_blocking_candidate(
             relationships,
-            &sorted_events,
-            &anchor_events,
+            BehaviorEventViews {
+                ordered: &behavior_event_ids(&definitions),
+                sorted: &sorted_events,
+                anchors: &anchor_events,
+            },
             0,
             1,
             &mut event_work,
@@ -1889,14 +1910,19 @@ mod tests {
                 right.into_iter().map(str::to_owned).collect();
             let definitions = [left_definition, right_definition];
             let classes = comparison_classes(&definitions);
-            let mut events = behavior_event_ids(&definitions);
-            events.iter_mut().for_each(|events| events.sort_unstable());
+            let events = behavior_event_ids(&definitions);
+            let mut sorted_events = events.clone();
+            sorted_events
+                .iter_mut()
+                .for_each(|events| events.sort_unstable());
             let anchor_events = behavior_anchor_event_ids(&definitions);
             assert_eq!(
                 can_reach_handler_similarity_gate(
                     classes.relationships(0, 1),
                     &events[0],
                     &events[1],
+                    &sorted_events[0],
+                    &sorted_events[1],
                     &anchor_events[0],
                     &anchor_events[1],
                 ),
@@ -1918,9 +1944,24 @@ mod tests {
             &[2],
             &[1],
             &[2],
+            &[1],
+            &[2],
+        ));
+        // The exact-structure shortcut preserves execution order rather than comparing only the
+        // sorted event multiset.
+        assert!(!can_reach_handler_similarity_gate(
+            classes.relationships(0, 1),
+            &[1, 2, 3],
+            &[3, 2, 1],
+            &[1, 2, 3],
+            &[1, 2, 3],
+            &[1, 2, 3],
+            &[1, 2, 3],
         ));
         assert!(can_reach_handler_similarity_gate(
             classes.relationships(0, 1),
+            &empty_events,
+            &empty_events,
             &empty_events,
             &empty_events,
             &empty_events,

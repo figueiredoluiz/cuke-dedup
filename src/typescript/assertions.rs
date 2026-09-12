@@ -461,6 +461,15 @@ fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<St
                 }
                 continue;
             }
+            "required_parameter" | "optional_parameter" => {
+                if let Some(binding) = node
+                    .child_by_field_name("name")
+                    .or_else(|| node.child_by_field_name("pattern"))
+                {
+                    stack.push(binding);
+                }
+                continue;
+            }
             "type_annotation" => continue,
             _ => {}
         }
@@ -645,9 +654,24 @@ fn namespace_alias_writes(
             "variable_declarator" => node
                 .child_by_field_name("name")
                 .zip(node.child_by_field_name("value")),
+            "assignment_pattern" | "object_assignment_pattern" => node
+                .child_by_field_name("left")
+                .zip(node.child_by_field_name("right")),
+            "required_parameter" | "optional_parameter" => node
+                .child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("pattern"))
+                .zip(node.child_by_field_name("value")),
             "assignment_expression" => node
                 .child_by_field_name("left")
                 .zip(node.child_by_field_name("right")),
+            "augmented_assignment_expression"
+                if node
+                    .child_by_field_name("operator")
+                    .is_some_and(|operator| matches!(operator.kind(), "||=" | "&&=" | "??=")) =>
+            {
+                node.child_by_field_name("left")
+                    .zip(node.child_by_field_name("right"))
+            }
             _ => None,
         };
         if let Some((left, right)) = edge {

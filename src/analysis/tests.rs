@@ -424,6 +424,36 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
         ),
         (
             valid,
+            "function mutate(other = api) { other.expect = replacement; }",
+            false,
+        ),
+        (
+            valid,
+            "function local(api, other = api) { other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "let other; other ||= api; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other; other &&= api; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other; other ??= api; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other = ''; other += api; other.expect = replacement;",
+            true,
+        ),
+        (
+            valid,
             "const other = api; function mutate() { other.expect = replacement; }",
             false,
         ),
@@ -551,6 +581,30 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
                     .any(|f| f.rule == Rule::NearDuplicateStep));
             }
         }
+    }
+    for mutation in [
+        "function mutate(other = api) { other.expect = replacement; }",
+        "let other; other ||= api; other.expect = replacement;",
+    ] {
+        let source = format!(
+            "const {{Then}} = require('@cucumber/cucumber'); const api = require('@playwright/test'); {mutation} Then('the parcel status is verified', ({{state}}) => api.expect(state).toBe('ready'));"
+        );
+        let extracted = typescript::extract(
+            &source,
+            &SourceFile {
+                path: PathBuf::from("steps.js"),
+                language: SourceLanguage::JavaScript,
+            },
+        )
+        .unwrap();
+        assert!(
+            extracted[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")),
+            "{mutation}"
+        );
     }
     for write in [
         "require &&= replacement;",
