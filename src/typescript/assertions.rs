@@ -35,6 +35,7 @@ impl AssertionBindings {
             module_runtime_binding_exists(root, source, "require", &shadow_ranges);
         let mut bindings = Self::default();
         let mut shadowed = BTreeSet::new();
+        let mut factory_writes = BTreeSet::new();
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             match node.kind() {
@@ -88,29 +89,30 @@ impl AssertionBindings {
                         collect_binding_names(name, source, &mut shadowed);
                     }
                 }
-                "assignment_expression" => {
-                    if let Some(left) = node.child_by_field_name("left") {
-                        if matches!(
-                            left.kind(),
-                            "identifier" | "object_pattern" | "array_pattern"
-                        ) {
-                            let mut assigned = BTreeSet::new();
-                            collect_assignment_targets(left, source, &mut assigned);
-                            shadowed.extend(
-                                assigned.into_iter().filter(|name| {
-                                    !position_is_shadowed(&shadow_ranges, name, node)
-                                }),
-                            );
-                        }
+                _ => {
+                    if let Some(left) = assignment_target(node) {
+                        let mut assigned = BTreeSet::new();
+                        let mut writes = BTreeSet::new();
+                        collect_assignment_targets(left, source, &mut assigned, &mut writes);
+                        factory_writes.extend(
+                            writes
+                                .into_iter()
+                                .filter(|name| !position_is_shadowed(&shadow_ranges, name, node)),
+                        );
+                        shadowed.extend(
+                            assigned
+                                .into_iter()
+                                .filter(|name| !position_is_shadowed(&shadow_ranges, name, node)),
+                        );
                     }
                 }
-                _ => {}
             }
             super::ast::push_named_children_reverse(node, &mut stack);
         }
         // Runtime declarations override trusted imports and aliases conservatively for the whole
         // file, matching step-registration discovery. A false negative is safer than assigning
         // assertion semantics to an unrelated function and manufacturing similarity evidence.
+        shadowed.extend(factory_writes.intersection(&bindings.namespaces).cloned());
         bindings
             .identifiers
             .retain(|identifier| !shadowed.contains(identifier));
@@ -298,7 +300,10 @@ fn resolved_facade_modules(
             && import_has_runtime_bindings(node)
             && import_has_resolved_registration(node, source, registrations)
         {
-            if let Some(module) = import_module(node, source) {
+            if let Some(module) = import_module(node, source)
+                .filter(|module| registrations.module_paths.contains_key(*module))
+            {
+                // Built-in registration packages are not evidence of an assertion facade.
                 modules.insert(module.to_owned());
             }
         }
@@ -408,15 +413,50 @@ fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<St
     }
 }
 
-fn collect_assignment_targets(root: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+fn collect_assignment_targets(
+    root: Node<'_>,
+    source: &[u8],
+    output: &mut BTreeSet<String>,
+    factory_writes: &mut BTreeSet<String>,
+) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         match node.kind() {
             "identifier" | "shorthand_property_identifier_pattern" => {
                 output.insert(node_text(node, source).to_owned());
             }
-            // Property writes mutate an object; they do not rebind the receiver identifier.
-            "member_expression" | "subscript_expression" => continue,
+            // Only writes that can replace the factory invalidate namespace trust.
+            "member_expression" | "subscript_expression" => {
+                let property = node
+                    .child_by_field_name("property")
+                    .filter(|property| !node_text(*property, source).contains('\\'))
+                    .map(|property| node_text(property, source).to_owned())
+                    .or_else(|| {
+                        node.child_by_field_name("index").and_then(|index| {
+                            let text = node_text(index, source);
+                            // Legacy numeric escapes are unsupported by the shared decoder.
+                            // Unknown keys must invalidate trust, not look like unrelated keys.
+                            if text
+                                .as_bytes()
+                                .windows(2)
+                                .any(|p| p[0] == b'\\' && p[1].is_ascii_digit())
+                            {
+                                return None;
+                            }
+                            super::matcher::decode_js_string(text)
+                        })
+                    });
+                if property.is_none_or(|property| property == "expect") {
+                    if let Some(object) = node
+                        .child_by_field_name("object")
+                        .and_then(super::registrations::unwrap_registration_callee)
+                        .filter(|object| object.kind() == "identifier")
+                    {
+                        factory_writes.insert(node_text(object, source).to_owned());
+                    }
+                }
+                continue;
+            }
             "pair" | "pair_pattern" => {
                 if let Some(value) = node.child_by_field_name("value") {
                     stack.push(value);
@@ -439,6 +479,19 @@ fn collect_assignment_targets(root: Node<'_>, source: &[u8], output: &mut BTreeS
     }
 }
 
+fn assignment_target(node: Node<'_>) -> Option<Node<'_>> {
+    match node.kind() {
+        "assignment_expression" | "augmented_assignment_expression" => {
+            node.child_by_field_name("left")
+        }
+        "update_expression" => node.child_by_field_name("argument"),
+        "for_in_statement" => node
+            .child_by_field_name("left")
+            .filter(|left| loop_binding_keyword(node, *left).is_none()),
+        _ => None,
+    }
+}
+
 fn module_runtime_binding_exists(
     root: Node<'_>,
     source: &[u8],
@@ -447,6 +500,7 @@ fn module_runtime_binding_exists(
 ) -> bool {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
+        let assignment = assignment_target(node);
         let pattern = match node.kind() {
             "import_statement" if import_has_runtime_bindings(node) => Some(node),
             "variable_declarator" if is_top_level_variable(node) => {
@@ -475,18 +529,17 @@ fn module_runtime_binding_exists(
             {
                 node.child_by_field_name("name")
             }
-            "assignment_expression" => node.child_by_field_name("left").filter(|left| {
+            _ => assignment.filter(|left| {
                 matches!(
                     left.kind(),
                     "identifier" | "object_pattern" | "array_pattern"
                 ) && !position_is_shadowed(shadow_ranges, expected, node)
             }),
-            _ => None,
         };
         if let Some(pattern) = pattern {
             let mut names = BTreeSet::new();
-            if node.kind() == "assignment_expression" {
-                collect_assignment_targets(pattern, source, &mut names);
+            if assignment.is_some() {
+                collect_assignment_targets(pattern, source, &mut names, &mut BTreeSet::new());
             } else {
                 collect_binding_names(pattern, source, &mut names);
             }

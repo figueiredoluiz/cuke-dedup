@@ -187,7 +187,7 @@ pub(super) fn registration_callee<'tree, 'source>(
     }
 }
 
-fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<'_>> {
+pub(super) fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<'_>> {
     loop {
         function = match function.kind() {
             "parenthesized_expression"

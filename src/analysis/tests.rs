@@ -241,6 +241,156 @@ fn inline_and_local_assertion_values_share_behavior_without_losing_value_precisi
 }
 
 #[test]
+fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
+    let (_directory, config) = config();
+    let valid = "import {Then} from '@cucumber/cucumber'; import * as api from '@playwright/test';";
+    let cjs =
+        "const {Then} = require('@cucumber/cucumber'); const api = require('@playwright/test');";
+    for (prefix, mutation, trusted) in [
+        (valid, "", true),
+        (valid, "(api).expect = replacement;", false),
+        (valid, "(api as PW).expect = replacement;", false),
+        (valid, "api!.expect = replacement;", false),
+        (valid, "(api satisfies PW).expect = replacement;", false),
+        (valid, "(<PW>api).expect = replacement;", false),
+        (valid, "((api as PW)!).expect = replacement;", false),
+        (valid, "(api as PW)['expect'] = replacement;", false),
+        (valid, "[api!.expect] = replacement;", false),
+        (valid, "(api as PW).expect++;", false),
+        (valid, "(api as PW).other = replacement;", true),
+        (
+            valid,
+            "function local(api) { (api as PW).expect = replacement; }",
+            true,
+        ),
+        (cjs, "", true),
+        (cjs, "api.expect = replacement;", false),
+        (cjs, r#"api.ex\u0070ect = replacement;"#, false),
+        (cjs, r#"api.ex\u{70}ect = replacement;"#, false),
+        (cjs, r#"api["\145xpect"] = replacement;"#, false),
+        (cjs, r#"api["\x65xpect"] = replacement;"#, false),
+        (cjs, r#"api["\u0065xpect"] = replacement;"#, false),
+        (cjs, r#"api["\u{65}xpect"] = replacement;"#, false),
+        (cjs, r#"api["\x6fther"] = replacement;"#, true),
+        (cjs, "api.expect++;", false),
+        (cjs, "for (api.expect of replacements) {}", false),
+        (cjs, "for (api.expect in replacements) {}", false),
+        (cjs, "api.other++;", true),
+        (cjs, "for (api.other of replacements) {}", true),
+        (
+            cjs,
+            "function local(api) { api.expect++; for (api.expect of replacements) {} }",
+            true,
+        ),
+        (valid, "api['expect'] = replacement;", false),
+        (valid, "({ factory: api.expect } = replacement);", false),
+        (valid, "[api.expect] = replacement;", false),
+        (valid, "api.expect ||= replacement;", false),
+        (valid, "api[key] = replacement;", false),
+        (valid, "api.other = replacement;", true),
+        (valid, "api['other'] = replacement;", true),
+        (
+            valid,
+            "function unrelated(api) { api.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "function mutate() { api.expect = replacement; }",
+            false,
+        ),
+    ] {
+        let mut extracted = Vec::new();
+        for (index, header) in [format!("{prefix} {mutation}"), valid.to_owned()]
+            .iter()
+            .enumerate()
+        {
+            extracted.extend(typescript::extract(
+                &format!("{header} Then('the parcel status is verified {index}', ({{state}}) => api.expect(state).toBe('ready'));"),
+                &SourceFile { path: PathBuf::from(format!("steps-{index}.ts")), language: SourceLanguage::TypeScript },
+            ).unwrap());
+        }
+        assert_eq!(
+            extracted[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e.starts_with("assert:")),
+            trusted,
+            "{prefix} {mutation}"
+        );
+        for definitions in [extracted.clone(), extracted.into_iter().rev().collect()] {
+            let result = analyze(definitions, Vec::new(), &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateHandler),
+                trusted,
+                "{prefix} {mutation}"
+            );
+            if !trusted {
+                assert!(!result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::NearDuplicateStep));
+            }
+        }
+    }
+    for write in [
+        "require &&= replacement;",
+        "require += replacement;",
+        "require++;",
+        "for (require of replacements) {}",
+    ] {
+        let source =
+            format!("{write} {cjs} Then('state', ({{state}}) => api.expect(state).toBe('ready'));");
+        assert!(
+            definitions(&source)[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|e| !e.starts_with("assert:")),
+            "{write}"
+        );
+        let source = format!("function local(require) {{ {write} }} {cjs} Then('state', ({{state}}) => api.expect(state).toBe('ready'));");
+        assert!(
+            definitions(&source)[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e.starts_with("assert:")),
+            "local {write}"
+        );
+    }
+    for module in [
+        "@cucumber/cucumber",
+        "cucumber",
+        "playwright-bdd",
+        "@badeball/cypress-cucumber-preprocessor",
+        "cypress-cucumber-preprocessor/steps",
+    ] {
+        let source = format!("import {{Then, expect as check}} from '{module}'; Then('state', ({{state}}) => check(state).toBe('ready'));");
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 1, "{module}");
+        assert!(
+            extracted[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|e| !e.starts_with("assert:")),
+            "{module}"
+        );
+    }
+    let extracted = definitions("import * as expect from '@playwright/test'; expect.expect = replacement; Then('state', ({state}) => expect(state).toBe('ready'));");
+    assert!(extracted[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|e| !e.starts_with("assert:")));
+}
+
+#[test]
 fn shorthand_assertions_preserve_property_keys_and_local_values() {
     let (_directory, config) = config();
     for (left, right, expected_duplicate) in [
