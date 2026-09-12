@@ -183,7 +183,7 @@ fn extract_detailed_impl(
         &session.configured_registrations,
     )?;
     let framework = registrations.framework;
-    let assertions = AssertionBindings::discover(root, source_bytes);
+    let assertions = AssertionBindings::discover(root, source_bytes, &registrations);
     let mut handler_bindings = BTreeMap::new();
     collect_handler_bindings(root, source_bytes, &mut handler_bindings);
     let context = AdapterContext {

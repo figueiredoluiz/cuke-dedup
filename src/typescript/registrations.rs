@@ -34,6 +34,16 @@ pub(super) struct RegistrationNames {
     pub(super) framework: Framework,
 }
 
+impl RegistrationNames {
+    pub(super) fn recognizes_alias(&self, name: &str) -> bool {
+        self.aliases.contains_key(name)
+    }
+
+    pub(super) fn recognizes_namespace(&self, name: &str) -> bool {
+        self.namespaces.contains_key(name)
+    }
+}
+
 pub(super) enum RegistrationCallee<'tree, 'source> {
     Identifier(&'source str),
     Property {

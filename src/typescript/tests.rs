@@ -633,6 +633,48 @@ Then('the result is visible', () => verify());
 }
 
 #[test]
+fn resolved_framework_facades_provide_expect_import_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("fixtures")).unwrap();
+    fs::create_dir_all(directory.path().join("steps")).unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"~/*":["./*"]}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("fixtures/test.ts"),
+        r#"
+import { createBdd } from 'playwright-bdd';
+export const { Then } = createBdd({});
+export const expect = createAssertionFactory();
+"#,
+    )
+    .unwrap();
+    let path = directory.path().join("steps/example.steps.ts");
+    let source = r#"
+import { Then, expect } from '~/fixtures/test';
+Then('a facade assertion', ({ state }) => expect(state).toBe('ready'));
+"#;
+    fs::write(&path, source).unwrap();
+    let file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(source, &file, &mut session).unwrap();
+
+    assert!(extracted.diagnostics.is_empty());
+    assert_eq!(extracted.definitions.len(), 1);
+    assert_eq!(extracted.definitions[0].handler.behavior_signature.len(), 1);
+    assert!(
+        extracted.definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:")
+    );
+}
+
+#[test]
 fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
     for (name, fixture) in [
         (
@@ -1260,6 +1302,118 @@ Then('unrelated assertion alias', ({ state }) => check(state).toBe('ready'));
         definition.handler.behavior_signature,
         ["call:check#toBe", "call:check"]
     );
+}
+
+#[test]
+fn runtime_expect_bindings_shadow_the_ambient_assertion_factory() {
+    let cases = [
+        r#"
+import { expect } from 'unrelated-assertion-library';
+Then('shadowed by ESM import', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+const expect = require('unrelated-assertion-library');
+Then('shadowed by CJS require', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+const expect = makeAssertionFactory();
+Then('shadowed by variable', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+function expect(value) { return makeAssertion(value); }
+Then('shadowed by declaration', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+Then('shadowed by parameter', (expect, state) => expect(state).toBe('ready'));
+"#,
+        r#"
+expect = makeAssertionFactory();
+Then('shadowed by assignment', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+import { expect as check } from '@playwright/test';
+Then('trusted alias shadowed by parameter', (check, state) => check(state).toBe('ready'));
+"#,
+        r#"
+try { work(); } catch (expect) { recover(expect); }
+Then('shadowed by catch binding', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+({ expect } = assertionFactories);
+Then('shadowed by destructuring assignment', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+enum expect { Ready }
+Then('shadowed by runtime enum', ({ state }) => expect(state).toBe('ready'));
+"#,
+    ];
+
+    for source in cases {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert!(
+            definitions[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
+fn shadowed_expect_calls_retain_generic_behavior_comparison() {
+    let definitions = extract_ts(
+        r#"
+import { expect } from 'unrelated-assertion-library';
+Then('the local state shows the first condition', ({ state }) => expect(state).toBe('ready'));
+Then('the local state shows the final condition', ({ state }) => expect(state).toBe('idle'));
+"#,
+    );
+
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+    assert!(definitions[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|event| !event.starts_with("assert:")));
+}
+
+#[test]
+fn trusted_and_type_only_expect_imports_preserve_assertion_semantics() {
+    for source in [
+        r#"
+import { expect } from '@playwright/test';
+Then('trusted runtime binding', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+import type { expect } from 'unrelated-types';
+Then('ambient binding remains', ({ state }) => expect(state).toBe('ready'));
+"#,
+        r#"
+const check = require('expect');
+Then('standalone CJS binding', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
+const { expect } = require('@playwright/test');
+Then('shorthand CJS binding', ({ state }) => expect(state).toBe('ready'));
+"#,
+    ] {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert_eq!(definitions[0].handler.behavior_signature.len(), 1);
+        assert!(
+            definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+    }
 }
 
 #[test]
