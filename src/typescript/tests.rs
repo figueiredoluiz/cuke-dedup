@@ -1210,6 +1210,86 @@ Then('missing assertion subject', () => {
 }
 
 #[test]
+fn behavior_signatures_resolve_trusted_expect_imports_and_requires() {
+    let cases = [
+        r#"
+import { expect as check } from '@playwright/test';
+Then('aliased ESM assertion', ({ state }) => check(state).toBe('ready'));
+"#,
+        r#"
+import * as testApi from '@playwright/test';
+Then('namespaced ESM assertion', ({ state }) => testApi.expect(state).toBe('ready'));
+"#,
+        r#"
+const { expect: verify } = require('@jest/globals');
+Then('aliased CJS assertion', ({ state }) => verify(state).toBe('ready'));
+"#,
+        r#"
+const testApi = require('@playwright/test');
+Then('namespaced CJS assertion', ({ state }) => testApi.expect(state).toBe('ready'));
+"#,
+        r#"
+import check from 'expect';
+Then('default assertion import', ({ state }) => check(state).toBe('ready'));
+"#,
+    ];
+
+    for source in cases {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert_eq!(definitions[0].handler.behavior_signature.len(), 1);
+        assert!(
+            definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+            "{source}: {:?}",
+            definitions[0].handler.behavior_signature
+        );
+    }
+}
+
+#[test]
+fn behavior_signatures_do_not_trust_expect_aliases_from_unrelated_modules() {
+    let definition = extract_ts(
+        r#"
+import { expect as check } from 'unrelated-assertion-library';
+Then('unrelated assertion alias', ({ state }) => check(state).toBe('ready'));
+"#,
+    )
+    .remove(0);
+
+    assert_eq!(
+        definition.handler.behavior_signature,
+        ["call:check#toBe", "call:check"]
+    );
+}
+
+#[test]
+fn decorated_method_behavior_does_not_include_synthetic_method_events() {
+    let definitions = extract_ts(
+        r#"
+import { Given } from 'playwright-bdd/decorators';
+import { expect as check } from '@playwright/test';
+class StatusSteps {
+  @Given('the account status shows the first condition')
+  first({ page }) { check(page.status).toBe('ready'); }
+
+  @Given('the account status shows the final condition')
+  second({ page }) { check(page.status).toBe('idle'); }
+}
+"#,
+    );
+
+    assert_eq!(definitions.len(), 2);
+    assert!(definitions.iter().all(|definition| {
+        definition.handler.behavior_signature.len() == 1
+            && definition.handler.behavior_signature[0].starts_with("assert:expect#toBe:")
+    }));
+    assert_ne!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+}
+
+#[test]
 fn alpha_fingerprints_assign_identifiers_by_declaration_order() {
     let definitions = extract_ts(
         "Given('first', (z, a) => z.goto(a));\n\

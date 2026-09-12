@@ -1,5 +1,6 @@
 //! Tree-sitter based JavaScript and TypeScript step-definition extraction.
 
+mod assertions;
 mod ast;
 mod handler;
 mod matcher;
@@ -8,6 +9,7 @@ mod project_resolution;
 mod registrations;
 mod suppression;
 
+use self::assertions::AssertionBindings;
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding,
@@ -109,6 +111,7 @@ struct AdapterContext<'source, 'tree> {
     file: &'source SourceFile,
     framework: Framework,
     registrations: &'source RegistrationNames,
+    assertions: &'source AssertionBindings,
     handler_bindings: &'source BTreeMap<String, Vec<HandlerBinding<'tree>>>,
 }
 
@@ -180,6 +183,7 @@ fn extract_detailed_impl(
         &session.configured_registrations,
     )?;
     let framework = registrations.framework;
+    let assertions = AssertionBindings::discover(root, source_bytes);
     let mut handler_bindings = BTreeMap::new();
     collect_handler_bindings(root, source_bytes, &mut handler_bindings);
     let context = AdapterContext {
@@ -188,6 +192,7 @@ fn extract_detailed_impl(
         file,
         framework,
         registrations: &registrations,
+        assertions: &assertions,
         handler_bindings: &handler_bindings,
     };
     let mut definitions = Vec::new();
@@ -400,7 +405,13 @@ fn extract_call<'tree>(
         matcher,
         matcher_kind,
         matcher_flags,
-        handler: fingerprint_handler(handler, bound_arguments, source, comparable),
+        handler: fingerprint_handler(
+            handler,
+            bound_arguments,
+            source,
+            comparable,
+            context.assertions,
+        ),
         framework: effective_registration_framework(registration_framework, context.framework),
         registration: if registration.is_empty() {
             callee
@@ -447,7 +458,7 @@ fn extract_decorator<'tree>(
         });
         return None;
     };
-    let Some(handler) = fingerprint_method_handler(method, source) else {
+    let Some(handler) = fingerprint_method_handler(method, source, context.assertions) else {
         diagnostics.push(ExtractionDiagnostic {
             level: ExtractionDiagnosticLevel::Warning,
             location: node_location(context.file, method, source),

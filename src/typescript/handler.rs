@@ -1,3 +1,4 @@
+use super::assertions::AssertionBindings;
 use super::ast::push_named_children_reverse;
 use super::node_text;
 use crate::model::{stable_fingerprint, HandlerFingerprint};
@@ -155,9 +156,17 @@ pub(super) fn fingerprint_handler(
     bound_arguments: Option<Node<'_>>,
     source: &[u8],
     comparable: bool,
+    assertions: &AssertionBindings,
 ) -> HandlerFingerprint {
     let declared = declared_identifiers(handler, source);
-    fingerprint_node(handler, bound_arguments, source, comparable, &declared)
+    fingerprint_node(
+        handler,
+        bound_arguments,
+        source,
+        comparable,
+        &declared,
+        assertions,
+    )
 }
 
 /// Fingerprints a decorated class method without its name or decorator metadata.
@@ -168,6 +177,7 @@ pub(super) fn fingerprint_handler(
 pub(super) fn fingerprint_method_handler(
     method: Node<'_>,
     source: &[u8],
+    assertions: &AssertionBindings,
 ) -> Option<HandlerFingerprint> {
     debug_assert_eq!(method.kind(), "method_definition");
     let name = method.child_by_field_name("name")?;
@@ -225,9 +235,11 @@ pub(super) fn fingerprint_method_handler(
         &declared,
         AstMode::Structural,
     );
-    let mut signature = vec![format!("method:{semantic_prefix}")];
-    signature.extend(behavior_signature(parameters, source, &declared));
-    signature.extend(behavior_signature(body, source, &declared));
+    // Method syntax affects exact/normalized fingerprints, but is not itself an executed
+    // behavior. Including a synthetic `method:*` event made any two decorated methods appear to
+    // share 50% behavior when each contained one conflicting assertion.
+    let mut signature = behavior_signature(parameters, source, &declared, assertions);
+    signature.extend(behavior_signature(body, source, &declared, assertions));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
 
     Some(HandlerFingerprint {
@@ -420,13 +432,14 @@ fn fingerprint_node(
     source: &[u8],
     comparable: bool,
     declared: &BTreeMap<String, String>,
+    assertions: &AssertionBindings,
 ) -> HandlerFingerprint {
     let raw = node_text(handler, source);
     let mut exact = raw.to_owned();
     let mut normalized = serialize_ast(handler, source, declared, AstMode::Normalized);
     let mut alpha = serialize_ast(handler, source, declared, AstMode::Alpha);
     let mut structural = serialize_ast(handler, source, declared, AstMode::Structural);
-    let mut signature = behavior_signature(handler, source, declared);
+    let mut signature = behavior_signature(handler, source, declared, assertions);
     let mut source_snippet = raw.to_owned();
     if let Some(arguments) = bound_arguments {
         let no_declarations = BTreeMap::new();
@@ -443,7 +456,12 @@ fn fingerprint_node(
             &mut structural,
             &serialize_ast(arguments, source, &no_declarations, AstMode::Structural),
         );
-        signature.extend(behavior_signature(arguments, source, &no_declarations));
+        signature.extend(behavior_signature(
+            arguments,
+            source,
+            &no_declarations,
+            assertions,
+        ));
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
@@ -757,9 +775,10 @@ fn behavior_signature(
     handler: Node<'_>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
+    assertions: &AssertionBindings,
 ) -> Vec<String> {
     let mut signature = Vec::new();
-    collect_behavior(handler, source, declared, &mut signature);
+    collect_behavior(handler, source, declared, assertions, &mut signature);
     signature
 }
 
@@ -767,13 +786,14 @@ fn collect_behavior(
     node: Node<'_>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
+    assertions: &AssertionBindings,
     output: &mut Vec<String>,
 ) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         match node.kind() {
             "call_expression" => {
-                if let Some(event) = assertion_behavior_event(node, source, declared) {
+                if let Some(event) = assertion_behavior_event(node, source, declared, assertions) {
                     output.push(event);
                     // Treat the complete assertion as one atomic behavior event. Its subject and
                     // expected values are already fingerprinted, so traversing its children would
@@ -806,6 +826,7 @@ fn assertion_behavior_event(
     call: Node<'_>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
+    assertions: &AssertionBindings,
 ) -> Option<String> {
     let function = call.child_by_field_name("function")?;
     if function.kind() != "member_expression" {
@@ -818,6 +839,7 @@ fn assertion_behavior_event(
         function.child_by_field_name("object")?,
         source,
         &mut modifiers,
+        assertions,
     )?;
     modifiers.reverse();
     let arguments = invocation.child_by_field_name("arguments")?;
@@ -847,20 +869,20 @@ fn find_expect_invocation<'tree>(
     node: Node<'tree>,
     source: &[u8],
     modifiers: &mut Vec<String>,
+    assertions: &AssertionBindings,
 ) -> Option<Node<'tree>> {
     let mut current = node;
     for _ in 0..MAX_ASSERTION_CHAIN_DEPTH {
         match current.kind() {
             "call_expression" => {
                 let function = current.child_by_field_name("function")?;
-                if function.kind() == "identifier" && node_text(function, source) == "expect" {
+                if assertions.is_factory(function, source) {
                     return Some(current);
                 }
                 if function.kind() == "member_expression" {
                     let object = function.child_by_field_name("object")?;
                     let property = function.child_by_field_name("property")?;
-                    if object.kind() == "identifier"
-                        && node_text(object, source) == "expect"
+                    if assertions.is_factory(object, source)
                         && matches!(node_text(property, source), "soft" | "poll")
                     {
                         modifiers.push(node_text(property, source).to_owned());
