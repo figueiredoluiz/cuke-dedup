@@ -89,8 +89,8 @@ impl AssertionBindings {
                         collect_binding_names(name, source, &mut shadowed);
                     }
                 }
-                "assignment_expression" | "augmented_assignment_expression" => {
-                    if let Some(left) = node.child_by_field_name("left") {
+                _ => {
+                    if let Some(left) = assignment_target(node) {
                         let mut assigned = BTreeSet::new();
                         let mut writes = BTreeSet::new();
                         collect_assignment_targets(left, source, &mut assigned, &mut writes);
@@ -106,7 +106,6 @@ impl AssertionBindings {
                         );
                     }
                 }
-                _ => {}
             }
             super::ast::push_named_children_reverse(node, &mut stack);
         }
@@ -430,10 +429,11 @@ fn collect_assignment_targets(
             "member_expression" | "subscript_expression" => {
                 let property = node
                     .child_by_field_name("property")
-                    .map(|property| node_text(property, source))
+                    .map(|property| node_text(property, source).to_owned())
                     .or_else(|| {
-                        node.child_by_field_name("index")
-                            .and_then(|index| string_literal(index, source))
+                        node.child_by_field_name("index").and_then(|index| {
+                            super::matcher::decode_js_string(node_text(index, source))
+                        })
                     });
                 if property.is_none_or(|property| property == "expect") {
                     if let Some(object) = node
@@ -467,6 +467,19 @@ fn collect_assignment_targets(
     }
 }
 
+fn assignment_target(node: Node<'_>) -> Option<Node<'_>> {
+    match node.kind() {
+        "assignment_expression" | "augmented_assignment_expression" => {
+            node.child_by_field_name("left")
+        }
+        "update_expression" => node.child_by_field_name("argument"),
+        "for_in_statement" => node
+            .child_by_field_name("left")
+            .filter(|left| loop_binding_keyword(node, *left).is_none()),
+        _ => None,
+    }
+}
+
 fn module_runtime_binding_exists(
     root: Node<'_>,
     source: &[u8],
@@ -475,6 +488,7 @@ fn module_runtime_binding_exists(
 ) -> bool {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
+        let assignment = assignment_target(node);
         let pattern = match node.kind() {
             "import_statement" if import_has_runtime_bindings(node) => Some(node),
             "variable_declarator" if is_top_level_variable(node) => {
@@ -503,17 +517,16 @@ fn module_runtime_binding_exists(
             {
                 node.child_by_field_name("name")
             }
-            "assignment_expression" => node.child_by_field_name("left").filter(|left| {
+            _ => assignment.filter(|left| {
                 matches!(
                     left.kind(),
                     "identifier" | "object_pattern" | "array_pattern"
                 ) && !position_is_shadowed(shadow_ranges, expected, node)
             }),
-            _ => None,
         };
         if let Some(pattern) = pattern {
             let mut names = BTreeSet::new();
-            if node.kind() == "assignment_expression" {
+            if assignment.is_some() {
                 collect_assignment_targets(pattern, source, &mut names, &mut BTreeSet::new());
             } else {
                 collect_binding_names(pattern, source, &mut names);

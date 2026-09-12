@@ -250,6 +250,20 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
         (valid, "", true),
         (cjs, "", true),
         (cjs, "api.expect = replacement;", false),
+        (cjs, r#"api["\x65xpect"] = replacement;"#, false),
+        (cjs, r#"api["\u0065xpect"] = replacement;"#, false),
+        (cjs, r#"api["\u{65}xpect"] = replacement;"#, false),
+        (cjs, r#"api["\x6fther"] = replacement;"#, true),
+        (cjs, "api.expect++;", false),
+        (cjs, "for (api.expect of replacements) {}", false),
+        (cjs, "for (api.expect in replacements) {}", false),
+        (cjs, "api.other++;", true),
+        (cjs, "for (api.other of replacements) {}", true),
+        (
+            cjs,
+            "function local(api) { api.expect++; for (api.expect of replacements) {} }",
+            true,
+        ),
         (valid, "api['expect'] = replacement;", false),
         (valid, "({ factory: api.expect } = replacement);", false),
         (valid, "[api.expect] = replacement;", false),
@@ -304,6 +318,32 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
                     .any(|f| f.rule == Rule::NearDuplicateStep));
             }
         }
+    }
+    for write in [
+        "require &&= replacement;",
+        "require += replacement;",
+        "require++;",
+        "for (require of replacements) {}",
+    ] {
+        let source =
+            format!("{write} {cjs} Then('state', ({{state}}) => api.expect(state).toBe('ready'));");
+        assert!(
+            definitions(&source)[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|e| !e.starts_with("assert:")),
+            "{write}"
+        );
+        let source = format!("function local(require) {{ {write} }} {cjs} Then('state', ({{state}}) => api.expect(state).toBe('ready'));");
+        assert!(
+            definitions(&source)[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e.starts_with("assert:")),
+            "local {write}"
+        );
     }
     for module in [
         "@cucumber/cucumber",
