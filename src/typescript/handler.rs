@@ -851,6 +851,9 @@ fn local_constant_scope<'tree>(
                 | "for_in_statement"
                 | "switch_body"
                 | "catch_clause"
+                | "class_static_block"
+                | "internal_module"
+                | "module"
         ) {
             return Some(candidate);
         }
@@ -964,8 +967,13 @@ fn collect_behavior(
     local_constants: &LocalConstants,
     output: &mut Vec<String>,
 ) {
+    let root_id = node.id();
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
+        // Match constant collection: nested functions have their own bindings and execution.
+        if node.id() != root_id && is_function_like(node) {
+            continue;
+        }
         match node.kind() {
             "call_expression" => {
                 if let Some(event) =

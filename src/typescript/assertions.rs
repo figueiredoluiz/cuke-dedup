@@ -696,6 +696,8 @@ fn is_local_scope(node: Node<'_>) -> bool {
             | "abstract_class_declaration"
             | "class"
             | "class_static_block"
+            | "internal_module"
+            | "module"
             | "statement_block"
             | "for_statement"
             | "for_in_statement"
@@ -715,6 +717,8 @@ fn nearest_function_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
                 | "arrow_function"
                 | "method_definition"
                 | "class_static_block"
+                | "internal_module"
+                | "module"
         ) {
             return Some(candidate);
         }
@@ -736,6 +740,8 @@ fn nearest_lexical_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
                 | "switch_body"
                 | "catch_clause"
                 | "class_static_block"
+                | "internal_module"
+                | "module"
         ) {
             return Some(candidate);
         }

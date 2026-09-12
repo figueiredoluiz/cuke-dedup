@@ -1300,6 +1300,7 @@ fn assertion_chains_unwrap_typescript_expression_wrappers() {
         "Then('satisfies wrapper', ({ state }) => (expect(state) satisfies Assertion).toBe('ready'));",
         "Then('non-null wrapper', ({ state }) => expect(state)!.toBe('ready'));",
         "Then('type assertion wrapper', ({ state }) => (<Assertion>expect(state)).toBe('ready'));",
+        "Then('generic call', ({ state }) => expect<string>(state).toBe('ready'));",
     ] {
         let definitions = extract_ts(source);
         assert_eq!(definitions.len(), 1, "{source}");
@@ -1308,6 +1309,64 @@ fn assertion_chains_unwrap_typescript_expression_wrappers() {
             "{source}: {:?}",
             definitions[0].handler.behavior_signature
         );
+    }
+}
+
+#[test]
+fn assertion_review_scope_boundaries() {
+    for body in [
+        "const run = () => { const expected = 'ready'; expect(state).toBe(expected); }; run();",
+        "const expected = 'ready'; items.forEach(expected => expect(state).toBe(expected));",
+    ] {
+        let definitions = extract_ts(&format!("Then('nested', () => {{ {body} }});"));
+        assert_eq!(definitions.len(), 1);
+        assert!(definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")));
+    }
+    for body in [
+        "const status = VALUE; expect(page.status).toBe('ready');",
+        "const status = VALUE; expect({ status: page.value }).toBe('ready');",
+        "class X { static { const expected = VALUE; } } expect(state).toBe(expected);",
+    ] {
+        let signatures: Vec<_> = ["'ready'", "'idle'"]
+            .into_iter()
+            .map(|value| {
+                extract_ts(&format!(
+                    "Then('scope', () => {{ {} }});",
+                    body.replace("VALUE", value)
+                ))[0]
+                    .handler
+                    .behavior_signature
+                    .clone()
+            })
+            .collect();
+        assert_eq!(signatures[0], signatures[1], "{body}");
+    }
+    for keyword in ["namespace", "module"] {
+        for binding in ["var", "const"] {
+            let source = format!("{keyword} Helpers {{ {binding} expect = custom; Then('inner', () => expect(state).toBe('ready')); }} Then('outer', () => expect(state).toBe('ready'));");
+            let definitions = extract_ts(&source);
+            assert_eq!(definitions.len(), 2);
+            assert!(
+                definitions[0]
+                    .handler
+                    .behavior_signature
+                    .iter()
+                    .all(|event| !event.starts_with("assert:")),
+                "{source}"
+            );
+            assert!(
+                definitions[1]
+                    .handler
+                    .behavior_signature
+                    .iter()
+                    .any(|event| event.starts_with("assert:")),
+                "{source}"
+            );
+        }
     }
 }
 
