@@ -12,6 +12,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
   while retaining assertion-only duplicate candidates and avoiding misleading handler-overlap
   warnings. Assertion provenance now also respects TypeScript runtime namespaces, erased
   declarations, namespace bindings, and wrapped assertion expressions.
+- Changed-files mode no longer inherits the caller's Git environment. `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_INDEX_FILE`, and related variables outrank the repository selected per invocation, so
+  running CukeDedup from another repository's Git hook resolved revisions, ignore rules, and the
+  changed set against the hook's repository instead of the analyzed root.
 
 ## [0.2.0] - 2026-09-10
 
