@@ -177,6 +177,70 @@ fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
 }
 
 #[test]
+fn inline_and_local_assertion_values_share_behavior_without_losing_value_precision() {
+    let (_directory, config) = config();
+    for (declaration, inline, local, expected_match) in [
+        ("const expected = 'ready';", "'ready'", "expected", true),
+        ("const expected = 'idle';", "'ready'", "expected", false),
+        (
+            "const first = 'ready'; const expected = first;",
+            "'ready'",
+            "expected",
+            true,
+        ),
+        ("const expected = 12;", "12", "expected", true),
+        ("const expected = true;", "true", "expected", true),
+        ("const expected = null;", "null", "expected", true),
+        (
+            "const expected = 'ready';",
+            "{ status: 'ready' }",
+            "{ status: expected }",
+            true,
+        ),
+        (
+            "const expected = 'ready';",
+            "['ready', 'idle']",
+            "['idle', expected]",
+            false,
+        ),
+        (
+            "let expected = 'ready'; expected = 'idle';",
+            "'ready'",
+            "expected",
+            false,
+        ),
+        ("const expected = external;", "'ready'", "expected", false),
+        (
+            "{ const expected = 'ready'; }",
+            "'ready'",
+            "expected",
+            false,
+        ),
+    ] {
+        let source = format!("Then('the parcel status is verified', ({{ state }}) => {{ expect(state).toEqual({inline}); }}); Then('the parcel status is now verified', ({{ state }}) => {{ {declaration} expect(state).toEqual({local}); }});");
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2);
+        if expected_match {
+            assert_eq!(
+                extracted[0].handler.behavior_signature, extracted[1].handler.behavior_signature,
+                "{source}"
+            );
+        }
+        for definitions in [extracted.clone(), extracted.into_iter().rev().collect()] {
+            let result = analyze(definitions, Vec::new(), &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::NearDuplicateStep),
+                expected_match,
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
 fn assertion_precision_covers_member_require_iifes_and_factory_options() {
     let (_directory, config) = config();
     for (prefix, body) in [
