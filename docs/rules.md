@@ -65,6 +65,8 @@ a call action, including direct and fluent forms such as `page.click()` and
 assertion values and polarity remain semantic during final similarity verification.
 Decorated class methods must also have compatible runtime-affecting semantics: async versus sync,
 static versus instance, generator, getter, and setter differences veto a near-duplicate match.
+Call evidence includes inline callback bodies syntactically; deferred assertions are not treated as
+directly executed assertions.
 
 ### parameterization-candidate
 
@@ -72,6 +74,10 @@ Handlers preserve the same control flow and calls after literal normalization, a
 texts are sufficiently similar. Findings remain pair-specific so reports retain the differing
 literals and matcher text. Replace repeated literals with a parameter when it makes the test
 vocabulary clearer.
+
+Expected assertion values and polarity are not erased for this rule. For example,
+`expect(state).toBe('ready')` and `expect(state).toBe('idle')` express distinct expectations and
+do not produce a parameterization suggestion solely because their expected literals differ.
 
 ### unused-definition
 

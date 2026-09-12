@@ -7,6 +7,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Fixed
 
+- Preserve callback call evidence in near-duplicate analysis without promoting deferred assertions
+  to executed behavior, preventing unrelated callback bodies from appearing identical.
+- Clarify that parameterization suggestions preserve expected assertion values and polarity.
+
 - Near-duplicate analysis now distinguishes assertions targeting different properties, expecting
   different inline or immutable local values, or using opposite chains such as `expect(...).not`,
   while retaining assertion-only duplicate candidates and avoiding misleading handler-overlap

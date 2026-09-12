@@ -7,6 +7,7 @@ use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
 const UNRESOLVED_ASSERTION: &str = "assert:unresolved";
+const DEFERRED_UNRESOLVED_ASSERTION: &str = "deferred-assert:unresolved";
 
 #[derive(Clone, Copy)]
 pub(super) struct HandlerBinding<'tree> {
@@ -256,7 +257,7 @@ pub(super) fn fingerprint_method_handler(
         &local_constants,
     ));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
-    let comparable = !signature.iter().any(|event| event == UNRESOLVED_ASSERTION);
+    let comparable = !signature.iter().any(|event| is_unresolved_assertion(event));
 
     Some(HandlerFingerprint {
         exact: stable_fingerprint(&exact),
@@ -483,7 +484,7 @@ fn fingerprint_node(
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
-    let comparable = comparable && !signature.iter().any(|event| event == UNRESOLVED_ASSERTION);
+    let comparable = comparable && !signature.iter().any(|event| is_unresolved_assertion(event));
     HandlerFingerprint {
         exact: stable_fingerprint(&exact),
         normalized: stable_fingerprint(&normalized),
@@ -723,6 +724,7 @@ struct LocalConstant {
     structural: String,
     safe: bool,
     parameter: bool,
+    lexical: bool,
 }
 
 #[derive(Default)]
@@ -733,6 +735,24 @@ struct LocalConstants {
 impl LocalConstants {
     fn collect(handler: Node<'_>, source: &[u8], declared: &BTreeMap<String, String>) -> Self {
         let mut constants = Self::default();
+        let mut ancestor = handler.parent();
+        while let Some(node) = ancestor {
+            if matches!(
+                node.kind(),
+                "class" | "class_declaration" | "abstract_class_declaration"
+            ) {
+                if let Some(name) = node.child_by_field_name("name") {
+                    constants.insert_unresolved_shadow(
+                        name,
+                        source,
+                        node.start_byte(),
+                        node,
+                        false,
+                    );
+                }
+            }
+            ancestor = node.parent();
+        }
         let mut pending = Vec::new();
         let mut stack = vec![handler];
         while let Some(node) = stack.pop() {
@@ -756,26 +776,88 @@ impl LocalConstants {
                                 structural: String::new(),
                                 safe: true,
                                 parameter: true,
+                                lexical: false,
                             });
                     }
                 }
             }
+            let declaration_shadow = match node.kind() {
+                "class_declaration" | "abstract_class_declaration" => node
+                    .child_by_field_name("name")
+                    .zip(local_constant_scope(node.parent(), handler))
+                    .map(|(name, scope)| (name, scope, node.start_byte(), true)),
+                "function_declaration" | "generator_function_declaration" | "enum_declaration" => {
+                    node.child_by_field_name("name")
+                        .zip(local_constant_scope(node.parent(), handler))
+                        .map(|(name, scope)| (name, scope, scope.start_byte(), false))
+                }
+                "function_expression" | "generator_function" | "class" => node
+                    .child_by_field_name("name")
+                    .map(|name| (name, node, node.start_byte(), false)),
+                "catch_clause" => node
+                    .child_by_field_name("parameter")
+                    .map(|parameter| (parameter, node, node.start_byte(), false)),
+                _ => None,
+            };
+            if let Some((name, scope, declaration_start, lexical)) = declaration_shadow {
+                constants.insert_unresolved_shadow(name, source, declaration_start, scope, lexical);
+            }
             if node.kind() == "variable_declarator" {
                 let declaration = node.parent();
-                if let (Some(name), Some(value), Some(scope)) = (
-                    node.child_by_field_name("name")
-                        .filter(|name| name.kind() == "identifier"),
-                    node.child_by_field_name("value"),
+                if let (Some(name), Some(scope)) = (
+                    node.child_by_field_name("name"),
                     local_constant_scope(node.parent(), handler),
                 ) {
-                    pending.push((
-                        node_text(name, source).to_owned(),
-                        node.start_byte(),
-                        scope.start_byte(),
-                        scope.end_byte(),
-                        value,
-                        declaration.is_some_and(is_const_declaration),
-                    ));
+                    // Register shadows before evaluating any initializer: a later lexical
+                    // declaration must never expose an outer constant through its TDZ.
+                    let mut names = Vec::new();
+                    collect_parameter_bindings(name, source, &mut names);
+                    for binding_name in names {
+                        let lexical =
+                            declaration.is_none_or(|d| d.kind() != "variable_declaration");
+                        if !lexical
+                            && node.child_by_field_name("value").is_none()
+                            && constants
+                                .bindings
+                                .get(&binding_name)
+                                .is_some_and(|entries| {
+                                    entries.iter().any(|b| {
+                                        b.scope_start == scope.start_byte()
+                                            && b.scope_end == scope.end_byte()
+                                    })
+                                })
+                        {
+                            continue;
+                        }
+                        constants
+                            .bindings
+                            .entry(binding_name)
+                            .or_default()
+                            .push(LocalConstant {
+                                declaration_start: node.start_byte(),
+                                scope_start: scope.start_byte(),
+                                scope_end: scope.end_byte(),
+                                alpha: String::new(),
+                                structural: String::new(),
+                                safe: false,
+                                parameter: false,
+                                lexical,
+                            });
+                    }
+                    // Destructuring is a shadow too, but is not a proven primitive constant.
+                    if let Some(value) = node
+                        .child_by_field_name("value")
+                        .filter(|_| name.kind() == "identifier")
+                    {
+                        pending.push((
+                            node_text(name, source).to_owned(),
+                            node.start_byte(),
+                            scope.start_byte(),
+                            scope.end_byte(),
+                            value,
+                            declaration.is_some_and(is_const_declaration),
+                        ));
+                    }
                 }
             }
             push_named_children_reverse(node, &mut stack);
@@ -810,31 +892,65 @@ impl LocalConstants {
             };
             let alpha = fingerprint(AstMode::Alpha);
             let structural = fingerprint(AstMode::Structural);
-            constants
-                .bindings
-                .entry(name)
-                .or_default()
-                .push(LocalConstant {
-                    declaration_start,
-                    scope_start,
-                    scope_end,
-                    alpha,
-                    structural,
-                    safe,
-                    parameter: false,
-                });
+            constants.bindings.entry(name).and_modify(|entries| {
+                if let Some(binding) = entries
+                    .iter_mut()
+                    .find(|binding| binding.declaration_start == declaration_start)
+                {
+                    *binding = LocalConstant {
+                        declaration_start,
+                        scope_start,
+                        scope_end,
+                        alpha,
+                        structural,
+                        safe,
+                        parameter: false,
+                        lexical: binding.lexical,
+                    };
+                }
+            });
         }
         constants
+    }
+
+    fn insert_unresolved_shadow(
+        &mut self,
+        pattern: Node<'_>,
+        source: &[u8],
+        declaration_start: usize,
+        scope: Node<'_>,
+        lexical: bool,
+    ) {
+        let mut names = Vec::new();
+        if pattern.kind() == "type_identifier" {
+            push_identifier(&mut names, node_text(pattern, source));
+        } else {
+            collect_parameter_bindings(pattern, source, &mut names);
+        }
+        for name in names {
+            self.bindings.entry(name).or_default().push(LocalConstant {
+                declaration_start,
+                scope_start: scope.start_byte(),
+                scope_end: scope.end_byte(),
+                alpha: String::new(),
+                structural: String::new(),
+                safe: false,
+                parameter: false,
+                lexical,
+            });
+        }
     }
 
     fn resolve(&self, name: &str, use_site: Node<'_>, mode: AstMode) -> Option<&str> {
         let binding = self
             .binding(name, use_site)
             .filter(|binding| !binding.parameter)?;
-        Some(match mode {
+        let fingerprint = match mode {
             AstMode::Alpha | AstMode::Normalized => binding.alpha.as_str(),
             AstMode::Structural => binding.structural.as_str(),
-        })
+        };
+        // Shadow placeholders have no resolved value; retain their identifier in the AST.
+        (!fingerprint.is_empty()).then_some(fingerprint)
     }
 
     fn binding(&self, name: &str, use_site: Node<'_>) -> Option<&LocalConstant> {
@@ -842,17 +958,23 @@ impl LocalConstants {
             .get(name)?
             .iter()
             .filter(|binding| {
-                binding.declaration_start <= use_site.start_byte()
-                    && binding.scope_start <= use_site.start_byte()
+                binding.scope_start <= use_site.start_byte()
                     && binding.scope_end >= use_site.end_byte()
             })
             .min_by(|left, right| {
                 let left_width = left.scope_end.saturating_sub(left.scope_start);
                 let right_width = right.scope_end.saturating_sub(right.scope_start);
-                left_width
-                    .cmp(&right_width)
-                    .then_with(|| right.declaration_start.cmp(&left.declaration_start))
+                left_width.cmp(&right_width).then_with(|| {
+                    let rank = |b: &LocalConstant| {
+                        (
+                            b.lexical || b.declaration_start <= use_site.start_byte(),
+                            b.declaration_start,
+                        )
+                    };
+                    rank(right).cmp(&rank(left))
+                })
             })
+            .filter(|binding| binding.declaration_start <= use_site.start_byte())
     }
 }
 
@@ -866,6 +988,16 @@ fn is_function_like(node: Node<'_>) -> bool {
             | "arrow_function"
             | "method_definition"
     )
+}
+
+fn is_unresolved_assertion(event: &str) -> bool {
+    matches!(event, UNRESOLVED_ASSERTION | DEFERRED_UNRESOLVED_ASSERTION)
+}
+
+fn has_function_parameters(node: Node<'_>) -> bool {
+    node.child_by_field_name("parameters")
+        .is_some_and(|parameters| parameters.named_child_count() > 0)
+        || node.child_by_field_name("parameter").is_some()
 }
 
 fn is_const_declaration(declaration: Node<'_>) -> bool {
@@ -915,7 +1047,7 @@ fn serialize_ast(
     declared: &BTreeMap<String, String>,
     mode: AstMode,
 ) -> String {
-    serialize_ast_with_constants(node, source, declared, mode, None)
+    serialize_ast_with_constants(node, source, declared, mode, None, None)
 }
 
 fn serialize_ast_with_constants(
@@ -924,6 +1056,7 @@ fn serialize_ast_with_constants(
     declared: &BTreeMap<String, String>,
     mode: AstMode,
     constants: Option<&LocalConstants>,
+    assertions: Option<&AssertionBindings>,
 ) -> String {
     enum Event<'tree> {
         Visit(Node<'tree>, bool),
@@ -940,6 +1073,22 @@ fn serialize_ast_with_constants(
                 }
                 if prefixed {
                     output.push(' ');
+                }
+                if let Some((negated, matcher)) =
+                    assertions.and_then(|bindings| bindings.asymmetric_matcher(node, source))
+                {
+                    output.push_str("(asymmetric_matcher:");
+                    if negated {
+                        output.push_str("not.");
+                    }
+                    output.push_str(matcher);
+                    if let Some(arguments) = node.child_by_field_name("arguments") {
+                        stack.push(Event::Close);
+                        stack.push(Event::Visit(arguments, true));
+                    } else {
+                        output.push(')');
+                    }
+                    continue;
                 }
                 if let Some(constants) = constants {
                     // Substitute at the use site so inline and local values retain identical shape.
@@ -1035,8 +1184,8 @@ fn behavior_signature(
     signature
 }
 
-fn collect_behavior(
-    node: Node<'_>,
+fn collect_behavior<'tree>(
+    node: Node<'tree>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
@@ -1044,18 +1193,56 @@ fn collect_behavior(
     output: &mut Vec<String>,
 ) {
     let root_id = node.id();
-    let mut stack = vec![node];
-    while let Some(node) = stack.pop() {
-        // Nested functions have their own execution; calls are not evaluated here.
-        if node.id() != root_id && is_function_like(node) {
-            continue;
+    let mut stack = vec![(node, false, false)];
+    let push_children =
+        |node: Node<'tree>, deferred, unresolved_callback_parameters, stack: &mut Vec<_>| {
+            let start = stack.len();
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                stack.push((child, deferred, unresolved_callback_parameters));
+            }
+            stack[start..].reverse();
+        };
+    while let Some((node, deferred, unresolved_callback_parameters)) = stack.pop() {
+        let nested_function = node.id() != root_id && is_function_like(node);
+        if nested_function {
+            let mut parent = node.parent();
+            while parent
+                .is_some_and(|p| super::registrations::unwrap_registration_callee(p) == Some(node))
+            {
+                parent = parent.and_then(|p| p.parent());
+            }
+            if !parent.is_some_and(|p| matches!(p.kind(), "arguments" | "call_expression")) {
+                continue;
+            }
         }
+        // Retain syntactic call evidence in callbacks without promoting their assertions
+        // to executed behavior. Dropping the body makes unrelated callbacks look identical.
+        let deferred = deferred || nested_function;
+        let parameterized_callback = nested_function && has_function_parameters(node);
+        if parameterized_callback {
+            // Callback arguments are not evaluated, so any runtime parameter can change the
+            // callback's behavior even when its body contains no recognized assertion.
+            output.push(DEFERRED_UNRESOLVED_ASSERTION.to_owned());
+        }
+        let unresolved_callback_parameters =
+            unresolved_callback_parameters || parameterized_callback;
         match node.kind() {
             "call_expression" => {
                 if let Some(event) =
                     assertion_behavior_event(node, source, declared, assertions, local_constants)
                 {
-                    output.push(event);
+                    if unresolved_callback_parameters {
+                        // The callback-level marker already makes this handler non-comparable.
+                    } else if deferred {
+                        output.push(if event == UNRESOLVED_ASSERTION {
+                            DEFERRED_UNRESOLVED_ASSERTION.to_owned()
+                        } else {
+                            format!("deferred-{event}")
+                        });
+                    } else {
+                        output.push(event);
+                    }
                     // Treat the complete assertion as one atomic behavior event. Its subject and
                     // expected values are already fingerprinted, so traversing its children would
                     // count subject calls such as `page.locator()` a second time and make overlap
@@ -1063,33 +1250,44 @@ fn collect_behavior(
                     continue;
                 }
                 if let Some(function) = node.child_by_field_name("function") {
-                    let mut invoked = function;
-                    while matches!(
-                        invoked.kind(),
-                        "parenthesized_expression"
-                            | "as_expression"
-                            | "satisfies_expression"
-                            | "non_null_expression"
-                    ) {
-                        let Some(inner) = invoked.named_child(0) else {
-                            break;
-                        };
-                        invoked = inner;
+                    let invoked = super::registrations::unwrap_registration_callee(function)
+                        .unwrap_or(function);
+                    if invoked.kind() == "generator_function" {
+                        // Arguments run now; the body stays suspended. Parameter initialization
+                        // is unresolved, as for other parameterized inline functions.
+                        if has_function_parameters(invoked) {
+                            output.push(UNRESOLVED_ASSERTION.to_owned());
+                        }
+                        if let Some(evaluated) = node.child_by_field_name("arguments") {
+                            push_children(
+                                evaluated,
+                                deferred,
+                                unresolved_callback_parameters,
+                                &mut stack,
+                            );
+                        }
+                        continue;
                     }
                     if matches!(invoked.kind(), "arrow_function" | "function_expression") {
                         // Parameter substitution is not evaluated; do not invent equal values.
-                        if invoked
-                            .child_by_field_name("parameters")
-                            .is_some_and(|p| p.named_child_count() > 0)
-                            || invoked.child_by_field_name("parameter").is_some()
-                        {
+                        if has_function_parameters(invoked) {
                             output.push(UNRESOLVED_ASSERTION.to_owned());
                             continue;
                         }
                         // Record the executed body, not an extra generic wrapper-call event.
-                        push_named_children_reverse(invoked, &mut stack);
+                        push_children(
+                            invoked,
+                            deferred,
+                            unresolved_callback_parameters,
+                            &mut stack,
+                        );
                         if let Some(arguments) = node.child_by_field_name("arguments") {
-                            push_named_children_reverse(arguments, &mut stack);
+                            push_children(
+                                arguments,
+                                deferred,
+                                unresolved_callback_parameters,
+                                &mut stack,
+                            );
                         }
                         continue;
                     }
@@ -1102,7 +1300,7 @@ fn collect_behavior(
             }
             _ => {}
         }
-        push_named_children_reverse(node, &mut stack);
+        push_children(node, deferred, unresolved_callback_parameters, &mut stack);
     }
 }
 
@@ -1154,6 +1352,14 @@ fn assertion_behavior_event(
     let configuration: Vec<_> = arguments.named_children(&mut cursor).skip(1).collect();
     pending.extend(configuration.iter().copied());
     while let Some(value) = pending.pop() {
+        // Only known builders on a trusted assertion factory are syntax, not external
+        // values. Their arguments still need the same conservative value validation.
+        if assertions.is_asymmetric_matcher(value, source) {
+            if let Some(arguments) = value.child_by_field_name("arguments") {
+                pending.push(arguments);
+            }
+            continue;
+        }
         if matches!(value.kind(), "identifier" | "shorthand_property_identifier")
             && !local_constants
                 .binding(node_text(value, source), value)
@@ -1165,8 +1371,14 @@ fn assertion_behavior_event(
     }
     // Alpha mode canonicalizes parameter and local names while retaining literal values and
     // member identities. The whole arguments node is included to preserve matcher arity.
-    let mut expected =
-        serialize_assertion_value(expected, source, declared, AstMode::Alpha, local_constants);
+    let mut expected = serialize_assertion_expected(
+        expected,
+        source,
+        declared,
+        AstMode::Alpha,
+        local_constants,
+        assertions,
+    );
     // Factory options affect execution, unlike structural literal normalization.
     for option in configuration {
         expected.push_str("\0factory-option:");
@@ -1198,7 +1410,25 @@ fn serialize_assertion_value(
     mode: AstMode,
     local_constants: &LocalConstants,
 ) -> String {
-    serialize_ast_with_constants(node, source, declared, mode, Some(local_constants))
+    serialize_ast_with_constants(node, source, declared, mode, Some(local_constants), None)
+}
+
+fn serialize_assertion_expected(
+    node: Node<'_>,
+    source: &[u8],
+    declared: &BTreeMap<String, String>,
+    mode: AstMode,
+    local_constants: &LocalConstants,
+    assertions: &AssertionBindings,
+) -> String {
+    serialize_ast_with_constants(
+        node,
+        source,
+        declared,
+        mode,
+        Some(local_constants),
+        Some(assertions),
+    )
 }
 
 fn find_expect_invocation<'tree>(
@@ -1211,7 +1441,9 @@ fn find_expect_invocation<'tree>(
     for _ in 0..MAX_ASSERTION_CHAIN_DEPTH {
         match current.kind() {
             "call_expression" => {
-                let function = current.child_by_field_name("function")?;
+                let function = super::registrations::unwrap_registration_callee(
+                    current.child_by_field_name("function")?,
+                )?;
                 if assertions.is_factory(function, source) {
                     return Some(current);
                 }
