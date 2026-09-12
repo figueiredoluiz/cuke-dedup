@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
+const UNRESOLVED_ASSERTION: &str = "assert:unresolved";
 
 #[derive(Clone, Copy)]
 pub(super) struct HandlerBinding<'tree> {
@@ -255,6 +256,7 @@ pub(super) fn fingerprint_method_handler(
         &local_constants,
     ));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
+    let comparable = !signature.iter().any(|event| event == UNRESOLVED_ASSERTION);
 
     Some(HandlerFingerprint {
         exact: stable_fingerprint(&exact),
@@ -263,7 +265,7 @@ pub(super) fn fingerprint_method_handler(
         structural: stable_fingerprint(&structural),
         behavior_signature: signature,
         source_snippet: bounded_source_snippet(&source_snippet),
-        comparable: true,
+        comparable,
         // A default initializer executes before the body. Treating an empty method with one as a
         // stub would hide real behavior and could recreate pending-handler finding storms.
         trivial: !has_parameter_initializer(parameters) && is_trivial_handler(body, source),
@@ -481,6 +483,7 @@ fn fingerprint_node(
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
+    let comparable = comparable && !signature.iter().any(|event| event == UNRESOLVED_ASSERTION);
     HandlerFingerprint {
         exact: stable_fingerprint(&exact),
         normalized: stable_fingerprint(&normalized),
@@ -1041,6 +1044,20 @@ fn assertion_behavior_event(
         local_constants,
     );
     let expected = call.child_by_field_name("arguments")?;
+    // An external name is not proof of an equal value across files. Preserve extraction and
+    // matcher checks, but decline handler equivalence rather than invent module resolution.
+    let mut pending = vec![expected];
+    while let Some(value) = pending.pop() {
+        if matches!(value.kind(), "identifier" | "shorthand_property_identifier")
+            && !declared.contains_key(node_text(value, source))
+            && local_constants
+                .resolve(node_text(value, source), value, AstMode::Alpha)
+                .is_none()
+        {
+            return Some(UNRESOLVED_ASSERTION.to_owned());
+        }
+        push_named_children_reverse(value, &mut pending);
+    }
     // Alpha mode canonicalizes parameter and local names while retaining literal values and
     // member identities. The whole arguments node is included to preserve matcher arity.
     let expected =

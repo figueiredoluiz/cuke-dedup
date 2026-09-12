@@ -510,7 +510,10 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
         ));
         classes.alpha_handler.push(intern_class(
             &mut alpha_handlers,
-            definition.handler.alpha_normalized.as_str(),
+            (
+                definition.handler.alpha_normalized.as_str(),
+                definition.handler.behavior_signature.as_slice(),
+            ),
         ));
         classes.structural_handler.push(intern_class(
             &mut structural_handlers,
@@ -617,7 +620,7 @@ pub(super) fn definition_pair_candidates(
     let behavior_events = behavior_event_ids(definitions);
     let behavior_anchor_events = behavior_anchor_event_ids(definitions);
     let mut normalized_matchers: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
-    let mut handlers: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut handlers: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
@@ -627,7 +630,10 @@ pub(super) fn definition_pair_candidates(
             .push(index);
         if definition.handler.comparable && !definition.handler.trivial {
             handlers
-                .entry(&definition.handler.alpha_normalized)
+                .entry((
+                    &definition.handler.alpha_normalized,
+                    &definition.handler.behavior_signature,
+                ))
                 .or_default()
                 .push(index);
             structures

@@ -63,6 +63,113 @@ Then('the user exists', async (name) => { await save(name); });
 }
 
 #[test]
+fn exact_handlers_require_compatible_assertion_provenance_across_files() {
+    let (_directory, config) = config();
+    let mut extracted = Vec::new();
+    for (index, module) in [
+        "@playwright/test",
+        "unrelated-assertions",
+        "@playwright/test",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let source = format!("import {{ expect }} from '{module}'; Then('the current state is verified {index}', () => expect(state).toBe('ready'));");
+        extracted.extend(
+            typescript::extract(
+                &source,
+                &SourceFile {
+                    path: PathBuf::from(format!("steps-{index}.ts")),
+                    language: SourceLanguage::TypeScript,
+                },
+            )
+            .unwrap(),
+        );
+    }
+    for definitions in [extracted.clone(), extracted.into_iter().rev().collect()] {
+        let result = analyze(definitions, Vec::new(), &config).unwrap();
+        let findings: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| matches!(f.rule, Rule::DuplicateHandler | Rule::NearDuplicateStep))
+            .collect();
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|f| f.rule == Rule::DuplicateHandler)
+                .count(),
+            1
+        );
+        for finding in findings {
+            assert_ne!(finding.primary.path, Path::new("steps-1.ts"));
+            assert!(finding
+                .related
+                .iter()
+                .all(|location| location.path != Path::new("steps-1.ts")));
+        }
+    }
+}
+
+#[test]
+fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
+    let (_directory, config) = config();
+    for (prefix, body, expected_duplicates) in [
+        (
+            "const expected = VALUE;",
+            "() => expect(state).toBe(expected)",
+            0,
+        ),
+        (
+            "",
+            "() => { const expected = 'ready'; expect(state).toBe(expected); }",
+            1,
+        ),
+        ("", "(expected) => expect(state).toBe(expected)", 1),
+    ] {
+        let mut extracted = Vec::new();
+        for (index, value) in ["'ready'", "'idle'"].into_iter().enumerate() {
+            let source = format!(
+                "{} Then('the current state is verified {index}', {body});",
+                prefix.replace("VALUE", value)
+            );
+            extracted.extend(
+                typescript::extract(
+                    &source,
+                    &SourceFile {
+                        path: PathBuf::from(format!("steps-{index}.ts")),
+                        language: SourceLanguage::TypeScript,
+                    },
+                )
+                .unwrap(),
+            );
+        }
+        let result = analyze(extracted.clone(), Vec::new(), &config).unwrap();
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .filter(|f| f.rule == Rule::DuplicateHandler)
+                .count(),
+            expected_duplicates,
+            "{prefix} {body}"
+        );
+        if expected_duplicates == 0 {
+            assert!(!result
+                .findings
+                .iter()
+                .any(|f| f.rule == Rule::NearDuplicateStep));
+        }
+        extracted[1].matcher = extracted[0].matcher.clone();
+        extracted[1].normalized_matcher = extracted[0].normalized_matcher.clone();
+        assert!(analyze(extracted, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .any(|f| f.rule == Rule::DuplicateMatcher));
+    }
+}
+
+#[test]
 fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     let mut unrelated_source = String::new();
     for index in 0..100 {
@@ -1038,8 +1145,18 @@ fn handler_similarity_contract_is_table_driven() {
             "left",
             "right",
             vec!["open"],
-            vec!["close"],
+            vec!["open"],
             1.0,
+        ),
+        (
+            "alpha equivalence with conflicting behavior",
+            "same",
+            "same",
+            "left",
+            "right",
+            vec!["open"],
+            vec!["close"],
+            0.0,
         ),
         (
             "structural and behavioral equivalence",

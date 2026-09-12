@@ -127,7 +127,7 @@ pub(super) fn handler_similarity_with_relationship<T: Eq>(
     left_events: &[T],
     right_events: &[T],
 ) -> f64 {
-    if same_alpha {
+    if same_alpha && left_events == right_events {
         return 1.0;
     }
     if same_structural {
