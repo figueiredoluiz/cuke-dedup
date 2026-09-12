@@ -118,6 +118,38 @@
       ]
     },
     {
+      "name": "review-gap-lexical-tdz",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "tdz.ts"
+      ],
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
       "name": "precision-import-esm",
       "path": "precision-import-esm",
       "expectedDefinitions": 2,

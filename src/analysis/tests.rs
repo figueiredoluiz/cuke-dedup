@@ -106,6 +106,24 @@ fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
 }
 
 #[test]
+fn future_local_declarations_do_not_expose_outer_assertion_values() {
+    for (body, comparable) in [
+        ("const expected = 'ready'; { expect(state).toBe(expected); const expected = 'idle'; }", false),
+        ("const expected = 'ready'; { const copy = expected; const expected = 'idle'; expect(state).toBe(copy); }", false),
+        ("const expected = 'ready'; { expect(state).toBe(expected); let expected; }", false),
+        ("const expected = 'ready'; { expect(state).toBe(expected); const {expected} = external; }", false),
+        ("const expected = 'ready'; { const [expected] = external; expect(state).toBe(expected); }", false),
+        ("const {x} = (() => { const expected = 'ready'; expect(state).toBe(expected); return {}; })();", true),
+        ("const expected = 'ready'; { const expected = 'idle'; expect(state).toBe(expected); }", true),
+        ("const expected = 'ready'; { const copy = expected; expect(state).toBe(copy); }", true),
+        ("{ expect(state).toBe(expected); const expected = 'idle'; }", false),
+    ] {
+        let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => {{ {body} }});"));
+        assert_eq!(defs[0].handler.comparable, comparable, "{body}");
+    }
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"

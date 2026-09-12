@@ -762,20 +762,43 @@ impl LocalConstants {
             }
             if node.kind() == "variable_declarator" {
                 let declaration = node.parent();
-                if let (Some(name), Some(value), Some(scope)) = (
-                    node.child_by_field_name("name")
-                        .filter(|name| name.kind() == "identifier"),
-                    node.child_by_field_name("value"),
+                if let (Some(name), Some(scope)) = (
+                    node.child_by_field_name("name"),
                     local_constant_scope(node.parent(), handler),
                 ) {
-                    pending.push((
-                        node_text(name, source).to_owned(),
-                        node.start_byte(),
-                        scope.start_byte(),
-                        scope.end_byte(),
-                        value,
-                        declaration.is_some_and(is_const_declaration),
-                    ));
+                    // Register shadows before evaluating any initializer: a later lexical
+                    // declaration must never expose an outer constant through its TDZ.
+                    let mut names = Vec::new();
+                    collect_parameter_bindings(name, source, &mut names);
+                    for binding_name in names {
+                        constants
+                            .bindings
+                            .entry(binding_name)
+                            .or_default()
+                            .push(LocalConstant {
+                                declaration_start: node.start_byte(),
+                                scope_start: scope.start_byte(),
+                                scope_end: scope.end_byte(),
+                                alpha: String::new(),
+                                structural: String::new(),
+                                safe: false,
+                                parameter: false,
+                            });
+                    }
+                    // Destructuring is a shadow too, but is not a proven primitive constant.
+                    if let Some(value) = node
+                        .child_by_field_name("value")
+                        .filter(|_| name.kind() == "identifier")
+                    {
+                        pending.push((
+                            node_text(name, source).to_owned(),
+                            node.start_byte(),
+                            scope.start_byte(),
+                            scope.end_byte(),
+                            value,
+                            declaration.is_some_and(is_const_declaration),
+                        ));
+                    }
                 }
             }
             push_named_children_reverse(node, &mut stack);
@@ -810,19 +833,22 @@ impl LocalConstants {
             };
             let alpha = fingerprint(AstMode::Alpha);
             let structural = fingerprint(AstMode::Structural);
-            constants
-                .bindings
-                .entry(name)
-                .or_default()
-                .push(LocalConstant {
-                    declaration_start,
-                    scope_start,
-                    scope_end,
-                    alpha,
-                    structural,
-                    safe,
-                    parameter: false,
-                });
+            constants.bindings.entry(name).and_modify(|entries| {
+                if let Some(binding) = entries
+                    .iter_mut()
+                    .find(|binding| binding.declaration_start == declaration_start)
+                {
+                    *binding = LocalConstant {
+                        declaration_start,
+                        scope_start,
+                        scope_end,
+                        alpha,
+                        structural,
+                        safe,
+                        parameter: false,
+                    };
+                }
+            });
         }
         constants
     }
@@ -842,8 +868,7 @@ impl LocalConstants {
             .get(name)?
             .iter()
             .filter(|binding| {
-                binding.declaration_start <= use_site.start_byte()
-                    && binding.scope_start <= use_site.start_byte()
+                binding.scope_start <= use_site.start_byte()
                     && binding.scope_end >= use_site.end_byte()
             })
             .min_by(|left, right| {
@@ -853,6 +878,7 @@ impl LocalConstants {
                     .cmp(&right_width)
                     .then_with(|| right.declaration_start.cmp(&left.declaration_start))
             })
+            .filter(|binding| binding.declaration_start <= use_site.start_byte())
     }
 }
 
