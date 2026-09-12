@@ -386,6 +386,29 @@
       ]
     },
     {
+      "name": "invocation-forms-preserve-duplicate-recall",
+      "path": "invocation-forms",
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the summary panel is ready",
+            "the inventory badge has finished loading"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the detail panel shows the first state",
+            "the detail panel shows the final state"
+          ]
+        }
+      ]
+    },
+    {
       "name": "legacy-cucumber-registration-modules",
       "path": "legacy-cucumber-modules",
       "expectedDefinitions": 2,

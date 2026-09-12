@@ -1076,17 +1076,24 @@ fn collect_behavior(
                         };
                         invoked = inner;
                     }
-                    if matches!(invoked.kind(), "arrow_function" | "function_expression") {
-                        // Parameter substitution is not evaluated; do not invent equal values.
-                        if invoked
+                    // A zero-parameter immediately-invoked function executes inline, so record its
+                    // body rather than an extra generic wrapper event.
+                    //
+                    // A parameterized one keeps the ordinary call boundary. Its arguments are
+                    // never substituted, and callback parameters count as safe value bindings, so
+                    // reading the body would let `((v) => expect(s).toBe(v))(1)` and the same
+                    // shape called with `2` produce one assertion event. Recording the callee as
+                    // a generic call avoids that without marking the handler unresolved: an
+                    // unresolved handler is excluded from every handler rule, which silently
+                    // hides an exact duplicate and loses recall on an error-severity rule. The
+                    // exact and normalized fingerprints still cover the arguments, so differing
+                    // arguments remain distinguishable.
+                    if matches!(invoked.kind(), "arrow_function" | "function_expression")
+                        && invoked.child_by_field_name("parameter").is_none()
+                        && invoked
                             .child_by_field_name("parameters")
-                            .is_some_and(|p| p.named_child_count() > 0)
-                            || invoked.child_by_field_name("parameter").is_some()
-                        {
-                            output.push(UNRESOLVED_ASSERTION.to_owned());
-                            continue;
-                        }
-                        // Record the executed body, not an extra generic wrapper-call event.
+                            .is_none_or(|parameters| parameters.named_child_count() == 0)
+                    {
                         push_named_children_reverse(invoked, &mut stack);
                         if let Some(arguments) = node.child_by_field_name("arguments") {
                             push_named_children_reverse(arguments, &mut stack);

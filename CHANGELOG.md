@@ -23,6 +23,9 @@ All notable changes to CukeDedup are documented in this file. The project follow
   `GIT_INDEX_FILE`, and related variables outrank the repository selected per invocation, so
   running CukeDedup from another repository's Git hook resolved revisions, ignore rules, and the
   changed set against the hook's repository instead of the analyzed root.
+- A duplicate handler wrapped in a parameterized immediately-invoked function is reported again.
+  Such an invocation marked the whole handler unresolved, which excluded it from every handler
+  rule rather than only from assertion comparison, so a byte-identical duplicate went unreported.
 
 ## [0.2.0] - 2026-09-10
 
