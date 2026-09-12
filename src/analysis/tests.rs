@@ -63,6 +63,240 @@ Then('the user exists', async (name) => { await save(name); });
 }
 
 #[test]
+fn exact_handlers_require_compatible_assertion_provenance_across_files() {
+    let (_directory, config) = config();
+    let mut extracted = Vec::new();
+    for (index, module) in [
+        "@playwright/test",
+        "unrelated-assertions",
+        "@playwright/test",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let source = format!("import {{ expect }} from '{module}'; Then('the current state is verified {index}', () => expect(state).toBe('ready'));");
+        extracted.extend(
+            typescript::extract(
+                &source,
+                &SourceFile {
+                    path: PathBuf::from(format!("steps-{index}.ts")),
+                    language: SourceLanguage::TypeScript,
+                },
+            )
+            .unwrap(),
+        );
+    }
+    for definitions in [extracted.clone(), extracted.into_iter().rev().collect()] {
+        let result = analyze(definitions, Vec::new(), &config).unwrap();
+        let findings: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| matches!(f.rule, Rule::DuplicateHandler | Rule::NearDuplicateStep))
+            .collect();
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|f| f.rule == Rule::DuplicateHandler)
+                .count(),
+            1
+        );
+        for finding in findings {
+            assert_ne!(finding.primary.path, Path::new("steps-1.ts"));
+            assert!(finding
+                .related
+                .iter()
+                .all(|location| location.path != Path::new("steps-1.ts")));
+        }
+    }
+}
+
+#[test]
+fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
+    let (_directory, config) = config();
+    for (prefix, body, expected_duplicates) in [
+        ("function getExpected() { return VALUE; }", "() => { const expected = getExpected(); expect(state).toBe(expected); }", 0),
+        ("const external = VALUE;", "() => { const expected = external; expect(state).toBe(expected); }", 0),
+        ("const expected = VALUE;", "() => { { const expected = 'local'; } expect(state).toBe(expected); }", 0),
+        ("function getExpected() { return VALUE; }", "(expected) => { { var expected = getExpected(); } expect(state).toBe(expected); }", 0),
+        ("", "() => expect(state).toSatisfy(actual => actual > 0)", 1),
+        ("const external = VALUE;", "() => expect(state).toSatisfy(actual => actual === external)", 0),
+        ("", "() => { const expected = 'ready'; const alias = expected; expect(state).toBe(alias); }", 1),
+        (
+            "const expected = VALUE;",
+            "() => expect(state).toBe(expected)",
+            0,
+        ),
+        (
+            "",
+            "() => { const expected = 'ready'; expect(state).toBe(expected); }",
+            1,
+        ),
+        ("", "(expected) => expect(state).toBe(expected)", 1),
+    ] {
+        let mut extracted = Vec::new();
+        for (index, value) in ["'ready'", "'idle'"].into_iter().enumerate() {
+            let source = format!(
+                "{} Then('the current state is verified {index}', {body});",
+                prefix.replace("VALUE", value)
+            );
+            extracted.extend(
+                typescript::extract(
+                    &source,
+                    &SourceFile {
+                        path: PathBuf::from(format!("steps-{index}.ts")),
+                        language: SourceLanguage::TypeScript,
+                    },
+                )
+                .unwrap(),
+            );
+        }
+        let result = analyze(extracted.clone(), Vec::new(), &config).unwrap();
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .filter(|f| f.rule == Rule::DuplicateHandler)
+                .count(),
+            expected_duplicates,
+            "{prefix} {body}"
+        );
+        if expected_duplicates == 0 {
+            assert!(!result
+                .findings
+                .iter()
+                .any(|f| f.rule == Rule::NearDuplicateStep));
+        }
+        extracted[1].matcher = extracted[0].matcher.clone();
+        extracted[1].normalized_matcher = extracted[0].normalized_matcher.clone();
+        assert!(analyze(extracted, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .any(|f| f.rule == Rule::DuplicateMatcher));
+    }
+}
+
+#[test]
+fn assertion_precision_covers_member_require_iifes_and_factory_options() {
+    let (_directory, config) = config();
+    for (prefix, body) in [
+        (
+            "const check = require('@playwright/test').expect;",
+            "() => check(state).toBe(VALUE)",
+        ),
+        (
+            "const check = require('@jest/globals').expect;",
+            "() => check(state).toBe(VALUE)",
+        ),
+        (
+            "const check = require('expect').expect;",
+            "() => check(state).toBe(VALUE)",
+        ),
+        ("", "() => { (() => expect(state).toBe(VALUE))(); }"),
+        (
+            "",
+            "() => { (function () { expect(state).toBe(VALUE); })(); }",
+        ),
+        (
+            "",
+            "async () => { await (async () => expect(state).toBe(VALUE))(); }",
+        ),
+        (
+            "",
+            "() => { ((() => expect(state).toBe(VALUE)) as (() => void))(); }",
+        ),
+        (
+            "",
+            "() => expect.poll(() => state, { timeout: VALUE }).toBe('ready')",
+        ),
+        (
+            "",
+            "() => expect.poll(() => state, { intervals: [VALUE] }).toBe('ready')",
+        ),
+    ] {
+        for same in [false, true] {
+            let source = format!(
+                "{prefix} Then('the current state is verified', {}); Then('the current state is verified now', {});",
+                body.replace("VALUE", "100"), body.replace("VALUE", if same { "100" } else { "5000" })
+            );
+            let extracted = definitions(&source);
+            assert_eq!(extracted.len(), 2, "{source}");
+            assert_eq!(
+                extracted[0].handler.behavior_signature == extracted[1].handler.behavior_signature,
+                same,
+                "{source}"
+            );
+            let result = analyze(extracted, Vec::new(), &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateHandler),
+                same,
+                "{source}"
+            );
+            if !same {
+                assert!(
+                    !result.findings.iter().any(|f| matches!(
+                        f.rule,
+                        Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+                    )),
+                    "{source}: {:?}",
+                    result.findings
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
+    for (prefix, body) in [
+        ("const check = require('unrelated').expect;", "() => check(state).toBe('ready')"),
+        ("const check = require('@playwright/test').other;", "() => check(state).toBe('ready')"),
+        ("const { expect: check } = require('@playwright/test').expect;", "() => check(state).toBe('ready')"),
+        ("function require(name) { return custom; } const check = require('@playwright/test').expect;", "() => check(state).toBe('ready')"),
+        ("const check = require('@playwright/test').expect;", "(check) => check(state).toBe('ready')"),
+        ("", "() => { register(() => expect(state).toBe('ready')); }"),
+        ("", "() => { const callback = () => expect(state).toBe('ready'); register(callback); }"),
+        ("", "() => { (function* () { expect(state).toBe('ready'); })(); }"),
+    ] {
+        let source = format!("{prefix} Then('state', {body});");
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 1, "{source}");
+        assert!(extracted[0].handler.behavior_signature.iter().all(|event| !event.starts_with("assert:")), "{source}");
+    }
+    for options in [
+        "external",
+        "{ timeout: external }",
+        "{ intervals: [external] }",
+    ] {
+        let extracted = definitions(&format!(
+            "Then('state', () => expect.poll(() => state, {options}).toBe('ready'));"
+        ));
+        assert!(!extracted[0].handler.comparable, "{options}");
+    }
+    for invocation in [
+        "((value) => expect(state).toBe(value))(100)",
+        "(value => expect(state).toBe(value))(100)",
+        "((value = 100) => expect(state).toBe(value))()",
+    ] {
+        let extracted = definitions(&format!("Then('state', () => {{ {invocation}; }});"));
+        assert!(!extracted[0].handler.comparable, "{invocation}");
+    }
+    let named = definitions("Then('one', () => { (function first() { expect(state).toBe('ready'); })(); }); Then('two', () => { (function second() { expect(state).toBe('ready'); })(); });");
+    assert_eq!(
+        named[0].handler.behavior_signature,
+        named[1].handler.behavior_signature
+    );
+    let arguments =
+        definitions("Then('state', () => { (() => expect(state).toBe('ready'))(prepare()); });");
+    assert_eq!(arguments[0].handler.behavior_signature.len(), 2);
+    assert_eq!(arguments[0].handler.behavior_signature[0], "call:prepare");
+    assert!(arguments[0].handler.behavior_signature[1].starts_with("assert:"));
+}
+
+#[test]
 fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     let mut unrelated_source = String::new();
     for index in 0..100 {
@@ -1038,18 +1272,38 @@ fn handler_similarity_contract_is_table_driven() {
             "left",
             "right",
             vec!["open"],
-            vec!["close"],
+            vec!["open"],
             1.0,
         ),
         (
-            "structural equivalence",
+            "alpha equivalence with conflicting behavior",
+            "same",
+            "same",
+            "left",
+            "right",
+            vec!["open"],
+            vec!["close"],
+            0.0,
+        ),
+        (
+            "structural and behavioral equivalence",
+            "left",
+            "right",
+            "same",
+            "same",
+            vec!["open"],
+            vec!["open"],
+            0.95,
+        ),
+        (
+            "structural equivalence with conflicting behavior",
             "left",
             "right",
             "same",
             "same",
             vec!["open"],
             vec!["close"],
-            0.95,
+            0.0,
         ),
         (
             "ordered behavior overlap",
@@ -1314,6 +1568,152 @@ Then('the item is hidden', async () => { await expect(item).not.toBeVisible(); }
         .findings
         .iter()
         .any(|finding| finding.rule == Rule::DuplicateHandler));
+}
+
+#[test]
+fn similar_matchers_on_different_assertion_subjects_are_not_near_duplicates() {
+    let definitions = definitions(
+        r#"
+Then('the settings panel shows the primary account field', async ({ page }, expected) => {
+  await expect(new AccountForm(page).primaryInput).toHaveValue(expected);
+});
+Then('the settings panel shows the secondary account field', async ({ page }, expected) => {
+  await expect(new AccountForm(page).secondaryInput).toHaveValue(expected);
+});
+"#,
+    );
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn similar_matchers_with_opposite_assertion_chains_are_not_near_duplicates() {
+    let definitions = definitions(
+        r#"
+Then('the navigation drawer state indicator is collapsed', async ({ page }) => {
+  await expect(new Navigation(page).drawer).toHaveClass(/collapsed/);
+});
+Then('the navigation drawer state indicator is expanded', async ({ page }) => {
+  await expect(new Navigation(page).drawer).not.toHaveClass(/collapsed/);
+});
+"#,
+    );
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn assertion_only_handlers_reach_near_duplicate_verification() {
+    let definitions = definitions(
+        r#"
+Then('the account badge is visible', async ({ page }) => {
+  await expect(new AccountPage(page).badge).toBeVisible();
+});
+Then('the account badge is now visible', async ({ page }) =>
+  expect(new AccountPage(page).badge).toBeVisible()
+);
+"#,
+    );
+    assert_ne!(
+        definitions[0].handler.structural,
+        definitions[1].handler.structural
+    );
+    let (_directory, config) = config();
+    let candidates = definition_pair_candidates(&definitions, &config);
+    assert_eq!(
+        candidates.census.candidate_sources["matcherBlocking"].evaluated,
+        1
+    );
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn conflicting_assertion_values_are_not_near_duplicates() {
+    let definitions = definitions(
+        r#"
+Then('the account status indicator shows the first condition', async ({ page }) => {
+  await expect(new AccountPage(page).status).toBe('ready');
+});
+Then('the account status indicator shows the final condition', async ({ page }) => {
+  await expect(new AccountPage(page).status).toBe('idle');
+});
+"#,
+    );
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn decorated_method_metadata_does_not_create_near_duplicate_findings() {
+    let definitions = definitions(
+        r#"
+import { Then } from 'playwright-bdd/decorators';
+import { expect } from '@playwright/test';
+class StatusSteps {
+  @Then('the account status indicator shows the first condition')
+  first({ state }) { expect(state).toBe('ready'); }
+
+  @Then('the account status indicator shows the final condition')
+  second({ state }) { expect(state).toBe('idle'); }
+}
+"#,
+    );
+    assert_eq!(definitions.len(), 2);
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    assert_eq!(handler_similarity(&definitions[0], &definitions[1]), 0.0);
+
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn incompatible_decorated_method_semantics_veto_near_duplicate_findings() {
+    let definitions = definitions(
+        r#"
+import { Then } from 'playwright-bdd/decorators';
+import { expect } from '@playwright/test';
+class StatusSteps {
+  @Then('the account status indicator is visible')
+  first({ state }) { expect(state).toBeVisible(); }
+
+  @Then('the account status indicator is now visible')
+  async second({ state }) { expect(state).toBeVisible(); }
+}
+"#,
+    );
+    assert_eq!(definitions.len(), 2);
+    assert!(matcher_similarity(&definitions[0], &definitions[1]) >= 0.9);
+    assert_eq!(handler_similarity(&definitions[0], &definitions[1]), 0.0);
+
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
 #[test]

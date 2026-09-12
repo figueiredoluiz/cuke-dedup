@@ -81,12 +81,44 @@ fn prefixed_opposites(positive: &str, negative: &str) -> bool {
 
 #[cfg(test)]
 pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
+    if !handler_runtime_compatible(left, right) {
+        return 0.0;
+    }
+    let left_events = executable_behavior_events(left);
+    let right_events = executable_behavior_events(right);
     handler_similarity_with_relationship(
         left.handler.alpha_normalized == right.handler.alpha_normalized,
-        left.handler.structural == right.handler.structural,
-        &left.handler.behavior_signature,
-        &right.handler.behavior_signature,
+        left.handler.structural == right.handler.structural
+            && left.handler.behavior_signature == right.handler.behavior_signature,
+        &left_events,
+        &right_events,
     )
+}
+
+pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
+    match (method_semantics(left), method_semantics(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => true,
+    }
+}
+
+fn method_semantics(definition: &StepDefinition) -> Option<&str> {
+    definition
+        .handler
+        .behavior_signature
+        .first()
+        .and_then(|event| event.strip_prefix("method:"))
+}
+
+#[cfg(test)]
+fn executable_behavior_events(definition: &StepDefinition) -> Vec<&str> {
+    definition
+        .handler
+        .behavior_signature
+        .iter()
+        .filter(|event| !event.starts_with("method:"))
+        .map(String::as_str)
+        .collect()
 }
 
 pub(super) fn handler_similarity_with_relationship<T: Eq>(
@@ -95,7 +127,7 @@ pub(super) fn handler_similarity_with_relationship<T: Eq>(
     left_events: &[T],
     right_events: &[T],
 ) -> f64 {
-    if same_alpha {
+    if same_alpha && left_events == right_events {
         return 1.0;
     }
     if same_structural {
@@ -189,5 +221,35 @@ mod tests {
         );
         assert_eq!(ordered_common_subsequence_len(&[1, 2, 3], &[2, 3, 4]), 2);
         assert_eq!(round_score(0.123_6), 0.124);
+    }
+
+    #[test]
+    fn method_metadata_is_a_compatibility_gate_not_similarity_evidence() {
+        let mut left = definition("left", MatcherKind::CucumberExpression);
+        left.handler.alpha_normalized = "left-alpha".to_owned();
+        left.handler.structural = "left-structure".to_owned();
+        left.handler.behavior_signature = vec![
+            "method:instance sync".to_owned(),
+            "assert:expect#toBe:subject:ready".to_owned(),
+        ];
+
+        let mut conflicting_assertion = left.clone();
+        conflicting_assertion.handler.alpha_normalized = "right-alpha".to_owned();
+        conflicting_assertion.handler.structural = "right-structure".to_owned();
+        conflicting_assertion.handler.behavior_signature[1] =
+            "assert:expect#toBe:subject:idle".to_owned();
+        assert_eq!(handler_similarity(&left, &conflicting_assertion), 0.0);
+
+        let mut incompatible_method = left.clone();
+        incompatible_method.handler.alpha_normalized = "async-alpha".to_owned();
+        incompatible_method.handler.structural = "async-structure".to_owned();
+        incompatible_method.handler.behavior_signature[0] = "method:async".to_owned();
+        assert_eq!(handler_similarity(&left, &incompatible_method), 0.0);
+
+        let mut function_handler = left.clone();
+        function_handler.handler.alpha_normalized = "function-alpha".to_owned();
+        function_handler.handler.structural = "function-structure".to_owned();
+        function_handler.handler.behavior_signature.remove(0);
+        assert_eq!(handler_similarity(&left, &function_handler), 1.0);
     }
 }

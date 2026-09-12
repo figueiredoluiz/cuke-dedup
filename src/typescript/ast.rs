@@ -179,6 +179,11 @@ pub(super) fn import_has_runtime_bindings(node: Node<'_>) -> bool {
     if is_type_only_declaration(node) {
         return false;
     }
+    // TypeScript's `import value = require("module")` places the require clause directly under
+    // the import statement rather than inside an `import_clause` node.
+    if direct_named_child(node, "import_require_clause").is_some() {
+        return true;
+    }
     let Some(clause) = direct_named_child(node, "import_clause") else {
         return false;
     };
@@ -368,6 +373,11 @@ export * as runtime from "runtime";
         assert!(export_has_runtime_bindings(declarations[6]));
         assert!(export_has_runtime_bindings(declarations[7]));
 
+        let import_require = parse_typescript("import check = require('expect');");
+        assert!(import_has_runtime_bindings(
+            import_require.root_node().named_child(0).unwrap()
+        ));
+
         let mut stack = vec![declarations[2]];
         let mut specifiers = Vec::new();
         while let Some(node) = stack.pop() {
@@ -378,5 +388,34 @@ export * as runtime from "runtime";
         }
         assert!(is_type_only_specifier(specifiers[0]));
         assert!(!is_type_only_specifier(specifiers[1]));
+    }
+
+    #[test]
+    fn typescript_namespace_parse_shapes_are_pinned() {
+        for (source, expected_shape) in [
+            (
+                "namespace expect { export const custom = true; }",
+                "(expression_statement (internal_module",
+            ),
+            (
+                "module expect { export const custom = true; }",
+                "(module name:",
+            ),
+            (
+                "declare namespace expect { const custom: boolean; }",
+                "(ambient_declaration (internal_module",
+            ),
+            (
+                "declare const expect: AssertionFactory;",
+                "(ambient_declaration (lexical_declaration",
+            ),
+        ] {
+            let tree = parse_typescript(source);
+            assert!(
+                tree.root_node().to_sexp().contains(expected_shape),
+                "{source}: {}",
+                tree.root_node().to_sexp()
+            );
+        }
     }
 }
