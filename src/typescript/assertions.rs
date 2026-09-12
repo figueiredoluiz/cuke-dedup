@@ -3,7 +3,7 @@ use super::ast::{
     string_literal,
 };
 use super::node_text;
-use super::registrations::RegistrationNames;
+use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
@@ -144,21 +144,15 @@ impl AssertionBindings {
             let name = node_text(node, source);
             return self.identifiers.contains(name) && !self.is_locally_shadowed(node, name);
         }
-        if node.kind() != "member_expression" {
-            return false;
-        }
-        let (Some(object), Some(property)) = (
-            node.child_by_field_name("object")
-                .and_then(super::registrations::unwrap_registration_callee),
-            node.child_by_field_name("property"),
-        ) else {
+        let Some(RegistrationCallee::Property { object, name }) = registration_callee(node, source)
+        else {
             return false;
         };
         let namespace = node_text(object, source);
         object.kind() == "identifier"
             && self.namespaces.contains(namespace)
             && !self.is_locally_shadowed(object, namespace)
-            && node_text(property, source) == "expect"
+            && name == "expect"
     }
 
     pub(super) fn is_asymmetric_matcher(&self, node: Node<'_>, source: &[u8]) -> bool {
@@ -211,7 +205,10 @@ impl AssertionBindings {
             negated = true;
         }
         let mut receiver = super::registrations::unwrap_registration_callee(object)?;
-        while receiver.kind() == "member_expression" {
+        while matches!(
+            receiver.kind(),
+            "member_expression" | "subscript_expression"
+        ) {
             receiver = super::registrations::unwrap_registration_callee(
                 receiver.child_by_field_name("object")?,
             )?;
@@ -341,7 +338,7 @@ impl AssertionBindings {
                 trusted.insert(local);
             }
             "object_pattern" => {
-                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted)
+                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted, false)
             }
             _ => {}
         }
@@ -727,7 +724,7 @@ fn namespace_alias_writes(
                 if left.kind() == "identifier" {
                     locals.insert(node_text(left, source).to_owned());
                 } else if matcher_members && left.kind() == "object_pattern" {
-                    collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new());
+                    collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new(), true);
                 }
                 if right.kind() == "identifier" {
                     owners.insert(node_text(right, source).to_owned());
@@ -1119,10 +1116,19 @@ fn collect_expect_pattern(
     source: &[u8],
     identifiers: &mut BTreeSet<String>,
     trusted: &mut BTreeSet<String>,
+    include_defaults: bool,
 ) {
     let mut cursor = pattern.walk();
     for property in pattern.named_children(&mut cursor) {
         match property.kind() {
+            "object_assignment_pattern" if include_defaults => {
+                if property
+                    .child_by_field_name("left")
+                    .is_some_and(|left| node_text(left, source) == "expect")
+                {
+                    identifiers.insert("expect".to_owned());
+                }
+            }
             "shorthand_property_identifier_pattern" if node_text(property, source) == "expect" => {
                 identifiers.insert("expect".to_owned());
                 trusted.insert("expect".to_owned());
@@ -1138,6 +1144,12 @@ fn collect_expect_pattern(
                     key.named_child(0).unwrap_or(key)
                 } else {
                     key
+                };
+                // Defaults can create mutation aliases, but cannot establish factory trust.
+                let value = if include_defaults && value.kind() == "assignment_pattern" {
+                    value.child_by_field_name("left").unwrap_or(value)
+                } else {
+                    value
                 };
                 if (node_text(key, source) == "expect"
                     || super::matcher::decode_js_string(node_text(key, source)).as_deref()

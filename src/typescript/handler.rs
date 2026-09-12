@@ -1250,19 +1250,8 @@ fn collect_behavior<'tree>(
                     continue;
                 }
                 if let Some(function) = node.child_by_field_name("function") {
-                    let mut invoked = function;
-                    while matches!(
-                        invoked.kind(),
-                        "parenthesized_expression"
-                            | "as_expression"
-                            | "satisfies_expression"
-                            | "non_null_expression"
-                    ) {
-                        let Some(inner) = invoked.named_child(0) else {
-                            break;
-                        };
-                        invoked = inner;
-                    }
+                    let invoked = super::registrations::unwrap_registration_callee(function)
+                        .unwrap_or(function);
                     if invoked.kind() == "generator_function" {
                         // Arguments run now; the body stays suspended. Parameter initialization
                         // is unresolved, as for other parameterized inline functions.

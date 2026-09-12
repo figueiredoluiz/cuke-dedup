@@ -70,6 +70,37 @@ fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
             true,
         ),
         (
+            "import * as api from '@playwright/test';",
+            "api['expect']",
+            true,
+        ),
+        (
+            "const api = require('@playwright/test');",
+            "(api as PW)[\"expect\"]",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            r"api['ex\u0070ect']",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            "api[key]",
+            false,
+        ),
+        ("import * as api from 'unrelated';", "api['expect']", false),
+        (
+            "const {expect: check = fallback} = require('@playwright/test');",
+            "check",
+            false,
+        ),
+        (
+            "const {expect = fallback} = require('@playwright/test');",
+            "expect",
+            false,
+        ),
+        (
             "import {default as check} from '@playwright/test';",
             "check",
             false,
@@ -264,6 +295,7 @@ fn reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory() {
             "check",
         ),
         ("const api = require('@playwright/test');", "api.expect"),
+        ("const api = require('@playwright/test');", "api['expect']"),
     ] {
         for (mutation, trusted) in [
             ("FACTORY.objectContaining = replacement;", false),
@@ -312,11 +344,18 @@ fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
             ("const check = api['expect'];", false),
             ("const check = (api as any)[\"expect\"];", false),
             ("const { expect: check } = api;", false),
+            ("const { expect: check = fallback } = api;", false),
+            ("let check; ({ expect: check = fallback } = api);", false),
+            (
+                "const {expect = fallback} = api; const check = expect;",
+                false,
+            ),
             ("const { 'expect': check } = api;", false),
             ("const { ['expect']: check } = api;", false),
             (r"const { 'ex\u0070ect': check } = api;", false),
             ("let check; ({ expect: check } = api);", false),
             ("const check = api.other;", true),
+            ("const check = api[key];", false),
             ("const { other: check } = api;", true),
         ] {
             let defs = definitions(&format!("{prefix} {alias} check.objectContaining = replacement; Then('state', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
@@ -324,12 +363,23 @@ fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
         }
         let defs = definitions(&format!("{prefix} function local(api) {{ const {{ expect: check }} = api; check.objectContaining = replacement; }} Then('state', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
         assert!(defs[0].handler.comparable, "{prefix}");
+        let defs = definitions(&format!("{prefix} function local(api) {{ const {{expect: check = fallback}} = api; check.objectContaining = replacement; }} Then('state', ({{state}}) => api['expect'](state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
+        assert!(defs[0].handler.comparable, "{prefix}");
     }
 }
 
 #[test]
 fn direct_generator_calls_do_not_contribute_suspended_body_events() {
     for generator in ["function*", "async function*"] {
+        for wrapped in [
+            format!("(<any>{generator} () {{ expect(state).toBe('ready'); }})"),
+            format!("(({generator} <T>() {{ expect(state).toBe('ready'); }})<string>)"),
+        ] {
+            let defs = definitions(&format!(
+                "Then('state', ({{state}}) => {{ {wrapped}(); }});"
+            ));
+            assert!(defs[0].handler.behavior_signature.is_empty(), "{wrapped}");
+        }
         for body in ["expect(state).toBe('ready');", "save(state); yield state;"] {
             let defs = definitions(&format!(
                 "Then('state', ({{state}}) => {{ ({generator} () {{ {body} }})(); }});"
