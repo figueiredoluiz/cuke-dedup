@@ -248,6 +248,21 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
         "const {Then} = require('@cucumber/cucumber'); const api = require('@playwright/test');";
     for (prefix, mutation, trusted) in [
         (valid, "", true),
+        (valid, "(api).expect = replacement;", false),
+        (valid, "(api as PW).expect = replacement;", false),
+        (valid, "api!.expect = replacement;", false),
+        (valid, "(api satisfies PW).expect = replacement;", false),
+        (valid, "(<PW>api).expect = replacement;", false),
+        (valid, "((api as PW)!).expect = replacement;", false),
+        (valid, "(api as PW)['expect'] = replacement;", false),
+        (valid, "[api!.expect] = replacement;", false),
+        (valid, "(api as PW).expect++;", false),
+        (valid, "(api as PW).other = replacement;", true),
+        (
+            valid,
+            "function local(api) { (api as PW).expect = replacement; }",
+            true,
+        ),
         (cjs, "", true),
         (cjs, "api.expect = replacement;", false),
         (cjs, r#"api.ex\u0070ect = replacement;"#, false),

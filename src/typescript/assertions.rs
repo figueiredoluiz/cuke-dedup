@@ -449,6 +449,7 @@ fn collect_assignment_targets(
                 if property.is_none_or(|property| property == "expect") {
                     if let Some(object) = node
                         .child_by_field_name("object")
+                        .and_then(super::registrations::unwrap_registration_callee)
                         .filter(|object| object.kind() == "identifier")
                     {
                         factory_writes.insert(node_text(object, source).to_owned());
