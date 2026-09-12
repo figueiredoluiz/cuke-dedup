@@ -480,7 +480,11 @@ fn collect_scoped_bindings(root: Node<'_>, source: &[u8]) -> BTreeMap<String, Ve
             | "arrow_function"
             | "method_definition" => {
                 if let Some(name) = node.child_by_field_name("name") {
-                    add_scope_binding(&mut scopes, node, name, source);
+                    // A method name is a class property, not a lexical binding visible in its
+                    // body. Function and generator names, by contrast, support self-reference.
+                    if node.kind() != "method_definition" {
+                        add_scope_binding(&mut scopes, node, name, source);
+                    }
                     if matches!(
                         node.kind(),
                         "function_declaration" | "generator_function_declaration"

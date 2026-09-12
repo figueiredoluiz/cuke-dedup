@@ -1658,6 +1658,26 @@ Then('class static var stays local', ({ state }) => {
 }
 
 #[test]
+fn method_names_do_not_shadow_assertion_bindings_inside_their_bodies() {
+    let definitions = extract_ts(
+        r#"
+import { Then } from 'playwright-bdd/decorators';
+class Assertions {
+  @Then('method name is not a lexical binding')
+  expect({ state }) { expect(state).toBe('ready'); }
+}
+"#,
+    );
+
+    assert_eq!(definitions.len(), 1);
+    assert!(definitions[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .any(|event| event.starts_with("assert:")));
+}
+
+#[test]
 fn shadowed_expect_calls_retain_generic_behavior_comparison() {
     let definitions = extract_ts(
         r#"
