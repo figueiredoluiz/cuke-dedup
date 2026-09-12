@@ -78,9 +78,7 @@ impl AssertionBindings {
                         continue;
                     };
                     if node_text(name, source) == "expect" {
-                        let local = node
-                            .child_by_field_name("alias")
-                            .map_or(name, |alias| alias);
+                        let local = node.child_by_field_name("alias").unwrap_or(name);
                         self.identifiers.insert(node_text(local, source).to_owned());
                     }
                 }
