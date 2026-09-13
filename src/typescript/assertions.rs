@@ -1119,16 +1119,22 @@ fn collect_expect_pattern(
     for property in pattern.named_children(&mut cursor) {
         match property.kind() {
             "object_assignment_pattern" if include_defaults => {
-                if property
+                if let Some(left) = property
                     .child_by_field_name("left")
-                    .is_some_and(|left| node_text(left, source) == "expect")
+                    .filter(|left| matches!(node_text(*left, source), "expect" | "not"))
                 {
-                    identifiers.insert("expect".to_owned());
+                    identifiers.insert(node_text(left, source).to_owned());
                 }
             }
-            "shorthand_property_identifier_pattern" if node_text(property, source) == "expect" => {
-                identifiers.insert("expect".to_owned());
-                trusted.insert("expect".to_owned());
+            "shorthand_property_identifier_pattern"
+                if node_text(property, source) == "expect"
+                    || (include_defaults && node_text(property, source) == "not") =>
+            {
+                let name = node_text(property, source);
+                identifiers.insert(name.to_owned());
+                if name == "expect" {
+                    trusted.insert(name.to_owned());
+                }
             }
             "pair_pattern" => {
                 let (Some(key), Some(value)) = (
@@ -1152,9 +1158,12 @@ fn collect_expect_pattern(
                 let decoded = super::matcher::decode_js_string(node_text(key, source));
                 let known_expect = (!computed && node_text(key, source) == "expect")
                     || decoded.as_deref() == Some("expect");
+                let known_not = (!computed && node_text(key, source) == "not")
+                    || decoded.as_deref() == Some("not");
                 // Unknown computed keys may alias the factory, but cannot establish trust.
                 // include_defaults is used only by the trust-removing mutation pass.
-                if (known_expect || (include_defaults && computed && decoded.is_none()))
+                if (known_expect
+                    || (include_defaults && (known_not || (computed && decoded.is_none()))))
                     && value.kind() == "identifier"
                 {
                     let local = node_text(value, source).to_owned();

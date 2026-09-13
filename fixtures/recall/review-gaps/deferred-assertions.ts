@@ -2,7 +2,7 @@ import { Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
 
 Then('the archive badge is visible', ({ state }) => register(() => expect(state.archive).toBe('ready')));
-Then('the archive badge is now visible', ({ state }) => register(function () { expect(state.archive).toBe('ready'); }));
+Then('the archive badge is now visible', ({ state }) => otherWrapper(function () { expect(state.archive).toBe('ready'); }));
 
 Then('the parcel status is verified', ({ state }) => register(() => expect(state.parcel).toBe('ready')));
 Then('the parcel status is now verified', ({ state }) => register(() => expect(state.parcel).toBe('idle')));

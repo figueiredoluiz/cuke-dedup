@@ -577,7 +577,8 @@ fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> 
                 .behavior_signature
                 .iter()
                 .filter_map(|event| {
-                    if event.starts_with("call:") {
+                    // Deferred anchors retain their full value and execution-context identity.
+                    if event.starts_with("call:") || event.starts_with("deferred-assert:") {
                         Some(Cow::Borrowed(event.as_str()))
                     } else if event.starts_with("assert:") {
                         // Assertion values are semantic during final similarity verification, but

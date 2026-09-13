@@ -479,7 +479,7 @@ fn parameterized_inline_calls_keep_execution_context_without_handler_findings() 
         "async function*(x) { yield x; }",
     ] {
         for deferred in [false, true] {
-            let call = format!("({function})(external);");
+            let call = format!("({function})(prepare(), finish());");
             let body = if deferred {
                 format!("register(() => {{ {call} }});")
             } else {
@@ -494,6 +494,16 @@ fn parameterized_inline_calls_keep_execution_context_without_handler_findings() 
             assert!(
                 defs.iter().all(|d| !d.handler.comparable
                     && d.handler.behavior_signature.iter().any(|e| e == marker)),
+                "{body}"
+            );
+            let mut expected_events = if deferred {
+                vec!["call:register"]
+            } else {
+                Vec::new()
+            };
+            expected_events.extend([marker, "call:prepare", "call:finish"]);
+            assert_eq!(
+                defs[0].handler.behavior_signature, expected_events,
                 "{body}"
             );
             let findings = analyze(defs, Vec::new(), &cfg).unwrap().findings;
@@ -516,7 +526,11 @@ fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
     let mut limited_cfg = cfg.clone();
     limited_cfg.max_candidate_comparisons = 1;
     for callback in ["() =>", "function()", "async () =>"] {
-        for shared_calls in ["", "load(); save(); render();"] {
+        for (right_wrapper, shared_calls) in [
+            ("register", ""),
+            ("otherWrapper", ""),
+            ("register", "load(); save(); render();"),
+        ] {
             for (right_assertion, expected) in [
                 ("expect(state).toBe('ready');", true),
                 ("(expect as any)(state).toBe('ready');", true),
@@ -528,7 +542,7 @@ fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
                     false,
                 ),
             ] {
-                let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => register({callback} {{ {shared_calls} expect(state).toBe('ready'); }})); Then('parcel is now ready', ({{state}}) => register({callback} {{ {shared_calls} {right_assertion} }}));"));
+                let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => register({callback} {{ {shared_calls} expect(state).toBe('ready'); }})); Then('parcel is now ready', ({{state}}) => {right_wrapper}({callback} {{ {shared_calls} {right_assertion} }}));"));
                 for pair in [defs.clone(), defs.into_iter().rev().collect()] {
                     if !expected {
                         assert!(
@@ -551,6 +565,40 @@ fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
             }
         }
     }
+}
+
+#[test]
+fn destructured_negation_mutations_do_not_establish_handler_equivalence() {
+    let (_dir, cfg) = config();
+    for factory in ["expect", "api.expect", "api['expect']"] {
+        for (alias, trusted) in [
+            ("const {not: negated} = FACTORY; negated.objectContaining = replacement;", false),
+            ("const {'not': negated} = FACTORY; negated.objectContaining = replacement;", false),
+            ("const {['not']: negated} = FACTORY; negated.objectContaining = replacement;", false),
+            (r"const {['n\u006ft']: negated} = FACTORY; delete negated.objectContaining;", false),
+            ("const {not: negated = fallback} = FACTORY; negated.objectContaining = replacement;", false),
+            ("const {not} = FACTORY; not.objectContaining = replacement;", false),
+            ("const {not = fallback} = FACTORY; not.objectContaining = replacement;", false),
+            ("let negated; ({not: negated} = FACTORY); negated.objectContaining = replacement;", false),
+            ("const {other: negated} = FACTORY; negated.objectContaining = replacement;", true),
+            ("function local(FACTORY) { const {not} = FACTORY; not.objectContaining = replacement; }", true),
+        ] {
+            // The shadowing control applies to a lexical identifier, not a namespace expression.
+            if alias.starts_with("function") && factory != "expect" { continue; }
+            let alias = alias.replace("FACTORY", factory);
+            let source = format!("import {{expect}} from '@playwright/test'; import * as api from '@playwright/test'; {alias} Then('parcel is ready', ({{state}}) => {factory}(state).toEqual({factory}.not.objectContaining({{role:'admin'}}))); Then('shipment readiness confirmed', ({{state}}) => {factory}(state).toEqual({factory}.not.objectContaining({{role:'admin'}})));");
+            let defs = definitions(&source);
+            assert!(defs.iter().all(|d| d.handler.comparable == trusted), "{source}");
+            let result = analyze(defs, Vec::new(), &cfg).unwrap();
+            assert_eq!(result.findings.iter().any(|f| matches!(f.rule, Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate)), trusted, "{source}");
+        }
+    }
+    let defs = definitions("const {not: check} = require('@playwright/test'); Then('step', ({state}) => check(state).toBe('ready'));");
+    assert!(defs[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|e| !e.starts_with("assert:")));
 }
 
 #[test]

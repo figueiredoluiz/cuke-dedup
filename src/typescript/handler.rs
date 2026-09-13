@@ -1280,6 +1280,14 @@ fn collect_behavior<'tree>(
                             } else {
                                 UNRESOLVED_ASSERTION.to_owned()
                             });
+                            if let Some(arguments) = node.child_by_field_name("arguments") {
+                                push_children(
+                                    arguments,
+                                    deferred,
+                                    unresolved_callback_parameters,
+                                    &mut stack,
+                                );
+                            }
                             continue;
                         }
                         // Record the executed body, not an extra generic wrapper-call event.
