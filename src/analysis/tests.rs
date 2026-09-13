@@ -266,6 +266,58 @@ fn nested_assertion_builders_validate_their_origin_and_arguments() {
 }
 
 #[test]
+fn computed_nested_matchers_preserve_dotted_semantics() {
+    for prefix in [
+        "import * as api from '@playwright/test';",
+        "const api = require('@playwright/test');",
+    ] {
+        for (dotted, computed) in [
+            ("expect.objectContaining", "expect['objectContaining']"),
+            (
+                "expect.not.objectContaining",
+                "expect['not']['objectContaining']",
+            ),
+            (
+                "api.expect.objectContaining",
+                "api['expect']['objectContaining']",
+            ),
+            (
+                "api.expect.not.objectContaining",
+                "(api['expect'] as any)['not']['objectContaining']",
+            ),
+            (
+                "api.expect.objectContaining",
+                r"api['expect']['object\u0043ontaining']",
+            ),
+        ] {
+            let defs = definitions(&format!("{prefix} Then('parcel is ready', ({{state}}) => expect(state).toEqual({dotted}({{role: 'admin'}}))); Then('parcel is now ready', ({{state}}) => expect(state).toEqual({computed}({{role: 'admin'}})));"));
+            assert!(defs.iter().all(|d| d.handler.comparable), "{computed}");
+            assert_eq!(
+                defs[0].handler.behavior_signature, defs[1].handler.behavior_signature,
+                "{computed}"
+            );
+            let (_dir, cfg) = config();
+            assert!(
+                analyze(defs, Vec::new(), &cfg)
+                    .unwrap()
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::NearDuplicateStep),
+                "{computed}"
+            );
+        }
+        for builder in [
+            "api['expect'][key]",
+            "api['expect']['unknownBuilder']",
+            "local['objectContaining']",
+        ] {
+            let defs = definitions(&format!("{prefix} const local = custom; Then('state', ({{state}}) => expect(state).toEqual({builder}({{role: 'admin'}})));"));
+            assert!(!defs[0].handler.comparable, "{builder}");
+        }
+    }
+}
+
+#[test]
 fn unresolved_subject_shadows_do_not_collapse_to_empty_values() {
     for declarations in [
         "class First {} class Second {}",
@@ -355,6 +407,9 @@ fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
             (r"const { 'ex\u0070ect': check } = api;", false),
             ("let check; ({ expect: check } = api);", false),
             ("const check = api.other;", true),
+            ("const check = make(api.expect);", true),
+            ("const check = (make(api['expect']) as any);", true),
+            ("const check = { factory: api.expect };", true),
             ("const check = api[key];", false),
             ("const { other: check } = api;", true),
         ] {
@@ -393,6 +448,16 @@ fn direct_generator_calls_do_not_contribute_suspended_body_events() {
         assert_eq!(
             defs[0].handler.behavior_signature,
             ["assert:unresolved", "call:prepare"]
+        );
+        assert!(!defs[0].handler.comparable);
+        let defs = definitions(&format!("Then('state', () => register(() => {{ ({generator} (value = initialize()) {{ save(value); }})(prepare()); }}));"));
+        assert_eq!(
+            defs[0].handler.behavior_signature,
+            [
+                "call:register",
+                "deferred-assert:unresolved",
+                "call:prepare"
+            ]
         );
         assert!(!defs[0].handler.comparable);
         let defs = definitions(&format!("Then('state', ({{state}}) => register({generator} () {{ expect(state).toBe('ready'); }}));"));

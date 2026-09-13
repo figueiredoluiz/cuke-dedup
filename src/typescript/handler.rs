@@ -1081,7 +1081,7 @@ fn serialize_ast_with_constants(
                     if negated {
                         output.push_str("not.");
                     }
-                    output.push_str(matcher);
+                    output.push_str(&matcher);
                     if let Some(arguments) = node.child_by_field_name("arguments") {
                         stack.push(Event::Close);
                         stack.push(Event::Visit(arguments, true));
@@ -1256,7 +1256,11 @@ fn collect_behavior<'tree>(
                         // Arguments run now; the body stays suspended. Parameter initialization
                         // is unresolved, as for other parameterized inline functions.
                         if has_function_parameters(invoked) {
-                            output.push(UNRESOLVED_ASSERTION.to_owned());
+                            output.push(if deferred {
+                                DEFERRED_UNRESOLVED_ASSERTION.to_owned()
+                            } else {
+                                UNRESOLVED_ASSERTION.to_owned()
+                            });
                         }
                         if let Some(evaluated) = node.child_by_field_name("arguments") {
                             push_children(

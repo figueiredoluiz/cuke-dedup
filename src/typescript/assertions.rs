@@ -4,6 +4,7 @@ use super::ast::{
 };
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
@@ -163,27 +164,22 @@ impl AssertionBindings {
         &self,
         node: Node<'_>,
         source: &'source [u8],
-    ) -> Option<(bool, &'source str)> {
+    ) -> Option<(bool, Cow<'source, str>)> {
         if node.kind() != "call_expression" {
             return None;
         }
         let function = node
             .child_by_field_name("function")
             .and_then(super::registrations::unwrap_registration_callee)?;
-        if function.kind() != "member_expression" {
-            return None;
-        }
-        let (Some(mut object), Some(property)) = (
-            function
-                .child_by_field_name("object")
-                .and_then(super::registrations::unwrap_registration_callee),
-            function.child_by_field_name("property"),
-        ) else {
+        let RegistrationCallee::Property {
+            mut object,
+            name: matcher,
+        } = registration_callee(function, source)?
+        else {
             return None;
         };
-        let matcher = node_text(property, source);
         if !matches!(
-            matcher,
+            matcher.as_ref(),
             "objectContaining"
                 | "arrayContaining"
                 | "stringContaining"
@@ -195,14 +191,13 @@ impl AssertionBindings {
             return None;
         }
         let mut negated = false;
-        if object.kind() == "member_expression"
-            && object
-                .child_by_field_name("property")
-                .is_some_and(|property| node_text(property, source) == "not")
+        if let Some(RegistrationCallee::Property { object: base, name }) =
+            registration_callee(object, source)
         {
-            let base = object.child_by_field_name("object")?;
-            object = base;
-            negated = true;
+            if name == "not" {
+                object = base;
+                negated = true;
+            }
         }
         let mut receiver = super::registrations::unwrap_registration_callee(object)?;
         while matches!(
@@ -728,8 +723,10 @@ fn namespace_alias_writes(
                 }
                 if right.kind() == "identifier" {
                     owners.insert(node_text(right, source).to_owned());
-                } else if matcher_members {
-                    // Reuse member decoding so dot and computed aliases have the same owner.
+                } else if matcher_members
+                    && matches!(right.kind(), "member_expression" | "subscript_expression")
+                {
+                    // Only direct property access establishes an alias, not a call's arguments.
                     collect_assignment_targets(
                         right,
                         source,
