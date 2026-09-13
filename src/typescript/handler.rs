@@ -1275,7 +1275,11 @@ fn collect_behavior<'tree>(
                     if matches!(invoked.kind(), "arrow_function" | "function_expression") {
                         // Parameter substitution is not evaluated; do not invent equal values.
                         if has_function_parameters(invoked) {
-                            output.push(UNRESOLVED_ASSERTION.to_owned());
+                            output.push(if deferred {
+                                DEFERRED_UNRESOLVED_ASSERTION.to_owned()
+                            } else {
+                                UNRESOLVED_ASSERTION.to_owned()
+                            });
                             continue;
                         }
                         // Record the executed body, not an extra generic wrapper-call event.

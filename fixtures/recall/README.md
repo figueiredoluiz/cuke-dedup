@@ -9,6 +9,11 @@ useful comparison and retain a true finding under a one-candidate limit; they do
 not claim to reproduce starvation at default limits. Positive controls complement
 explicit non-findings. These are required contracts, not newly accepted known misses.
 
+Computed-key cases distinguish static factory trust from dynamic keys and possible alias mutations.
+The mutation case runs separately so it cannot invalidate the positive control's namespace.
+The deferred-assertion case retains matching callbacks while rejecting conflicting values,
+negation, and unresolved inline calls. Exact total finding counts also reject unlisted pairings.
+
 This corpus protects what CukeDedup finds, not only aggregate finding counts.
 Each case in `manifest.json` records one of three outcomes:
 

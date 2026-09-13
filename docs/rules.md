@@ -67,6 +67,9 @@ Decorated class methods must also have compatible runtime-affecting semantics: a
 static versus instance, generator, getter, and setter differences veto a near-duplicate match.
 Call evidence includes inline callback bodies syntactically; deferred assertions are not treated as
 directly executed assertions.
+Deferred assertion sequences must match in value, polarity, and order for a near-duplicate finding.
+Shared wrapper calls cannot compensate for different deferred assertions. This conservatively skips
+fuzzy matches when one callback adds or reorders assertions; exact matcher checks still run.
 
 ### parameterization-candidate
 

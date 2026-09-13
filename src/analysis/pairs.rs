@@ -112,6 +112,7 @@ struct PairRelationships {
     same_handler: bool,
     same_handler_structure: bool,
     same_structure: bool,
+    same_deferred_assertions: bool,
 }
 
 struct ComparisonClasses {
@@ -120,6 +121,7 @@ struct ComparisonClasses {
     alpha_handler: Vec<usize>,
     structural_handler: Vec<usize>,
     structure_and_behavior: Vec<usize>,
+    deferred_assertions: Vec<usize>,
 }
 
 impl ComparisonClasses {
@@ -130,6 +132,8 @@ impl ComparisonClasses {
             same_handler: self.alpha_handler[left] == self.alpha_handler[right],
             same_handler_structure: self.structural_handler[left] == self.structural_handler[right],
             same_structure: self.structure_and_behavior[left] == self.structure_and_behavior[right],
+            same_deferred_assertions: self.deferred_assertions[left]
+                == self.deferred_assertions[right],
         }
     }
 }
@@ -208,6 +212,7 @@ pub(super) fn analyze_definition_pairs(
             && same_structure
             && meaningful_handlers;
         let near_handler = candidate.sources.can_feed_near_matcher()
+            && relationships.same_deferred_assertions
             && !structural_handler
             && !normalized_matcher
             && meaningful_handlers;
@@ -485,14 +490,25 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
     let mut alpha_handlers = HashMap::new();
     let mut structural_handlers = HashMap::new();
     let mut structures_and_behavior = HashMap::new();
+    let mut deferred_assertions = HashMap::new();
     let mut classes = ComparisonClasses {
         exact_matcher: Vec::with_capacity(definitions.len()),
         normalized_matcher: Vec::with_capacity(definitions.len()),
         alpha_handler: Vec::with_capacity(definitions.len()),
         structural_handler: Vec::with_capacity(definitions.len()),
         structure_and_behavior: Vec::with_capacity(definitions.len()),
+        deferred_assertions: Vec::with_capacity(definitions.len()),
     };
     for definition in definitions {
+        classes.deferred_assertions.push(intern_class(
+            &mut deferred_assertions,
+            definition
+                .handler
+                .behavior_signature
+                .iter()
+                .filter(|event| event.starts_with("deferred-assert:"))
+                .collect::<Vec<_>>(),
+        ));
         classes.exact_matcher.push(intern_class(
             &mut exact_matchers,
             (
@@ -1134,7 +1150,11 @@ fn consider_matcher_blocking_pair(
         builder.skip(CandidateSource::MatcherBlocking, 1);
         return false;
     }
-    if !handler_runtime_compatible(&definitions[left], &definitions[right]) {
+    // A shared wrapper call cannot outweigh differing deferred assertions. Interned sequences
+    // preserve values, polarity and order, and reject these pairs before charging event work.
+    if !relationships.same_deferred_assertions
+        || !handler_runtime_compatible(&definitions[left], &definitions[right])
+    {
         return true;
     }
     try_insert_matcher_blocking_candidate(
@@ -2293,6 +2313,7 @@ mod tests {
             same_handler: false,
             same_handler_structure: false,
             same_structure: false,
+            same_deferred_assertions: true,
         };
         let work = |relationships, stage| {
             let input = PairWorkInput {

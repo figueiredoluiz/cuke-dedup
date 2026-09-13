@@ -424,6 +424,136 @@ fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
 }
 
 #[test]
+fn computed_destructuring_distinguishes_trust_from_possible_mutation() {
+    let (_dir, cfg) = config();
+    for (key, grants_trust, may_mutate) in [
+        ("expect", true, true),
+        ("'expect'", true, true),
+        ("['expect']", true, true),
+        (r"['ex\u0070ect']", true, true),
+        ("[key]", false, true),
+        ("[expect]", false, true),
+        ("other", false, false),
+        ("['other']", false, false),
+    ] {
+        for mutation in [false, true] {
+            for prefix in [
+                "import * as api from '@playwright/test';",
+                "const api = require('@playwright/test');",
+            ] {
+                let setup = if mutation {
+                    format!("{prefix} const {{{key}: check}} = api; check.objectContaining = replacement;")
+                } else {
+                    format!("const {{{key}: check}} = require('@playwright/test');")
+                };
+                let builder = if mutation { "api.expect" } else { "check" };
+                let expected = if mutation { !may_mutate } else { grants_trust };
+                let defs = definitions(&format!("{setup} Then('parcel is ready', ({{state}}) => expect(state).toEqual({builder}.objectContaining({{role:'admin'}}))); Then('parcel is now ready', ({{state}}) => expect(state).toEqual({builder}.objectContaining({{role:'admin'}})));"));
+                assert!(
+                    defs.iter().all(|d| d.handler.comparable == expected),
+                    "{setup}"
+                );
+                let findings = analyze(defs, Vec::new(), &cfg).unwrap().findings;
+                assert_eq!(
+                    findings.iter().any(|f| matches!(
+                        f.rule,
+                        Rule::DuplicateHandler
+                            | Rule::NearDuplicateStep
+                            | Rule::ParameterizationCandidate
+                    )),
+                    expected,
+                    "{setup}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn parameterized_inline_calls_keep_execution_context_without_handler_findings() {
+    let (_dir, cfg) = config();
+    for function in [
+        "(x) => save(x)",
+        "function(x) { save(x); }",
+        "function*(x) { yield x; }",
+        "async function*(x) { yield x; }",
+    ] {
+        for deferred in [false, true] {
+            let call = format!("({function})(external);");
+            let body = if deferred {
+                format!("register(() => {{ {call} }});")
+            } else {
+                call
+            };
+            let defs = definitions(&format!("Then('parcel is ready', () => {{ {body} }}); Then('parcel is now ready', () => {{ {body} }});"));
+            let marker = if deferred {
+                "deferred-assert:unresolved"
+            } else {
+                "assert:unresolved"
+            };
+            assert!(
+                defs.iter().all(|d| !d.handler.comparable
+                    && d.handler.behavior_signature.iter().any(|e| e == marker)),
+                "{body}"
+            );
+            let findings = analyze(defs, Vec::new(), &cfg).unwrap().findings;
+            assert!(
+                !findings.iter().any(|f| matches!(
+                    f.rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )),
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
+    let (_dir, cfg) = config();
+    let mut limited_cfg = cfg.clone();
+    limited_cfg.max_candidate_comparisons = 1;
+    for callback in ["() =>", "function()", "async () =>"] {
+        for shared_calls in ["", "load(); save(); render();"] {
+            for (right_assertion, expected) in [
+                ("expect(state).toBe('ready');", true),
+                ("(expect as any)(state).toBe('ready');", true),
+                ("expect(state).toBe('idle');", false),
+                ("expect(state).not.toBe('ready');", false),
+                ("expect(state).toBe(external);", false),
+                (
+                    "expect(state).toBe('ready'); expect(state).toBe('idle');",
+                    false,
+                ),
+            ] {
+                let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => register({callback} {{ {shared_calls} expect(state).toBe('ready'); }})); Then('parcel is now ready', ({{state}}) => register({callback} {{ {shared_calls} {right_assertion} }}));"));
+                for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                    if !expected {
+                        assert!(
+                            definition_pair_candidates(&pair, &limited_cfg).is_empty(),
+                            "{right_assertion}"
+                        );
+                    }
+                    let findings = analyze(pair, Vec::new(), &cfg).unwrap().findings;
+                    assert_eq!(
+                        findings.iter().any(|f| matches!(
+                            f.rule,
+                            Rule::DuplicateHandler
+                                | Rule::NearDuplicateStep
+                                | Rule::ParameterizationCandidate
+                        )),
+                        expected,
+                        "{callback} {shared_calls} {right_assertion}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn direct_generator_calls_do_not_contribute_suspended_body_events() {
     for generator in ["function*", "async function*"] {
         for wrapped in [

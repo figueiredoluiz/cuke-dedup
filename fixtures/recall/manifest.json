@@ -4,6 +4,86 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "review-gap-computed-key-trust",
+      "path": "review-gaps",
+      "arguments": ["--definitions", "computed-key-trust.cjs"],
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the parcel is ready", "shipment readiness has been confirmed"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the unknown status is verified", "the unknown status is now verified"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the unknown status is verified", "the unknown status is now verified"]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the unknown status is verified", "the unknown status is now verified"]
+        }
+      ]
+    },
+    {
+      "name": "review-gap-computed-key-mutation",
+      "path": "review-gaps",
+      "arguments": ["--definitions", "computed-key-mutation.ts"],
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        }
+      ]
+    },
+    {
+      "name": "review-gap-deferred-assertions",
+      "path": "review-gaps",
+      "arguments": ["--definitions", "deferred-assertions.ts"],
+      "expectedDefinitions": 8,
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the archive badge is visible", "the archive badge is now visible"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the switch position is checked", "the switch position is now checked"]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the warehouse is inspected", "the warehouse is now inspected"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the warehouse is inspected", "the warehouse is now inspected"]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the warehouse is inspected", "the warehouse is now inspected"]
+        }
+      ]
+    },
+    {
       "name": "review-gap-callback-call-evidence",
       "path": "review-gaps",
       "arguments": ["--definitions", "callbacks.ts"],

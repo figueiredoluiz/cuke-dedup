@@ -1137,7 +1137,8 @@ fn collect_expect_pattern(
                 ) else {
                     continue;
                 };
-                let key = if key.kind() == "computed_property_name" {
+                let computed = key.kind() == "computed_property_name";
+                let key = if computed {
                     key.named_child(0).unwrap_or(key)
                 } else {
                     key
@@ -1148,14 +1149,19 @@ fn collect_expect_pattern(
                 } else {
                     value
                 };
-                if (node_text(key, source) == "expect"
-                    || super::matcher::decode_js_string(node_text(key, source)).as_deref()
-                        == Some("expect"))
+                let decoded = super::matcher::decode_js_string(node_text(key, source));
+                let known_expect = (!computed && node_text(key, source) == "expect")
+                    || decoded.as_deref() == Some("expect");
+                // Unknown computed keys may alias the factory, but cannot establish trust.
+                // include_defaults is used only by the trust-removing mutation pass.
+                if (known_expect || (include_defaults && computed && decoded.is_none()))
                     && value.kind() == "identifier"
                 {
                     let local = node_text(value, source).to_owned();
                     identifiers.insert(local.clone());
-                    trusted.insert(local);
+                    if known_expect {
+                        trusted.insert(local);
+                    }
                 }
             }
             _ => {}
