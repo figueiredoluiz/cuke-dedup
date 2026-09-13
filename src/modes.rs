@@ -108,7 +108,12 @@ pub(crate) fn baseline_snapshot(
         // Neither caller-supplied Git config nor global templates/filters may execute code.
         // Clone does not copy the source repository's local config or hooks.
         for (name, _) in std::env::vars_os() {
-            if name.to_string_lossy().starts_with("GIT_") {
+            // Windows preserves spelling but treats environment names case-insensitively.
+            if name
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("GIT_")
+            {
                 command.env_remove(name);
             }
         }

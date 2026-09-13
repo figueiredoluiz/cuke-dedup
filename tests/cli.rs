@@ -105,6 +105,11 @@ fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
             .current_dir(&scope)
             .env("GIT_DIR", sandbox.path().join("not-a-repository"))
             .env("GIT_CONFIG_GLOBAL", root.join(".git/config"))
+            .env("git_config_count", "2")
+            .env("gIt_cOnFiG_kEy_0", "filter.unsafe.required")
+            .env("git_config_value_0", "true")
+            .env("git_config_key_1", "filter.unsafe.smudge")
+            .env("gIt_cOnFiG_vAlUe_1", "nonexistent-cuke-filter")
             .args([
                 ".",
                 "--baseline-from-ref",
@@ -387,6 +392,8 @@ fn baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped() {
         root,
         "shim/git",
         r#"#!/bin/sh
+# Also exercise Windows-style case variants on case-sensitive Unix hosts.
+if [ -n "${git_config_count-}${gIt_cOnFiG_kEy_0-}" ]; then exit 99; fi
 for argument do
     if [ "$argument" = ls-tree ]; then
         echo "$$" > "$BASELINE_TEST_PID"
@@ -456,6 +463,9 @@ exec "$BASELINE_TEST_REAL_GIT" "$@"
             .env("BASELINE_TEST_TREE", root.join("tree-output"))
             .env("BASELINE_TEST_STDERR", root.join("stderr-output"))
             .env("BASELINE_TEST_EXIT", status)
+            .env("git_config_count", "1")
+            .env("gIt_cOnFiG_kEy_0", "filter.unused.smudge")
+            .env("git_config_value_0", "nonexistent-cuke-filter")
             .timeout(std::time::Duration::from_secs(10))
             .output()
             .unwrap();
