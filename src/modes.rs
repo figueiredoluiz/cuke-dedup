@@ -40,14 +40,37 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
         .collect())
 }
 
+/// Git environment variables that a `git` process exports to the hooks it runs. They outrank a
+/// child invocation's `-C`, so leaving them in place would point changed-files mode at whichever
+/// repository invoked the hook instead of the analyzed root.
+const INHERITED_GIT_VARIABLES: [&str; 8] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+    "GIT_CEILING_DIRECTORIES",
+];
+
+/// Builds a `git` invocation bound to `root` and nothing else, so results describe the analyzed
+/// tree whether CukeDedup runs from a shell, CI, or another repository's Git hook.
+fn git_at(root: &Path) -> Command {
+    let mut command = Command::new("git");
+    for variable in INHERITED_GIT_VARIABLES {
+        command.env_remove(variable);
+    }
+    command.arg("-C").arg(root);
+    command
+}
+
 fn resolve_commit(root: &Path, base: &str) -> Result<String> {
     if base.trim().is_empty() || base.starts_with('-') {
         bail!("invalid --changed-since revision `{base}`");
     }
     let revision = format!("{base}^{{commit}}");
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let output = git_at(root)
         .args(["rev-parse", "--verify", "--end-of-options"])
         .arg(&revision)
         .output()
@@ -69,9 +92,7 @@ fn resolve_commit(root: &Path, base: &str) -> Result<String> {
 /// Rejects changed-file mode when the analyzed root itself is excluded by Git.
 pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
     let root = normalize_platform_path(root.to_path_buf());
-    let repository = Command::new("git")
-        .arg("-C")
-        .arg(&root)
+    let repository = git_at(&root)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .with_context(|| "failed to locate the Git repository for changed-files mode")?;
@@ -100,9 +121,7 @@ pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
             repository.display()
         )
     })?;
-    let ignored = Command::new("git")
-        .arg("-C")
-        .arg(&repository)
+    let ignored = git_at(&repository)
         .args(["check-ignore", "--quiet", "--"])
         .arg(relative)
         .status()
@@ -118,9 +137,7 @@ pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
 }
 
 fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathBuf>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let output = git_at(root)
         .args(["-c", "core.quotePath=false"])
         .args(arguments)
         .output()
@@ -374,13 +391,25 @@ mod tests {
             ["add", "."].as_slice(),
             ["commit", "-qm", "initial"].as_slice(),
         ] {
-            assert!(Command::new("git")
+            assert!(fixture_git()
                 .args(arguments)
                 .current_dir(root)
                 .status()
                 .unwrap()
                 .success());
         }
+    }
+
+    /// Git exports `GIT_DIR`, `GIT_INDEX_FILE`, and friends to the processes it spawns. When this
+    /// suite runs from a Git hook, those variables outrank the `current_dir` and `-C` of a nested
+    /// invocation, so a fixture's `git add` would stage temporary paths into the real repository's
+    /// index and mark every tracked file deleted. Strip that environment instead.
+    fn fixture_git() -> Command {
+        let mut command = Command::new("git");
+        for variable in INHERITED_GIT_VARIABLES {
+            command.env_remove(variable);
+        }
+        command
     }
 
     fn finding(root: &Path, file: &str) -> Finding {

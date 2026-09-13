@@ -40,7 +40,7 @@ inputs:
     default: "false"
   version:
     description: Exact CukeDedup release version used for verified downloads
-    default: "0.2.0"
+    default: "0.2.1"
 outputs:
   exit-code:
     description: Native CukeDedup exit code (0, 1, or 2)

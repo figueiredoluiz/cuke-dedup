@@ -1,6 +1,6 @@
 [package]
 name = "cuke-dedup"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.90"
 description = "Static analysis for duplicate and reusable Cucumber step definitions"
@@ -53,6 +53,15 @@ yaml_serde = "0.10"
 assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.15"
+
+[profile.release]
+# Aborting on panic drops the unwinding tables and landing pads, and stripping removes the symbol
+# table. Together they cut the published archive for each platform by about 21% with no measured
+# analysis cost. CukeDedup reports expected failures through exit codes and `anyhow::Result`, so
+# nothing depends on unwinding. Fat LTO with one codegen unit was measured too: it saves only
+# another 2.7 points of download while tripling build time across the eight release targets.
+panic = "abort"
+strip = "symbols"
 
 [profile.mutants]
 inherits = "test"
