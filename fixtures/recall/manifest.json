@@ -4,6 +4,26 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "review-gap-require-mutation",
+      "path": "review-gaps",
+      "arguments": ["--definitions", "require-mutation.cjs"],
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        }
+      ]
+    },
+    {
       "name": "review-gap-negation-mutation",
       "path": "review-gaps",
       "arguments": ["--definitions", "negation-mutation.ts"],

@@ -568,6 +568,44 @@ fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
 }
 
 #[test]
+fn repeated_commonjs_loads_share_only_guarded_mutation_provenance() {
+    let (_dir, cfg) = config();
+    for (binding, trusted) in [
+        ("const {[key]: check} = require('@playwright/test'); check.objectContaining = replacement;", false),
+        ("const {expect: check} = require('@playwright/test'); delete check.objectContaining;", false),
+        ("let check; ({['expect']: check} = require('@playwright/test')); check.objectContaining = replacement;", false),
+        ("const {expect: check = fallback} = require('@playwright/test'); check.objectContaining = replacement;", false),
+        ("const other = require('@playwright/test'); other.expect.objectContaining = replacement;", false),
+        ("const check = require('@playwright/test').expect; check.objectContaining = replacement;", false),
+        ("function mutate() { const {expect: check} = require('@playwright/test'); check.objectContaining = replacement; }", false),
+        ("const {[key]: check} = require('@jest/globals'); check.objectContaining = replacement;", true),
+        ("function mutate(require) { const {expect: check} = require('@playwright/test'); check.objectContaining = replacement; }", true),
+        ("{ const require = localLoader; const {expect: check} = require('@playwright/test'); check.objectContaining = replacement; }", true),
+        ("const {[key]: check} = require('@playwright/test');", true),
+        ("let {expect: check} = require('@playwright/test'); check = replacement;", true),
+        ("const {other: check} = require('@playwright/test'); check.objectContaining = replacement;", true),
+    ] {
+        for before in [false, true] {
+            let namespace = "const api = require('@playwright/test');";
+            let setup = if before { format!("{binding} {namespace}") } else { format!("{namespace} {binding}") };
+            let defs = definitions(&format!("{setup} Then('parcel is ready', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role:'admin'}}))); Then('shipment readiness confirmed', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role:'admin'}})));") );
+            assert!(defs.iter().all(|d| d.handler.comparable == trusted), "{setup}");
+            let result = analyze(defs, Vec::new(), &cfg).unwrap();
+            assert_eq!(result.findings.iter().any(|f| matches!(f.rule, Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate)), trusted, "{setup}");
+        }
+    }
+    // A module-level custom loader must not gain assertion provenance or contaminate imports.
+    let defs = definitions("import * as api from '@playwright/test'; const require = loader; const {[key]: check} = require('@playwright/test'); check.objectContaining = replacement; Then('ready', ({state}) => api.expect(state).toEqual(api.expect.objectContaining({role:'admin'})));");
+    assert!(defs[0].handler.comparable);
+    let defs = definitions("const {[key]: check} = require('@playwright/test'); Then('ready', ({state}) => check(state).toBe('ready'));");
+    assert!(defs[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|e| !e.starts_with("assert:")));
+}
+
+#[test]
 fn destructured_negation_mutations_do_not_establish_handler_equivalence() {
     let (_dir, cfg) = config();
     for factory in ["expect", "api.expect", "api['expect']"] {

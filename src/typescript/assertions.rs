@@ -33,11 +33,12 @@ impl AssertionBindings {
     ) -> Self {
         let facade_modules = resolved_facade_modules(root, source, registrations);
         let (scopes, scope_ranges) = collect_binding_scopes(root, source);
-        let alias_writes = namespace_alias_writes(root, source, &scopes, false);
-        let mutated_matcher_factories = namespace_alias_writes(root, source, &scopes, true);
-        let shadow_ranges = collect_scoped_bindings(scopes, scope_ranges);
+        let shadow_ranges = collect_scoped_bindings(scopes.clone(), scope_ranges);
         let require_shadowed =
             module_runtime_binding_exists(root, source, "require", &shadow_ranges);
+        let alias_writes = namespace_alias_writes(root, source, &scopes, false, require_shadowed);
+        let mutated_matcher_factories =
+            namespace_alias_writes(root, source, &scopes, true, require_shadowed);
         let mut bindings = Self::default();
         let mut shadowed = BTreeSet::new();
         let mut factory_writes = BTreeSet::new();
@@ -668,6 +669,7 @@ fn namespace_alias_writes(
     source: &[u8],
     scopes: &BindingScopes,
     matcher_members: bool,
+    require_shadowed: bool,
 ) -> BTreeSet<String> {
     // A may-alias graph only removes trust; it never promotes an alias to an assertion
     // factory. Keep prior assignments conservatively and identify lexical bindings, not
@@ -685,6 +687,7 @@ fn namespace_alias_writes(
         node = parent;
     };
     let mut aliases = BTreeMap::<_, BTreeSet<_>>::new();
+    let mut required_aliases = BTreeMap::new();
     let mut writes = Vec::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -720,6 +723,31 @@ fn namespace_alias_writes(
                     locals.insert(node_text(left, source).to_owned());
                 } else if matcher_members && left.kind() == "object_pattern" {
                     collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new(), true);
+                }
+                let required = match registration_callee(right, source) {
+                    Some(RegistrationCallee::Property { object, name }) if name == "expect" => {
+                        object
+                    }
+                    _ => right,
+                };
+                // Same-module loads share mutation provenance, never callable factory trust.
+                // Respect both module-level replacement and lexical shadowing of require.
+                if matcher_members && !require_shadowed && key("require", required).0 == root.id() {
+                    if let Some(module) = required_module(required, source)
+                        .filter(|module| ASSERTION_MODULES.contains(module))
+                    {
+                        for local in &locals {
+                            let local = key(local, left);
+                            let owner = required_aliases
+                                .entry(module)
+                                .or_insert_with(|| local.clone());
+                            aliases
+                                .entry(owner.clone())
+                                .or_default()
+                                .insert(local.clone());
+                            aliases.entry(local).or_default().insert(owner.clone());
+                        }
+                    }
                 }
                 if right.kind() == "identifier" {
                     owners.insert(node_text(right, source).to_owned());
