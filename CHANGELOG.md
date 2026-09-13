@@ -11,13 +11,17 @@ All notable changes to CukeDedup are documented in this file. The project follow
   archive for each platform by about 21 percent, from 2,499,615 to 1,972,110 bytes on
   `aarch64-apple-darwin`, with no measured analysis slowdown. Only the binaries this project
   distributes are affected; a crate depending on CukeDedup keeps its own release profile.
+- Handlers whose behavior is a parameterized inline invocation, such as
+  `((value) => check(value))(compute())`, are excluded from handler comparison. The arguments
+  are not substituted, so the body is never read and two such handlers are not claimed to be
+  equivalent. Version 0.2.0 reported a byte-identical pair of that shape as a duplicate; it is
+  no longer reported. Zero-parameter invocations are unaffected and still compare normally.
 
 ### Fixed
 
 - Preserve callback call evidence in near-duplicate analysis without promoting deferred assertions
   to executed behavior, preventing unrelated callback bodies from appearing identical.
 - Clarify that parameterization suggestions preserve expected assertion values and polarity.
-
 - Near-duplicate analysis now distinguishes assertions targeting different properties, expecting
   different inline or immutable local values, or using opposite chains such as `expect(...).not`,
   while retaining assertion-only duplicate candidates and avoiding misleading handler-overlap
