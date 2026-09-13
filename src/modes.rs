@@ -9,6 +9,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -111,7 +112,7 @@ pub(crate) fn baseline_snapshot(
                 command.env_remove(name);
             }
         }
-        let output = command
+        command
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_NO_LAZY_FETCH", "1")
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -122,9 +123,32 @@ pub(crate) fn baseline_snapshot(
                 temporary.path().join("no-hooks").display()
             ))
             .args(["-c", "core.fsmonitor=false"])
-            .args(args)
-            .output()
-            .context("failed to run Git for baseline")?;
+            .args(args);
+        if args.first().is_some_and(|arg| *arg == "ls-tree") {
+            // Fixed format: six mode digits, space, at most 20 size digits, newline.
+            let limit = 28 * crate::resource_limits::MAX_WORKSPACE_SCAN_ENTRIES as u64;
+            let mut child = command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            let mut bytes = Vec::new();
+            let read = child
+                .stdout
+                .take()
+                .context("missing baseline Git stdout")
+                .and_then(|stdout| Ok(stdout.take(limit + 1).read_to_end(&mut bytes)?));
+            if read.is_err() || bytes.len() as u64 > limit {
+                let _ = child.kill();
+                let _ = child.wait();
+                read?;
+                bail!("baseline tree listing exceeds the bounded snapshot metadata limit");
+            }
+            if !child.wait()?.success() {
+                bail!("baseline Git tree enumeration failed");
+            }
+            return Ok(bytes);
+        }
+        let output = command.output().context("failed to run Git for baseline")?;
         if !output.status.success() {
             bail!(
                 "baseline Git operation failed: {}",

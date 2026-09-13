@@ -351,6 +351,137 @@ fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
         .stderr(predicate::str::contains("unsupported submodules"));
 }
 
+#[cfg(unix)]
+#[test]
+fn baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped() {
+    use std::os::unix::fs::PermissionsExt;
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let real_git = ProcessCommand::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout).unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base",
+        ],
+    ] {
+        assert!(fixture_git()
+            .current_dir(root)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(
+        root,
+        "shim/git",
+        r#"#!/bin/sh
+for argument do
+    if [ "$argument" = ls-tree ]; then
+        echo "$$" > "$BASELINE_TEST_PID"
+        cat "$BASELINE_TEST_STDERR" >&2
+        cat "$BASELINE_TEST_TREE"
+        exit "$BASELINE_TEST_EXIT"
+    fi
+done
+exec "$BASELINE_TEST_REAL_GIT" "$@"
+"#,
+    );
+    fs::set_permissions(root.join("shim/git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![root.join("shim")];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(paths).unwrap();
+    let limit = 28 * 100_000;
+    for (name, listing, status, diagnostic) in [
+        ("empty", String::new(), "0", ""),
+        ("file-limit", "100644 0\n".repeat(100_000), "0", ""),
+        (
+            "too-many-files",
+            "100644 0\n".repeat(100_001),
+            "0",
+            "snapshot limit",
+        ),
+        (
+            "byte-limit",
+            "x".repeat(limit),
+            "7",
+            "baseline Git tree enumeration failed",
+        ),
+        (
+            "overflow",
+            "x".repeat(limit + 1),
+            "7",
+            "bounded snapshot metadata limit",
+        ),
+        (
+            "large-overflow",
+            "100644 0\n".repeat(400_000),
+            "7",
+            "bounded snapshot metadata limit",
+        ),
+        (
+            "size-limit",
+            "100644 536870913\n".into(),
+            "0",
+            "snapshot limit",
+        ),
+        (
+            "submodule",
+            "160000 -\n".into(),
+            "0",
+            "unsupported submodules",
+        ),
+    ] {
+        write(root, "tree-output", &listing);
+        // More than a pipe buffer: stderr must not deadlock stdout consumption.
+        write(root, "stderr-output", &"diagnostic\n".repeat(10_000));
+        let result = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .args([".", "--baseline-from-ref", "HEAD"])
+            .env("PATH", &path)
+            .env("BASELINE_TEST_REAL_GIT", real_git.trim())
+            .env("BASELINE_TEST_PID", root.join("git-pid"))
+            .env("BASELINE_TEST_TREE", root.join("tree-output"))
+            .env("BASELINE_TEST_STDERR", root.join("stderr-output"))
+            .env("BASELINE_TEST_EXIT", status)
+            .timeout(std::time::Duration::from_secs(10))
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(if diagnostic.is_empty() { 0 } else { 2 }),
+            "{name}"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let pid = fs::read_to_string(root.join("git-pid")).unwrap();
+        assert!(
+            !ProcessCommand::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success(),
+            "unreaped Git: {name}"
+        );
+    }
+}
+
 fn write_sized(root: &Path, relative: &str, bytes: u64) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
