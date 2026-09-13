@@ -1207,12 +1207,22 @@ fn collect_behavior<'tree>(
         let nested_function = node.id() != root_id && is_function_like(node);
         if nested_function {
             let mut parent = node.parent();
-            while parent
-                .is_some_and(|p| super::registrations::unwrap_registration_callee(p) == Some(node))
-            {
-                parent = parent.and_then(|p| p.parent());
+            // Argument values can contain callbacks inside objects, arrays, or expressions.
+            // Do not cross into an enclosing function's arguments or unrelated local bodies.
+            while let Some(ancestor) = parent {
+                if ancestor.kind() == "arguments" {
+                    break;
+                }
+                if ancestor.id() == root_id
+                    || is_function_like(ancestor)
+                    || matches!(ancestor.kind(), "statement_block" | "class_body")
+                {
+                    parent = None;
+                    break;
+                }
+                parent = ancestor.parent();
             }
-            if !parent.is_some_and(|p| matches!(p.kind(), "arguments" | "call_expression")) {
+            if parent.is_none() {
                 continue;
             }
         }

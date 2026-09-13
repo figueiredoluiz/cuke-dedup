@@ -1296,6 +1296,109 @@ fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
 }
 
 #[test]
+fn nested_argument_callbacks_preserve_behavior_and_scope_boundaries() {
+    let (_directory, config) = config();
+    for container in [
+        "CALLBACK",
+        "{ callback: CALLBACK }",
+        "[{ nested: [CALLBACK] }]",
+        "enabled ? CALLBACK : undefined",
+        "enabled && CALLBACK",
+        "(undefined, CALLBACK)",
+        "({ callback: CALLBACK } as Options)",
+    ] {
+        for callback in ["() =>", "async () =>", "function ()", "function* ()"] {
+            for (left_body, right_body, expected) in [
+                (
+                    "load(); save(); render();",
+                    "load(); save(); render();",
+                    true,
+                ),
+                (
+                    "load(); save(); render();",
+                    "erase(); reset(); remove();",
+                    false,
+                ),
+                (
+                    "expect(state).toBe('ready');",
+                    "expect(state).toBe('ready');",
+                    true,
+                ),
+                (
+                    "expect(state).toBe('ready');",
+                    "expect(state).toBe('idle');",
+                    false,
+                ),
+                (
+                    "expect(state).toBe('ready');",
+                    "expect(state).toBe(external);",
+                    false,
+                ),
+            ] {
+                let argument =
+                    |body| container.replace("CALLBACK", &format!("{callback} {{ {body} }}"));
+                let defs = definitions(&format!(
+                    "Then('parcel is ready', ({{state}}) => register({})); Then('parcel is now ready', ({{state}}) => register({}));",
+                    argument(left_body), argument(right_body)
+                ));
+                assert!(
+                    defs[0].handler.behavior_signature.len() > 1,
+                    "{container} {callback}"
+                );
+                assert!(defs.iter().all(|d| d
+                    .handler
+                    .behavior_signature
+                    .iter()
+                    .all(|e| !e.starts_with("assert:"))));
+                for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                    let findings = analyze(pair, Vec::new(), &config).unwrap().findings;
+                    assert_eq!(
+                        findings.iter().any(|f| matches!(
+                            f.rule,
+                            Rule::DuplicateHandler
+                                | Rule::NearDuplicateStep
+                                | Rule::ParameterizationCandidate
+                        )),
+                        expected,
+                        "{container} {callback} {right_body}"
+                    );
+                }
+            }
+        }
+        for callback in ["value => save(value)", "function (value) { save(value); }"] {
+            let argument = container.replace("CALLBACK", callback);
+            let defs = definitions(&format!("Then('parcel is ready', () => register({argument})); Then('parcel is now ready', () => register({argument}));"));
+            assert!(
+                defs.iter().all(|d| !d.handler.comparable),
+                "{container} {callback}"
+            );
+            let findings = analyze(defs, Vec::new(), &config).unwrap().findings;
+            assert!(!findings.iter().any(|f| matches!(
+                f.rule,
+                Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+            )));
+        }
+    }
+    for body in [
+        "register({callback: () => { const unused = () => erase(); load(); }});",
+        "register({callback: () => { function unused() { erase(); } load(); }});",
+        "register({callback: () => () => erase()});",
+        "register(class { method() { erase(); } });",
+        "const unused = {callback: () => erase()}; load();",
+    ] {
+        let defs = definitions(&format!("Then('scope control', () => {{ {body} }});"));
+        assert!(
+            !defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e == "call:erase"),
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
     let (_directory, config) = config();
     for callback in ["async () =>", "async function ()", "function* ()"] {
