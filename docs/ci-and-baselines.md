@@ -95,9 +95,9 @@ cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new
 cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new 3
 ```
 
-`--fail-on-new` defaults to zero when no count is supplied. It and `--update-baseline` both require
-`--baseline` and cannot be combined. The Action exposes the same behavior through `baseline` and
-`fail-on-new` inputs.
+`--fail-on-new` defaults to zero when no count is supplied and requires `--baseline` or
+`--baseline-from-ref`. `--update-baseline` requires the file form and cannot be combined with
+`--fail-on-new`. The Action exposes `baseline`, `baseline-from-ref`, and `fail-on-new` inputs.
 
 Baselines store sorted semantic fingerprints with multiplicity counts. Renames and unrelated line
 changes do not make a finding new, while an additional occurrence beyond the recorded count does.
@@ -106,6 +106,48 @@ Version `1` baselines from CukeDedup 0.1 can be replaced by running the version 
 
 Updates reject `--changed-since` and are skipped after incomplete analysis or an operational error,
 preventing a partial scan from erasing accepted findings.
+
+### Compare against a Git revision (next release)
+
+Instead of committing a baseline file, compare with a revision that is already fetched locally:
+
+```sh
+cuke-dedup . --baseline-from-ref origin/main --fail-on-new
+```
+
+The corresponding Action inputs are:
+
+```yaml
+with:
+  baseline-from-ref: ${{ github.event.pull_request.base.sha }}
+  fail-on-new: "0"
+```
+
+This requires an Action/binary version containing this feature; v0.2.1 does not include it.
+Use checkout with `fetch-depth: 0`, or explicitly fetch the desired revision before analysis.
+The tool does not fetch revisions, initialize submodules, install dependencies, or run project code.
+
+The base is scanned in a temporary independent Git checkout using the **current effective
+CukeDedup configuration**, including rule overrides, patterns and suppressions. Historical
+project module metadata and ignore files remain historical inputs. The same repository-relative
+analysis directory must exist in both trees. Missing refs/directories, unsupported submodules,
+base extraction errors, unresolved registrations, zero extraction from discovered sources,
+definitions without a feature corpus, and truncated base comparisons fail with exit code `2`;
+none become an empty accepted baseline. A genuinely empty historical suite is allowed.
+Hooks and configured checkout filters are disabled, so Git LFS content is not hydrated.
+The full repository snapshot is limited to 512 MiB of tracked content and 100,000 files;
+larger repositories can use a committed baseline instead. Git submodules anywhere in that
+snapshot are rejected because their content is not materialized.
+
+Matching findings are suppressed using the existing semantic fingerprints and multiplicity
+rules. Current modified/untracked files are analyzed normally. `--baseline-from-ref` conflicts
+with `--baseline` and `--update-baseline`; it writes no baseline file or base reports and leaves
+the current index, branch and worktree registration untouched. Temporary files are removed after
+success or failure. This costs a second scan, not a changed-files-only optimization.
+
+The new-finding allowance is an additional gate: it does not disable the duplication threshold
+or independent error rules. Use `--fail-on-incomplete` if incomplete current analysis must also
+fail instead of retaining the normal partial-report behavior.
 
 ## Exit codes
 

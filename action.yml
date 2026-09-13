@@ -29,6 +29,9 @@ inputs:
   baseline:
     description: Optional semantic finding baseline
     default: ""
+  baseline-from-ref:
+    description: Fetched Git revision to compare against instead of a baseline file
+    default: ""
   fail-on-new:
     description: Maximum findings allowed beyond the semantic baseline
     default: ""

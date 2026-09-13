@@ -59,6 +59,9 @@ export function buildArguments(inputs, effectiveConfig = {}) {
   if (inputs.baseline) {
     args.push("--baseline", inputs.baseline);
   }
+  if (inputs.baselineFromRef) {
+    args.push("--baseline-from-ref", inputs.baselineFromRef);
+  }
   if (inputs.failOnNew !== undefined && inputs.failOnNew !== "") {
     args.push("--fail-on-new", inputs.failOnNew);
   }
@@ -105,6 +108,7 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     output: readInput(env, "output", ""),
     changedSince: readInput(env, "changed-since", ""),
     baseline: readInput(env, "baseline", ""),
+    baselineFromRef: readInput(env, "baseline-from-ref", ""),
     failOnNew: readInput(env, "fail-on-new", ""),
     noMetrics: readInput(env, "no-metrics", "false"),
     failOnIncomplete: readInput(env, "fail-on-incomplete", "false"),

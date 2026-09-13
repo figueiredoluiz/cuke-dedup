@@ -5,6 +5,12 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- `--baseline-from-ref` and the matching Action input compare against a fetched Git revision
+  with the current analysis policy, reusing `--fail-on-new` without a committed baseline file.
+  Incomplete historical scans are rejected rather than treated as clean baselines.
+
 ## [0.2.1] - 2026-09-13
 
 ### Changed
