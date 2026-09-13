@@ -45,6 +45,650 @@ fn public_analysis_rejects_mutated_configs_above_hard_safety_ceilings() {
 }
 
 #[test]
+fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
+    for (import, factory, trusted) in [
+        ("import {default as check} from 'expect';", "check", true),
+        ("const check = require('expect');", "(check)", true),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "(check as any)",
+            true,
+        ),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "check!",
+            true,
+        ),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "(check satisfies Function)",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            "((api as PW).expect)",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            "api['expect']",
+            true,
+        ),
+        (
+            "const api = require('@playwright/test');",
+            "(api as PW)[\"expect\"]",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            r"api['ex\u0070ect']",
+            true,
+        ),
+        (
+            "import * as api from '@playwright/test';",
+            "api[key]",
+            false,
+        ),
+        ("import * as api from 'unrelated';", "api['expect']", false),
+        (
+            "const {expect: check = fallback} = require('@playwright/test');",
+            "check",
+            false,
+        ),
+        (
+            "const {expect = fallback} = require('@playwright/test');",
+            "expect",
+            false,
+        ),
+        (
+            "import {default as check} from '@playwright/test';",
+            "check",
+            false,
+        ),
+        (
+            "import {default as check} from 'unrelated';",
+            "(check)",
+            false,
+        ),
+        (
+            "import type {default as check} from 'expect';",
+            "check",
+            false,
+        ),
+    ] {
+        let defs = definitions(&format!("{import} Then('parcel is ready', ({{state}}) => {factory}(state).toBe('ready')); Then('parcel is idle', ({{state}}) => {factory}(state).toBe('idle'));"));
+        assert_eq!(defs.len(), 2, "{import} {factory}");
+        assert_eq!(
+            defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e.starts_with("assert:")),
+            trusted,
+            "{import} {factory}"
+        );
+        if trusted {
+            assert_ne!(
+                defs[0].handler.behavior_signature,
+                defs[1].handler.behavior_signature
+            );
+        }
+    }
+}
+
+#[test]
+fn future_local_declarations_do_not_expose_outer_assertion_values() {
+    for (body, comparable) in [
+        (
+            "expect(state).toBe(expected); var expected = 'ready';",
+            true,
+        ),
+        ("var expected; expect(state).toBe(expected);", true),
+        (
+            "var expected = external; expect(state).toBe(expected);",
+            false,
+        ),
+        (
+            "{ expect(state).toBe(expected); let expected = 'ready'; }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { expect(state).toBe(expected); class expected {} }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { expect(state).toBe(expected); function expected() {} }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { expect(state).toBe(expected); enum expected { value } }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; try {} catch (expected) { expect(state).toBe(expected); }",
+            false,
+        ),
+        (
+            "const expected = 'ready'; { type expected = string; expect(state).toBe(expected); }",
+            true,
+        ),
+    ] {
+        let defs = definitions(&format!(
+            "Then('state', ({{state, expected}}) => {{ {body} }});"
+        ));
+        assert_eq!(defs[0].handler.comparable, comparable, "{body}");
+    }
+    for (body, comparable) in [
+        ("const expected = 'ready'; { expect(state).toBe(expected); const expected = 'idle'; }", false),
+        ("const expected = 'ready'; { const copy = expected; const expected = 'idle'; expect(state).toBe(copy); }", false),
+        ("const expected = 'ready'; { expect(state).toBe(expected); let expected; }", false),
+        ("const expected = 'ready'; { expect(state).toBe(expected); const {expected} = external; }", false),
+        ("const expected = 'ready'; { const [expected] = external; expect(state).toBe(expected); }", false),
+        ("const {x} = (() => { const expected = 'ready'; expect(state).toBe(expected); return {}; })();", true),
+        ("const expected = 'ready'; { const expected = 'idle'; expect(state).toBe(expected); }", true),
+        ("const expected = 'ready'; { const copy = expected; expect(state).toBe(copy); }", true),
+        ("{ expect(state).toBe(expected); const expected = 'idle'; }", false),
+    ] {
+        let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => {{ {body} }});"));
+        assert_eq!(defs[0].handler.comparable, comparable, "{body}");
+    }
+    for callback in ["function expected()", "function* expected()"] {
+        let defs = definitions(&format!(
+            "Then('state', ({{state}}) => {{ const expected = 'ready'; register({callback} {{ expect(state).toBe(expected); }}); }});"
+        ));
+        assert!(!defs[0].handler.comparable, "{callback}");
+    }
+    let defs = definitions("Then('state', ({state, expected}) => { const Box = class expected { static check = expect(state).toBe(expected); }; use(Box); });");
+    assert_eq!(defs.len(), 1);
+    assert!(!defs[0].handler.comparable);
+}
+
+#[test]
+fn nested_assertion_builders_validate_their_origin_and_arguments() {
+    for (prefix, expected, comparable) in [
+        ("", "expect.objectContaining({role: 'admin'})", true),
+        ("", "expect.not.objectContaining({role: 'admin'})", true),
+        (
+            "",
+            "expect.arrayContaining([expect.stringContaining('admin')])",
+            true,
+        ),
+        ("", "expect.objectContaining({role: external})", false),
+        ("", "expect.unknownBuilder({role: 'admin'})", false),
+        (
+            "import {expect as check} from '@playwright/test';",
+            "check.objectContaining({role: 'admin'})",
+            true,
+        ),
+        (
+            "import {expect as check} from 'unrelated';",
+            "check.objectContaining({role: 'admin'})",
+            false,
+        ),
+        (
+            "const check = custom;",
+            "check.objectContaining({role: 'admin'})",
+            false,
+        ),
+    ] {
+        let defs = definitions(&format!("{prefix} Then('parcel is ready', ({{state}}) => expect(state).toEqual({expected})); Then('shipment readiness confirmed', ({{state}}) => expect(state).toEqual({expected}));"));
+        assert_eq!(
+            defs[0].handler.comparable, comparable,
+            "{prefix} {expected}"
+        );
+        let (_dir, cfg) = config();
+        let result = analyze(defs, Vec::new(), &cfg).unwrap();
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule == Rule::DuplicateHandler),
+            comparable,
+            "{prefix} {expected}"
+        );
+    }
+    let defs = definitions("Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('parcel is now ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'guest'})));");
+    assert_ne!(
+        defs[0].handler.behavior_signature,
+        defs[1].handler.behavior_signature
+    );
+
+    let defs = definitions("import {expect as check} from '@playwright/test'; Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('shipment readiness confirmed', ({state}) => check(state).toEqual((check as any).objectContaining({role: 'admin'})));");
+    assert_eq!(
+        defs[0].handler.behavior_signature,
+        defs[1].handler.behavior_signature
+    );
+    let defs = definitions("Then('parcel is ready', ({state}) => expect(state).toEqual(expect.objectContaining({role: 'admin'}))); Then('shipment readiness confirmed', ({state}) => expect(state).toEqual(expect.not.objectContaining({role: 'admin'})));");
+    assert_ne!(
+        defs[0].handler.behavior_signature,
+        defs[1].handler.behavior_signature
+    );
+}
+
+#[test]
+fn computed_nested_matchers_preserve_dotted_semantics() {
+    for prefix in [
+        "import * as api from '@playwright/test';",
+        "const api = require('@playwright/test');",
+    ] {
+        for (dotted, computed) in [
+            ("expect.objectContaining", "expect['objectContaining']"),
+            (
+                "expect.not.objectContaining",
+                "expect['not']['objectContaining']",
+            ),
+            (
+                "api.expect.objectContaining",
+                "api['expect']['objectContaining']",
+            ),
+            (
+                "api.expect.not.objectContaining",
+                "(api['expect'] as any)['not']['objectContaining']",
+            ),
+            (
+                "api.expect.objectContaining",
+                r"api['expect']['object\u0043ontaining']",
+            ),
+        ] {
+            let defs = definitions(&format!("{prefix} Then('parcel is ready', ({{state}}) => expect(state).toEqual({dotted}({{role: 'admin'}}))); Then('parcel is now ready', ({{state}}) => expect(state).toEqual({computed}({{role: 'admin'}})));"));
+            assert!(defs.iter().all(|d| d.handler.comparable), "{computed}");
+            assert_eq!(
+                defs[0].handler.behavior_signature, defs[1].handler.behavior_signature,
+                "{computed}"
+            );
+            let (_dir, cfg) = config();
+            assert!(
+                analyze(defs, Vec::new(), &cfg)
+                    .unwrap()
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::NearDuplicateStep),
+                "{computed}"
+            );
+        }
+        for builder in [
+            "api['expect'][key]",
+            "api['expect']['unknownBuilder']",
+            "local['objectContaining']",
+        ] {
+            let defs = definitions(&format!("{prefix} const local = custom; Then('state', ({{state}}) => expect(state).toEqual({builder}({{role: 'admin'}})));"));
+            assert!(!defs[0].handler.comparable, "{builder}");
+        }
+    }
+}
+
+#[test]
+fn unresolved_subject_shadows_do_not_collapse_to_empty_values() {
+    for declarations in [
+        "class First {} class Second {}",
+        "function First() {} function Second() {}",
+        "enum First { Ready } enum Second { Idle }",
+    ] {
+        let defs = definitions(&format!(
+            "Then('subject', () => {{ {declarations} expect(First).toBe('ready'); expect(Second).toBe('ready'); }});"
+        ));
+        let events: Vec<_> = defs[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .collect();
+        assert_eq!(events.len(), 2, "{declarations}");
+        assert_ne!(events[0], events[1], "{declarations}");
+    }
+}
+
+#[test]
+fn reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory() {
+    for (prefix, factory) in [
+        ("", "expect"),
+        (
+            "import { expect as check } from '@playwright/test';",
+            "check",
+        ),
+        ("const api = require('@playwright/test');", "api.expect"),
+        ("const api = require('@playwright/test');", "api['expect']"),
+    ] {
+        for (mutation, trusted) in [
+            ("FACTORY.objectContaining = replacement;", false),
+            ("FACTORY.not = replacement;", false),
+            ("FACTORY.not.objectContaining = replacement;", false),
+            ("FACTORY['not'].objectContaining = replacement;", false),
+            ("FACTORY['objectContaining'] = replacement;", false),
+            ("delete FACTORY.objectContaining;", false),
+            (
+                "const alias = FACTORY; alias.objectContaining = replacement;",
+                false,
+            ),
+            ("FACTORY.unrelated = replacement;", true),
+            (
+                "function local(expect) { expect.objectContaining = replacement; }",
+                true,
+            ),
+            ("", true),
+        ] {
+            let mutation = mutation.replace("FACTORY", factory);
+            let defs = definitions(&format!(
+                "{prefix} {mutation} Then('nested', ({{state}}) => {factory}(state).toEqual({factory}.objectContaining({{role: 'admin'}}))); Then('direct', ({{state}}) => {factory}(state).toBe('ready'));"
+            ));
+            assert_eq!(defs.len(), 2, "{factory} {mutation}");
+            assert_eq!(defs[0].handler.comparable, trusted, "{factory} {mutation}");
+            assert!(defs[1].handler.comparable, "{factory} {mutation}");
+            assert!(
+                defs[1]
+                    .handler
+                    .behavior_signature
+                    .iter()
+                    .any(|event| event.starts_with("assert:")),
+                "{factory} {mutation}"
+            );
+        }
+    }
+}
+
+#[test]
+fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
+    for prefix in [
+        "import * as api from '@playwright/test';",
+        "const api = require('@playwright/test');",
+    ] {
+        for (alias, trusted) in [
+            ("const check = api['expect'];", false),
+            ("const check = (api as any)[\"expect\"];", false),
+            ("const { expect: check } = api;", false),
+            ("const { expect: check = fallback } = api;", false),
+            ("let check; ({ expect: check = fallback } = api);", false),
+            (
+                "const {expect = fallback} = api; const check = expect;",
+                false,
+            ),
+            ("const { 'expect': check } = api;", false),
+            ("const { ['expect']: check } = api;", false),
+            (r"const { 'ex\u0070ect': check } = api;", false),
+            ("let check; ({ expect: check } = api);", false),
+            ("const check = api.other;", true),
+            ("const check = make(api.expect);", true),
+            ("const check = (make(api['expect']) as any);", true),
+            ("const check = { factory: api.expect };", true),
+            ("const check = api[key];", false),
+            ("const { other: check } = api;", true),
+        ] {
+            let defs = definitions(&format!("{prefix} {alias} check.objectContaining = replacement; Then('state', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
+            assert_eq!(defs[0].handler.comparable, trusted, "{prefix} {alias}");
+        }
+        let defs = definitions(&format!("{prefix} function local(api) {{ const {{ expect: check }} = api; check.objectContaining = replacement; }} Then('state', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
+        assert!(defs[0].handler.comparable, "{prefix}");
+        let defs = definitions(&format!("{prefix} function local(api) {{ const {{expect: check = fallback}} = api; check.objectContaining = replacement; }} Then('state', ({{state}}) => api['expect'](state).toEqual(api.expect.objectContaining({{role: 'admin'}})));"));
+        assert!(defs[0].handler.comparable, "{prefix}");
+    }
+}
+
+#[test]
+fn computed_destructuring_distinguishes_trust_from_possible_mutation() {
+    let (_dir, cfg) = config();
+    for (key, grants_trust, may_mutate) in [
+        ("expect", true, true),
+        ("'expect'", true, true),
+        ("['expect']", true, true),
+        (r"['ex\u0070ect']", true, true),
+        ("[key]", false, true),
+        ("[expect]", false, true),
+        ("other", false, false),
+        ("['other']", false, false),
+    ] {
+        for mutation in [false, true] {
+            for prefix in [
+                "import * as api from '@playwright/test';",
+                "const api = require('@playwright/test');",
+            ] {
+                let setup = if mutation {
+                    format!("{prefix} const {{{key}: check}} = api; check.objectContaining = replacement;")
+                } else {
+                    format!("const {{{key}: check}} = require('@playwright/test');")
+                };
+                let builder = if mutation { "api.expect" } else { "check" };
+                let expected = if mutation { !may_mutate } else { grants_trust };
+                let defs = definitions(&format!("{setup} Then('parcel is ready', ({{state}}) => expect(state).toEqual({builder}.objectContaining({{role:'admin'}}))); Then('parcel is now ready', ({{state}}) => expect(state).toEqual({builder}.objectContaining({{role:'admin'}})));"));
+                assert!(
+                    defs.iter().all(|d| d.handler.comparable == expected),
+                    "{setup}"
+                );
+                let findings = analyze(defs, Vec::new(), &cfg).unwrap().findings;
+                assert_eq!(
+                    findings.iter().any(|f| matches!(
+                        f.rule,
+                        Rule::DuplicateHandler
+                            | Rule::NearDuplicateStep
+                            | Rule::ParameterizationCandidate
+                    )),
+                    expected,
+                    "{setup}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn parameterized_inline_calls_keep_execution_context_without_handler_findings() {
+    let (_dir, cfg) = config();
+    for function in [
+        "(x) => save(x)",
+        "function(x) { save(x); }",
+        "function*(x) { yield x; }",
+        "async function*(x) { yield x; }",
+    ] {
+        for deferred in [false, true] {
+            let call = format!("({function})(prepare(), finish());");
+            let body = if deferred {
+                format!("register(() => {{ {call} }});")
+            } else {
+                call
+            };
+            let defs = definitions(&format!("Then('parcel is ready', () => {{ {body} }}); Then('parcel is now ready', () => {{ {body} }});"));
+            let marker = if deferred {
+                "deferred-assert:unresolved"
+            } else {
+                "assert:unresolved"
+            };
+            assert!(
+                defs.iter().all(|d| !d.handler.comparable
+                    && d.handler.behavior_signature.iter().any(|e| e == marker)),
+                "{body}"
+            );
+            let mut expected_events = if deferred {
+                vec!["call:register"]
+            } else {
+                Vec::new()
+            };
+            expected_events.extend([marker, "call:prepare", "call:finish"]);
+            assert_eq!(
+                defs[0].handler.behavior_signature, expected_events,
+                "{body}"
+            );
+            let findings = analyze(defs, Vec::new(), &cfg).unwrap().findings;
+            assert!(
+                !findings.iter().any(|f| matches!(
+                    f.rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )),
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
+    let (_dir, cfg) = config();
+    let mut limited_cfg = cfg.clone();
+    limited_cfg.max_candidate_comparisons = 1;
+    for callback in ["() =>", "function()", "async () =>"] {
+        for (right_wrapper, shared_calls) in [
+            ("register", ""),
+            ("otherWrapper", ""),
+            ("register", "load(); save(); render();"),
+        ] {
+            for (right_assertion, expected) in [
+                ("expect(state).toBe('ready');", true),
+                ("(expect as any)(state).toBe('ready');", true),
+                ("expect(state).toBe('idle');", false),
+                ("expect(state).not.toBe('ready');", false),
+                ("expect(state).toBe(external);", false),
+                (
+                    "expect(state).toBe('ready'); expect(state).toBe('idle');",
+                    false,
+                ),
+            ] {
+                let defs = definitions(&format!("Then('parcel is ready', ({{state}}) => register({callback} {{ {shared_calls} expect(state).toBe('ready'); }})); Then('parcel is now ready', ({{state}}) => {right_wrapper}({callback} {{ {shared_calls} {right_assertion} }}));"));
+                for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                    if !expected {
+                        assert!(
+                            definition_pair_candidates(&pair, &limited_cfg).is_empty(),
+                            "{right_assertion}"
+                        );
+                    }
+                    let findings = analyze(pair, Vec::new(), &cfg).unwrap().findings;
+                    assert_eq!(
+                        findings.iter().any(|f| matches!(
+                            f.rule,
+                            Rule::DuplicateHandler
+                                | Rule::NearDuplicateStep
+                                | Rule::ParameterizationCandidate
+                        )),
+                        expected,
+                        "{callback} {shared_calls} {right_assertion}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn repeated_commonjs_loads_share_only_guarded_mutation_provenance() {
+    let (_dir, cfg) = config();
+    for (binding, trusted) in [
+        ("const {[key]: check} = require('@playwright/test'); check.objectContaining = replacement;", false),
+        ("const {expect: check} = require('@playwright/test'); delete check.objectContaining;", false),
+        ("let check; ({['expect']: check} = require('@playwright/test')); check.objectContaining = replacement;", false),
+        ("const {expect: check = fallback} = require('@playwright/test'); check.objectContaining = replacement;", false),
+        ("const other = require('@playwright/test'); other.expect.objectContaining = replacement;", false),
+        ("const check = require('@playwright/test').expect; check.objectContaining = replacement;", false),
+        ("function mutate() { const {expect: check} = require('@playwright/test'); check.objectContaining = replacement; }", false),
+        ("const {[key]: check} = require('@jest/globals'); check.objectContaining = replacement;", true),
+        ("function mutate(require) { const {expect: check} = require('@playwright/test'); check.objectContaining = replacement; }", true),
+        ("{ const require = localLoader; const {expect: check} = require('@playwright/test'); check.objectContaining = replacement; }", true),
+        ("const {[key]: check} = require('@playwright/test');", true),
+        ("let {expect: check} = require('@playwright/test'); check = replacement;", true),
+        ("const {other: check} = require('@playwright/test'); check.objectContaining = replacement;", true),
+    ] {
+        for before in [false, true] {
+            let namespace = "const api = require('@playwright/test');";
+            let setup = if before { format!("{binding} {namespace}") } else { format!("{namespace} {binding}") };
+            let defs = definitions(&format!("{setup} Then('parcel is ready', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role:'admin'}}))); Then('shipment readiness confirmed', ({{state}}) => api.expect(state).toEqual(api.expect.objectContaining({{role:'admin'}})));") );
+            assert!(defs.iter().all(|d| d.handler.comparable == trusted), "{setup}");
+            let result = analyze(defs, Vec::new(), &cfg).unwrap();
+            assert_eq!(result.findings.iter().any(|f| matches!(f.rule, Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate)), trusted, "{setup}");
+        }
+    }
+    // A module-level custom loader must not gain assertion provenance or contaminate imports.
+    let defs = definitions("import * as api from '@playwright/test'; const require = loader; const {[key]: check} = require('@playwright/test'); check.objectContaining = replacement; Then('ready', ({state}) => api.expect(state).toEqual(api.expect.objectContaining({role:'admin'})));");
+    assert!(defs[0].handler.comparable);
+    let defs = definitions("const {[key]: check} = require('@playwright/test'); Then('ready', ({state}) => check(state).toBe('ready'));");
+    assert!(defs[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|e| !e.starts_with("assert:")));
+}
+
+#[test]
+fn destructured_negation_mutations_do_not_establish_handler_equivalence() {
+    let (_dir, cfg) = config();
+    for factory in ["expect", "api.expect", "api['expect']"] {
+        for (alias, trusted) in [
+            ("const {not: negated} = FACTORY; negated.objectContaining = replacement;", false),
+            ("const {'not': negated} = FACTORY; negated.objectContaining = replacement;", false),
+            ("const {['not']: negated} = FACTORY; negated.objectContaining = replacement;", false),
+            (r"const {['n\u006ft']: negated} = FACTORY; delete negated.objectContaining;", false),
+            ("const {not: negated = fallback} = FACTORY; negated.objectContaining = replacement;", false),
+            ("const {not} = FACTORY; not.objectContaining = replacement;", false),
+            ("const {not = fallback} = FACTORY; not.objectContaining = replacement;", false),
+            ("let negated; ({not: negated} = FACTORY); negated.objectContaining = replacement;", false),
+            ("const {other: negated} = FACTORY; negated.objectContaining = replacement;", true),
+            ("function local(FACTORY) { const {not} = FACTORY; not.objectContaining = replacement; }", true),
+        ] {
+            // The shadowing control applies to a lexical identifier, not a namespace expression.
+            if alias.starts_with("function") && factory != "expect" { continue; }
+            let alias = alias.replace("FACTORY", factory);
+            let source = format!("import {{expect}} from '@playwright/test'; import * as api from '@playwright/test'; {alias} Then('parcel is ready', ({{state}}) => {factory}(state).toEqual({factory}.not.objectContaining({{role:'admin'}}))); Then('shipment readiness confirmed', ({{state}}) => {factory}(state).toEqual({factory}.not.objectContaining({{role:'admin'}})));");
+            let defs = definitions(&source);
+            assert!(defs.iter().all(|d| d.handler.comparable == trusted), "{source}");
+            let result = analyze(defs, Vec::new(), &cfg).unwrap();
+            assert_eq!(result.findings.iter().any(|f| matches!(f.rule, Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate)), trusted, "{source}");
+        }
+    }
+    let defs = definitions("const {not: check} = require('@playwright/test'); Then('step', ({state}) => check(state).toBe('ready'));");
+    assert!(defs[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .all(|e| !e.starts_with("assert:")));
+}
+
+#[test]
+fn direct_generator_calls_do_not_contribute_suspended_body_events() {
+    for generator in ["function*", "async function*"] {
+        for wrapped in [
+            format!("(<any>{generator} () {{ expect(state).toBe('ready'); }})"),
+            format!("(({generator} <T>() {{ expect(state).toBe('ready'); }})<string>)"),
+        ] {
+            let defs = definitions(&format!(
+                "Then('state', ({{state}}) => {{ {wrapped}(); }});"
+            ));
+            assert!(defs[0].handler.behavior_signature.is_empty(), "{wrapped}");
+        }
+        for body in ["expect(state).toBe('ready');", "save(state); yield state;"] {
+            let defs = definitions(&format!(
+                "Then('state', ({{state}}) => {{ ({generator} () {{ {body} }})(); }});"
+            ));
+            assert!(
+                defs[0].handler.behavior_signature.is_empty(),
+                "{generator} {body}"
+            );
+        }
+        let defs = definitions(&format!("Then('state', () => {{ ({generator} (value = initialize()) {{ save(value); }})(prepare()); }});"));
+        assert_eq!(
+            defs[0].handler.behavior_signature,
+            ["assert:unresolved", "call:prepare"]
+        );
+        assert!(!defs[0].handler.comparable);
+        let defs = definitions(&format!("Then('state', () => register(() => {{ ({generator} (value = initialize()) {{ save(value); }})(prepare()); }}));"));
+        assert_eq!(
+            defs[0].handler.behavior_signature,
+            [
+                "call:register",
+                "deferred-assert:unresolved",
+                "call:prepare"
+            ]
+        );
+        assert!(!defs[0].handler.comparable);
+        let defs = definitions(&format!("Then('state', ({{state}}) => register({generator} () {{ expect(state).toBe('ready'); }}));"));
+        assert!(
+            defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.starts_with("deferred-assert:")),
+            "{generator}"
+        );
+    }
+}
+
+#[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
         r#"
@@ -247,6 +891,101 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
     let cjs =
         "const {Then} = require('@cucumber/cucumber'); const api = require('@playwright/test');";
     for (prefix, mutation, trusted) in [
+        (valid, "const other = api; delete other.expect;", false),
+        (cjs, "delete api['expect'];", false),
+        (valid, "const other = api; delete other.other;", true),
+        (
+            valid,
+            "function local(api) { const other = api; delete other.expect; }",
+            true,
+        ),
+        (
+            valid,
+            "const other = api; other.expect = replacement;",
+            false,
+        ),
+        (cjs, "const other = api; other.expect = replacement;", false),
+        (
+            valid,
+            "const other = (api as PW); const last = other; [last.expect] = replacements;",
+            false,
+        ),
+        (valid, "let other; other = api; other['expect']++;", false),
+        (
+            valid,
+            "function mutate() { const other = api; other.expect = replacement; }",
+            false,
+        ),
+        (
+            valid,
+            "function mutate(other = api) { other.expect = replacement; }",
+            false,
+        ),
+        (
+            valid,
+            "function local(api, other = api) { other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "let other; other ||= api; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other; other &&= api; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other; other ??= api; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other = ''; other += api; other.expect = replacement;",
+            true,
+        ),
+        (
+            valid,
+            "const other = api; function mutate() { other.expect = replacement; }",
+            false,
+        ),
+        (
+            valid,
+            "const other = api; function local(other) { other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "function local(api) { const other = api; other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "const other = api; { const other = local; other.expect = replacement; }",
+            true,
+        ),
+        (
+            valid,
+            "let other = api; other = local; other.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "let other = api; let last = other; other = last; last.expect = replacement;",
+            false,
+        ),
+        (
+            valid,
+            "const other = api; other.unrelated = replacement;",
+            true,
+        ),
+        (
+            valid,
+            "type other = unknown; const other = api; other.expect = replacement;",
+            false,
+        ),
         (valid, "", true),
         (valid, "(api).expect = replacement;", false),
         (valid, "(api as PW).expect = replacement;", false),
@@ -336,6 +1075,30 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
                     .any(|f| f.rule == Rule::NearDuplicateStep));
             }
         }
+    }
+    for mutation in [
+        "function mutate(other = api) { other.expect = replacement; }",
+        "let other; other ||= api; other.expect = replacement;",
+    ] {
+        let source = format!(
+            "const {{Then}} = require('@cucumber/cucumber'); const api = require('@playwright/test'); {mutation} Then('the parcel status is verified', ({{state}}) => api.expect(state).toBe('ready'));"
+        );
+        let extracted = typescript::extract(
+            &source,
+            &SourceFile {
+                path: PathBuf::from("steps.js"),
+                language: SourceLanguage::JavaScript,
+            },
+        )
+        .unwrap();
+        assert!(
+            extracted[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|event| !event.starts_with("assert:")),
+            "{mutation}"
+        );
     }
     for write in [
         "require &&= replacement;",
@@ -568,6 +1331,206 @@ fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
     assert_eq!(arguments[0].handler.behavior_signature.len(), 2);
     assert_eq!(arguments[0].handler.behavior_signature[0], "call:prepare");
     assert!(arguments[0].handler.behavior_signature[1].starts_with("assert:"));
+}
+
+#[test]
+fn nested_argument_callbacks_preserve_behavior_and_scope_boundaries() {
+    let (_directory, config) = config();
+    for container in [
+        "CALLBACK",
+        "{ callback: CALLBACK }",
+        "[{ nested: [CALLBACK] }]",
+        "enabled ? CALLBACK : undefined",
+        "enabled && CALLBACK",
+        "(undefined, CALLBACK)",
+        "({ callback: CALLBACK } as Options)",
+    ] {
+        for callback in ["() =>", "async () =>", "function ()", "function* ()"] {
+            for (left_body, right_body, expected) in [
+                (
+                    "load(); save(); render();",
+                    "load(); save(); render();",
+                    true,
+                ),
+                (
+                    "load(); save(); render();",
+                    "erase(); reset(); remove();",
+                    false,
+                ),
+                (
+                    "expect(state).toBe('ready');",
+                    "expect(state).toBe('ready');",
+                    true,
+                ),
+                (
+                    "expect(state).toBe('ready');",
+                    "expect(state).toBe('idle');",
+                    false,
+                ),
+                (
+                    "expect(state).toBe('ready');",
+                    "expect(state).toBe(external);",
+                    false,
+                ),
+            ] {
+                let argument =
+                    |body| container.replace("CALLBACK", &format!("{callback} {{ {body} }}"));
+                let defs = definitions(&format!(
+                    "Then('parcel is ready', ({{state}}) => register({})); Then('parcel is now ready', ({{state}}) => register({}));",
+                    argument(left_body), argument(right_body)
+                ));
+                assert!(
+                    defs[0].handler.behavior_signature.len() > 1,
+                    "{container} {callback}"
+                );
+                assert!(defs.iter().all(|d| d
+                    .handler
+                    .behavior_signature
+                    .iter()
+                    .all(|e| !e.starts_with("assert:"))));
+                for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                    let findings = analyze(pair, Vec::new(), &config).unwrap().findings;
+                    assert_eq!(
+                        findings.iter().any(|f| matches!(
+                            f.rule,
+                            Rule::DuplicateHandler
+                                | Rule::NearDuplicateStep
+                                | Rule::ParameterizationCandidate
+                        )),
+                        expected,
+                        "{container} {callback} {right_body}"
+                    );
+                }
+            }
+        }
+        for callback in ["value => save(value)", "function (value) { save(value); }"] {
+            let argument = container.replace("CALLBACK", callback);
+            let defs = definitions(&format!("Then('parcel is ready', () => register({argument})); Then('parcel is now ready', () => register({argument}));"));
+            assert!(
+                defs.iter().all(|d| !d.handler.comparable),
+                "{container} {callback}"
+            );
+            let findings = analyze(defs, Vec::new(), &config).unwrap().findings;
+            assert!(!findings.iter().any(|f| matches!(
+                f.rule,
+                Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+            )));
+        }
+    }
+    for body in [
+        "register({callback: () => { const unused = () => erase(); load(); }});",
+        "register({callback: () => { function unused() { erase(); } load(); }});",
+        "register({callback: () => () => erase()});",
+        "register(class { method() { erase(); } });",
+        "const unused = {callback: () => erase()}; load();",
+    ] {
+        let defs = definitions(&format!("Then('scope control', () => {{ {body} }});"));
+        assert!(
+            !defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|e| e == "call:erase"),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
+    let (_directory, config) = config();
+    for callback in ["async () =>", "async function ()", "function* ()"] {
+        for (left_wrapper, right_wrapper, right_calls, expected) in [
+            (
+                "withTransaction",
+                "withTransaction",
+                "loadOrder(); applyShipping(); commit();",
+                false,
+            ),
+            (
+                "alpha",
+                "beta",
+                "loadCart(); applyDiscount(); save();",
+                true,
+            ),
+        ] {
+            let defs = definitions(&format!(
+                "When('the admin applies the discount rule', () => {{ {left_wrapper}({callback} {{ loadCart(); applyDiscount(); save(); }}); }});\nWhen('the admin applies the shipping rule', () => {{ {right_wrapper}({callback} {{ {right_calls} }}); }});"
+            ));
+            assert_eq!(defs[0].handler.behavior_signature.len(), 4);
+            assert_eq!(defs[1].handler.behavior_signature.len(), 4);
+            for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                let result = analyze(pair, Vec::new(), &config).unwrap();
+                assert_eq!(
+                    result
+                        .findings
+                        .iter()
+                        .any(|f| f.rule == Rule::NearDuplicateStep),
+                    expected,
+                    "{callback} {left_wrapper} {right_wrapper} {right_calls}"
+                );
+                assert!(!result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateHandler));
+            }
+        }
+    }
+    for body in [
+        "register(() => { (() => expect(state).toBe('ready'))(); });",
+        "register(((function () { load(); render(); }) as Callback));",
+        "register(() => nested(() => load()));",
+    ] {
+        let defs = definitions(&format!("Then('callback example', () => {{ {body} }});"));
+        assert!(defs[0].handler.behavior_signature.len() > 1, "{body}");
+        assert!(
+            defs[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .all(|e| !e.starts_with("assert:")),
+            "{body}"
+        );
+    }
+    let conflicting = definitions(
+        "Then('callback expects ready', ({state}) => register(() => expect(state).toBe('ready'))); Then('callback expects idle', ({state}) => register(() => expect(state).toBe('idle')));",
+    );
+    assert_ne!(
+        conflicting[0].handler.behavior_signature,
+        conflicting[1].handler.behavior_signature
+    );
+    assert!(conflicting.iter().all(|definition| definition
+        .handler
+        .behavior_signature
+        .iter()
+        .any(|event| event.starts_with("deferred-assert:"))));
+    let unresolved = definitions(
+        "Then('callback unresolved', ({state}) => register(() => expect(state).toBe(external)));",
+    );
+    assert!(!unresolved[0].handler.comparable);
+    for callback in ["value =>", "function (value)", "function* (value)"] {
+        let unresolved = definitions(&format!(
+            "Then('parameterized callback', ({{state}}) => register({callback} {{ expect(state).toBe(value); }}, externalValue));"
+        ));
+        assert!(!unresolved[0].handler.comparable, "{callback}");
+        assert!(
+            unresolved[0]
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event == "deferred-assert:unresolved"),
+            "{callback}"
+        );
+    }
+    let unresolved_without_assertion = definitions(
+        "Then('parameterized callback', () => register(value => save(value), externalValue));",
+    );
+    assert!(!unresolved_without_assertion[0].handler.comparable);
+    assert!(unresolved_without_assertion[0]
+        .handler
+        .behavior_signature
+        .iter()
+        .any(|event| event == "deferred-assert:unresolved"));
 }
 
 #[test]
@@ -1931,6 +2894,33 @@ Then('the account status indicator shows the final condition', async ({ page }) 
     let (_directory, config) = config();
     let result = analyze(definitions, Vec::new(), &config).unwrap();
     assert!(!result
+        .findings
+        .iter()
+        .any(|finding| finding.rule == Rule::NearDuplicateStep));
+}
+
+#[test]
+fn mostly_matching_ordered_behavior_remains_a_near_duplicate_candidate() {
+    let assertions = |last| {
+        (0..10)
+            .map(|index| {
+                let expected = if index == 9 { last } else { "shared" };
+                format!("expect(state.field{index}).toBe('{expected}');")
+            })
+            .collect::<String>()
+    };
+    let definitions = definitions(&format!(
+        "Then('the account workflow is ready', ({{state}}) => {{ {} }}); Then('the account workflow is nearly ready', ({{state}}) => {{ {} }});",
+        assertions("first"),
+        assertions("second")
+    ));
+    assert_eq!(
+        definitions[0].handler.structural,
+        definitions[1].handler.structural
+    );
+    let (_directory, config) = config();
+    let result = analyze(definitions, Vec::new(), &config).unwrap();
+    assert!(result
         .findings
         .iter()
         .any(|finding| finding.rule == Rule::NearDuplicateStep));

@@ -3,7 +3,8 @@ use super::ast::{
     string_literal,
 };
 use super::node_text;
-use super::registrations::RegistrationNames;
+use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
@@ -21,6 +22,7 @@ pub(super) struct AssertionBindings {
     identifiers: BTreeSet<String>,
     namespaces: BTreeSet<String>,
     shadow_ranges: BTreeMap<String, Vec<(usize, usize)>>,
+    mutated_matcher_factories: BTreeSet<String>,
 }
 
 impl AssertionBindings {
@@ -30,9 +32,13 @@ impl AssertionBindings {
         registrations: &RegistrationNames,
     ) -> Self {
         let facade_modules = resolved_facade_modules(root, source, registrations);
-        let shadow_ranges = collect_scoped_bindings(root, source);
+        let (scopes, scope_ranges) = collect_binding_scopes(root, source);
+        let shadow_ranges = collect_scoped_bindings(scopes.clone(), scope_ranges);
         let require_shadowed =
             module_runtime_binding_exists(root, source, "require", &shadow_ranges);
+        let alias_writes = namespace_alias_writes(root, source, &scopes, false, require_shadowed);
+        let mutated_matcher_factories =
+            namespace_alias_writes(root, source, &scopes, true, require_shadowed);
         let mut bindings = Self::default();
         let mut shadowed = BTreeSet::new();
         let mut factory_writes = BTreeSet::new();
@@ -93,7 +99,7 @@ impl AssertionBindings {
                     if let Some(left) = assignment_target(node) {
                         let mut assigned = BTreeSet::new();
                         let mut writes = BTreeSet::new();
-                        collect_assignment_targets(left, source, &mut assigned, &mut writes);
+                        collect_assignment_targets(left, source, &mut assigned, &mut writes, false);
                         factory_writes.extend(
                             writes
                                 .into_iter()
@@ -113,6 +119,7 @@ impl AssertionBindings {
         // file, matching step-registration discovery. A false negative is safer than assigning
         // assertion semantics to an unrelated function and manufacturing similarity evidence.
         shadowed.extend(factory_writes.intersection(&bindings.namespaces).cloned());
+        shadowed.extend(alias_writes.intersection(&bindings.namespaces).cloned());
         bindings
             .identifiers
             .retain(|identifier| !shadowed.contains(identifier));
@@ -127,28 +134,86 @@ impl AssertionBindings {
             bindings.identifiers.insert("expect".to_owned());
         }
         bindings.shadow_ranges = shadow_ranges;
+        bindings.mutated_matcher_factories = mutated_matcher_factories;
         bindings
     }
 
     pub(super) fn is_factory(&self, node: Node<'_>, source: &[u8]) -> bool {
+        let Some(node) = super::registrations::unwrap_registration_callee(node) else {
+            return false;
+        };
         if node.kind() == "identifier" {
             let name = node_text(node, source);
             return self.identifiers.contains(name) && !self.is_locally_shadowed(node, name);
         }
-        if node.kind() != "member_expression" {
-            return false;
-        }
-        let (Some(object), Some(property)) = (
-            node.child_by_field_name("object"),
-            node.child_by_field_name("property"),
-        ) else {
+        let Some(RegistrationCallee::Property { object, name }) = registration_callee(node, source)
+        else {
             return false;
         };
         let namespace = node_text(object, source);
         object.kind() == "identifier"
             && self.namespaces.contains(namespace)
             && !self.is_locally_shadowed(object, namespace)
-            && node_text(property, source) == "expect"
+            && name == "expect"
+    }
+
+    pub(super) fn is_asymmetric_matcher(&self, node: Node<'_>, source: &[u8]) -> bool {
+        self.asymmetric_matcher(node, source).is_some()
+    }
+
+    pub(super) fn asymmetric_matcher<'source>(
+        &self,
+        node: Node<'_>,
+        source: &'source [u8],
+    ) -> Option<(bool, Cow<'source, str>)> {
+        if node.kind() != "call_expression" {
+            return None;
+        }
+        let function = node
+            .child_by_field_name("function")
+            .and_then(super::registrations::unwrap_registration_callee)?;
+        let RegistrationCallee::Property {
+            mut object,
+            name: matcher,
+        } = registration_callee(function, source)?
+        else {
+            return None;
+        };
+        if !matches!(
+            matcher.as_ref(),
+            "objectContaining"
+                | "arrayContaining"
+                | "stringContaining"
+                | "stringMatching"
+                | "anything"
+                | "any"
+                | "closeTo"
+        ) {
+            return None;
+        }
+        let mut negated = false;
+        if let Some(RegistrationCallee::Property { object: base, name }) =
+            registration_callee(object, source)
+        {
+            if name == "not" {
+                object = base;
+                negated = true;
+            }
+        }
+        let mut receiver = super::registrations::unwrap_registration_callee(object)?;
+        while matches!(
+            receiver.kind(),
+            "member_expression" | "subscript_expression"
+        ) {
+            receiver = super::registrations::unwrap_registration_callee(
+                receiver.child_by_field_name("object")?,
+            )?;
+        }
+        (self.is_factory(object, source)
+            && !self
+                .mutated_matcher_factories
+                .contains(node_text(receiver, source)))
+        .then_some((negated, matcher))
     }
 
     fn is_locally_shadowed(&self, node: Node<'_>, expected: &str) -> bool {
@@ -183,7 +248,9 @@ impl AssertionBindings {
                     let Some(name) = node.child_by_field_name("name") else {
                         continue;
                     };
-                    if node_text(name, source) == "expect" {
+                    if node_text(name, source) == "expect"
+                        || (module == "expect" && node_text(name, source) == "default")
+                    {
                         let local = node.child_by_field_name("alias").unwrap_or(name);
                         let local = node_text(local, source).to_owned();
                         self.identifiers.insert(local.clone());
@@ -267,7 +334,7 @@ impl AssertionBindings {
                 trusted.insert(local);
             }
             "object_pattern" => {
-                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted)
+                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted, false)
             }
             _ => {}
         }
@@ -406,6 +473,15 @@ fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<St
                 }
                 continue;
             }
+            "required_parameter" | "optional_parameter" => {
+                if let Some(binding) = node
+                    .child_by_field_name("name")
+                    .or_else(|| node.child_by_field_name("pattern"))
+                {
+                    stack.push(binding);
+                }
+                continue;
+            }
             "type_annotation" => continue,
             _ => {}
         }
@@ -418,6 +494,7 @@ fn collect_assignment_targets(
     source: &[u8],
     output: &mut BTreeSet<String>,
     factory_writes: &mut BTreeSet<String>,
+    matcher_members: bool,
 ) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -446,13 +523,32 @@ fn collect_assignment_targets(
                             super::matcher::decode_js_string(text)
                         })
                     });
-                if property.is_none_or(|property| property == "expect") {
+                if property.is_none_or(|property| {
+                    property == "expect"
+                        || matcher_members
+                            && matches!(
+                                property.as_str(),
+                                "not"
+                                    | "objectContaining"
+                                    | "arrayContaining"
+                                    | "stringContaining"
+                                    | "stringMatching"
+                                    | "anything"
+                                    | "any"
+                                    | "closeTo"
+                            )
+                }) {
                     if let Some(object) = node
                         .child_by_field_name("object")
                         .and_then(super::registrations::unwrap_registration_callee)
-                        .filter(|object| object.kind() == "identifier")
                     {
-                        factory_writes.insert(node_text(object, source).to_owned());
+                        if matcher_members
+                            && matches!(object.kind(), "member_expression" | "subscript_expression")
+                        {
+                            stack.push(object);
+                        } else if object.kind() == "identifier" {
+                            factory_writes.insert(node_text(object, source).to_owned());
+                        }
                     }
                 }
                 continue;
@@ -485,6 +581,13 @@ fn assignment_target(node: Node<'_>) -> Option<Node<'_>> {
             node.child_by_field_name("left")
         }
         "update_expression" => node.child_by_field_name("argument"),
+        "unary_expression"
+            if node
+                .child_by_field_name("operator")
+                .is_some_and(|op| op.kind() == "delete") =>
+        {
+            node.child_by_field_name("argument")
+        }
         "for_in_statement" => node
             .child_by_field_name("left")
             .filter(|left| loop_binding_keyword(node, *left).is_none()),
@@ -539,7 +642,13 @@ fn module_runtime_binding_exists(
         if let Some(pattern) = pattern {
             let mut names = BTreeSet::new();
             if assignment.is_some() {
-                collect_assignment_targets(pattern, source, &mut names, &mut BTreeSet::new());
+                collect_assignment_targets(
+                    pattern,
+                    source,
+                    &mut names,
+                    &mut BTreeSet::new(),
+                    false,
+                );
             } else {
                 collect_binding_names(pattern, source, &mut names);
             }
@@ -552,7 +661,148 @@ fn module_runtime_binding_exists(
     false
 }
 
-fn collect_scoped_bindings(root: Node<'_>, source: &[u8]) -> BTreeMap<String, Vec<(usize, usize)>> {
+type BindingScopes = BTreeMap<usize, BTreeSet<String>>;
+type ScopeRanges = BTreeMap<usize, (usize, usize)>;
+
+fn namespace_alias_writes(
+    root: Node<'_>,
+    source: &[u8],
+    scopes: &BindingScopes,
+    matcher_members: bool,
+    require_shadowed: bool,
+) -> BTreeSet<String> {
+    // A may-alias graph only removes trust; it never promotes an alias to an assertion
+    // factory. Keep prior assignments conservatively and identify lexical bindings, not
+    // spellings, so a shadowed local receiver cannot contaminate a module namespace.
+    let key = |name: &str, mut node: Node<'_>| loop {
+        if scopes
+            .get(&node.id())
+            .is_some_and(|names| names.contains(name))
+        {
+            return (node.id(), name.to_owned());
+        }
+        let Some(parent) = node.parent() else {
+            return (root.id(), name.to_owned());
+        };
+        node = parent;
+    };
+    let mut aliases = BTreeMap::<_, BTreeSet<_>>::new();
+    let mut required_aliases = BTreeMap::new();
+    let mut writes = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let edge = match node.kind() {
+            "variable_declarator" => node
+                .child_by_field_name("name")
+                .zip(node.child_by_field_name("value")),
+            "assignment_pattern" | "object_assignment_pattern" => node
+                .child_by_field_name("left")
+                .zip(node.child_by_field_name("right")),
+            "required_parameter" | "optional_parameter" => node
+                .child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("pattern"))
+                .zip(node.child_by_field_name("value")),
+            "assignment_expression" => node
+                .child_by_field_name("left")
+                .zip(node.child_by_field_name("right")),
+            "augmented_assignment_expression"
+                if node
+                    .child_by_field_name("operator")
+                    .is_some_and(|operator| matches!(operator.kind(), "||=" | "&&=" | "??=")) =>
+            {
+                node.child_by_field_name("left")
+                    .zip(node.child_by_field_name("right"))
+            }
+            _ => None,
+        };
+        if let Some((left, right)) = edge {
+            if let Some(right) = super::registrations::unwrap_registration_callee(right) {
+                let mut locals = BTreeSet::new();
+                let mut owners = BTreeSet::new();
+                if left.kind() == "identifier" {
+                    locals.insert(node_text(left, source).to_owned());
+                } else if matcher_members && left.kind() == "object_pattern" {
+                    collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new(), true);
+                }
+                let required = match registration_callee(right, source) {
+                    Some(RegistrationCallee::Property { object, name }) if name == "expect" => {
+                        object
+                    }
+                    _ => right,
+                };
+                // Same-module loads share mutation provenance, never callable factory trust.
+                // Respect both module-level replacement and lexical shadowing of require.
+                if matcher_members && !require_shadowed && key("require", required).0 == root.id() {
+                    if let Some(module) = required_module(required, source)
+                        .filter(|module| ASSERTION_MODULES.contains(module))
+                    {
+                        for local in &locals {
+                            let local = key(local, left);
+                            let owner = required_aliases
+                                .entry(module)
+                                .or_insert_with(|| local.clone());
+                            aliases
+                                .entry(owner.clone())
+                                .or_default()
+                                .insert(local.clone());
+                            aliases.entry(local).or_default().insert(owner.clone());
+                        }
+                    }
+                }
+                if right.kind() == "identifier" {
+                    owners.insert(node_text(right, source).to_owned());
+                } else if matcher_members
+                    && matches!(right.kind(), "member_expression" | "subscript_expression")
+                {
+                    // Only direct property access establishes an alias, not a call's arguments.
+                    collect_assignment_targets(
+                        right,
+                        source,
+                        &mut BTreeSet::new(),
+                        &mut owners,
+                        true,
+                    );
+                }
+                for local in locals {
+                    for owner in &owners {
+                        aliases
+                            .entry(key(&local, left))
+                            .or_default()
+                            .insert(key(owner, right));
+                    }
+                }
+            }
+        }
+        if let Some(target) = assignment_target(node) {
+            let mut receivers = BTreeSet::new();
+            collect_assignment_targets(
+                target,
+                source,
+                &mut BTreeSet::new(),
+                &mut receivers,
+                matcher_members,
+            );
+            writes.extend(receivers.into_iter().map(|name| key(&name, node)));
+        }
+        super::ast::push_named_children_reverse(node, &mut stack);
+    }
+    let mut visited = BTreeSet::new();
+    let mut modules = BTreeSet::new();
+    while let Some(binding) = writes.pop() {
+        if !visited.insert(binding.clone()) {
+            continue;
+        }
+        if binding.0 == root.id() {
+            modules.insert(binding.1.clone());
+        }
+        if let Some(sources) = aliases.get(&binding) {
+            writes.extend(sources.iter().cloned());
+        }
+    }
+    modules
+}
+
+fn collect_binding_scopes(root: Node<'_>, source: &[u8]) -> (BindingScopes, ScopeRanges) {
     let mut scopes = BTreeMap::<usize, BTreeSet<String>>::new();
     let mut scope_ranges = BTreeMap::new();
     let mut stack = vec![root];
@@ -669,6 +919,13 @@ fn collect_scoped_bindings(root: Node<'_>, source: &[u8]) -> BTreeMap<String, Ve
         }
         super::ast::push_named_children_reverse(node, &mut stack);
     }
+    (scopes, scope_ranges)
+}
+
+fn collect_scoped_bindings(
+    scopes: BindingScopes,
+    scope_ranges: ScopeRanges,
+) -> BTreeMap<String, Vec<(usize, usize)>> {
     let mut ranges = BTreeMap::<String, Vec<(usize, usize)>>::new();
     for (scope, names) in scopes {
         let Some(range) = scope_ranges.get(&scope).copied() else {
@@ -884,13 +1141,28 @@ fn collect_expect_pattern(
     source: &[u8],
     identifiers: &mut BTreeSet<String>,
     trusted: &mut BTreeSet<String>,
+    include_defaults: bool,
 ) {
     let mut cursor = pattern.walk();
     for property in pattern.named_children(&mut cursor) {
         match property.kind() {
-            "shorthand_property_identifier_pattern" if node_text(property, source) == "expect" => {
-                identifiers.insert("expect".to_owned());
-                trusted.insert("expect".to_owned());
+            "object_assignment_pattern" if include_defaults => {
+                if let Some(left) = property
+                    .child_by_field_name("left")
+                    .filter(|left| matches!(node_text(*left, source), "expect" | "not"))
+                {
+                    identifiers.insert(node_text(left, source).to_owned());
+                }
+            }
+            "shorthand_property_identifier_pattern"
+                if node_text(property, source) == "expect"
+                    || (include_defaults && node_text(property, source) == "not") =>
+            {
+                let name = node_text(property, source);
+                identifiers.insert(name.to_owned());
+                if name == "expect" {
+                    trusted.insert(name.to_owned());
+                }
             }
             "pair_pattern" => {
                 let (Some(key), Some(value)) = (
@@ -899,10 +1171,34 @@ fn collect_expect_pattern(
                 ) else {
                     continue;
                 };
-                if node_text(key, source) == "expect" && value.kind() == "identifier" {
+                let computed = key.kind() == "computed_property_name";
+                let key = if computed {
+                    key.named_child(0).unwrap_or(key)
+                } else {
+                    key
+                };
+                // Defaults can create mutation aliases, but cannot establish factory trust.
+                let value = if include_defaults && value.kind() == "assignment_pattern" {
+                    value.child_by_field_name("left").unwrap_or(value)
+                } else {
+                    value
+                };
+                let decoded = super::matcher::decode_js_string(node_text(key, source));
+                let known_expect = (!computed && node_text(key, source) == "expect")
+                    || decoded.as_deref() == Some("expect");
+                let known_not = (!computed && node_text(key, source) == "not")
+                    || decoded.as_deref() == Some("not");
+                // Unknown computed keys may alias the factory, but cannot establish trust.
+                // include_defaults is used only by the trust-removing mutation pass.
+                if (known_expect
+                    || (include_defaults && (known_not || (computed && decoded.is_none()))))
+                    && value.kind() == "identifier"
+                {
                     let local = node_text(value, source).to_owned();
                     identifiers.insert(local.clone());
-                    trusted.insert(local);
+                    if known_expect {
+                        trusted.insert(local);
+                    }
                 }
             }
             _ => {}
