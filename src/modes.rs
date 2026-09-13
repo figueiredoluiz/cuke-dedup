@@ -198,10 +198,11 @@ pub(crate) fn baseline_snapshot(
         }
     }
     let repository = git(root, &["rev-parse".as_ref(), "--show-toplevel".as_ref()])?;
+    let repository =
+        String::from_utf8(repository).context("baseline repository path is not UTF-8")?;
+    // Remove Git's one line terminator, not whitespace belonging to the path.
     let repository = crate::config::normalize_platform_path(PathBuf::from(
-        String::from_utf8(repository)
-            .context("baseline repository path is not UTF-8")?
-            .trim(),
+        repository.strip_suffix('\n').unwrap_or(&repository),
     ));
     let relative = root
         .strip_prefix(&repository)

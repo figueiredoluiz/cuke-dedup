@@ -35,7 +35,13 @@ fn write(root: &Path, relative: &str, contents: &str) {
 #[test]
 fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
     let sandbox = tempfile::tempdir().unwrap();
-    let root = sandbox.path().join("repository");
+    // Trailing spaces are valid on Unix and must not be trimmed from Git's output.
+    let repository_name = if cfg!(unix) {
+        " repository "
+    } else {
+        "repository"
+    };
+    let root = sandbox.path().join(repository_name);
     fs::create_dir(&root).unwrap();
     let git = |args: &[&str]| {
         let output = fixture_git()
