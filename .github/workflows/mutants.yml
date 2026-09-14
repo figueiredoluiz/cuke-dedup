@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+      - uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
         with:
           tool: cargo-mutants@27.1.0
           fallback: none
