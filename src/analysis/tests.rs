@@ -3269,3 +3269,410 @@ fn reported_similarity_scores_round_to_three_decimal_places() {
         assert_eq!(super::similarity::round_score(input), expected);
     }
 }
+
+/// Supporting invariants for OPEN-2 / R5190030268-S2, stated on dot access where an assertion is a
+/// single atomic event.
+///
+/// An assertion is identified by its subject, its modifier chain and its expected value, and a
+/// change that dropped any one of them would still emit one plausible-looking event. Each part is
+/// pinned separately here: erase the subject, the modifier, or the value and this test fails.
+#[test]
+fn dotted_assertion_events_distinguish_subject_modifier_and_value() {
+    let (_directory, config) = config();
+
+    let events = |subject: &str, access: &str, value: &str| {
+        let source =
+            format!("Then('alpha holds', () => {{ expect({subject}){access}.toBe({value}); }});");
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 1, "{source}");
+        extracted[0].handler.behavior_signature.clone()
+    };
+
+    let reference = events("alpha", ".not", "'ready'");
+    assert!(
+        reference
+            .iter()
+            .any(|event| event.starts_with("assert:expect.not#toBe:")),
+        "dot access must record the negation modifier: {reference:?}"
+    );
+    assert_eq!(
+        reference.len(),
+        1,
+        "an assertion is one atomic event: {reference:?}"
+    );
+
+    assert_ne!(
+        reference,
+        events("beta", ".not", "'ready'"),
+        "assertions on different subjects must not share an assertion event"
+    );
+    assert_ne!(
+        reference,
+        events("alpha", "", "'ready'"),
+        "a negated assertion must not match the same assertion without the modifier"
+    );
+    assert_ne!(
+        reference,
+        events("alpha", ".not", "'idle'"),
+        "assertions expecting different values must not share an assertion event"
+    );
+
+    // Final outcome, not only event inequality: close wording must not equate assertions that
+    // differ only in their subject. A change erasing the subject would report a near duplicate.
+    let extracted = definitions(
+        "Then('the alpha row is aligned', () => { expect(alpha).not.toBe('ready'); }); \
+         Then('the beta row is aligned', () => { expect(beta).not.toBe('ready'); });",
+    );
+    assert_eq!(extracted.len(), 2);
+    let result = analyze(extracted, Vec::new(), &config).unwrap();
+    assert!(
+        !result.findings.iter().any(|finding| matches!(
+            finding.rule,
+            Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+        )),
+        "close wording must not equate assertions on different subjects: {:?}",
+        result.findings
+    );
+}
+
+/// Shared by the OPEN-1 tests below. Returns, per handler, whether it stayed comparable and its
+/// behavior signature, plus the handler rules the pair produced. `write` is inserted between the
+/// alias and the two identical step definitions.
+///
+/// Per handler rather than aggregated: revoking trust for only one of a pair must not be able to
+/// match a fully revoked baseline.
+fn aliased_matcher_outcome(
+    alias: &str,
+    write: &str,
+    config: &Config,
+) -> (Vec<bool>, Vec<Vec<String>>, Vec<Rule>) {
+    let usage = "api.expect(state).toEqual(api.expect.not.objectContaining({ role: 'admin' }));";
+    let source = format!(
+        "const api = require('@playwright/test'); {alias} {write} \
+         Then('the parcel is ready', ({{ state }}) => {{ {usage} }}); \
+         Then('the parcel is now ready', ({{ state }}) => {{ {usage} }});"
+    );
+    let extracted = definitions(&source);
+    assert_eq!(extracted.len(), 2, "{source}");
+    let comparable: Vec<bool> = extracted
+        .iter()
+        .map(|definition| definition.handler.comparable)
+        .collect();
+    let events: Vec<Vec<String>> = extracted
+        .iter()
+        .map(|definition| definition.handler.behavior_signature.clone())
+        .collect();
+    let result = analyze(extracted, Vec::new(), config).unwrap();
+    let mut rules: Vec<Rule> = result
+        .findings
+        .iter()
+        .map(|finding| finding.rule)
+        .filter(|rule| {
+            matches!(
+                rule,
+                Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+            )
+        })
+        .collect();
+    rules.sort();
+    rules.dedup();
+    (comparable, events, rules)
+}
+
+const FLAT_MATCHER_ALIAS: &str = "const negated = api.expect.not;";
+const MATCHER_WRITE: &str = "negated.objectContaining = replacement;";
+
+/// Reference behaviour for OPEN-1 / R5190030268-S1, stated on the flat alias.
+///
+/// A write through an alias of a matcher builder revokes assertion trust, and the handler becomes
+/// non-comparable rather than silently keeping a stale result. Both sides of that decision are
+/// pinned: a write under a path that is not a matcher path must leave trust intact, so a collector
+/// that followed any property would fail here.
+#[test]
+fn flat_matcher_aliases_revoke_trust_only_for_matcher_paths() {
+    let (_directory, config) = config();
+
+    let mutated = aliased_matcher_outcome(FLAT_MATCHER_ALIAS, MATCHER_WRITE, &config);
+    assert!(
+        mutated.0.iter().all(|comparable| !comparable),
+        "a write through a flat alias must revoke trust for every handler: {mutated:?}"
+    );
+    assert!(
+        mutated
+            .1
+            .iter()
+            .all(|events| events.iter().any(|event| event == "assert:unresolved")),
+        "revoked trust is reported as the unresolved sentinel: {:?}",
+        mutated.1
+    );
+    assert!(
+        mutated.2.is_empty(),
+        "a non-comparable handler yields no handler finding: {:?}",
+        mutated.2
+    );
+
+    // Without the write the same alias stays trusted and still reports, so a change that simply
+    // suppressed every aliased assertion would fail here.
+    let clean = aliased_matcher_outcome(FLAT_MATCHER_ALIAS, "", &config);
+    assert!(
+        clean.0.iter().all(|comparable| *comparable),
+        "an unmutated alias must leave every handler comparable"
+    );
+    assert!(
+        clean.2.contains(&Rule::DuplicateHandler),
+        "an unmutated alias must still report identical handlers: {:?}",
+        clean.2
+    );
+
+    // The other side of the provenance decision: a write under a path that is not a matcher path
+    // must not revoke trust, so a collector that followed *any* property would fail here.
+    let other = aliased_matcher_outcome("const negated = api.other.not;", MATCHER_WRITE, &config);
+    assert!(
+        other.2.contains(&Rule::DuplicateHandler),
+        "a write under a path that is not a matcher path must not revoke trust: {other:?}"
+    );
+}
+
+/// Every position of an assertion chain, as `label, dotted, dynamic, event prefix`.
+///
+/// `VALUE` is substituted per definition. `dynamic` selects the property at runtime and must
+/// never gain assertion trust. The prefix is the trusted event dot access produces, and pins the
+/// factory, modifier and matcher identity so a row cannot be satisfied by an event that lost one
+/// of them.
+const ASSERTION_CHAIN_POSITIONS: [(&str, &str, &str, &str); 6] = [
+    (
+        "factory",
+        "api.expect(state).not.toBe(VALUE)",
+        "api[factoryKey](state).not.toBe(VALUE)",
+        "assert:expect.not#toBe:",
+    ),
+    (
+        "modifier",
+        "api.expect(state).not.toBe(VALUE)",
+        "api.expect(state)[modifierKey].toBe(VALUE)",
+        "assert:expect.not#toBe:",
+    ),
+    (
+        "terminal matcher",
+        "api.expect(state).not.toBe(VALUE)",
+        "api.expect(state).not[matcherKey](VALUE)",
+        "assert:expect.not#toBe:",
+    ),
+    (
+        "factory option",
+        "api.expect.soft(state).toBe(VALUE)",
+        "api.expect[optionKey](state).toBe(VALUE)",
+        "assert:expect.soft#toBe:",
+    ),
+    (
+        "nested builder",
+        "api.expect(state).toEqual(api.expect.not.objectContaining({ r: VALUE }))",
+        "api.expect(state).toEqual(api.expect[modifierKey].objectContaining({ r: VALUE }))",
+        "assert:expect#toEqual:",
+    ),
+    (
+        "wrapped modifier",
+        "(api.expect(state) as any).not.toBe(VALUE)",
+        "(api.expect(state) as any)[modifierKey].toBe(VALUE)",
+        "assert:expect.not#toBe:",
+    ),
+];
+
+/// Two definitions asserting `expression` with `left` and `right` expected values. Returns each
+/// handler's behavior signature and the handler rules the pair produced.
+///
+/// Per handler rather than first-only: resolving one handler correctly while losing trust on the
+/// other must not be able to match a fully resolved baseline.
+fn assertion_position_outcome(
+    expression: &str,
+    (left, right): (&str, &str),
+    config: &Config,
+) -> (Vec<Vec<String>>, Vec<Rule>) {
+    let source = format!(
+        "const api = require('@playwright/test'); \
+         Then('alpha holds', ({{ state }}) => {{ {}; }}); \
+         Then('alpha stands', ({{ state }}) => {{ {}; }});",
+        expression.replace("VALUE", left),
+        expression.replace("VALUE", right)
+    );
+    let extracted = definitions(&source);
+    assert_eq!(extracted.len(), 2, "{source}");
+    let events: Vec<Vec<String>> = extracted
+        .iter()
+        .map(|definition| definition.handler.behavior_signature.clone())
+        .collect();
+    let result = analyze(extracted, Vec::new(), config).unwrap();
+    let mut rules: Vec<Rule> = result
+        .findings
+        .iter()
+        .map(|finding| finding.rule)
+        .filter(|rule| {
+            matches!(
+                rule,
+                Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+            )
+        })
+        .collect();
+    rules.sort();
+    rules.dedup();
+    (events, rules)
+}
+
+const CONFLICTING: (&str, &str) = ("'ready'", "'idle'");
+const EQUAL: (&str, &str) = ("'ready'", "'ready'");
+
+/// Dot access must resolve every position of an assertion chain to a trusted event that names its
+/// factory, modifier and matcher, keep conflicting expected values apart, and still report equal
+/// ones. Each position is pinned separately, since resolving one says nothing about the others.
+#[test]
+fn dotted_access_resolves_every_assertion_position() {
+    let (_directory, config) = config();
+    for (label, dotted, _, prefix) in ASSERTION_CHAIN_POSITIONS {
+        let (events, rules) = assertion_position_outcome(dotted, CONFLICTING, &config);
+        for handler in &events {
+            assert_eq!(
+                handler.len(),
+                1,
+                "dot access at the {label} position is one atomic event: {handler:?}"
+            );
+            assert!(
+                handler[0].starts_with(prefix),
+                "dot access at the {label} position must produce `{prefix}…`: {handler:?}"
+            );
+        }
+        assert!(
+            rules.is_empty(),
+            "dot access at the {label} position must keep conflicting values apart: {rules:?}"
+        );
+
+        // Equal values are a genuine duplicate, so a change that merely stopped comparing this
+        // position would fail here rather than satisfy the contract test.
+        let (_, equal_rules) = assertion_position_outcome(dotted, EQUAL, &config);
+        assert!(
+            equal_rules.contains(&Rule::DuplicateHandler),
+            "dot access at the {label} position must still report equal values: {equal_rules:?}"
+        );
+
+        // The subject is part of the assertion at every position.
+        let (other_subject, _) =
+            assertion_position_outcome(&dotted.replace("state", "other"), CONFLICTING, &config);
+        assert_ne!(
+            other_subject[0], events[0],
+            "the {label} position must distinguish the asserted subject"
+        );
+    }
+}
+
+/// A property selected at runtime is not provably the factory, modifier, option or matcher it
+/// happens to hold, so it must not gain assertion trust at any position. Returning the existing
+/// `assert:unresolved` sentinel is an acceptable conservative answer; inventing a trusted event is
+/// not, so a resolver that trusted whatever a bracket expression happened to name would fail here.
+#[test]
+fn dynamic_access_gains_no_assertion_trust_at_any_position() {
+    let (_directory, config) = config();
+    for (label, _, dynamic, _) in ASSERTION_CHAIN_POSITIONS {
+        let (events, _) = assertion_position_outcome(dynamic, CONFLICTING, &config);
+        for handler in &events {
+            assert!(
+                !handler
+                    .iter()
+                    .any(|event| event.starts_with("assert:") && event != "assert:unresolved"),
+                "a runtime-selected property at the {label} position must not gain trust: {handler:?}"
+            );
+        }
+    }
+}
+
+/// A modifier chain is ordered and semantic: `not`, the promise modifiers, and the supported
+/// factory options each change what an assertion means, and `not.resolves` is not `resolves.not`.
+/// A change that sorted, deduplicated or folded the chain would leave every existing test passing.
+///
+/// Transparent TypeScript wrappers and `await` are the opposite: they carry no meaning and must
+/// leave the assertion unchanged.
+#[test]
+fn modifier_chains_are_ordered_and_semantic() {
+    let (_directory, config) = config();
+
+    let events = |expression: &str| {
+        let (events, _) = assertion_position_outcome(expression, EQUAL, &config);
+        events[0].clone()
+    };
+    let chain_events = |chain: &str| events(&format!("api.expect(state){chain}.toBe(VALUE)"));
+
+    // Every distinct chain is a distinct trusted assertion. Collected rather than compared
+    // pairwise so a collision names both chains.
+    let mut seen: Vec<(&str, Vec<String>)> = Vec::new();
+    for chain in [
+        "",
+        ".not",
+        ".not.not",
+        ".resolves",
+        ".rejects",
+        ".not.resolves",
+        ".resolves.not",
+    ] {
+        let produced = chain_events(chain);
+        assert_eq!(
+            produced.len(),
+            1,
+            "`expect(state){chain}` is one atomic event: {produced:?}"
+        );
+        assert!(
+            produced[0].starts_with("assert:expect"),
+            "`expect(state){chain}` must be a trusted assertion: {produced:?}"
+        );
+        if let Some((other, _)) = seen.iter().find(|(_, events)| *events == produced) {
+            panic!(
+                "`expect(state){chain}` and `expect(state){other}` share an event: {produced:?}"
+            );
+        }
+        seen.push((chain, produced));
+    }
+
+    // `poll` is a supported factory option and names itself in the chain.
+    let polled = events("api.expect.poll(() => state, { timeout: 1 }).toBe(VALUE)");
+    assert!(
+        polled[0].starts_with("assert:expect.poll#"),
+        "a polled assertion must record the option: {polled:?}"
+    );
+
+    // Final outcome, not only event inequality: near-identical wording must not equate two steps
+    // whose only difference is the modifier chain.
+    for (left, right) in [
+        (".not", ".resolves"),
+        (".not.resolves", ".resolves.not"),
+        (".not", ".not.not"),
+    ] {
+        let source = format!(
+            "const api = require('@playwright/test'); \
+             Then('the alpha row is aligned', async ({{ state }}) => {{ api.expect(state){left}.toBe('ready'); }}); \
+             Then('the beta row is aligned', async ({{ state }}) => {{ api.expect(state){right}.toBe('ready'); }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        assert!(
+            !result.findings.iter().any(|finding| matches!(
+                finding.rule,
+                Rule::DuplicateHandler | Rule::NearDuplicateStep | Rule::ParameterizationCandidate
+            )),
+            "`{left}` and `{right}` differ in meaning and must not be equated: {:?}",
+            result.findings
+        );
+    }
+
+    // Transparent wrappers and `await` carry no meaning, so they must not change the assertion.
+    let plain = chain_events(".not");
+    for equivalent in [
+        "(api.expect(state) as any).not.toBe(VALUE)",
+        "(api.expect(state))!.not.toBe(VALUE)",
+        "((api.expect(state) as any)! satisfies Function).not.toBe(VALUE)",
+        "await api.expect(state).not.toBe(VALUE)",
+    ] {
+        assert_eq!(
+            events(equivalent),
+            plain,
+            "`{equivalent}` must resolve to the same assertion as dot access"
+        );
+    }
+}
