@@ -335,7 +335,7 @@ impl AssertionBindings {
                 trusted.insert(local);
             }
             "object_pattern" => {
-                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted, false, 0)
+                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted, false)
             }
             _ => {}
         }
@@ -701,14 +701,7 @@ fn namespace_alias_writes(
                 if left.kind() == "identifier" {
                     locals.insert(node_text(left, source).to_owned());
                 } else if matcher_members && left.kind() == "object_pattern" {
-                    collect_expect_pattern(
-                        left,
-                        source,
-                        &mut locals,
-                        &mut BTreeSet::new(),
-                        true,
-                        0,
-                    );
+                    collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new(), true);
                 }
                 let required = match registration_callee(right, source) {
                     Some(RegistrationCallee::Property { object, name }) if name == "expect" => {
@@ -1122,11 +1115,6 @@ fn required_module<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     string_literal(arguments.named_child(0)?, source)
 }
 
-/// Nested destructuring binds through the same owner as the equivalent flat member access, so the
-/// mutation pass must reach the innermost identifier. Bounded like the other recursive walks so a
-/// pathologically nested pattern cannot consume the process stack.
-const MAX_DESTRUCTURING_DEPTH: usize = 16;
-
 /// Property names that reach a matcher builder from a trusted assertion factory.
 ///
 /// Shared so the nested destructuring collector supports exactly the path the flat member walker
@@ -1165,118 +1153,115 @@ fn collect_expect_pattern(
     identifiers: &mut BTreeSet<String>,
     trusted: &mut BTreeSet<String>,
     include_defaults: bool,
-    depth: usize,
 ) {
-    let mut cursor = pattern.walk();
-    for property in pattern.named_children(&mut cursor) {
-        match property.kind() {
-            "object_assignment_pattern" if include_defaults => {
-                if let Some(left) = property.child_by_field_name("left") {
-                    let name = shorthand_key_name(left, source);
-                    if name
-                        .as_deref()
-                        .is_none_or(|name| name == "expect" || is_matcher_member(name))
-                    {
-                        identifiers.insert(node_text(left, source).to_owned());
+    // An explicit worklist rather than recursion. A bound here would have to decide what the
+    // bindings below it mean, and both answers are wrong: stopping silently keeps trust that a
+    // write should have removed, while sweeping everything below ignores the property filter the
+    // rest of this walk applies and revokes trust a write never touched. Walking iteratively keeps
+    // one rule at every depth and costs no stack.
+    //
+    // The flag marks the top level. Reaching deeper may remove trust but never establishes it, so
+    // only the outermost properties can name a trusted factory.
+    let mut pending = vec![(pattern, true)];
+    while let Some((pattern, top_level)) = pending.pop() {
+        let mut cursor = pattern.walk();
+        for property in pattern.named_children(&mut cursor) {
+            match property.kind() {
+                "object_assignment_pattern" if include_defaults => {
+                    if let Some(left) = property.child_by_field_name("left") {
+                        let name = shorthand_key_name(left, source);
+                        if name
+                            .as_deref()
+                            .is_none_or(|name| name == "expect" || is_matcher_member(name))
+                        {
+                            identifiers.insert(node_text(left, source).to_owned());
+                        }
                     }
                 }
-            }
-            // A rest binding copies every remaining property, so it holds the same matcher objects
-            // the owner holds and `copy.not.objectContaining = x` reaches the original. The names
-            // are not enumerable here, so it is recorded as a possible alias, never as factory
-            // trust. This over-approximates: `copy.not = x` replaces a slot on the copy alone and
-            // changes nothing shared, yet still revokes. Removing trust that could have been kept
-            // is the safe direction; keeping trust that should have been removed is not.
-            "rest_pattern" if include_defaults => {
-                if let Some(binding) = property.named_child(0) {
-                    if binding.kind() == "identifier" {
-                        identifiers.insert(node_text(binding, source).to_owned());
+                // A rest binding copies every remaining property, so it holds the same matcher
+                // objects the owner holds and `copy.not.objectContaining = x` reaches the
+                // original. The names are not enumerable here, so it is recorded as a possible
+                // alias, never as factory trust. This over-approximates: `copy.not = x` replaces a
+                // slot on the copy alone and changes nothing shared, yet still revokes. Removing
+                // trust that could have been kept is the safe direction; keeping trust that should
+                // have been removed is not.
+                "rest_pattern" if include_defaults => {
+                    if let Some(binding) = property.named_child(0) {
+                        if binding.kind() == "identifier" {
+                            identifiers.insert(node_text(binding, source).to_owned());
+                        }
                     }
                 }
-            }
-            "shorthand_property_identifier_pattern" => {
-                let name = shorthand_key_name(property, source);
-                let known_expect = name.as_deref() == Some("expect");
-                let known_not = name.as_deref().is_some_and(is_matcher_member);
-                if known_expect || (include_defaults && (known_not || name.is_none())) {
-                    let local = node_text(property, source).to_owned();
-                    identifiers.insert(local.clone());
-                    if known_expect {
-                        trusted.insert(local);
+                "shorthand_property_identifier_pattern" => {
+                    let name = shorthand_key_name(property, source);
+                    let known_expect = name.as_deref() == Some("expect");
+                    let known_not = name.as_deref().is_some_and(is_matcher_member);
+                    if known_expect || (include_defaults && (known_not || name.is_none())) {
+                        let local = node_text(property, source).to_owned();
+                        identifiers.insert(local.clone());
+                        if known_expect && top_level {
+                            trusted.insert(local);
+                        }
                     }
                 }
-            }
-            "pair_pattern" => {
-                let (Some(key), Some(value)) = (
-                    property.child_by_field_name("key"),
-                    property.child_by_field_name("value"),
-                ) else {
-                    continue;
-                };
-                let computed = key.kind() == "computed_property_name";
-                let key = if computed {
-                    key.named_child(0).unwrap_or(key)
-                } else {
-                    key
-                };
-                // Defaults can create mutation aliases, but cannot establish factory trust.
-                let value = if include_defaults
-                    && matches!(
-                        value.kind(),
-                        "assignment_pattern" | "object_assignment_pattern"
-                    ) {
-                    value.child_by_field_name("left").unwrap_or(value)
-                } else {
-                    value
-                };
-                // Mirror the property classification the flat alias path applies: a key the
-                // decoder cannot read is *unknown*, never a known unrelated property. An unknown
-                // key may still name the matcher, so the mutation pass has to keep it as a
-                // possible alias instead of stopping the descent and leaving trust in place.
-                let text = node_text(key, source);
-                let name = if key.kind() == "string" {
-                    super::matcher::static_string_key(key, source)
-                } else if computed || text.contains('\\') {
-                    None
-                } else {
-                    Some(text.to_owned())
-                };
-                let known_expect = name.as_deref() == Some("expect");
-                let known_not = name.as_deref().is_some_and(is_matcher_member);
-                // Unknown computed keys may alias the factory, but cannot establish trust.
-                // include_defaults is used only by the trust-removing mutation pass.
-                let supported = known_expect || (include_defaults && (known_not || name.is_none()));
-                if supported && value.kind() == "identifier" {
-                    let local = node_text(value, source).to_owned();
-                    identifiers.insert(local.clone());
-                    if known_expect {
-                        trusted.insert(local);
-                    }
-                } else if supported && include_defaults && value.kind() == "object_pattern" {
-                    if depth >= MAX_DESTRUCTURING_DEPTH {
-                        // The bound is a stack guard, not a judgement, so the bindings below
-                        // it stay possible aliases. `collect_binding_names` is the existing
-                        // walker for this and already skips key positions and default
-                        // expressions, which are not bindings and must not become aliases.
-                        collect_binding_names(value, source, identifiers);
+                "pair_pattern" => {
+                    let (Some(key), Some(value)) = (
+                        property.child_by_field_name("key"),
+                        property.child_by_field_name("value"),
+                    ) else {
                         continue;
+                    };
+                    let computed = key.kind() == "computed_property_name";
+                    let key = if computed {
+                        key.named_child(0).unwrap_or(key)
+                    } else {
+                        key
+                    };
+                    // Defaults can create mutation aliases, but cannot establish factory trust.
+                    let value = if include_defaults
+                        && matches!(
+                            value.kind(),
+                            "assignment_pattern" | "object_assignment_pattern"
+                        ) {
+                        value.child_by_field_name("left").unwrap_or(value)
+                    } else {
+                        value
+                    };
+                    // Mirror the property classification the flat alias path applies: a key the
+                    // decoder cannot read is *unknown*, never a known unrelated property. An
+                    // unknown key may still name the matcher, so the mutation pass has to keep it
+                    // as a possible alias instead of stopping the descent and leaving trust in
+                    // place.
+                    let text = node_text(key, source);
+                    let name = if key.kind() == "string" {
+                        super::matcher::static_string_key(key, source)
+                    } else if computed || text.contains('\\') {
+                        None
+                    } else {
+                        Some(text.to_owned())
+                    };
+                    let known_expect = name.as_deref() == Some("expect");
+                    let known_not = name.as_deref().is_some_and(is_matcher_member);
+                    // Unknown computed keys may alias the factory, but cannot establish trust.
+                    // include_defaults is used only by the trust-removing mutation pass.
+                    let supported =
+                        known_expect || (include_defaults && (known_not || name.is_none()));
+                    if supported && value.kind() == "identifier" {
+                        let local = node_text(value, source).to_owned();
+                        identifiers.insert(local.clone());
+                        if known_expect && top_level {
+                            trusted.insert(local);
+                        }
+                    } else if supported && include_defaults && value.kind() == "object_pattern" {
+                        // `{ expect: { not: negated } }` names the same object as
+                        // `api.expect.not`, so a write through either must revoke trust
+                        // identically. An unsupported key stops the descent, matching the property
+                        // filter the flat path applies.
+                        pending.push((value, false));
                     }
-                    // `{ expect: { not: negated } }` names the same object as `api.expect.not`, so
-                    // a write through either must revoke trust identically. An unsupported key
-                    // stops the descent, matching the property filter the flat path applies.
-                    // Trust is never established here: reaching deeper may remove trust, never
-                    // grant it, so the recursion collects aliases into a discarded trust set.
-                    collect_expect_pattern(
-                        value,
-                        source,
-                        identifiers,
-                        &mut BTreeSet::new(),
-                        include_defaults,
-                        depth + 1,
-                    );
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 }

@@ -59,6 +59,13 @@ pub(super) fn static_string_key(node: Node<'_>, source: &[u8]) -> Option<String>
             continue;
         }
         match characters.next() {
+            // `\0` is NUL unless another digit follows, and the decoder handles it. Only the
+            // legacy octal forms are unreadable here.
+            Some('0')
+                if !characters
+                    .clone()
+                    .next()
+                    .is_some_and(|next| next.is_ascii_digit()) => {}
             Some(escaped) if escaped.is_ascii_digit() => return None,
             // Every other escape consumes its character, so a doubled backslash cannot be
             // mistaken for the start of one.

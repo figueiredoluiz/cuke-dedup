@@ -3942,8 +3942,8 @@ fn nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases() {
         "a matcher-builder path must be treated the same through both alias forms"
     );
 
-    // The recursion bound is a stack guard, not a judgement about provenance. A pattern nested
-    // past it must still revoke, or the bound would quietly become a way to keep trust.
+    // Depth is not a judgement about provenance. An arbitrarily nested pattern must still
+    // revoke, or nesting would quietly become a way to keep trust.
     let beyond_bound = {
         let mut pattern = "negated".to_owned();
         for _ in 0..24 {
@@ -3954,13 +3954,13 @@ fn nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases() {
     assert_eq!(
         aliased_matcher_outcome(&beyond_bound, MATCHER_WRITE, &config),
         flat_mutated,
-        "a pattern nested past the recursion bound must still revoke trust"
+        "an arbitrarily nested pattern must still revoke trust"
     );
 
     // A variable that appears only as a computed key is not a binding, so a write through it must
-    // not revoke trust. Nested past the bound so the fallback walker is the one deciding.
+    // not revoke trust. Nested deeply so this is decided by the same walk at every level.
     let beyond_bound_key = {
-        let mut pattern = "{ [marker]: { deep: leaf } }".to_owned();
+        let mut pattern = "{ [marker]: { not: leaf } }".to_owned();
         for _ in 0..20 {
             pattern = format!("{{ ['n' + 'ot']: {pattern} }}");
         }
@@ -3982,8 +3982,29 @@ fn nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases() {
             &config
         ),
         flat_mutated,
-        "a binding past the recursion bound must still revoke trust"
+        "a deeply nested binding must still revoke trust"
     );
+
+    // The same property filter applies at every depth. An unrelated property stops the walk
+    // whether it is the first level or the twentieth, and agrees with the flat spelling either
+    // way; depth is not a judgement about provenance.
+    let nested_unrelated = |levels: usize| {
+        let mut pattern = "{ other: { not: leaf } }".to_owned();
+        for _ in 0..levels {
+            pattern = format!("{{ ['n' + 'ot']: {pattern} }}");
+        }
+        format!("const {{ expect: {pattern} }} = api;")
+    };
+    const LEAF_WRITE: &str = "leaf.objectContaining = replacement;";
+    let flat_unrelated =
+        aliased_matcher_outcome("const leaf = api.expect.other.not;", LEAF_WRITE, &config);
+    for levels in [0, 20] {
+        assert_eq!(
+            aliased_matcher_outcome(&nested_unrelated(levels), LEAF_WRITE, &config),
+            flat_unrelated,
+            "an unrelated property must stop the walk at {levels} levels of nesting"
+        );
+    }
 
     // A write to an unrelated property of the aliased object is the same question on both forms,
     // whatever it is decided to mean, so consistency is asserted without fixing the answer.
@@ -4154,6 +4175,18 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
         "a key that genuinely contains the separator names a different property"
     );
 
+    // `\0` is NUL unless another digit follows it, so these name real properties. Only the legacy
+    // octal forms stay unreadable, which keeps the guard and the decoder agreeing.
+    for index in [r"'\0foo'", r"'\0'"] {
+        let (events, _, _) = outcome(index);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.starts_with("assert:expect.")),
+            "`[{index}]` is a readable key, but produced: {events:?}"
+        );
+    }
+
     // An escaped backslash is not the start of an escape: `'foo\\5'` names `foo\5`, which reads
     // fine. Only a digit that an escape actually consumes makes a key unreadable.
     let (escaped_backslash, _, _) = outcome(r"'foo\\5'");
@@ -4233,6 +4266,8 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
         // names `not`, not `n157t`. Answering with the undecoded digits would name a property the
         // source never mentions, so it must stay unreadable rather than resolve to the wrong one.
         "'n\\157t'",
+        // `\0` followed by another digit is the legacy form, unlike a bare `\0`.
+        "'n\\01t'",
     ] {
         let (events, _, _) = outcome(index);
         // Reject every trusted assertion event, not only a modified one: resolving the index to
