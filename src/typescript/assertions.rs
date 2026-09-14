@@ -1178,20 +1178,6 @@ fn collect_expect_pattern(
                         }
                     }
                 }
-                // A rest binding copies every remaining property, so it holds the same matcher
-                // objects the owner holds and `copy.not.objectContaining = x` reaches the
-                // original. The names are not enumerable here, so it is recorded as a possible
-                // alias, never as factory trust. This over-approximates: `copy.not = x` replaces a
-                // slot on the copy alone and changes nothing shared, yet still revokes. Removing
-                // trust that could have been kept is the safe direction; keeping trust that should
-                // have been removed is not.
-                "rest_pattern" if include_defaults => {
-                    if let Some(binding) = property.named_child(0) {
-                        if binding.kind() == "identifier" {
-                            identifiers.insert(node_text(binding, source).to_owned());
-                        }
-                    }
-                }
                 "shorthand_property_identifier_pattern" => {
                     let name = shorthand_key_name(property, source);
                     let known_expect = name.as_deref() == Some("expect");
