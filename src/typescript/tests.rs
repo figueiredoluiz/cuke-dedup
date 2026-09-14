@@ -15,6 +15,71 @@ fn file(language: SourceLanguage) -> SourceFile {
 }
 
 #[test]
+fn framework_entrypoints_preserve_duplicate_findings_and_attribution() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
+    for (module, framework) in [
+        ("@cucumber/cucumber", Framework::CucumberJs),
+        ("cucumber", Framework::CucumberJs),
+        ("playwright-bdd", Framework::PlaywrightBdd),
+        ("playwright-bdd/decorators", Framework::PlaywrightBdd),
+        (
+            "@badeball/cypress-cucumber-preprocessor",
+            Framework::CypressCucumber,
+        ),
+        (
+            "cypress-cucumber-preprocessor/steps",
+            Framework::CypressCucumber,
+        ),
+        ("cypress-cucumber-preprocessor", Framework::Unknown),
+        ("playwright-bdd/decorators-extra", Framework::Unknown),
+        ("@cucumber/cucumber-extra", Framework::Unknown),
+        ("@cucumber/cucumber/unknown", Framework::Unknown),
+    ] {
+        for binding in [
+            format!("import {{ Given as Setup }} from '{module}';"),
+            format!("const {{ Given: Setup }} = require('{module}');"),
+        ] {
+            let body = if module == "playwright-bdd/decorators" {
+                "class Steps {
+                    @Setup('same step') first() { firstAction(); }
+                    @Setup('same step') second() { secondAction(); }
+                }"
+            } else {
+                "Setup('same step', () => firstAction());
+                 Setup('same step', () => secondAction());"
+            };
+            let definitions = extract_ts(&format!("{binding}\n{body}"));
+            let supported = framework != Framework::Unknown;
+            assert_eq!(
+                definitions.len(),
+                if supported { 2 } else { 0 },
+                "{binding}"
+            );
+            assert!(
+                definitions
+                    .iter()
+                    .all(|definition| definition.framework == framework),
+                "{binding}"
+            );
+            let result = crate::analysis::analyze(definitions, vec![], &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .filter(|finding| finding.rule == Rule::DuplicateMatcher)
+                    .count(),
+                usize::from(supported),
+                "{binding}",
+            );
+            if !supported {
+                assert!(result.findings.is_empty(), "{binding}");
+            }
+        }
+    }
+}
+
+#[test]
 fn extracts_cucumber_import_alias_and_regex() {
     let source = r#"
 import { Given as G, Then } from '@cucumber/cucumber';

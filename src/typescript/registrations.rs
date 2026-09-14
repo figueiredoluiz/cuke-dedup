@@ -1,10 +1,12 @@
 use super::ast::{
-    export_has_runtime_bindings, framework_for_module, import_has_runtime_bindings,
-    import_has_runtime_module_reference, import_module, is_supported_module,
-    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
-    registration_exports_for_framework, registration_exports_for_module, string_literal,
-    RegistrationExport, RegistrationExportKind, RegistrationExports, DEFAULT_REGISTRATIONS,
-    REGISTRATIONS,
+    export_has_runtime_bindings, import_has_runtime_bindings, import_has_runtime_module_reference,
+    import_module, is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
+    string_literal,
+};
+use super::frameworks::{
+    framework_for_module, is_supported_module, registration_exports_for_framework,
+    registration_exports_for_module, RegistrationExport, RegistrationExportKind,
+    RegistrationExports, DEFAULT_REGISTRATIONS, REGISTRATIONS,
 };
 use super::matcher::decode_js_string;
 use super::module_resolver::{merge_framework, RegistrationResolver};
@@ -774,7 +776,8 @@ fn collect_create_bdd_factories(
                 if pattern.kind() == "object_pattern"
                     && value.kind() == "call_expression"
                     && call_name(value, source) == Some("require")
-                    && call_string_argument(value, source) == Some(super::ast::PLAYWRIGHT_MODULE)
+                    && call_string_argument(value, source)
+                        == Some(super::frameworks::PLAYWRIGHT_MODULE)
                 {
                     collect_named_binding_aliases(
                         pattern,
