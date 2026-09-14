@@ -18,7 +18,7 @@ steps:
       fetch-depth: 0
       persist-credentials: false
 
-  - uses: figueiredoluiz/cuke-dedup@v0.2.1
+  - uses: figueiredoluiz/cuke-dedup@v0.3.0
     id: cuke-dedup
     with:
       path: .
