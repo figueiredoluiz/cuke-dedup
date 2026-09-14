@@ -2,6 +2,7 @@
 
 mod assertions;
 mod ast;
+mod frameworks;
 mod handler;
 mod matcher;
 mod module_resolver;

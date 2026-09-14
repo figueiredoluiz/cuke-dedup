@@ -1,8 +1,10 @@
 use super::ast::{
-    framework_for_module, import_has_runtime_bindings, import_module, is_star_export,
-    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
-    registration_exports_for_framework, registration_exports_for_module, string_literal,
-    RegistrationExports, FRAMEWORK_MODULES,
+    import_has_runtime_bindings, import_module, is_star_export, is_type_only_declaration,
+    is_type_only_specifier, push_named_children_reverse, string_literal,
+};
+use super::frameworks::{
+    framework_for_module, is_supported_module, registration_exports_for_framework,
+    registration_exports_for_module, RegistrationExports,
 };
 use super::node_text;
 use super::project_resolution::ProjectResolution;
@@ -207,18 +209,17 @@ fn resolve_active_exports(
     let mut framework = module.framework;
     let mut cacheable = true;
     for reexport in module.reexports {
-        let (available, available_framework) =
-            if FRAMEWORK_MODULES.contains(&reexport.module.as_str()) {
-                (
-                    registration_exports_for_module(&reexport.module),
-                    framework_for_module(&reexport.module),
-                )
-            } else {
-                let resolved =
-                    resolve_exports(path, &reexport.module, boundary, project, state, depth + 1)?;
-                cacheable &= resolved.cacheable;
-                (resolved.exports.unwrap_or_default(), resolved.framework)
-            };
+        let (available, available_framework) = if is_supported_module(&reexport.module) {
+            (
+                registration_exports_for_module(&reexport.module),
+                framework_for_module(&reexport.module),
+            )
+        } else {
+            let resolved =
+                resolve_exports(path, &reexport.module, boundary, project, state, depth + 1)?;
+            cacheable &= resolved.cacheable;
+            (resolved.exports.unwrap_or_default(), resolved.framework)
+        };
         framework = merge_framework(framework, available_framework);
         for (imported, exported) in &reexport.specifiers {
             if let Some(canonical) = available.get(imported) {
@@ -302,7 +303,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
             "import_statement" if import_has_runtime_bindings(node) => {
                 if let Some(module) = import_module(node, source) {
                     collect_imported_binding_origins(node, source, module, &mut imported_bindings);
-                    if FRAMEWORK_MODULES.contains(&module) {
+                    if is_supported_module(module) {
                         let available = registration_exports_for_module(module);
                         collect_imported_registrations(
                             node,
@@ -449,7 +450,7 @@ fn collect_factory_aliases(
             if let Some(name) = node.child_by_field_name("name") {
                 let imported = node_text(name, source);
                 if available.get(imported).is_some_and(|export| {
-                    export.kind == super::ast::RegistrationExportKind::Factory
+                    export.kind == super::frameworks::RegistrationExportKind::Factory
                 }) {
                     let local = node
                         .child_by_field_name("alias")
@@ -480,7 +481,7 @@ fn collect_commonjs_imports(
     let Some(module) = call_string_argument(value, source) else {
         return;
     };
-    if FRAMEWORK_MODULES.contains(&module) {
+    if is_supported_module(module) {
         collect_pattern_registrations(
             pattern,
             source,
@@ -488,7 +489,7 @@ fn collect_commonjs_imports(
             local_registrations,
         );
     }
-    if module == super::ast::PLAYWRIGHT_MODULE {
+    if module == super::frameworks::PLAYWRIGHT_MODULE {
         collect_pattern_alias(pattern, source, "createBdd", create_bdd_aliases);
     }
 }
