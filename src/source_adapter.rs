@@ -581,6 +581,11 @@ mod tests {
         let mut suffixes = BTreeSet::new();
         for registration in SOURCE_ADAPTER_REGISTRY {
             assert!(suffixes.insert(registration.suffix), "duplicate suffix");
+            assert!(
+                registration.initialize_session.is_some(),
+                "{} is missing session initialization",
+                registration.suffix
+            );
             let file = SourceFile {
                 path: PathBuf::from(format!("steps{}", registration.suffix)),
                 language: registration.adapter.language(),
