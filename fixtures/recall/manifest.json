@@ -4,6 +4,85 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "b1-computed-positions-match-dot-access",
+      "path": "b1-computed-positions",
+      "expectedDefinitions": 6,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the factory gauge is settled", "the archive factory reading has finished"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the terminal panel reads the first value", "the terminal panel reads the final value"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the terminal panel reads the first value", "the terminal panel reads the final value"]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the option panel reads the first value", "the option panel reads the final value"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the option panel reads the first value", "the option panel reads the final value"]
+        }
+      ]
+    },
+    {
+      "name": "open1-nested-alias-revokes-matcher-trust",
+      "path": "open1-nested-alias",
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the crate label is confirmed", "the crate label is now confirmed"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the crate label is confirmed", "the crate label is now confirmed"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+        }
+      ]
+    },
+    {
+      "name": "open2-computed-modifier-preserves-semantics",
+      "path": "open2-computed-modifier",
+      "expectedDefinitions": 6,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the inventory badge is settled", "the archive marker has finished loading"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": ["the computed panel shows the first state", "the computed panel shows the final state"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the computed panel shows the first state", "the computed panel shows the final state"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the gauge reading is checked", "the gauge reading is now checked"]
+        }
+      ]
+    },
+    {
       "name": "review-gap-require-mutation",
       "path": "review-gaps",
       "arguments": ["--definitions", "require-mutation.cjs"],

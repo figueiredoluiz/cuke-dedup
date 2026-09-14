@@ -35,6 +35,47 @@ pub(super) fn matcher_value(
     }
 }
 
+/// Decodes a property key that is written as a static string literal.
+///
+/// Deciding this from text alone is unsound: any expression whose text merely begins and ends with
+/// a matching quote — a sequence expression like `['a', f(), 'b']` or a concatenation like
+/// `['a' + 'b']` — would otherwise decode into a key that names nothing, either inventing a
+/// property or masking an unknown one. Requiring the node to be a string literal keeps an
+/// undecodable key undecodable, so callers apply their conservative branch instead.
+pub(super) fn static_string_key(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() != "string" {
+        return None;
+    }
+    let text = node_text(node, source);
+    // Legacy numeric escapes are not decoded here: `'\157'` is `o`, but the shared decoder reads
+    // the digits literally and would answer `157`. A wrong name is worse than no name — it grants
+    // trust to a property the source never mentions — so an unsupported escape stays unreadable.
+    //
+    // Walk the escapes rather than scanning adjacent bytes: in `'foo\\5'` the first backslash
+    // escapes the second and the `5` is an ordinary character, so the key is readable.
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            continue;
+        }
+        match characters.next() {
+            // `\0` is NUL unless another digit follows, and the decoder handles it. Only the
+            // legacy octal forms are unreadable here.
+            Some('0')
+                if !characters
+                    .clone()
+                    .next()
+                    .is_some_and(|next| next.is_ascii_digit()) => {}
+            Some(escaped) if escaped.is_ascii_digit() => return None,
+            // Every other escape consumes its character, so a doubled backslash cannot be
+            // mistaken for the start of one.
+            Some(_) => {}
+            None => return None,
+        }
+    }
+    decode_js_string(text)
+}
+
 pub(super) fn decode_js_string(text: &str) -> Option<String> {
     let quote = text.chars().next()?;
     if text.chars().last()? != quote || !matches!(quote, '\'' | '"') {
@@ -61,6 +102,10 @@ pub(super) fn decode_js_string(text: &str) -> Option<String> {
             '"' => decoded.push('"'),
             '\\' => decoded.push('\\'),
             '\n' => {}
+            // U+2028 and U+2029 are JavaScript line terminators, so a backslash before either is a
+            // line continuation that contributes nothing. Preserving the separator instead would
+            // both lose the real name and conflate the key with one that genuinely contains it.
+            '\u{2028}' | '\u{2029}' => {}
             '\r' => {
                 if chars.clone().next() == Some('\n') {
                     chars.next();

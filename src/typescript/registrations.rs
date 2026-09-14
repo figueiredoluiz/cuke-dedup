@@ -8,7 +8,7 @@ use super::frameworks::{
     registration_exports_for_module, RegistrationExport, RegistrationExportKind,
     RegistrationExports, DEFAULT_REGISTRATIONS, REGISTRATIONS,
 };
-use super::matcher::decode_js_string;
+use super::matcher::static_string_key;
 use super::module_resolver::{merge_framework, RegistrationResolver};
 use super::node_text;
 use crate::model::Framework;
@@ -180,10 +180,10 @@ pub(super) fn registration_callee<'tree, 'source>(
         }),
         "subscript_expression" => Some(RegistrationCallee::Property {
             object: unwrap_registration_callee(function.child_by_field_name("object")?)?,
-            name: Cow::Owned(decode_js_string(node_text(
+            name: Cow::Owned(static_string_key(
                 function.child_by_field_name("index")?,
                 source,
-            ))?),
+            )?),
         }),
         _ => None,
     }
