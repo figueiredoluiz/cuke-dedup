@@ -3349,8 +3349,8 @@ fn aliased_matcher_outcome(
     let usage = "api.expect(state).toEqual(api.expect.not.objectContaining({ role: 'admin' }));";
     let source = format!(
         "const api = require('@playwright/test'); {alias} {write} \
-         Then('the parcel is ready', ({{ state }}) => {{ {usage} }}); \
-         Then('the parcel is now ready', ({{ state }}) => {{ {usage} }});"
+         Then('the parcel is ready', async ({{ state }}) => {{ {usage} }}); \
+         Then('the parcel is now ready', async ({{ state }}) => {{ {usage} }});"
     );
     let extracted = definitions(&source);
     assert_eq!(extracted.len(), 2, "{source}");
@@ -3426,11 +3426,20 @@ fn flat_matcher_aliases_revoke_trust_only_for_matcher_paths() {
 
     // The other side of the provenance decision: a write under a path that is not a matcher path
     // must not revoke trust, so a collector that followed *any* property would fail here.
-    let other = aliased_matcher_outcome("const negated = api.other.not;", MATCHER_WRITE, &config);
-    assert!(
-        other.2.contains(&Rule::DuplicateHandler),
-        "a write under a path that is not a matcher path must not revoke trust: {other:?}"
-    );
+    for alias in [
+        // A sibling of the trusted factory: the walk stops before the matcher allowlist.
+        "const negated = api.other.not;",
+        // A member *under* the trusted factory that is not a matcher: this is what pins the
+        // allowlist itself, since a change treating every `api.expect.<property>` as a matcher
+        // path would revoke trust here while leaving the sibling case untouched.
+        "const negated = api.expect.unknownProperty;",
+    ] {
+        let other = aliased_matcher_outcome(alias, MATCHER_WRITE, &config);
+        assert!(
+            other.2.contains(&Rule::DuplicateHandler),
+            "a write under `{alias}` is not a matcher path and must not revoke trust: {other:?}"
+        );
+    }
 }
 
 /// Every position of an assertion chain, as `label, dotted, dynamic, event prefix`.
@@ -3490,8 +3499,8 @@ fn assertion_position_outcome(
 ) -> (Vec<Vec<String>>, Vec<Rule>) {
     let source = format!(
         "const api = require('@playwright/test'); \
-         Then('alpha holds', ({{ state }}) => {{ {}; }}); \
-         Then('alpha stands', ({{ state }}) => {{ {}; }});",
+         Then('alpha holds', async ({{ state }}) => {{ {}; }}); \
+         Then('alpha stands', async ({{ state }}) => {{ {}; }});",
         expression.replace("VALUE", left),
         expression.replace("VALUE", right)
     );
@@ -3628,6 +3637,15 @@ fn modifier_chains_are_ordered_and_semantic() {
         }
         seen.push((chain, produced));
     }
+
+    // A nested asymmetric builder contributes to the expected value, so its own modifier must be
+    // part of the assertion. The outer `assert:expect#toEqual:` prefix carries no information about
+    // it, so dropping the nested `not` would otherwise go unnoticed.
+    assert_ne!(
+        events("api.expect(state).toEqual(api.expect.not.objectContaining({ r: VALUE }))"),
+        events("api.expect(state).toEqual(api.expect.objectContaining({ r: VALUE }))"),
+        "a negated nested builder must not match the same builder without the modifier"
+    );
 
     // `poll` is a supported factory option and names itself in the chain.
     let polled = events("api.expect.poll(() => state, { timeout: 1 }).toBe(VALUE)");
