@@ -119,6 +119,7 @@ pub(crate) fn baseline_snapshot(
         }
         command
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
             .env("GIT_NO_LAZY_FETCH", "1")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_CONFIG_GLOBAL", temporary.path().join("no-config"))
@@ -198,12 +199,10 @@ pub(crate) fn baseline_snapshot(
         }
     }
     let repository = git(root, &["rev-parse".as_ref(), "--show-toplevel".as_ref()])?;
-    let repository =
-        String::from_utf8(repository).context("baseline repository path is not UTF-8")?;
     // Remove Git's one line terminator, not whitespace belonging to the path.
-    let repository = crate::config::normalize_platform_path(PathBuf::from(
-        repository.strip_suffix('\n').unwrap_or(&repository),
-    ));
+    let repository = crate::config::normalize_platform_path(path_from_git_bytes(
+        repository.strip_suffix(b"\n").unwrap_or(&repository),
+    )?);
     let relative = root
         .strip_prefix(&repository)
         .context("baseline root is outside repository")?;

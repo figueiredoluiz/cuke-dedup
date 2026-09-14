@@ -36,10 +36,17 @@ fn write(root: &Path, relative: &str, contents: &str) {
 fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
     let sandbox = tempfile::tempdir().unwrap();
     // Trailing spaces are valid on Unix and must not be trimmed from Git's output.
+    #[cfg(not(target_os = "linux"))]
     let repository_name = if cfg!(unix) {
         " repository "
     } else {
         "repository"
+    };
+    // Linux also permits non-UTF-8 bytes in repository roots.
+    #[cfg(target_os = "linux")]
+    let repository_name = {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::OsStr::from_bytes(b" repository-\xff ")
     };
     let root = sandbox.path().join(repository_name);
     fs::create_dir(&root).unwrap();
@@ -360,6 +367,33 @@ fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("unsupported submodules"));
+    let gitlink = git(&["rev-parse", "HEAD"]);
+    let gitlink_tree = git(&["rev-parse", "HEAD^{tree}"]);
+    let clean_tree = git(&["rev-parse", &format!("{}^{{tree}}", oid.trim())]);
+    for (original, replacement) in [
+        (gitlink.trim(), oid.trim()),
+        (gitlink_tree.trim(), clean_tree.trim()),
+    ] {
+        // A replacement must not hide a real submodule from the snapshot pre-check.
+        git(&["replace", original, replacement]);
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root.path())
+            .args([".", "--baseline-from-ref", gitlink.trim()])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unsupported submodules"));
+        git(&["replace", "-d", original]);
+        // Conversely, a replacement must not inject a submodule into a clean base.
+        git(&["replace", replacement, original]);
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root.path())
+            .args([".", "--baseline-from-ref", oid.trim()])
+            .assert()
+            .code(0);
+        git(&["replace", "-d", replacement]);
+    }
 }
 
 #[cfg(unix)]
