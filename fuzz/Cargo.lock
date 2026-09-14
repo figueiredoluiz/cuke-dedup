@@ -221,6 +221,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strsim",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-javascript",
  "tree-sitter-typescript",

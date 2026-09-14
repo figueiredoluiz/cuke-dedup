@@ -18,9 +18,11 @@ regenerated whenever `Cargo.lock` changes.
 | anstyle-query | 1.1.5 | MIT OR Apache-2.0 | Not declared | https://github.com/rust-cli/anstyle.git |
 | anstyle-wincon | 3.0.11 | MIT OR Apache-2.0 | Not declared | https://github.com/rust-cli/anstyle.git |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/anyhow |
+| bitflags | 2.13.1 | MIT OR Apache-2.0 | The Rust Project Developers | https://github.com/bitflags/bitflags |
 | bstr | 1.13.1 | MIT OR Apache-2.0 | Andrew Gallant <jamslam@gmail.com> | https://github.com/BurntSushi/bstr |
 | bytecount | 0.6.9 | Apache-2.0/MIT | Andre Bogus <bogusandre@gmail.de>, Joshua Landau <joshua@landau.ws> | https://github.com/llogiq/bytecount |
 | cc | 1.4.4 | MIT OR Apache-2.0 | Not declared | https://github.com/rust-lang/cc-rs |
+| cfg-if | 1.0.4 | MIT OR Apache-2.0 | Alex Crichton <alex@alexcrichton.com> | https://github.com/rust-lang/cfg-if |
 | clap | 4.6.6 | MIT OR Apache-2.0 | Not declared | https://github.com/clap-rs/clap |
 | clap_builder | 4.6.6 | MIT OR Apache-2.0 | Not declared | https://github.com/clap-rs/clap |
 | clap_derive | 4.6.4 | MIT OR Apache-2.0 | Not declared | https://github.com/clap-rs/clap |
@@ -35,7 +37,10 @@ regenerated whenever `Cargo.lock` changes.
 | derive_more-impl | 2.1.1 | MIT | Jelte Fennema <github-tech@jeltef.nl> | https://github.com/JelteF/derive_more |
 | either | 1.18.0 | MIT OR Apache-2.0 | Not declared | https://github.com/rayon-rs/either |
 | equivalent | 1.0.2 | Apache-2.0 OR MIT | Not declared | https://github.com/indexmap-rs/equivalent |
+| errno | 0.3.14 | MIT OR Apache-2.0 | Chris Wong <lambda.fairy@gmail.com>, Dan Gohman <dev@sunfishcode.online> | https://github.com/lambda-fairy/rust-errno |
+| fastrand | 2.5.0 | Apache-2.0 OR MIT | Stjepan Glavina <stjepang@gmail.com> | https://github.com/smol-rs/fastrand |
 | find-msvc-tools | 0.1.11 | MIT OR Apache-2.0 | Not declared | https://github.com/rust-lang/cc-rs |
+| getrandom | 0.4.3 | MIT OR Apache-2.0 | The Rand Project Developers | https://github.com/rust-random/getrandom |
 | gherkin | 0.16.0 | MIT OR Apache-2.0 | Brendan Molloy <brendan@bbqsrc.net> | https://github.com/cucumber-rs/gherkin |
 | globset | 0.4.20 | Unlicense OR MIT | Andrew Gallant <jamslam@gmail.com> | https://github.com/BurntSushi/ripgrep/tree/master/crates/globset |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | Not declared | https://github.com/rust-lang/hashbrown |
@@ -44,21 +49,26 @@ regenerated whenever `Cargo.lock` changes.
 | indexmap | 2.14.1 | Apache-2.0 OR MIT | Not declared | https://github.com/indexmap-rs/indexmap |
 | is_terminal_polyfill | 1.70.2 | MIT OR Apache-2.0 | Not declared | https://github.com/polyfill-rs/is_terminal_polyfill |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/itoa |
+| libc | 0.2.189 | MIT OR Apache-2.0 | Not declared | https://github.com/rust-lang/libc |
 | libyaml-rs | 0.3.0 | MIT | David Tolnay <dtolnay@gmail.com>, YAML Organization <noreply@yaml.org> | https://github.com/yaml/libyaml-rs |
+| linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Dan Gohman <dev@sunfishcode.online> | https://github.com/sunfishcode/linux-raw-sys |
 | log | 0.4.34 | MIT OR Apache-2.0 | The Rust Project Developers | https://github.com/rust-lang/log |
 | memchr | 2.8.3 | Unlicense OR MIT | Andrew Gallant <jamslam@gmail.com>, bluss | https://github.com/BurntSushi/memchr |
 | nom | 8.0.0 | MIT | contact@geoffroycouprie.com | https://github.com/rust-bakery/nom |
 | nom_locate | 5.0.0 | MIT | Florent FAYOLLE <florent.fayolle69@gmail.com>, Christopher Durham <cad97@cad97.com>, Valentin Lorentz <progval+git@progval.net> | https://github.com/fflorent/nom_locate |
+| once_cell | 1.21.4 | MIT OR Apache-2.0 | Aleksey Kladov <aleksey.kladov@gmail.com> | https://github.com/matklad/once_cell |
 | once_cell_polyfill | 1.70.2 | MIT OR Apache-2.0 | Not declared | https://github.com/polyfill-rs/once_cell_polyfill |
 | peg | 0.6.3 | MIT | Kevin Mehall <km@kevinmehall.net> | https://github.com/kevinmehall/rust-peg |
 | peg-macros | 0.6.3 | MIT | Kevin Mehall <km@kevinmehall.net> | https://github.com/kevinmehall/rust-peg |
 | peg-runtime | 0.6.3 | MIT | Kevin Mehall <km@kevinmehall.net> | https://github.com/kevinmehall/rust-peg |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com>, Alex Crichton <alex@alexcrichton.com> | https://github.com/dtolnay/proc-macro2 |
 | quote | 1.0.47 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/quote |
+| r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | Not declared | https://github.com/r-efi/r-efi |
 | regex | 1.13.1 | MIT OR Apache-2.0 | The Rust Project Developers, Andrew Gallant <jamslam@gmail.com> | https://github.com/rust-lang/regex |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | The Rust Project Developers, Andrew Gallant <jamslam@gmail.com> | https://github.com/rust-lang/regex |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | The Rust Project Developers, Andrew Gallant <jamslam@gmail.com> | https://github.com/rust-lang/regex |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | Not declared | https://github.com/djc/rustc-version-rs |
+| rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com> | https://github.com/bytecodealliance/rustix |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/ryu |
 | same-file | 1.0.6 | Unlicense/MIT | Andrew Gallant <jamslam@gmail.com> | https://github.com/BurntSushi/same-file |
 | semver | 1.0.28 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/semver |
@@ -72,6 +82,7 @@ regenerated whenever `Cargo.lock` changes.
 | strsim | 0.11.1 | MIT | Danny Guo <danny@dannyguo.com>, maxbachmann <oss@maxbachmann.de> | https://github.com/rapidfuzz/strsim-rs |
 | syn | 2.0.119 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/syn |
 | syn | 3.0.4 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/syn |
+| tempfile | 3.27.0 | MIT OR Apache-2.0 | Steven Allen <steven@stebalien.com>, The Rust Project Developers, Ashley Mannix <ashleymannix@live.com.au>, Jason White <me@jasonwhite.io> | https://github.com/Stebalien/tempfile |
 | textwrap | 0.16.2 | MIT | Martin Geisler <martin@geisler.net> | https://github.com/mgeisler/textwrap |
 | thiserror | 2.0.20 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/thiserror |
 | thiserror-impl | 2.0.20 | MIT OR Apache-2.0 | David Tolnay <dtolnay@gmail.com> | https://github.com/dtolnay/thiserror |

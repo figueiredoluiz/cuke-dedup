@@ -121,6 +121,12 @@ test("action preserves JSONL stdout while adding its internal JSON report", () =
   );
 });
 
+test("action forwards a Git baseline and zero allowance without shell interpretation", () => {
+  const args = buildArguments({ baselineFromRef: "topic;echo unsafe", failOnNew: "0" });
+  assert.deepEqual(args.slice(-4), ["--baseline-from-ref", "topic;echo unsafe", "--fail-on-new", "0"]);
+  assert.ok(!args.includes("--baseline"));
+});
+
 test("action exposes deterministic report generation", () => {
   assert.deepEqual(
     buildArguments({

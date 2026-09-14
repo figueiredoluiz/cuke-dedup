@@ -126,8 +126,18 @@ struct CheckOptions {
     changed_since: Option<String>,
 
     /// Suppress findings already present in a versioned semantic baseline.
-    #[arg(long, global = true, value_name = "BASELINE.json")]
+    #[arg(
+        long,
+        global = true,
+        value_name = "BASELINE.json",
+        group = "baseline_source"
+    )]
     baseline: Option<PathBuf>,
+
+    /// Compare with a fetched Git revision using the current analysis configuration.
+    #[arg(long, global = true, value_name = "GIT_REF", group = "baseline_source",
+        conflicts_with_all = ["baseline", "update_baseline"])]
+    baseline_from_ref: Option<String>,
 
     /// Rewrite the configured baseline from the current complete analysis.
     #[arg(
@@ -145,7 +155,7 @@ struct CheckOptions {
         value_name = "COUNT",
         num_args = 0..=1,
         default_missing_value = "0",
-        requires = "baseline",
+        requires = "baseline_source",
         conflicts_with = "update_baseline"
     )]
     fail_on_new: Option<usize>,
@@ -596,6 +606,46 @@ fn apply_baseline_mode(
     run_incomplete: bool,
     diagnostics: &mut Diagnostics,
 ) -> Result<Option<modes::BaselineOutcome>> {
+    if let Some(revision) = &options.baseline_from_ref {
+        let (_snapshot, root) = modes::baseline_snapshot(&config.root, revision)?;
+        // Freeze the current policy instead of loading historical rule/config overrides.
+        let mut base_config = config.clone();
+        base_config.root = root;
+        base_config.fail_on_incomplete = true;
+        let files = discovery::discover(&base_config)?;
+        let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
+        let extracted = extract_corpus(&base_config, &files, &None, &mut base_diagnostics);
+        let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics)?;
+        if base.run_incomplete
+            || !base_diagnostics.errors.is_empty()
+            || (!files.definitions.is_empty() && base.result.definitions.is_empty())
+            || (files.features.is_empty() && !base.result.definitions.is_empty())
+        {
+            bail!(
+                "baseline revision `{revision}` is incomplete: {}",
+                base_diagnostics
+                    .errors
+                    .iter()
+                    .chain(&base_diagnostics.warnings)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        apply_finding_modes(
+            &mut base.result,
+            &files,
+            &None,
+            base.parsed_feature_files,
+            base.feature_files_without_steps,
+        );
+        return modes::apply_reference_baseline(
+            &mut result.findings,
+            &base.result.findings,
+            revision,
+        )
+        .map(Some);
+    }
     let Some(path) = &options.baseline else {
         return Ok(None);
     };

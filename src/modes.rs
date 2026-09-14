@@ -9,8 +9,12 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+// Snapshotting is additional disk work, separate from the analyzer's per-source read limits.
+const MAX_BASELINE_CHECKOUT_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Returns tracked changes since `base` plus untracked files beneath `root`.
 pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
@@ -87,6 +91,153 @@ fn resolve_commit(root: &Path, base: &str) -> Result<String> {
         bail!("git returned an invalid commit object id for `{base}`");
     }
     Ok(oid)
+}
+
+/// Materializes a fetched commit without running checkout hooks or configured filters.
+/// An independent local clone avoids registering worktrees or modifying the caller's index.
+pub(crate) fn baseline_snapshot(
+    root: &Path,
+    revision: &str,
+) -> Result<(tempfile::TempDir, PathBuf)> {
+    if revision.trim().is_empty() || revision.starts_with('-') {
+        bail!("invalid baseline revision `{revision}`");
+    }
+    let temporary = tempfile::tempdir().context("cannot create temporary baseline checkout")?;
+    let git = |directory: &Path, args: &[&std::ffi::OsStr]| -> Result<Vec<u8>> {
+        let mut command = git_at(directory);
+        // Neither caller-supplied Git config nor global templates/filters may execute code.
+        // Clone does not copy the source repository's local config or hooks.
+        for (name, _) in std::env::vars_os() {
+            // Windows preserves spelling but treats environment names case-insensitively.
+            if name
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("GIT_")
+            {
+                command.env_remove(name);
+            }
+        }
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_CONFIG_GLOBAL", temporary.path().join("no-config"))
+            .arg("-c")
+            .arg(format!(
+                "core.hooksPath={}",
+                temporary.path().join("no-hooks").display()
+            ))
+            .args(["-c", "core.fsmonitor=false"])
+            .args(args);
+        if args.first().is_some_and(|arg| *arg == "ls-tree") {
+            // Fixed format: six mode digits, space, at most 20 size digits, newline.
+            let limit = 28 * crate::resource_limits::MAX_WORKSPACE_SCAN_ENTRIES as u64;
+            let mut child = command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            let mut bytes = Vec::new();
+            let read = child
+                .stdout
+                .take()
+                .context("missing baseline Git stdout")
+                .and_then(|stdout| Ok(stdout.take(limit + 1).read_to_end(&mut bytes)?));
+            if read.is_err() || bytes.len() as u64 > limit {
+                let _ = child.kill();
+                let _ = child.wait();
+                read?;
+                bail!("baseline tree listing exceeds the bounded snapshot metadata limit");
+            }
+            if !child.wait()?.success() {
+                bail!("baseline Git tree enumeration failed");
+            }
+            return Ok(bytes);
+        }
+        let output = command.output().context("failed to run Git for baseline")?;
+        if !output.status.success() {
+            bail!(
+                "baseline Git operation failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(output.stdout)
+    };
+    let oid = git(
+        root,
+        &[
+            "rev-parse".as_ref(),
+            "--verify".as_ref(),
+            "--end-of-options".as_ref(),
+            format!("{revision}^{{commit}}").as_ref(),
+        ],
+    )?;
+    let oid = String::from_utf8(oid).context("invalid baseline commit id")?;
+    let tree = git(
+        root,
+        &[
+            "ls-tree".as_ref(),
+            "--full-tree".as_ref(),
+            "-r".as_ref(),
+            "--format=%(objectmode) %(objectsize)".as_ref(),
+            oid.trim().as_ref(),
+        ],
+    )?;
+    let mut total_bytes = 0_u64;
+    for (index, entry) in String::from_utf8(tree)?.lines().enumerate() {
+        if entry.starts_with("160000 ") {
+            bail!("baseline checkout contains unsupported submodules");
+        }
+        let (_, size) = entry
+            .split_once(' ')
+            .context("invalid baseline tree entry")?;
+        total_bytes = total_bytes.saturating_add(size.parse::<u64>()?);
+        if total_bytes > MAX_BASELINE_CHECKOUT_BYTES
+            || index >= crate::resource_limits::MAX_WORKSPACE_SCAN_ENTRIES
+        {
+            bail!("baseline checkout exceeds the 512 MiB / 100000-file snapshot limit");
+        }
+    }
+    let repository = git(root, &["rev-parse".as_ref(), "--show-toplevel".as_ref()])?;
+    // Remove Git's one line terminator, not whitespace belonging to the path.
+    let repository = crate::config::normalize_platform_path(path_from_git_bytes(
+        repository.strip_suffix(b"\n").unwrap_or(&repository),
+    )?);
+    let relative = root
+        .strip_prefix(&repository)
+        .context("baseline root is outside repository")?;
+    let checkout = temporary.path().join("checkout");
+    git(
+        &repository,
+        &[
+            "clone".as_ref(),
+            "--shared".as_ref(),
+            "--no-checkout".as_ref(),
+            "--template=".as_ref(),
+            "--".as_ref(),
+            repository.as_os_str(),
+            checkout.as_os_str(),
+        ],
+    )?;
+    git(
+        &checkout,
+        &[
+            "checkout".as_ref(),
+            "--detach".as_ref(),
+            oid.trim().as_ref(),
+        ],
+    )?;
+    let scoped = checkout.join(relative);
+    if !scoped.is_dir() {
+        bail!("baseline revision does not contain the analysis directory");
+    }
+    let scoped = crate::config::normalize_platform_path(scoped.canonicalize()?);
+    if !scoped.starts_with(crate::config::normalize_platform_path(
+        checkout.canonicalize()?,
+    )) {
+        bail!("baseline analysis directory escapes its checkout");
+    }
+    Ok((temporary, scoped))
 }
 
 /// Rejects changed-file mode when the analyzed root itself is excluded by Git.
@@ -235,6 +386,14 @@ pub struct BaselineOutcome {
 pub fn apply_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
     let baseline = load_baseline(baseline_path)?;
     apply_loaded_baseline(findings, baseline_path, &baseline)
+}
+
+pub(crate) fn apply_reference_baseline(
+    findings: &mut [Finding],
+    accepted: &[Finding],
+    revision: &str,
+) -> Result<BaselineOutcome> {
+    apply_loaded_baseline(findings, Path::new(revision), &build_baseline(accepted))
 }
 
 /// Rewrites a baseline from the current active findings and suppresses those findings.

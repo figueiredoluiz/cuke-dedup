@@ -32,6 +32,506 @@ fn write(root: &Path, relative: &str, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
+#[test]
+fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
+    let sandbox = tempfile::tempdir().unwrap();
+    // Trailing spaces are valid on Unix and must not be trimmed from Git's output.
+    #[cfg(not(target_os = "linux"))]
+    let repository_name = if cfg!(unix) {
+        " repository "
+    } else {
+        "repository"
+    };
+    // Linux also permits non-UTF-8 bytes in repository roots.
+    #[cfg(target_os = "linux")]
+    let repository_name = {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::OsStr::from_bytes(b" repository-\xff ")
+    };
+    let root = sandbox.path().join(repository_name);
+    fs::create_dir(&root).unwrap();
+    let git = |args: &[&str]| {
+        let output = fixture_git()
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "test@example.invalid"]);
+    git(&["config", "user.name", "Test"]);
+    let scope = root.join("packages/suite");
+    write(&scope, "README.md", "Synthetic suite\n");
+    git(&["add", "."]);
+    git(&["commit", "-qm", "empty suite"]);
+    git(&["tag", "empty-suite"]);
+    write(
+        &scope,
+        "steps.ts",
+        "Given('shared', () => first());\nGiven('shared', () => second());\n",
+    );
+    write(
+        &scope,
+        "example.feature",
+        "Feature: Example\n  Scenario: Example\n    Given shared\n",
+    );
+    // The old policy disables all rules. The current explicit overrides must govern BOTH scans.
+    let rules: serde_json::Map<String, Value> = cuke_dedup::model::Rule::ALL
+        .iter()
+        .map(|rule| (rule.to_string(), Value::from("off")))
+        .collect();
+    write(
+        &scope,
+        ".cuke-dedup.json",
+        &serde_json::json!({"rules": rules}).to_string(),
+    );
+    write(&root, ".gitattributes", "*.ts filter=unsafe\n");
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    // These would break checkout if the snapshot inherited repository config or hooks.
+    write(&root, "hooks/post-checkout", "#!/bin/sh\nexit 99\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            root.join("hooks/post-checkout"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    git(&["config", "core.hooksPath", "hooks"]);
+    git(&["config", "filter.unsafe.required", "true"]);
+    git(&["config", "filter.unsafe.smudge", "nonexistent-cuke-filter"]);
+    let before_head = git(&["rev-parse", "HEAD"]);
+    let before_index = git(&["ls-files", "--stage"]);
+    let before_worktrees = git(&["worktree", "list", "--porcelain"]);
+    fs::rename(scope.join("steps.ts"), scope.join("renamed café.ts")).unwrap();
+    let run = |allowance: &str, expected: i32| {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(&scope)
+            .env("GIT_DIR", sandbox.path().join("not-a-repository"))
+            .env("GIT_CONFIG_GLOBAL", root.join(".git/config"))
+            .env("git_config_count", "2")
+            .env("gIt_cOnFiG_kEy_0", "filter.unsafe.required")
+            .env("git_config_value_0", "true")
+            .env("git_config_key_1", "filter.unsafe.smudge")
+            .env("gIt_cOnFiG_vAlUe_1", "nonexistent-cuke-filter")
+            .args([
+                ".",
+                "--baseline-from-ref",
+                "HEAD",
+                "--fail-on-new",
+                allowance,
+                "--rule",
+                "duplicate-matcher=warning",
+                "--reporters",
+                "json",
+                "--output",
+            ])
+            .arg(sandbox.path().join("reports"))
+            .assert()
+            .code(expected);
+    };
+    run("0", 0);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(&scope)
+        .args([
+            ".",
+            "--baseline-from-ref",
+            "empty-suite",
+            "--fail-on-new=0",
+            "--rule",
+            "duplicate-matcher=warning",
+            "--output",
+        ])
+        .arg(sandbox.path().join("empty-report"))
+        .assert()
+        .code(1);
+    write(&scope, "third.ts", "Given('shared', () => third());\n");
+    run("0", 1);
+    run("1", 0);
+    let report: Value =
+        serde_json::from_slice(&fs::read(sandbox.path().join("reports/cuke-dedup.json")).unwrap())
+            .unwrap();
+    let findings = report["findings"].as_array().unwrap();
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding["suppression"].is_null())
+            .count(),
+        1
+    );
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| !finding["suppression"].is_null())
+            .count(),
+        1
+    );
+    // Explicit current-source errors still fail even when the allowance is generous.
+    write(&scope, "broken.ts", "Given('bad', () => {");
+    run("99", 2);
+    fs::remove_file(scope.join("broken.ts")).unwrap();
+    assert_eq!(git(&["rev-parse", "HEAD"]), before_head);
+    assert_eq!(git(&["ls-files", "--stage"]), before_index);
+    assert_eq!(git(&["worktree", "list", "--porcelain"]), before_worktrees);
+    assert!(scope.join("renamed café.ts").exists());
+    assert!(scope.join("third.ts").exists());
+    assert!(!scope.join(".cuke-dedup-baseline.json").exists());
+    let report: Value =
+        serde_json::from_slice(&fs::read(sandbox.path().join("reports/cuke-dedup.json")).unwrap())
+            .unwrap();
+    assert!(report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|finding| {
+            !finding["primary"]["path"]
+                .as_str()
+                .unwrap_or("")
+                .contains("checkout")
+        }));
+    fs::create_dir(scope.join("new-directory")).unwrap();
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(scope.join("new-directory"))
+        .args([".", "--baseline-from-ref", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "does not contain the analysis directory",
+        ));
+    for (args, message) in [
+        (vec!["--baseline-from-ref", "missing-ref"], "baseline"),
+        (vec!["--baseline-from-ref=--help"], "baseline"),
+        (
+            vec!["--baseline-from-ref", "HEAD", "--baseline", "baseline.json"],
+            "cannot be used",
+        ),
+        (
+            vec!["--baseline-from-ref", "HEAD", "--update-baseline"],
+            "cannot be used",
+        ),
+        (vec!["--fail-on-new"], "required"),
+    ] {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(&scope)
+            .arg(".")
+            .args(args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(message));
+    }
+}
+
+#[test]
+fn baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_valid() {
+    let valid_feature = "Feature: Example\n  Scenario: Example\n    Given shared\n";
+    for (bad_source, feature) in [
+        ("Given('shared', () => {", Some(valid_feature)),
+        (
+            "import { Given } from './missing'; Given('shared', () => work());",
+            Some(valid_feature),
+        ),
+        ("const helper = 42;", Some(valid_feature)),
+        ("Given('shared', () => work());", None),
+        ("Given('shared', () => work());", Some("invalid Gherkin")),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "steps.ts", bad_source);
+        if let Some(feature) = feature {
+            write(root.path(), "example.feature", feature);
+        }
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "base",
+            ],
+        ] {
+            assert!(fixture_git()
+                .current_dir(root.path())
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        write(root.path(), "steps.ts", "Given('shared', () => work());");
+        write(root.path(), "example.feature", valid_feature);
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root.path())
+            .args([".", "--baseline-from-ref", "HEAD", "--fail-on-new=0"])
+            .assert()
+            .code(2)
+            .stderr(
+                predicate::str::contains("baseline").and(predicate::str::contains("incomplete")),
+            );
+    }
+}
+
+#[test]
+fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
+    let root = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let output = fixture_git()
+            .current_dir(root.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "-q"]);
+    let source: String = (0..10)
+        .map(|index| format!("Given('operation label {index}', () => perform({index}));\n"))
+        .collect();
+    write(root.path(), "steps.ts", &source);
+    write(
+        root.path(),
+        "example.feature",
+        "Feature: Example\n  Scenario: Example\n    Given operation label 0\n",
+    );
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+    ]);
+    write(
+        root.path(),
+        "steps.ts",
+        "Given('operation label 0', () => perform(0));",
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root.path())
+        .args([
+            ".",
+            "--baseline-from-ref",
+            "HEAD",
+            "--max-structural-class-comparisons",
+            "2",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "baseline revision `HEAD` is incomplete",
+        ));
+    let oid = git(&["rev-parse", "HEAD"]);
+    git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "160000",
+        oid.trim(),
+        "vendor",
+    ]);
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "gitlink",
+    ]);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root.path())
+        .args([".", "--baseline-from-ref", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unsupported submodules"));
+    let gitlink = git(&["rev-parse", "HEAD"]);
+    let gitlink_tree = git(&["rev-parse", "HEAD^{tree}"]);
+    let clean_tree = git(&["rev-parse", &format!("{}^{{tree}}", oid.trim())]);
+    for (original, replacement) in [
+        (gitlink.trim(), oid.trim()),
+        (gitlink_tree.trim(), clean_tree.trim()),
+    ] {
+        // A replacement must not hide a real submodule from the snapshot pre-check.
+        git(&["replace", original, replacement]);
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root.path())
+            .args([".", "--baseline-from-ref", gitlink.trim()])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unsupported submodules"));
+        git(&["replace", "-d", original]);
+        // Conversely, a replacement must not inject a submodule into a clean base.
+        git(&["replace", replacement, original]);
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root.path())
+            .args([".", "--baseline-from-ref", oid.trim()])
+            .assert()
+            .code(0);
+        git(&["replace", "-d", replacement]);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped() {
+    use std::os::unix::fs::PermissionsExt;
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let real_git = ProcessCommand::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout).unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base",
+        ],
+    ] {
+        assert!(fixture_git()
+            .current_dir(root)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    }
+    write(
+        root,
+        "shim/git",
+        r#"#!/bin/sh
+# Also exercise Windows-style case variants on case-sensitive Unix hosts.
+if [ -n "${git_config_count-}${gIt_cOnFiG_kEy_0-}" ]; then exit 99; fi
+for argument do
+    if [ "$argument" = ls-tree ]; then
+        echo "$$" > "$BASELINE_TEST_PID"
+        cat "$BASELINE_TEST_STDERR" >&2
+        cat "$BASELINE_TEST_TREE"
+        exit "$BASELINE_TEST_EXIT"
+    fi
+done
+exec "$BASELINE_TEST_REAL_GIT" "$@"
+"#,
+    );
+    fs::set_permissions(root.join("shim/git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![root.join("shim")];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(paths).unwrap();
+    let limit = 28 * 100_000;
+    for (name, listing, status, diagnostic) in [
+        ("empty", String::new(), "0", ""),
+        ("file-limit", "100644 0\n".repeat(100_000), "0", ""),
+        (
+            "too-many-files",
+            "100644 0\n".repeat(100_001),
+            "0",
+            "snapshot limit",
+        ),
+        (
+            "byte-limit",
+            "x".repeat(limit),
+            "7",
+            "baseline Git tree enumeration failed",
+        ),
+        (
+            "overflow",
+            "x".repeat(limit + 1),
+            "7",
+            "bounded snapshot metadata limit",
+        ),
+        (
+            "large-overflow",
+            "100644 0\n".repeat(400_000),
+            "7",
+            "bounded snapshot metadata limit",
+        ),
+        (
+            "size-limit",
+            "100644 536870913\n".into(),
+            "0",
+            "snapshot limit",
+        ),
+        (
+            "submodule",
+            "160000 -\n".into(),
+            "0",
+            "unsupported submodules",
+        ),
+    ] {
+        write(root, "tree-output", &listing);
+        // More than a pipe buffer: stderr must not deadlock stdout consumption.
+        write(root, "stderr-output", &"diagnostic\n".repeat(10_000));
+        let result = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .args([".", "--baseline-from-ref", "HEAD"])
+            .env("PATH", &path)
+            .env("BASELINE_TEST_REAL_GIT", real_git.trim())
+            .env("BASELINE_TEST_PID", root.join("git-pid"))
+            .env("BASELINE_TEST_TREE", root.join("tree-output"))
+            .env("BASELINE_TEST_STDERR", root.join("stderr-output"))
+            .env("BASELINE_TEST_EXIT", status)
+            .env("git_config_count", "1")
+            .env("gIt_cOnFiG_kEy_0", "filter.unused.smudge")
+            .env("git_config_value_0", "nonexistent-cuke-filter")
+            .timeout(std::time::Duration::from_secs(10))
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(if diagnostic.is_empty() { 0 } else { 2 }),
+            "{name}"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let pid = fs::read_to_string(root.join("git-pid")).unwrap();
+        assert!(
+            !ProcessCommand::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success(),
+            "unreaped Git: {name}"
+        );
+    }
+}
+
 fn write_sized(root: &Path, relative: &str, bytes: u64) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
