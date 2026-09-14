@@ -306,16 +306,17 @@ impl AssertionBindings {
         ) else {
             return trusted;
         };
-        let member_expect = name.kind() == "identifier"
-            && value.kind() == "member_expression"
-            && value
-                .child_by_field_name("property")
-                .is_some_and(|property| node_text(property, source) == "expect");
-        let required = if member_expect {
-            value.child_by_field_name("object").unwrap_or(value)
-        } else {
-            value
-        };
+        // A direct property read of the module is the factory when it names `expect`. Route it
+        // through the shared resolver so the computed spelling is recognized as the dotted one is.
+        let expect_property = (name.kind() == "identifier")
+            .then(|| registration_callee(value, source))
+            .flatten()
+            .and_then(|callee| match callee {
+                RegistrationCallee::Property { object, name } if name == "expect" => Some(object),
+                _ => None,
+            });
+        let member_expect = expect_property.is_some();
+        let required = expect_property.unwrap_or(value);
         let Some(module) = required_module(required, source) else {
             return trusted;
         };
@@ -1158,28 +1159,6 @@ fn shorthand_key_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     (!text.contains('\\')).then(|| text.to_owned())
 }
 
-/// Sweeps every binding a pattern introduces without descending through property names.
-///
-/// Used only when the recursion bound is reached: the bound is a stack guard, not a judgement, so
-/// the bindings below it must stay possible aliases rather than silently become unrelated.
-fn collect_pattern_identifiers(
-    pattern: Node<'_>,
-    source: &[u8],
-    identifiers: &mut BTreeSet<String>,
-) {
-    let mut stack = vec![pattern];
-    while let Some(node) = stack.pop() {
-        if matches!(
-            node.kind(),
-            "identifier" | "shorthand_property_identifier_pattern"
-        ) {
-            identifiers.insert(node_text(node, source).to_owned());
-            continue;
-        }
-        super::ast::push_named_children_reverse(node, &mut stack);
-    }
-}
-
 fn collect_expect_pattern(
     pattern: Node<'_>,
     source: &[u8],
@@ -1275,7 +1254,11 @@ fn collect_expect_pattern(
                     }
                 } else if supported && include_defaults && value.kind() == "object_pattern" {
                     if depth >= MAX_DESTRUCTURING_DEPTH {
-                        collect_pattern_identifiers(value, source, identifiers);
+                        // The bound is a stack guard, not a judgement, so the bindings below
+                        // it stay possible aliases. `collect_binding_names` is the existing
+                        // walker for this and already skips key positions and default
+                        // expressions, which are not bindings and must not become aliases.
+                        collect_binding_names(value, source, identifiers);
                         continue;
                     }
                     // `{ expect: { not: negated } }` names the same object as `api.expect.not`, so

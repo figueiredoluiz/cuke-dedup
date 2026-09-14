@@ -50,12 +50,21 @@ pub(super) fn static_string_key(node: Node<'_>, source: &[u8]) -> Option<String>
     // Legacy numeric escapes are not decoded here: `'\157'` is `o`, but the shared decoder reads
     // the digits literally and would answer `157`. A wrong name is worse than no name — it grants
     // trust to a property the source never mentions — so an unsupported escape stays unreadable.
-    if text
-        .as_bytes()
-        .windows(2)
-        .any(|pair| pair[0] == b'\\' && pair[1].is_ascii_digit())
-    {
-        return None;
+    //
+    // Walk the escapes rather than scanning adjacent bytes: in `'foo\\5'` the first backslash
+    // escapes the second and the `5` is an ordinary character, so the key is readable.
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            continue;
+        }
+        match characters.next() {
+            Some(escaped) if escaped.is_ascii_digit() => return None,
+            // Every other escape consumes its character, so a doubled backslash cannot be
+            // mistaken for the start of one.
+            Some(_) => {}
+            None => return None,
+        }
     }
     decode_js_string(text)
 }

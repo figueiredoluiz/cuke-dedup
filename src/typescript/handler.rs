@@ -1416,7 +1416,7 @@ fn assertion_behavior_event(
     };
     Some(format!(
         "assert:{qualifier}#{}:{}:{}",
-        escape_event_component(&method),
+        encode_event_component(method),
         stable_fingerprint(&subject),
         stable_fingerprint(&expected)
     ))
@@ -1456,20 +1456,26 @@ fn serialize_assertion_expected(
 /// positions already use; routing the chain walk through it keeps the supported spellings in one
 /// place. A key that is not a static string yields `None`, so a runtime-selected property keeps
 /// its conservative treatment instead of gaining trust it cannot prove.
-/// Escapes a property name for use as a component of an assertion event.
+/// Encodes a property name as a component of an assertion event.
 ///
-/// Event components are joined with `.`, `#` and `:`, so a name containing one of them would be
-/// indistinguishable from the join itself: `expect(x)['not.resolves']` would otherwise produce the
-/// event that `expect(x).not.resolves` produces. Only a decoded string key can contain these
-/// characters — a name spelled as an identifier cannot — so escaping leaves every event written
-/// with identifier access byte-identical.
-fn escape_event_component(name: &str) -> Cow<'_, str> {
+/// Event components are joined with `.`, `#` and `:`, so a decoded string key containing one of
+/// them would be indistinguishable from the join itself: `expect(x)['not.resolves']` would
+/// otherwise produce the event that `expect(x).not.resolves` produces.
+///
+/// Only a decoded key is escaped. An identifier cannot contain those delimiters, and escaping it
+/// too would make a name written with a unicode escape collide with a key that genuinely contains
+/// a backslash — `x.foo\u0062ar` reads `foobar`, while `x['foo\\u0062ar']` reads a different
+/// property entirely.
+fn encode_event_component(name: Cow<'_, str>) -> Cow<'_, str> {
     const DELIMITERS: [char; 4] = ['\\', '.', '#', ':'];
-    if !name.contains(DELIMITERS) {
-        return Cow::Borrowed(name);
+    let Cow::Owned(decoded) = name else {
+        return name;
+    };
+    if !decoded.contains(DELIMITERS) {
+        return Cow::Owned(decoded);
     }
-    let mut escaped = String::with_capacity(name.len() + 8);
-    for character in name.chars() {
+    let mut escaped = String::with_capacity(decoded.len() + 8);
+    for character in decoded.chars() {
         if DELIMITERS.contains(&character) {
             escaped.push('\\');
         }
@@ -1508,7 +1514,7 @@ fn find_expect_invocation<'tree>(
                     if assertions.is_factory(object, source)
                         && matches!(option.as_ref(), "soft" | "poll")
                     {
-                        modifiers.push(escape_event_component(&option).into_owned());
+                        modifiers.push(encode_event_component(option).into_owned());
                         return Some(current);
                     }
                 }
@@ -1516,7 +1522,7 @@ fn find_expect_invocation<'tree>(
             }
             "member_expression" | "subscript_expression" => {
                 let (object, modifier) = assertion_property(current, source)?;
-                modifiers.push(escape_event_component(&modifier).into_owned());
+                modifiers.push(encode_event_component(modifier).into_owned());
                 current = object;
             }
             "parenthesized_expression"

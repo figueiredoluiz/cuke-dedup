@@ -3957,6 +3957,34 @@ fn nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases() {
         "a pattern nested past the recursion bound must still revoke trust"
     );
 
+    // A variable that appears only as a computed key is not a binding, so a write through it must
+    // not revoke trust. Nested past the bound so the fallback walker is the one deciding.
+    let beyond_bound_key = {
+        let mut pattern = "{ [marker]: { deep: leaf } }".to_owned();
+        for _ in 0..20 {
+            pattern = format!("{{ ['n' + 'ot']: {pattern} }}");
+        }
+        format!("const marker = 'k'; const {{ expect: {pattern} }} = api;")
+    };
+    assert_eq!(
+        aliased_matcher_outcome(
+            &beyond_bound_key,
+            "marker.objectContaining = replacement;",
+            &config
+        ),
+        flat_clean,
+        "a variable used only as a computed key must not revoke trust"
+    );
+    assert_eq!(
+        aliased_matcher_outcome(
+            &beyond_bound_key,
+            "leaf.objectContaining = replacement;",
+            &config
+        ),
+        flat_mutated,
+        "a binding past the recursion bound must still revoke trust"
+    );
+
     // A write to an unrelated property of the aliased object is the same question on both forms,
     // whatever it is decided to mean, so consistency is asserted without fixing the answer.
     const UNRELATED_WRITE: &str = "negated.unrelatedProperty = replacement;";
@@ -4008,6 +4036,61 @@ fn computed_access_matches_dot_access_at_every_position() {
         diverging.is_empty(),
         "computed access must match dot access, but diverges at: {diverging:?}"
     );
+}
+
+/// A direct property read of a required assertion module is the factory, in either spelling, so
+/// `require('...')['expect']` must carry exactly the trust `require('...').expect` carries.
+///
+/// The dotted spelling is anchored absolutely, so the equalities below cannot be satisfied by both
+/// spellings failing to resolve together.
+#[test]
+fn a_computed_require_property_is_an_assertion_factory() {
+    let (_directory, config) = config();
+    let outcome = |spelling: &str, right: &str| {
+        let source = format!(
+            "const check = {spelling}; \
+             Then('the panel reads the first value', () => {{ check(state).not.toBe('ready'); }}); \
+             Then('the panel reads the final value', () => {{ check(state).not.toBe({right}); }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let events = extracted[0].handler.behavior_signature.clone();
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        (events, rules)
+    };
+    let dotted = "require('@playwright/test').expect";
+    let computed = "require('@playwright/test')['expect']";
+
+    let (anchored, _) = outcome(dotted, "'idle'");
+    assert!(
+        anchored
+            .iter()
+            .any(|event| event.starts_with("assert:expect.not#toBe:")),
+        "the dotted spelling must resolve to a trusted assertion: {anchored:?}"
+    );
+
+    for right in ["'idle'", "'ready'"] {
+        assert_eq!(
+            outcome(computed, right),
+            outcome(dotted, right),
+            "`{computed}` must carry the trust `{dotted}` carries for {right}"
+        );
+    }
 }
 
 /// A subscript index names a property only when it is a static string literal. Deciding that from
@@ -4069,6 +4152,37 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
     assert_ne!(
         separator, resolved,
         "a key that genuinely contains the separator names a different property"
+    );
+
+    // An escaped backslash is not the start of an escape: `'foo\\5'` names `foo\5`, which reads
+    // fine. Only a digit that an escape actually consumes makes a key unreadable.
+    let (escaped_backslash, _, _) = outcome(r"'foo\\5'");
+    assert!(
+        escaped_backslash
+            .iter()
+            .any(|event| event.starts_with("assert:expect.")),
+        "an escaped backslash must not make a key unreadable: {escaped_backslash:?}"
+    );
+
+    // An identifier may carry unicode escapes, and a decoded key may contain a literal backslash.
+    // They name different properties, so encoding must keep them apart: `x.foobar` reads
+    // `foobar`, while `x['foo\\u0062ar']` reads a property whose name contains a backslash.
+    let (computed_backslash, _, _) = outcome(r"'foo\\u0062ar'");
+    let escaped_identifier = {
+        let source = "Then('alpha holds', () => { expect(state).foo\\u0062ar.toBe('ready'); });";
+        let extracted = definitions(source);
+        assert_eq!(extracted.len(), 1, "{source}");
+        extracted[0].handler.behavior_signature.clone()
+    };
+    assert!(
+        escaped_identifier
+            .iter()
+            .any(|event| event.starts_with("assert:expect.")),
+        "an escaped identifier must still resolve: {escaped_identifier:?}"
+    );
+    assert_ne!(
+        computed_backslash, escaped_identifier,
+        "a key containing a backslash must not encode to the same event as an escaped identifier"
     );
 
     // A decoded key is arbitrary text, while event components are joined with delimiters. A key
