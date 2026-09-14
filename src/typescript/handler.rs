@@ -1,7 +1,9 @@
 use super::assertions::AssertionBindings;
 use super::ast::push_named_children_reverse;
 use super::node_text;
+use super::registrations::{registration_callee, RegistrationCallee};
 use crate::model::{stable_fingerprint, HandlerFingerprint};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use tree_sitter::Node;
 
@@ -1344,19 +1346,10 @@ fn assertion_behavior_event(
     assertions: &AssertionBindings,
     local_constants: &LocalConstants,
 ) -> Option<String> {
-    let function = call.child_by_field_name("function")?;
-    if function.kind() != "member_expression" {
-        return None;
-    }
-    let method = function.child_by_field_name("property")?;
+    let (receiver, method) = assertion_property(call.child_by_field_name("function")?, source)?;
 
     let mut modifiers = Vec::new();
-    let invocation = find_expect_invocation(
-        function.child_by_field_name("object")?,
-        source,
-        &mut modifiers,
-        assertions,
-    )?;
+    let invocation = find_expect_invocation(receiver, source, &mut modifiers, assertions)?;
     modifiers.reverse();
     let arguments = invocation.child_by_field_name("arguments")?;
     let subject = arguments.named_child(0)?;
@@ -1423,7 +1416,7 @@ fn assertion_behavior_event(
     };
     Some(format!(
         "assert:{qualifier}#{}:{}:{}",
-        node_text(method, source),
+        escape_event_component(&method),
         stable_fingerprint(&subject),
         stable_fingerprint(&expected)
     ))
@@ -1457,6 +1450,44 @@ fn serialize_assertion_expected(
     )
 }
 
+/// Resolves a property access spelled either `object.name` or `object["name"]` to the same
+/// receiver and name, so a statically computed key means what the dotted key means at every
+/// position of an assertion chain. This is the resolver the factory and asymmetric-builder
+/// positions already use; routing the chain walk through it keeps the supported spellings in one
+/// place. A key that is not a static string yields `None`, so a runtime-selected property keeps
+/// its conservative treatment instead of gaining trust it cannot prove.
+/// Escapes a property name for use as a component of an assertion event.
+///
+/// Event components are joined with `.`, `#` and `:`, so a name containing one of them would be
+/// indistinguishable from the join itself: `expect(x)['not.resolves']` would otherwise produce the
+/// event that `expect(x).not.resolves` produces. Only a decoded string key can contain these
+/// characters — a name spelled as an identifier cannot — so escaping leaves every event written
+/// with identifier access byte-identical.
+fn escape_event_component(name: &str) -> Cow<'_, str> {
+    const DELIMITERS: [char; 4] = ['\\', '.', '#', ':'];
+    if !name.contains(DELIMITERS) {
+        return Cow::Borrowed(name);
+    }
+    let mut escaped = String::with_capacity(name.len() + 8);
+    for character in name.chars() {
+        if DELIMITERS.contains(&character) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    Cow::Owned(escaped)
+}
+
+fn assertion_property<'tree, 'source>(
+    node: Node<'tree>,
+    source: &'source [u8],
+) -> Option<(Node<'tree>, Cow<'source, str>)> {
+    match registration_callee(node, source)? {
+        RegistrationCallee::Property { object, name } => Some((object, name)),
+        RegistrationCallee::Identifier(_) => None,
+    }
+}
+
 fn find_expect_invocation<'tree>(
     node: Node<'tree>,
     source: &[u8],
@@ -1473,22 +1504,20 @@ fn find_expect_invocation<'tree>(
                 if assertions.is_factory(function, source) {
                     return Some(current);
                 }
-                if function.kind() == "member_expression" {
-                    let object = function.child_by_field_name("object")?;
-                    let property = function.child_by_field_name("property")?;
+                if let Some((object, option)) = assertion_property(function, source) {
                     if assertions.is_factory(object, source)
-                        && matches!(node_text(property, source), "soft" | "poll")
+                        && matches!(option.as_ref(), "soft" | "poll")
                     {
-                        modifiers.push(node_text(property, source).to_owned());
+                        modifiers.push(escape_event_component(&option).into_owned());
                         return Some(current);
                     }
                 }
                 return None;
             }
-            "member_expression" => {
-                let property = current.child_by_field_name("property")?;
-                modifiers.push(node_text(property, source).to_owned());
-                current = current.child_by_field_name("object")?;
+            "member_expression" | "subscript_expression" => {
+                let (object, modifier) = assertion_property(current, source)?;
+                modifiers.push(escape_event_component(&modifier).into_owned());
+                current = object;
             }
             "parenthesized_expression"
             | "await_expression"

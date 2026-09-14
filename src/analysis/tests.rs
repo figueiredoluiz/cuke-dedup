@@ -3442,46 +3442,53 @@ fn flat_matcher_aliases_revoke_trust_only_for_matcher_paths() {
     }
 }
 
-/// Every position of an assertion chain, as `label, dotted, dynamic, event prefix`.
+/// Every position of an assertion chain, as `label, dotted, computed, dynamic, event prefix`.
 ///
-/// `VALUE` is substituted per definition. `dynamic` selects the property at runtime and must
+/// `VALUE` is substituted per definition. `computed` names the property with a static string and
+/// must behave exactly like `dotted`. `dynamic` selects the property at runtime and must
 /// never gain assertion trust. The prefix is the trusted event dot access produces, and pins the
 /// factory, modifier and matcher identity so a row cannot be satisfied by an event that lost one
 /// of them.
-const ASSERTION_CHAIN_POSITIONS: [(&str, &str, &str, &str); 6] = [
+const ASSERTION_CHAIN_POSITIONS: [(&str, &str, &str, &str, &str); 6] = [
     (
         "factory",
         "api.expect(state).not.toBe(VALUE)",
+        "api['expect'](state).not.toBe(VALUE)",
         "api[factoryKey](state).not.toBe(VALUE)",
         "assert:expect.not#toBe:",
     ),
     (
         "modifier",
         "api.expect(state).not.toBe(VALUE)",
+        "api.expect(state)['not'].toBe(VALUE)",
         "api.expect(state)[modifierKey].toBe(VALUE)",
         "assert:expect.not#toBe:",
     ),
     (
         "terminal matcher",
         "api.expect(state).not.toBe(VALUE)",
+        "api.expect(state).not['toBe'](VALUE)",
         "api.expect(state).not[matcherKey](VALUE)",
         "assert:expect.not#toBe:",
     ),
     (
         "factory option",
         "api.expect.soft(state).toBe(VALUE)",
+        "api.expect['soft'](state).toBe(VALUE)",
         "api.expect[optionKey](state).toBe(VALUE)",
         "assert:expect.soft#toBe:",
     ),
     (
         "nested builder",
         "api.expect(state).toEqual(api.expect.not.objectContaining({ r: VALUE }))",
+        "api.expect(state).toEqual(api.expect['not'].objectContaining({ r: VALUE }))",
         "api.expect(state).toEqual(api.expect[modifierKey].objectContaining({ r: VALUE }))",
         "assert:expect#toEqual:",
     ),
     (
         "wrapped modifier",
         "(api.expect(state) as any).not.toBe(VALUE)",
+        "(api.expect(state) as any)['not'].toBe(VALUE)",
         "(api.expect(state) as any)[modifierKey].toBe(VALUE)",
         "assert:expect.not#toBe:",
     ),
@@ -3536,7 +3543,7 @@ const EQUAL: (&str, &str) = ("'ready'", "'ready'");
 #[test]
 fn dotted_access_resolves_every_assertion_position() {
     let (_directory, config) = config();
-    for (label, dotted, _, prefix) in ASSERTION_CHAIN_POSITIONS {
+    for (label, dotted, _, _, prefix) in ASSERTION_CHAIN_POSITIONS {
         let (events, rules) = assertion_position_outcome(dotted, CONFLICTING, &config);
         for handler in &events {
             assert_eq!(
@@ -3579,7 +3586,7 @@ fn dotted_access_resolves_every_assertion_position() {
 #[test]
 fn dynamic_access_gains_no_assertion_trust_at_any_position() {
     let (_directory, config) = config();
-    for (label, _, dynamic, _) in ASSERTION_CHAIN_POSITIONS {
+    for (label, _, _, dynamic, _) in ASSERTION_CHAIN_POSITIONS {
         let (events, _) = assertion_position_outcome(dynamic, CONFLICTING, &config);
         for handler in &events {
             assert!(
@@ -3691,6 +3698,437 @@ fn modifier_chains_are_ordered_and_semantic() {
             events(equivalent),
             plain,
             "`{equivalent}` must resolve to the same assertion as dot access"
+        );
+    }
+}
+
+/// OPEN-2 / R5190030268-S2. A statically computed modifier names the same modifier as dot access,
+/// so `expect(x)['not']` must carry the semantics `expect(x).not` carries: conflicting expected
+/// values stay distinguishable, and equal values remain an exact duplicate. A modifier selected at
+/// runtime is unknown and must not inherit that trust.
+///
+/// Currently the computed form yields generic call events whose literals are normalized away, so
+/// conflicting values collapse into one `parameterization-candidate`.
+///
+/// Comparing finding sets alone is not enough: unwrapping `['not']` while discarding the modifier
+/// would still distinguish differing values and still equate identical handlers. The event
+/// assertions below pin the modifier itself, so dropping negation fails this test.
+#[test]
+fn computed_modifier_access_matches_dot_access_semantics() {
+    let (_directory, config) = config();
+
+    // Behavior events for a single definition asserting on `subject` using `access` before
+    // `.toBe(value)`. The subject is a parameter so that erasing it from the event is observable.
+    let events = |subject: &str, access: &str, value: &str| {
+        let source =
+            format!("Then('alpha holds', () => {{ expect({subject}){access}.toBe({value}); }});");
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 1, "{source}");
+        extracted[0].handler.behavior_signature.clone()
+    };
+
+    // Handler rules only: `unused-definition` depends on a feature corpus these snippets lack.
+    let outcome = |access: &str, left: &str, right: &str| {
+        let source = format!(
+            "Then('alpha holds', () => {{ expect(state){access}.toBe({left}); }}); \
+             Then('alpha stands', () => {{ expect(state){access}.toBe({right}); }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    // The dotted form is the reference. Anchor it absolutely, so a change that drops the modifier
+    // from both access forms cannot satisfy the equality below by making them agree on nothing.
+    let dotted_negated = events("state", ".not", "'ready'");
+    assert!(
+        dotted_negated
+            .iter()
+            .any(|event| event.starts_with("assert:expect.not#toBe:")),
+        "dot access must record the negation modifier: {dotted_negated:?}"
+    );
+
+    // Negation is an execution effect: a negated assertion must never look like the unmodified one.
+    assert_ne!(
+        dotted_negated,
+        events("state", "", "'ready'"),
+        "a negated assertion must not match the same assertion without the modifier"
+    );
+    assert_ne!(
+        events("state", "['not']", "'ready'"),
+        events("state", "", "'ready'"),
+        "a computed negation must not be reduced to the unmodified assertion"
+    );
+
+    // The computed modifier must produce the same events as dot access, modifier included.
+    assert_eq!(
+        events("state", "['not']", "'ready'"),
+        dotted_negated,
+        "a static computed modifier must produce the same assertion events as dot access"
+    );
+
+    for (left, right, expected) in [
+        ("'ready'", "'idle'", Vec::new()),
+        ("'ready'", "'ready'", vec![Rule::DuplicateHandler]),
+    ] {
+        let dotted = outcome(".not", left, right);
+        assert_eq!(
+            dotted, expected,
+            "dot access baseline changed for {left}/{right}"
+        );
+        assert_eq!(
+            outcome("['not']", left, right),
+            dotted,
+            "a static computed modifier must match dot access for {left}/{right}"
+        );
+    }
+
+    // Control: the modifier is chosen at runtime, so it is not provably `not`. Emitting the
+    // unresolved sentinel is a conservative, contract-compliant answer here — it makes the handler
+    // non-comparable rather than claiming a modifier — so only a *trusted* assertion event is
+    // forbidden.
+    let dynamic = events("state", "[modifier]", "'ready'");
+    assert!(
+        !dynamic
+            .iter()
+            .any(|event| event.starts_with("assert:") && event != "assert:unresolved"),
+        "a runtime-selected modifier must not produce a trusted assertion event: {dynamic:?}"
+    );
+    // Forbidding only `DuplicateHandler` while supplying differing literals cannot fail: differing
+    // literals already preclude that rule whatever the modifier means, so the check passes without
+    // observing the modifier at all. Pin the whole rule set for both pairings instead, which holds
+    // the runtime form to a stated outcome rather than to a condition it satisfies for free.
+    assert_eq!(
+        outcome("[modifier]", "'ready'", "'idle'"),
+        vec![Rule::ParameterizationCandidate],
+        "an unresolved modifier falls back to structural similarity for differing values"
+    );
+    assert_eq!(
+        outcome("[modifier]", "'ready'", "'ready'"),
+        vec![Rule::DuplicateHandler],
+        "handlers identical in source stay duplicates however the modifier is spelled"
+    );
+}
+
+/// OPEN-1 / R5190030268-S1. A destructuring pattern that binds a matcher builder through nested
+/// levels aliases the same module object as the equivalent flat member access, so a write through
+/// either alias must revoke assertion trust identically.
+///
+/// Today only the flat alias revokes it: the pattern collector records an identifier at the first
+/// supported property level, so nested bindings never reach the owner and the write is invisible.
+///
+/// Each scenario is asserted as nested-equals-flat rather than against an absolute value, because
+/// the consistency requirement is the contract and the product has not decided every absolute
+/// answer. `flat_matcher_aliases_revoke_trust_only_for_matcher_paths` anchors the flat side, so
+/// these equalities cannot be satisfied by both forms degrading together.
+#[test]
+fn nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases() {
+    let (_directory, config) = config();
+    let flat_mutated = aliased_matcher_outcome(FLAT_MATCHER_ALIAS, MATCHER_WRITE, &config);
+    let flat_clean = aliased_matcher_outcome(FLAT_MATCHER_ALIAS, "", &config);
+
+    for pattern in [
+        "const { expect: { not: negated } } = api;",
+        "const { expect: { not: negated } = {} } = api;",
+        // A computed key that resolves statically names the same property as the plain key.
+        "const { expect: { ['not']: negated } } = api;",
+        // A computed key that does not resolve statically may still name it. Unknown provenance
+        // must remove trust rather than keep it, so this form cannot be treated as an unrelated
+        // property either.
+        "const { expect: { ['n' + 'ot']: negated } } = api;",
+        // The same applies to escapes the decoder does not read: an escaped identifier and a
+        // legacy numeric escape both still name `not`, and the flat path already treats them as
+        // unknown rather than unrelated.
+        "const { expect: { n\\u006ft: negated } } = api;",
+        "const { expect: { ['\\156ot']: negated } } = api;",
+    ] {
+        assert_eq!(
+            aliased_matcher_outcome(pattern, MATCHER_WRITE, &config),
+            flat_mutated,
+            "a write through `{pattern}` must revoke trust like the flat alias"
+        );
+        assert_eq!(
+            aliased_matcher_outcome(pattern, "", &config),
+            flat_clean,
+            "`{pattern}` without a write must stay trusted like the flat alias"
+        );
+    }
+
+    // Binding forms whose local name is not `negated`: a shorthand, a shorthand carrying a default,
+    // an escaped shorthand, and a rest binding. Object rest copies the property values, so `copy`
+    // holds the very matcher objects the owner holds and a write through it reaches them.
+    for (pattern, write) in [
+        (
+            "const { expect: { not } } = api;",
+            "not.objectContaining = replacement;",
+        ),
+        (
+            "const { expect: { not = {} } } = api;",
+            "not.objectContaining = replacement;",
+        ),
+        (
+            "const { expect: { n\\u006ft } } = api;",
+            "n\\u006ft.objectContaining = replacement;",
+        ),
+        (
+            "const { expect: { ...copy } } = api;",
+            "copy.not.objectContaining = replacement;",
+        ),
+    ] {
+        assert_eq!(
+            aliased_matcher_outcome(pattern, write, &config),
+            flat_mutated,
+            "a write through `{pattern}` must revoke trust like the flat alias"
+        );
+        assert_eq!(
+            aliased_matcher_outcome(pattern, "", &config),
+            flat_clean,
+            "`{pattern}` without a write must stay trusted like the flat alias"
+        );
+    }
+
+    // Bindings are tracked by spelling: nothing in this analyzer decodes identifier escapes, so a
+    // declaration and a write that spell one identifier differently do not match. That is a
+    // limitation rather than a judgement about provenance, and normalizing it in the nested
+    // collector alone would disagree with registration and shadowing and lose real mutations. Pin
+    // it as nested-equals-flat so the two forms cannot drift apart while it stands.
+    for (nested, flat, write) in [
+        (
+            "const { expect: { n\\u006ft } } = api;",
+            "const n\\u006ft = api.expect.not;",
+            "not.objectContaining = replacement;",
+        ),
+        (
+            "const { expect: { not } } = api;",
+            "const not = api.expect.not;",
+            "n\\u006ft.objectContaining = replacement;",
+        ),
+    ] {
+        assert_eq!(
+            aliased_matcher_outcome(nested, write, &config),
+            aliased_matcher_outcome(flat, write, &config),
+            "`{nested}` with `{write}` must behave like the equivalent flat alias"
+        );
+    }
+
+    // The nested collector must reach every property the flat walker reaches, not only `not`.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { expect: { not: { objectContaining: negated } } } = api;",
+            "negated.any = replacement;",
+            &config
+        ),
+        aliased_matcher_outcome(
+            "const negated = api.expect.not.objectContaining;",
+            "negated.any = replacement;",
+            &config
+        ),
+        "a matcher-builder path must be treated the same through both alias forms"
+    );
+
+    // The recursion bound is a stack guard, not a judgement about provenance. A pattern nested
+    // past it must still revoke, or the bound would quietly become a way to keep trust.
+    let beyond_bound = {
+        let mut pattern = "negated".to_owned();
+        for _ in 0..24 {
+            pattern = format!("{{ ['n' + 'ot']: {pattern} }}");
+        }
+        format!("const {{ expect: {pattern} }} = api;")
+    };
+    assert_eq!(
+        aliased_matcher_outcome(&beyond_bound, MATCHER_WRITE, &config),
+        flat_mutated,
+        "a pattern nested past the recursion bound must still revoke trust"
+    );
+
+    // A write to an unrelated property of the aliased object is the same question on both forms,
+    // whatever it is decided to mean, so consistency is asserted without fixing the answer.
+    const UNRELATED_WRITE: &str = "negated.unrelatedProperty = replacement;";
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { expect: { not: negated } } = api;",
+            UNRELATED_WRITE,
+            &config
+        ),
+        aliased_matcher_outcome(FLAT_MATCHER_ALIAS, UNRELATED_WRITE, &config),
+        "an unrelated write must be treated the same through both alias forms"
+    );
+
+    // The same nesting shape under a property that is not a matcher path must also agree, so an
+    // over-broad collector that aliased identifiers beneath any property fails rather than passes.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { other: { not: negated } } = api;",
+            MATCHER_WRITE,
+            &config
+        ),
+        aliased_matcher_outcome("const negated = api.other.not;", MATCHER_WRITE, &config),
+        "an alias under an unrelated property must be treated the same through both forms"
+    );
+}
+
+/// OPEN-2 / R5190030268-S2, generalized across assertion positions. A statically computed property
+/// names the same thing as dot access at every position of an assertion chain, so each must carry
+/// the same semantics for both conflicting and equal expected values.
+///
+/// Every divergence is collected before asserting, so the failure names each unsupported position
+/// instead of stopping at the first. At the current tree the factory and nested-builder positions
+/// already agree.
+#[test]
+fn computed_access_matches_dot_access_at_every_position() {
+    let (_directory, config) = config();
+    let mut diverging = Vec::new();
+    for (label, dotted, computed, _, _) in ASSERTION_CHAIN_POSITIONS {
+        for values in [CONFLICTING, EQUAL] {
+            if assertion_position_outcome(computed, values, &config)
+                != assertion_position_outcome(dotted, values, &config)
+            {
+                diverging.push(label);
+                break;
+            }
+        }
+    }
+    assert!(
+        diverging.is_empty(),
+        "computed access must match dot access, but diverges at: {diverging:?}"
+    );
+}
+
+/// A subscript index names a property only when it is a static string literal. Deciding that from
+/// the index text alone is unsound: any expression whose text merely begins and ends with a
+/// matching quote decodes into a key that names nothing, which both invents a modifier and hides
+/// whatever the index actually executes.
+///
+/// The resolved case is anchored absolutely, so the prohibitions below cannot be satisfied by
+/// making every subscript unresolved.
+#[test]
+fn quote_shaped_subscript_indexes_do_not_name_a_property() {
+    let (_directory, config) = config();
+    let outcome = |index: &str| {
+        let handler = format!("expect(state)[{index}].toBe('ready');");
+        let source = format!(
+            "Then('the alpha gauge is settled', () => {{ {handler} }}); \
+             Then('the archive reading has finished', () => {{ {handler} }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let events = extracted[0].handler.behavior_signature.clone();
+        let comparable = extracted[0].handler.comparable;
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        (events, comparable, rules)
+    };
+
+    let (resolved, _, _) = outcome("'not'");
+    assert!(
+        resolved
+            .iter()
+            .any(|event| event.starts_with("assert:expect.not#toBe:")),
+        "a string-literal index must resolve to the modifier it names: {resolved:?}"
+    );
+
+    // A backslash before U+2028 or U+2029 is a line continuation, so this key names `not` exactly
+    // as `'not'` does. Preserving the separator instead would lose that name and, worse, make the
+    // key indistinguishable from one that genuinely contains the separator.
+    let (continued, _, _) = outcome("'n\\\u{2028}ot'");
+    assert_eq!(
+        continued, resolved,
+        "a line continuation inside a key must resolve to the name the key spells"
+    );
+    let (separator, _, _) = outcome("'n\u{2028}ot'");
+    assert_ne!(
+        separator, resolved,
+        "a key that genuinely contains the separator names a different property"
+    );
+
+    // A decoded key is arbitrary text, while event components are joined with delimiters. A key
+    // containing one of them must stay distinguishable from the join, or a single property named
+    // `not.resolves` would be recorded as the two-step chain `.not.resolves`.
+    let (dotted_key, _, _) = outcome("'not.resolves'");
+    let (chain, _, _) = {
+        let source = "Then('the alpha gauge is settled', () => { \
+                      expect(state).not.resolves.toBe('ready'); }); \
+                      Then('the archive reading has finished', () => { \
+                      expect(state).not.resolves.toBe('ready'); });";
+        let extracted = definitions(source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        (extracted[0].handler.behavior_signature.clone(), true, ())
+    };
+    assert!(
+        chain
+            .iter()
+            .any(|event| event.starts_with("assert:expect.not.resolves#toBe:")),
+        "the modifier chain must resolve, anchoring the comparison below: {chain:?}"
+    );
+    assert_ne!(
+        dotted_key, chain,
+        "a property named `not.resolves` must not record the same event as the chain `.not.resolves`"
+    );
+
+    // The sequence index executes an assertion against an external binding. Decoding the index as
+    // one opaque key swallows that call, which turns a handler that cannot be compared into one
+    // that looks fully resolved. Compare against the same handler written without the index so the
+    // control states what the difference must be rather than asserting an absolute.
+    const SWALLOWED: &str = "'not', ((x) => expect(state).toBe(x))(external), 'not'";
+    let (events, comparable, rules) = outcome(SWALLOWED);
+    assert!(
+        !comparable,
+        "an index that executes an unresolved call must leave the handler non-comparable: \
+         {events:?}"
+    );
+    assert!(
+        rules.is_empty(),
+        "a non-comparable handler must not be equated with another, but produced: {rules:?}"
+    );
+
+    for index in [
+        "'n' + 'ot'",
+        "`not`",
+        "'not', ((x) => expect(state).toBe(x))(external), 'not'",
+        // A legacy numeric escape is a string literal the shared decoder cannot read: `'n\\157t'`
+        // names `not`, not `n157t`. Answering with the undecoded digits would name a property the
+        // source never mentions, so it must stay unreadable rather than resolve to the wrong one.
+        "'n\\157t'",
+    ] {
+        let (events, _, _) = outcome(index);
+        // Reject every trusted assertion event, not only a modified one: resolving the index to
+        // nothing and emitting the unmodified `assert:expect#toBe:` would still be claiming the
+        // chain was understood.
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.starts_with("assert:") && event != "assert:unresolved"),
+            "`[{index}]` does not name a modifier, but produced: {events:?}"
         );
     }
 }
