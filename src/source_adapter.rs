@@ -250,17 +250,35 @@ impl SourceAdapterRegistration {
     }
 }
 
-/// Registered definition-source suffixes in deterministic lookup order.
-pub static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
-    SourceAdapterRegistration::with_session(".mjs", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::with_session(".cjs", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::with_session(".jsx", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::with_session(".js", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::with_session(".mts", &crate::typescript::TYPESCRIPT_ADAPTER),
-    SourceAdapterRegistration::with_session(".cts", &crate::typescript::TYPESCRIPT_ADAPTER),
-    SourceAdapterRegistration::with_session(".tsx", &crate::typescript::TSX_ADAPTER),
-    SourceAdapterRegistration::with_session(".ts", &crate::typescript::TYPESCRIPT_ADAPTER),
-];
+/// The authoritative language/adapter mapping: one table drives both the suffix registry and the
+/// language lookup, so the two routing surfaces cannot drift apart. Adding a language means one
+/// row here; the expansion stays an exhaustive match, so routing remains total without a
+/// fallible lookup.
+macro_rules! register_source_adapters {
+    ( $( $language:ident => $adapter:path : $($suffix:literal),+ );+ ; ) => {
+        /// Registered definition-source suffixes in deterministic lookup order.
+        pub static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
+            $(
+                $(
+                    SourceAdapterRegistration::with_session($suffix, &$adapter),
+                )+
+            )+
+        ];
+
+        /// Returns the adapter for an already classified source language.
+        pub fn adapter_for_language(language: SourceLanguage) -> &'static dyn SourceAdapter {
+            match language {
+                $(SourceLanguage::$language => &$adapter,)+
+            }
+        }
+    };
+}
+
+register_source_adapters! {
+    JavaScript => crate::typescript::JAVASCRIPT_ADAPTER : ".mjs", ".cjs", ".jsx", ".js";
+    TypeScript => crate::typescript::TYPESCRIPT_ADAPTER : ".mts", ".cts", ".ts";
+    Tsx => crate::typescript::TSX_ADAPTER : ".tsx";
+}
 
 /// Returns the adapter registered for `path`, rejecting declaration and source-map files.
 pub fn adapter_for_path(path: &Path) -> Option<&'static dyn SourceAdapter> {
@@ -282,15 +300,6 @@ fn is_declaration_file(path: &Path, extension: &str) -> bool {
                     .extension()
                     .is_some_and(|extension| extension == "d")
         })
-}
-
-/// Returns the adapter for an already classified source language.
-pub fn adapter_for_language(language: SourceLanguage) -> &'static dyn SourceAdapter {
-    match language {
-        SourceLanguage::JavaScript => &crate::typescript::JAVASCRIPT_ADAPTER,
-        SourceLanguage::TypeScript => &crate::typescript::TYPESCRIPT_ADAPTER,
-        SourceLanguage::Tsx => &crate::typescript::TSX_ADAPTER,
-    }
 }
 
 /// Classifies a path using the registered suffixes.
@@ -646,5 +655,77 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.to_string(), "default extract delegation reached");
+    }
+
+    #[test]
+    fn language_lookup_and_suffix_routing_agree_on_one_adapter_table() {
+        // Data-address identity (not `ptr::eq`, which compares wide-pointer vtables) is what
+        // "one authoritative mapping" means here: both routing surfaces must select the same
+        // adapter static, not merely two adapters that agree on name and language.
+        for registration in SOURCE_ADAPTER_REGISTRY {
+            let expected = registration.adapter.language();
+            let name = format!("steps{}", registration.suffix);
+            let routed = adapter_for_path(Path::new(&name)).expect(&name);
+            assert!(
+                std::ptr::addr_eq(
+                    routed as *const dyn SourceAdapter,
+                    registration.adapter as *const dyn SourceAdapter
+                ),
+                "{}",
+                registration.suffix
+            );
+            let by_language = adapter_for_language(expected);
+            assert!(
+                std::ptr::addr_eq(
+                    by_language as *const dyn SourceAdapter,
+                    registration.adapter as *const dyn SourceAdapter
+                ),
+                "{}",
+                registration.suffix
+            );
+            assert_eq!(language_for_path(Path::new(&name)), Some(expected));
+        }
+        for language in [
+            SourceLanguage::JavaScript,
+            SourceLanguage::TypeScript,
+            SourceLanguage::Tsx,
+        ] {
+            assert_eq!(adapter_for_language(language).language(), language);
+        }
+    }
+
+    #[test]
+    fn language_routed_and_suffix_routed_extraction_share_session_state() {
+        // The registry's session initializers must prepare exactly the backend state that
+        // `adapter_for_language` routes to: the same resolver-backed import has to extract
+        // identically through either surface, whichever warms the shared cache first.
+        let project = session_project();
+        for suffix in ["js", "ts", "tsx"] {
+            for language_route_first in [true, false] {
+                let path = project.path().join(format!("steps.{suffix}"));
+                let language = language_for_path(&path).expect(suffix);
+                let file = SourceFile { path, language };
+                let suffix_routed = adapter_for_path(&file.path).expect(suffix);
+                let language_routed = adapter_for_language(language);
+                let mut session = SourceExtractionSession::new(project.path());
+                let (first, second) = if language_route_first {
+                    (language_routed, suffix_routed)
+                } else {
+                    (suffix_routed, language_routed)
+                };
+                let results = [
+                    first.extract_with_session(IMPORTED_STEP, &file, &mut session),
+                    second.extract_with_session(IMPORTED_STEP, &file, &mut session),
+                ];
+                let [first, second] = results;
+                let extraction = first.unwrap();
+                assert_eq!(&extraction, second.as_ref().unwrap(), "{suffix}");
+                assert_eq!(extraction.definitions.len(), 1, "{suffix}");
+                assert!(extraction.diagnostics.is_empty(), "{suffix}");
+                // Every registered adapter is TypeScript-backed today, so one shared backend
+                // state must serve all of them; a second backend is allowed to change this.
+                assert_eq!(session.states.len(), 1, "{suffix}");
+            }
+        }
     }
 }
