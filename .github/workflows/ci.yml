@@ -150,6 +150,18 @@ jobs:
             lcov.info
           if-no-files-found: error
 
+      - name: Upload Rust coverage to Codecov
+        # Fork and Dependabot PRs retain the coverage gate but cannot use the Actions secret.
+        if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info
+          disable_search: true
+          plugins: noop
+          flags: rust
+          fail_ci_if_error: true
+
   npm:
     name: npm launcher (${{ matrix.os }}, Node ${{ matrix.node }})
     strategy:
