@@ -2,7 +2,10 @@
 
 use crate::model::{SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::path::{Path, PathBuf};
 
 pub(crate) const UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX: &str =
@@ -107,7 +110,22 @@ impl Extraction {
 /// session per analysis root rather than sharing it between unrelated repositories.
 #[derive(Default)]
 pub struct SourceExtractionSession {
-    pub(crate) typescript: crate::typescript::TypeScriptExtractionSession,
+    root: Option<PathBuf>,
+    registrations: Vec<String>,
+    states: HashMap<TypeId, Box<dyn Any + Send + Sync + UnwindSafe + RefUnwindSafe>>,
+}
+
+/// Backend-owned state; related syntax variants can share the same state type.
+/// The bounds preserve the public session's existing thread and unwind-safety guarantees.
+pub(crate) trait AdapterSessionState:
+    Any + Send + Sync + UnwindSafe + RefUnwindSafe
+{
+    fn initialize(root: Option<&Path>, registrations: &[String]) -> Self;
+}
+
+/// Internal stateful registrations must explicitly select their backend state.
+pub(crate) trait StatefulSourceAdapter: SourceAdapter {
+    type State: AdapterSessionState;
 }
 
 impl SourceExtractionSession {
@@ -121,12 +139,43 @@ impl SourceExtractionSession {
     /// Use this for project-declared wrappers that static inference cannot recognize, such as a
     /// helper that builds its registration call dynamically.
     pub fn with_registrations(root: &Path, registrations: &[String]) -> Self {
-        Self {
-            typescript: crate::typescript::TypeScriptExtractionSession::for_root(
-                root,
-                registrations,
-            ),
+        let mut session = Self {
+            root: Some(root.to_owned()),
+            registrations: registrations.to_vec(),
+            ..Self::default()
+        };
+        // Preserve construction-time root resolution, including a failed canonicalization.
+        for registration in SOURCE_ADAPTER_REGISTRY {
+            if let Some(initialize) = registration.initialize_session {
+                initialize(&mut session);
+            }
         }
+        session
+    }
+
+    pub(crate) fn initialize<T: AdapterSessionState>(&mut self) {
+        self.states
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::initialize(self.root.as_deref(), &self.registrations)));
+    }
+
+    pub(crate) fn state<T: AdapterSessionState>(&mut self) -> Result<&mut T> {
+        // Explicit-root sessions must never establish a boundary later than construction.
+        if self.root.is_none() {
+            self.initialize::<T>();
+        }
+        self.states
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|state| {
+                let state: &mut dyn Any = state.as_mut();
+                state.downcast_mut::<T>()
+            })
+            .with_context(|| {
+                format!(
+                    "source adapter state {} is uninitialized or incompatible",
+                    std::any::type_name::<T>()
+                )
+            })
     }
 }
 
@@ -176,25 +225,41 @@ pub struct SourceAdapterRegistration {
     pub suffix: &'static str,
     /// Adapter responsible for matching sources.
     pub adapter: &'static dyn SourceAdapter,
+    initialize_session: Option<fn(&mut SourceExtractionSession)>,
 }
 
 impl SourceAdapterRegistration {
     /// Creates one suffix-to-adapter registration.
     pub const fn new(suffix: &'static str, adapter: &'static dyn SourceAdapter) -> Self {
-        Self { suffix, adapter }
+        Self {
+            suffix,
+            adapter,
+            initialize_session: None,
+        }
+    }
+
+    const fn with_session<A: StatefulSourceAdapter>(
+        suffix: &'static str,
+        adapter: &'static A,
+    ) -> Self {
+        Self {
+            suffix,
+            adapter,
+            initialize_session: Some(SourceExtractionSession::initialize::<A::State>),
+        }
     }
 }
 
 /// Registered definition-source suffixes in deterministic lookup order.
 pub static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
-    SourceAdapterRegistration::new(".mjs", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::new(".cjs", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::new(".jsx", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::new(".js", &crate::typescript::JAVASCRIPT_ADAPTER),
-    SourceAdapterRegistration::new(".mts", &crate::typescript::TYPESCRIPT_ADAPTER),
-    SourceAdapterRegistration::new(".cts", &crate::typescript::TYPESCRIPT_ADAPTER),
-    SourceAdapterRegistration::new(".tsx", &crate::typescript::TSX_ADAPTER),
-    SourceAdapterRegistration::new(".ts", &crate::typescript::TYPESCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".mjs", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".cjs", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".jsx", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".js", &crate::typescript::JAVASCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".mts", &crate::typescript::TYPESCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".cts", &crate::typescript::TYPESCRIPT_ADAPTER),
+    SourceAdapterRegistration::with_session(".tsx", &crate::typescript::TSX_ADAPTER),
+    SourceAdapterRegistration::with_session(".ts", &crate::typescript::TYPESCRIPT_ADAPTER),
 ];
 
 /// Returns the adapter registered for `path`, rejecting declaration and source-map files.
@@ -245,6 +310,214 @@ pub fn registered_suffixes() -> Vec<&'static str> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+    use std::fs;
+
+    fn session_project() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("package.json"), "{}").unwrap();
+        fs::write(
+            directory.path().join("support.ts"),
+            "export { Given } from '@cucumber/cucumber';",
+        )
+        .unwrap();
+        directory
+    }
+
+    fn session_extract(
+        session: &mut SourceExtractionSession,
+        root: &Path,
+        suffix: &str,
+        source: &str,
+    ) -> Extraction {
+        let path = root.join(format!("steps.{suffix}"));
+        let adapter = adapter_for_path(&path).unwrap();
+        adapter
+            .extract_with_session(
+                source,
+                &SourceFile {
+                    path,
+                    language: adapter.language(),
+                },
+                session,
+            )
+            .unwrap()
+    }
+
+    const IMPORTED_STEP: &str =
+        "import { Given } from './support'; Given('shared step', () => work());";
+
+    #[test]
+    fn session_state_initializes_once_per_backend_and_per_run() {
+        struct Counter(usize);
+        impl AdapterSessionState for Counter {
+            fn initialize(_: Option<&Path>, _: &[String]) -> Self {
+                Self(0)
+            }
+        }
+        struct Other;
+        impl AdapterSessionState for Other {
+            fn initialize(_: Option<&Path>, _: &[String]) -> Self {
+                Self
+            }
+        }
+        let mut session = SourceExtractionSession::default();
+        session.state::<Counter>().unwrap().0 = 7;
+        session.initialize::<Counter>();
+        session.state::<Other>().unwrap();
+        assert_eq!(session.states.len(), 2);
+        assert_eq!(session.state::<Counter>().unwrap().0, 7);
+        assert_eq!(
+            SourceExtractionSession::default()
+                .state::<Counter>()
+                .unwrap()
+                .0,
+            0
+        );
+        let project = tempfile::tempdir().unwrap();
+        let mut explicit = SourceExtractionSession::new(project.path());
+        assert!(explicit.state::<Counter>().is_err());
+        assert!(!explicit.states.contains_key(&TypeId::of::<Counter>()));
+        // Even a violated internal key/value invariant must return an error, not panic.
+        session
+            .states
+            .insert(TypeId::of::<Counter>(), Box::new(Other));
+        assert!(session.state::<Counter>().is_err());
+    }
+
+    #[test]
+    fn session_mixed_languages_share_cache_and_preserve_findings_in_either_order() {
+        for suffixes in [["js", "ts", "tsx"], ["tsx", "ts", "js"]] {
+            let project = session_project();
+            let root = project.path();
+            let mut session = SourceExtractionSession::new(root);
+            assert_eq!(session.states.len(), 1);
+            let mut definitions = Vec::new();
+            for suffix in suffixes {
+                let extracted = session_extract(&mut session, root, suffix, IMPORTED_STEP);
+                assert_eq!(extracted.definitions.len(), 1, "{suffix}");
+                assert!(extracted.diagnostics.is_empty(), "{suffix}");
+                // A second resolver would observe this edit; a shared run keeps cached exports.
+                fs::write(
+                    root.join("support.ts"),
+                    "export { When } from '@cucumber/cucumber';",
+                )
+                .unwrap();
+                definitions.extend(extracted.definitions);
+            }
+            fs::write(
+                root.join("support.ts"),
+                "export { Given } from '@cucumber/cucumber';",
+            )
+            .unwrap();
+            let mut expected = Vec::new();
+            for suffix in suffixes {
+                let extracted = session_extract(
+                    &mut SourceExtractionSession::default(),
+                    root,
+                    suffix,
+                    IMPORTED_STEP,
+                );
+                assert!(extracted.diagnostics.is_empty());
+                expected.extend(extracted.definitions);
+            }
+            assert_eq!(definitions, expected);
+            let config = crate::config::Config::load(root, Default::default()).unwrap();
+            let result = crate::analysis::analyze(definitions, vec![], &config).unwrap();
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .filter(|finding| finding.rule == crate::model::Rule::DuplicateMatcher)
+                    .count(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn session_keeps_failed_root_resolution_snapshot_and_default_fallback() {
+        let project = session_project();
+        let missing = project.path().join("initially-missing");
+        let mut session = SourceExtractionSession::new(&missing);
+        fs::create_dir(&missing).unwrap();
+        let actual = session_extract(&mut session, project.path(), "ts", IMPORTED_STEP);
+        let expected = session_extract(
+            &mut SourceExtractionSession::default(),
+            project.path(),
+            "ts",
+            IMPORTED_STEP,
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(actual.definitions.len(), 1);
+        let rejected = session_extract(
+            &mut SourceExtractionSession::new(&missing),
+            project.path(),
+            "ts",
+            IMPORTED_STEP,
+        );
+        assert!(rejected.definitions.is_empty());
+        assert!(!rejected.diagnostics.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_keeps_valid_root_snapshot_when_symlink_is_retargeted() {
+        let original = session_project();
+        let other = session_project();
+        let links = tempfile::tempdir().unwrap();
+        let link = links.path().join("root");
+        std::os::unix::fs::symlink(original.path(), &link).unwrap();
+        let mut session = SourceExtractionSession::new(&link);
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(other.path(), &link).unwrap();
+        let actual = session_extract(&mut session, original.path(), "ts", IMPORTED_STEP);
+        assert_eq!(actual.definitions.len(), 1);
+        assert!(actual.diagnostics.is_empty());
+        let rejected = session_extract(
+            &mut SourceExtractionSession::new(&link),
+            original.path(),
+            "ts",
+            IMPORTED_STEP,
+        );
+        assert!(rejected.definitions.is_empty());
+        assert!(!rejected.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn session_roots_and_configured_registrations_are_isolated() {
+        let project = session_project();
+        let other = session_project();
+        let mut first =
+            SourceExtractionSession::with_registrations(project.path(), &["SetupA".into()]);
+        let mut second =
+            SourceExtractionSession::with_registrations(other.path(), &["SetupB".into()]);
+        let source = "SetupA('custom', () => work()); SetupB('custom', () => work());";
+        for (session, root, name) in [
+            (&mut first, project.path(), "SetupA"),
+            (&mut second, other.path(), "SetupB"),
+        ] {
+            let result = session_extract(session, root, "ts", source);
+            assert_eq!(result.definitions.len(), 1);
+            assert_eq!(result.definitions[0].registration, name);
+            assert!(result.diagnostics.is_empty());
+        }
+        fs::write(
+            other.path().join("support.ts"),
+            "export { When } from '@cucumber/cucumber';",
+        )
+        .unwrap();
+        assert_eq!(
+            session_extract(&mut first, project.path(), "ts", IMPORTED_STEP)
+                .definitions
+                .len(),
+            1
+        );
+        assert!(
+            session_extract(&mut second, other.path(), "ts", IMPORTED_STEP)
+                .definitions
+                .is_empty()
+        );
+    }
 
     struct DefaultSessionAdapter;
 
@@ -277,6 +550,9 @@ mod tests {
         for (path, expected) in cases {
             let adapter = adapter_for_path(Path::new(path)).expect(path);
             assert_eq!(adapter.language(), expected, "{path}");
+            let by_language = adapter_for_language(expected);
+            assert_eq!(by_language.language(), expected, "{path}");
+            assert_eq!(by_language.name(), adapter.name(), "{path}");
             assert!(!adapter.name().is_empty());
         }
         assert_eq!(registered_suffixes().len(), cases.len());
@@ -305,6 +581,11 @@ mod tests {
         let mut suffixes = BTreeSet::new();
         for registration in SOURCE_ADAPTER_REGISTRY {
             assert!(suffixes.insert(registration.suffix), "duplicate suffix");
+            assert!(
+                registration.initialize_session.is_some(),
+                "{} is missing session initialization",
+                registration.suffix
+            );
             let file = SourceFile {
                 path: PathBuf::from(format!("steps{}", registration.suffix)),
                 language: registration.adapter.language(),

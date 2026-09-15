@@ -31,8 +31,8 @@ use self::registrations::{
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
-    adapter_for_language, grammar_for_language, SourceAdapter, SourceExtractionSession,
-    UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
+    adapter_for_language, grammar_for_language, AdapterSessionState, SourceAdapter,
+    SourceExtractionSession, StatefulSourceAdapter, UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
 };
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
@@ -74,6 +74,19 @@ impl TypeScriptExtractionSession {
     }
 }
 
+impl AdapterSessionState for TypeScriptExtractionSession {
+    fn initialize(root: Option<&std::path::Path>, registrations: &[String]) -> Self {
+        match root {
+            Some(root) => Self::for_root(root, registrations),
+            None => Self::default(),
+        }
+    }
+}
+
+impl StatefulSourceAdapter for TreeSitterSourceAdapter {
+    type State = TypeScriptExtractionSession;
+}
+
 impl SourceAdapter for TreeSitterSourceAdapter {
     fn name(&self) -> &'static str {
         self.name
@@ -102,7 +115,11 @@ impl SourceAdapter for TreeSitterSourceAdapter {
                 file.path.display()
             );
         }
-        extract_detailed_impl(source, file, &mut session.typescript)
+        extract_detailed_impl(
+            source,
+            file,
+            session.state::<TypeScriptExtractionSession>()?,
+        )
     }
 }
 

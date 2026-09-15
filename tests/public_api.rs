@@ -17,6 +17,46 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+#[test]
+fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults() {
+    use cuke_dedup::source_adapter::{SourceAdapter, SourceExtractionSession};
+    use std::panic::{RefUnwindSafe, UnwindSafe};
+    fn assert_auto_traits<T: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe>() {}
+    assert_auto_traits::<SourceExtractionSession>();
+
+    struct ExternalAdapter;
+    impl SourceAdapter for ExternalAdapter {
+        fn name(&self) -> &'static str {
+            "external"
+        }
+        fn language(&self) -> SourceLanguage {
+            SourceLanguage::JavaScript
+        }
+        fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
+            anyhow::bail!("external adapter reached")
+        }
+    }
+    let project = tempfile::tempdir().unwrap();
+    let file = SourceFile {
+        path: project.path().join("steps.js"),
+        language: SourceLanguage::JavaScript,
+    };
+    let adapter: &dyn SourceAdapter = &ExternalAdapter;
+    for mut session in [
+        SourceExtractionSession::default(),
+        SourceExtractionSession::new(project.path()),
+        SourceExtractionSession::with_registrations(project.path(), &["Setup".into()]),
+    ] {
+        assert_eq!(
+            adapter
+                .extract_with_session("", &file, &mut session)
+                .unwrap_err()
+                .to_string(),
+            "external adapter reached"
+        );
+    }
+}
+
 fn reporter_name(reporter: ReporterKind) -> &'static str {
     match reporter {
         ReporterKind::Terminal => "terminal",
