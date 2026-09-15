@@ -1,4 +1,5 @@
 [toolchain]
-channel = "1.90.0"
+# Development and releases use this pin; Cargo.toml declares the separately tested MSRV.
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]
 profile = "minimal"

@@ -4,10 +4,11 @@ Thanks for helping improve CukeDedup. Bug reports should include a small `.featu
 
 ## Development setup
 
-Install Rust through rustup, Node.js 20 or newer, npm, Python 3, Gitleaks, actionlint, cargo-audit, cargo-deny, and cargo-shear. The repository pins Rust 1.90 for compatibility tests, while the local quality gate also checks the current stable toolchain. Prepare the Rust tools once:
+Install Rust through rustup, Node.js 24 LTS, npm, Python 3, Gitleaks, actionlint, cargo-audit, cargo-deny, and cargo-shear. Development, rust-analyzer, and release builds use the exact Rust version pinned in `rust-toolchain.toml` (currently 1.98.1). The minimum supported Rust version remains 1.90 in `Cargo.toml`; CI tests it separately and also checks the current stable compiler. Prepare the Rust tools once:
 
 ```sh
-rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt,llvm-tools-preview
+rustup toolchain install 1.90.0 --profile minimal
+rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt,llvm-tools-preview
 rustup toolchain install stable --profile minimal --component clippy,rustfmt
 cargo install cargo-llvm-cov --locked
 cargo install cargo-audit --version 0.22.2 --locked
@@ -15,6 +16,8 @@ cargo install cargo-deny --version 0.20.2 --locked
 cargo +stable install cargo-shear --version 1.13.4 --locked
 cargo install cargo-mutants --version 27.1.0 --locked
 ```
+
+Update `rust-toolchain.toml` when upgrading the development and release compiler together. Run `rustup update stable` to refresh the separate stable quality checks. Use `cargo +1.90.0 test --all-targets --all-features --locked` to check minimum-version compatibility locally.
 
 Enable the repository's pre-commit hook:
 
@@ -88,7 +91,7 @@ node scripts/check/check-mutation-score.mjs mutants.out/outcomes.json 90
 
 ## Pull requests
 
-Describe the user-visible problem, the chosen behavior, and the validation performed. CI reads the declared MSRV from `Cargo.toml`, tests it on Linux, macOS, and Windows, publishes JUnit results, measures Rust coverage, compiles the parser fuzz target, scans Git history for secrets, validates clean-room Cargo and npm installation, validates the release binary and local GitHub Action against the corpus, tests the npm launcher on Node 20 and 24, and enforces stable Rust quality, rustdoc, dependency policy, and deterministic release packaging. Scheduled workflows run the full parser fuzz campaign, focused mutation analysis, and scalability profiles, and catch vulnerability disclosures or leaked credentials that occur without a source change.
+Describe the user-visible problem, the chosen behavior, and the validation performed. CI reads the declared MSRV from `Cargo.toml`, tests it on Linux, macOS, and Windows, publishes JUnit results, measures Rust coverage, compiles the parser fuzz target, scans Git history for secrets, validates clean-room Cargo and npm installation, validates the release binary and local GitHub Action against the corpus, tests the npm launcher on Node.js 24 LTS with an additional Node.js 20 compatibility check, and enforces stable Rust quality, rustdoc, dependency policy, and deterministic release packaging. Scheduled workflows run the full parser fuzz campaign, focused mutation analysis, and scalability profiles, and catch vulnerability disclosures or leaked credentials that occur without a source change.
 
 Maintainers may ask for a smaller change when a pull request mixes unrelated parser, rule, reporter, and distribution behavior.
 
