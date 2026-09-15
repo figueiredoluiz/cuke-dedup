@@ -1,4 +1,6 @@
 //! Safe, static feature-path discovery from supported framework configuration files.
+//!
+//! Frameworks register in [`DISCOVERY_REGISTRY`], whose order is the discovery precedence.
 
 use crate::resource_limits::{read_utf8, MAX_CONFIG_INPUT_BYTES};
 use crate::source_adapter::{grammar_for_language, SourceLanguage};
@@ -36,6 +38,11 @@ const CYPRESS_CONFIGS: [&str; 6] = [
     "cypress.config.cjs",
 ];
 const CUCUMBER_DEFAULT: &str = "features/**/*.{feature,feature.md}";
+const CYPRESS_PREPROCESSORS: [&str; 2] = [
+    "@badeball/cypress-cucumber-preprocessor",
+    "cypress-cucumber-preprocessor",
+];
+const CUCUMBER_DEPENDENCIES: [&str; 2] = ["@cucumber/cucumber", "cucumber"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FrameworkFeatures {
@@ -45,53 +52,95 @@ pub(crate) struct FrameworkFeatures {
     pub(crate) warnings: Vec<String>,
 }
 
+/// Static discovery contract for one framework's configuration. A discovery function returns the
+/// feature patterns of the first matching configuration file, `Ok(None)` when the framework does
+/// not apply to the project, or an error when an existing configuration file could not be
+/// inspected. Errors propagate; they are never treated as a non-match. Configuration is only
+/// ever parsed statically, never imported or executed.
+type FrameworkDiscovery = fn(&Path, Option<&JsonValue>) -> Result<Option<FrameworkFeatures>>;
+
+/// Ordered discovery registry: the first provider to return a match decides, so the array order
+/// is the framework precedence — recognized Playwright-BDD configuration, then Cypress
+/// configuration when a supported Cucumber preprocessor dependency is present, then Cucumber
+/// configuration files, then Cucumber dependency-based default paths.
+const DISCOVERY_REGISTRY: [FrameworkDiscovery; 3] =
+    [playwright_discovery, cypress_discovery, cucumber_discovery];
+
 pub(crate) fn detect(
     root: &Path,
     package: Option<&JsonValue>,
 ) -> Result<Option<FrameworkFeatures>> {
-    for name in PLAYWRIGHT_CONFIGS {
+    for discovery in DISCOVERY_REGISTRY {
+        if let Some(features) = discovery(root, package)? {
+            return Ok(Some(features));
+        }
+    }
+    Ok(None)
+}
+
+/// Inspects a provider's configuration files in listed order and returns the first recognized
+/// one. A file that yields no recognized configuration is a non-match, so the next filename is
+/// tried; an existing file that fails to parse aborts discovery with the error.
+fn first_matching_config(
+    root: &Path,
+    configs: &[&str],
+    probe: fn(&Path) -> Result<Option<FrameworkFeatures>>,
+) -> Result<Option<FrameworkFeatures>> {
+    for name in configs {
         let path = root.join(name);
         if !path.is_file() {
             continue;
         }
-        if let Some(config) = playwright_config(&path)? {
-            return Ok(Some(config));
+        if let Some(features) = probe(&path)? {
+            return Ok(Some(features));
         }
-    }
-
-    if package_has_any_dependency(
-        package,
-        &[
-            "@badeball/cypress-cucumber-preprocessor",
-            "cypress-cucumber-preprocessor",
-        ],
-    ) {
-        for name in CYPRESS_CONFIGS {
-            let path = root.join(name);
-            if path.is_file() {
-                if let Some(config) = cypress_config(&path)? {
-                    return Ok(Some(config));
-                }
-            }
-        }
-    }
-
-    for name in CUCUMBER_CONFIGS {
-        let path = root.join(name);
-        if path.is_file() {
-            return cucumber_config(&path).map(Some);
-        }
-    }
-
-    if package_has_any_dependency(package, &["@cucumber/cucumber", "cucumber"]) {
-        return Ok(Some(FrameworkFeatures {
-            patterns: vec![CUCUMBER_DEFAULT.to_owned()],
-            source: root.join("package.json"),
-            framework: "Cucumber.js",
-            warnings: Vec::new(),
-        }));
     }
     Ok(None)
+}
+
+fn playwright_discovery(
+    root: &Path,
+    _package: Option<&JsonValue>,
+) -> Result<Option<FrameworkFeatures>> {
+    first_matching_config(root, &PLAYWRIGHT_CONFIGS, playwright_config)
+}
+
+fn cypress_discovery(
+    root: &Path,
+    package: Option<&JsonValue>,
+) -> Result<Option<FrameworkFeatures>> {
+    if !package_has_any_dependency(package, &CYPRESS_PREPROCESSORS) {
+        return Ok(None);
+    }
+    first_matching_config(root, &CYPRESS_CONFIGS, cypress_config)
+}
+
+fn cucumber_discovery(
+    root: &Path,
+    package: Option<&JsonValue>,
+) -> Result<Option<FrameworkFeatures>> {
+    if let Some(features) = first_matching_config(root, &CUCUMBER_CONFIGS, cucumber_file_config)? {
+        return Ok(Some(features));
+    }
+    if package_has_any_dependency(package, &CUCUMBER_DEPENDENCIES) {
+        return Ok(Some(cucumber_default_features(root)));
+    }
+    Ok(None)
+}
+
+/// Unlike the scripted frameworks, any existing Cucumber configuration file matches, whatever its
+/// contents: missing paths fall back to the default.
+fn cucumber_file_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
+    cucumber_config(path).map(Some)
+}
+
+fn cucumber_default_features(root: &Path) -> FrameworkFeatures {
+    FrameworkFeatures {
+        patterns: vec![CUCUMBER_DEFAULT.to_owned()],
+        source: root.join("package.json"),
+        framework: "Cucumber.js",
+        warnings: Vec::new(),
+    }
 }
 
 fn package_has_any_dependency(package: Option<&JsonValue>, names: &[&str]) -> bool {
@@ -636,6 +685,180 @@ mod tests {
         assert!(detect(tempfile::tempdir().unwrap().path(), None)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn registry_precedence_prefers_recognized_playwright_bdd_configuration() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("playwright.config.ts"),
+            "defineBddConfig({ features: ['pw/**/*.feature'] });",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("cypress.config.js"),
+            "export default defineConfig({ e2e: { specPattern: 'cy/**/*.feature' } });",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("cucumber.json"),
+            r#"{"paths":["cu/**"]}"#,
+        )
+        .unwrap();
+        let package = serde_json::json!({
+            "dependencies": {
+                "@badeball/cypress-cucumber-preprocessor": "1",
+                "@cucumber/cucumber": "1"
+            }
+        });
+        let detected = detect(directory.path(), Some(&package)).unwrap().unwrap();
+        assert_eq!(detected.framework, "Playwright-BDD");
+        assert_eq!(detected.patterns, ["pw/**/*.feature"]);
+        assert_eq!(
+            detected.source,
+            directory.path().join("playwright.config.ts")
+        );
+    }
+
+    #[test]
+    fn unrecognized_playwright_config_falls_through_to_lower_precedence_frameworks() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("playwright.config.ts"),
+            "export default defineConfig({ testDir: 'tests' });",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("cypress.config.js"),
+            "export default defineConfig({ e2e: { specPattern: 'cy/**/*.feature' } });",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("cucumber.json"),
+            r#"{"paths":["cu/**"]}"#,
+        )
+        .unwrap();
+
+        let cypress = serde_json::json!({
+            "dependencies": {"@badeball/cypress-cucumber-preprocessor": "1"}
+        });
+        let detected = detect(directory.path(), Some(&cypress)).unwrap().unwrap();
+        assert_eq!(detected.framework, "Cypress Cucumber");
+        assert_eq!(detected.patterns, ["cy/**/*.feature"]);
+
+        let cucumber = serde_json::json!({"dependencies": {"@cucumber/cucumber": "1"}});
+        let detected = detect(directory.path(), Some(&cucumber)).unwrap().unwrap();
+        assert_eq!(detected.framework, "Cucumber.js");
+        assert_eq!(detected.patterns, ["cu/**"]);
+        assert_eq!(detected.source, directory.path().join("cucumber.json"));
+    }
+
+    #[test]
+    fn cypress_configuration_requires_preprocessor_dependency_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("cypress.config.js"),
+            "export default defineConfig({ e2e: { specPattern: 'cy/**/*.feature' } });",
+        )
+        .unwrap();
+        assert!(detect(directory.path(), None).unwrap().is_none());
+        let unrelated = serde_json::json!({"dependencies": {"cypress": "10"}});
+        assert!(detect(directory.path(), Some(&unrelated))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn unsupported_dependency_names_do_not_enable_framework_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        // The Cypress configuration would match if the lookalike preprocessor name were
+        // accepted, so the None assertion actually distinguishes rejection from gating on
+        // missing files.
+        fs::write(
+            directory.path().join("cypress.config.js"),
+            "export default defineConfig({ e2e: { specPattern: 'cy/**/*.feature' } });",
+        )
+        .unwrap();
+        let lookalike = serde_json::json!({
+            "dependencies": {
+                "cucumber-js": "1",
+                "@badeball/cypress-cucumber-preprocessor-legacy": "1"
+            }
+        });
+        assert!(detect(directory.path(), Some(&lookalike))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn same_provider_filename_fallthrough_continues_after_a_non_match() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("playwright.config.ts"),
+            "export default defineConfig({ testDir: 'tests' });",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("playwright.config.js"),
+            "defineBddConfig({ features: ['js/**/*.feature'] });",
+        )
+        .unwrap();
+        let detected = detect(directory.path(), None).unwrap().unwrap();
+        assert_eq!(
+            detected.framework, "Playwright-BDD",
+            "an unrecognized earlier filename must not stop the provider"
+        );
+        assert_eq!(detected.patterns, ["js/**/*.feature"]);
+        assert_eq!(
+            detected.source,
+            directory.path().join("playwright.config.js")
+        );
+    }
+
+    #[test]
+    fn cucumber_config_filename_order_decides_which_file_is_inspected() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("cucumber.yaml"),
+            "default:\n  paths:\n    - from-yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("cucumber.cjs"),
+            "module.exports = { paths: ['from-cjs'] };",
+        )
+        .unwrap();
+        let detected = detect(directory.path(), None).unwrap().unwrap();
+        assert_eq!(
+            detected.patterns,
+            ["from-yaml/**/*.{feature,feature.md}"],
+            "the first existing filename in cucumber order wins"
+        );
+
+        fs::remove_file(directory.path().join("cucumber.yaml")).unwrap();
+        let detected = detect(directory.path(), None).unwrap().unwrap();
+        assert_eq!(
+            detected.patterns,
+            ["from-cjs/**/*.{feature,feature.md}"],
+            "removing the higher-precedence file promotes the next one"
+        );
+    }
+
+    #[test]
+    fn cucumber_files_match_regardless_of_contents_and_errors_propagate() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("cucumber.cjs"), "const answer = 42;").unwrap();
+        let detected = detect(directory.path(), None).unwrap().unwrap();
+        assert_eq!(detected.framework, "Cucumber.js");
+        assert_eq!(detected.patterns, [CUCUMBER_DEFAULT]);
+        assert!(detected.warnings.is_empty());
+
+        fs::write(directory.path().join("cucumber.json"), "not json").unwrap();
+        let error = detect(directory.path(), None).unwrap_err();
+        assert!(
+            error.to_string().contains("cucumber.json"),
+            "a malformed existing config must surface, not fall through: {error:#}"
+        );
     }
 
     #[test]
