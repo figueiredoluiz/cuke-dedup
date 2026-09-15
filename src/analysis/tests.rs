@@ -3981,12 +3981,10 @@ fn nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases() {
         "a deeply nested binding must still revoke trust"
     );
 
-    // An object rest binding is a shallow copy and nothing here models that: `copy.not = x`
-    // replaces a slot on the copy alone and changes nothing shared, while
-    // `copy.not.objectContaining = x` does reach the shared object. Treating every write through
-    // `copy` as a write to the source would silence every assertion in the file, so rest bindings
-    // stay untracked until the distinction is modelled. Pin it as nested-equals-flat so the two
-    // spellings cannot drift apart while that stands.
+    // An object rest binding is a shallow copy, and the two spellings of one must agree whatever
+    // the write depth. What each depth *means* is pinned by
+    // `object_rest_aliases_propagate_only_writes_that_reach_the_shared_object`; this only holds
+    // the nested and flat spellings together.
     for write in [
         "copy.not = replacement;",
         "copy.not.objectContaining = replacement;",
@@ -4069,6 +4067,183 @@ fn computed_access_matches_dot_access_at_every_position() {
     assert!(
         diverging.is_empty(),
         "computed access must match dot access, but diverges at: {diverging:?}"
+    );
+}
+
+/// Object rest copies property *values* into a fresh object, so the depth of a write decides
+/// whether it reaches the object that was copied from: `copy.not = x` replaces a slot on the copy
+/// alone and changes nothing shared, while `copy.not.objectContaining = x` mutates the very object
+/// the source still references.
+///
+/// The direct alias is anchored absolutely first, so the equalities below cannot be satisfied by
+/// every form degrading to the same answer.
+#[test]
+fn object_rest_aliases_propagate_only_writes_that_reach_the_shared_object() {
+    let (_directory, config) = config();
+    let flat_mutated = aliased_matcher_outcome(FLAT_MATCHER_ALIAS, MATCHER_WRITE, &config);
+    let flat_clean = aliased_matcher_outcome(FLAT_MATCHER_ALIAS, "", &config);
+    assert_ne!(
+        flat_mutated, flat_clean,
+        "the direct alias baseline must distinguish a write from no write"
+    );
+
+    for rest in [
+        "const { expect: { ...copy } } = api;",
+        "const { ...copy } = api.expect;",
+    ] {
+        assert_eq!(
+            aliased_matcher_outcome(rest, "copy.not = replacement;", &config),
+            flat_clean,
+            "`{rest}` with a depth-1 write changes nothing shared and must keep trust"
+        );
+        assert_eq!(
+            aliased_matcher_outcome(rest, "copy.not.objectContaining = replacement;", &config),
+            flat_mutated,
+            "`{rest}` with a depth-2 write reaches the shared object and must revoke trust"
+        );
+    }
+
+    // A direct alias is not a copy, so a depth-1 write through it reaches the source. Comparing it
+    // against the copy is what makes this fail if the exemption ever leaks across.
+    assert_ne!(
+        aliased_matcher_outcome(FLAT_MATCHER_ALIAS, MATCHER_WRITE, &config),
+        aliased_matcher_outcome(
+            "const { ...copy } = api.expect;",
+            "copy.not = replacement;",
+            &config
+        ),
+        "a direct alias must not inherit the depth-1 exemption a copy gets"
+    );
+
+    // Depth travels along alias edges: `negated` sits one level below `copy`, so a depth-1 write
+    // on it is a depth-2 write on the copy and does reach the shared object. Both spellings of
+    // that alias must agree.
+    for alias in [
+        "const { ...copy } = api.expect; const negated = copy.not;",
+        "const { ...copy } = api.expect; const { not: negated } = copy;",
+    ] {
+        assert_eq!(
+            aliased_matcher_outcome(alias, MATCHER_WRITE, &config),
+            flat_mutated,
+            "`{alias}` reaches the shared object and must revoke trust"
+        );
+    }
+
+    // One binding can be reached at different depths by different paths: `copy` is written
+    // directly at depth 1, and reached at depth 2 through `negated`. Recording only that a binding
+    // was seen would let whichever path is walked first decide the answer, so the deeper arrival
+    // has to be able to revisit it. Both statement orders are checked because the order is exactly
+    // what must not matter.
+    //
+    // The names matter: bindings are visited in sorted order, so `zcopy` is reached by its own
+    // shallow write before `anegated` can offer the deeper one. Naming them the other way round
+    // hides the defect entirely, which is why both orders and this spelling are pinned.
+    const ALIAS_CHAIN: &str = "const { ...zcopy } = api.expect; const anegated = zcopy.not;";
+    const SHALLOW_FIRST: &str = "zcopy.not = replacement; anegated.objectContaining = replacement;";
+    const DEEP_FIRST: &str = "anegated.objectContaining = replacement; zcopy.not = replacement;";
+    for write in [SHALLOW_FIRST, DEEP_FIRST] {
+        assert_eq!(
+            aliased_matcher_outcome(ALIAS_CHAIN, write, &config),
+            flat_mutated,
+            "the deeper path must decide, whichever order the writes appear in"
+        );
+    }
+
+    // A binding name changes the traversal order too, and must not change the answer.
+    for name in ["a", "z"] {
+        let alias = format!("const {{ ...{name} }} = api.expect;");
+        let write = format!("{name}.not.objectContaining = replacement; {name}.not = replacement;");
+        assert_eq!(
+            aliased_matcher_outcome(&alias, &write, &config),
+            flat_mutated,
+            "a deep write must survive a shallow one whatever the binding is called"
+        );
+    }
+
+    // A copy taken straight from `require(...)` shares the module's provenance like any other
+    // binding of it.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { ...copy } = require('@playwright/test').expect;",
+            "copy.not.objectContaining = replacement;",
+            &config
+        ),
+        flat_mutated,
+        "a rest copy taken straight from require() must share the module's provenance"
+    );
+
+    // Being a copy belongs to the edge that made it one, not to the name. Reassigning the binding
+    // to a direct alias must not carry the exemption over.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "let { ...copy } = api.expect; copy = api.expect.not;",
+            "copy.objectContaining = replacement;",
+            &config
+        ),
+        flat_mutated,
+        "a binding reassigned to a direct alias must not keep the copy exemption"
+    );
+
+    // One receiver written at several depths takes the largest: the deep write reaches shared
+    // state whatever the shallow one does, so a depth-1 write cannot mask it.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { ...copy } = api.expect;",
+            "copy.not = replacement; copy.anything.any = replacement;",
+            &config
+        ),
+        flat_mutated,
+        "a depth-1 write must not mask a deeper write through the same receiver"
+    );
+
+    // One assignment target can name a receiver at two depths as well, so the aggregation inside
+    // the target walk has to take the largest too, not only the aggregation across statements.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { ...copy } = api.expect;",
+            "[copy.not, copy.anything.any] = pair;",
+            &config
+        ),
+        flat_mutated,
+        "a deeper write in the same assignment target must not be masked"
+    );
+
+    // A shorthand binding carrying a default is filtered by its key like any other: one named for
+    // an unrelated property must not become an alias. Without this the accepting branch of that
+    // arm is the only one exercised.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { expect: { other = {} } } = api;",
+            "other.objectContaining = replacement;",
+            &config
+        ),
+        aliased_matcher_outcome(
+            "const other = api.expect.other;",
+            "other.objectContaining = replacement;",
+            &config
+        ),
+        "an unrelated shorthand default must be treated like the unrelated property itself"
+    );
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { expect: { other = {} } } = api;",
+            "other.objectContaining = replacement;",
+            &config
+        ),
+        flat_clean,
+        "an unrelated shorthand default must not revoke trust"
+    );
+
+    // An unrelated property path is still not a matcher path, copy or not. Anchored against the
+    // clean outcome rather than another alias, so it cannot pass by both sides degrading.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { ...copy } = api.other;",
+            "copy.not.objectContaining = replacement;",
+            &config
+        ),
+        flat_clean,
+        "a copy of an unrelated property must not revoke trust"
     );
 }
 
