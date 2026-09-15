@@ -5,6 +5,32 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-15
+
+### Changed
+
+- Static computed property access resolves the same way dot access does at every position of an
+  assertion chain, so `expect(x)['not'].toBe(y)` now carries the semantics of
+  `expect(x).not.toBe(y)`. Conflicting expected values behind a computed modifier are no longer
+  collapsed into a `parameterization-candidate`, and a dotted and a computed spelling of the same
+  assertion can now be reported as near-duplicates where previously neither was. Reports can
+  therefore change in both directions on upgrade.
+- A property name resolves only when it is written as a static string literal. A concatenation, a
+  template literal, a runtime value, or an escape the decoder does not support stays unresolved
+  rather than resolving to a name the source never spells, which keeps the handler non-comparable
+  instead of claiming an assertion.
+
+### Fixed
+
+- Writing through an alias of a matcher builder revokes assertion trust for every spelling of that
+  alias, not only the flat one. Nested destructuring, shorthand bindings, shorthand bindings
+  carrying a default, and object rest bindings are now treated like `const negated =
+  api.expect.not`. Handlers that rely on a matcher replaced through one of those aliases are no
+  longer reported as duplicates.
+- Object rest bindings are treated as the shallow copies they are. `copy.not.objectContaining = x`
+  reaches the object the source still references and revokes trust, while `copy.not = x` replaces a
+  slot on the copy alone and leaves trust intact. Previously neither revoked it.
+
 ## [0.3.0] - 2026-09-14
 
 ### Added
@@ -159,6 +185,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.4.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.1.1...v0.2.0
