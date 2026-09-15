@@ -23,7 +23,7 @@ With Cargo:
 cargo install cuke-dedup
 ```
 
-Or in a JavaScript project:
+Or in a JavaScript project, using Node.js 24 LTS (recommended):
 
 ```sh
 npm install --save-dev cuke-dedup
@@ -185,7 +185,7 @@ and is distributed independently from the Cargo and npm packages.
 
 ## Compatibility
 
-- Rust 1.90 or newer is required. The npm launcher is tested on Node.js 20 and 24.
+- Building from source requires Rust 1.90 or newer. Node.js 24 LTS is recommended for the npm launcher; Node.js 20 remains the minimum compatible version and is tested in CI.
 - Definition extraction currently supports JavaScript and TypeScript, including JSX and common
   module variants.
 - Static analysis cannot safely resolve every dynamic configuration, matcher, wrapper, or imported
