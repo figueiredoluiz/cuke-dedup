@@ -83,6 +83,31 @@
       ]
     },
     {
+      "name": "rest-alias-depth-decides-shared-mutation",
+      "path": "rest-alias-depth",
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the pallet label is confirmed", "the pallet label is now confirmed"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the pallet label is confirmed", "the pallet label is now confirmed"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": ["the crate seal is verified", "the crate seal is now verified"]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": ["the crate seal is verified", "the crate seal is now verified"]
+        }
+      ]
+    },
+    {
       "name": "review-gap-require-mutation",
       "path": "review-gaps",
       "arguments": ["--definitions", "require-mutation.cjs"],

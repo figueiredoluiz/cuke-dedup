@@ -98,11 +98,11 @@ impl AssertionBindings {
                 _ => {
                     if let Some(left) = assignment_target(node) {
                         let mut assigned = BTreeSet::new();
-                        let mut writes = BTreeSet::new();
+                        let mut writes = BTreeMap::new();
                         collect_assignment_targets(left, source, &mut assigned, &mut writes, false);
                         factory_writes.extend(
                             writes
-                                .into_iter()
+                                .into_keys()
                                 .filter(|name| !position_is_shadowed(&shadow_ranges, name, node)),
                         );
                         shadowed.extend(
@@ -335,7 +335,17 @@ impl AssertionBindings {
                 trusted.insert(local);
             }
             "object_pattern" => {
-                collect_expect_pattern(name, source, &mut self.identifiers, &mut trusted, false)
+                // The trust pass wants names only; the distances matter to the mutation pass.
+                let mut destructured = BTreeMap::new();
+                collect_expect_pattern(
+                    name,
+                    source,
+                    &mut destructured,
+                    &mut trusted,
+                    &mut BTreeMap::new(),
+                    false,
+                );
+                self.identifiers.extend(destructured.into_keys());
             }
             _ => {}
         }
@@ -490,15 +500,21 @@ fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<St
     }
 }
 
+/// Collects the bindings an assignment target names, and for each receiver the **depth** of the
+/// property path written through it: `copy.not = x` is depth 1, `copy.not.objectContaining = x` is
+/// depth 2. Depth separates replacing a slot from mutating the object held in it, which is exactly
+/// the difference between a copy and the thing it was copied from. Where one receiver is written
+/// at several depths the largest wins: a deep write reaches shared state whatever else the file
+/// does.
 fn collect_assignment_targets(
     root: Node<'_>,
     source: &[u8],
     output: &mut BTreeSet<String>,
-    factory_writes: &mut BTreeSet<String>,
+    factory_writes: &mut BTreeMap<String, usize>,
     matcher_members: bool,
 ) {
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
+    let mut stack = vec![(root, 0usize)];
+    while let Some((node, depth)) = stack.pop() {
         match node.kind() {
             "identifier" | "shorthand_property_identifier_pattern" => {
                 output.insert(node_text(node, source).to_owned());
@@ -524,9 +540,13 @@ fn collect_assignment_targets(
                         if matcher_members
                             && matches!(object.kind(), "member_expression" | "subscript_expression")
                         {
-                            stack.push(object);
+                            stack.push((object, depth + 1));
                         } else if object.kind() == "identifier" {
-                            factory_writes.insert(node_text(object, source).to_owned());
+                            let reached = depth + 1;
+                            factory_writes
+                                .entry(node_text(object, source).to_owned())
+                                .and_modify(|deepest| *deepest = (*deepest).max(reached))
+                                .or_insert(reached);
                         }
                     }
                 }
@@ -534,7 +554,7 @@ fn collect_assignment_targets(
             }
             "pair" | "pair_pattern" => {
                 if let Some(value) = node.child_by_field_name("value") {
-                    stack.push(value);
+                    stack.push((value, depth));
                 }
                 continue;
             }
@@ -543,14 +563,16 @@ fn collect_assignment_targets(
                     .child_by_field_name("left")
                     .or_else(|| node.named_child(0))
                 {
-                    stack.push(left);
+                    stack.push((left, depth));
                 }
                 continue;
             }
             "type_annotation" => continue,
             _ => {}
         }
-        super::ast::push_named_children_reverse(node, &mut stack);
+        let mut children = Vec::new();
+        super::ast::push_named_children_reverse(node, &mut children);
+        stack.extend(children.into_iter().map(|child| (child, depth)));
     }
 }
 
@@ -625,7 +647,7 @@ fn module_runtime_binding_exists(
                     pattern,
                     source,
                     &mut names,
-                    &mut BTreeSet::new(),
+                    &mut BTreeMap::new(),
                     false,
                 );
             } else {
@@ -665,9 +687,14 @@ fn namespace_alias_writes(
         };
         node = parent;
     };
-    let mut aliases = BTreeMap::<_, BTreeSet<_>>::new();
     let mut required_aliases = BTreeMap::new();
-    let mut writes = Vec::new();
+    // Each edge records how many property levels the local sits below its owner, and whether the
+    // step is a copy. An object rest binding holds the same property *values* as the object it
+    // copied, so a write that reaches past its own slots reaches that object too, while a write to
+    // a slot itself does not. Depth has to travel along the edges: `const negated = copy.not`
+    // makes a depth-1 write on `negated` a depth-2 write on `copy`.
+    let mut aliases = BTreeMap::<_, BTreeSet<(_, usize, bool)>>::new();
+    let mut writes = BTreeMap::<_, usize>::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         let edge = match node.kind() {
@@ -696,12 +723,20 @@ fn namespace_alias_writes(
         };
         if let Some((left, right)) = edge {
             if let Some(right) = super::registrations::unwrap_registration_callee(right) {
-                let mut locals = BTreeSet::new();
-                let mut owners = BTreeSet::new();
+                let mut locals = BTreeMap::new();
+                let mut shallow_locals = BTreeMap::new();
+                let mut owners = BTreeMap::new();
                 if left.kind() == "identifier" {
-                    locals.insert(node_text(left, source).to_owned());
+                    locals.insert(node_text(left, source).to_owned(), 0);
                 } else if matcher_members && left.kind() == "object_pattern" {
-                    collect_expect_pattern(left, source, &mut locals, &mut BTreeSet::new(), true);
+                    collect_expect_pattern(
+                        left,
+                        source,
+                        &mut locals,
+                        &mut BTreeSet::new(),
+                        &mut shallow_locals,
+                        true,
+                    );
                 }
                 let required = match registration_callee(right, source) {
                     Some(RegistrationCallee::Property { object, name }) if name == "expect" => {
@@ -715,45 +750,64 @@ fn namespace_alias_writes(
                     if let Some(module) = required_module(required, source)
                         .filter(|module| ASSERTION_MODULES.contains(module))
                     {
-                        for local in &locals {
+                        for (local, copied) in locals
+                            .keys()
+                            .map(|local| (local, false))
+                            .chain(shallow_locals.keys().map(|local| (local, true)))
+                        {
                             let local = key(local, left);
                             let owner = required_aliases
                                 .entry(module)
                                 .or_insert_with(|| local.clone());
+                            aliases.entry(owner.clone()).or_default().insert((
+                                local.clone(),
+                                0,
+                                false,
+                            ));
                             aliases
-                                .entry(owner.clone())
+                                .entry(local)
                                 .or_default()
-                                .insert(local.clone());
-                            aliases.entry(local).or_default().insert(owner.clone());
+                                .insert((owner.clone(), 0, copied));
                         }
                     }
                 }
                 if right.kind() == "identifier" {
-                    owners.insert(node_text(right, source).to_owned());
+                    owners.insert(node_text(right, source).to_owned(), 0);
                 } else if matcher_members
                     && matches!(right.kind(), "member_expression" | "subscript_expression")
                 {
                     // Only direct property access establishes an alias, not a call's arguments.
+                    let mut owner_writes = BTreeMap::new();
                     collect_assignment_targets(
                         right,
                         source,
                         &mut BTreeSet::new(),
-                        &mut owners,
+                        &mut owner_writes,
                         true,
                     );
+                    owners.extend(owner_writes);
                 }
-                for local in locals {
-                    for owner in &owners {
-                        aliases
-                            .entry(key(&local, left))
-                            .or_default()
-                            .insert(key(owner, right));
+                for (local, local_delta, copied) in locals
+                    .iter()
+                    .map(|(local, delta)| (local, delta, false))
+                    .chain(
+                        shallow_locals
+                            .iter()
+                            .map(|(local, delta)| (local, delta, true)),
+                    )
+                {
+                    for (owner, owner_delta) in &owners {
+                        aliases.entry(key(local, left)).or_default().insert((
+                            key(owner, right),
+                            local_delta + owner_delta,
+                            copied,
+                        ));
                     }
                 }
             }
         }
         if let Some(target) = assignment_target(node) {
-            let mut receivers = BTreeSet::new();
+            let mut receivers = BTreeMap::new();
             collect_assignment_targets(
                 target,
                 source,
@@ -761,21 +815,42 @@ fn namespace_alias_writes(
                 &mut receivers,
                 matcher_members,
             );
-            writes.extend(receivers.into_iter().map(|name| key(&name, node)));
+            for (name, depth) in receivers {
+                writes
+                    .entry(key(&name, node))
+                    .and_modify(|deepest| *deepest = (*deepest).max(depth))
+                    .or_insert(depth);
+            }
         }
         super::ast::push_named_children_reverse(node, &mut stack);
     }
-    let mut visited = BTreeSet::new();
+    // Record the deepest write already propagated from each binding rather than merely that it was
+    // seen. A binding reached first by a shallow path and later by a deeper one must be revisited,
+    // or the answer would depend on the order the file happens to be walked in.
+    let mut deepest = BTreeMap::<_, usize>::new();
     let mut modules = BTreeSet::new();
-    while let Some(binding) = writes.pop() {
-        if !visited.insert(binding.clone()) {
+    let mut pending: Vec<_> = writes.into_iter().collect();
+    while let Some((binding, depth)) = pending.pop() {
+        if deepest
+            .get(&binding)
+            .is_some_and(|reached| *reached >= depth)
+        {
             continue;
         }
+        deepest.insert(binding.clone(), depth);
         if binding.0 == root.id() {
             modules.insert(binding.1.clone());
         }
         if let Some(sources) = aliases.get(&binding) {
-            writes.extend(sources.iter().cloned());
+            for (source, delta, copied) in sources {
+                // Replacing a slot on a copy changes nothing the copied object can observe, so a
+                // write has to reach past that slot before it crosses. Without this, one
+                // `copy.not = x` would revoke trust for every assertion the module reaches.
+                if *copied && depth < 2 {
+                    continue;
+                }
+                pending.push((source.clone(), depth + delta));
+            }
         }
     }
     modules
@@ -1150,8 +1225,9 @@ fn shorthand_key_name(node: Node<'_>, source: &[u8]) -> Option<String> {
 fn collect_expect_pattern(
     pattern: Node<'_>,
     source: &[u8],
-    identifiers: &mut BTreeSet<String>,
+    identifiers: &mut BTreeMap<String, usize>,
     trusted: &mut BTreeSet<String>,
+    shallow: &mut BTreeMap<String, usize>,
     include_defaults: bool,
 ) {
     // An explicit worklist rather than recursion. A bound here would have to decide what the
@@ -1160,10 +1236,13 @@ fn collect_expect_pattern(
     // rest of this walk applies and revokes trust a write never touched. Walking iteratively keeps
     // one rule at every depth and costs no stack.
     //
-    // The flag marks the top level. Reaching deeper may remove trust but never establishes it, so
-    // only the outermost properties can name a trusted factory.
-    let mut pending = vec![(pattern, true)];
-    while let Some((pattern, top_level)) = pending.pop() {
+    // Each local is reported with how many property levels it sits below the destructured value,
+    // so an alias edge can carry that distance: `const { not: negated } = copy` makes a depth-1
+    // write on `negated` a depth-2 write on `copy`. Only the outermost level can name a trusted
+    // factory — reaching deeper may remove trust but never establishes it.
+    let mut pending = vec![(pattern, 0usize)];
+    while let Some((pattern, depth)) = pending.pop() {
+        let top_level = depth == 0;
         let mut cursor = pattern.walk();
         for property in pattern.named_children(&mut cursor) {
             match property.kind() {
@@ -1174,7 +1253,20 @@ fn collect_expect_pattern(
                             .as_deref()
                             .is_none_or(|name| name == "expect" || is_matcher_member(name))
                         {
-                            identifiers.insert(node_text(left, source).to_owned());
+                            identifiers.insert(node_text(left, source).to_owned(), depth + 1);
+                        }
+                    }
+                }
+                // An object rest binding copies the remaining property *values* into a fresh
+                // object, so it holds the very objects the source holds. It is reported apart
+                // from a direct alias because only writes that reach past its own slots can be
+                // seen by the source.
+                "rest_pattern" if include_defaults => {
+                    if let Some(binding) = property.named_child(0) {
+                        if binding.kind() == "identifier" {
+                            // A rest binding holds the same properties as the value it copied,
+                            // so it sits at that value's own level, not one below it.
+                            shallow.insert(node_text(binding, source).to_owned(), depth);
                         }
                     }
                 }
@@ -1184,7 +1276,7 @@ fn collect_expect_pattern(
                     let known_not = name.as_deref().is_some_and(is_matcher_member);
                     if known_expect || (include_defaults && (known_not || name.is_none())) {
                         let local = node_text(property, source).to_owned();
-                        identifiers.insert(local.clone());
+                        identifiers.insert(local.clone(), depth + 1);
                         if known_expect && top_level {
                             trusted.insert(local);
                         }
@@ -1234,7 +1326,7 @@ fn collect_expect_pattern(
                         known_expect || (include_defaults && (known_not || name.is_none()));
                     if supported && value.kind() == "identifier" {
                         let local = node_text(value, source).to_owned();
-                        identifiers.insert(local.clone());
+                        identifiers.insert(local.clone(), depth + 1);
                         if known_expect && top_level {
                             trusted.insert(local);
                         }
@@ -1243,7 +1335,7 @@ fn collect_expect_pattern(
                         // `api.expect.not`, so a write through either must revoke trust
                         // identically. An unsupported key stops the descent, matching the property
                         // filter the flat path applies.
-                        pending.push((value, false));
+                        pending.push((value, depth + 1));
                     }
                 }
                 _ => {}
