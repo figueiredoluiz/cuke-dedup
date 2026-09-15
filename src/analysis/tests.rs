@@ -4208,6 +4208,32 @@ fn object_rest_aliases_propagate_only_writes_that_reach_the_shared_object() {
         "a deeper write in the same assignment target must not be masked"
     );
 
+    // A shorthand binding carrying a default is filtered by its key like any other: one named for
+    // an unrelated property must not become an alias. Without this the accepting branch of that
+    // arm is the only one exercised.
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { expect: { other = {} } } = api;",
+            "other.objectContaining = replacement;",
+            &config
+        ),
+        aliased_matcher_outcome(
+            "const other = api.expect.other;",
+            "other.objectContaining = replacement;",
+            &config
+        ),
+        "an unrelated shorthand default must be treated like the unrelated property itself"
+    );
+    assert_eq!(
+        aliased_matcher_outcome(
+            "const { expect: { other = {} } } = api;",
+            "other.objectContaining = replacement;",
+            &config
+        ),
+        flat_clean,
+        "an unrelated shorthand default must not revoke trust"
+    );
+
     // An unrelated property path is still not a matcher path, copy or not. Anchored against the
     // clean outcome rather than another alias, so it cannot pass by both sides degrading.
     assert_eq!(
