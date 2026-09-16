@@ -35,7 +35,8 @@ scripts/check/check.sh
 Coverage is measured separately because it rebuilds the test suite with instrumentation:
 
 ```sh
-cargo llvm-cov --all-features --all-targets --locked --fail-under-lines 97
+cargo +stable llvm-cov --all-features --tests --locked --no-report
+cargo +stable llvm-cov report --summary-only --fail-under-lines 97
 ```
 
 The npm launcher currently has no third-party development dependencies, so contributor and CI checks run directly without an install step. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 97% Rust line-coverage floor.
@@ -69,7 +70,8 @@ The Python packaging utility intentionally uses only the standard library to cre
 CI enforces a 97% Rust line-coverage floor. The lines left uncovered fall into two groups: lines with an external reason no in-process test can reach them, and reachable residual lines that simply have no test yet. The justified group is recorded below so the next coverage run can be interpreted without re-deriving each case. Regenerate the current list with:
 
 ```sh
-cargo llvm-cov --all-features --all-targets --locked --fail-under-lines 97 --show-missing-lines
+cargo +stable llvm-cov --all-features --tests --locked --no-report
+cargo +stable llvm-cov report --show-missing-lines --fail-under-lines 97
 ```
 
 The listing enumerates each missed region; the summary's "Missed Lines" count also includes brace-only continuation lines inside those regions, so it reads slightly higher than the listing. An entry here must cite an external reason — an upstream contract, a platform invariant, a race window, a resource scale, compile-time evaluation, or failing I/O. Anything else is a missing test, not an entry. When a change makes a listed line reachable, write the test; when a change proves code unreachable with no defensive value, delete the code rather than adding it here.
@@ -106,7 +108,7 @@ These fire only on inputs far beyond test-practical size:
 
 ### Failing-I/O propagation
 
-- `src/main.rs` (BrokenPipe arm), `src/reporters/terminal.rs`, `src/cli.rs`, `src/modes.rs`, `src/framework_config.rs`, and `src/config.rs`: `?` propagation from writes to stdout/stderr, git subprocess output, and configuration reads. These run only when a write or read actually fails — a closed pipe or a vanished file — which the in-process suite never produces.
+- `src/main.rs` (BrokenPipe arm), `src/reporters/terminal.rs`, `src/cli.rs`, `src/modes.rs`, `src/framework_config.rs`, and `src/config.rs`: remaining uncovered `?` paths propagate failed writes, git subprocess output, or configuration reads. The in-process suite does exercise a terminal footer write returning `BrokenPipe`; other failure paths require different failure points or external conditions such as a vanished file.
 
 ### Reachable residual
 
