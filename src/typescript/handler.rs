@@ -799,6 +799,25 @@ impl LocalConstants {
                 "catch_clause" => node
                     .child_by_field_name("parameter")
                     .map(|parameter| (parameter, node, node.start_byte(), false)),
+                // `for (const x of xs)` binds `x` for the loop, but the grammar attaches that
+                // binding to the loop itself rather than to a `variable_declarator`, so the
+                // declarator branch below never sees it and an outer constant of the same name
+                // stayed visible inside the body. Without a declaration keyword the left side is
+                // an assignment target and introduces no binding at all.
+                "for_in_statement" => node
+                    .child_by_field_name("kind")
+                    .zip(node.child_by_field_name("left"))
+                    .and_then(|(keyword, left)| {
+                        let lexical = matches!(node_text(keyword, source), "let" | "const");
+                        // `var` is function-scoped and hoists past the loop; `let`/`const` belong
+                        // to the loop alone.
+                        let scope = if lexical {
+                            Some(node)
+                        } else {
+                            local_constant_scope(node.parent(), handler)
+                        };
+                        scope.map(|scope| (left, scope, node.start_byte(), lexical))
+                    }),
                 _ => None,
             };
             if let Some((name, scope, declaration_start, lexical)) = declaration_shadow {
@@ -1052,6 +1071,19 @@ fn serialize_ast(
     serialize_ast_with_constants(node, source, declared, mode, None, None)
 }
 
+/// Whether a decoded property name can also be written with dot access.
+///
+/// Only then do `obj['name']` and `obj.name` denote the same expression; any other name has no dot
+/// spelling, so folding it into one would invent an equivalence.
+fn is_identifier_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_' || first == '$')
+        && characters
+            .all(|character| character.is_alphanumeric() || character == '_' || character == '$')
+}
+
 fn serialize_ast_with_constants(
     node: Node<'_>,
     source: &[u8],
@@ -1062,6 +1094,7 @@ fn serialize_ast_with_constants(
 ) -> String {
     enum Event<'tree> {
         Visit(Node<'tree>, bool),
+        Text(String),
         Close,
     }
     let mut output = String::new();
@@ -1069,6 +1102,7 @@ fn serialize_ast_with_constants(
     while let Some(event) = stack.pop() {
         match event {
             Event::Close => output.push(')'),
+            Event::Text(text) => output.push_str(&text),
             Event::Visit(node, prefixed) => {
                 if node.kind() == "comment" {
                     continue;
@@ -1130,6 +1164,41 @@ fn serialize_ast_with_constants(
                     output.push_str(node.kind());
                     output.push('>');
                     continue;
+                }
+                // `obj['name']` and `obj.name` read the same property, so a readable computed
+                // form is serialized as the dot form and the two share a fingerprint. Only a
+                // static string literal decoding to a valid identifier qualifies: that is the one
+                // case where a dot spelling exists. A key such as `'not.resolves'` names a single
+                // property and must not be folded into the chain `.not.resolves`.
+                if node.kind() == "subscript_expression" {
+                    if let Some((object, name)) = node
+                        .child_by_field_name("object")
+                        .zip(node.child_by_field_name("index"))
+                        .and_then(|(object, index)| {
+                            super::matcher::static_string_key(index, source)
+                                .filter(|name| is_identifier_name(name))
+                                .map(|name| (object, name))
+                        })
+                    {
+                        // `a?.['b']` short-circuits where `a['b']` throws, so the optional link is
+                        // part of the access and must survive canonicalisation. Emitting it in the
+                        // shape the dotted form uses keeps `a?.['b']` equal to `a?.b` and distinct
+                        // from `a.b`.
+                        let mut cursor = node.walk();
+                        let optional = node
+                            .children(&mut cursor)
+                            .any(|child| child.kind() == "optional_chain");
+                        let link = if optional {
+                            " (optional_chain ?.:?.)"
+                        } else {
+                            " .:."
+                        };
+                        output.push_str("(member_expression");
+                        stack.push(Event::Close);
+                        stack.push(Event::Text(format!("{link} property_identifier:{name}")));
+                        stack.push(Event::Visit(object, true));
+                        continue;
+                    }
                 }
                 let mut cursor = node.walk();
                 let children: Vec<_> = node
@@ -1551,14 +1620,15 @@ fn call_behavior_event(
         let name = node_text(function, source);
         return format!("call:{}", declared.get(name).map_or(name, String::as_str));
     }
-    if function.kind() == "member_expression" {
-        if let (Some(object), Some(property)) = (
-            function.child_by_field_name("object"),
-            function.child_by_field_name("property"),
-        ) {
-            if let Some(receiver) = static_call_receiver(object, source, declared) {
-                return format!("call:{receiver}#{}", node_text(property, source));
-            }
+    // Both spellings of one property name the same method, so `page['locator']()` records the
+    // event `page.locator()` records. `assertion_property` resolves only a static string literal,
+    // so a runtime key still falls through to the structural form below.
+    if let Some((object, property)) = assertion_property(function, source) {
+        if let Some(receiver) = static_call_receiver(object, source, declared) {
+            return format!(
+                "call:{receiver}#{}",
+                encode_event_component(property.clone())
+            );
         }
     }
     format!(
@@ -1581,16 +1651,15 @@ fn static_call_receiver(
         "parenthesized_expression" | "await_expression" => {
             static_call_receiver(node.named_child(0)?, source, declared)
         }
-        "member_expression" => {
-            let object =
-                static_call_receiver(node.child_by_field_name("object")?, source, declared)?;
-            let property = node.child_by_field_name("property")?;
-            Some(format!("{object}.{}", node_text(property, source)))
+        "member_expression" | "subscript_expression" => {
+            let (object, property) = assertion_property(node, source)?;
+            let object = static_call_receiver(object, source, declared)?;
+            Some(format!("{object}.{}", encode_event_component(property)))
         }
         "call_expression" => {
             let function = node.child_by_field_name("function")?;
-            if function.kind() == "member_expression" {
-                static_call_receiver(function.child_by_field_name("object")?, source, declared)
+            if let Some((object, _)) = assertion_property(function, source) {
+                static_call_receiver(object, source, declared)
             } else if function.kind() == "identifier" {
                 let name = node_text(function, source);
                 Some(declared.get(name).map_or(name, String::as_str).to_owned())

@@ -744,9 +744,13 @@ fn namespace_alias_writes(
                     }
                     _ => right,
                 };
-                // Same-module loads share mutation provenance, never callable factory trust.
-                // Respect both module-level replacement and lexical shadowing of require.
-                if matcher_members && !require_shadowed && key("require", required).0 == root.id() {
+                // Same-module loads share mutation provenance, never callable factory trust. Two
+                // `require()` calls for one module return the same cached object, so a write
+                // through either binding is a write to the other — which is as true of replacing
+                // the factory as it is of mutating a matcher below it, so this link is not
+                // restricted to the matcher pass. Respect both module-level replacement and
+                // lexical shadowing of require.
+                if !require_shadowed && key("require", required).0 == root.id() {
                     if let Some(module) = required_module(required, source)
                         .filter(|module| ASSERTION_MODULES.contains(module))
                     {

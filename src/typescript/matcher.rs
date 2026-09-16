@@ -214,8 +214,14 @@ pub(super) fn normalize_matcher_with_flags(
     }
 }
 
+/// The flags that change what a matcher matches, and therefore belong to its identity.
+///
+/// `v` is included: it enables Unicode set notation and changes character-class semantics, so it is
+/// at least as significant as `u`, which it implies. Leaving it out made `/x/v` normalize to the
+/// text of `/x/` and reported the two as equivalent. `g`, `y` and `d` affect only how a match is
+/// executed or reported, never which inputs match, so they stay out.
 fn semantic_regex_flags(flags: &str) -> String {
-    ['i', 'm', 's', 'u']
+    ['i', 'm', 's', 'u', 'v']
         .into_iter()
         .filter(|flag| flags.contains(*flag))
         .collect()
@@ -329,6 +335,54 @@ fn normalize_capture_groups(expression: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `v` enables Unicode set notation and changes character-class semantics, so it belongs to a
+    /// matcher's identity exactly as `u` does — more so, since `v` implies `u`. Dropping it made
+    /// `/x/v` normalize to the text of `/x/` and reported the two as equivalent.
+    ///
+    /// The non-semantic flags are pinned alongside it, so widening the set cannot pass this test by
+    /// making every flag significant.
+    #[test]
+    fn unicode_sets_flag_belongs_to_matcher_identity() {
+        let normalized = |flags: &str| {
+            normalize_matcher_with_flags("^the gauge$", MatcherKind::RegularExpression, flags)
+        };
+
+        // The defect: these three were indistinguishable from the unflagged spelling.
+        for flags in ["v", "vi", "uv"] {
+            assert_ne!(
+                normalized(flags),
+                normalized(""),
+                "`/x/{flags}` must not share an identity with the unflagged matcher"
+            );
+        }
+        assert_ne!(
+            normalized("v"),
+            normalized("u"),
+            "`v` is not `u`: it changes character-class semantics"
+        );
+        assert_ne!(normalized("vi"), normalized("i"), "`v` survives beside `i`");
+
+        // Execution-only flags stay stripped, so the set was widened rather than abandoned.
+        for flags in ["g", "y", "d", "gy"] {
+            assert_eq!(
+                normalized(flags),
+                normalized(""),
+                "`{flags}` does not change what a matcher matches and must stay non-semantic"
+            );
+        }
+
+        // `v` is a flag, not an opaque marker: two matchers carrying it still share an identity.
+        assert_eq!(normalized("v"), normalized("v"));
+        assert_eq!(
+            normalized("iv"),
+            normalized("vi"),
+            "flag order is not identity"
+        );
+
+        // A `v` matcher is still unsupported for compilation, which this must not change.
+        assert_eq!(rust_regex_expression("[a&&b]", "v"), None);
+    }
 
     #[test]
     fn javascript_string_decoding_covers_escape_forms_and_rejections() {
