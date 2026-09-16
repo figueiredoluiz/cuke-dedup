@@ -5,6 +5,37 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Changed
+
+- `obj['name']` and `obj.name` read the same property, so two handlers that differ only in that
+  spelling are now recognised as the same handler. This applies to every property access in a
+  handler, not only assertions: `page['locator']('x')` matches `page.locator('x')`. Only a static
+  string literal whose decoded value is a valid identifier is folded — a dynamic key, a template
+  literal, or a name with no dot spelling such as `['not.resolves']` keeps its own identity.
+  Optional access is preserved, so `a?.['b']` matches `a?.b` and neither matches `a.b`.
+  **Reports can gain findings on upgrade**, because pairs that were previously distinguished only
+  by access spelling are now duplicates.
+
+### Fixed
+
+- The regular-expression `v` flag is part of a matcher's identity. It enables Unicode set notation
+  and changes character-class semantics, so `/^a gauge$/v` and `/^a gauge$/` match different inputs
+  and are no longer reported as `normalized-matcher`. Flags that only affect how a match is executed
+  — `g`, `y` and `d` — are still ignored for identity, and two matchers carrying `v` still compare
+  as the same matcher.
+- Replacing the assertion factory through a second `require()` of the same module now revokes
+  assertion trust. Two `require()` calls for one module return the same cached object, so
+  `other.expect = replacement` replaces the factory that a separate `api.expect(...)` call uses.
+  Previously only a local alias (`const other = api`) propagated, so handlers relying on a factory
+  replaced through the second binding were still reported as duplicates.
+- A `for (const x of xs)` or `for (const x in xs)` head binds `x` for the loop, so a reference to
+  `x` in the body is the loop variable rather than an outer constant of the same name. The binding
+  was not registered, so the outer constant's value was substituted into the loop body. This was
+  wrong in both directions: identical loop handlers with different unrelated outer constants were
+  reported as distinct, and different loop bodies sharing an outer constant could be reported as
+  duplicates. `class`, `function`, `catch` and classic `for (let i = …)` bindings were already
+  handled.
+
 ## [0.4.0] - 2026-09-15
 
 ### Changed

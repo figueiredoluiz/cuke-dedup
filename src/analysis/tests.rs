@@ -4247,6 +4247,287 @@ fn object_rest_aliases_propagate_only_writes_that_reach_the_shared_object() {
     );
 }
 
+/// `obj['name']` and `obj.name` read the same property, so two handlers that differ only in that
+/// spelling are the same handler. The behaviour signature already agreed across the two forms;
+/// the alpha fingerprint did not, and `duplicate-handler` needs both.
+///
+/// Only a static string literal whose decoded value is a valid identifier is canonicalised, since
+/// that is the only case where a dot spelling of the property exists.
+#[test]
+fn static_computed_property_access_shares_a_handler_fingerprint() {
+    let (_directory, config) = config();
+    let outcome = |left: &str, right: &str| {
+        let source = format!(
+            "Then('the alpha gauge is settled', () => {{ {left} }}); \
+             Then('the archive reading has finished', () => {{ {right} }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| matches!(rule, Rule::DuplicateHandler | Rule::NearDuplicateStep))
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+    let duplicate = vec![Rule::DuplicateHandler];
+
+    // Anchor: each spelling equates with itself, so the equalities below cannot pass by making
+    // every handler comparable to everything.
+    for body in [
+        "expect(s).not.toBe('ready');",
+        "expect(s)['not'].toBe('ready');",
+        "page.locator('x').click();",
+        "page['locator']('x').click();",
+    ] {
+        assert_eq!(
+            outcome(body, body),
+            duplicate,
+            "`{body}` must equate with itself"
+        );
+    }
+
+    // The contract: the two spellings of one property are one handler.
+    for (dotted, computed) in [
+        (
+            "expect(s).not.toBe('ready');",
+            "expect(s)['not'].toBe('ready');",
+        ),
+        (
+            "expect(s).toEqual(expect.objectContaining({ r: 1 }));",
+            "expect(s).toEqual(expect['objectContaining']({ r: 1 }));",
+        ),
+        (
+            "page.locator('x').click();",
+            "page['locator']('x').click();",
+        ),
+    ] {
+        assert_eq!(
+            outcome(dotted, computed),
+            duplicate,
+            "`{computed}` reads the same property as `{dotted}`"
+        );
+    }
+
+    // Optional access short-circuits where plain access throws, so the optional link is part of
+    // the access. `a?.['b']` is `a?.b`, and neither is `a.b`.
+    assert_eq!(
+        outcome("expect(s)?.['not'].toBe('a');", "expect(s)?.not.toBe('a');"),
+        duplicate,
+        "an optional computed access is the optional dotted access"
+    );
+    assert_ne!(
+        outcome("expect(s)?.['not'].toBe('a');", "expect(s).not.toBe('a');"),
+        duplicate,
+        "an optional access must not collapse into a plain one"
+    );
+    assert_ne!(
+        outcome("expect(s)['not'].toBe('a');", "expect(s)?.not.toBe('a');"),
+        duplicate,
+        "a plain computed access must not gain an optional link"
+    );
+
+    // A key that is not a valid identifier has no dot spelling, so it must not be folded into one.
+    assert_ne!(
+        outcome(
+            "expect(s)['not.resolves'].toBe('ready');",
+            "expect(s).not.resolves.toBe('ready');"
+        ),
+        duplicate,
+        "a property literally named `not.resolves` is not the chain `.not.resolves`"
+    );
+
+    // Indexes that cannot be read statically keep their own identity.
+    for computed in [
+        "expect(s)[key].toBe('ready');",
+        "expect(s)[`not`].toBe('ready');",
+    ] {
+        assert_ne!(
+            outcome("expect(s).not.toBe('ready');", computed),
+            duplicate,
+            "`{computed}` is not provably the `not` property"
+        );
+        assert_eq!(
+            outcome(computed, computed),
+            duplicate,
+            "`{computed}` must still equate with itself"
+        );
+    }
+}
+
+/// A `for (const x of xs)` head binds `x` for the loop, so a reference to `x` inside the body is
+/// the loop variable and never an outer constant of the same name. The grammar attaches that
+/// binding to the loop rather than to a `variable_declarator`, so the declarator path did not see
+/// it and the outer constant's value was substituted into the loop body.
+///
+/// The three-cell shape is what makes this observable. Two handlers whose only difference is an
+/// *unrelated* outer constant must stay comparable-but-equal; if the loop variable is taking that
+/// constant's value, the same pair becomes distinguishable instead.
+#[test]
+fn loop_head_bindings_shadow_an_outer_handler_constant() {
+    let (_directory, config) = config();
+    let outcome = |left: &str, right: &str| {
+        let source = format!(
+            "Then('the alpha gauge is settled', () => {{ {left} }}); \
+             Then('the archive reading has finished', () => {{ {right} }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    for head in [
+        "for (const expected of list)",
+        "for (let expected of list)",
+        "for (const expected in list)",
+    ] {
+        let body = format!("{head} {{ expect(state).toBe(expected); }}");
+        // The loop variable is unresolved, so the handlers are not comparable at all.
+        let bare = outcome(&body, &body);
+        assert!(
+            bare.is_empty(),
+            "`{head}` alone must leave the loop variable unresolved: {bare:?}"
+        );
+        // Adding an unrelated outer constant of the same name must change nothing. If it is
+        // substituted into the loop body the pair becomes comparable and reports a duplicate.
+        let shadowed = format!("const expected = 'ready'; {body}");
+        assert_eq!(
+            outcome(&shadowed, &shadowed),
+            bare,
+            "`{head}` must shadow an outer constant of the same name"
+        );
+        // ...and differing outer constants must likewise stay invisible to the loop body.
+        assert_eq!(
+            outcome(
+                &format!("const expected = 'ready'; {body}"),
+                &format!("const expected = 'idle'; {body}")
+            ),
+            bare,
+            "`{head}` must not expose a differing outer constant either"
+        );
+    }
+
+    // Control: the same reference without a loop head does resolve, so the probe is live and the
+    // shadow above is doing the work rather than the reference being unresolvable everywhere.
+    let resolved = outcome(
+        "const expected = 'ready'; expect(state).toBe(expected);",
+        "const expected = 'ready'; expect(state).toBe(expected);",
+    );
+    assert_eq!(
+        resolved,
+        vec![Rule::DuplicateHandler],
+        "an outer constant must still resolve when no loop head shadows it"
+    );
+}
+
+/// Two `require()` calls for one module return the same cached object, so replacing the factory
+/// through either binding replaces it for both. Trust must therefore be revoked whichever binding
+/// the write goes through.
+///
+/// Conflicting expected values are the observable: a trusted factory distinguishes them and reports
+/// nothing, while a replaced one falls back to structural similarity. The unwritten case is
+/// anchored first so the equalities below cannot pass by every form reporting the same thing.
+#[test]
+fn a_write_through_any_binding_of_one_module_revokes_factory_trust() {
+    let (_directory, config) = config();
+    let outcome = |setup: &str, right: &str| {
+        let source = format!(
+            "const api = require('@playwright/test'); {setup} \
+             Then('the panel reads the first value', () => {{ api.expect(state).toBe('ready'); }}); \
+             Then('the panel reads the final value', () => {{ api.expect(state).toBe({right}); }});"
+        );
+        let extracted = definitions(&source);
+        assert_eq!(extracted.len(), 2, "{source}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    // Anchors: an untouched factory distinguishes conflicting values; a replaced one does not.
+    let untouched = outcome("", "'idle'");
+    assert!(
+        untouched.is_empty(),
+        "an untouched factory must distinguish conflicting values: {untouched:?}"
+    );
+    let replaced = outcome("api.expect = replacement;", "'idle'");
+    assert_eq!(
+        replaced,
+        vec![Rule::ParameterizationCandidate],
+        "replacing the factory must fall back to structural similarity"
+    );
+
+    // A local alias of the binding already propagates; a second `require()` of the same module
+    // returns that same object and must propagate identically.
+    for setup in [
+        "const other = api; other.expect = replacement;",
+        "const other = require('@playwright/test'); other.expect = replacement;",
+        "const other = require('@playwright/test'); other['expect'] = replacement;",
+        "const first = require('@playwright/test'); const second = first; second.expect = replacement;",
+    ] {
+        assert_eq!(
+            outcome(setup, "'idle'"),
+            replaced,
+            "`{setup}` writes the same module object and must revoke trust"
+        );
+    }
+
+    // Control: writing a property *on the factory function* is not replacing the factory.
+    // `expect(state).toBe(...)` calls `toBe` on the call's result, not on `expect`, so this
+    // changes nothing the assertions rely on.
+    assert_eq!(
+        outcome(
+            "const { expect: other } = require('@playwright/test'); other.toBe = replacement;",
+            "'idle'"
+        ),
+        untouched,
+        "a write to a property of the factory function must not revoke trust"
+    );
+
+    // Control: a different module is a different object, so it must not revoke.
+    assert_eq!(
+        outcome(
+            "const other = require('unrelated-assertion-library'); other.expect = replacement;",
+            "'idle'"
+        ),
+        untouched,
+        "a write through an unrelated module must not revoke trust"
+    );
+}
+
 /// A direct property read of a required assertion module is the factory, in either spelling, so
 /// `require('...')['expect']` must carry exactly the trust `require('...').expect` carries.
 ///

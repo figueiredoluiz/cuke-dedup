@@ -108,6 +108,23 @@
       ]
     },
     {
+      "name": "regex-flag-identity-keeps-semantic-flags",
+      "path": "regex-flag-identity",
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "normalized-matcher",
+          "matchers": ["^the crate gauge is settled$", "^the crate gauge is settled$"]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "normalized-matcher",
+          "matchers": ["^the pallet gauge is settled$", "^the pallet gauge is settled$"]
+        }
+      ]
+    },
+    {
       "name": "review-gap-require-mutation",
       "path": "review-gaps",
       "arguments": ["--definitions", "require-mutation.cjs"],
