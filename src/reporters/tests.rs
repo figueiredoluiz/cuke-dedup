@@ -186,6 +186,48 @@ fn terminal_report_uses_singular_finding_and_omits_optional_timing() {
 }
 
 #[test]
+fn terminal_report_propagates_footer_write_failures() {
+    struct LimitedWriter {
+        remaining: usize,
+    }
+
+    impl std::io::Write for LimitedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            let written = bytes.len().min(self.remaining);
+            self.remaining -= written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let root = PathBuf::from("/repo");
+    let analysis = result(&root);
+    let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
+    let context = ReportContext::with_metrics(&analysis, &root, 100.0, &metrics);
+    let mut complete = Vec::new();
+    write_terminal(&context, &mut complete).unwrap();
+    let complete = String::from_utf8(complete).unwrap();
+
+    for marker in ["Found 1 finding.", "Detection time:"] {
+        let mut writer = LimitedWriter {
+            remaining: complete.find(marker).unwrap(),
+        };
+        let error = write_terminal(&context, &mut writer).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "write failure at {marker} should propagate"
+        );
+    }
+}
+
+#[test]
 fn jsonl_emits_self_contained_findings_and_a_final_summary() {
     let root = PathBuf::from("/repo");
     let mut analysis = result(&root);

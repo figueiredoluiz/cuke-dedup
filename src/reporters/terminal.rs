@@ -40,11 +40,11 @@ pub(super) fn write_terminal_with_color(
             if index > 0 {
                 writeln!(writer)?;
             }
-            let severity_color = match finding.severity {
-                crate::model::Severity::Error => "31",
-                crate::model::Severity::Warning => "33",
-                // The active-finding selection excludes Off; retain a harmless fallback if that changes.
-                crate::model::Severity::Off => "0",
+            // The active-finding selection excludes Off.
+            let severity_color = if finding.severity == crate::model::Severity::Error {
+                "31"
+            } else {
+                "33"
             };
             let severity = colorize(format!("[{}]", finding.severity), severity_color, color);
             writeln!(writer, "  {severity} {}", terminal_safe(&finding.message))?;
