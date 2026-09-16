@@ -1004,7 +1004,12 @@ fn unparseable_manifests_and_uncontained_configs_name_the_offending_path() {
     );
     assert!(error.to_string().contains("project config"), "{error:#}");
 
-    let error = config_error(r#"{"compilerOptions":{"baseUrl":"missing/.."}}"#);
+    // The intermediate directory must stay absent after `..` is collapsed, or this asserts
+    // nothing on Windows: Windows resolves `..` lexically before touching the filesystem, so
+    // `missing/..` becomes the existing config directory and resolves cleanly, while POSIX
+    // stats the literal path and fails. `missing/deeper/..` collapses to `missing`, absent on
+    // both, and still ends in `..` so it has no file name to walk back to.
+    let error = config_error(r#"{"compilerOptions":{"baseUrl":"missing/deeper/.."}}"#);
     assert!(error.contains("has no existing ancestor"), "{error}");
 }
 
