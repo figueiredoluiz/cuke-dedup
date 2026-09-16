@@ -9,7 +9,7 @@ use crate::{gherkin, modes, reporters, source_adapter};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -707,6 +707,10 @@ fn write_reports(
         // SARIF consumers treat a successful invocation as proof the tool covered its input.
         execution_successful: diagnostics.errors.is_empty() && !analyzed.run_incomplete,
     };
+    let terminal_color = terminal_color_enabled(
+        io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").as_deref(),
+    );
     let mut stdout = io::stdout().lock();
     reporters::write_cli_reports(
         &analyzed.result,
@@ -714,8 +718,13 @@ fn write_reports(
         (!config.no_metrics).then_some(&metrics),
         &report_metadata,
         &mut stdout,
+        terminal_color,
     )?;
     Ok(())
+}
+
+fn terminal_color_enabled(is_terminal: bool, no_color: Option<&std::ffi::OsStr>) -> bool {
+    is_terminal && !no_color.is_some_and(|value| !value.is_empty())
 }
 
 fn write_diagnostics(
@@ -808,6 +817,17 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_color_requires_tty_and_allows_no_color_opt_out() {
+        use std::ffi::OsStr;
+
+        assert!(terminal_color_enabled(true, None));
+        assert!(terminal_color_enabled(true, Some(OsStr::new(""))));
+        assert!(!terminal_color_enabled(true, Some(OsStr::new("1"))));
+        assert!(!terminal_color_enabled(false, None));
+        assert!(!terminal_color_enabled(false, Some(OsStr::new(""))));
+    }
 
     #[test]
     fn parses_rule_override() {
