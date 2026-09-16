@@ -929,13 +929,15 @@ fn collect_binding_scopes(root: Node<'_>, source: &[u8]) -> (BindingScopes, Scop
                     } else {
                         None
                     };
+                    // A declaration head binds through `variable_declarator` children, which the
+                    // generic declarator arm below already registers against the same scope: the
+                    // loop itself for `let`/`const`, and the enclosing function for `var`. Only a
+                    // bare pattern head, which has no declarator to visit, needs registering here.
                     if let Some(target) = target {
-                        if matches!(
+                        if !matches!(
                             binding.kind(),
                             "lexical_declaration" | "variable_declaration"
                         ) {
-                            collect_declaration_bindings(&mut scopes, target, binding, source);
-                        } else {
                             add_scope_binding(&mut scopes, target, binding, source);
                         }
                     }
@@ -1027,27 +1029,6 @@ fn add_scope_binding(
     source: &[u8],
 ) {
     collect_binding_names(pattern, source, scopes.entry(scope.id()).or_default());
-}
-
-fn collect_declaration_bindings(
-    scopes: &mut BTreeMap<usize, BTreeSet<String>>,
-    scope: Node<'_>,
-    declaration: Node<'_>,
-    source: &[u8],
-) {
-    let mut cursor = declaration.walk();
-    for declarator in declaration.named_children(&mut cursor) {
-        if declarator.kind() == "variable_declarator" {
-            if let Some(name) = declarator.child_by_field_name("name") {
-                add_scope_binding(scopes, scope, name, source);
-            }
-        } else if matches!(
-            declarator.kind(),
-            "identifier" | "object_pattern" | "array_pattern"
-        ) {
-            add_scope_binding(scopes, scope, declarator, source);
-        }
-    }
 }
 
 fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Option<&'static str> {
