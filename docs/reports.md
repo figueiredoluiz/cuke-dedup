@@ -17,6 +17,10 @@ file-only run prints the generated paths to stdout.
 Terminal and JSONL both own stdout and cannot be selected together. JSONL can be combined with
 file reporters without contaminating the stream.
 
+The terminal report shows the tool version, leaves a blank line after each rule heading and between findings, and ends with the total number of active findings and detection time. Timing covers discovery, parsing, and analysis; `--no-metrics` omits it.
+
+Rule headings are bold cyan, paths are blue, error/warning labels are red/yellow, and footer details are gray only when stdout is a terminal. Set `NO_COLOR` to a nonempty value to disable color. Piped output and the other report formats contain no ANSI color codes.
+
 ## JSON and HTML
 
 JSON schema version `2` contains:

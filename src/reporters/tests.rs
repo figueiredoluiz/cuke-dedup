@@ -113,6 +113,121 @@ fn default_summary_uses_the_strict_zero_percent_threshold() {
 }
 
 #[test]
+fn terminal_report_has_version_and_finding_spacing() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let mut warning = analysis.findings[0].clone();
+    warning.severity = Severity::Warning;
+    warning.message = "Check this definition".to_owned();
+    analysis.findings.push(warning);
+    let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
+    let context = ReportContext::with_metrics(&analysis, &root, 100.0, &metrics);
+
+    let mut plain = Vec::new();
+    write_terminal(&context, &mut plain).unwrap();
+    let plain = String::from_utf8(plain).unwrap();
+    assert!(plain.starts_with(&format!("CukeDedup v{}\n\n", env!("CARGO_PKG_VERSION"))));
+    assert!(plain.contains("  [error] Duplicate <matcher>"));
+    assert!(plain.contains("duplicate-matcher\n\n  [error]"));
+    assert!(plain.contains("    action: Keep one\n\n  [warning]"));
+    assert!(!plain.contains('─'));
+    assert!(plain.ends_with("Found 2 findings.\nDetection time: 6.0 ms\n"));
+    assert!(!plain.contains('\u{1b}'));
+}
+
+#[test]
+fn terminal_report_colors_only_selected_text() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let mut warning = analysis.findings[0].clone();
+    warning.severity = Severity::Warning;
+    warning.message = "Check this definition".to_owned();
+    analysis.findings.push(warning);
+    let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
+    let context = ReportContext::with_metrics(&analysis, &root, 100.0, &metrics);
+
+    let mut plain = Vec::new();
+    write_terminal(&context, &mut plain).unwrap();
+    let plain = String::from_utf8(plain).unwrap();
+
+    let mut colored = Vec::new();
+    super::terminal::write_terminal_with_color(&context, &mut colored, true).unwrap();
+    let colored = String::from_utf8(colored).unwrap();
+    assert!(colored.contains("\u{1b}[31m[error]\u{1b}[0m Duplicate <matcher>"));
+    assert!(colored.contains("\u{1b}[33m[warning]\u{1b}[0m Check this definition"));
+    assert!(colored.contains("\u{1b}[1;36mduplicate-matcher\u{1b}[0m\n\n  \u{1b}[31m[error]"));
+    assert!(colored.contains("    --> \u{1b}[94msteps/a.ts:2:1\u{1b}[0m"));
+    assert!(colored.contains("    related: \u{1b}[94msteps/b.ts:3:1\u{1b}[0m"));
+    assert!(colored.ends_with(
+        "\u{1b}[90mFound 2 findings.\u{1b}[0m\n\u{1b}[90mDetection time: 6.0 ms\u{1b}[0m\n"
+    ));
+    assert_eq!(
+        colored
+            .replace("\u{1b}[31m", "")
+            .replace("\u{1b}[33m", "")
+            .replace("\u{1b}[1;36m", "")
+            .replace("\u{1b}[94m", "")
+            .replace("\u{1b}[90m", "")
+            .replace("\u{1b}[0m", ""),
+        plain
+    );
+}
+
+#[test]
+fn terminal_report_uses_singular_finding_and_omits_optional_timing() {
+    let root = PathBuf::from("/repo");
+    let analysis = result(&root);
+    let without_metrics = ReportContext::new(&analysis, &root, 100.0);
+    let mut no_timing = Vec::new();
+    write_terminal(&without_metrics, &mut no_timing).unwrap();
+    let no_timing = String::from_utf8(no_timing).unwrap();
+    assert!(no_timing.ends_with("Found 1 finding.\n"));
+    assert!(!no_timing.contains("Detection time:"));
+}
+
+#[test]
+fn terminal_report_propagates_footer_write_failures() {
+    struct LimitedWriter {
+        remaining: usize,
+    }
+
+    impl std::io::Write for LimitedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            let written = bytes.len().min(self.remaining);
+            self.remaining -= written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let root = PathBuf::from("/repo");
+    let analysis = result(&root);
+    let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
+    let context = ReportContext::with_metrics(&analysis, &root, 100.0, &metrics);
+    let mut complete = Vec::new();
+    write_terminal(&context, &mut complete).unwrap();
+    let complete = String::from_utf8(complete).unwrap();
+
+    for marker in ["Found 1 finding.", "Detection time:"] {
+        let mut writer = LimitedWriter {
+            remaining: complete.find(marker).unwrap(),
+        };
+        let error = write_terminal(&context, &mut writer).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "write failure at {marker} should propagate"
+        );
+    }
+}
+
+#[test]
 fn jsonl_emits_self_contained_findings_and_a_final_summary() {
     let root = PathBuf::from("/repo");
     let mut analysis = result(&root);
@@ -519,6 +634,7 @@ fn terminal_groups_each_rule_once_and_removes_control_characters() {
     let terminal = String::from_utf8(terminal).unwrap();
     assert_eq!(terminal.matches("\nduplicate-matcher\n").count(), 1);
     assert_eq!(terminal.matches("\nnear-duplicate-step\n").count(), 1);
+    assert!(terminal.contains("\n\nnear-duplicate-step\n"));
     assert!(!terminal.contains('\u{1b}'));
     assert!(!terminal.contains('\u{202e}'));
     assert!(!terminal.contains('\u{e0001}'));

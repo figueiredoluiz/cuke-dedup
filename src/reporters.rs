@@ -35,7 +35,7 @@ pub fn write_reports(
     config: &Config,
     terminal: &mut dyn Write,
 ) -> Result<Vec<std::path::PathBuf>> {
-    write_reports_context(context, config, None, terminal)
+    write_reports_context(context, config, None, terminal, false)
 }
 
 pub(crate) fn write_cli_reports(
@@ -44,12 +44,13 @@ pub(crate) fn write_cli_reports(
     metrics: Option<&ExecutionMetrics>,
     metadata: &CliReportMetadata<'_>,
     terminal: &mut dyn Write,
+    terminal_color: bool,
 ) -> Result<Vec<std::path::PathBuf>> {
     let context = metrics.map_or_else(
         || ReportContext::new(result, &config.root, config.threshold),
         |metrics| ReportContext::with_metrics(result, &config.root, config.threshold, metrics),
     );
-    write_reports_context(&context, config, Some(metadata), terminal)
+    write_reports_context(&context, config, Some(metadata), terminal, terminal_color)
 }
 
 fn write_reports_context(
@@ -57,6 +58,7 @@ fn write_reports_context(
     config: &Config,
     metadata: Option<&CliReportMetadata<'_>>,
     terminal: &mut dyn Write,
+    terminal_color: bool,
 ) -> Result<Vec<std::path::PathBuf>> {
     let mut written = Vec::new();
     let has_stdout_reporter = config
@@ -65,7 +67,9 @@ fn write_reports_context(
         .any(|reporter| matches!(reporter, ReporterKind::Terminal | ReporterKind::Jsonl));
     for reporter in &config.reporters {
         match reporter {
-            ReporterKind::Terminal => terminal::write_terminal(context, terminal)?,
+            ReporterKind::Terminal => {
+                terminal::write_terminal_with_color(context, terminal, terminal_color)?
+            }
             ReporterKind::Json => {
                 let path = config.output_path("cuke-dedup.json");
                 ensure_parent(&path)?;

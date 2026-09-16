@@ -4,12 +4,21 @@ use anyhow::Result;
 use std::collections::BTreeMap;
 use std::io::Write;
 
-/// Writes grouped, terminal-safe findings and totals to `writer`.
+/// Writes a plain-text terminal report to `writer`.
 pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Result<()> {
+    write_terminal_with_color(context, writer, false)
+}
+
+pub(super) fn write_terminal_with_color(
+    context: &ReportContext<'_>,
+    writer: &mut dyn Write,
+    color: bool,
+) -> Result<()> {
     let result = context.result;
     let root = context.root;
     let summary = &context.summary;
-    writeln!(writer, "CukeDedup")?;
+    writeln!(writer, "CukeDedup v{}", context.tool_version)?;
+    writeln!(writer)?;
     let mut wrote_rule = false;
     let mut findings_by_rule: BTreeMap<_, Vec<_>> = BTreeMap::new();
     let selected = bounded_findings(result, true);
@@ -24,26 +33,32 @@ pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Re
         if wrote_rule {
             writeln!(writer)?;
         }
-        writeln!(writer, "{rule}")?;
+        writeln!(writer, "{}", colorize(rule.to_string(), "1;36", color))?;
+        writeln!(writer)?;
         wrote_rule = true;
-        for finding in findings {
-            writeln!(
-                writer,
-                "  [{}] {}",
-                finding.severity,
-                terminal_safe(&finding.message)
-            )?;
+        for (index, finding) in findings.into_iter().enumerate() {
+            if index > 0 {
+                writeln!(writer)?;
+            }
+            // The active-finding selection excludes Off.
+            let severity_color = if finding.severity == crate::model::Severity::Error {
+                "31"
+            } else {
+                "33"
+            };
+            let severity = colorize(format!("[{}]", finding.severity), severity_color, color);
+            writeln!(writer, "  {severity} {}", terminal_safe(&finding.message))?;
             writeln!(
                 writer,
                 "    --> {}",
-                terminal_safe(&finding.primary.display(root))
+                colorize(terminal_safe(&finding.primary.display(root)), "94", color)
             )?;
             let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
             for related in finding.related.iter().take(retained_related) {
                 writeln!(
                     writer,
                     "    related: {}",
-                    terminal_safe(&related.display(root))
+                    colorize(terminal_safe(&related.display(root)), "94", color)
                 )?;
             }
             if finding.related.len() > retained_related {
@@ -119,5 +134,37 @@ pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Re
                 .join(", ")
         )?;
     }
+    writeln!(writer)?;
+    writeln!(
+        writer,
+        "{}",
+        colorize(
+            format!("Found {}.", count_label(summary.findings, "finding")),
+            "90",
+            color
+        )
+    )?;
+    if let Some(metrics) = context.metrics {
+        writeln!(
+            writer,
+            "{}",
+            colorize(
+                format!(
+                    "Detection time: {:.1} ms",
+                    metrics.discovery_ms + metrics.parsing_ms + metrics.analysis_ms
+                ),
+                "90",
+                color
+            )
+        )?;
+    }
     Ok(())
+}
+
+fn colorize(text: String, code: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\u{1b}[{code}m{text}\u{1b}[0m")
+    } else {
+        text
+    }
 }

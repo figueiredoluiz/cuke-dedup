@@ -5,8 +5,13 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- Interactive terminal reports show the tool version, selective color, a finding-count footer, and detection time. `NO_COLOR` disables ANSI styling; redirected output remains plain text.
+
 ### Changed
 
+- Terminal findings have a blank line after each rule heading and between findings instead of divider lines.
 - `obj['name']` and `obj.name` read the same property, so two handlers that differ only in that
   spelling are now recognised as the same handler. This applies to every property access in a
   handler, not only assertions: `page['locator']('x')` matches `page.locator('x')`. Only a static
