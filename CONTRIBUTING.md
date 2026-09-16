@@ -35,7 +35,8 @@ scripts/check/check.sh
 Coverage is measured separately because it rebuilds the test suite with instrumentation:
 
 ```sh
-cargo llvm-cov --all-features --all-targets --locked --fail-under-lines 97
+cargo +stable llvm-cov --all-features --tests --locked --no-report
+cargo +stable llvm-cov report --summary-only --fail-under-lines 97
 ```
 
 The npm launcher currently has no third-party development dependencies, so contributor and CI checks run directly without an install step. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 97% Rust line-coverage floor.
@@ -63,6 +64,55 @@ The dependency policy is maintained in `deny.toml`: known security advisories, u
 - Do not edit generated release assets or commit build output.
 
 The Python packaging utility intentionally uses only the standard library to create deterministic `tar.gz` and ZIP archives. Node.js owns npm manifest/version validation, while Rust owns the analyzer and CLI.
+
+## Coverage floor and uncovered lines
+
+CI enforces a 97% Rust line-coverage floor. The lines left uncovered fall into two groups: lines with an external reason no in-process test can reach them, and reachable residual lines that simply have no test yet. The justified group is recorded below so the next coverage run can be interpreted without re-deriving each case. Regenerate the current list with:
+
+```sh
+cargo +stable llvm-cov --all-features --tests --locked --no-report
+cargo +stable llvm-cov report --show-missing-lines --fail-under-lines 97
+```
+
+The listing enumerates each missed region; the summary's "Missed Lines" count also includes brace-only continuation lines inside those regions, so it reads slightly higher than the listing. An entry here must cite an external reason — an upstream contract, a platform invariant, a race window, a resource scale, compile-time evaluation, or failing I/O. Anything else is a missing test, not an entry. When a change makes a listed line reachable, write the test; when a change proves code unreachable with no defensive value, delete the code rather than adding it here.
+
+### Excluded by an upstream guarantee
+
+- `src/analysis/suppression.rs` (path-configured suppressions without a compiled matcher): config loading rejects invalid suppression path globs before the index is built, so a configured path always comes with a working matcher.
+- `src/discovery.rs` (depth-zero arm of the walk filter): the `ignore` walker (0.4.33) decides the depth-zero entry itself and never consults the custom `filter_entry` predicate for the root.
+- `src/typescript/module_resolver.rs` (missing-parent arm of `is_top_level_variable`): a `variable_declarator` always has a parent declaration node in the pinned tree-sitter grammars.
+- `src/reporters/sarif.rs` (`Severity::Off` arm): analysis drops severity-off findings before any finding is recorded, so no reporter ever sees one.
+
+### Platform and race invariants
+
+- `src/config.rs` and `src/typescript/project_resolution.rs` (existing-ancestor walks): `Path::parent()` returns `None` only for root-like paths, and an ancestor that just passed `exists()` failing `canonicalize()` requires the path to vanish between the two calls (TOCTOU).
+- `src/modes.rs` and `src/reporters/shared.rs` (no-parent arms of report-path creation): a path without a parent means writing directly to a filesystem root.
+
+### Arithmetic overflow guards
+
+- `src/analysis/pairs.rs` and `src/analysis/usage.rs` (`checked_add` refusal arms): u64 sums over per-definition counters; addressable memory is exhausted far below the wrap point.
+
+### Resource-limit bails
+
+These fire only on inputs far beyond test-practical size:
+
+- `src/typescript/project_resolution.rs`: the workspace-scan limit trips only past 100,000 walked entries.
+- `src/analysis/pairs.rs`: the structural-candidate limit, the matcher-shingle cap, the matcher-blocking event budget, and the candidate-list limit.
+- `src/analysis/usage.rs`: the proposal and suppression work budgets and the regex byte cap.
+- `src/cli.rs`: the unmatched-suppression safety-limit warning.
+
+### Compile-time evaluation and test-only formatting
+
+- `src/source_adapter.rs` (`const fn with_session`): const-evaluated into `static SOURCE_ADAPTER_REGISTRY`, and const evaluation emits no runtime coverage counters.
+- `src/typescript/ast.rs` (assert-failure formatting): the format arguments of a passing `assert!` are never evaluated.
+
+### Failing-I/O propagation
+
+- `src/main.rs` (BrokenPipe arm), `src/reporters/terminal.rs`, `src/cli.rs`, `src/modes.rs`, `src/framework_config.rs`, and `src/config.rs`: remaining uncovered `?` paths propagate failed writes, git subprocess output, or configuration reads. The in-process suite does exercise a terminal footer write returning `BrokenPipe`; other failure paths require different failure points or external conditions such as a vanished file.
+
+### Reachable residual
+
+Everything the listing shows beyond the groups above — Gherkin Markdown edges, tree-sitter walk fall-throughs across the TypeScript adapters, decorated-handler diagnostic branches, and a few CLI paths such as an absolute config file or a severity-off finding — is reachable and awaiting a test, not justified.
 
 ## Corpus and benchmarks
 

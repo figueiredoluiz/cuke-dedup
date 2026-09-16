@@ -2977,3 +2977,884 @@ fn configured_registration_names_override_inference_without_duplicating_known_al
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].registration, "step");
 }
+
+/// Pins the wrapper forwards that may and may not be followed. Wrapping the forwarded call in
+/// parentheses does not change what it calls, so the wrapper must still resolve; a namespaced
+/// callee and a call that forwards fewer than two arguments both break the positional
+/// correspondence the extractor depends on, so inferring a wrapper from them would pair a matcher
+/// with a handler that never travelled together.
+#[test]
+fn wrapper_forwards_unwrap_parentheses_but_reject_namespaced_or_short_calls() {
+    let parenthesized = extract_ts(
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { return (Given(text, handler)); }
+step("parenthesized forward", () => work());"#,
+    );
+    assert_eq!(parenthesized.len(), 1);
+    assert_eq!(parenthesized[0].matcher, "parenthesized forward");
+    assert_eq!(parenthesized[0].registration, "Given");
+
+    for source in [
+        // A namespaced callee is not the positional identifier forward the rule accepts.
+        r#"import * as bdd from "@cucumber/cucumber";
+function step(text, handler) { bdd.Given(text, handler); }
+step("namespaced forward", () => work());"#,
+        // Fewer than two forwarded arguments cannot carry both the matcher and the handler.
+        r#"import { Given } from "@cucumber/cucumber";
+function step(text, handler) { Given(text); }
+step("short forward", () => work());"#,
+    ] {
+        assert!(
+            extract_ts(source).is_empty(),
+            "must not infer a wrapper from: {source}"
+        );
+    }
+}
+
+/// Pins that a type-only specifier standing beside a runtime one never becomes a registration
+/// binding, whether its module resolves or not. `import { type Given as Shape, Given as Setup }`
+/// erases `Shape` at compile time, so treating it as an alias would invent a step definition for a
+/// call that cannot exist — and, for an unresolved module, would overstate how many
+/// registration-shaped calls the file actually lost.
+#[test]
+fn type_only_specifiers_never_alias_registrations_in_resolved_or_unresolved_imports() {
+    let definitions = extract_ts(
+        r#"import { type Given as Shape, Given as Setup } from '@cucumber/cucumber';
+Setup('a step', () => work());
+Shape('not a step', () => work());"#,
+    );
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].matcher, "a step");
+    assert_eq!(definitions[0].registration, "Given");
+
+    let extracted = extract_detailed(
+        r#"import { type Given as Shape, When as Setup } from '@company/bdd';
+Setup('missing', () => work());
+Shape('not a registration', () => work());"#,
+        &file(SourceLanguage::TypeScript),
+    )
+    .unwrap();
+    assert!(extracted.definitions.is_empty());
+    let completeness = extracted
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+        .collect::<Vec<_>>();
+    assert_eq!(completeness.len(), 1);
+    assert!(
+        completeness[0].message.contains("1 call(s)"),
+        "{}",
+        completeness[0].message
+    );
+}
+
+/// Pins which names a re-export or a destructured `require` turns into registration aliases. Only
+/// a name the framework actually exports counts: a re-exported `World`, a positional array
+/// binding, and a rest element all name something the module never published as a registration, so
+/// calling them must not be extracted as a step definition.
+#[test]
+fn re_exports_and_destructures_only_alias_names_the_framework_publishes() {
+    let re_exported = extract_ts(
+        r#"export { World, Given as Setup } from '@cucumber/cucumber';
+Setup('a step', () => work());
+World('not a step', () => work());"#,
+    );
+    assert_eq!(re_exported.len(), 1);
+    assert_eq!(re_exported[0].matcher, "a step");
+    assert_eq!(re_exported[0].registration, "Given");
+
+    assert!(extract_ts(
+        r#"const [Setup] = require('@cucumber/cucumber');
+Setup('not a step', () => work());"#,
+    )
+    .is_empty());
+
+    let with_rest = extract_ts(
+        r#"const { Given: Setup, ...others } = require('@cucumber/cucumber');
+Setup('a step', () => work());
+others.Given('not a step', () => work());"#,
+    );
+    assert_eq!(with_rest.len(), 1);
+    assert_eq!(with_rest[0].matcher, "a step");
+    assert_eq!(with_rest[0].registration, "Given");
+}
+
+/// The language-specific adapters must refuse sources written in another language.
+///
+/// Each adapter owns one tree-sitter grammar. Parsing a `.js` file with the TypeScript grammar
+/// silently changes how ambiguous syntax is read, so the mismatch has to surface as an error
+/// naming the adapter and the file instead of producing definitions from the wrong grammar.
+#[test]
+fn language_adapters_reject_sources_from_another_language() {
+    let error = TYPESCRIPT_ADAPTER
+        .extract(
+            "Given('a step', () => work());",
+            &file(SourceLanguage::JavaScript),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("typescript adapter cannot parse")
+            && error.contains("JavaScript")
+            && error.contains("features/steps/example.ts"),
+        "{error}"
+    );
+
+    let error = JAVASCRIPT_ADAPTER
+        .extract(
+            "Given('a step', () => work());",
+            &file(SourceLanguage::TypeScript),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("javascript adapter cannot parse"), "{error}");
+}
+
+/// Default parameter initializers of a decorated method are part of that method's identity.
+///
+/// A default runs on every invocation, so two decorated steps that differ only in what their
+/// defaults evaluate are not duplicates, while two that differ only in the local name bound to an
+/// identical default are. An empty body with a default is also not a stub: the initializer still
+/// executes, and calling it trivial would suppress real findings.
+#[test]
+fn decorated_method_parameter_defaults_are_part_of_handler_identity() {
+    let definitions = extract_ts(
+        r#"
+import { Given } from 'playwright-bdd/decorators';
+class Steps {
+  @Given('the first page opens')
+  first({ page: tab = makePage() }) { tab.goto('/'); }
+
+  @Given('the second page opens')
+  second({ page: view = makePage() }) { view.goto('/'); }
+
+  @Given('the third page opens')
+  third({ page: tab = makeOtherPage() }) { tab.goto('/'); }
+
+  @Given('the fourth page is defaulted but empty')
+  fourth({ page: tab = makePage() }) {}
+
+  @Given('the fifth page is empty')
+  fifth({ page: tab }) {}
+}
+"#,
+    );
+
+    assert_eq!(definitions.len(), 5);
+    assert_eq!(
+        definitions[0].handler.alpha_normalized,
+        definitions[1].handler.alpha_normalized
+    );
+    assert_ne!(
+        definitions[0].handler.alpha_normalized,
+        definitions[2].handler.alpha_normalized
+    );
+    assert_eq!(
+        definitions[0].handler.behavior_signature,
+        ["method:instance sync", "call:makePage", "call:v0#goto"]
+    );
+    assert!(!definitions[3].handler.trivial);
+    assert!(definitions[4].handler.trivial);
+}
+
+/// A bare default parameter of a decorated method is serialized with its initializer too.
+///
+/// The JavaScript grammar represents `value = 1` as a plain assignment pattern rather than the
+/// TypeScript `required_parameter` shape, so the parameter serializer has to recognize both or
+/// JavaScript decorated steps would compare as if they had no defaults at all.
+#[test]
+fn javascript_decorated_method_defaults_change_handler_identity() {
+    let source = |initializer: &str| {
+        format!(
+            r#"
+import {{ Given }} from 'playwright-bdd/decorators';
+class Steps {{
+  @Given('the page opens')
+  open(page = {initializer}) {{ page.goto('/'); }}
+}}
+"#
+        )
+    };
+    let first = extract(&source("makePage()"), &file(SourceLanguage::JavaScript)).unwrap();
+    let renamed = extract(
+        &source("makePage()").replace("page", "tab"),
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    let other = extract(
+        &source("makeOtherPage()"),
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(
+        first[0].handler.behavior_signature,
+        ["method:instance sync", "call:makePage", "call:v0#goto"]
+    );
+    assert_eq!(
+        first[0].handler.alpha_normalized,
+        renamed[0].handler.alpha_normalized
+    );
+    assert_ne!(
+        first[0].handler.alpha_normalized,
+        other[0].handler.alpha_normalized
+    );
+}
+
+/// A named handler resolves to the binding JavaScript scoping would actually run.
+///
+/// Two declarations can share a name: an inner function shadows an outer one, and a later
+/// assignment in the same scope replaces an earlier one. Picking the wrong candidate would
+/// fingerprint a body that never executes and report duplicates between unrelated steps.
+#[test]
+fn named_handlers_resolve_to_the_innermost_and_latest_binding() {
+    let nested = extract(
+        r#"
+function run() { outerAction(); }
+function register() {
+  function run() { innerAction(); }
+  Given('a nested registration', run);
+}
+"#,
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    assert_eq!(nested.len(), 1);
+    assert_eq!(nested[0].handler.behavior_signature, ["call:innerAction"]);
+
+    let redeclared = extract(
+        r#"
+var run = () => firstAction();
+var run = () => secondAction();
+Given('a redeclared registration', run);
+"#,
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    assert_eq!(redeclared.len(), 1);
+    assert_eq!(
+        redeclared[0].handler.behavior_signature,
+        ["call:secondAction"]
+    );
+}
+
+/// A handler named through a property read is not resolved to a body.
+///
+/// Nothing in one file proves what `steps.run` holds at registration time, so the definition has
+/// to stay visible but uncomparable. Treating it as an empty body would also mark it a stub and
+/// hide a real handler behind a pending-step finding.
+#[test]
+fn property_handler_expressions_stay_uncomparable() {
+    for source in [
+        "Given('a member handler', steps.run);",
+        "Given('a bound member handler', steps.run.bind(steps));",
+    ] {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert!(!definitions[0].handler.comparable, "{source}");
+        assert!(!definitions[0].handler.trivial, "{source}");
+    }
+}
+
+/// Handlers whose only effect is a nullish value or an explicit marker are stubs.
+///
+/// `() => null` and `() => undefined` execute nothing, and `throw pending` names the marker
+/// directly rather than through a string. Failing to recognize these shapes would let unfinished
+/// steps compare as real duplicate behavior.
+#[test]
+fn nullish_and_marker_handlers_are_recognized_as_stubs() {
+    let definitions = extract(
+        r#"
+Given('null stub', () => null);
+Given('undefined stub', () => undefined);
+Given('thrown marker stub', () => { throw pending; });
+Given('real handler', () => doWork());
+"#,
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    assert_eq!(definitions.len(), 4);
+    assert!(definitions[0].handler.trivial);
+    assert!(definitions[1].handler.trivial);
+    assert!(definitions[2].handler.trivial);
+    assert!(!definitions[3].handler.trivial);
+}
+
+/// A call on a receiver with no static name keeps the structural spelling of that call.
+///
+/// `'text'.trim()` has no binding to normalize, so inventing a receiver name would make it
+/// collide with every other `.trim()` call. The event must retain the serialized callee instead.
+#[test]
+fn calls_on_unnameable_receivers_keep_their_structural_callee() {
+    let definitions = extract(
+        r#"
+Given('literal receiver', () => 'the value'.trim());
+Given('other literal receiver', () => 'the value'.trimEnd());
+"#,
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(definitions[0].handler.behavior_signature.len(), 1);
+    assert!(
+        definitions[0].handler.behavior_signature[0].starts_with("call:(member_expression"),
+        "{:?}",
+        definitions[0].handler.behavior_signature
+    );
+    assert_ne!(
+        definitions[0].handler.behavior_signature,
+        definitions[1].handler.behavior_signature
+    );
+}
+
+/// Comments never contribute to a normalized handler fingerprint.
+///
+/// Tree-sitter keeps comments as named nodes, so a serializer that did not skip them would report
+/// two identical handlers as different merely because one carries an explanatory note.
+#[test]
+fn comments_do_not_change_normalized_handler_fingerprints() {
+    let definitions = extract(
+        r#"
+Given('with comment', () => { /* explain the wait */ work(); });
+Given('without comment', () => { work(); });
+"#,
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(
+        definitions[0].handler.normalized,
+        definitions[1].handler.normalized
+    );
+    assert_ne!(definitions[0].handler.exact, definitions[1].handler.exact);
+}
+
+/// A loop declaration named `expect` shadows the ambient assertion only where it is in scope.
+///
+/// `let` in a `for` head belongs to the loop, while `var` hoists to the enclosing function. Using
+/// the wrong scope either keeps trusting a name the loop replaced or silently drops assertion
+/// evidence from statements the loop never covered.
+#[test]
+fn loop_declarations_shadow_the_ambient_assertion_within_their_scope() {
+    let lexical = extract_ts(
+        r#"
+Then('lexical loop declaration', ({ state }) => {
+  for (let expect = 0; expect < 1; expect += 1) { expect(state).toBe('ready'); }
+  expect(state).toBe('done');
+});
+"#,
+    );
+    assert_eq!(lexical.len(), 1);
+    assert_eq!(
+        lexical[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .count(),
+        1,
+        "{:?}",
+        lexical[0].handler.behavior_signature
+    );
+
+    let hoisted = extract_ts(
+        r#"
+Then('hoisted loop declaration', ({ state }) => {
+  for (var expect = 0; expect < 1; expect += 1) { record(expect); }
+  expect(state).toBe('done');
+});
+"#,
+    );
+    assert_eq!(hoisted.len(), 1);
+    assert!(
+        hoisted[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")),
+        "{:?}",
+        hoisted[0].handler.behavior_signature
+    );
+}
+
+/// A namespace declared inside a block shadows the ambient assertion only within that block.
+///
+/// A nested `namespace expect` is a runtime value, unlike a module-level one it is not file-wide.
+/// Treating it as file-wide would erase assertion evidence from unrelated handlers; ignoring it
+/// would attribute assertion semantics to a local object that is not the assertion factory.
+#[test]
+fn nested_namespace_declarations_shadow_assertions_only_inside_their_block() {
+    let definitions = extract_ts(
+        r#"
+Then('assertion inside the namespace block', ({ state }) => {
+  {
+    namespace expect { export const custom = true; }
+    expect(state).toBe('ready');
+  }
+});
+Then('assertion beside the namespace block', ({ state }) => {
+  { namespace expect { export const custom = true; } }
+  expect(state).toBe('ready');
+});
+"#,
+    );
+    assert_eq!(definitions.len(), 2);
+    assert!(
+        definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")),
+        "{:?}",
+        definitions[0].handler.behavior_signature
+    );
+    assert!(
+        definitions[1]
+            .handler
+            .behavior_signature
+            .iter()
+            .any(|event| event.starts_with("assert:")),
+        "{:?}",
+        definitions[1].handler.behavior_signature
+    );
+}
+
+/// `import ns = require('@playwright/test')` binds an assertion namespace, not the factory.
+///
+/// The TypeScript require form is the only import shape whose trust depends on the module: the
+/// standalone `expect` package is itself callable, every other assertion package exposes `expect`
+/// as a property. Conflating the two would either lose assertion evidence or invent it.
+#[test]
+fn import_require_clauses_bind_assertion_namespaces_by_module() {
+    let namespaced = extract_ts(
+        r#"
+import testApi = require('@playwright/test');
+Then('namespace property assertion', ({ state }) => testApi.expect(state).toBe('ready'));
+"#,
+    );
+    assert_eq!(namespaced.len(), 1);
+    assert!(
+        namespaced[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+        "{:?}",
+        namespaced[0].handler.behavior_signature
+    );
+
+    // The namespace itself is not callable, so calling it is ordinary behavior, not an assertion.
+    let called = extract_ts(
+        r#"
+import testApi = require('@playwright/test');
+Then('namespace called directly', ({ state }) => testApi(state).toBe('ready'));
+"#,
+    );
+    assert_eq!(called.len(), 1);
+    assert!(
+        called[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")),
+        "{:?}",
+        called[0].handler.behavior_signature
+    );
+}
+
+/// An asymmetric matcher is recognized through a namespaced factory exactly as through the global.
+///
+/// `testApi.expect.objectContaining(...)` and `expect.objectContaining(...)` describe the same
+/// expected value, so they must record the same assertion event; otherwise the same assertion
+/// written with a namespace import would never match its ambient spelling.
+#[test]
+fn asymmetric_matchers_are_recognized_through_namespaced_factories() {
+    let namespaced = extract_ts(
+        r#"
+import * as testApi from '@playwright/test';
+Then('namespaced matcher', ({ state }) =>
+  testApi.expect(state).toEqual(testApi.expect.objectContaining({ ready: true })));
+"#,
+    );
+    let ambient = extract_ts(
+        r#"
+Then('ambient matcher', ({ state }) =>
+  expect(state).toEqual(expect.objectContaining({ ready: true })));
+"#,
+    );
+    assert_eq!(namespaced.len(), 1);
+    assert_eq!(ambient.len(), 1);
+    assert!(
+        namespaced[0].handler.behavior_signature[0].starts_with("assert:expect#toEqual:"),
+        "{:?}",
+        namespaced[0].handler.behavior_signature
+    );
+    assert_eq!(
+        namespaced[0].handler.behavior_signature,
+        ambient[0].handler.behavior_signature
+    );
+
+    // A plain call is not a matcher, so its value cannot be compared across files.
+    let opaque = extract_ts(
+        r#"
+Then('opaque expected value', ({ state }) => expect(state).toEqual(buildExpected()));
+"#,
+    );
+    assert_eq!(opaque.len(), 1);
+    assert_ne!(
+        opaque[0].handler.behavior_signature,
+        ambient[0].handler.behavior_signature
+    );
+}
+
+/// A require destructured into an array pattern never establishes assertion trust.
+///
+/// `const [expect] = require('expect')` reads index `0` of the module, not its `expect` export, so
+/// the local name is an unrelated runtime binding that must shadow the ambient factory instead of
+/// inheriting its provenance.
+#[test]
+fn array_destructured_requires_shadow_rather_than_trust_the_assertion_factory() {
+    let definitions = extract_ts(
+        r#"
+const [expect] = require('expect');
+Then('array destructured require', ({ state }) => expect(state).toBe('ready'));
+"#,
+    );
+    assert_eq!(definitions.len(), 1);
+    assert!(
+        definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")),
+        "{:?}",
+        definitions[0].handler.behavior_signature
+    );
+}
+
+/// Type-only specifiers beside a runtime `expect` import neither shadow nor gain trust.
+///
+/// The erased names never exist at runtime, so folding them into the shadow set would revoke the
+/// trust the runtime specifier in the same statement just established.
+#[test]
+fn type_only_specifiers_beside_a_runtime_expect_import_preserve_trust() {
+    let definitions = extract_ts(
+        r#"
+import { expect, type Locator } from '@playwright/test';
+Then('mixed specifier import', ({ state }) => expect(state).toBe('ready'));
+"#,
+    );
+    assert_eq!(definitions.len(), 1);
+    assert!(
+        definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+        "{:?}",
+        definitions[0].handler.behavior_signature
+    );
+}
+
+/// A registration decorator still finds its method across other decorators on the same member.
+///
+/// Tree-sitter lists decorators as siblings preceding the member, so the resolver has to skip
+/// consecutive decorators. Stopping at the first sibling would drop every step whose method also
+/// carries a logging or fixture decorator, in either order.
+#[test]
+fn decorator_registrations_skip_sibling_decorators_to_reach_their_method() {
+    for source in [
+        r#"
+import { Given } from 'playwright-bdd/decorators';
+class Steps {
+  @Given('a decorated step')
+  @log()
+  run() { work(); }
+}
+"#,
+        r#"
+import { Given } from 'playwright-bdd/decorators';
+class Steps {
+  @log()
+  @Given('a decorated step')
+  run() { work(); }
+}
+"#,
+    ] {
+        let definitions = extract_ts(source);
+        assert_eq!(definitions.len(), 1, "{source}");
+        assert_eq!(definitions[0].matcher, "a decorated step", "{source}");
+        assert_eq!(
+            definitions[0].handler.behavior_signature,
+            ["method:instance sync", "call:work"],
+            "{source}"
+        );
+    }
+}
+
+/// An assertion chain remains recognizable through an angle-bracket type assertion.
+///
+/// `<any>expect(state)` is erased at runtime, so the assertion it wraps must record the same
+/// behavior as the unwrapped spelling; otherwise a cast added for type reasons would silently
+/// make two identical assertions incomparable.
+#[test]
+fn assertion_chains_unwrap_angle_bracket_type_assertions() {
+    let asserted =
+        extract_ts("Then('cast assertion', ({ state }) => (<any>expect(state)).toBe('ready'));");
+    let plain = extract_ts("Then('plain assertion', ({ state }) => expect(state).toBe('ready'));");
+    assert_eq!(asserted.len(), 1);
+    assert_eq!(plain.len(), 1);
+    assert!(
+        asserted[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+        "{:?}",
+        asserted[0].handler.behavior_signature
+    );
+    assert_eq!(
+        asserted[0].handler.behavior_signature,
+        plain[0].handler.behavior_signature
+    );
+}
+
+/// An awaited angle-bracket cast still resolves to the assertion it wraps.
+///
+/// `await` is not erased the way a cast is, so the chain walker has to step through both. A cast
+/// added purely for typing must not make an otherwise identical assertion incomparable.
+#[test]
+fn awaited_angle_bracket_casts_still_resolve_the_assertion_chain() {
+    let cast = extract_ts(
+        "Then('awaited cast assertion', async ({ state }) => (await <any>expect(state)).toBe('ready'));",
+    );
+    let plain = extract_ts(
+        "Then('awaited assertion', async ({ state }) => (await expect(state)).toBe('ready'));",
+    );
+    assert_eq!(cast.len(), 1);
+    assert_eq!(plain.len(), 1);
+    assert!(
+        cast[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+        "{:?}",
+        cast[0].handler.behavior_signature
+    );
+    assert_eq!(
+        cast[0].handler.behavior_signature,
+        plain[0].handler.behavior_signature
+    );
+}
+
+/// A `for` head that declares nothing leaves the surrounding bindings in place.
+///
+/// Only a declaration keyword introduces a loop binding. Treating the head of `for (;;)` as one
+/// would invent a binding that shadows the ambient assertion factory and silently drop assertion
+/// evidence from every statement in the loop body.
+#[test]
+fn loop_heads_without_a_declaration_introduce_no_binding() {
+    let definitions = extract_ts(
+        r#"
+Then('loop without a declaration', ({ state }) => {
+  for (;;) { expect(state).toBe('ready'); break; }
+});
+"#,
+    );
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(
+        definitions[0].handler.behavior_signature[0],
+        "for_statement"
+    );
+    assert!(
+        definitions[0].handler.behavior_signature[1].starts_with("assert:expect#toBe:"),
+        "{:?}",
+        definitions[0].handler.behavior_signature
+    );
+}
+
+/// A labelled module-level `var` is still a module binding and shadows the ambient factory.
+///
+/// A label wraps the declaration without introducing a scope, so the declaration belongs to the
+/// module. Missing that would keep trusting an ambient `expect` the file has replaced.
+#[test]
+fn labelled_module_level_var_declarations_shadow_the_ambient_assertion() {
+    let definitions = extract_ts(
+        r#"
+outer: var expect = makeLocalAssertion();
+Then('labelled module var', ({ state }) => expect(state).toBe('ready'));
+"#,
+    );
+    assert_eq!(definitions.len(), 1);
+    assert!(
+        definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")),
+        "{:?}",
+        definitions[0].handler.behavior_signature
+    );
+}
+
+/// Only a write that names a binding can revoke that binding's assertion trust.
+///
+/// `testApi.expect = custom` replaces the factory the namespace holds, while `makeApi().expect =
+/// custom` writes to an object no binding in this file names. Treating the second as a write to
+/// `testApi` would discard assertion evidence from every handler in the file.
+#[test]
+fn only_named_receivers_revoke_namespace_assertion_trust() {
+    let assertion_events = |write: &str| {
+        let definitions = extract_ts(&format!(
+            r#"
+import * as testApi from '@playwright/test';
+{write}
+Then('namespace assertion', ({{ state }}) => testApi.expect(state).toBe('ready'));
+"#
+        ));
+        assert_eq!(definitions.len(), 1, "{write}");
+        definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .count()
+    };
+
+    assert_eq!(assertion_events("makeApi().expect = custom;"), 1);
+    assert_eq!(assertion_events("testApi.expect = custom;"), 0);
+}
+
+/// A matcher alias only carries writes back to its namespace when it really aliases a matcher.
+///
+/// `const { not = fallback } = testApi` binds the matcher container, so replacing a matcher
+/// through it mutates what `testApi.expect` reaches. A defaulted binding for an unrelated property
+/// reaches nothing the assertion factory uses, so writing through it must leave trust intact.
+#[test]
+fn defaulted_destructured_matcher_aliases_propagate_writes_but_unrelated_ones_do_not() {
+    let matcher_event = |alias: &str| {
+        let definitions = extract_ts(&format!(
+            r#"
+import * as testApi from '@playwright/test';
+const {{ {alias} = fallback }} = testApi;
+{alias}.objectContaining = custom;
+Then('namespaced matcher', ({{ state }}) =>
+  testApi.expect(state).toEqual(testApi.expect.objectContaining({{ ready: true }})));
+"#
+        ));
+        assert_eq!(definitions.len(), 1, "{alias}");
+        definitions[0].handler.behavior_signature[0].clone()
+    };
+
+    let unrelated = matcher_event("unrelated");
+    let aliased = matcher_event("not");
+    assert!(
+        unrelated.starts_with("assert:expect#toEqual:"),
+        "{unrelated}"
+    );
+    assert_ne!(unrelated, aliased);
+}
+
+/// A rest copy only aliases the namespace when the copy itself is a binding.
+///
+/// `({ ...copy } = testApi)` names a local that holds the same matcher objects, so a deep write
+/// through it reaches `testApi`. `({ ...holder.copy } = testApi)` writes into a property instead,
+/// which names no binding this file can reason about, so trust must survive.
+#[test]
+fn rest_copies_alias_the_namespace_only_through_a_bound_identifier() {
+    let matcher_event = |target: &str| {
+        let definitions = extract_ts(&format!(
+            r#"
+import * as testApi from '@playwright/test';
+({{ ...{target} }} = testApi);
+{target}.not.objectContaining = custom;
+Then('namespaced matcher', ({{ state }}) =>
+  testApi.expect(state).toEqual(testApi.expect.objectContaining({{ ready: true }})));
+"#
+        ));
+        assert_eq!(definitions.len(), 1, "{target}");
+        definitions[0].handler.behavior_signature[0].clone()
+    };
+
+    let property_target = matcher_event("holder.copy");
+    let binding_target = matcher_event("copy");
+    assert!(
+        property_target.starts_with("assert:expect#toEqual:"),
+        "{property_target}"
+    );
+    assert_ne!(property_target, binding_target);
+}
+
+/// A facade module grants assertion trust to its named `expect`, never to a namespace binding.
+///
+/// Only the exact assertion packages are known to expose `expect` as a property of their module
+/// object. A project fixture that re-exports registrations may export anything under that name, so
+/// `import facade = require('~/fixtures/test')` must not make `facade.expect(...)` an assertion,
+/// even though `import { expect } from '~/fixtures/test'` is trusted.
+#[test]
+fn facade_require_imports_bind_namespaces_without_assertion_trust() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("fixtures")).unwrap();
+    fs::create_dir_all(directory.path().join("steps")).unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        directory.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"~/*":["./*"]}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("fixtures/test.ts"),
+        r#"
+import { createBdd } from 'playwright-bdd';
+export const { Then } = createBdd({});
+export const expect = createAssertionFactory();
+"#,
+    )
+    .unwrap();
+    let path = directory.path().join("steps/example.steps.ts");
+    let source = r#"
+import { Then } from '~/fixtures/test';
+import { expect } from '~/fixtures/test';
+import facade = require('~/fixtures/test');
+Then('a named facade import is trusted', ({ state }) => expect(state).toBe('ready'));
+Then('a facade require namespace is not', ({ state }) => facade.expect(state).toBe('ready'));
+"#;
+    fs::write(&path, source).unwrap();
+    let file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+
+    let extracted = extract_detailed_impl(source, &file, &mut session).unwrap();
+
+    assert_eq!(extracted.definitions.len(), 2);
+    assert!(
+        extracted.definitions[0].handler.behavior_signature[0].starts_with("assert:expect#toBe:"),
+        "{:?}",
+        extracted.definitions[0].handler.behavior_signature
+    );
+    assert!(
+        extracted.definitions[1]
+            .handler
+            .behavior_signature
+            .iter()
+            .all(|event| !event.starts_with("assert:")),
+        "{:?}",
+        extracted.definitions[1].handler.behavior_signature
+    );
+}
+
+/// Aliasing a parameter is a rename, not a resolved constant.
+///
+/// A parameter's value is only known at call time, so an alias of one carries no fingerprint to
+/// substitute. The alias still has to alpha-normalize like any other local, so two handlers that
+/// alias the same parameter under different names stay equal while aliasing a different parameter
+/// does not.
+#[test]
+fn constant_aliases_of_parameters_normalize_without_resolving_a_value() {
+    let definitions = extract(
+        r#"
+Given('first', (page, other) => { const alias = page; alias.goto('/'); });
+Given('second', (tab, extra) => { const copy = tab; copy.goto('/'); });
+Given('third', (page, other) => { const alias = other; alias.goto('/'); });
+"#,
+        &file(SourceLanguage::JavaScript),
+    )
+    .unwrap();
+    assert_eq!(definitions.len(), 3);
+    assert_eq!(
+        definitions[0].handler.alpha_normalized,
+        definitions[1].handler.alpha_normalized
+    );
+    assert_ne!(
+        definitions[0].handler.alpha_normalized,
+        definitions[2].handler.alpha_normalized
+    );
+}
