@@ -5,6 +5,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-16
+
 ### Added
 
 - Interactive terminal reports show the tool version, selective color, a finding-count footer, and detection time. `NO_COLOR` disables ANSI styling; redirected output remains plain text.
@@ -221,6 +223,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.5.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.0...v0.2.1
