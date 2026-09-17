@@ -378,9 +378,10 @@ fn extract_definitions(
     diagnostics: &mut Diagnostics,
     corpus: &mut ExtractedCorpus,
 ) {
-    let mut extraction_session = source_adapter::SourceExtractionSession::with_registrations(
+    let mut extraction_session = source_adapter::SourceExtractionSession::with_options(
         &config.root,
         &config.registrations,
+        &config.assertion_modules,
     );
     for file in &files.definitions {
         let adapter = source_adapter::adapter_for_language(file.language);

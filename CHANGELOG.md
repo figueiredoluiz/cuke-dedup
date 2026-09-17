@@ -5,6 +5,41 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- `assertionModules` names module specifiers whose `expect` export is a trusted assertion factory.
+  Use it for a local module that re-exports `expect`, or for a runner this build does not recognise
+  by name. Both `import` and `require` spellings honour the setting, including
+  `import * as fixtures from "./fixtures"` and `import fixtures = require("./fixtures")`. An
+  undeclared module stays untrusted, and a facade inferred from registration re-exports is not
+  trusted for assertions.
+
+### Changed
+
+- `vitest`, `chai` and `bun:test` join the recognised assertion factories. Importing `expect` from
+  one of them was previously *less* trusted than relying on an injected global, so explicit imports
+  were penalised: expected values did not count as behaviour and two steps asserting different
+  values could be offered as a `parameterization-candidate`. Chain recognition is shape-based, so
+  Chai's `expect(x).to.equal(y)` is read exactly as `expect(x).toBe(y)` is. **Reports can lose those
+  spurious findings on upgrade.**
+- A module-scoped constant now reaches the handler fingerprint, so two handlers reading the same
+  value through differently named constants are recognised as the same handler. A mutable `let`
+  stays unproven, a handler-local binding of the same name shadows the module constant, and a
+  constant declared inside another declaration's initializer is out of scope and never substituted.
+  A name captured from an enclosing scope is nearer than the module's, so a module constant never
+  substitutes over it. **Reports can gain findings on upgrade.**
+
+### Fixed
+
+- A function declared in a handler and then called contributes its assertions to that handler, so
+  conflicting expected values inside it keep the handlers apart instead of surfacing as a
+  `parameterization-candidate`. Expansion is single level and terminates on recursion. It is
+  declined when the name is bound by anything else in the handler — another declaration, a variable,
+  a parameter, a catch binding, a `class`, an `enum`, or a reassignment — because a name-keyed lookup
+  cannot tell which body a shadowed call reaches, and expanding the wrong one would attribute
+  assertions the handler never runs. A transparent wrapper such as `(check)()` resolves the same
+  declaration a bare call does.
+
 ## [0.5.0] - 2026-09-16
 
 ### Added

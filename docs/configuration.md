@@ -134,6 +134,39 @@ Nested, asynchronous, generator, conditional, multi-statement, reordered, rewrit
 dynamically constructed wrappers cannot be inferred safely. Declare those names when they still
 take the matcher first and handler second.
 
+## Trusted assertion modules
+
+`assertionModules` names module specifiers whose `expect` export is a real assertion factory.
+
+CukeDedup recognizes `@playwright/test`, `playwright/test`, `@jest/globals`, `expect`, `vitest`,
+`chai`, and `bun:test` without configuration, and it also trusts the ambient `expect` that Jest,
+Vitest, and Playwright inject. Chain recognition is shape-based, so Chai's `expect(x).to.equal(y)`
+is understood exactly as Jest's `expect(x).toBe(y)` is; only the origin of the factory is listed.
+
+Declare a module when the factory reaches your steps another way:
+
+```json
+{
+  "assertionModules": ["./support/fixtures"]
+}
+```
+
+A local module that re-exports `expect` is the common case:
+
+```ts
+// support/fixtures.ts
+export { expect } from "@playwright/test";
+```
+
+Without the declaration, `expect` is untrusted, because the analyzer does not follow a local
+re-export back to its origin. An untrusted factory is not an error: its expected values simply stop
+counting as behaviour, so two steps asserting genuinely different values can be offered as a
+`parameterization-candidate`. Declaring the module restores the distinction. Both `import` and
+`require` spellings honour the setting.
+
+Trust only modules that really do expose an assertion factory. Declaring an unrelated module makes
+its call arguments semantically load-bearing and can manufacture similarity evidence.
+
 ## Custom parameter types
 
 `parameterTypes` maps a project-defined Cucumber Expression parameter type to the regular

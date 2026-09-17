@@ -4,7 +4,7 @@ use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee};
 use crate::model::{stable_fingerprint, HandlerFingerprint};
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
@@ -455,9 +455,21 @@ fn fingerprint_node(
 ) -> HandlerFingerprint {
     let raw = node_text(handler, source);
     let mut exact = raw.to_owned();
+    // A module-scoped constant is a fixed value every handler in the file reads, so substituting it
+    // lets two handlers that spell the same value through differently named constants compare
+    // equal. Handler-local names keep their alpha renaming instead: two handlers each declaring one
+    // constant already align through `v0`, and substituting there would make the alpha fingerprint
+    // value-sensitive and hide the parameterization signal it exists to expose.
+    let module_constants = LocalConstants::collect_module_scope(handler, source, declared);
+    // Substituting through the identifier map keeps literal handling untouched: passing the
+    // constants to the serializer would also route every literal through the value-fingerprint
+    // branch, which is a far wider change than reading a module constant.
+    let alpha_declared = module_constants.substituted_names(declared, handler, AstMode::Alpha);
+    let structural_declared =
+        module_constants.substituted_names(declared, handler, AstMode::Structural);
     let mut normalized = serialize_ast(handler, source, declared, AstMode::Normalized);
-    let mut alpha = serialize_ast(handler, source, declared, AstMode::Alpha);
-    let mut structural = serialize_ast(handler, source, declared, AstMode::Structural);
+    let mut alpha = serialize_ast(handler, source, &alpha_declared, AstMode::Alpha);
+    let mut structural = serialize_ast(handler, source, &structural_declared, AstMode::Structural);
     let local_constants = LocalConstants::collect(handler, source, declared);
     let mut signature = behavior_signature(handler, source, declared, assertions, &local_constants);
     let mut source_snippet = raw.to_owned();
@@ -649,6 +661,33 @@ pub(super) fn bounded_source_snippet(source: &str) -> String {
     snippet
 }
 
+/// Returns the module's own top-level declarations, without descending into sibling handlers.
+fn module_declarations<'tree>(handler: Node<'tree>) -> Vec<Node<'tree>> {
+    let mut root = handler;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    // The root of a parsed file is always `program`. Filtering the children below is what selects
+    // declarations, so no separate guard on the root kind is needed.
+    let mut cursor = root.walk();
+    let children: Vec<Node<'tree>> = root.named_children(&mut cursor).collect();
+    let mut declarations = Vec::new();
+    for child in children {
+        match child.kind() {
+            "lexical_declaration" | "variable_declaration" => declarations.push(child),
+            "export_statement" => {
+                let mut inner = child.walk();
+                let exported: Vec<Node<'tree>> = child.named_children(&mut inner).collect();
+                declarations.extend(exported.into_iter().filter(|node| {
+                    matches!(node.kind(), "lexical_declaration" | "variable_declaration")
+                }));
+            }
+            _ => {}
+        }
+    }
+    declarations
+}
+
 fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
     let mut identifiers = Vec::new();
     if matches!(
@@ -735,7 +774,40 @@ struct LocalConstants {
 }
 
 impl LocalConstants {
+    /// Collects only the module's own constants, for fingerprints that must not substitute a
+    /// handler-local value. The declarations are walked with the handler as the scope anchor so
+    /// registration and containment behave exactly as in `collect`.
+    fn collect_module_scope(
+        handler: Node<'_>,
+        source: &[u8],
+        declared: &BTreeMap<String, String>,
+    ) -> Self {
+        Self::collect_from(module_declarations(handler), handler, source, declared)
+    }
+
+    /// Collects the constants a handler body can resolve, including the module's own declarations.
+    ///
+    /// `behavior_signature` reads these bindings to recognise assertions and to resolve their
+    /// expected values, so a proven module constant has to be visible here too. `duplicate-handler`
+    /// compares `alpha_normalized` *and* `behavior_signature`, and seeding only one of them leaves
+    /// two handlers that read the same value through differently named constants unequal.
+    ///
+    /// Do not remove the module seeding to fix an assertion-recognition regression: that was tried,
+    /// and the cause was passing the constants to the serializer, which also routes every literal
+    /// through the value-fingerprint branch. `collect_module_scope` is the narrower path that
+    /// substitutes module values into a fingerprint without touching literal handling.
     fn collect(handler: Node<'_>, source: &[u8], declared: &BTreeMap<String, String>) -> Self {
+        let mut seeds = vec![handler];
+        seeds.extend(module_declarations(handler));
+        Self::collect_from(seeds, handler, source, declared)
+    }
+
+    fn collect_from(
+        seeds: Vec<Node<'_>>,
+        handler: Node<'_>,
+        source: &[u8],
+        declared: &BTreeMap<String, String>,
+    ) -> Self {
         let mut constants = Self::default();
         let mut ancestor = handler.parent();
         while let Some(node) = ancestor {
@@ -753,10 +825,73 @@ impl LocalConstants {
                     );
                 }
             }
+            // A handler can close over a binding in an enclosing scope. That name is neither
+            // handler-local nor module-scoped, so without recording it a module constant of the
+            // same name would substitute over the captured value and fuse two handlers that read
+            // different values. The value itself is not resolved here — only the fact that a nearer
+            // binding exists, which is enough to decline substitution.
+            //
+            // Every binding form an enclosing scope can introduce is recorded, not just its
+            // declarations: a parameter, a catch binding and a loop head all capture the same way,
+            // and covering one form at a time leaves the next as a latent false duplicate.
+            let captured = if is_function_like(node) {
+                node.child_by_field_name("parameters")
+                    .or_else(|| node.child_by_field_name("parameter"))
+            } else {
+                match node.kind() {
+                    "catch_clause" => node.child_by_field_name("parameter"),
+                    "for_in_statement" => node
+                        .child_by_field_name("kind")
+                        .and_then(|_| node.child_by_field_name("left")),
+                    _ => None,
+                }
+            };
+            if let Some(captured) = captured {
+                constants.insert_unresolved_shadow(
+                    captured,
+                    source,
+                    node.start_byte(),
+                    node,
+                    false,
+                );
+            }
+            let mut cursor = node.walk();
+            let children: Vec<Node<'_>> = node.named_children(&mut cursor).collect();
+            for child in children {
+                let declaration = match child.kind() {
+                    "lexical_declaration" | "variable_declaration" => Some(child),
+                    "export_statement" => {
+                        let mut inner = child.walk();
+                        let exported: Vec<Node<'_>> = child.named_children(&mut inner).collect();
+                        exported.into_iter().find(|node| {
+                            matches!(node.kind(), "lexical_declaration" | "variable_declaration")
+                        })
+                    }
+                    _ => None,
+                };
+                let Some(declaration) = declaration else {
+                    continue;
+                };
+                let mut declarators = declaration.walk();
+                let names: Vec<Node<'_>> = declaration
+                    .named_children(&mut declarators)
+                    .filter(|declarator| declarator.kind() == "variable_declarator")
+                    .filter_map(|declarator| declarator.child_by_field_name("name"))
+                    .collect();
+                for name in names {
+                    constants.insert_unresolved_shadow(
+                        name,
+                        source,
+                        declaration.start_byte(),
+                        node,
+                        true,
+                    );
+                }
+            }
             ancestor = node.parent();
         }
         let mut pending = Vec::new();
-        let mut stack = vec![handler];
+        let mut stack = seeds;
         while let Some(node) = stack.pop() {
             if is_function_like(node) {
                 if let Some(parameters) = node
@@ -962,6 +1097,40 @@ impl LocalConstants {
         }
     }
 
+    /// Returns `declared` extended with the values of every proven module constant.
+    ///
+    /// Only a binding with a proven value contributes, so a mutable or unresolved declaration keeps
+    /// its identifier and stays distinguishing. Two handlers reading the same value through
+    /// differently named constants therefore serialize identically.
+    fn substituted_names(
+        &self,
+        declared: &BTreeMap<String, String>,
+        handler: Node<'_>,
+        mode: AstMode,
+    ) -> BTreeMap<String, String> {
+        let mut names = declared.clone();
+        for name in self.bindings.keys() {
+            // A handler-local binding of the same name shadows the module constant.
+            if declared.contains_key(name) {
+                continue;
+            }
+            // Take the nearest binding that spans the handler rather than any safe one. A
+            // constant inside another declaration's initializer is not in scope at all, and a
+            // binding captured from an enclosing scope is nearer than the module's, so only a
+            // module constant that nothing shadows may substitute.
+            if let Some(binding) = self.binding(name, handler).filter(|binding| binding.safe) {
+                let value = match mode {
+                    AstMode::Alpha | AstMode::Normalized => &binding.alpha,
+                    AstMode::Structural => &binding.structural,
+                };
+                if !value.is_empty() {
+                    names.insert(name.clone(), format!("const:{value}"));
+                }
+            }
+        }
+        names
+    }
+
     fn resolve(&self, name: &str, use_site: Node<'_>, mode: AstMode) -> Option<&str> {
         let binding = self
             .binding(name, use_site)
@@ -1051,6 +1220,9 @@ fn local_constant_scope<'tree>(
                 | "class_static_block"
                 | "internal_module"
                 | "module"
+                // Without this the walk runs past `program`, yields no scope, and a module-scoped
+                // declarator is skipped entirely.
+                | "program"
         ) {
             return Some(candidate);
         }
@@ -1236,6 +1408,84 @@ fn serialize_ast_with_constants(
     output
 }
 
+/// Maps functions declared inside the handler to their declaration, by name.
+///
+/// Only a plain `function` declaration is collected. A function reached through a variable can be
+/// reassigned before the call, so treating it as the callee would assert behaviour the source does
+/// not prove.
+///
+/// A name declared more than once maps to `None`. The lookup is by name alone, so a shadowed name
+/// cannot be resolved to the right body here, and expanding the wrong one would fabricate executed
+/// behaviour the handler never runs. Declining to expand only loses the expansion; inventing an
+/// assertion changes the finding.
+fn local_function_declarations<'tree>(
+    handler: Node<'tree>,
+    source: &[u8],
+) -> BTreeMap<String, Option<Node<'tree>>> {
+    let mut declarations: BTreeMap<String, Option<Node<'tree>>> = BTreeMap::new();
+    let mut shadowed = BTreeSet::new();
+    let mut stack = vec![handler];
+    while let Some(node) = stack.pop() {
+        // A `function_declaration` always carries a name, so the lookup is folded into the
+        // condition rather than nested: an inner `if let` would leave a branch no input reaches.
+        let declared = (node.id() != handler.id() && node.kind() == "function_declaration")
+            .then(|| node.child_by_field_name("name"))
+            .flatten();
+        if let Some(name) = declared {
+            declarations
+                .entry(node_text(name, source).to_owned())
+                .and_modify(|existing| *existing = None)
+                .or_insert(Some(node));
+        }
+        // Any other construct that introduces the same name shadows the declaration at some
+        // position, and a name-keyed lookup cannot tell where. This is deliberately inverted: rather
+        // than enumerate the shadowing forms, which leaves the next syntax form to be discovered as
+        // a defect, every named binding disqualifies the name and only a sole `function` declaration
+        // stays expandable. Over-declining loses an expansion; expanding the wrong body invents
+        // assertions the handler never runs.
+        let bound = match node.kind() {
+            "variable_declarator" => node.child_by_field_name("name"),
+            "catch_clause" => node.child_by_field_name("parameter"),
+            // A function declaration is a mutable binding: `check = () => ...` replaces the body
+            // before the call reaches it, so the declaration no longer describes what runs.
+            "assignment_expression" | "augmented_assignment_expression" => {
+                node.child_by_field_name("left")
+            }
+            _ if is_function_like(node) => node
+                .child_by_field_name("parameters")
+                .or_else(|| node.child_by_field_name("parameter")),
+            // `class check {}`, `enum check {}`, `namespace check {}` and any future declaration
+            // form all bind their name at runtime.
+            kind if kind.ends_with("_declaration") || kind.ends_with("_statement") => {
+                node.child_by_field_name("name")
+            }
+            _ => node.child_by_field_name("name"),
+        };
+        if let Some(bound) = bound {
+            // The declaration currently being recorded is not a shadow of itself.
+            if node.kind() != "function_declaration" {
+                let mut names = Vec::new();
+                match bound.kind() {
+                    // A class or enum name is a `type_identifier`, which the pattern collector does
+                    // not treat as a binding, so name nodes are read directly.
+                    "identifier" | "type_identifier" | "property_identifier" => {
+                        names.push(node_text(bound, source).to_owned());
+                    }
+                    _ => collect_parameter_bindings(bound, source, &mut names),
+                }
+                shadowed.extend(names);
+            }
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+    for name in shadowed {
+        if let Some(entry) = declarations.get_mut(&name) {
+            *entry = None;
+        }
+    }
+    declarations
+}
+
 fn behavior_signature(
     handler: Node<'_>,
     source: &[u8],
@@ -1264,17 +1514,21 @@ fn collect_behavior<'tree>(
     output: &mut Vec<String>,
 ) {
     let root_id = node.id();
-    let mut stack = vec![(node, false, false)];
-    let push_children =
-        |node: Node<'tree>, deferred, unresolved_callback_parameters, stack: &mut Vec<_>| {
-            let start = stack.len();
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                stack.push((child, deferred, unresolved_callback_parameters));
-            }
-            stack[start..].reverse();
-        };
-    while let Some((node, deferred, unresolved_callback_parameters)) = stack.pop() {
+    let local_functions = local_function_declarations(node, source);
+    let mut stack = vec![(node, false, false, false)];
+    let push_children = |node: Node<'tree>,
+                         deferred,
+                         unresolved_callback_parameters,
+                         expanded,
+                         stack: &mut Vec<_>| {
+        let start = stack.len();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            stack.push((child, deferred, unresolved_callback_parameters, expanded));
+        }
+        stack[start..].reverse();
+    };
+    while let Some((node, deferred, unresolved_callback_parameters, expanded)) = stack.pop() {
         let nested_function = node.id() != root_id && is_function_like(node);
         if nested_function {
             let mut parent = node.parent();
@@ -1348,6 +1602,7 @@ fn collect_behavior<'tree>(
                                 evaluated,
                                 deferred,
                                 unresolved_callback_parameters,
+                                expanded,
                                 &mut stack,
                             );
                         }
@@ -1366,6 +1621,7 @@ fn collect_behavior<'tree>(
                                     arguments,
                                     deferred,
                                     unresolved_callback_parameters,
+                                    expanded,
                                     &mut stack,
                                 );
                             }
@@ -1376,6 +1632,7 @@ fn collect_behavior<'tree>(
                             invoked,
                             deferred,
                             unresolved_callback_parameters,
+                            expanded,
                             &mut stack,
                         );
                         if let Some(arguments) = node.child_by_field_name("arguments") {
@@ -1383,6 +1640,55 @@ fn collect_behavior<'tree>(
                                 arguments,
                                 deferred,
                                 unresolved_callback_parameters,
+                                expanded,
+                                &mut stack,
+                            );
+                        }
+                        continue;
+                    }
+                    // A function declared in the handler and then called does execute, so its
+                    // assertions are the handler's behaviour. Expanding only one level keeps this
+                    // bounded and terminates on recursion; a deeper call still records the generic
+                    // call event, as before.
+                    // `invoked` has already been unwrapped through parentheses, `as`, and the
+                    // non-null assertion, so `(check)()` resolves the same declaration `check()`
+                    // does. Reading the original callee here would silently skip those spellings.
+                    let expansion = (!expanded && invoked.kind() == "identifier")
+                        .then(|| local_functions.get(node_text(invoked, source)))
+                        .flatten()
+                        .and_then(|declaration| *declaration)
+                        // The declaration must be able to reach this call: a `function` nested in
+                        // another function or a block is not visible outside it, so expanding it
+                        // here would attribute behaviour the call never reaches.
+                        .filter(|declaration| {
+                            declaration.parent().is_some_and(|scope| {
+                                scope.start_byte() <= node.start_byte()
+                                    && scope.end_byte() >= node.end_byte()
+                            })
+                        });
+                    if let Some(target) = expansion {
+                        if has_function_parameters(target) {
+                            // Arguments are not substituted, so the body's values are unproven.
+                            output.push(if deferred {
+                                DEFERRED_UNRESOLVED_ASSERTION.to_owned()
+                            } else {
+                                UNRESOLVED_ASSERTION.to_owned()
+                            });
+                        } else {
+                            push_children(
+                                target,
+                                deferred,
+                                unresolved_callback_parameters,
+                                true,
+                                &mut stack,
+                            );
+                        }
+                        if let Some(arguments) = node.child_by_field_name("arguments") {
+                            push_children(
+                                arguments,
+                                deferred,
+                                unresolved_callback_parameters,
+                                expanded,
                                 &mut stack,
                             );
                         }
@@ -1397,7 +1703,13 @@ fn collect_behavior<'tree>(
             }
             _ => {}
         }
-        push_children(node, deferred, unresolved_callback_parameters, &mut stack);
+        push_children(
+            node,
+            deferred,
+            unresolved_callback_parameters,
+            expanded,
+            &mut stack,
+        );
     }
 }
 

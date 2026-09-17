@@ -335,7 +335,7 @@ class WorkspaceSteps {
         path,
         language: SourceLanguage::TypeScript,
     };
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(source, &source_file, &mut session).unwrap();
     assert!(extracted.diagnostics.is_empty());
@@ -521,7 +521,7 @@ fn project_resolved_registrations_propagate_framework_metadata() {
         "export { Given } from 'playwright-bdd';\n",
     )
     .unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     for (name, module, expected) in [
         ("imports.ts", "#bdd", Framework::CucumberJs),
@@ -564,7 +564,7 @@ fn mixed_framework_detection_is_scoped_to_each_source_file() {
             Framework::CypressCucumber,
         ),
     ];
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     for (name, source, expected) in cases {
         let path = directory.path().join(name);
@@ -682,7 +682,7 @@ Then('the result is visible', () => verify());
         language: SourceLanguage::TypeScript,
     };
     let source = fs::read_to_string(&file.path).unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
 
@@ -741,7 +741,7 @@ Given('an unrelated module is not assertion provenance', ({ state }) => localChe
         path,
         language: SourceLanguage::TypeScript,
     };
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(source, &file, &mut session).unwrap();
 
@@ -770,7 +770,7 @@ Given('an unrelated module is not assertion provenance', ({ state }) => localChe
             "import { expect } from '~/fixtures/test';",
             &format!("import {{ expect }} from '{specifier}';"),
         );
-        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
         let split = extract_detailed_impl(&split_source, &file, &mut session).unwrap();
         assert!(split.diagnostics.is_empty());
         assert_eq!(
@@ -809,7 +809,7 @@ fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
             language: SourceLanguage::TypeScript,
         };
         let source = fs::read_to_string(&file.path).unwrap();
-        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
         let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
 
@@ -840,7 +840,7 @@ fn project_resolves_reexported_runtime_registration_imports() {
             language: SourceLanguage::TypeScript,
         };
         let source = fs::read_to_string(&file.path).unwrap();
-        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+        let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
         let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
 
@@ -891,7 +891,7 @@ PlaywrightGiven('through a factory chain', () => act());
         language: SourceLanguage::TypeScript,
     };
     let source = fs::read_to_string(&file.path).unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
 
@@ -907,7 +907,7 @@ fn module_resolution_clears_active_paths_after_recoverable_errors() {
     fs::write(directory.path().join("package.json"), "{}").unwrap();
     let module = directory.path().join("fixture.ts");
     fs::write(&module, "export { Given from '@cucumber/cucumber';\n").unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let first_path = directory.path().join("first.steps.ts");
     fs::write(
@@ -964,7 +964,7 @@ export const { Given } = createBdd();
 "#,
     )
     .unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     for (module, expected_definitions) in [("./fixture", 1), ("./lookalike", 0)] {
         let path = directory.path().join(format!("{}.steps.ts", &module[2..]));
@@ -1017,7 +1017,7 @@ export const { Given } = (createBdd(test) as ReturnType<typeof createBdd>)!;
         language: SourceLanguage::TypeScript,
     };
     let source = fs::read_to_string(&file.path).unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
 
@@ -1050,7 +1050,7 @@ export const { Given } = Factory(test);
         language: SourceLanguage::TypeScript,
     };
     let source = fs::read_to_string(&file.path).unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
 
@@ -2466,7 +2466,7 @@ import { type Then } from './missing';
 Given('ambient runtime registration', () => work());
 "#;
     fs::write(&path, source).unwrap();
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
     let extracted = extract_detailed_impl(
         source,
         &SourceFile {
@@ -2968,9 +2968,49 @@ ExportedSpecifierTypeThen('exported specifier type only', () => work());
 }
 
 #[test]
+fn configured_assertion_modules_are_trusted_in_every_import_form() {
+    let configured = vec!["./fixtures".to_owned()];
+    let assertion = |header: &str, factory: &str, modules: &[String]| {
+        let mut session =
+            TypeScriptExtractionSession::for_root(std::path::Path::new("."), &[], modules);
+        let source = format!(
+            "{header}\nimport {{ Given }} from '@cucumber/cucumber';\n\
+             Given('a declared factory', () => {factory}(gauge()).toBe(1));"
+        );
+        let extracted =
+            extract_detailed_impl(&source, &file(SourceLanguage::TypeScript), &mut session)
+                .unwrap();
+        assert_eq!(extracted.definitions.len(), 1, "{header}");
+        extracted.definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .any(|event| event.starts_with("assert:"))
+    };
+
+    // A declared module carries the same provenance a recognized package does, so every import form
+    // it supports is trusted. The namespace form was previously accepted only for a built-in
+    // module, which made the setting silently depend on how the import was spelled.
+    for (header, factory) in [
+        ("import { expect } from './fixtures';", "expect"),
+        ("import * as fixtures from './fixtures';", "fixtures.expect"),
+    ] {
+        assert!(
+            assertion(header, factory, &configured),
+            "declared module must be trusted: {header}"
+        );
+        assert!(
+            !assertion(header, factory, &[]),
+            "undeclared module must stay untrusted: {header}"
+        );
+    }
+}
+
+#[test]
 fn configured_registration_names_override_inference_without_duplicating_known_aliases() {
     let configured = vec!["step".to_owned(), "Given".to_owned()];
-    let mut session = TypeScriptExtractionSession::for_root(std::path::Path::new("."), &configured);
+    let mut session =
+        TypeScriptExtractionSession::for_root(std::path::Path::new("."), &configured, &[]);
     let source = "function step(text, handler) { dynamic(text, handler); }\nstep('configured', () => work());";
     let extracted =
         extract_detailed_impl(source, &file(SourceLanguage::TypeScript), &mut session).unwrap();
@@ -3810,7 +3850,7 @@ Then('a facade require namespace is not', ({ state }) => facade.expect(state).to
         path,
         language: SourceLanguage::TypeScript,
     };
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[]);
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     let extracted = extract_detailed_impl(source, &file, &mut session).unwrap();
 

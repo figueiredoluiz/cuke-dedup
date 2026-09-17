@@ -112,6 +112,7 @@ impl Extraction {
 pub struct SourceExtractionSession {
     root: Option<PathBuf>,
     registrations: Vec<String>,
+    assertion_modules: Vec<String>,
     states: HashMap<TypeId, Box<dyn Any + Send + Sync + UnwindSafe + RefUnwindSafe>>,
 }
 
@@ -120,7 +121,11 @@ pub struct SourceExtractionSession {
 pub(crate) trait AdapterSessionState:
     Any + Send + Sync + UnwindSafe + RefUnwindSafe
 {
-    fn initialize(root: Option<&Path>, registrations: &[String]) -> Self;
+    fn initialize(
+        root: Option<&Path>,
+        registrations: &[String],
+        assertion_modules: &[String],
+    ) -> Self;
 }
 
 /// Internal stateful registrations must explicitly select their backend state.
@@ -139,9 +144,23 @@ impl SourceExtractionSession {
     /// Use this for project-declared wrappers that static inference cannot recognize, such as a
     /// helper that builds its registration call dynamically.
     pub fn with_registrations(root: &Path, registrations: &[String]) -> Self {
+        Self::with_options(root, registrations, &[])
+    }
+
+    /// Creates a session that also trusts `assertion_modules` as assertion-factory providers.
+    ///
+    /// Use this for a local module that re-exports `expect` from a supported assertion package, or
+    /// for a runner this build does not recognize by name. Without it such a factory is untrusted
+    /// and its expected values are not treated as behaviour.
+    pub fn with_options(
+        root: &Path,
+        registrations: &[String],
+        assertion_modules: &[String],
+    ) -> Self {
         let mut session = Self {
             root: Some(root.to_owned()),
             registrations: registrations.to_vec(),
+            assertion_modules: assertion_modules.to_vec(),
             ..Self::default()
         };
         // Preserve construction-time root resolution, including a failed canonicalization.
@@ -154,9 +173,13 @@ impl SourceExtractionSession {
     }
 
     pub(crate) fn initialize<T: AdapterSessionState>(&mut self) {
-        self.states
-            .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(T::initialize(self.root.as_deref(), &self.registrations)));
+        self.states.entry(TypeId::of::<T>()).or_insert_with(|| {
+            Box::new(T::initialize(
+                self.root.as_deref(),
+                &self.registrations,
+                &self.assertion_modules,
+            ))
+        });
     }
 
     pub(crate) fn state<T: AdapterSessionState>(&mut self) -> Result<&mut T> {
