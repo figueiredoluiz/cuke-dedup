@@ -60,6 +60,7 @@ The dependency policy is maintained in `deny.toml`: known security advisories, u
 - Add a focused regression test for every bug fix. Prefer sanitized inline fixtures; do not commit third-party repositories.
 - Major new functionality must include automated tests that exercise its public behavior and failure modes. Parser and discovery changes must add adversarial cases, not only happy-path examples.
 - Preserve deterministic ordering and the canonical JSON schema unless the change explicitly introduces a documented schema version. Reporter changes must retain equivalent active finding counts, rule/message/location evidence, and threshold results across terminal, JSON, JSONL, HTML, and SARIF.
+- A new public type is marked `#[non_exhaustive]` when the analyzer returns it and left exhaustive when a caller has to construct it, because the attribute makes a type impossible to build from outside the crate. The crate-level documentation in `src/lib.rs` states the rule and lists the constructed types; follow it rather than copying a neighbouring type.
 - Use conventional commit subjects such as `fix:`, `feat:`, `test:`, `docs:`, and `chore:`.
 - Do not edit generated release assets or commit build output.
 
