@@ -63,21 +63,31 @@ pub(crate) static TSX_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter
 pub(crate) struct TypeScriptExtractionSession {
     resolver: RegistrationResolver,
     configured_registrations: std::collections::BTreeSet<String>,
+    configured_assertion_modules: std::collections::BTreeSet<String>,
 }
 
 impl TypeScriptExtractionSession {
-    pub(crate) fn for_root(root: &std::path::Path, registrations: &[String]) -> Self {
+    pub(crate) fn for_root(
+        root: &std::path::Path,
+        registrations: &[String],
+        assertion_modules: &[String],
+    ) -> Self {
         Self {
             resolver: RegistrationResolver::for_root(root),
             configured_registrations: registrations.iter().cloned().collect(),
+            configured_assertion_modules: assertion_modules.iter().cloned().collect(),
         }
     }
 }
 
 impl AdapterSessionState for TypeScriptExtractionSession {
-    fn initialize(root: Option<&std::path::Path>, registrations: &[String]) -> Self {
+    fn initialize(
+        root: Option<&std::path::Path>,
+        registrations: &[String],
+        assertion_modules: &[String],
+    ) -> Self {
         match root {
-            Some(root) => Self::for_root(root, registrations),
+            Some(root) => Self::for_root(root, registrations, assertion_modules),
             None => Self::default(),
         }
     }
@@ -201,7 +211,12 @@ fn extract_detailed_impl(
         &session.configured_registrations,
     )?;
     let framework = registrations.framework;
-    let assertions = AssertionBindings::discover(root, source_bytes, &registrations);
+    let assertions = AssertionBindings::discover(
+        root,
+        source_bytes,
+        &registrations,
+        &session.configured_assertion_modules,
+    );
     let mut handler_bindings = BTreeMap::new();
     collect_handler_bindings(root, source_bytes, &mut handler_bindings);
     let context = AdapterContext {

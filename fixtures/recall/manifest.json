@@ -4,31 +4,607 @@
   "minimumRecall": 0.6,
   "cases": [
     {
+      "name": "assertion-modules-declared-trust-every-import-form",
+      "path": "assertion-modules-declared",
+      "expectedDefinitions": 10,
+      "expectedFindings": [],
+      "expectedAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the alpha meter shows a first value",
+            "the alpha meter shows a second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the beta dial holds a first entry",
+            "the beta dial holds a second entry"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the delta sensor logs a first sample",
+            "the delta sensor logs a second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the epsilon valve reports a first state",
+            "the epsilon valve reports a second state"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gamma probe records a first reading",
+            "the gamma probe records a second reading"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "assertion-modules-undeclared-stay-untrusted",
+      "path": "assertion-modules-undeclared",
+      "expectedDefinitions": 10,
+      "expectedFindings": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the alpha meter shows a first value",
+            "the alpha meter shows a second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the beta dial holds a first entry",
+            "the beta dial holds a second entry"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the delta sensor logs a first sample",
+            "the delta sensor logs a second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the epsilon valve reports a first state",
+            "the epsilon valve reports a second state"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gamma probe records a first reading",
+            "the gamma probe records a second reading"
+          ]
+        }
+      ],
+      "expectedAbsent": []
+    },
+    {
+      "name": "assertion-runner-provenance-trusts-known-factories",
+      "path": "assertion-runner-provenance",
+      "expectedDefinitions": 10,
+      "expectedFindings": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the unknown valve reads a first state",
+            "the unknown valve reads a second state"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the playwright gauge reads a first value",
+            "the playwright gauge reads a second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the vitest dial reads a first entry",
+            "the vitest dial reads a second entry"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the bun probe reads a first sample",
+            "the bun probe reads a second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the chai sensor reads a first reading",
+            "the chai sensor reads a second reading"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "assertion-subjects-and-chains-preserve-precision",
+      "path": "assertion-precision",
+      "expectedDefinitions": 14,
+      "expectedCandidateSources": {
+        "matcherBlocking": 3
+      },
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the account badge is visible",
+            "the account badge is now visible"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the settings panel shows the primary account field",
+            "the settings panel shows the secondary account field"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the navigation drawer state indicator is collapsed",
+            "the navigation drawer state indicator is expanded"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the account status indicator shows the first condition",
+            "the account status indicator shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the profile state indicator shows the first condition",
+            "the profile state indicator shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the local account status shows the first condition",
+            "the local account status shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the decorated status shows the first condition",
+            "the decorated status shows the final condition"
+          ]
+        }
+      ]
+    },
+    {
       "name": "b1-computed-positions-match-dot-access",
       "path": "b1-computed-positions",
       "expectedDefinitions": 6,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the factory gauge is settled", "the archive factory reading has finished"]
+          "matchers": [
+            "the factory gauge is settled",
+            "the archive factory reading has finished"
+          ]
         }
       ],
       "expectedAbsent": [
         {
           "rule": "parameterization-candidate",
-          "matchers": ["the terminal panel reads the first value", "the terminal panel reads the final value"]
+          "matchers": [
+            "the terminal panel reads the first value",
+            "the terminal panel reads the final value"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the terminal panel reads the first value", "the terminal panel reads the final value"]
+          "matchers": [
+            "the terminal panel reads the first value",
+            "the terminal panel reads the final value"
+          ]
         },
         {
           "rule": "parameterization-candidate",
-          "matchers": ["the option panel reads the first value", "the option panel reads the final value"]
+          "matchers": [
+            "the option panel reads the first value",
+            "the option panel reads the final value"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the option panel reads the first value", "the option panel reads the final value"]
+          "matchers": [
+            "the option panel reads the first value",
+            "the option panel reads the final value"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cross-package-relative-reexport",
+      "path": "cross-package",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cross package registration",
+            "cross package registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "direct-and-fluent-action-equivalence",
+      "path": "direct-fluent-action",
+      "expectedDefinitions": 2,
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      },
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "I click the save button",
+            "I click save button"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "empty-markdown-does-not-prove-unused-definitions",
+      "path": "empty-markdown-dialect",
+      "expectedDefinitions": 1,
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    {
+      "name": "exact-match-remains-detectable",
+      "path": "exact-match",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the account is active",
+            "the account is active"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fuzzy-wording-with-varied-handler-shape",
+      "path": "fuzzy-varied-handler",
+      "expectedDefinitions": 2,
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      },
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "I am on login page",
+            "I am on the login page"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "legacy-cucumber-registration-modules",
+      "path": "legacy-cucumber-modules",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "legacy cucumber registration",
+            "legacy cucumber registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "legacy-cypress-steps-entrypoint",
+      "path": "legacy-cypress-steps",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "legacy Cypress registration",
+            "legacy Cypress registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "local-function-provenance-limits-expansion",
+      "path": "local-function-provenance",
+      "expectedDefinitions": 24,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the alpha meter settles evenly",
+            "the alpha meter settles smoothly"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the alpha meter settles evenly",
+            "the alpha meter settles smoothly"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the spindle cycles a first turn",
+            "the spindle cycles a second turn"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the crane idles at a first angle",
+            "the crane idles at a second angle"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the delta sensor logs a replaced first sample",
+            "the delta sensor logs a replaced second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gamma probe reads a shadowed first value",
+            "the gamma probe reads a shadowed second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gantry shifts a first span",
+            "the gantry shifts a second span"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the ratchet holds a first tooth",
+            "the ratchet holds a second tooth"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the relay trips on a first path",
+            "the relay trips on a second path"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the winch spools past a first mark",
+            "the winch spools past a second mark"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the gamma probe reads a shadowed first value",
+            "the gamma probe reads a shadowed second value"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the delta sensor logs a replaced first sample",
+            "the delta sensor logs a replaced second sample"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the winch spools past a first mark",
+            "the winch spools past a second mark"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the ratchet holds a first tooth",
+            "the ratchet holds a second tooth"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the gantry shifts a first span",
+            "the gantry shifts a second span"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the beta dial resolves downward",
+            "the beta dial resolves upward"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the beta dial resolves downward",
+            "the beta dial resolves upward"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the hoist lifts along a first track",
+            "the hoist lifts along a second track"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the pulley turns to a first notch",
+            "the pulley turns to a second notch"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the crane idles at a first angle",
+            "the crane idles at a second angle"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "local-registration-wrapper",
+      "path": "local-wrapper",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "wrapped registration",
+            "wrapped registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "module-constant-values-reach-the-fingerprint",
+      "path": "module-constant-values",
+      "expectedDefinitions": 20,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the alpha meter reaches its bound",
+            "the alpha meter reaches its limit"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the alpha panel shows its label",
+            "the alpha panel shows its tag"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the top slot is pressed first",
+            "the top slot is pressed second"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the alpha meter reaches its bound",
+            "the alpha meter reaches its limit"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the alpha panel shows its label",
+            "the alpha panel shows its tag"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the nested slot is pressed first",
+            "the nested slot is pressed second"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the top slot is pressed first",
+            "the top slot is pressed second"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the beta dial holds its first stop",
+            "the beta dial holds its second stop"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the gamma probe tracks a mutable first point",
+            "the gamma probe tracks a mutable second point"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the delta sensor samples a nested first slot",
+            "the delta sensor samples a nested second slot"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the nested slot is pressed first",
+            "the nested slot is pressed second"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the omega brake holds a local stop",
+            "the omega brake holds a module stop"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the capstan winds to a first limit",
+            "the capstan winds to a second limit"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the derrick swings to a first span",
+            "the derrick swings to a second span"
+          ]
         }
       ]
     },
@@ -39,21 +615,33 @@
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the crate label is confirmed", "the crate label is now confirmed"]
+          "matchers": [
+            "the crate label is confirmed",
+            "the crate label is now confirmed"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the crate label is confirmed", "the crate label is now confirmed"]
+          "matchers": [
+            "the crate label is confirmed",
+            "the crate label is now confirmed"
+          ]
         }
       ],
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         }
       ]
     },
@@ -64,46 +652,264 @@
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the inventory badge is settled", "the archive marker has finished loading"]
+          "matchers": [
+            "the inventory badge is settled",
+            "the archive marker has finished loading"
+          ]
         }
       ],
       "expectedAbsent": [
         {
           "rule": "parameterization-candidate",
-          "matchers": ["the computed panel shows the first state", "the computed panel shows the final state"]
+          "matchers": [
+            "the computed panel shows the first state",
+            "the computed panel shows the final state"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the computed panel shows the first state", "the computed panel shows the final state"]
+          "matchers": [
+            "the computed panel shows the first state",
+            "the computed panel shows the final state"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the gauge reading is checked", "the gauge reading is now checked"]
+          "matchers": [
+            "the gauge reading is checked",
+            "the gauge reading is now checked"
+          ]
         }
       ]
     },
     {
-      "name": "rest-alias-depth-decides-shared-mutation",
-      "path": "rest-alias-depth",
-      "expectedDefinitions": 4,
+      "name": "package-imports-registration",
+      "path": "package-imports",
+      "expectedDefinitions": 2,
       "expectedFindings": [
         {
-          "rule": "duplicate-handler",
-          "matchers": ["the pallet label is confirmed", "the pallet label is now confirmed"]
-        },
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "package imports registration",
+            "package imports registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "playwright-bdd-decorator-registrations",
+      "path": "playwright-decorators",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "decorated workspace registration",
+            "decorated workspace registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "polarity-conflict-is-intentionally-not-near",
+      "path": "polarity",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the pallet label is confirmed", "the pallet label is now confirmed"]
+          "matchers": [
+            "the account is enabled",
+            "the account is not enabled"
+          ]
         }
-      ],
+      ]
+    },
+    {
+      "name": "precision-decorator-values",
+      "path": "precision-decorator-values",
+      "expectedDefinitions": 2,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the crate seal is verified", "the crate seal is now verified"]
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the crate seal is verified", "the crate seal is now verified"]
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-erased-runtime",
+      "path": "precision-erased-runtime",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-external-values",
+      "path": "precision-external-values",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-import-cjs",
+      "path": "precision-import-cjs",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-import-esm",
+      "path": "precision-import-esm",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-inline-local",
+      "path": "precision-inline-local",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-local-values",
+      "path": "precision-local-values",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-mixed-positive",
+      "path": "precision-mixed-positive",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-nested-shadow",
+      "path": "precision-nested-shadow",
+      "expectedDefinitions": 2,
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "precision-renamed-local",
+      "path": "precision-renamed-local",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
         }
       ]
     },
@@ -114,314 +920,82 @@
       "expectedFindings": [
         {
           "rule": "normalized-matcher",
-          "matchers": ["^the crate gauge is settled$", "^the crate gauge is settled$"]
+          "matchers": [
+            "^the crate gauge is settled$",
+            "^the crate gauge is settled$"
+          ]
         }
       ],
       "expectedAbsent": [
         {
           "rule": "normalized-matcher",
-          "matchers": ["^the pallet gauge is settled$", "^the pallet gauge is settled$"]
+          "matchers": [
+            "^the pallet gauge is settled$",
+            "^the pallet gauge is settled$"
+          ]
         }
       ]
     },
     {
-      "name": "review-gap-require-mutation",
-      "path": "review-gaps",
-      "arguments": ["--definitions", "require-mutation.cjs"],
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-negation-mutation",
-      "path": "review-gaps",
-      "arguments": ["--definitions", "negation-mutation.ts"],
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-computed-key-trust",
-      "path": "review-gaps",
-      "arguments": ["--definitions", "computed-key-trust.cjs"],
+      "name": "rest-alias-depth-decides-shared-mutation",
+      "path": "rest-alias-depth",
       "expectedDefinitions": 4,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the parcel is ready", "shipment readiness has been confirmed"]
+          "matchers": [
+            "the pallet label is confirmed",
+            "the pallet label is now confirmed"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the pallet label is confirmed",
+            "the pallet label is now confirmed"
+          ]
         }
       ],
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
-          "matchers": ["the unknown status is verified", "the unknown status is now verified"]
+          "matchers": [
+            "the crate seal is verified",
+            "the crate seal is now verified"
+          ]
         },
         {
           "rule": "near-duplicate-step",
-          "matchers": ["the unknown status is verified", "the unknown status is now verified"]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": ["the unknown status is verified", "the unknown status is now verified"]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-computed-key-mutation",
-      "path": "review-gaps",
-      "arguments": ["--definitions", "computed-key-mutation.ts"],
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-deferred-assertions",
-      "path": "review-gaps",
-      "arguments": ["--definitions", "deferred-assertions.ts"],
-      "expectedDefinitions": 8,
-      "expectedFindings": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the archive badge is visible", "the archive badge is now visible"]
-        }
-      ],
-      "expectedAbsent": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the parcel status is verified", "the parcel status is now verified"]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the switch position is checked", "the switch position is now checked"]
-        },
-        {
-          "rule": "duplicate-handler",
-          "matchers": ["the warehouse is inspected", "the warehouse is now inspected"]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the warehouse is inspected", "the warehouse is now inspected"]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": ["the warehouse is inspected", "the warehouse is now inspected"]
+          "matchers": [
+            "the crate seal is verified",
+            "the crate seal is now verified"
+          ]
         }
       ]
     },
     {
       "name": "review-gap-callback-call-evidence",
       "path": "review-gaps",
-      "arguments": ["--definitions", "callbacks.ts"],
-      "expectedDefinitions": 4,
-      "expectedFindings": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the invoice grid is refreshed", "the invoice list is refreshed"]
-        }
-      ],
-      "expectedAbsent": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": ["the admin applies the discount rule", "the admin applies the shipping rule"]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-namespace-alias",
-      "path": "review-gaps",
       "arguments": [
         "--definitions",
-        "alias.ts,control.ts"
-      ],
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-named-default",
-      "path": "review-gaps",
-      "arguments": [
-        "--definitions",
-        "named-default.ts"
+        "callbacks.ts"
       ],
       "expectedDefinitions": 4,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
           "matchers": [
-            "the archive badge is visible",
-            "the archive badge is now visible"
+            "the invoice grid is refreshed",
+            "the invoice list is refreshed"
           ]
         }
       ],
       "expectedAbsent": [
         {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
           "rule": "near-duplicate-step",
           "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-wrapped-callee",
-      "path": "review-gaps",
-      "arguments": [
-        "--definitions",
-        "wrapped.ts"
-      ],
-      "expectedDefinitions": 4,
-      "expectedFindings": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the archive badge is visible",
-            "the archive badge is now visible"
-          ]
-        }
-      ],
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-lexical-tdz",
-      "path": "review-gaps",
-      "arguments": [
-        "--definitions",
-        "tdz.ts"
-      ],
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "parameterization-candidate",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "review-gap-nested-matcher",
-      "path": "review-gaps",
-      "arguments": [
-        "--definitions",
-        "nested.ts"
-      ],
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel is ready",
-            "shipment readiness has been confirmed"
+            "the admin applies the discount rule",
+            "the admin applies the shipping rule"
           ]
         }
       ]
@@ -517,8 +1091,12 @@
       ]
     },
     {
-      "name": "precision-import-esm",
-      "path": "precision-import-esm",
+      "name": "review-gap-computed-key-mutation",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "computed-key-mutation.ts"
+      ],
       "expectedDefinitions": 2,
       "expectedAbsent": [
         {
@@ -534,89 +1112,119 @@
             "the parcel status is verified",
             "the parcel status is now verified"
           ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         }
       ]
     },
     {
-      "name": "precision-import-cjs",
-      "path": "precision-import-cjs",
-      "expectedDefinitions": 2,
+      "name": "review-gap-computed-key-trust",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "computed-key-trust.cjs"
+      ],
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ],
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
           "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
+            "the unknown status is verified",
+            "the unknown status is now verified"
           ]
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "precision-external-values",
-      "path": "precision-external-values",
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
+            "the unknown status is verified",
+            "the unknown status is now verified"
           ]
         },
         {
-          "rule": "near-duplicate-step",
+          "rule": "parameterization-candidate",
           "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
+            "the unknown status is verified",
+            "the unknown status is now verified"
           ]
         }
       ]
     },
     {
-      "name": "precision-local-values",
-      "path": "precision-local-values",
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "duplicate-handler",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the parcel status is verified",
-            "the parcel status is now verified"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "precision-inline-local",
-      "path": "precision-inline-local",
-      "expectedDefinitions": 2,
+      "name": "review-gap-deferred-assertions",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "deferred-assertions.ts"
+      ],
+      "expectedDefinitions": 8,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
           "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the switch position is checked",
+            "the switch position is now checked"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the warehouse is inspected",
+            "the warehouse is now inspected"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the warehouse is inspected",
+            "the warehouse is now inspected"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the warehouse is inspected",
+            "the warehouse is now inspected"
           ]
         }
       ]
     },
     {
-      "name": "precision-nested-shadow",
-      "path": "precision-nested-shadow",
+      "name": "review-gap-lexical-tdz",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "tdz.ts"
+      ],
       "expectedDefinitions": 2,
       "expectedAbsent": [
         {
@@ -632,12 +1240,64 @@
             "the parcel status is verified",
             "the parcel status is now verified"
           ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         }
       ]
     },
     {
-      "name": "precision-erased-runtime",
-      "path": "precision-erased-runtime",
+      "name": "review-gap-named-default",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "named-default.ts"
+      ],
+      "expectedDefinitions": 4,
+      "expectedFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "review-gap-namespace-alias",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "alias.ts,control.ts"
+      ],
       "expectedDefinitions": 2,
       "expectedAbsent": [
         {
@@ -653,12 +1313,23 @@
             "the parcel status is verified",
             "the parcel status is now verified"
           ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         }
       ]
     },
     {
-      "name": "precision-decorator-values",
-      "path": "precision-decorator-values",
+      "name": "review-gap-negation-mutation",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "negation-mutation.ts"
+      ],
       "expectedDefinitions": 2,
       "expectedAbsent": [
         {
@@ -674,12 +1345,23 @@
             "the parcel status is verified",
             "the parcel status is now verified"
           ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
         }
       ]
     },
     {
-      "name": "precision-mixed-positive",
-      "path": "precision-mixed-positive",
+      "name": "review-gap-nested-matcher",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "nested.ts"
+      ],
       "expectedDefinitions": 2,
       "expectedFindings": [
         {
@@ -692,63 +1374,74 @@
       ]
     },
     {
-      "name": "precision-renamed-local",
-      "path": "precision-renamed-local",
+      "name": "review-gap-require-mutation",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "require-mutation.cjs"
+      ],
       "expectedDefinitions": 2,
-      "expectedFindings": [
+      "expectedAbsent": [
         {
           "rule": "duplicate-handler",
           "matchers": [
-            "the parcel is ready",
-            "shipment readiness has been confirmed"
+            "the parcel status is verified",
+            "the parcel status is now verified"
           ]
-        }
-      ]
-    },
-    {
-      "name": "exact-match-remains-detectable",
-      "path": "exact-match",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
+        },
         {
-          "rule": "duplicate-matcher",
+          "rule": "near-duplicate-step",
           "matchers": [
-            "the account is active",
-            "the account is active"
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
           ]
         }
       ]
     },
     {
-      "name": "fuzzy-wording-with-varied-handler-shape",
-      "path": "fuzzy-varied-handler",
-      "expectedDefinitions": 2,
-      "expectedCandidateSources": {
-        "matcherBlocking": 1
-      },
+      "name": "review-gap-wrapped-callee",
+      "path": "review-gaps",
+      "arguments": [
+        "--definitions",
+        "wrapped.ts"
+      ],
+      "expectedDefinitions": 4,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
           "matchers": [
-            "I am on login page",
-            "I am on the login page"
+            "the archive badge is visible",
+            "the archive badge is now visible"
           ]
         }
-      ]
-    },
-    {
-      "name": "direct-and-fluent-action-equivalence",
-      "path": "direct-fluent-action",
-      "expectedDefinitions": 2,
-      "expectedCandidateSources": {
-        "matcherBlocking": 1
-      },
-      "expectedFindings": [
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
         {
           "rule": "near-duplicate-step",
           "matchers": [
-            "I click the save button",
-            "I click save button"
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
           ]
         }
       ]
@@ -768,20 +1461,6 @@
       ]
     },
     {
-      "name": "package-imports-registration",
-      "path": "package-imports",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-matcher",
-          "matchers": [
-            "package imports registration",
-            "package imports registration"
-          ]
-        }
-      ]
-    },
-    {
       "name": "workspace-package-entrypoint-registration",
       "path": "workspace-entrypoint",
       "expectedDefinitions": 2,
@@ -792,161 +1471,6 @@
             "workspace package registration",
             "workspace package registration"
           ]
-        }
-      ]
-    },
-    {
-      "name": "cross-package-relative-reexport",
-      "path": "cross-package",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-matcher",
-          "matchers": [
-            "cross package registration",
-            "cross package registration"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "local-registration-wrapper",
-      "path": "local-wrapper",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-matcher",
-          "matchers": [
-            "wrapped registration",
-            "wrapped registration"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "polarity-conflict-is-intentionally-not-near",
-      "path": "polarity",
-      "expectedDefinitions": 2,
-      "expectedAbsent": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the account is enabled",
-            "the account is not enabled"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "assertion-subjects-and-chains-preserve-precision",
-      "path": "assertion-precision",
-      "expectedDefinitions": 14,
-      "expectedCandidateSources": {
-        "matcherBlocking": 3
-      },
-      "expectedFindings": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the account badge is visible",
-            "the account badge is now visible"
-          ]
-        }
-      ],
-      "expectedAbsent": [
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the settings panel shows the primary account field",
-            "the settings panel shows the secondary account field"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the navigation drawer state indicator is collapsed",
-            "the navigation drawer state indicator is expanded"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the account status indicator shows the first condition",
-            "the account status indicator shows the final condition"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the profile state indicator shows the first condition",
-            "the profile state indicator shows the final condition"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the local account status shows the first condition",
-            "the local account status shows the final condition"
-          ]
-        },
-        {
-          "rule": "near-duplicate-step",
-          "matchers": [
-            "the decorated status shows the first condition",
-            "the decorated status shows the final condition"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "legacy-cucumber-registration-modules",
-      "path": "legacy-cucumber-modules",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-matcher",
-          "matchers": [
-            "legacy cucumber registration",
-            "legacy cucumber registration"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "legacy-cypress-steps-entrypoint",
-      "path": "legacy-cypress-steps",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-matcher",
-          "matchers": [
-            "legacy Cypress registration",
-            "legacy Cypress registration"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "playwright-bdd-decorator-registrations",
-      "path": "playwright-decorators",
-      "expectedDefinitions": 2,
-      "expectedFindings": [
-        {
-          "rule": "duplicate-matcher",
-          "matchers": [
-            "decorated workspace registration",
-            "decorated workspace registration"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "empty-markdown-does-not-prove-unused-definitions",
-      "path": "empty-markdown-dialect",
-      "expectedDefinitions": 1,
-      "expectedAbsent": [
-        {
-          "rule": "unused-definition"
         }
       ]
     }

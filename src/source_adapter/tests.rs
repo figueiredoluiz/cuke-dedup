@@ -40,13 +40,13 @@ const IMPORTED_STEP: &str =
 fn session_state_initializes_once_per_backend_and_per_run() {
     struct Counter(usize);
     impl AdapterSessionState for Counter {
-        fn initialize(_: Option<&Path>, _: &[String]) -> Self {
+        fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
             Self(0)
         }
     }
     struct Other;
     impl AdapterSessionState for Other {
-        fn initialize(_: Option<&Path>, _: &[String]) -> Self {
+        fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
             Self
         }
     }

@@ -8,13 +8,22 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
-// These modules expose the Jest-compatible `expect` API CukeDedup can identify without module
-// resolution. Exact matching avoids treating unrelated package-name prefixes as trusted APIs.
-const ASSERTION_MODULES: [&str; 4] = [
+// These modules expose an `expect` factory CukeDedup can identify without module resolution. Exact
+// matching avoids treating unrelated package-name prefixes as trusted APIs.
+//
+// Chain recognition itself is shape-based rather than matcher-name-based: an assertion is a call on
+// a property chain that traces back to a trusted `expect(...)`, so Chai's `.to.equal` is recognized
+// exactly as Jest's `.toBe` is. Only the provenance of the factory is listed here, which is why a
+// runner is added by name rather than by dialect. Anything this list cannot name is declared
+// through the `assertionModules` configuration key.
+const ASSERTION_MODULES: [&str; 7] = [
     "@playwright/test",
     "playwright/test",
     "@jest/globals",
     "expect",
+    "vitest",
+    "chai",
+    "bun:test",
 ];
 
 #[derive(Default)]
@@ -30,8 +39,12 @@ impl AssertionBindings {
         root: Node<'_>,
         source: &[u8],
         registrations: &RegistrationNames,
+        configured_modules: &BTreeSet<String>,
     ) -> Self {
-        let facade_modules = resolved_facade_modules(root, source, registrations);
+        let mut facade_modules = resolved_facade_modules(root, source, registrations);
+        // A project-declared module is trusted exactly like a recognized package: the analyzer
+        // cannot see through a local re-export, so the declaration is the evidence.
+        facade_modules.extend(configured_modules.iter().cloned());
         let (scopes, scope_ranges) = collect_binding_scopes(root, source);
         let shadow_ranges = collect_scoped_bindings(scopes.clone(), scope_ranges);
         let require_shadowed =
@@ -46,7 +59,8 @@ impl AssertionBindings {
         while let Some(node) = stack.pop() {
             match node.kind() {
                 "import_statement" if import_has_runtime_bindings(node) => {
-                    let trusted = bindings.collect_import(node, source, &facade_modules);
+                    let trusted =
+                        bindings.collect_import(node, source, &facade_modules, configured_modules);
                     extend_untrusted_bindings(node, source, &trusted, &mut shadowed);
                 }
                 "variable_declarator" if is_top_level_variable(node) => {
@@ -54,7 +68,7 @@ impl AssertionBindings {
                     // module-scope CommonJS declarations so a nested helper cannot leak an
                     // assertion alias into unrelated step handlers.
                     let trusted = if !require_shadowed {
-                        bindings.collect_require(node, source)
+                        bindings.collect_require(node, source, configured_modules)
                     } else {
                         BTreeSet::new()
                     };
@@ -225,6 +239,7 @@ impl AssertionBindings {
         import: Node<'_>,
         source: &[u8],
         facade_modules: &BTreeSet<String>,
+        configured_modules: &BTreeSet<String>,
     ) -> BTreeSet<String> {
         let mut trusted = BTreeSet::new();
         if is_type_only_declaration(import) {
@@ -234,6 +249,10 @@ impl AssertionBindings {
             return trusted;
         };
         let exact_assertion_module = ASSERTION_MODULES.contains(&module);
+        // A declared module carries the same provenance a recognized package does, so every import
+        // form it supports is trusted. A facade inferred from registration re-exports keeps the
+        // narrower named-import rule: the declaration is explicit evidence, the inference is not.
+        let declared_module = configured_modules.contains(module);
         // Registration provenance is collected by module before this pass, so split imports from
         // one custom fixture retain the same trust without trusting unrelated local modules.
         let framework_facade = facade_modules.contains(module);
@@ -257,7 +276,7 @@ impl AssertionBindings {
                         trusted.insert(local);
                     }
                 }
-                "namespace_import" if exact_assertion_module => {
+                "namespace_import" if exact_assertion_module || declared_module => {
                     if let Some(identifier) = node.named_child(0) {
                         let local = node_text(identifier, source).to_owned();
                         self.namespaces.insert(local.clone());
@@ -283,7 +302,9 @@ impl AssertionBindings {
                         let local = node_text(local, source).to_owned();
                         if module == "expect" {
                             self.identifiers.insert(local.clone());
-                        } else if exact_assertion_module {
+                        } else if exact_assertion_module || declared_module {
+                            // `import fixtures = require('./fixtures')` binds the module the same
+                            // way the namespace form does, so a declared module is trusted here too.
                             self.namespaces.insert(local.clone());
                         } else {
                             continue;
@@ -298,7 +319,12 @@ impl AssertionBindings {
         trusted
     }
 
-    fn collect_require(&mut self, declaration: Node<'_>, source: &[u8]) -> BTreeSet<String> {
+    fn collect_require(
+        &mut self,
+        declaration: Node<'_>,
+        source: &[u8],
+        configured_modules: &BTreeSet<String>,
+    ) -> BTreeSet<String> {
         let mut trusted = BTreeSet::new();
         let (Some(name), Some(value)) = (
             declaration.child_by_field_name("name"),
@@ -320,7 +346,12 @@ impl AssertionBindings {
         let Some(module) = required_module(required, source) else {
             return trusted;
         };
-        if !ASSERTION_MODULES.contains(&module) {
+        // A declared module is trusted exactly as a recognized package is, so a CommonJS project
+        // does not lose the setting by spelling the dependency with `require`. A facade merely
+        // inferred from registration re-exports is deliberately excluded: inference is not evidence
+        // that the module exposes a real assertion factory, and trusting it would make an unrelated
+        // `expect` export semantically load-bearing.
+        if !ASSERTION_MODULES.contains(&module) && !configured_modules.contains(module) {
             return trusted;
         }
         match name.kind() {

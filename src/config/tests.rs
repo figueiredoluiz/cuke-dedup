@@ -64,6 +64,8 @@ fn configuration_rejects_empty_or_malformed_public_selectors() {
             r#"{"parameterTypes":{"colour":"("}}"#,
             "invalid regular expression",
         ),
+        (r#"{"assertionModules":[""]}"#, "module specifier"),
+        (r#"{"assertionModules":[" vitest"]}"#, "module specifier"),
         (r#"{"registrations":[""]}"#, "JavaScript identifier"),
         (r#"{"registrations":["1step"]}"#, "JavaScript identifier"),
         (
@@ -107,6 +109,7 @@ fn raw_configuration_applies_every_boolean_and_collection_field() {
           "requireDefinitions":true,
           "failOnIncomplete":true,
           "registrations":["step"],
+          "assertionModules":["./support/fixtures"],
           "parameterTypes":{"colour":"red|green"},
           "noMetrics":true,
           "rules":{"unused-definition":"off"},
@@ -127,6 +130,7 @@ fn raw_configuration_applies_every_boolean_and_collection_field() {
     );
     assert!(config.require_features && config.require_definitions && config.fail_on_incomplete);
     assert_eq!(config.registrations, ["step"]);
+    assert_eq!(config.assertion_modules, ["./support/fixtures"]);
     assert_eq!(config.parameter_types["colour"], "red|green");
     assert!(config.no_metrics);
     assert_eq!(config.severity(Rule::UnusedDefinition), Severity::Off);

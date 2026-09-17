@@ -80,6 +80,8 @@ struct RawConfig {
     #[serde(default)]
     registrations: Option<Vec<String>>,
     #[serde(default)]
+    assertion_modules: Option<Vec<String>>,
+    #[serde(default)]
     parameter_types: Option<BTreeMap<String, String>>,
     #[serde(default)]
     max_candidate_comparisons: Option<usize>,
@@ -190,6 +192,8 @@ pub struct Config {
     pub fail_on_incomplete: bool,
     /// Additional local function names that register step definitions.
     pub registrations: Vec<String>,
+    /// Additional module specifiers whose `expect` export is a trusted assertion factory.
+    pub assertion_modules: Vec<String>,
     /// Project-defined Cucumber Expression parameter types and their regular expressions.
     pub parameter_types: BTreeMap<String, String>,
     /// Maximum unique definition pairs retained for analysis.
@@ -374,6 +378,7 @@ impl Config {
             require_definitions: false,
             fail_on_incomplete: false,
             registrations: Vec::new(),
+            assertion_modules: Vec::new(),
             parameter_types: BTreeMap::new(),
             max_candidate_comparisons: MAX_CANDIDATE_COMPARISONS,
             max_structural_class_comparisons: MAX_STRUCTURAL_CLASS_COMPARISONS,
@@ -423,6 +428,9 @@ impl Config {
         }
         if let Some(value) = raw.registrations {
             self.registrations = value;
+        }
+        if let Some(value) = raw.assertion_modules {
+            self.assertion_modules = value;
         }
         if let Some(value) = raw.parameter_types {
             self.parameter_types = value;
@@ -512,6 +520,13 @@ impl Config {
             crate::resource_limits::compile_regex(pattern).with_context(|| {
                 format!("invalid regular expression for parameter type `{name}`")
             })?;
+        }
+        for module in &self.assertion_modules {
+            // A specifier is matched exactly against the import text, so surrounding whitespace or
+            // an empty entry would silently never match and quietly disable the setting.
+            if module.is_empty() || module.trim() != module {
+                bail!("assertion module `{module}` must be a module specifier without surrounding whitespace");
+            }
         }
         for name in &self.registrations {
             if name.is_empty()

@@ -1534,6 +1534,359 @@ fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
 }
 
 #[test]
+fn assertion_factories_are_trusted_by_provenance_across_runners() {
+    let (_directory, config) = config();
+    let conflicting = |import: &str, assertion: &str| {
+        let extracted = definitions(&format!(
+            "{import}\nThen('the alpha gauge is settled', () => {{ {assertion}(1); }});\n\
+             Then('the archive reading has finished', () => {{ {assertion}(2); }});"
+        ));
+        assert_eq!(extracted.len(), 2, "{import}");
+        analyze(extracted, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .any(|finding| finding.rule == Rule::ParameterizationCandidate)
+    };
+
+    // A trusted factory makes the expected value behaviour, so conflicting values are genuinely
+    // different assertions rather than one step waiting to be parameterized. Recognition is
+    // shape-based, so Chai's `.to.equal` chain is read exactly as Jest's `.toBe` is; only the
+    // provenance of the factory differs between these runners.
+    for (import, assertion) in [
+        (
+            "import { expect } from '@playwright/test';",
+            "expect(gauge()).toBe",
+        ),
+        ("import { expect } from 'vitest';", "expect(gauge()).toBe"),
+        ("import { expect } from 'bun:test';", "expect(gauge()).toBe"),
+        ("import { expect } from 'chai';", "expect(gauge()).to.equal"),
+    ] {
+        assert!(
+            !conflicting(import, assertion),
+            "{import} must be trusted, so conflicting values are not a parameterization candidate"
+        );
+    }
+
+    // An unrecognized module is not trusted, and importing from one must stay weaker than the
+    // ambient global it shadows. Declaring the module is the supported way to restore trust.
+    assert!(conflicting(
+        "import { expect } from 'some-unknown-assertion-lib';",
+        "expect(gauge()).toBe"
+    ));
+}
+
+#[test]
+fn module_scoped_constants_reach_the_handler_fingerprint() {
+    let (_directory, config) = config();
+    let rules = |module: &str, left: &str, right: &str| {
+        let extracted = definitions(&format!(
+            "{module}\nThen('the alpha gauge is settled', () => {{ {left} }});\n\
+             Then('the archive reading has finished', () => {{ {right} }});"
+        ));
+        assert_eq!(extracted.len(), 2, "{module} | {left} | {right}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    // A module constant is a fixed value every handler in the file reads, so two handlers spelling
+    // the same value through differently named constants are the same handler. Renaming cannot
+    // express this: both constants are visible to both handlers and therefore hold distinct alpha
+    // names, so the value itself has to reach the fingerprint.
+    for declarations in [
+        "const A = 1; const B = 1;",
+        "const A = 'ready'; const B = 'ready';",
+    ] {
+        assert_eq!(
+            rules(
+                declarations,
+                "expect(gauge()).toBe(A);",
+                "expect(gauge()).toBe(B);"
+            ),
+            vec![Rule::DuplicateHandler],
+            "{declarations}"
+        );
+    }
+
+    // Conflicting values stay distinct, exactly as the literal spelling does.
+    assert!(rules(
+        "const A = 1; const B = 2;",
+        "expect(gauge()).toBe(A);",
+        "expect(gauge()).toBe(B);"
+    )
+    .is_empty());
+
+    // `let` can be reassigned between registration and execution, so its value is never proven.
+    assert!(rules(
+        "let A = 1; let B = 1;",
+        "expect(gauge()).toBe(A);",
+        "expect(gauge()).toBe(B);"
+    )
+    .is_empty());
+
+    // A handler-local binding shadows the module constant and keeps its own value.
+    assert!(rules(
+        "const A = 1;",
+        "const A = 2; expect(gauge()).toBe(A);",
+        "expect(gauge()).toBe(A);"
+    )
+    .is_empty());
+
+    // Seeding the walk with a module declaration also reaches constants inside its initializer.
+    // Those are not in scope for any handler, so they must never substitute: here `A` and `B` are
+    // unresolved module references and the handlers are not the same handler.
+    assert!(rules(
+        "const helper = () => { const A = 1; const B = 1; };",
+        "expect(gauge()).toBe(A);",
+        "expect(gauge()).toBe(B);"
+    )
+    .iter()
+    .all(|rule| *rule != Rule::DuplicateHandler));
+
+    // A handler can close over a binding in an enclosing scope. That name is neither
+    // handler-local nor module-scoped, so a module constant of the same name must not substitute
+    // over the captured value: doing so fused two handlers that read different values. Every form
+    // an enclosing scope can introduce is covered, because fixing one at a time left the next as a
+    // latent false duplicate.
+    for (label, first, second) in [
+        (
+            "parameter",
+            "function buildOne(SHARED) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
+            "function buildTwo(SHARED) { Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+        ),
+        (
+            "declaration",
+            "function buildOne() { const SHARED = 7; Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
+            "function buildTwo() { const SHARED = 8; Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+        ),
+        (
+            "catch binding",
+            "try { work(); } catch (SHARED) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
+            "try { work(); } catch (SHARED) { Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+        ),
+        (
+            "loop head",
+            "for (const SHARED of [7]) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
+            "for (const SHARED of [8]) { Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+        ),
+    ] {
+        let captured = definitions(&format!("const SHARED = 1;\n{first}\n{second}"));
+        assert_eq!(captured.len(), 2, "{label}");
+        // The handler bodies are textually identical, so the fingerprints match; what keeps them
+        // apart is that the captured value stays unresolved and the handlers are not comparable.
+        // The protection is exclusion rather than distinction, which is the conservative direction:
+        // a substituted module value made them comparable *and* equal, which is the false duplicate.
+        assert!(
+            !captured[0].handler.comparable && !captured[1].handler.comparable,
+            "{label}: a captured binding must leave the handler non-comparable"
+        );
+        let result = analyze(captured, Vec::new(), &config).unwrap();
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|finding| finding.rule == Rule::DuplicateHandler),
+            "{label}: {:?}",
+            result
+                .findings
+                .iter()
+                .map(|finding| finding.rule)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // Handler-local constants keep their existing alpha renaming, and the parameterization signal
+    // that depends on a value-insensitive alpha fingerprint still fires.
+    assert_eq!(
+        rules(
+            "",
+            "const A = 1; expect(gauge()).toBe(A);",
+            "const B = 1; expect(gauge()).toBe(B);"
+        ),
+        vec![Rule::DuplicateHandler]
+    );
+    assert_eq!(
+        rules("", "clickButton('save');", "clickButton('cancel');"),
+        vec![Rule::ParameterizationCandidate]
+    );
+}
+
+#[test]
+fn called_local_functions_contribute_their_assertions_to_the_handler() {
+    let (_directory, config) = config();
+    let rules = |left: &str, right: &str| {
+        let extracted = definitions(&format!(
+            "Then('the alpha gauge is settled', () => {{ {left} }});\n\
+             Then('the archive reading has finished', () => {{ {right} }});"
+        ));
+        assert_eq!(extracted.len(), 2, "{left} | {right}");
+        let result = analyze(extracted, Vec::new(), &config).unwrap();
+        let mut rules: Vec<Rule> = result
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| {
+                matches!(
+                    rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    // A function declared in the handler and then called does execute, so its expected values are
+    // the handler's behaviour and conflicting ones keep the handlers apart. Before this, the
+    // assertion was dropped at the declaration and the difference resurfaced as a spurious
+    // parameterization candidate, which the direct spelling never produces.
+    let direct = rules("expect(gauge()).toBe(1);", "expect(gauge()).toBe(2);");
+    let called = rules(
+        "function check() { expect(gauge()).toBe(1); } check();",
+        "function check() { expect(gauge()).toBe(2); } check();",
+    );
+    assert_eq!(
+        called, direct,
+        "a called local function must match the direct spelling"
+    );
+    assert!(called.is_empty(), "{called:?}");
+
+    // Identical bodies still share behaviour through the same expansion.
+    assert_eq!(
+        rules(
+            "function check() { expect(gauge()).toBe(1); } check();",
+            "function check() { expect(gauge()).toBe(1); } check();",
+        ),
+        vec![Rule::DuplicateHandler]
+    );
+
+    // Declared and never called: nothing executes, so the values are not behaviour and must not be
+    // absorbed. The handlers differ only in an unproven value, which is a parameterization
+    // candidate exactly as it was before.
+    assert_eq!(
+        rules(
+            "function check() { expect(gauge()).toBe(1); }",
+            "function check() { expect(gauge()).toBe(2); }",
+        ),
+        vec![Rule::ParameterizationCandidate]
+    );
+
+    // Parameters are not substituted at the call, so the body's values stay unproven.
+    assert!(rules(
+        "function check(value) { expect(gauge()).toBe(value); } check(1);",
+        "function check(value) { expect(gauge()).toBe(value); } check(2);",
+    )
+    .is_empty());
+
+    // Expansion is single level, so self-recursion terminates instead of walking forever.
+    assert!(rules(
+        "function loop() { expect(gauge()).toBe(1); loop(); } loop();",
+        "function loop() { expect(gauge()).toBe(2); loop(); } loop();",
+    )
+    .is_empty());
+
+    // A name declared more than once cannot be resolved to one body by name alone, so no expansion
+    // happens. Expanding the wrong declaration would attribute assertions the handler never runs:
+    // here the executed bodies are identical and only the unused shadows differ, so fabricating a
+    // conflict from them would wrongly separate two handlers that behave the same.
+    let shadowed = rules(
+        "function check() { expect(gauge()).toBe(1); } check();          { function check() { expect(gauge()).toBe(111); } }",
+        "function check() { expect(gauge()).toBe(1); } check();          { function check() { expect(gauge()).toBe(222); } }",
+    );
+    assert!(!shadowed.contains(&Rule::DuplicateHandler), "{shadowed:?}");
+
+    // A declaration nested inside another function is not visible at this call site, so it must not
+    // be expanded either.
+    let invisible = rules(
+        "function outer() { function check() { expect(gauge()).toBe(1); } } check();",
+        "function outer() { function check() { expect(gauge()).toBe(2); } } check();",
+    );
+    assert!(
+        !invisible.contains(&Rule::DuplicateHandler),
+        "{invisible:?}"
+    );
+
+    // A variable binding shadows the declaration at some position, and a name-keyed lookup cannot
+    // tell where. `const check = () => ...` over an outer `function check()` is the common
+    // spelling; expanding the outer body there attributes assertions the call never reaches.
+    let variable_shadow = rules(
+        "function check() { expect(gauge()).toBe(9); } \
+         { const check = () => { expect(gauge()).toBe(1); }; check(); }",
+        "function check() { expect(gauge()).toBe(9); } \
+         { const check = () => { expect(gauge()).toBe(2); }; check(); }",
+    );
+    assert!(
+        !variable_shadow.contains(&Rule::DuplicateHandler),
+        "{variable_shadow:?}"
+    );
+
+    // Any named binding disqualifies the name, so a new declaration form does not have to be
+    // enumerated to be handled. `enum` is covered by the same rule as `class` without naming it.
+    for shadow in ["class check {}", "enum check { A }"] {
+        let shadowed_by_declaration = rules(
+            &format!("function check() {{ expect(gauge()).toBe(1); }} {{ {shadow} check(); }}"),
+            &format!("function check() {{ expect(gauge()).toBe(2); }} {{ {shadow} check(); }}"),
+        );
+        assert!(
+            !shadowed_by_declaration.is_empty(),
+            "{shadow} must decline expansion, leaving the values unproven"
+        );
+        assert!(
+            !shadowed_by_declaration.contains(&Rule::DuplicateHandler),
+            "{shadow}: {shadowed_by_declaration:?}"
+        );
+    }
+
+    // A parameterized local function called inside a callback is deferred as well as unproven, so
+    // the handler records the deferred marker rather than the immediate one.
+    let deferred = definitions(
+        "Then('a deferred parameterized call', () => {          register(() => { function act(value) { expect(gauge()).toBe(value); } act(1); }); });",
+    );
+    assert_eq!(deferred.len(), 1);
+    assert!(
+        deferred[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .any(|event| event == "deferred-assert:unresolved"),
+        "{:?}",
+        deferred[0].handler.behavior_signature
+    );
+
+    // A transparent wrapper resolves the same declaration a bare call does. Reading the original
+    // callee instead of the unwrapped one silently skipped every parenthesised spelling.
+    assert_eq!(
+        rules(
+            "function check() { expect(gauge()).toBe(1); } (check)();",
+            "function check() { expect(gauge()).toBe(2); } (check)();",
+        ),
+        rules(
+            "function check() { expect(gauge()).toBe(1); } check();",
+            "function check() { expect(gauge()).toBe(2); } check();",
+        ),
+        "a wrapped call must expand like a bare call"
+    );
+}
+
+#[test]
 fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     let mut unrelated_source = String::new();
     for index in 0..100 {
