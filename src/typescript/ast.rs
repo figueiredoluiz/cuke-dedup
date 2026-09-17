@@ -122,6 +122,33 @@ fn direct_named_child<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree
     child
 }
 
+/// Returns the first string-literal argument of a call expression, if any.
+pub(super) fn call_string_argument<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    let arguments = call.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let argument = arguments.named_children(&mut cursor).next()?;
+    string_literal(argument, source)
+}
+
+/// Returns whether a variable declarator belongs to a top-level declaration, either directly
+/// under the program or under a single `export` statement.
+///
+/// A declarator always sits under a declaration, which always has a parent of its own, so the
+/// missing-ancestor cases are folded into the chain rather than returned early: they cannot be
+/// reached from a parsed tree and an early return would be an untestable branch.
+pub(super) fn is_top_level_variable(declarator: Node<'_>) -> bool {
+    declarator
+        .parent()
+        .and_then(|declaration| declaration.parent())
+        .is_some_and(|parent| match parent.kind() {
+            "program" => true,
+            "export_statement" => parent
+                .parent()
+                .is_some_and(|ancestor| ancestor.kind() == "program"),
+            _ => false,
+        })
+}
+
 /// Returns the contents of a single- or double-quoted string literal node.
 pub(super) fn string_literal<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     let text = node_text(node, source);

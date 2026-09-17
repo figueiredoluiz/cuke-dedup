@@ -29,7 +29,7 @@ use self::registrations::{
     registration_name, unresolved_registration_module, RegistrationCallee, RegistrationNames,
 };
 use self::suppression::inline_suppressions;
-use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
+use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
     adapter_for_language, grammar_for_language, AdapterSessionState, SourceAdapter,
     SourceExtractionSession, StatefulSourceAdapter, UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
@@ -418,32 +418,20 @@ fn extract_call<'tree>(
     }
     let comparable = resolved_handler.is_some();
     let handler = resolved_handler.unwrap_or(handler);
-    Some(StepDefinition {
-        normalized_matcher: normalize_matcher_with_flags(&matcher, matcher_kind, &matcher_flags),
-        matcher,
-        matcher_kind,
-        matcher_flags,
-        handler: fingerprint_handler(
+    Some(step_definition(
+        call,
+        context,
+        diagnostics,
+        (callee, registration, registration_framework),
+        (matcher, matcher_kind, matcher_flags),
+        fingerprint_handler(
             handler,
             bound_arguments,
             source,
             comparable,
             context.assertions,
         ),
-        framework: effective_registration_framework(registration_framework, context.framework),
-        registration: if registration.is_empty() {
-            callee
-        } else {
-            registration
-        },
-        location: node_location(context.file, call, source),
-        inline_suppressions: inline_suppressions(
-            call,
-            context.source_lines,
-            context.file,
-            diagnostics,
-        ),
-    })
+    ))
 }
 
 fn extract_decorator<'tree>(
@@ -484,7 +472,29 @@ fn extract_decorator<'tree>(
         });
         return None;
     };
-    Some(StepDefinition {
+    Some(step_definition(
+        call,
+        context,
+        diagnostics,
+        (callee, registration, registration_framework),
+        (matcher, matcher_kind, matcher_flags),
+        handler,
+    ))
+}
+
+/// Assembles the definition both registration shapes describe once their differing parts are
+/// resolved. A plain call fingerprints its handler argument and a decorator fingerprints the method
+/// it precedes, but the matcher, the resolved registration, and everything the `call` node itself
+/// carries — the location and the inline suppressions — are built the same way for both.
+fn step_definition<'tree>(
+    call: Node<'tree>,
+    context: &AdapterContext<'_, 'tree>,
+    diagnostics: &mut Vec<ExtractionDiagnostic>,
+    (callee, registration, registration_framework): (String, String, Framework),
+    (matcher, matcher_kind, matcher_flags): (String, MatcherKind, String),
+    handler: HandlerFingerprint,
+) -> StepDefinition {
+    StepDefinition {
         normalized_matcher: normalize_matcher_with_flags(&matcher, matcher_kind, &matcher_flags),
         matcher,
         matcher_kind,
@@ -496,14 +506,14 @@ fn extract_decorator<'tree>(
         } else {
             registration
         },
-        location: node_location(context.file, call, source),
+        location: node_location(context.file, call, context.source),
         inline_suppressions: inline_suppressions(
             call,
             context.source_lines,
             context.file,
             diagnostics,
         ),
-    })
+    }
 }
 
 /// Resolves a decorator to the class method it decorates without crossing another class member.

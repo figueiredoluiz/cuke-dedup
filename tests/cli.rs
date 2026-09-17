@@ -26,6 +26,24 @@ fn fixture_git() -> ProcessCommand {
     command
 }
 
+/// Initializes a Git repository at `root` with a stable identity and a single initial commit.
+fn init_repository(root: &Path) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        assert!(fixture_git()
+            .args(args)
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+    }
+}
+
 fn write(root: &Path, relative: &str, contents: &str) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1172,20 +1190,7 @@ fn unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files() 
         "steps.ts",
         "import { Given } from '@company/bdd';\nGiven('invisible step', () => work());\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
@@ -1715,20 +1720,7 @@ fn static_project_config_errors_survive_changed_mode_and_every_reporter() {
         "steps.ts",
         "import { Given as G } from '@support/world';\nG('static configuration only', () => work());\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     for reporter in ["terminal", "json", "jsonl", "html", "sarif"] {
@@ -2212,20 +2204,7 @@ fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
         "features/example.feature",
         8 * 1024 * 1024 + 1,
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
@@ -2246,20 +2225,7 @@ fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
         "features/example.feature",
         8 * 1024 * 1024 + 1,
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
@@ -2276,20 +2242,7 @@ fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
 fn an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("steps.ts"), [0xff]).unwrap();
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
@@ -2309,20 +2262,7 @@ fn a_malformed_unchanged_definition_cannot_make_changed_analysis_pass() {
         "steps.ts",
         "Given('broken step', () => {\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
@@ -2344,20 +2284,7 @@ fn changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions() {
         "steps.ts",
         "Given(/foo(?=bar)/, () => work());\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
@@ -2840,20 +2767,7 @@ fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
         "steps/existing.ts",
         "Given('shared step', () => { existing(); });\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(
         directory.path(),
         "steps/café changed.ts",
@@ -2894,20 +2808,7 @@ fn changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate() {
         "steps.ts",
         "Given('shared step', () => first());\nGiven('shared step', () => second());\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
@@ -2927,20 +2828,7 @@ fn changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory() {
         "packages/e2e/steps/existing.ts",
         "Given('shared step', () => { existing(); });\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(
         directory.path(),
         "packages/e2e/steps/café step.ts",
@@ -2966,20 +2854,7 @@ fn changed_since_handles_an_untracked_file_with_a_newline() {
         "steps/existing.ts",
         "Given('shared step', () => { existing(); });\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(
         directory.path(),
         "steps/line\nbreak.ts",
@@ -3007,20 +2882,7 @@ fn changed_since_handles_an_untracked_non_utf8_file() {
         "steps/existing.ts",
         "Given('shared step', () => { existing(); });\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     let path = directory
         .path()
         .join("steps")
@@ -3077,20 +2939,7 @@ fn changed_since_disables_unused_findings_but_fails_when_no_feature_parses() {
         "vendor/broken.feature",
         "Scenario: Missing feature\n  Given a step\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
     write(
         directory.path(),
         "steps/new.ts",
@@ -3356,20 +3205,7 @@ fn changed_since_fails_closed_on_unchanged_feature_parse_errors() {
         "broken.feature",
         "Scenario: Missing feature\n  Given a step\n",
     );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(directory.path());
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
@@ -3520,20 +3356,7 @@ fn path_before_check_is_rejected_and_discovery_flags_are_applied() {
 fn changed_files_mode_ignores_an_inherited_git_environment() {
     let decoy = tempfile::tempdir().unwrap();
     write(decoy.path(), "sentinel.txt", "sentinel\n");
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", "."],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(decoy.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    init_repository(decoy.path());
 
     // The analyzed root is deliberately not a repository, so the only way this can succeed is by
     // resolving the decoy from the environment.
