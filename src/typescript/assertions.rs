@@ -1,6 +1,6 @@
 use super::ast::{
-    import_has_runtime_bindings, import_module, is_type_only_declaration, is_type_only_specifier,
-    string_literal,
+    import_has_runtime_bindings, import_module, is_top_level_variable, is_type_only_declaration,
+    is_type_only_specifier, string_literal,
 };
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
@@ -1120,19 +1120,6 @@ fn nearest_lexical_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
         node = candidate.parent();
     }
     None
-}
-
-fn is_top_level_variable(declarator: Node<'_>) -> bool {
-    let Some(declaration) = declarator.parent() else {
-        return false;
-    };
-    match declaration.parent() {
-        Some(parent) if parent.kind() == "program" => true,
-        Some(parent) if parent.kind() == "export_statement" => parent
-            .parent()
-            .is_some_and(|ancestor| ancestor.kind() == "program"),
-        _ => false,
-    }
 }
 
 fn is_module_declaration(node: Node<'_>) -> bool {

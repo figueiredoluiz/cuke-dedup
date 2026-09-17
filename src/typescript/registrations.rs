@@ -1,7 +1,7 @@
 use super::ast::{
-    export_has_runtime_bindings, import_has_runtime_bindings, import_has_runtime_module_reference,
-    import_module, is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
-    string_literal,
+    call_string_argument, export_has_runtime_bindings, import_has_runtime_bindings,
+    import_has_runtime_module_reference, import_module, is_top_level_variable,
+    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
 };
 use super::frameworks::{
     framework_for_module, is_supported_module, registration_exports_for_framework,
@@ -551,11 +551,25 @@ fn forwarded_callee(
     Some(callee.to_owned())
 }
 
-fn collect_unresolved_imports(
+/// A runtime binding introduced by an import clause.
+enum ImportBinding<'a> {
+    /// A named specifier, carrying the exported name and the local name it binds. The local name
+    /// is the alias when one is written and the exported name otherwise.
+    Named { exported: &'a str, local: &'a str },
+    /// A namespace import, carrying the local name bound to the whole module.
+    Namespace(&'a str),
+}
+
+/// Reports every runtime binding an import clause introduces.
+///
+/// A type-only specifier binds nothing at runtime, so it is skipped without descending into it.
+/// `collect_shadowing_imports` deliberately does not share this walk: it still descends through
+/// type-only specifiers, and it resolves the local name from the alias or name node rather than
+/// from their text, so folding it in here would change which names it sees.
+fn for_each_import_binding(
     import: Node<'_>,
     source: &[u8],
-    module: &str,
-    discovered: &mut RegistrationDiscovery<'_>,
+    mut on_binding: impl FnMut(ImportBinding<'_>),
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
@@ -567,27 +581,43 @@ fn collect_unresolved_imports(
                 let Some(name) = node.child_by_field_name("name") else {
                     continue;
                 };
-                let original = node_text(name, source);
-                if REGISTRATIONS.contains(&original) {
-                    let local = node
-                        .child_by_field_name("alias")
-                        .map_or(original, |alias| node_text(alias, source));
-                    discovered
-                        .unresolved_aliases
-                        .insert(local.to_owned(), module.to_owned());
-                }
+                let exported = node_text(name, source);
+                let local = node
+                    .child_by_field_name("alias")
+                    .map_or(exported, |alias| node_text(alias, source));
+                on_binding(ImportBinding::Named { exported, local });
             }
             "namespace_import" => {
                 if let Some(identifier) = first_named_kind(node, "identifier") {
-                    discovered
-                        .unresolved_namespaces
-                        .insert(node_text(identifier, source).to_owned(), module.to_owned());
+                    on_binding(ImportBinding::Namespace(node_text(identifier, source)));
                 }
             }
             _ => {}
         }
         push_named_children_reverse(node, &mut stack);
     }
+}
+
+fn collect_unresolved_imports(
+    import: Node<'_>,
+    source: &[u8],
+    module: &str,
+    discovered: &mut RegistrationDiscovery<'_>,
+) {
+    for_each_import_binding(import, source, |binding| match binding {
+        ImportBinding::Named { exported, local } => {
+            if REGISTRATIONS.contains(&exported) {
+                discovered
+                    .unresolved_aliases
+                    .insert(local.to_owned(), module.to_owned());
+            }
+        }
+        ImportBinding::Namespace(namespace) => {
+            discovered
+                .unresolved_namespaces
+                .insert(namespace.to_owned(), module.to_owned());
+        }
+    });
 }
 
 fn collect_imports(
@@ -598,37 +628,20 @@ fn collect_imports(
     namespaces: &mut BTreeMap<String, RegistrationExports>,
     create_bdd_factories: &mut BTreeSet<String>,
 ) {
-    let mut stack = vec![import];
-    while let Some(node) = stack.pop() {
-        match node.kind() {
-            "import_specifier" => {
-                if is_type_only_specifier(node) {
-                    continue;
-                }
-                let Some(name) = node.child_by_field_name("name") else {
-                    continue;
-                };
-                let original = node_text(name, source);
-                if let Some(registration) = exports.get(original) {
-                    let alias = node
-                        .child_by_field_name("alias")
-                        .map_or(original, |alias| node_text(alias, source));
-                    if registration.kind == RegistrationExportKind::Factory {
-                        create_bdd_factories.insert(alias.to_owned());
-                    } else {
-                        aliases.insert(alias.to_owned(), registration.clone());
-                    }
+    for_each_import_binding(import, source, |binding| match binding {
+        ImportBinding::Named { exported, local } => {
+            if let Some(registration) = exports.get(exported) {
+                if registration.kind == RegistrationExportKind::Factory {
+                    create_bdd_factories.insert(local.to_owned());
+                } else {
+                    aliases.insert(local.to_owned(), registration.clone());
                 }
             }
-            "namespace_import" => {
-                if let Some(identifier) = first_named_kind(node, "identifier") {
-                    namespaces.insert(node_text(identifier, source).to_owned(), exports.clone());
-                }
-            }
-            _ => {}
         }
-        push_named_children_reverse(node, &mut stack);
-    }
+        ImportBinding::Namespace(namespace) => {
+            namespaces.insert(namespace.to_owned(), exports.clone());
+        }
+    });
 }
 
 fn collect_exports(
@@ -829,19 +842,6 @@ fn collect_factory_import_aliases(
     }
 }
 
-fn is_top_level_variable(declarator: Node<'_>) -> bool {
-    let Some(declaration) = declarator.parent() else {
-        return false;
-    };
-    match declaration.parent() {
-        Some(parent) if parent.kind() == "program" => true,
-        Some(parent) if parent.kind() == "export_statement" => parent
-            .parent()
-            .is_some_and(|ancestor| ancestor.kind() == "program"),
-        _ => false,
-    }
-}
-
 fn collect_named_binding_aliases(
     root: Node<'_>,
     source: &[u8],
@@ -951,13 +951,6 @@ fn shadow_pattern_defaults(
 fn call_name<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     let function = call.child_by_field_name("function")?;
     (function.kind() == "identifier").then(|| node_text(function, source))
-}
-
-fn call_string_argument<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
-    let arguments = call.child_by_field_name("arguments")?;
-    let mut cursor = arguments.walk();
-    let argument = arguments.named_children(&mut cursor).next()?;
-    string_literal(argument, source)
 }
 
 fn first_named_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {

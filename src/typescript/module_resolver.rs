@@ -1,6 +1,7 @@
 use super::ast::{
-    import_has_runtime_bindings, import_module, is_star_export, is_type_only_declaration,
-    is_type_only_specifier, push_named_children_reverse, string_literal,
+    call_string_argument, import_has_runtime_bindings, import_module, is_star_export,
+    is_top_level_variable, is_type_only_declaration, is_type_only_specifier,
+    push_named_children_reverse,
 };
 use super::frameworks::{
     framework_for_module, is_supported_module, registration_exports_for_framework,
@@ -624,26 +625,6 @@ fn call_identifier<'a>(mut call: Node<'_>, source: &'a [u8]) -> Option<&'a str> 
         function = function.named_child(0)?;
     }
     (function.kind() == "identifier").then(|| node_text(function, source))
-}
-
-fn call_string_argument<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
-    let arguments = call.child_by_field_name("arguments")?;
-    let mut cursor = arguments.walk();
-    let argument = arguments.named_children(&mut cursor).next()?;
-    string_literal(argument, source)
-}
-
-fn is_top_level_variable(declarator: Node<'_>) -> bool {
-    let Some(declaration) = declarator.parent() else {
-        return false;
-    };
-    match declaration.parent() {
-        Some(parent) if parent.kind() == "program" => true,
-        Some(parent) if parent.kind() == "export_statement" => parent
-            .parent()
-            .is_some_and(|ancestor| ancestor.kind() == "program"),
-        _ => false,
-    }
 }
 
 fn is_directly_exported_variable(declarator: Node<'_>) -> bool {
