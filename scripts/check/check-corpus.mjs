@@ -20,9 +20,13 @@ const recallManifest = JSON.parse(
 );
 assert.equal(recallManifest.schemaVersion, 1);
 
+// Narrows a run to one recall case, so a deliberate break can be attributed to the case meant to
+// catch it. The aggregate run stops at the first failure and cannot show that.
+const onlyCase = process.env.CUKE_DEDUP_CORPUS_CASE;
+
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-corpus-"));
 try {
-  for (const testCase of manifest.cases) {
+  for (const testCase of onlyCase ? [] : manifest.cases) {
     const caseRoot = join(temporary, testCase.name, "case");
     const output = join(temporary, testCase.name, "report");
     await cp(join(corpus, testCase.path), caseRoot, { recursive: true });
@@ -131,12 +135,31 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
+/**
+ * Runs every recall case and returns the corpus-wide recall figures.
+ *
+ * Recall is deliberately a ratio of *desired* findings rather than a pass/fail count: a case may
+ * assert a finding the analyzer cannot yet produce, recorded as a known miss, and the ratio is what
+ * keeps those visible instead of letting them read as absence.
+ *
+ * @param {string} temporary Scratch directory each case is copied into before it runs.
+ * @returns {Promise<{cases: number, detected: number, desired: number, ratio: number,
+ *   knownMisses: number}>} Per-run totals; `ratio` is `detected / desired`.
+ */
 async function validateRecallCorpus(temporary) {
   const knownIds = new Set();
   let detected = 0;
   let knownMisses = 0;
 
-  for (const testCase of recallManifest.cases) {
+  // The recall baseline is only asserted over a full run, since a subset cannot meet a
+  // corpus-wide ratio.
+  const only = onlyCase;
+  const cases = only
+    ? recallManifest.cases.filter((testCase) => testCase.name === only)
+    : recallManifest.cases;
+  assert.ok(cases.length > 0, `no recall case named ${only}`);
+
+  for (const testCase of cases) {
     const caseRoot = join(temporary, "recall", testCase.name, "case");
     const output = join(temporary, "recall", testCase.name, "report");
     await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
@@ -162,9 +185,39 @@ async function validateRecallCorpus(temporary) {
 
     const activeFindings = report.findings.filter((finding) => finding.suppression === null);
     const expectedFindings = testCase.expectedFindings || [];
+    // `count` lets one expectation stand for several findings sharing every asserted field. It
+    // defaults to 1 so existing entries keep their exact meaning.
+    const expectedTotal = expectedFindings.reduce(
+      (total, expected) => total + (expected.count ?? 1),
+      0,
+    );
     for (const expected of expectedFindings) {
-      assertFindingCount(activeFindings, expected, 1, `${testCase.name}: expected finding`);
+      assertFindingCount(
+        activeFindings,
+        expected,
+        expected.count ?? 1,
+        `${testCase.name}: expected finding`,
+      );
     }
+    // Counting each expectation independently is not enough: one finding can satisfy a broad and a
+    // narrow expectation at once, leaving room for a second unclassified finding while the totals
+    // still balance. Requiring a one-to-one mapping closes that, and `count` still lets a single
+    // expectation own several findings.
+    for (const finding of activeFindings) {
+      const owners = expectedFindings.filter((expected) => findingMatches(finding, expected));
+      assert.equal(
+        owners.length,
+        1,
+        `${testCase.name}: each finding needs exactly one expectation, ${
+          owners.length === 0 ? "none" : owners.length
+        } matched ${JSON.stringify({
+          rule: finding.rule,
+          primary: locationLabel(finding.primary),
+          related: finding.related.map(locationLabel),
+        })}`,
+      );
+    }
+
     for (const expected of testCase.expectedAbsent || []) {
       assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
     }
@@ -182,35 +235,84 @@ async function validateRecallCorpus(temporary) {
     }
     assert.equal(
       activeFindings.length,
-      expectedFindings.length,
+      expectedTotal,
       `${testCase.name}: unclassified active findings`,
     );
-    detected += expectedFindings.length;
+    detected += expectedTotal;
   }
 
-  assert.equal(
-    knownMisses,
-    recallManifest.knownMissBaseline,
-    "known-miss baseline changed; fixes must move entries to expectedFindings and reduce the baseline",
-  );
   const desired = detected + knownMisses;
   const ratio = desired === 0 ? 1 : detected / desired;
-  assert.ok(
-    ratio >= recallManifest.minimumRecall,
-    `recall ${(ratio * 100).toFixed(1)}% is below ${(recallManifest.minimumRecall * 100).toFixed(1)}%`,
-  );
-  return { cases: recallManifest.cases.length, detected, desired, ratio, knownMisses };
+  if (!only) {
+    assert.equal(
+      knownMisses,
+      recallManifest.knownMissBaseline,
+      "known-miss baseline changed; fixes must move entries to expectedFindings and reduce the baseline",
+    );
+    assert.ok(
+      ratio >= recallManifest.minimumRecall,
+      `recall ${(ratio * 100).toFixed(1)}% is below ${(recallManifest.minimumRecall * 100).toFixed(1)}%`,
+    );
+  }
+  return { cases: cases.length, detected, desired, ratio, knownMisses };
 }
 
+/**
+ * Asserts that exactly `count` findings match an expectation.
+ *
+ * The same helper serves positives, deliberate non-findings (`count` 0) and known misses, so all
+ * three are held to one matching rule and cannot drift apart.
+ *
+ * @param {object[]} findings Active findings from one case.
+ * @param {object} expected Expectation to match against, as written in the manifest.
+ * @param {number} count Exact number of findings that must match.
+ * @param {string} context Message prefix identifying the case and the kind of expectation.
+ */
 function assertFindingCount(findings, expected, count, context) {
   const matches = findings.filter((finding) => findingMatches(finding, expected));
   assert.equal(matches.length, count, `${context}: ${JSON.stringify(expected)}`);
 }
 
+/**
+ * Renders a source location as the `path:line` form the manifest uses for related locations.
+ *
+ * @param {{path: string, line: number}} location Location from a finding.
+ * @returns {string} Comparable label.
+ */
+function locationLabel(location) {
+  return `${location.path}:${location.line}`;
+}
+
+/**
+ * Returns whether one finding satisfies one manifest expectation.
+ *
+ * Every field is optional and omitting one widens the match, so an expectation asserts exactly what
+ * it names and nothing more. `relatedLocations` is the exception worth knowing about: it compares
+ * unordered but exactly, because a subset must not satisfy it.
+ *
+ * @param {object} finding Active finding from a report.
+ * @param {object} expected Expectation from the manifest.
+ * @returns {boolean} True when every field the expectation names agrees.
+ */
 function findingMatches(finding, expected) {
   if (finding.rule !== expected.rule) return false;
   if (expected.primaryPath && finding.primary.path !== expected.primaryPath) return false;
   if (expected.primaryLine && finding.primary.line !== expected.primaryLine) return false;
+  // Two findings can share a primary location and differ only in which definitions they involve, so
+  // related locations are part of a finding's identity. Compared unordered and exactly: a subset
+  // must not satisfy the expectation, or shrinking a group would stay green.
+  if (expected.relatedLocations) {
+    const actual = finding.related.map(locationLabel).sort();
+    const wanted = [...expected.relatedLocations].sort();
+    if (actual.length !== wanted.length) return false;
+    if (!actual.every((label, index) => label === wanted[index])) return false;
+  }
+  if (expected.relatedCount !== undefined && finding.related.length !== expected.relatedCount) {
+    return false;
+  }
+  if (expected.messageIncludes && !finding.message.includes(expected.messageIncludes)) {
+    return false;
+  }
   if (expected.matchers) {
     const comparison = finding.evidence.comparison;
     if (!comparison) return false;
@@ -222,6 +324,12 @@ function findingMatches(finding, expected) {
   return true;
 }
 
+/**
+ * Escapes regex metacharacters so a literal string can be embedded in a pattern.
+ *
+ * @param {string} value Literal text.
+ * @returns {string} Text safe to interpolate into a `RegExp`.
+ */
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
