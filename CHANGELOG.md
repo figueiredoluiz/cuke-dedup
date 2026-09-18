@@ -5,6 +5,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-18
+
 ### Added
 
 - `assertionModules` names module specifiers whose `expect` export is a trusted assertion factory.
@@ -258,6 +260,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.6.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.1...v0.3.0
