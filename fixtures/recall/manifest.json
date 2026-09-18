@@ -1,8 +1,432 @@
 {
   "schemaVersion": 1,
-  "knownMissBaseline": 0,
+  "knownMissBaseline": 3,
   "minimumRecall": 0.6,
   "cases": [
+    {
+      "name": "ambient-global-registration-case-sensitivity",
+      "path": "ambient-global-case",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the alpha gauge is settled",
+            "the alpha gauge is settled"
+          ]
+        }
+      ],
+      "expectedAbsent": [],
+      "knownMisses": [
+        {
+          "id": "lowercase-ambient-global",
+          "reason": "Cucumber injects lowercase registration aliases, but an ambient `given` is not recognised, so the file yields no definitions and this duplicate is never reported. Destructuring `given` from the package is recognised; the gap is specific to the ambient spelling.",
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the beta dial is settled",
+            "the beta dial is settled"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ambiguous-step-definition-origins-cover-every-registration-shape",
+      "path": "ambiguous-step-definition-origins",
+      "expectedDefinitions": 28,
+      "expectedExit": 1,
+      "expectedFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps/cucumber-forms.js:10",
+            "steps/cucumber-forms.js:11"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps/cucumber-forms.js:14",
+            "steps/cucumber-forms.js:15"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 10,
+          "relatedLocations": [
+            "steps/cucumber-forms.js:18",
+            "steps/cucumber-forms.js:19"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 13,
+          "relatedLocations": [
+            "steps/cucumber-forms.js:22",
+            "steps/cucumber-forms.js:23"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 16,
+          "relatedLocations": [
+            "steps/esm-forms.ts:12",
+            "steps/esm-forms.ts:13"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "steps/esm-forms.ts:16",
+            "steps/esm-forms.ts:17"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 22,
+          "relatedLocations": [
+            "steps/esm-forms.ts:20",
+            "steps/esm-forms.ts:21"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 25,
+          "relatedLocations": [
+            "steps/ambient-global.js:3",
+            "steps/ambient-global.js:4"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 31,
+          "relatedLocations": [
+            "steps/playwright-factory.ts:5",
+            "steps/playwright-factory.ts:6"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 34,
+          "relatedLocations": [
+            "steps/playwright-decorators.ts:10",
+            "steps/playwright-decorators.ts:5"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 37,
+          "relatedLocations": [
+            "steps/playwright-decorators.ts:16",
+            "steps/playwright-decorators.ts:21"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps/cypress-forms.js:5",
+            "steps/cypress-forms.js:6"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 43,
+          "relatedLocations": [
+            "steps/cypress-forms.js:8",
+            "steps/cypress-forms.js:9"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 52,
+          "relatedLocations": [
+            "steps/esm-forms.ts:24",
+            "steps/esm-forms.ts:25"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 28
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 46
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 49
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 61
+        }
+      ],
+      "knownMisses": [
+        {
+          "id": "default-import-registration",
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 55,
+          "reason": "Registration bindings are collected only from `import_specifier` nodes in module_resolver.rs, so a default import reached through a member call never becomes a registration. `import_has_runtime_bindings` (ast.rs:64) already counts it as a runtime binding and assertions.rs handles `import_require_clause`, so the omission is on the registration path alone. Both definitions are invisible, which also holds `expectedDefinitions` at 28 instead of 32."
+        },
+        {
+          "id": "import-equals-registration",
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 58,
+          "reason": "Registration bindings are collected only from `import_specifier` nodes in module_resolver.rs, so TypeScript's `import x = require(...)` form never becomes a registration. `import_has_runtime_bindings` (ast.rs:64) already counts it as a runtime binding and assertions.rs handles `import_require_clause`, so the omission is on the registration path alone. Both definitions are invisible, which also holds `expectedDefinitions` at 28 instead of 32."
+        }
+      ]
+    },
+    {
+      "name": "ambiguous-step-identity-pins-the-finding-key",
+      "path": "ambiguous-step-identity",
+      "expectedDefinitions": 15,
+      "expectedExit": 1,
+      "expectedFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps.js:6",
+            "steps.js:7"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.js:10",
+            "steps.js:11",
+            "steps.js:12"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 10,
+          "relatedLocations": [
+            "steps.js:15",
+            "steps.js:16"
+          ],
+          "messageIncludes": "3 ambiguous expansions"
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "steps.js:19",
+            "steps.js:20"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "steps.js:19",
+            "steps.js:21"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 27,
+          "relatedLocations": [
+            "steps.js:24",
+            "steps.js:25"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 30,
+          "relatedLocations": [
+            "steps.js:24",
+            "steps.js:25"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 33
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 36
+        }
+      ]
+    },
+    {
+      "name": "ambiguous-step-origins-cover-every-construct",
+      "path": "ambiguous-step-origins",
+      "expectedDefinitions": 29,
+      "expectedExit": 1,
+      "expectedFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/localized.feature",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "steps.js:42",
+            "steps.js:43"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/markdown.feature.md",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.js:38",
+            "steps.js:39"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps.js:7",
+            "steps.js:8"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.js:5",
+            "steps.js:6"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 11,
+          "relatedLocations": [
+            "steps.js:11",
+            "steps.js:12"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 14,
+          "relatedLocations": [
+            "steps.js:13",
+            "steps.js:14"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 18,
+          "relatedLocations": [
+            "steps.js:34",
+            "steps.js:35"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 21,
+          "relatedLocations": [
+            "steps.js:26",
+            "steps.js:27"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 22,
+          "relatedLocations": [
+            "steps.js:28",
+            "steps.js:29"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 23,
+          "relatedLocations": [
+            "steps.js:30",
+            "steps.js:31"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 29,
+          "relatedLocations": [
+            "steps.js:10",
+            "steps.js:9"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 37,
+          "relatedLocations": [
+            "steps.js:21",
+            "steps.js:22"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps.js:15",
+            "steps.js:16"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 43,
+          "relatedLocations": [
+            "steps.js:17",
+            "steps.js:18"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 26
+        }
+      ]
+    },
     {
       "name": "assertion-modules-declared-trust-every-import-form",
       "path": "assertion-modules-declared",
@@ -311,6 +735,41 @@
       ]
     },
     {
+      "name": "gherkin-step-sources-contribute-concrete-steps",
+      "path": "gherkin-step-sources",
+      "expectedDefinitions": 5,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 21
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 9
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 12
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 15
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 18
+        }
+      ]
+    },
+    {
       "name": "legacy-cucumber-registration-modules",
       "path": "legacy-cucumber-modules",
       "expectedDefinitions": 2,
@@ -500,6 +959,83 @@
           ]
         }
       ]
+    },
+    {
+      "name": "matcher-overlap-is-synthesised-without-features",
+      "path": "matcher-overlap",
+      "expectedDefinitions": 14,
+      "expectedFindings": [
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "overlap.ts",
+          "primaryLine": 6
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "overlap.ts",
+          "primaryLine": 10
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "overlap.ts",
+          "primaryLine": 13
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the delta valve is sealed",
+            "the delta valve is sealed"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/proven.feature",
+          "primaryLine": 9
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.ts",
+          "primaryLine": 5
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.ts",
+          "primaryLine": 6
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.ts",
+          "primaryLine": 10
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.ts",
+          "primaryLine": 11
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.ts",
+          "primaryLine": 14
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.ts",
+          "primaryLine": 15
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "proven.ts",
+          "primaryLine": 5
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "proven.ts",
+          "primaryLine": 6
+        }
+      ],
+      "expectedExit": 1
     },
     {
       "name": "module-constant-values-reach-the-fingerprint",

@@ -3388,3 +3388,68 @@ fn changed_files_mode_ignores_an_inherited_git_environment() {
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&tracked.stdout), "sentinel.txt\n");
 }
+
+/// The recall corpus filters suppressed findings before evaluating expectations, so a suppressed
+/// `ambiguous-step` finding is indistinguishable there from one that was never generated. Severity
+/// and suppression therefore have to be pinned here instead.
+#[test]
+fn ambiguous_step_severity_and_suppression_are_distinguishable_from_absence() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('the gauge reads {word}', () => parameterized());\nGiven('the gauge reads high', () => literal());\n",
+    );
+    write(
+        directory.path(),
+        "features/gauge.feature",
+        "Feature: Gauge\n  Scenario: One\n    Given the gauge reads high\n",
+    );
+
+    // At `warning` the finding is still reported, and the run succeeds: `off` alone would not show
+    // that severity is read rather than treated as a boolean.
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"rules": {"ambiguous-step": "warning"}, "reporters": ["json", "terminal"], "output": "reports"}"#,
+    );
+    let mut warned = Command::cargo_bin("cuke-dedup").unwrap();
+    warned
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"))
+        .stdout(predicate::str::contains("ambiguous-step"));
+
+    // Suppressed: the finding is retained in the report carrying its reason, not dropped.
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"reporters": ["json", "terminal"], "output": "reports", "suppressions": [{"rule": "ambiguous-step", "matcher": "the gauge reads high", "reason": "the literal wins at runtime"}]}"#,
+    );
+    let mut suppressed = Command::cargo_bin("cuke-dedup").unwrap();
+    suppressed
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 suppressed"));
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.path().join("reports/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    let ambiguities: Vec<_> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == "ambiguous-step")
+        .collect();
+    assert_eq!(ambiguities.len(), 1);
+    assert_eq!(
+        ambiguities[0]["suppression"]["reason"],
+        "the literal wins at runtime"
+    );
+    assert_eq!(report["summary"]["findings"], 0);
+}
