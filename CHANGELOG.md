@@ -5,6 +5,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-18
+
 ### Added
 
 - `assertionModules` names module specifiers whose `expect` export is a trusted assertion factory.
@@ -39,6 +41,23 @@ All notable changes to CukeDedup are documented in this file. The project follow
   cannot tell which body a shadowed call reaches, and expanding the wrong one would attribute
   assertions the handler never runs. A transparent wrapper such as `(check)()` resolves the same
   declaration a bare call does.
+
+### Known limitations
+
+- A module-scoped constant reaches the handler fingerprint only when it is declared **before** the
+  registrations that read it. Two handlers reading the same value through constants declared after
+  the `Given`/`When`/`Then` calls are not recognised as the same handler, so the duplicate is
+  missed. Moving the declarations above the registrations restores the finding.
+- A handler passed as a call expression, such as `Given("...", makeHandler())`, cannot be resolved
+  to a body and takes no part in the handler rules; it is reported as `dynamic or unsupported step
+  handler cannot be compared statically`. A handler reached through a member expression, such as
+  `Given("...", steps.run)`, is not compared either, and that case is silent. Inline functions —
+  arrow, `async`, `function` and generator — and a reference to a local function declaration are
+  all compared normally.
+- Step definitions registered through a default import or TypeScript's `import x = require(...)`
+  and called as a member, such as `cucumber.Given("...")`, are not discovered, so those files
+  contribute no definitions to any rule. Named imports, namespace imports (`import * as cucumber`),
+  renamed named imports and `require` destructuring are all recognised.
 
 ## [0.5.0] - 2026-09-16
 
@@ -258,6 +277,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.6.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.1...v0.3.0
