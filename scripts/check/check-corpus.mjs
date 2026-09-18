@@ -135,6 +135,17 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
+/**
+ * Runs every recall case and returns the corpus-wide recall figures.
+ *
+ * Recall is deliberately a ratio of *desired* findings rather than a pass/fail count: a case may
+ * assert a finding the analyzer cannot yet produce, recorded as a known miss, and the ratio is what
+ * keeps those visible instead of letting them read as absence.
+ *
+ * @param {string} temporary Scratch directory each case is copied into before it runs.
+ * @returns {Promise<{cases: number, detected: number, desired: number, ratio: number,
+ *   knownMisses: number}>} Per-run totals; `ratio` is `detected / desired`.
+ */
 async function validateRecallCorpus(temporary) {
   const knownIds = new Set();
   let detected = 0;
@@ -246,15 +257,43 @@ async function validateRecallCorpus(temporary) {
   return { cases: cases.length, detected, desired, ratio, knownMisses };
 }
 
+/**
+ * Asserts that exactly `count` findings match an expectation.
+ *
+ * The same helper serves positives, deliberate non-findings (`count` 0) and known misses, so all
+ * three are held to one matching rule and cannot drift apart.
+ *
+ * @param {object[]} findings Active findings from one case.
+ * @param {object} expected Expectation to match against, as written in the manifest.
+ * @param {number} count Exact number of findings that must match.
+ * @param {string} context Message prefix identifying the case and the kind of expectation.
+ */
 function assertFindingCount(findings, expected, count, context) {
   const matches = findings.filter((finding) => findingMatches(finding, expected));
   assert.equal(matches.length, count, `${context}: ${JSON.stringify(expected)}`);
 }
 
+/**
+ * Renders a source location as the `path:line` form the manifest uses for related locations.
+ *
+ * @param {{path: string, line: number}} location Location from a finding.
+ * @returns {string} Comparable label.
+ */
 function locationLabel(location) {
   return `${location.path}:${location.line}`;
 }
 
+/**
+ * Returns whether one finding satisfies one manifest expectation.
+ *
+ * Every field is optional and omitting one widens the match, so an expectation asserts exactly what
+ * it names and nothing more. `relatedLocations` is the exception worth knowing about: it compares
+ * unordered but exactly, because a subset must not satisfy it.
+ *
+ * @param {object} finding Active finding from a report.
+ * @param {object} expected Expectation from the manifest.
+ * @returns {boolean} True when every field the expectation names agrees.
+ */
 function findingMatches(finding, expected) {
   if (finding.rule !== expected.rule) return false;
   if (expected.primaryPath && finding.primary.path !== expected.primaryPath) return false;
@@ -285,6 +324,12 @@ function findingMatches(finding, expected) {
   return true;
 }
 
+/**
+ * Escapes regex metacharacters so a literal string can be embedded in a pattern.
+ *
+ * @param {string} value Literal text.
+ * @returns {string} Text safe to interpolate into a `RegExp`.
+ */
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
