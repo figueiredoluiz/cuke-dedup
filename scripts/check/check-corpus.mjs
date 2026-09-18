@@ -20,9 +20,13 @@ const recallManifest = JSON.parse(
 );
 assert.equal(recallManifest.schemaVersion, 1);
 
+// Narrows a run to one recall case, so a deliberate break can be attributed to the case meant to
+// catch it. The aggregate run stops at the first failure and cannot show that.
+const onlyCase = process.env.CUKE_DEDUP_CORPUS_CASE;
+
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-corpus-"));
 try {
-  for (const testCase of manifest.cases) {
+  for (const testCase of onlyCase ? [] : manifest.cases) {
     const caseRoot = join(temporary, testCase.name, "case");
     const output = join(temporary, testCase.name, "report");
     await cp(join(corpus, testCase.path), caseRoot, { recursive: true });
@@ -136,7 +140,15 @@ async function validateRecallCorpus(temporary) {
   let detected = 0;
   let knownMisses = 0;
 
-  for (const testCase of recallManifest.cases) {
+  // The recall baseline is only asserted over a full run, since a subset cannot meet a
+  // corpus-wide ratio.
+  const only = onlyCase;
+  const cases = only
+    ? recallManifest.cases.filter((testCase) => testCase.name === only)
+    : recallManifest.cases;
+  assert.ok(cases.length > 0, `no recall case named ${only}`);
+
+  for (const testCase of cases) {
     const caseRoot = join(temporary, "recall", testCase.name, "case");
     const output = join(temporary, "recall", testCase.name, "report");
     await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
@@ -162,8 +174,19 @@ async function validateRecallCorpus(temporary) {
 
     const activeFindings = report.findings.filter((finding) => finding.suppression === null);
     const expectedFindings = testCase.expectedFindings || [];
+    // `count` lets one expectation stand for several findings sharing every asserted field. It
+    // defaults to 1 so existing entries keep their exact meaning.
+    const expectedTotal = expectedFindings.reduce(
+      (total, expected) => total + (expected.count ?? 1),
+      0,
+    );
     for (const expected of expectedFindings) {
-      assertFindingCount(activeFindings, expected, 1, `${testCase.name}: expected finding`);
+      assertFindingCount(
+        activeFindings,
+        expected,
+        expected.count ?? 1,
+        `${testCase.name}: expected finding`,
+      );
     }
     for (const expected of testCase.expectedAbsent || []) {
       assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
@@ -182,24 +205,26 @@ async function validateRecallCorpus(temporary) {
     }
     assert.equal(
       activeFindings.length,
-      expectedFindings.length,
+      expectedTotal,
       `${testCase.name}: unclassified active findings`,
     );
-    detected += expectedFindings.length;
+    detected += expectedTotal;
   }
 
-  assert.equal(
-    knownMisses,
-    recallManifest.knownMissBaseline,
-    "known-miss baseline changed; fixes must move entries to expectedFindings and reduce the baseline",
-  );
   const desired = detected + knownMisses;
   const ratio = desired === 0 ? 1 : detected / desired;
-  assert.ok(
-    ratio >= recallManifest.minimumRecall,
-    `recall ${(ratio * 100).toFixed(1)}% is below ${(recallManifest.minimumRecall * 100).toFixed(1)}%`,
-  );
-  return { cases: recallManifest.cases.length, detected, desired, ratio, knownMisses };
+  if (!only) {
+    assert.equal(
+      knownMisses,
+      recallManifest.knownMissBaseline,
+      "known-miss baseline changed; fixes must move entries to expectedFindings and reduce the baseline",
+    );
+    assert.ok(
+      ratio >= recallManifest.minimumRecall,
+      `recall ${(ratio * 100).toFixed(1)}% is below ${(recallManifest.minimumRecall * 100).toFixed(1)}%`,
+    );
+  }
+  return { cases: cases.length, detected, desired, ratio, knownMisses };
 }
 
 function assertFindingCount(findings, expected, count, context) {
@@ -207,10 +232,29 @@ function assertFindingCount(findings, expected, count, context) {
   assert.equal(matches.length, count, `${context}: ${JSON.stringify(expected)}`);
 }
 
+function locationLabel(location) {
+  return `${location.path}:${location.line}`;
+}
+
 function findingMatches(finding, expected) {
   if (finding.rule !== expected.rule) return false;
   if (expected.primaryPath && finding.primary.path !== expected.primaryPath) return false;
   if (expected.primaryLine && finding.primary.line !== expected.primaryLine) return false;
+  // Two findings can share a primary location and differ only in which definitions they involve, so
+  // related locations are part of a finding's identity. Compared unordered and exactly: a subset
+  // must not satisfy the expectation, or shrinking a group would stay green.
+  if (expected.relatedLocations) {
+    const actual = finding.related.map(locationLabel).sort();
+    const wanted = [...expected.relatedLocations].sort();
+    if (actual.length !== wanted.length) return false;
+    if (!actual.every((label, index) => label === wanted[index])) return false;
+  }
+  if (expected.relatedCount !== undefined && finding.related.length !== expected.relatedCount) {
+    return false;
+  }
+  if (expected.messageIncludes && !finding.message.includes(expected.messageIncludes)) {
+    return false;
+  }
   if (expected.matchers) {
     const comparison = finding.evidence.comparison;
     if (!comparison) return false;
