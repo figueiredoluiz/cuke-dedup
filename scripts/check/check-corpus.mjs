@@ -188,6 +188,25 @@ async function validateRecallCorpus(temporary) {
         `${testCase.name}: expected finding`,
       );
     }
+    // Counting each expectation independently is not enough: one finding can satisfy a broad and a
+    // narrow expectation at once, leaving room for a second unclassified finding while the totals
+    // still balance. Requiring a one-to-one mapping closes that, and `count` still lets a single
+    // expectation own several findings.
+    for (const finding of activeFindings) {
+      const owners = expectedFindings.filter((expected) => findingMatches(finding, expected));
+      assert.equal(
+        owners.length,
+        1,
+        `${testCase.name}: each finding needs exactly one expectation, ${
+          owners.length === 0 ? "none" : owners.length
+        } matched ${JSON.stringify({
+          rule: finding.rule,
+          primary: locationLabel(finding.primary),
+          related: finding.related.map(locationLabel),
+        })}`,
+      );
+    }
+
     for (const expected of testCase.expectedAbsent || []) {
       assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
     }
