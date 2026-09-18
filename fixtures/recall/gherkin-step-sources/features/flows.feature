@@ -4,7 +4,8 @@ Feature: Step sources
     Given the site is reachable
 
   Scenario: A plain scenario with a continuation
-    Given the report is archived
+    Given the site is reachable
+    And the report is archived
 
   Scenario Outline: Outline rows expand to concrete steps
     Given the <queue> queue is drained

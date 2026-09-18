@@ -47,3 +47,15 @@ Feature: Definition origins
 
   Scenario: A shadowed registration name does not register
     Given the pi rod extends far
+
+  Scenario: A renamed ESM named import
+    Given the rho cable tightens fully
+
+  Scenario: A default import
+    Given the sigma wheel locks hard
+
+  Scenario: A TypeScript import-equals
+    Given the tau chain feeds evenly
+
+  Scenario: A type-only import registers nothing
+    Given the upsilon belt slips loose
