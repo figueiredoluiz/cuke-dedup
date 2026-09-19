@@ -24,6 +24,7 @@
     "bump:version": "node scripts/release/bump-version.mjs",
     "pack:check": "npm pack --dry-run",
     "corpus:check": "node scripts/check/check-corpus.mjs",
+    "memory:check": "node scripts/check/check-memory.mjs target/release/cuke-dedup",
     "benchmark": "node scripts/benchmark/benchmark-analysis.mjs"
   },
   "engines": {

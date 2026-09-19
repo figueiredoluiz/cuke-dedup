@@ -314,6 +314,8 @@ jobs:
       # the overlap finding `ambiguous-step` owns.
       - name: Validate corpus with cross-window matcher compilation
         run: CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+      - name: Guard matcher-analysis memory
+        run: node scripts/check/check-memory.mjs target/release/cuke-dedup
       - name: Smoke-test the local GitHub Action
         id: cuke-dedup
         uses: ./

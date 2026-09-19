@@ -124,6 +124,13 @@ cargo build --release --locked
 npm run corpus:check
 ```
 
+Guard matcher-analysis memory with `npm run memory:check`. It compiles a deterministic corpus at
+two sizes and holds the **marginal** bytes per definition — the cost that scales with corpus size,
+as distinct from fixed startup — under a budget, with a work floor so a run that analyses less
+cannot pass more easily. Lower the budget when a change improves the figure; never raise it to make
+a regression pass, and re-pin it from CI rather than a local run, since peak resident memory is
+platform-dependent.
+
 Matchers are compiled in windows rather than all at once. `CUKE_DEDUP_MATCHER_WINDOW` overrides the
 window size and exists so the corpus gate can force one definition per window, which makes every
 definition pair cross-window and exercises the merge paths that a fixture-sized corpus would
