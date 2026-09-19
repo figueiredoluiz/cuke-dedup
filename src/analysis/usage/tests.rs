@@ -108,24 +108,36 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
             .parameter_types
             .insert(name.to_owned(), format!("{name}-only"));
     }
-    let compiled = definitions
+    let summaries = definitions
         .iter()
-        .map(|definition| compile_matcher(definition, &config.parameter_types).0)
+        .map(|definition| {
+            let matcher = compile_matcher(definition, &config.parameter_types).0;
+            MatcherSummary {
+                authoritative: matcher.authoritative,
+                has_regex: matcher.regex.is_some(),
+            }
+        })
         .collect::<Vec<_>>();
-    let index = MatcherIndex::build_with_limits(&compiled, 32, 32);
-    assert!(index.scan_work() > OVERLAP_PROPOSAL_WORK_MULTIPLIER);
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
 
+    // One definition per window puts one automaton scan per definition into the witness scan
+    // charge, so the scan budget is exceeded before any candidate pair is proposed. Previously the
+    // same condition was produced by shrinking the regex limits until one index split into many
+    // sets; windowing is now the mechanism that multiplies scans.
     let outcome = analyze_matcher_overlap(
         &definitions,
-        &compiled,
-        &index,
+        &summaries,
         &ProvenAmbiguities::new(definitions.len()),
         &config,
         &suppressions,
         &mut findings,
         1,
+        1,
+        // Scan work the step-matching pass reports for this corpus at one definition per window:
+        // one automaton per window. With a work budget of 1 the witness scan budget is 4, so not
+        // even one witness is affordable and nothing is scanned.
+        definitions.len(),
     );
 
     assert_eq!(outcome.census.evaluated, 0);
@@ -412,4 +424,143 @@ fn matcher_compilation_reports_limits_but_not_unsupported_syntax() {
     let (compiled, diagnostic) = compile_matcher(&definition, &BTreeMap::new());
     assert!(compiled.regex.is_none());
     assert!(diagnostic.unwrap().contains("regex resource limit"));
+}
+
+/// Windowing must not change what is reported, only how much is alive at once.
+///
+/// Each row is an axis from the windowing matrix. Every row runs at one definition per window, at
+/// two, and at a window wider than the corpus, and all three must produce identical findings. At
+/// window 1 every pair is cross-window, so the merge paths are exercised by construction — a fixture
+///-sized corpus never crosses a boundary at the default window of 250.
+#[test]
+fn windowing_does_not_change_findings_on_any_axis() {
+    struct Case {
+        axis: &'static str,
+        source: &'static str,
+        feature: &'static str,
+    }
+    let cases = [
+        Case {
+            axis: "step matching definitions in more than one window",
+            source: "Given('the gate opens {word}', () => a());\nGiven(/^the gate opens wide$/, () => b());\nGiven('the gate opens wide', () => c());",
+            feature: "Feature: F\n  Scenario: S\n    Given the gate opens wide\n",
+        },
+        Case {
+            // The hazard: a proven ambiguity split across windows must still withhold the overlap
+            // finding, because `ambiguous-step` owns that pair.
+            axis: "proven ambiguity pair split across windows withholds the overlap",
+            source: "Given('the dial reads {int}', () => a());\nGiven(/^the dial reads \\d+$/, () => b());",
+            feature: "Feature: F\n  Scenario: S\n    Given the dial reads 7\n",
+        },
+        Case {
+            axis: "overlap with no feature corpus at all",
+            source: "Given('the pump runs {word}', () => a());\nGiven(/^the pump runs .+$/, () => b());",
+            feature: "Feature: F\n  Scenario: S\n    Given something unrelated\n",
+        },
+        Case {
+            axis: "equivalent-matcher group spanning windows keeps one representative witness",
+            source: "Given('the lamp glows {word}', () => a());\nGiven('the lamp glows {word}', () => b());\nGiven(/^the lamp glows .+$/, () => c());",
+            feature: "Feature: F\n  Scenario: S\n    Given nothing here\n",
+        },
+        Case {
+            axis: "unused definitions are indeterminate or proven across windows",
+            source: "Given('the seal closes', () => a());\nGiven('the rotor spins', () => b());\nGiven('the brake holds', () => c());",
+            feature: "Feature: F\n  Scenario: S\n    Given the rotor spins\n",
+        },
+    ];
+
+    for case in cases {
+        let definitions = definitions(case.source);
+        let steps = crate::gherkin::extract(case.feature, Path::new("example.feature")).unwrap();
+        let (_directory, config) = config();
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+
+        // Findings and `used` are window-invariant unconditionally. Truncation reporting is the one
+        // output that is not: the witness-scan charge is the number of automata scanned, which grows
+        // as windows shrink, so a budget-constrained corpus can truncate at one window size and not
+        // another. This case runs well inside its budget, where the two must agree, and asserting
+        // them here pins that — it is not a claim that truncation is window-invariant in general.
+        /// Everything one window size observed, so two sizes can be compared field by field.
+        struct Observed {
+            findings: Vec<String>,
+            used: Vec<usize>,
+            incomplete: Vec<String>,
+            evaluated: u64,
+        }
+        let mut reference: Option<Observed> = None;
+        for window in [1, 2, definitions.len() + 5] {
+            let mut findings = Vec::new();
+            let outcome = analyze_feature_usage_in_windows(
+                &definitions,
+                &steps,
+                &config,
+                &suppressions,
+                &mut findings,
+                1_000,
+                window,
+            );
+            let mut rendered: Vec<String> = findings
+                .iter()
+                .map(|finding| {
+                    format!(
+                        "{:?}|{}|{}|{:?}",
+                        finding.rule,
+                        finding.primary.line,
+                        finding.message,
+                        finding
+                            .related
+                            .iter()
+                            .map(|location| location.line)
+                            .collect::<Vec<_>>()
+                    )
+                })
+                .collect();
+            rendered.sort();
+            let used = outcome.used.iter().copied().collect::<Vec<_>>();
+            let incomplete = outcome.incomplete.clone();
+            let evaluated = u64::try_from(outcome.overlap_census.evaluated).unwrap();
+            match &reference {
+                None => {
+                    reference = Some(Observed {
+                        findings: rendered,
+                        used,
+                        incomplete,
+                        evaluated,
+                    });
+                }
+                Some(expected) => {
+                    assert_eq!(
+                        &rendered, &expected.findings,
+                        "{}: findings changed at window {window}",
+                        case.axis
+                    );
+                    assert_eq!(
+                        &used, &expected.used,
+                        "{}: used set changed at window {window}",
+                        case.axis
+                    );
+                    assert_eq!(
+                        &incomplete, &expected.incomplete,
+                        "{}: incomplete diagnostics changed at window {window}",
+                        case.axis
+                    );
+                    assert_eq!(
+                        evaluated, expected.evaluated,
+                        "{}: overlap census changed at window {window}",
+                        case.axis
+                    );
+                }
+            }
+        }
+        // A case must discriminate, or comparing it across window sizes proves nothing. Findings
+        // are the observable for the ambiguity and overlap axes; for the usage axis it is a `used`
+        // set that is neither empty nor everything, meaning the pass actually classified.
+        let observed = reference.expect("at least one window was evaluated");
+        assert!(
+            !observed.findings.is_empty()
+                || (!observed.used.is_empty() && observed.used.len() < definitions.len()),
+            "{}: no finding and no partial used set, so the comparison proves nothing",
+            case.axis
+        );
+    }
 }

@@ -126,6 +126,64 @@ impl MatcherIndex {
     }
 }
 
+/// Definitions compiled per window instead of all at once.
+///
+/// Holding every compiled matcher and one monolithic `RegexSet` alive was ~90% of peak memory on a
+/// large corpus, because a compiled program is orders of magnitude larger than the matcher text it
+/// came from. Compiling a window, scanning it, and dropping it bounds peak at window size rather
+/// than corpus size. Output is unaffected: every definition is still compiled and still scanned
+/// against every step text and every witness, only not all at the same time.
+/// Measured on a 10k-definition corpus with rules on: 392 MB unwindowed, 146 MB at 1,000, and
+/// 133 MB at 250, with 250 also the fastest. Smaller windows keep each automaton's lazy-DFA cache
+/// warm instead of thrashing one monolithic program.
+const DEFAULT_MATCHER_WINDOW: usize = 250;
+
+/// Window size override, used by the corpus gate to force cross-window behaviour.
+///
+/// The corpus fixtures are far smaller than the default window, so without this every fixture would
+/// sit in a single window and the cross-window merge paths would never be exercised.
+fn matcher_window_size() -> usize {
+    std::env::var("CUKE_DEDUP_MATCHER_WINDOW")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MATCHER_WINDOW)
+}
+
+/// The part of a compiled matcher that outlives its window.
+///
+/// Two bits per definition, against kilobytes for the compiled program they summarize.
+#[derive(Clone, Copy)]
+struct MatcherSummary {
+    authoritative: bool,
+    has_regex: bool,
+}
+
+/// Compiles each window in index order and hands it to `visit` before dropping it.
+///
+/// `visit` receives the window's start offset so local indices can be mapped back to definition
+/// indices. Windows are visited in ascending order and `MatcherIndex::matches` returns sorted local
+/// indices, so anything accumulated across windows is already in ascending definition order.
+fn scan_windows(
+    definitions: &[StepDefinition],
+    parameter_types: &BTreeMap<String, String>,
+    window: usize,
+    mut visit: impl FnMut(usize, &[CompiledMatcher], &MatcherIndex, Vec<Option<String>>),
+) -> usize {
+    let mut scan_work = 0_usize;
+    for start in (0..definitions.len()).step_by(window) {
+        let end = (start + window).min(definitions.len());
+        let (compiled, diagnostics): (Vec<_>, Vec<_>) = definitions[start..end]
+            .iter()
+            .map(|definition| compile_matcher(definition, parameter_types))
+            .unzip();
+        let index = MatcherIndex::build(&compiled);
+        scan_work = scan_work.saturating_add(index.scan_work());
+        visit(start, &compiled, &index, diagnostics);
+    }
+    scan_work
+}
+
 enum CucumberRegexExpression {
     Compiled(String),
     Unsupported,
@@ -192,44 +250,79 @@ pub(super) fn analyze_feature_usage(
     findings: &mut Vec<Finding>,
     overlap_budget: usize,
 ) -> FeatureUsageOutcome {
-    let (compiled, incomplete): (Vec<_>, Vec<_>) = definitions
-        .iter()
-        .map(|definition| compile_matcher(definition, &config.parameter_types))
-        .unzip();
-    let mut incomplete: Vec<String> = incomplete.into_iter().flatten().collect();
+    analyze_feature_usage_in_windows(
+        definitions,
+        steps,
+        config,
+        suppressions,
+        findings,
+        overlap_budget,
+        matcher_window_size(),
+    )
+}
+
+/// Window size is a parameter rather than an environment read so tests can vary it without
+/// mutating process state, which would make them order-dependent under the default test harness.
+fn analyze_feature_usage_in_windows(
+    definitions: &[StepDefinition],
+    steps: &[FeatureStep],
+    config: &Config,
+    suppressions: &SuppressionIndex<'_>,
+    findings: &mut Vec<Finding>,
+    overlap_budget: usize,
+    window: usize,
+) -> FeatureUsageOutcome {
+    let mut summaries: Vec<MatcherSummary> = Vec::with_capacity(definitions.len());
+    let mut incomplete: Vec<String> = Vec::new();
+
+    // Scenario Outline expansion repeats identical step text, and repeated text always produces
+    // the same match set, so each distinct text is matched once per window.
+    let mut matched_texts: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for step in steps {
+        matched_texts.entry(step.text.as_str()).or_default();
+    }
+
+    let mut local = Vec::new();
+    let scan_work = scan_windows(
+        definitions,
+        &config.parameter_types,
+        window,
+        |start, compiled, index, diagnostics| {
+            summaries.extend(compiled.iter().map(|matcher| MatcherSummary {
+                authoritative: matcher.authoritative,
+                has_regex: matcher.regex.is_some(),
+            }));
+            incomplete.extend(diagnostics.into_iter().flatten());
+            for (text, accumulated) in matched_texts.iter_mut() {
+                index.matches(compiled, text, &mut local);
+                accumulated.extend(local.iter().map(|index| index + start));
+            }
+        },
+    );
+
     // Definitions whose matcher cannot be modeled authoritatively cannot be proven unused.
     // A permissive fallback may still fail to match the available feature corpus, so both
     // uncompiled and non-authoritative matchers remain indeterminate.
-    let mut used: BTreeSet<_> = compiled
+    let mut used: BTreeSet<_> = summaries
         .iter()
         .enumerate()
         .filter_map(|(index, matcher)| {
-            (matcher.regex.is_none() || !matcher.authoritative).then_some(index)
+            (!matcher.has_regex || !matcher.authoritative).then_some(index)
         })
         .collect();
-    let index = MatcherIndex::build(&compiled);
     let mut ambiguities: BTreeMap<_, (&FeatureStep, BTreeSet<usize>, usize)> = BTreeMap::new();
     let mut proven = ProvenAmbiguities::new(definitions.len());
     let ambiguity_is_reported = config.severity(Rule::AmbiguousStep) != Severity::Off;
-    let mut matches = Vec::new();
-    // Scenario Outline expansion repeats identical step text, and repeated text always produces
-    // the same match set, so each distinct text is matched once.
-    let mut matched_texts: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for step in steps {
-        let matches: &Vec<usize> = match matched_texts.get(step.text.as_str()) {
-            Some(cached) => cached,
-            None => {
-                index.matches(&compiled, &step.text, &mut matches);
-                matched_texts
-                    .entry(step.text.as_str())
-                    .or_insert_with(|| matches.clone())
-            }
-        };
+        // Merged across windows before anything reads it. Recording `proven` from a single
+        // window's matches would miss a pair split across windows, and `overlapping-matcher`
+        // would then report an overlap that `ambiguous-step` already owns.
+        let matches = &matched_texts[step.text.as_str()];
         used.extend(matches.iter().copied());
         let authoritative_matches: BTreeSet<_> = matches
             .iter()
             .copied()
-            .filter(|index| compiled[*index].authoritative)
+            .filter(|index| summaries[*index].authoritative)
             .collect();
         if authoritative_matches.len() > 1 && ambiguity_is_reported {
             proven.record(&authoritative_matches);
@@ -251,13 +344,14 @@ pub(super) fn analyze_feature_usage(
     // ambiguity group.
     let overlap = analyze_matcher_overlap(
         definitions,
-        &compiled,
-        &index,
+        &summaries,
         &proven,
         config,
         suppressions,
         findings,
         overlap_budget,
+        window,
+        scan_work,
     );
     if let Some(diagnostic) = overlap.incomplete {
         incomplete.push(diagnostic);
@@ -341,13 +435,19 @@ struct OverlapOutcome {
 #[allow(clippy::too_many_arguments)]
 fn analyze_matcher_overlap(
     definitions: &[StepDefinition],
-    compiled: &[CompiledMatcher],
-    index: &MatcherIndex,
+    summaries: &[MatcherSummary],
     proven: &ProvenAmbiguities,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
     work_budget: usize,
+    window: usize,
+    // Automaton scans one witness costs across the whole corpus, measured by the step-matching
+    // walk and spent here to bound the witness walk. Sound only because both walks build the same
+    // windows from the same definitions under the same limits, so `MatcherIndex` splits the same
+    // way and the count is identical. Changing the window size between the two walks would break
+    // that.
+    scan_work: usize,
 ) -> OverlapOutcome {
     let severity = config.severity(Rule::OverlappingMatcher);
     if severity == Severity::Off {
@@ -356,56 +456,101 @@ fn analyze_matcher_overlap(
             incomplete: None,
         };
     }
-    let mut considered = HashSet::new();
-    let mut matches = Vec::new();
-    let mut evaluated = 0_usize;
-    let mut proposal_work = 0_usize;
     let proposal_budget = work_budget.saturating_mul(OVERLAP_PROPOSAL_WORK_MULTIPLIER);
-    let mut witness_scan_work = 0_usize;
-    let witness_scan_budget = proposal_budget;
-    let mut retained = 0_usize;
-    let mut truncated = false;
-    let mut suppression_work = 0_u64;
+
+    // Representatives, chosen exactly as a single pass would: first authoritative member of each
+    // equivalent-matcher group, in definition order. Equivalent matchers are already connected by
+    // the duplicate rules, so one representative witness preserves every cross-group overlap
+    // without evaluating an identical witness once per group member.
+    //
+    // This is why witnesses cannot be built before the first walk and folded into it, which would
+    // avoid compiling every matcher twice. `witness_for` needs only the definition, but *choosing*
+    // the representative needs `authoritative`, which exists only after compiling. Dropping that
+    // filter would let a non-authoritative member claim its group's slot and yield no witness,
+    // silently losing the overlap coverage of every authoritative member behind it.
     let mut witnessed_groups = HashSet::new();
-    'definitions: for (left, definition) in definitions.iter().enumerate() {
-        if !compiled[left].authoritative {
+    let mut witnesses: Vec<(usize, String)> = Vec::new();
+    let witness_scan_budget = proposal_budget;
+    for (left, definition) in definitions.iter().enumerate() {
+        if !summaries[left].authoritative {
             continue;
         }
-        // Equivalent matchers are already connected by the duplicate rules. One representative
-        // witness preserves every cross-group overlap without evaluating an identical witness N
-        // times for a large duplicate group.
         if !witnessed_groups.insert((definition.matcher_kind, &definition.normalized_matcher)) {
             continue;
         }
-        let Some(witness) = witness_for(definition, &config.parameter_types) else {
-            continue;
-        };
-        let scan_work = index.scan_work();
-        if scan_work > witness_scan_budget.saturating_sub(witness_scan_work) {
-            truncated = true;
-            break;
+        if let Some(witness) = witness_for(definition, &config.parameter_types) {
+            witnesses.push((left, witness));
         }
-        witness_scan_work += scan_work;
-        index.matches(compiled, &witness, &mut matches);
-        for right in matches.iter().copied() {
-            if right == left || !compiled[right].authoritative {
-                continue;
+    }
+
+    // A witness has to be matched against every definition, so the windows are walked again and
+    // each witness accumulates its matches across all of them. Only proposable matches are kept —
+    // the same three filters a single pass applies — so this holds the pairs the replay below
+    // would consider and nothing more, capped by the proposal budget.
+    // Every witness costs the same full-index scan, so the number the budget affords is exact and
+    // the cut is a uniform prefix: a witness is scanned against every window or none, which keeps
+    // each accumulated match set complete. Charging this before scanning restores the bound a
+    // single pass had — otherwise witnesses that accept nothing would sweep every window while
+    // advancing no budget at all.
+    let affordable = witness_scan_budget
+        .checked_div(scan_work)
+        .unwrap_or(witnesses.len());
+    let scan_truncated = witnesses.len() > affordable;
+    witnesses.truncate(affordable);
+
+    let mut proposals: Vec<Vec<usize>> = vec![Vec::new(); witnesses.len()];
+    let mut accumulated = 0_usize;
+    let mut local = Vec::new();
+    // Summaries and compilation diagnostics were already collected by the step-matching pass;
+    // recompiling here must not duplicate them.
+    scan_windows(
+        definitions,
+        &config.parameter_types,
+        window,
+        |start, compiled, index, _diagnostics| {
+            for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter_mut()) {
+                if accumulated >= proposal_budget {
+                    break;
+                }
+                index.matches(compiled, witness, &mut local);
+                let definition = &definitions[*left];
+                for right in local.iter().map(|index| index + start) {
+                    if right == *left || !summaries[right].authoritative {
+                        continue;
+                    }
+                    // Equivalent matchers are already reported as duplicates; overlap adds nothing.
+                    if definition.matcher_kind == definitions[right].matcher_kind
+                        && definition.normalized_matcher == definitions[right].normalized_matcher
+                    {
+                        continue;
+                    }
+                    if accumulated >= proposal_budget {
+                        break;
+                    }
+                    accepted.push(right);
+                    accumulated += 1;
+                }
             }
-            // Equivalent matchers are already reported as duplicates; overlap adds nothing.
-            if definition.matcher_kind == definitions[right].matcher_kind
-                && definition.normalized_matcher == definitions[right].normalized_matcher
-            {
-                continue;
-            }
+        },
+    );
+
+    let mut considered = HashSet::new();
+    let mut evaluated = 0_usize;
+    let mut proposal_work = 0_usize;
+    let mut retained = 0_usize;
+    let mut truncated = scan_truncated;
+    let mut suppression_work = 0_u64;
+    'definitions: for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter()) {
+        for right in accepted.iter().copied() {
             if proposal_work == proposal_budget {
                 truncated = true;
                 break 'definitions;
             }
             proposal_work += 1;
-            let pair = if left < right {
-                (left, right)
+            let pair = if *left < right {
+                (*left, right)
             } else {
-                (right, left)
+                (right, *left)
             };
             if considered.contains(&pair) {
                 continue;

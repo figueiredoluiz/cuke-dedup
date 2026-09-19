@@ -124,6 +124,11 @@ cargo build --release --locked
 npm run corpus:check
 ```
 
+Matchers are compiled in windows rather than all at once. `CUKE_DEDUP_MATCHER_WINDOW` overrides the
+window size and exists so the corpus gate can force one definition per window, which makes every
+definition pair cross-window and exercises the merge paths that a fixture-sized corpus would
+otherwise never reach. It changes memory and running time, never findings.
+
 Record the non-blocking scalability profiles with `npm run benchmark`. The benchmark measures wall-clock, discovery, parsing, analysis, peak resident memory where available, input counts, and findings. Set `CUKE_DEDUP_BENCH_REPEATS` to change the sample count, `CUKE_DEDUP_BENCH_SMOKE=1` to select the reduced validation profile used by local and CI checks, or `CUKE_DEDUP_BENCH_PROFILE=usage-scale` to isolate one profile.
 
 The scheduled mutation workflow holds the core similarity and evidence contracts to a 90% score. Its checked-in configuration keeps local execution bounded; run the same focused measurement with:
