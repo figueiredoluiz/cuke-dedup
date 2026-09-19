@@ -308,6 +308,14 @@ jobs:
         run: CUKE_DEDUP_BENCH_SMOKE=1 CUKE_DEDUP_BENCH_REPEATS=1 npm run --silent benchmark > /dev/null
       - name: Validate versioned corpus and reporter parity
         run: node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+      # Every fixture is far smaller than the default matcher window, so the run above never
+      # crosses a window boundary. One definition per window makes every pair cross-window and
+      # exercises the merge paths — notably that an ambiguity split across windows still withholds
+      # the overlap finding `ambiguous-step` owns.
+      - name: Validate corpus with cross-window matcher compilation
+        run: CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+      - name: Guard matcher-analysis memory
+        run: node scripts/check/check-memory.mjs target/release/cuke-dedup
       - name: Smoke-test the local GitHub Action
         id: cuke-dedup
         uses: ./

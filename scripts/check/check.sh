@@ -56,6 +56,12 @@ if [[ "$mode" == "full" ]]; then
   cargo +stable package --list --allow-dirty >/dev/null
   cargo +stable build --release --locked
   node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+  # Matcher compilation is windowed, and every fixture is far smaller than the default window, so
+  # the default run never crosses a window boundary. Forcing one definition per window makes every
+  # pair cross-window and exercises the merge paths — notably that a proven ambiguity split across
+  # windows still withholds the overlap finding that `ambiguous-step` owns.
+  CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+  node scripts/check/check-memory.mjs target/release/cuke-dedup
   CUKE_DEDUP_BENCH_SMOKE=1 CUKE_DEDUP_BENCH_REPEATS=1 \
     node scripts/benchmark/benchmark-analysis.mjs target/release/cuke-dedup >/dev/null
 fi
