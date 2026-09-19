@@ -475,11 +475,13 @@ fn windowing_does_not_change_findings_on_any_axis() {
         let (_directory, config) = config();
         let suppressions = SuppressionIndex::new(&config, &definitions);
 
-        // Findings and `used` are window-invariant unconditionally. Truncation reporting is the one
-        // output that is not: the witness-scan charge is the number of automata scanned, which grows
-        // as windows shrink, so a budget-constrained corpus can truncate at one window size and not
-        // another. This case runs well inside its budget, where the two must agree, and asserting
-        // them here pins that — it is not a claim that truncation is window-invariant in general.
+        // Findings and `used` are window-invariant **for runs that do not truncate**, which is what
+        // these cases are. Once a budget is exhausted that no longer holds: the witness-scan charge
+        // grows as windows shrink, and the proposal cap cuts a window-major stream where a single
+        // pass cut a witness-major one, so both which pairs survive and whether the run truncates
+        // become window-dependent. These cases run well inside their budgets, where every output
+        // must agree, and asserting all four pins that — it is not a claim of invariance under
+        // truncation.
         /// Everything one window size observed, so two sizes can be compared field by field.
         struct Observed {
             findings: Vec<String>,

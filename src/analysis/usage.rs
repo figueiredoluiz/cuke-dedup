@@ -509,6 +509,19 @@ fn analyze_matcher_overlap(
         window,
         |start, compiled, index, _diagnostics| {
             for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter_mut()) {
+                // Checked per witness rather than per match: a witness is either accumulated whole
+                // or not at all, so storage is bounded by the budget plus one match list.
+                //
+                // **Equivalence with a single pass holds only until this budget is exhausted.**
+                // Windows are walked outermost, so the candidate stream is window-major while a
+                // single pass was witness-major. When the cap cuts the stream, which pairs survive
+                // depends on the window size: measured 160/163/172 findings at windows 1/5/1000 on
+                // a corpus built to exhaust it. That is accepted rather than fixed — restoring
+                // witness-major order would mean holding every window alive at once, which is the
+                // cost this whole design exists to avoid, or a third counting walk. It is sound
+                // because a run that sets `incomplete` already promises only a subset: "the absence
+                // of a finding proves nothing" (see `analyze_with_diagnostics`). A run that does not
+                // truncate is byte-identical at any window size.
                 if accumulated >= proposal_budget {
                     break;
                 }
@@ -523,9 +536,6 @@ fn analyze_matcher_overlap(
                         && definition.normalized_matcher == definitions[right].normalized_matcher
                     {
                         continue;
-                    }
-                    if accumulated >= proposal_budget {
-                        break;
                     }
                     accepted.push(right);
                     accumulated += 1;

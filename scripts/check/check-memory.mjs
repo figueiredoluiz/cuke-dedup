@@ -20,19 +20,20 @@ import { spawnSync } from "node:child_process";
 
 const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
 
-/// Marginal bytes per definition. **Ratchet: lower it when a change improves the figure, never
-/// raise it to make a regression pass.**
+/// Marginal bytes per definition. **Ratchet: lower these when a change improves the figure, never
+/// raise them to make a regression pass.**
 ///
-/// Measured 11.2-11.7 KB across four consecutive local runs (a 4.5% spread), so the budget carries
-/// roughly 20% headroom: tight enough to catch the order-of-magnitude regression this gate exists
-/// for, loose enough not to fail on measurement noise. Before v0.6.0 the same corpus cost several
-/// times this.
-///
-/// If CI reports a materially different figure, re-pin from CI rather than from a local run —
-/// peak RSS is platform-dependent and macOS reports an upper bound, since libmalloc does not
-/// eagerly return freed transients.
+/// Each carries roughly 25-35% headroom over the measured figure for its platform: tight enough to
+/// catch the order-of-magnitude regression this gate exists for, loose enough to absorb the
+/// run-to-run spread. Before v0.6.0 the same corpus cost roughly five times this.
+/// Peak RSS is platform-dependent, so one number is either loose where it gates or failing where
+/// it does not. Measured on this corpus: Linux CI **6,619**; macOS local 8,957-12,190 across runs,
+/// because libmalloc does not eagerly return freed transients and reports an upper bound. A single
+/// budget wide enough for macOS would leave CI — the branch that actually gates merges — with more
+/// than 2x slack, so a regression would have to double before tripping it.
+const DEFAULT_BUDGET_BYTES = process.platform === "linux" ? 9_000 : 14_000;
 const BUDGET_BYTES_PER_DEFINITION = Number.parseInt(
-  process.env.CUKE_DEDUP_MEMORY_BUDGET || "14000",
+  process.env.CUKE_DEDUP_MEMORY_BUDGET || String(DEFAULT_BUDGET_BYTES),
   10,
 );
 const SIZES = [1_000, 4_000];
