@@ -57,11 +57,25 @@ import { spawnSync } from "node:child_process";
 /// missed real sources under a directory that merely shares the name, and could never be complete.
 /// `--cached --others --exclude-standard` covers tracked and new-but-not-ignored files alike, so a
 /// source is measured before it is committed.
-const ALL_RUST_SOURCES = spawnSync(
-  "git",
-  ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.rs"],
-  { encoding: "utf8" },
-).stdout.split("\n").filter(Boolean);
+const ALL_RUST_SOURCES = [
+  ...new Set(
+    spawnSync(
+      "git",
+      ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.rs"],
+      { encoding: "utf8" },
+    ).stdout.split("\n").filter(Boolean),
+  ),
+]
+  // `--cached` lists index entries, so two ordinary states need handling. During an unresolved
+  // merge a conflicted path appears once per stage — three times, verified — which would otherwise
+  // trip the scope-overlap assertion with an overlap that does not exist; the Set above collapses
+  // that. And a file deleted without staging the deletion is still in the index, which would fail
+  // the run with ENOENT while staging it rather than with a duplication verdict.
+  //
+  // Measuring what is on disk is also the correct reading: the working tree is what the ceilings
+  // describe. A local deletion therefore shifts the figures rather than being ignored, which the
+  // stale-ceiling check reports.
+  .filter((path) => existsSync(path));
 
 /// How far below its ceiling a scope may sit before the ceiling is treated as stale.
 ///
