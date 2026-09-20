@@ -25,7 +25,7 @@ const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
 ///
 /// Each carries roughly 25-35% headroom over the measured figure for its platform: tight enough to
 /// catch the order-of-magnitude regression this gate exists for, loose enough to absorb the
-/// run-to-run spread. Before v0.6.0 the same corpus cost roughly five times this.
+/// run-to-run spread. Before v0.7.0 the same corpus cost roughly five times this.
 /// Peak RSS is platform-dependent, so one number is either loose where it gates or failing where
 /// it does not. Measured on this corpus: Linux CI **6,619**; macOS local 8,957-12,190 across runs,
 /// because libmalloc does not eagerly return freed transients and reports an upper bound. A single

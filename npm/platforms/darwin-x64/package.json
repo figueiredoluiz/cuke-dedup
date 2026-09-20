@@ -1,6 +1,6 @@
 {
   "name": "cuke-dedup-darwin-x64",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "macOS x64 native binary for cuke-dedup",
   "os": ["darwin"],
   "cpu": ["x64"],

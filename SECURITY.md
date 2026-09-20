@@ -5,11 +5,6 @@
 Security fixes are released for the latest published minor version. Before the first
 stable release, only the latest `0.x` release is supported.
 
-| Version | Supported |
-| --- | --- |
-| 0.2.x | Yes |
-| Older versions | No |
-
 ## Reporting a vulnerability
 
 Please do not open a public issue for a suspected vulnerability. Use
