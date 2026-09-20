@@ -1,5 +1,7 @@
 use super::*;
-use crate::model::{DefinitionCluster, FindingEvidence, Rule, Severity, SourceLocation};
+use crate::model::{
+    DefinitionCluster, DefinitionComparison, FindingEvidence, Rule, Severity, SourceLocation,
+};
 
 fn initialize_repository(root: &Path) {
     for arguments in [
@@ -96,6 +98,58 @@ fn cluster_fingerprints_are_location_and_member_order_independent() {
         .definition_fingerprints
         .push("delta".into());
     assert_ne!(finding_fingerprint(&original), finding_fingerprint(&moved));
+}
+
+#[test]
+fn multipart_framing_cannot_suppress_a_different_cluster() {
+    let directory = tempfile::tempdir().unwrap();
+    let baseline_path = directory.path().join("baseline.json");
+    let mut accepted = finding(directory.path(), "steps/accepted.ts");
+    accepted.evidence.cluster = Some(DefinitionCluster {
+        member_count: 2,
+        definition_fingerprints: vec!["a\0b".into(), "c".into()],
+        pair_findings_collapsed: 1,
+        members_truncated: false,
+    });
+    let mut unrelated = finding(directory.path(), "steps/unrelated.ts");
+    unrelated.evidence.cluster = Some(DefinitionCluster {
+        member_count: 2,
+        definition_fingerprints: vec!["a".into(), "b\0c".into()],
+        pair_findings_collapsed: 1,
+        members_truncated: false,
+    });
+    let baseline = BaselineFile::new(BTreeMap::from([(finding_fingerprint(&accepted), 1)]));
+    fs::write(&baseline_path, serde_json::to_string(&baseline).unwrap()).unwrap();
+
+    let outcome = apply_baseline(std::slice::from_mut(&mut unrelated), &baseline_path).unwrap();
+
+    assert_eq!(outcome.suppressed, 0);
+    assert_eq!(outcome.new_findings, 1);
+    assert!(unrelated.is_active());
+}
+
+#[test]
+fn multipart_framing_cannot_suppress_a_different_fallback_finding() {
+    let directory = tempfile::tempdir().unwrap();
+    let baseline_path = directory.path().join("baseline.json");
+    let mut accepted = finding(directory.path(), "steps/accepted.ts");
+    accepted.message = "a\0b".to_owned();
+    let mut equivalent = accepted.clone();
+    let mut unrelated = finding(directory.path(), "steps/unrelated.ts");
+    unrelated.message = "a".to_owned();
+    unrelated.evidence.matcher_difference = "b\0same".to_owned();
+    let baseline = BaselineFile::new(BTreeMap::from([(finding_fingerprint(&accepted), 1)]));
+    fs::write(&baseline_path, serde_json::to_string(&baseline).unwrap()).unwrap();
+
+    let equivalent_outcome =
+        apply_baseline(std::slice::from_mut(&mut equivalent), &baseline_path).unwrap();
+    let unrelated_outcome =
+        apply_baseline(std::slice::from_mut(&mut unrelated), &baseline_path).unwrap();
+
+    assert_eq!(equivalent_outcome.suppressed, 1);
+    assert!(!equivalent.is_active());
+    assert_eq!(unrelated_outcome.suppressed, 0);
+    assert_eq!(unrelated_outcome.new_findings, 1);
 }
 
 #[test]
@@ -251,6 +305,12 @@ fn baseline_validation_counts_removals_and_ignores_suppressed_findings() {
     assert_eq!(outcome.removed, 2);
     assert_eq!(outcome.suppressed, 0);
 
+    fs::write(&baseline_path, r#"{"schemaVersion":2,"fingerprints":{}}"#).unwrap();
+    let error = apply_baseline(&mut [], &baseline_path)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unsupported baseline schema version `2` (expected `3`)"));
+    assert!(error.contains("regenerate it with --update-baseline"));
     fs::write(&baseline_path, r#"{"schemaVersion":99,"fingerprints":{}}"#).unwrap();
     assert!(apply_baseline(&mut [], &baseline_path)
         .unwrap_err()
@@ -265,6 +325,7 @@ fn baseline_validation_counts_removals_and_ignores_suppressed_findings() {
 
 #[test]
 fn comparison_fingerprints_are_independent_of_pair_order() {
+    let root = Path::new("/repo");
     let comparison = DefinitionComparison {
         left_fingerprint: "left".to_owned(),
         right_fingerprint: "right".to_owned(),
@@ -284,9 +345,13 @@ fn comparison_fingerprints_are_independent_of_pair_order() {
         &mut reversed.left_fingerprint,
         &mut reversed.right_fingerprint,
     );
+    let mut original_finding = finding(root, "steps/original.ts");
+    original_finding.evidence.comparison = Some(comparison);
+    let mut reversed_finding = finding(root, "steps/reversed.ts");
+    reversed_finding.evidence.comparison = Some(reversed);
     assert_eq!(
-        comparison_fingerprint_input(&comparison),
-        comparison_fingerprint_input(&reversed)
+        finding_fingerprint(&original_finding),
+        finding_fingerprint(&reversed_finding)
     );
     assert_eq!(
         count_added(

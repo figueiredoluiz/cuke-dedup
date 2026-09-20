@@ -1,10 +1,14 @@
 //! Shared intermediate representation and diagnostics.
 
+mod sha256;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+use self::sha256::Sha256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 /// Source span with one-based starts and one-based, exclusive end coordinates.
@@ -480,30 +484,37 @@ impl DuplicationThreshold {
     }
 }
 
-/// Computes a deterministic FNV-1a fingerprint for report and comparison data.
+const SINGLE_FINGERPRINT_DOMAIN: &[u8] = b"cuke-dedup:fingerprint:v3:single\0";
+const MULTIPART_FINGERPRINT_DOMAIN: &[u8] = b"cuke-dedup:fingerprint:v3:parts\0";
+
+/// Computes the first 128 bits of a domain-separated SHA-256 digest for report and comparison data.
 pub fn stable_fingerprint(value: &str) -> String {
-    // FNV-1a is deliberately simple and deterministic across platforms and Rust versions.
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
+    let mut hasher = Sha256::new();
+    hasher.update(SINGLE_FINGERPRINT_DOMAIN);
+    hasher.update(value.as_bytes());
+    truncated_sha256(hasher)
 }
 
 pub(crate) fn stable_fingerprint_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for (index, part) in parts.into_iter().enumerate() {
-        if index > 0 {
-            hash ^= 0;
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-        for byte in part.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
+    let mut hasher = Sha256::new();
+    hasher.update(MULTIPART_FINGERPRINT_DOMAIN);
+    for part in parts {
+        let bytes = part.as_bytes();
+        let length = u64::try_from(bytes.len()).expect("fingerprint part length fits in u64");
+        hasher.update(&length.to_be_bytes());
+        hasher.update(bytes);
     }
-    format!("{hash:016x}")
+    truncated_sha256(hasher)
+}
+
+fn truncated_sha256(hasher: Sha256) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut fingerprint = String::with_capacity(32);
+    for byte in &hasher.finalize()[..16] {
+        fingerprint.push(HEX[usize::from(byte >> 4)] as char);
+        fingerprint.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    fingerprint
 }
 
 #[cfg(test)]
