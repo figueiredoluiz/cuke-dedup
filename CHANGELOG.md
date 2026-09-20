@@ -5,9 +5,12 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-21
+
 ### Changed
 
 - **Breaking (reports and baselines):** semantic fingerprints now use the first 128 bits of SHA-256 instead of FNV-1a-64. JSON and JSONL reports use schema version `3`, SARIF publishes `cukeDedupFingerprint/v3`, and semantic baselines use version `3`. Existing version `1` or `2` baselines are rejected for comparison and can be regenerated in place with `--update-baseline`.
+- Matcher compilation now runs in bounded windows instead of retaining every compiled matcher at once, substantially reducing peak memory on large definition corpora. Complete, untruncated runs retain the same findings; a run that exhausts its matcher-scan budget may become incomplete or retain a different bounded subset than v0.6.0.
 
 ## [0.6.0] - 2026-09-18
 
@@ -281,6 +284,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.7.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.3.0...v0.4.0
