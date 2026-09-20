@@ -1,0 +1,9 @@
+{
+  "name": "cuke-dedup-check-tools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated manifest for analysis tools used by the check scripts. Kept out of the root package so `npm install` there stays unnecessary — the root declares eight platform packages for other operating systems and architectures, and installing them locally is what the root's no-dependency stance avoids.",
+  "dependencies": {
+    "jscpd": "4.0.5"
+  }
+}

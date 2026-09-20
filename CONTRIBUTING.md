@@ -39,7 +39,7 @@ cargo +stable llvm-cov --all-features --tests --locked --no-report
 cargo +stable llvm-cov report --summary-only --fail-under-lines 97
 ```
 
-The npm launcher currently has no third-party development dependencies, so contributor and CI checks run directly without an install step. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 97% Rust line-coverage floor.
+The npm launcher currently has no third-party development dependencies, so contributor and CI checks run directly without an install step. The one analysis tool that needs installing, `jscpd`, lives in `scripts/check/tools/` with its own manifest and lockfile — install it with `npm ci --prefix scripts/check/tools` — so its whole dependency graph is pinned by integrity hash without the root manifest gaining dependencies. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 97% Rust line-coverage floor.
 
 The full local gate always runs `actionlint`, `cargo-audit`, `cargo-deny`, and `cargo-shear`. The quick gate runs them only when the staged patch changes or deletes the corresponding Action, manifest, lock, or policy files. The dependency commands are:
 
@@ -123,6 +123,17 @@ The sanitized end-to-end fixtures and their manifest are documented in [`fixture
 cargo build --release --locked
 npm run corpus:check
 ```
+
+Ratchet copy-paste duplication with `npm run duplication:check`. Two scopes — production and test
+sources — each pinned at the value measured today, not an aspirational one: a gate that is red on
+arrival gets ignored, which is worse than no gate. The gate fails both when a scope exceeds its
+ceiling **and** when it sits far enough below one that the ceiling has gone stale, so an improvement
+has to be recorded rather than left as slack a later regression can reclaim. Every Rust source in
+the repository must belong to exactly one scope; a new file in neither fails until it is classified. Each scope carries both a percentage ceiling and an absolute duplicated-line ceiling, because a
+percentage alone falls whenever unique code is added and so can hide copied code accumulating. The
+gate also names any non-trivial staged file jscpd did not analyse, because jscpd skips oversized
+files silently and a skipped file lowers the percentage — a measurement here once reported 0.71%
+where the real figure was 2.88% for that reason.
 
 Guard matcher-analysis memory with `npm run memory:check`. It compiles a deterministic corpus at
 two sizes and holds the **marginal** bytes per definition — the cost that scales with corpus size,

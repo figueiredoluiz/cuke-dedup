@@ -10,3 +10,4 @@ fuzz/artifacts/
 fuzz/corpus/*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
 fuzz/coverage/
 fuzz/target/
+scripts/check/tools/node_modules/

@@ -316,6 +316,10 @@ jobs:
         run: CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
       - name: Guard matcher-analysis memory
         run: node scripts/check/check-memory.mjs target/release/cuke-dedup
+      - name: Install pinned analysis tools
+        run: npm ci --prefix scripts/check/tools
+      - name: Guard copy-paste duplication
+        run: node scripts/check/check-duplication.mjs
       - name: Smoke-test the local GitHub Action
         id: cuke-dedup
         uses: ./
