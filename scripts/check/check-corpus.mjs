@@ -159,6 +159,34 @@ async function validateRecallCorpus(temporary) {
     : recallManifest.cases;
   assert.ok(cases.length > 0, `no recall case named ${only}`);
 
+  // Counting cases protects the count, not the coverage. Without these two, a case carrying real
+  // expectations could be deleted and replaced by a vacuous one — or by a copy of an easier case
+  // under a new name — leaving `minimumCases` satisfied and the recall ratio unharmed.
+  const names = cases.map((testCase) => testCase.name);
+  const repeated = names.filter((name, index) => names.indexOf(name) !== index);
+  assert.deepEqual(repeated, [], `duplicate recall case name(s): ${repeated.join(", ")}`);
+  for (const testCase of cases) {
+    // `findingMatches` compares `rule` first, so an expectation without one can never match any
+    // finding: as an absence it is satisfied vacuously, and as a positive it can only fail. Either
+    // way it asserts nothing, which counting entries alone would not notice — and a malformed
+    // expectation is far likelier as an authoring slip than as an attempt to game the floor.
+    const asserted = [
+      ...(testCase.expectedFindings || []),
+      ...(testCase.expectedAbsent || []),
+      ...(testCase.knownMisses || []),
+    ];
+    for (const expectation of asserted) {
+      assert.ok(
+        expectation.rule,
+        `${testCase.name}: an expectation names no rule, so it can never match a finding: ${JSON.stringify(expectation)}`,
+      );
+    }
+    assert.ok(
+      asserted.length > 0,
+      `${testCase.name}: asserts no finding, non-finding or known miss, so it occupies a corpus slot without pinning anything`,
+    );
+  }
+
   for (const testCase of cases) {
     const caseRoot = join(temporary, "recall", testCase.name, "case");
     const output = join(temporary, "recall", testCase.name, "report");
@@ -244,6 +272,17 @@ async function validateRecallCorpus(temporary) {
   const desired = detected + knownMisses;
   const ratio = desired === 0 ? 1 : detected / desired;
   if (!only) {
+    // Recall is a ratio, so deleting an unsatisfied case raises it. Exact equality — matching how
+    // `knownMissBaseline` below is asserted — makes the corpus ratchet in one direction only. A
+    // `>=` floor would let the corpus grow to 60 and then shed all seven additions while staying
+    // green, so additions would never become durable. Raising the floor is one line, and it is the
+    // line that records the gain.
+    assert.equal(
+      cases.length,
+      recallManifest.minimumCases,
+      `recall corpus has ${cases.length} cases against a floor of ${recallManifest.minimumCases}; `
+        + "raise minimumCases when adding a case, and never lower it to drop one",
+    );
     assert.equal(
       knownMisses,
       recallManifest.knownMissBaseline,

@@ -25,6 +25,7 @@
     "pack:check": "npm pack --dry-run",
     "corpus:check": "node scripts/check/check-corpus.mjs",
     "memory:check": "node scripts/check/check-memory.mjs target/release/cuke-dedup",
+    "duplication:check": "node scripts/check/check-duplication.mjs",
     "benchmark": "node scripts/benchmark/benchmark-analysis.mjs"
   },
   "engines": {

@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "knownMissBaseline": 3,
   "minimumRecall": 0.6,
+  "minimumCases": 53,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
