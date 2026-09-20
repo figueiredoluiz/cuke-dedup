@@ -1,5 +1,5 @@
 use crate::model::{
-    stable_fingerprint, DefinitionComparison, MatcherDiff, MatcherKind, StepDefinition,
+    stable_fingerprint_parts, DefinitionComparison, MatcherDiff, MatcherKind, StepDefinition,
 };
 
 pub(super) fn matcher_difference(left: &StepDefinition, right: &StepDefinition) -> String {
@@ -26,12 +26,13 @@ fn definition_semantic_fingerprint(definition: &StepDefinition) -> String {
         MatcherKind::CucumberExpression => "cucumber-expression",
         MatcherKind::RegularExpression => "regular-expression",
     };
-    stable_fingerprint(&format!(
-        "{matcher_kind}\u{0}{}\u{0}{}\u{0}{}",
-        definition.normalized_matcher,
-        definition.matcher_flags,
-        definition.handler.alpha_normalized
-    ))
+    stable_fingerprint_parts([
+        "definition-semantic",
+        matcher_kind,
+        &definition.normalized_matcher,
+        &definition.matcher_flags,
+        &definition.handler.alpha_normalized,
+    ])
 }
 
 fn matcher_diff(left: &str, right: &str) -> MatcherDiff {
@@ -133,6 +134,25 @@ mod tests {
     }
 
     #[test]
+    fn semantic_fingerprints_preserve_component_boundaries() {
+        let mut accepted = definitions("Given('accepted', () => action());").remove(0);
+        accepted.normalized_matcher = "a\0b".to_owned();
+        let equivalent = accepted.clone();
+        let mut unrelated = accepted.clone();
+        unrelated.normalized_matcher = "a".to_owned();
+        unrelated.matcher_flags = "b\0".to_owned();
+
+        assert_eq!(
+            definition_semantic_fingerprint(&accepted),
+            definition_semantic_fingerprint(&equivalent)
+        );
+        assert_ne!(
+            definition_semantic_fingerprint(&accepted),
+            definition_semantic_fingerprint(&unrelated)
+        );
+    }
+
+    #[test]
     fn pair_evidence_contract_includes_matchers_fingerprints_and_handler_classification() {
         let definitions = definitions(
             "Given('left matcher', () => first()); Given('right matcher', () => second());",
@@ -146,7 +166,7 @@ mod tests {
         assert_eq!(comparison.right_matcher, "right matcher");
         assert_ne!(comparison.left_fingerprint, comparison.right_fingerprint);
         for fingerprint in [comparison.left_fingerprint, comparison.right_fingerprint] {
-            assert_eq!(fingerprint.len(), 16);
+            assert_eq!(fingerprint.len(), 32);
             assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
         }
 

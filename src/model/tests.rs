@@ -63,11 +63,13 @@ fn rule_names_are_stable_kebab_case() {
 }
 
 #[test]
-fn multipart_fingerprint_matches_nul_joined_input_without_join_allocation() {
-    assert_eq!(
-        stable_fingerprint_parts(["duplicate-matcher", "alpha", "bravo"]),
-        stable_fingerprint("duplicate-matcher\0alpha\0bravo")
+fn multipart_fingerprint_has_unambiguous_framing_and_a_separate_domain() {
+    assert_ne!(
+        stable_fingerprint_parts(["a\0b"]),
+        stable_fingerprint_parts(["a", "b"])
     );
+    assert_ne!(stable_fingerprint("a"), stable_fingerprint_parts(["a"]));
+    assert_ne!(stable_fingerprint_parts([]), stable_fingerprint_parts([""]));
 }
 
 #[test]
@@ -143,7 +145,14 @@ fn duplication_threshold_counts_multiple_definitions_at_one_location() {
 
 #[test]
 fn fingerprint_is_stable_and_content_sensitive() {
-    assert_eq!(stable_fingerprint("hello"), "a430d84680aabd0b");
+    assert_eq!(
+        stable_fingerprint("hello"),
+        "d45a69d7e7ff4c802cfc49b4f1fa7d11"
+    );
+    assert_eq!(stable_fingerprint("hello").len(), 32);
+    assert!(stable_fingerprint("hello")
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
     assert_ne!(stable_fingerprint("hello"), stable_fingerprint("Hello"));
 }
 

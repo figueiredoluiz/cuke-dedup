@@ -101,8 +101,7 @@ cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new 3
 
 Baselines store sorted semantic fingerprints with multiplicity counts. Renames and unrelated line
 changes do not make a finding new, while an additional occurrence beyond the recorded count does.
-Version `1` baselines from CukeDedup 0.1 can be replaced by running the version `2` tool with
-`--update-baseline`; comparison rejects mismatched schemas.
+Version `1` and `2` baselines can be replaced by running the version `3` tool with `--update-baseline`; comparison rejects mismatched schemas and names the regeneration command.
 
 Updates reject `--changed-since` and are skipped after incomplete analysis or an operational error,
 preventing a partial scan from erasing accepted findings.

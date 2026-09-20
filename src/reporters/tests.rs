@@ -81,7 +81,7 @@ fn json_uses_versioned_schema_and_relative_paths() {
         .message
         .push_str("\u{202e}\u{200b}\u{2060}\u{feff}\u{00ad}\u{e0001}\u{e007f}");
     let json = render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
-    assert!(json.contains("\"schemaVersion\": \"2\""));
+    assert!(json.contains("\"schemaVersion\": \"3\""));
     assert!(json.contains("\"path\": \"steps/a.ts\""));
     assert!(json.contains("\"leftHandler\": \"() => '</script><script>bad()</script>'\""));
     assert!(!json.contains("/repo/steps"));
@@ -254,7 +254,7 @@ fn jsonl_emits_self_contained_findings_and_a_final_summary() {
     assert_eq!(finding["active"], true);
     assert_eq!(finding["contributesToThreshold"], true);
     assert_eq!(finding["evidence"]["matcherSimilarity"], 1.0);
-    assert_eq!(finding["fingerprint"].as_str().unwrap().len(), 16);
+    assert_eq!(finding["fingerprint"].as_str().unwrap().len(), 32);
     assert_eq!(
         finding["truncatedFields"],
         serde_json::json!(["evidence.comparison.leftHandler"])
@@ -414,10 +414,16 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
             ["uri"],
         "steps/a.ts"
     );
+    let fingerprint = sarif["runs"][0]["results"][0]["partialFingerprints"]
+        ["cukeDedupFingerprint/v3"]
+        .as_str()
+        .unwrap();
+    assert_eq!(fingerprint.len(), 32);
+    assert!(fingerprint
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
     assert!(
-        sarif["runs"][0]["results"][0]["partialFingerprints"]["cukeDedupFingerprint/v2"]
-            .as_str()
-            .is_some()
+        sarif["runs"][0]["results"][0]["partialFingerprints"]["cukeDedupFingerprint/v2"].is_null()
     );
 }
 

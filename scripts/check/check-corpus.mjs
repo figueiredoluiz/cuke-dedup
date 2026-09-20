@@ -88,16 +88,16 @@ try {
   assert.equal(sarif.runs[0].results.length, active.length);
   assert.equal(jsonlFindings.length, json.findings.length);
   assert.equal(jsonlSummary.type, "summary");
-  assert.equal(jsonlSummary.schemaVersion, "2");
+  assert.equal(jsonlSummary.schemaVersion, "3");
   assert.equal(typeof jsonlSummary.toolVersion, "string");
   assert.equal(jsonlSummary.recordCount, jsonl.length);
   assert.equal(jsonlSummary.truncated, false);
   assert.deepEqual(jsonlSummary.summary, json.summary);
   assert.ok(jsonlSummary.metrics.filesDiscovered > 0);
   for (const record of jsonlFindings) {
-    assert.equal(record.schemaVersion, "2");
+    assert.equal(record.schemaVersion, "3");
     assert.equal(typeof record.toolVersion, "string");
-    assert.match(record.fingerprint, /^[0-9a-f]{16}$/);
+    assert.match(record.fingerprint, /^[0-9a-f]{32}$/);
     assert.equal(typeof record.active, "boolean");
     assert.equal(typeof record.contributesToThreshold, "boolean");
     assert.equal(typeof record.primary.path, "string");

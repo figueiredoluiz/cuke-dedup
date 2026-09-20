@@ -58,7 +58,7 @@ pub(super) fn render_sarif_context_with_metadata(
                 "locations": [primary],
                 "relatedLocations": related,
                 "partialFingerprints": {
-                    "cukeDedupFingerprint/v2": crate::modes::finding_fingerprint(finding)
+                    "cukeDedupFingerprint/v3": crate::modes::finding_fingerprint(finding)
                 },
                 "properties": {
                     "suggestedAction": report_safe(&finding.suggested_action),

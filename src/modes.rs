@@ -1,9 +1,7 @@
 //! Changed-files and existing-findings baseline modes for incremental CI adoption.
 
 use crate::config::normalize_platform_path;
-use crate::model::{
-    stable_fingerprint, stable_fingerprint_parts, DefinitionComparison, Finding, Suppression,
-};
+use crate::model::{stable_fingerprint_parts, Finding, Suppression};
 use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -332,7 +330,7 @@ pub fn retain_changed_findings(findings: &mut Vec<Finding>, changed: &BTreeSet<P
 }
 
 /// Schema version of the compact, reviewable baseline format.
-pub const BASELINE_SCHEMA_VERSION: u32 = 2;
+pub const BASELINE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -493,39 +491,39 @@ fn apply_loaded_baseline(
 
 /// Returns a location-independent fingerprint for baseline comparison.
 pub fn finding_fingerprint(finding: &Finding) -> String {
+    let rule = finding.rule.to_string();
     if let Some(cluster) = &finding.evidence.cluster {
-        let rule = finding.rule.to_string();
         let mut fingerprints = cluster
             .definition_fingerprints
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
         fingerprints.sort_unstable();
-        return stable_fingerprint_parts(std::iter::once(rule.as_str()).chain(fingerprints));
+        return stable_fingerprint_parts(
+            ["finding-cluster", rule.as_str()]
+                .into_iter()
+                .chain(fingerprints),
+        );
     }
-    let semantic = finding
-        .evidence
-        .comparison
-        .as_ref()
-        .map(comparison_fingerprint_input)
-        .unwrap_or_else(|| {
-            format!(
-                "{}\u{0}{}\u{0}{}",
-                finding.message,
-                finding.evidence.matcher_difference,
-                finding.evidence.handler_evidence
-            )
-        });
-    stable_fingerprint(&format!("{}\u{0}{semantic}", finding.rule))
-}
-
-fn comparison_fingerprint_input(comparison: &DefinitionComparison) -> String {
-    let mut sides = [
-        comparison.left_fingerprint.clone(),
-        comparison.right_fingerprint.clone(),
-    ];
-    sides.sort();
-    sides.join("\u{0}")
+    if let Some(comparison) = &finding.evidence.comparison {
+        let mut sides = [
+            comparison.left_fingerprint.as_str(),
+            comparison.right_fingerprint.as_str(),
+        ];
+        sides.sort_unstable();
+        return stable_fingerprint_parts(
+            ["finding-comparison", rule.as_str()]
+                .into_iter()
+                .chain(sides),
+        );
+    }
+    stable_fingerprint_parts([
+        "finding-fallback",
+        rule.as_str(),
+        &finding.message,
+        &finding.evidence.matcher_difference,
+        &finding.evidence.handler_evidence,
+    ])
 }
 
 fn count_added(previous: &BTreeMap<String, usize>, current: &BTreeMap<String, usize>) -> usize {

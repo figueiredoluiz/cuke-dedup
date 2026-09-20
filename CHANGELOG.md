@@ -5,6 +5,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (reports and baselines):** semantic fingerprints now use the first 128 bits of SHA-256 instead of FNV-1a-64. JSON and JSONL reports use schema version `3`, SARIF publishes `cukeDedupFingerprint/v3`, and semantic baselines use version `3`. Existing version `1` or `2` baselines are rejected for comparison and can be regenerated in place with `--update-baseline`.
+
 ## [0.6.0] - 2026-09-18
 
 ### Added

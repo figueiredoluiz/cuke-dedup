@@ -23,7 +23,7 @@ Rule headings are bold cyan, paths are blue, error/warning labels are red/yellow
 
 ## JSON and HTML
 
-JSON schema version `2` contains:
+JSON schema version `3` contains:
 
 - Relative Unicode-aware source spans and severity.
 - Suppressions and semantic fingerprints.
@@ -43,7 +43,7 @@ byte-reproducible artifacts matter. The deterministic corpus census remains pres
 
 ## JSON Lines
 
-JSONL schema version `2` emits one compact record per finding and a final summary:
+JSONL schema version `3` emits one compact record per finding and a final summary:
 
 ```sh
 cuke-dedup . --reporters jsonl \
