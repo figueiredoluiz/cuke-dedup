@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "knownMissBaseline": 3,
   "minimumRecall": 0.6,
-  "minimumCases": 53,
+  "minimumCases": 56,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
@@ -695,12 +695,233 @@
       ]
     },
     {
+      "name": "duplicate-matcher-precision-requires-kind-text-and-flags",
+      "path": "duplicate-matcher-precision",
+      "expectedDefinitions": 24,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "other-steps.ts",
+          "primaryLine": 6,
+          "relatedLocations": [
+            "steps.ts:49"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 11,
+          "relatedLocations": [
+            "steps.ts:12"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 36,
+          "relatedLocations": [
+            "steps.ts:37"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps.ts:41"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 45,
+          "relatedLocations": [
+            "steps.ts:46"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 62,
+          "relatedLocations": [
+            "steps.ts:63"
+          ],
+          "cluster": false
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 17
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 21
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 25
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 29
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 53
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 57
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 11
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 36
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 40
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 45
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 62
+        }
+      ]
+    },
+    {
       "name": "empty-markdown-does-not-prove-unused-definitions",
       "path": "empty-markdown-dialect",
       "expectedDefinitions": 1,
       "expectedAbsent": [
         {
           "rule": "unused-definition"
+        }
+      ]
+    },
+    {
+      "name": "exact-group-cluster-boundary-splits-at-five-members",
+      "path": "exact-group-cluster-boundary",
+      "expectedDefinitions": 17,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 15,
+          "relatedLocations": [
+            "steps.ts:16"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 16,
+          "relatedLocations": [
+            "steps.ts:17"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 17,
+          "relatedLocations": [
+            "steps.ts:18"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 21,
+          "relatedLocations": [
+            "steps.ts:22",
+            "steps.ts:23",
+            "steps.ts:24",
+            "steps.ts:25"
+          ],
+          "cluster": {
+            "memberCount": 5,
+            "pairFindingsCollapsed": 4,
+            "membersTruncated": false
+          }
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 32,
+          "relatedLocations": [
+            "steps.ts:33",
+            "steps.ts:34",
+            "steps.ts:35",
+            "steps.ts:36"
+          ],
+          "cluster": {
+            "memberCount": 5,
+            "pairFindingsCollapsed": 4,
+            "membersTruncated": false
+          }
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps.ts:41"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 41,
+          "relatedLocations": [
+            "steps.ts:42"
+          ],
+          "cluster": false
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 22
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 23
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 24
         }
       ]
     },
@@ -1142,6 +1363,130 @@
             "the derrick swings to a first span",
             "the derrick swings to a second span"
           ]
+        }
+      ]
+    },
+    {
+      "name": "normalized-matcher-covers-four-axes-and-four-exclusions",
+      "path": "normalized-matcher-axes",
+      "expectedDefinitions": 24,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 12,
+          "relatedLocations": [
+            "steps.ts:13"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 17,
+          "relatedLocations": [
+            "steps.ts:18"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 22,
+          "relatedLocations": [
+            "steps.ts:23"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 26,
+          "relatedLocations": [
+            "steps.ts:27"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 51,
+          "relatedLocations": [
+            "steps.ts:52"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 56,
+          "relatedLocations": [
+            "steps.ts:57"
+          ],
+          "cluster": false
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 32
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 32
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 36
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 36
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 41
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 41
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 45
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 45
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 60
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 60
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 64
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.ts",
+          "primaryLine": 64
         }
       ]
     },
