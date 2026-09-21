@@ -21,6 +21,7 @@ pub use self::matcher::normalize_matcher;
 #[cfg(test)]
 use self::matcher::normalize_regular_expression;
 pub(crate) use self::matcher::rust_regex_expression;
+pub(crate) use self::matcher::semantic_regex_flags;
 use self::matcher::{matcher_value, normalize_matcher_with_flags};
 use self::matcher::{rust_regex_support, RegexSupport};
 use self::module_resolver::RegistrationResolver;

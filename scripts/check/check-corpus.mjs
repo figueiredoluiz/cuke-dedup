@@ -352,6 +352,20 @@ function findingMatches(finding, expected) {
   if (expected.messageIncludes && !finding.message.includes(expected.messageIncludes)) {
     return false;
   }
+  // Cluster evidence is the documented contract for groups past the pair/cluster boundary: one
+  // finding carrying the complete member count and how many pair findings it stands in for. Without
+  // this a cluster could report the wrong count, or lose the truncation signal, and the manifest
+  // would still match on rule and locations alone.
+  if (expected.cluster) {
+    const cluster = finding.evidence?.cluster;
+    if (!cluster) return false;
+    for (const [field, value] of Object.entries(expected.cluster)) {
+      if (cluster[field] !== value) return false;
+    }
+  }
+  if (expected.cluster === false && finding.evidence?.cluster) {
+    return false;
+  }
   if (expected.matchers) {
     const comparison = finding.evidence.comparison;
     if (!comparison) return false;

@@ -514,7 +514,12 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
             (
                 definition.matcher_kind,
                 definition.matcher.as_str(),
-                definition.matcher_flags.as_str(),
+                // Effective flags, not the raw string: `docs/rules.md` defines an exact duplicate
+                // as the same kind, source text and *effective* flags, and `g`/`y`/`d` do not
+                // change what a matcher accepts. Keying on the raw string classified `/x/` against
+                // `/x/g` as merely normalization-equivalent, which contradicted the documented
+                // contract.
+                crate::typescript::semantic_regex_flags(&definition.matcher_flags),
             ),
         ));
         classes.normalized_matcher.push(intern_class(

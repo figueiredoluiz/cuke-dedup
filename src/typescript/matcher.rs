@@ -220,7 +220,12 @@ pub(super) fn normalize_matcher_with_flags(
 /// at least as significant as `u`, which it implies. Leaving it out made `/x/v` normalize to the
 /// text of `/x/` and reported the two as equivalent. `g`, `y` and `d` affect only how a match is
 /// executed or reported, never which inputs match, so they stay out.
-fn semantic_regex_flags(flags: &str) -> String {
+/// The flags that change what a matcher accepts, in a fixed order.
+///
+/// `g`, `y` and `d` affect how a caller drives the regex, not the language it accepts, so two
+/// matchers differing only in those are the same matcher. `docs/rules.md` calls this the
+/// "effective" flag set and both the exact-duplicate class and normalization key on it.
+pub(crate) fn semantic_regex_flags(flags: &str) -> String {
     ['i', 'm', 's', 'u', 'v']
         .into_iter()
         .filter(|flag| flags.contains(*flag))
