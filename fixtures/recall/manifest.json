@@ -1456,7 +1456,7 @@
       "expectedDefinitions": 4,
       "expectedFindings": [
         {
-          "rule": "normalized-matcher",
+          "rule": "duplicate-matcher",
           "matchers": [
             "^the crate gauge is settled$",
             "^the crate gauge is settled$"
