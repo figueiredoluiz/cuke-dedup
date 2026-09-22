@@ -5,6 +5,16 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Fixed
+
+- Extraction of large generated bundles no longer takes minutes. Resolving each assignment to its
+  lexical scope followed the parse tree's ancestors, which tree-sitter answers by restarting from
+  the root, so a deeply nested minified file cost time quadratic in its nesting; and alias
+  propagation raised its property depth without bound when the alias graph closed a cycle, which
+  such files do. Scopes now resolve through a precomputed chain and propagation depth saturates at
+  the only threshold that affects the result. Findings are unchanged — three real bundles that did
+  not finish within minutes now extract in seconds with identical output.
+
 ## [0.7.0] - 2026-09-21
 
 ### Changed
