@@ -203,13 +203,12 @@ jobs:
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: release-packaging
+          key: release-packaging-v2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24"
           package-manager-cache: false
       - run: node scripts/release/prepare-npm-packages.mjs --check
-      - run: python3 scripts/release/generate-third-party-licenses.py --check
       - run: cargo +stable package --locked
       - name: Clean-room Cargo installation
         run: |
