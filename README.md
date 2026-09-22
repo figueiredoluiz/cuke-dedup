@@ -209,8 +209,7 @@ or its maintainers.
 
 Release archives include SHA-256 checksums, keyless Sigstore bundles, and GitHub build provenance.
 See [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases) and
-[CHANGELOG.md](CHANGELOG.md) for published versions and release notes. Runtime dependency licenses
-are listed in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+[CHANGELOG.md](CHANGELOG.md) for published versions and release notes.
 
 ```sh
 gh attestation verify <archive> \

@@ -21,7 +21,6 @@ include = [
     "/LICENSE",
     "/CHANGELOG.md",
     "/SECURITY.md",
-    "/THIRD-PARTY-LICENSES.md",
 ]
 
 [lib]

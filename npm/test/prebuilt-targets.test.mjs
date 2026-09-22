@@ -40,7 +40,7 @@ test("prebuilt manifest, platform packages, and optional dependencies do not dri
     }
     assert.deepEqual(
       platformPackage.files,
-      [`bin/${target.binaryName}`, "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+      [`bin/${target.binaryName}`, "README.md", "LICENSE"],
     );
 
     const readme = renderPlatformReadme(platformPackage);

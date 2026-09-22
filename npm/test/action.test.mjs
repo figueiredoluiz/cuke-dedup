@@ -275,25 +275,22 @@ test("action pins provenance verification to the tagged hosted build", () => {
 });
 
 test("action accepts only the exact release archive structure", () => {
-  validateArchiveMemberNames(
-    "cuke-dedup\nLICENSE\nTHIRD-PARTY-LICENSES.md\n",
-    "cuke-dedup",
-  );
+  validateArchiveMemberNames("cuke-dedup\nLICENSE\n", "cuke-dedup");
   assert.throws(
-    () => validateArchiveMemberNames("../../cuke-dedup\nLICENSE\nTHIRD-PARTY-LICENSES.md\n", "cuke-dedup"),
+    () => validateArchiveMemberNames("../../cuke-dedup\nLICENSE\n", "cuke-dedup"),
     /unexpected release archive members/,
   );
   assert.throws(
-    () => validateArchiveMemberNames("cuke-dedup\nLICENSE\n", "cuke-dedup"),
+    () => validateArchiveMemberNames("cuke-dedup\n", "cuke-dedup"),
     /unexpected release archive members/,
   );
   assert.throws(
-    () => validateArchiveMemberNames("LICENSE\ncuke-dedup\nTHIRD-PARTY-LICENSES.md\n", "cuke-dedup"),
+    () => validateArchiveMemberNames("LICENSE\ncuke-dedup\n", "cuke-dedup"),
     /unexpected release archive members/,
   );
   assert.throws(
     () => validateArchiveMemberNames(
-      "cuke-dedup\nLICENSE\nTHIRD-PARTY-LICENSES.md\nextra\n",
+      "cuke-dedup\nLICENSE\nextra\n",
       "cuke-dedup",
     ),
     /unexpected release archive members/,

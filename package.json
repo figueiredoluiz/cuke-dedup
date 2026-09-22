@@ -14,8 +14,7 @@
     "docs/",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md",
-    "THIRD-PARTY-LICENSES.md"
+    "SECURITY.md"
   ],
   "scripts": {
     "test": "node --test npm/test/*.test.mjs",

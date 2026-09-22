@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 
 
-LEGAL_FILES = ["LICENSE", "THIRD-PARTY-LICENSES.md"]
+LEGAL_FILES = ["LICENSE"]
 
 
 def verify_and_extract(archive: Path, checksum: Path, destination: Path) -> Path:
