@@ -20,6 +20,23 @@ pub(super) fn push_named_children_reverse<'tree>(node: Node<'tree>, stack: &mut 
     stack[start..].reverse();
 }
 
+/// Pushes a node's named children tagged with an enclosing-scope id, in source order.
+///
+/// Walks that resolve lexical bindings carry the nearest enclosing scope alongside each node
+/// instead of asking tree-sitter for ancestors: `Node::parent` restarts its search from the tree
+/// root, so an ancestor walk per visited node is quadratic in nesting depth, which generated
+/// one-expression bundles reach in practice.
+pub(super) fn push_named_children_reverse_scoped<'tree>(
+    node: Node<'tree>,
+    scope: usize,
+    stack: &mut Vec<(Node<'tree>, usize)>,
+) {
+    let mut cursor = node.walk();
+    let start = stack.len();
+    stack.extend(node.named_children(&mut cursor).map(|child| (child, scope)));
+    stack[start..].reverse();
+}
+
 /// Returns the module specifier of an import or export statement.
 pub(super) fn import_module<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     string_literal(node.child_by_field_name("source")?, source)

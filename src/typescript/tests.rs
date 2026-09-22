@@ -3751,6 +3751,115 @@ Then('namespace assertion', ({{ state }}) => testApi.expect(state).toBe('ready')
     assert_eq!(assertion_events("testApi.expect = custom;"), 0);
 }
 
+/// A write resolves through the chain of enclosing scopes, not only the innermost and the module.
+///
+/// The receiver sits one block below the block that binds `testApi`, so resolving it correctly
+/// requires walking the enclosing-scope chain past a scope that binds nothing. The discriminating
+/// shape is that middle binding: with it, the write names a local and module trust survives;
+/// without it, the same write reaches the module and revokes trust. A scope chain that jumped
+/// straight to the module would answer the shadowed case wrongly.
+#[test]
+fn nested_block_writes_resolve_to_the_shadowing_binding_not_the_namespace() {
+    let assertion_events = |binding: &str| {
+        let definitions = extract_ts(&format!(
+            r#"
+import * as testApi from '@playwright/test';
+function helper() {{
+  {binding}
+  {{
+    testApi.expect = custom;
+  }}
+}}
+Then('namespace assertion', ({{ state }}) => testApi.expect(state).toBe('ready'));
+"#
+        ));
+        assert_eq!(definitions.len(), 1, "{binding}");
+        definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .count()
+    };
+
+    assert_eq!(assertion_events("let testApi = other;"), 1);
+    assert_eq!(assertion_events("let unrelated = other;"), 0);
+}
+
+/// Assertion-alias discovery stays linear across deep scopes dense with assignment edges.
+///
+/// Every assignment resolves its receiver to an enclosing binding. Resolving that through the
+/// parse tree's ancestors is quadratic in nesting depth, because tree-sitter restarts each parent
+/// lookup from the root; deeply nested generated bundles reach that cost in practice. The
+/// discriminating shape is the combination the naive walk is worst on: deep nesting, wide sibling
+/// runs, and an assignment on every line. One statement per line keeps the mean line short, so the
+/// content filter would analyze rather than skip a file of this shape. Pre-fix this effectively
+/// hangs; the assertions only check that it terminates with the expected extraction.
+#[test]
+fn alias_provenance_resolves_deep_scopes_with_many_assignment_edges_without_quadratic_work() {
+    let mut source = String::from("import { Given } from '@cucumber/cucumber';\n");
+    for depth in 0..40 {
+        source.push_str(&format!("function level{depth}() {{\n"));
+        for index in 0..50 {
+            source.push_str(&format!("var a{index} = b{index};\n"));
+            source.push_str(&format!("a{index} = b{index};\n"));
+        }
+    }
+    source.push_str("Given('deep', () => work());\n");
+    source.push_str(&"}\n".repeat(40));
+
+    let definitions = extract_ts(&source);
+    assert_eq!(definitions.len(), 1);
+}
+
+/// Alias propagation terminates when the alias graph closes a positive-depth cycle.
+///
+/// An assignment through a dynamically-keyed subscript records a property-depth edge, and reused
+/// names close those edges into a cycle whose depth rises on every lap. Because a write's effect on
+/// trust is decided once its depth reaches the copy-cross ceiling, propagation saturates depth
+/// there; without that, a graph that closes such a cycle raises the depth forever and never
+/// finishes. The body below is reduced by delta-debugging from the `jquery-3.5.1.min.js` selector
+/// engine — the smallest fragment of it that still hangs — because the trigger is a property of the
+/// whole graph, not of any one statement: `while(a=a[l])` self-references `a` while the nested
+/// cache assignments reach it through subscripts on the same name. Isolated pieces of it do not
+/// reproduce, so the fragment is kept whole; the assertion only checks that extraction terminates
+/// with the step still analyzed.
+#[test]
+fn alias_propagation_terminates_on_cyclic_subscript_reassignments() {
+    let source = r#"
+import { expect } from 'chai';
+function child(a, c, e, f, h, k, l, m, o, p, r, s, u, x, y, S) {
+  d = !1;
+  if (c) {
+    if (y) {
+      while (l) {
+        a = e;
+        while (a = a[l]) if (x ? a.nodeName.toLowerCase() === f : 1 === a.nodeType) return !1;
+        u = l = "only" === h && !u && "nextSibling";
+      }
+      return !0;
+    }
+    if (u = [m ? c.firstChild : c.lastChild], m && p) {
+      d = (s = (r = (i = (o = (a = c)[S] || (a[S] = {}))[a.uniqueID] || (o[a.uniqueID] = {}))[h] || [])[0] === k && r[1]) && r[2];
+    }
+  }
+}
+Then('subscript cycle', ({ state }) => expect(state).toBe('ready'));
+"#;
+
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(
+        definitions[0]
+            .handler
+            .behavior_signature
+            .iter()
+            .filter(|event| event.starts_with("assert:"))
+            .count(),
+        1
+    );
+}
+
 /// A matcher alias only carries writes back to its namespace when it really aliases a matcher.
 ///
 /// `const { not = fallback } = testApi` binds the matcher container, so replacing a matcher

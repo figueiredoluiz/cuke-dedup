@@ -16,6 +16,17 @@ use tree_sitter::Node;
 // exactly as Jest's `.toBe` is. Only the provenance of the factory is listed here, which is why a
 // runner is added by name rather than by dialect. Anything this list cannot name is declared
 // through the `assertionModules` configuration key.
+/// Property depth a write must reach past a copied slot before it crosses to the copied object.
+///
+/// A copy shares its source's property *values*, so replacing a slot on the copy changes nothing
+/// the source can observe, while a write that reaches past the copy's own slots does reach it. Two
+/// levels is the whole of that distinction: at this depth or beyond, a copied edge is always
+/// crossed, so propagation depth has no effect on the result once it reaches here. The propagation
+/// loop saturates depth at this ceiling, which both keeps the comparison meaningful and bounds the
+/// work — an alias graph with a positive-delta cycle would otherwise raise the depth without limit
+/// and never terminate on inputs, such as minified bundles, that close such a cycle.
+const COPY_CROSS_DEPTH: usize = 2;
+
 const ASSERTION_MODULES: [&str; 7] = [
     "@playwright/test",
     "playwright/test",
@@ -45,13 +56,26 @@ impl AssertionBindings {
         // A project-declared module is trusted exactly like a recognized package: the analyzer
         // cannot see through a local re-export, so the declaration is the evidence.
         facade_modules.extend(configured_modules.iter().cloned());
-        let (scopes, scope_ranges) = collect_binding_scopes(root, source);
+        let (scopes, scope_ranges, scope_parents) = collect_binding_scopes(root, source);
         let shadow_ranges = collect_scoped_bindings(scopes.clone(), scope_ranges);
         let require_shadowed =
             module_runtime_binding_exists(root, source, "require", &shadow_ranges);
-        let alias_writes = namespace_alias_writes(root, source, &scopes, false, require_shadowed);
-        let mutated_matcher_factories =
-            namespace_alias_writes(root, source, &scopes, true, require_shadowed);
+        let alias_writes = namespace_alias_writes(
+            root,
+            source,
+            &scopes,
+            &scope_parents,
+            false,
+            require_shadowed,
+        );
+        let mutated_matcher_factories = namespace_alias_writes(
+            root,
+            source,
+            &scopes,
+            &scope_parents,
+            true,
+            require_shadowed,
+        );
         let mut bindings = Self::default();
         let mut shadowed = BTreeSet::new();
         let mut factory_writes = BTreeSet::new();
@@ -695,28 +719,39 @@ fn module_runtime_binding_exists(
 
 type BindingScopes = BTreeMap<usize, BTreeSet<String>>;
 type ScopeRanges = BTreeMap<usize, (usize, usize)>;
+/// Nearest enclosing local scope for every local-scope node; scopes at top level map to the
+/// root's id. Built on the same walk that collects bindings, so the chain and the binding map
+/// agree on which nodes count as scopes.
+type ScopeParents = BTreeMap<usize, usize>;
 
 fn namespace_alias_writes(
     root: Node<'_>,
     source: &[u8],
     scopes: &BindingScopes,
+    scope_parents: &ScopeParents,
     matcher_members: bool,
     require_shadowed: bool,
 ) -> BTreeSet<String> {
     // A may-alias graph only removes trust; it never promotes an alias to an assertion
     // factory. Keep prior assignments conservatively and identify lexical bindings, not
     // spellings, so a shadowed local receiver cannot contaminate a module namespace.
-    let key = |name: &str, mut node: Node<'_>| loop {
-        if scopes
-            .get(&node.id())
-            .is_some_and(|names| names.contains(name))
-        {
-            return (node.id(), name.to_owned());
+    //
+    // Resolution follows the precomputed scope chain rather than the node's ancestors: every id
+    // `scopes` can hold is a local-scope node, so the chain visits exactly the ancestors the
+    // lookup can hit, without paying for `Node::parent`'s root-restarting search on each step.
+    // The chain starts at the enclosing scope carried by the walk. A lookup target is never
+    // itself a scope that could bind the name sooner: aliasing targets are identifiers, patterns
+    // and member expressions, and the require lookup only proceeds for a `require(...)` call
+    // node, so a scope-kind target — an arrow initializer, say — is rejected by `required_module`
+    // before its bindings could matter.
+    let key = |name: &str, mut scope: usize| {
+        while scope != root.id() {
+            if scopes.get(&scope).is_some_and(|names| names.contains(name)) {
+                return (scope, name.to_owned());
+            }
+            scope = scope_parents[&scope];
         }
-        let Some(parent) = node.parent() else {
-            return (root.id(), name.to_owned());
-        };
-        node = parent;
+        (root.id(), name.to_owned())
     };
     let mut required_aliases = BTreeMap::new();
     // Each edge records how many property levels the local sits below its owner, and whether the
@@ -726,8 +761,8 @@ fn namespace_alias_writes(
     // makes a depth-1 write on `negated` a depth-2 write on `copy`.
     let mut aliases = BTreeMap::<_, BTreeSet<(_, usize, bool)>>::new();
     let mut writes = BTreeMap::<_, usize>::new();
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
+    let mut stack = vec![(root, root.id())];
+    while let Some((node, scope)) = stack.pop() {
         let edge = match node.kind() {
             "variable_declarator" => node
                 .child_by_field_name("name")
@@ -781,7 +816,7 @@ fn namespace_alias_writes(
                 // the factory as it is of mutating a matcher below it, so this link is not
                 // restricted to the matcher pass. Respect both module-level replacement and
                 // lexical shadowing of require.
-                if !require_shadowed && key("require", required).0 == root.id() {
+                if !require_shadowed && key("require", scope).0 == root.id() {
                     if let Some(module) = required_module(required, source)
                         .filter(|module| ASSERTION_MODULES.contains(module))
                     {
@@ -790,7 +825,7 @@ fn namespace_alias_writes(
                             .map(|local| (local, false))
                             .chain(shallow_locals.keys().map(|local| (local, true)))
                         {
-                            let local = key(local, left);
+                            let local = key(local, scope);
                             let owner = required_aliases
                                 .entry(module)
                                 .or_insert_with(|| local.clone());
@@ -832,8 +867,8 @@ fn namespace_alias_writes(
                     )
                 {
                     for (owner, owner_delta) in &owners {
-                        aliases.entry(key(local, left)).or_default().insert((
-                            key(owner, right),
+                        aliases.entry(key(local, scope)).or_default().insert((
+                            key(owner, scope),
                             local_delta + owner_delta,
                             copied,
                         ));
@@ -852,19 +887,32 @@ fn namespace_alias_writes(
             );
             for (name, depth) in receivers {
                 writes
-                    .entry(key(&name, node))
+                    .entry(key(&name, scope))
                     .and_modify(|deepest| *deepest = (*deepest).max(depth))
                     .or_insert(depth);
             }
         }
-        super::ast::push_named_children_reverse(node, &mut stack);
+        let scope = if is_local_scope(node) {
+            node.id()
+        } else {
+            scope
+        };
+        super::ast::push_named_children_reverse_scoped(node, scope, &mut stack);
     }
     // Record the deepest write already propagated from each binding rather than merely that it was
     // seen. A binding reached first by a shallow path and later by a deeper one must be revisited,
     // or the answer would depend on the order the file happens to be walked in.
     let mut deepest = BTreeMap::<_, usize>::new();
     let mut modules = BTreeSet::new();
-    let mut pending: Vec<_> = writes.into_iter().collect();
+    // Depth saturates at `COPY_CROSS_DEPTH`: it is only ever compared against that ceiling, so a
+    // deeper reach decides nothing a reach at the ceiling has not already decided. Saturating it
+    // bounds every binding to at most three admissions and guarantees termination even when the
+    // alias graph closes a positive-delta cycle, as minified bundles do through dynamically-keyed
+    // subscript reassignments among reused names.
+    let mut pending: Vec<_> = writes
+        .into_iter()
+        .map(|(binding, depth)| (binding, depth.min(COPY_CROSS_DEPTH)))
+        .collect();
     while let Some((binding, depth)) = pending.pop() {
         if deepest
             .get(&binding)
@@ -881,24 +929,32 @@ fn namespace_alias_writes(
                 // Replacing a slot on a copy changes nothing the copied object can observe, so a
                 // write has to reach past that slot before it crosses. Without this, one
                 // `copy.not = x` would revoke trust for every assertion the module reaches.
-                if *copied && depth < 2 {
+                if *copied && depth < COPY_CROSS_DEPTH {
                     continue;
                 }
-                pending.push((source.clone(), depth + delta));
+                pending.push((source.clone(), (depth + delta).min(COPY_CROSS_DEPTH)));
             }
         }
     }
     modules
 }
 
-fn collect_binding_scopes(root: Node<'_>, source: &[u8]) -> (BindingScopes, ScopeRanges) {
+fn collect_binding_scopes(
+    root: Node<'_>,
+    source: &[u8],
+) -> (BindingScopes, ScopeRanges, ScopeParents) {
     let mut scopes = BTreeMap::<usize, BTreeSet<String>>::new();
     let mut scope_ranges = BTreeMap::new();
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
-        if is_local_scope(node) {
+    let mut scope_parents = BTreeMap::new();
+    let mut stack = vec![(root, root.id())];
+    while let Some((node, enclosing)) = stack.pop() {
+        let scope = if is_local_scope(node) {
             scope_ranges.insert(node.id(), (node.start_byte(), node.end_byte()));
-        }
+            scope_parents.insert(node.id(), enclosing);
+            node.id()
+        } else {
+            enclosing
+        };
         match node.kind() {
             "function_declaration"
             | "generator_function_declaration"
@@ -1008,9 +1064,9 @@ fn collect_binding_scopes(root: Node<'_>, source: &[u8]) -> (BindingScopes, Scop
             }
             _ => {}
         }
-        super::ast::push_named_children_reverse(node, &mut stack);
+        super::ast::push_named_children_reverse_scoped(node, scope, &mut stack);
     }
-    (scopes, scope_ranges)
+    (scopes, scope_ranges, scope_parents)
 }
 
 fn collect_scoped_bindings(
