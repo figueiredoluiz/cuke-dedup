@@ -346,6 +346,7 @@ fn is_call_callee(prefix: &[u8], from: usize, angles: &BTreeMap<usize, usize>) -
 fn angle_bracket_pairs(prefix: &[u8]) -> BTreeMap<usize, usize> {
     let mut unclosed = Vec::new();
     let mut pairs = BTreeMap::new();
+    let mut braces = 0_usize;
     for (index, byte) in prefix.iter().enumerate() {
         match byte {
             b'<' => unclosed.push(index),
@@ -355,9 +356,15 @@ fn angle_bracket_pairs(prefix: &[u8]) -> BTreeMap<usize, usize> {
                     pairs.insert(start, index);
                 }
             }
+            // A brace is not itself a boundary: `Given<{ value: string }>(...)` puts an object
+            // type inside the type argument list, so treating `{` as the end of a statement would
+            // abandon a list that does close.
+            b'{' => braces += 1,
+            b'}' => braces = braces.saturating_sub(1),
             // An unbalanced `<` before a statement boundary was a comparison, not a type argument
-            // list, so everything still open is abandoned.
-            b';' | b'{' | b'}' => unclosed.clear(),
+            // list, so everything still open is abandoned. Inside braces a `;` separates members
+            // of an object type rather than ending a statement.
+            b';' if braces == 0 => unclosed.clear(),
             _ => {}
         }
     }
@@ -860,6 +867,12 @@ mod tests {
             // punctuation, so pairing it with the `<` would end the type list early.
             "Given<() => void>('a step', () => work());",
             "Given<Array<() => void>>('a step', () => work());",
+            // Object types inside a type argument list: the braces belong to the type, not to a
+            // statement, and a `;` between members is a separator rather than a boundary.
+            "Given<{ value: string }>('a step', () => work());",
+            "Given<{ value: { nested: string } }>('a step', () => work());",
+            "Given<{ value: string; other: number }>('a step', () => work());",
+            "Given<Record<string, { value: string }>>('a step', () => work());",
         ] {
             let source = format!("{filler}{wrapped}{filler}");
             assert_eq!(classify(source.as_bytes(), &[]), None, "{wrapped}");
