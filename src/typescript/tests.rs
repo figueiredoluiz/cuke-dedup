@@ -4007,3 +4007,49 @@ Given('third', (page, other) => { const alias = other; alias.goto('/'); });
         definitions[2].handler.alpha_normalized
     );
 }
+
+/// A string literal cannot forge sibling AST structure into an equal fingerprint.
+///
+/// `serialize_ast` frames nodes with `(`, `)`, spaces and `:` and embeds string content raw, so in
+/// the abstract the flat serialization is ambiguous. It is safe in practice only because the quote
+/// and backslash a forgery would need to reproduce a string wrapper are tokenized as
+/// `escape_sequence` nodes rather than fragment text — so a string built to look like two arguments
+/// stays distinct from two real arguments. This pins that separation; a tokenizer change that
+/// stopped splitting on escapes would collapse the two and this test would fail.
+#[test]
+fn a_string_literal_does_not_forge_sibling_structure_into_an_equal_fingerprint() {
+    let two_args = extract_ts(r#"Given('two args', () => { g("m", "n"); });"#);
+    let forged_single = extract_ts(
+        r#"Given('forged', () => { g("m \":\") ,:, (string \":\" string_fragment:n"); });"#,
+    );
+    assert_eq!(two_args.len(), 1);
+    assert_eq!(forged_single.len(), 1);
+    assert_ne!(
+        two_args[0].handler.alpha_normalized,
+        forged_single[0].handler.alpha_normalized,
+    );
+}
+
+/// Assertion-event components escape their delimiters, so a computed key cannot forge a chain.
+///
+/// A behaviour event frames the assertion chain with `#` and `:`. `encode_event_component` escapes
+/// those inside each name, so a computed member whose key *contains* a delimiter cannot be read as
+/// the structure that delimiter denotes. `['not.toBe']` is one method named `not.toBe`, distinct
+/// from `.not.toBe` (a `not` modifier on method `toBe`); a plain computed key equal to a dotted one
+/// stays identical. The escaping path had no coverage before this test.
+#[test]
+fn assertion_event_components_escape_delimiters_so_computed_keys_do_not_forge_chains() {
+    let dotted = extract_ts("Then('h', ({ state }) => expect(state).not.toBe('x'));");
+    let computed_same = extract_ts("Then('h', ({ state }) => expect(state)['not'].toBe('x'));");
+    let computed_delimited =
+        extract_ts("Then('h', ({ state }) => expect(state)['not.toBe']('x'));");
+    assert_eq!(
+        dotted[0].handler.behavior_signature,
+        computed_same[0].handler.behavior_signature,
+    );
+    assert_ne!(
+        dotted[0].handler.behavior_signature,
+        computed_delimited[0].handler.behavior_signature,
+    );
+    assert!(computed_delimited[0].handler.behavior_signature[0].contains("not\\.toBe"));
+}

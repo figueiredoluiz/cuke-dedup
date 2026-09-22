@@ -20,15 +20,15 @@ resource limits keep failures visible and bound the work performed.
   references remain usable for matcher and usage rules but are not compared by name.
 - Malformed JavaScript and TypeScript fail closed. Unsupported regular-expression constructs warn;
   malformed matcher escapes are operational errors.
+- Lowercase `given`/`when`/`then` are recognised only through a resolved import (for example
+  `const { given } = createBdd(test)`), never as ambient globals. A bare lowercase call with no
+  import registers nothing, so an unrelated lowercase helper is not mistaken for a step. Name it in
+  the `registrations` configuration (see `configuration.md`) to enable it as a global registration.
 - One analysis root is one corpus. Analyze independent monorepo packages separately.
 - Regular expressions are matched against feature steps but are never reversed into invented
   overlap witnesses.
 - Bounded fuzzy indexes preserve a deterministic sample in highly repetitive vocabularies but do
   not promise every possible pair after a work limit is reached.
-- A module-scoped constant declared *after* the registrations that read it is not resolved, even
-  though the handler body runs later and the value is initialized by then. Declaration order is the
-  conservative rule shared with handler-local constants, where a reference before the declaration is
-  a temporal-dead-zone error. The effect is a missed duplicate, never an invented one.
 - A handler produced by calling a generator function, such as
   `Given('a step', (function* () { … })())`, is not compared. Calling a generator returns a
   suspended object and never runs the body, so the registered handler is that object rather than a

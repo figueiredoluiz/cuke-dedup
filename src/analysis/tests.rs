@@ -1726,6 +1726,78 @@ fn module_scoped_constants_reach_the_handler_fingerprint() {
     );
 }
 
+/// A module constant declared after the registrations that read it still resolves.
+///
+/// A handler is a deferred callback: by the time it runs, the module has finished initializing, so
+/// a later-declared module constant holds its value. Declaration order is a temporal-dead-zone rule
+/// for a synchronous handler body, not for a value read from an enclosing scope. Same-value
+/// later-declared constants therefore collapse into one handler; conflicting later-declared values
+/// stay distinct, exactly as a declared-before pair does. Reverting the enclosing-scope exemption
+/// in `LocalConstants::binding` drops the same-value finding, which is the mutation this pins.
+#[test]
+fn module_constants_declared_after_the_registrations_still_resolve() {
+    let (_directory, config) = config();
+    let rules = |left_name: &str, right_name: &str, declarations: &str| {
+        let extracted = definitions(&format!(
+            "Then('the fore gauge is settled', () => {{ expect(gauge()).toBe({left_name}); }});\n\
+             Then('the aft gauge is settled', () => {{ expect(gauge()).toBe({right_name}); }});\n\
+             {declarations}"
+        ));
+        assert_eq!(extracted.len(), 2);
+        let mut rules: Vec<Rule> = analyze(extracted, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| matches!(rule, Rule::DuplicateHandler))
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    assert_eq!(
+        rules("AFT_A", "AFT_B", "const AFT_A = 1;\nconst AFT_B = 1;"),
+        vec![Rule::DuplicateHandler]
+    );
+    // Opposite-answer control: conflicting later-declared values must not collapse.
+    assert_eq!(
+        rules("DIF_A", "DIF_B", "const DIF_A = 1;\nconst DIF_B = 2;"),
+        Vec::<Rule>::new()
+    );
+}
+
+/// A constant does not resolve into a member property that shares its name.
+///
+/// `foo` and `bar` are module constants of the same value, but `obj.foo` and `obj.bar` are member
+/// accesses, not references to those bindings, so neither constant's value substitutes into the
+/// property. The two assertion subjects therefore stay distinct — resolving the property through
+/// the constant would collapse them and invent an equivalence between handlers reading different
+/// properties. The observable is `behavior_signature`, whose assert subject carries the structural
+/// property; the constant values never reach `alpha_normalized`, which is why an earlier probe that
+/// watched a `duplicate-handler` finding was invalid. Adding `property_identifier` to the
+/// constant-substitution gate in `serialize_ast` collapses the two subjects, which is the
+/// conflation this pins against.
+#[test]
+fn a_constant_does_not_resolve_into_a_same_named_member_property() {
+    let extracted = definitions(
+        "const foo = 1;\nconst bar = 1;\n\
+         Then('the fore probe reads foo', () => { expect(obj.foo).toBe('ready'); });\n\
+         Then('the aft probe reads bar', () => { expect(obj.bar).toBe('ready'); });",
+    );
+    assert_eq!(extracted.len(), 2);
+    // Both assertions resolved with a member subject.
+    assert!(extracted.iter().all(|definition| {
+        definition.handler.behavior_signature.len() == 1
+            && definition.handler.behavior_signature[0].starts_with("assert:expect#toBe:")
+    }));
+    // Distinct properties despite equal-valued same-named constants: the value is not substituted.
+    assert_ne!(
+        extracted[0].handler.behavior_signature,
+        extracted[1].handler.behavior_signature,
+    );
+}
+
 #[test]
 fn called_local_functions_contribute_their_assertions_to_the_handler() {
     let (_directory, config) = config();

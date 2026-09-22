@@ -771,6 +771,10 @@ struct LocalConstant {
 #[derive(Default)]
 struct LocalConstants {
     bindings: BTreeMap<String, Vec<LocalConstant>>,
+    /// Byte span of the handler these constants were collected for. A binding whose scope encloses
+    /// this span belongs to a scope outer to the handler, so the handler — a deferred callback —
+    /// reads it after that scope has finished executing, regardless of textual declaration order.
+    handler_span: (usize, usize),
 }
 
 impl LocalConstants {
@@ -808,7 +812,10 @@ impl LocalConstants {
         source: &[u8],
         declared: &BTreeMap<String, String>,
     ) -> Self {
-        let mut constants = Self::default();
+        let mut constants = Self {
+            handler_span: (handler.start_byte(), handler.end_byte()),
+            ..Self::default()
+        };
         let mut ancestor = handler.parent();
         while let Some(node) = ancestor {
             if matches!(
@@ -1164,7 +1171,18 @@ impl LocalConstants {
                     rank(right).cmp(&rank(left))
                 })
             })
-            .filter(|binding| binding.declaration_start <= use_site.start_byte())
+            .filter(|binding| {
+                // Declaration order gates a handler-local binding, where the body runs
+                // synchronously and a reference before the declaration is a temporal-dead-zone
+                // error. A binding whose scope encloses the whole handler is outer to it — module
+                // scope, or an enclosing function — and the deferred handler runs only after that
+                // scope has fully executed, so a later-declared value is initialized by then and
+                // resolves regardless of textual order.
+                let (handler_start, handler_end) = self.handler_span;
+                let encloses_handler =
+                    binding.scope_start <= handler_start && binding.scope_end >= handler_end;
+                encloses_handler || binding.declaration_start <= use_site.start_byte()
+            })
     }
 }
 

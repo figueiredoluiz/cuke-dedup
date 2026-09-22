@@ -35,3 +35,17 @@ Given("the alpha panel shows its tag", () => expect(panel()).toBe(ALPHA_TAG));
 const SHARED_STOP = 1;
 Given("the omega brake holds a local stop", () => { const SHARED_STOP = 2; expect(brake()).toBe(SHARED_STOP); });
 Given("the omega brake holds a module stop", () => expect(brake()).toBe(SHARED_STOP));
+
+// A module constant declared *after* the registrations that read it still resolves: a handler is a
+// deferred callback, so the module has finished initializing by the time it runs. Same value
+// collapses just as a declared-before pair does.
+Given("the delta valve settles at its early mark", () => expect(valve()).toBe(DELTA_EARLY));
+Given("the delta valve settles at its late mark", () => expect(valve()).toBe(DELTA_LATE));
+const DELTA_EARLY = 1;
+const DELTA_LATE = 1;
+
+// Conflicting later-declared values stay distinct, exactly as declared-before conflicts do.
+Given("the epsilon lever locks at its low notch", () => expect(lever()).toBe(EPSILON_LOW));
+Given("the epsilon lever locks at its high notch", () => expect(lever()).toBe(EPSILON_HIGH));
+const EPSILON_LOW = 1;
+const EPSILON_HIGH = 2;

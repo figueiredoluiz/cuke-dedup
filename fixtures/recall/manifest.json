@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "knownMissBaseline": 3,
   "minimumRecall": 0.6,
-  "minimumCases": 56,
+  "minimumCases": 57,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
@@ -678,6 +678,20 @@
       ]
     },
     {
+      "name": "local-commonjs-barrel-reexport",
+      "path": "local-cjs-barrel",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cjs barrel registration",
+            "cjs barrel registration"
+          ]
+        }
+      ]
+    },
+    {
       "name": "direct-and-fluent-action-equivalence",
       "path": "direct-fluent-action",
       "expectedDefinitions": 2,
@@ -1262,7 +1276,7 @@
     {
       "name": "module-constant-values-reach-the-fingerprint",
       "path": "module-constant-values",
-      "expectedDefinitions": 20,
+      "expectedDefinitions": 24,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1312,9 +1326,30 @@
             "the top slot is pressed first",
             "the top slot is pressed second"
           ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the delta valve settles at its early mark",
+            "the delta valve settles at its late mark"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the delta valve settles at its early mark",
+            "the delta valve settles at its late mark"
+          ]
         }
       ],
       "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the epsilon lever locks at its high notch",
+            "the epsilon lever locks at its low notch"
+          ]
+        },
         {
           "rule": "duplicate-handler",
           "matchers": [

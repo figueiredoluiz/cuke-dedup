@@ -1,7 +1,7 @@
 use super::ast::{
     call_string_argument, import_has_runtime_bindings, import_module, is_star_export,
     is_top_level_variable, is_type_only_declaration, is_type_only_specifier,
-    push_named_children_reverse,
+    push_named_children_reverse, string_literal,
 };
 use super::frameworks::{
     framework_for_module, is_supported_module, registration_exports_for_framework,
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
 const MAX_REEXPORT_DEPTH: usize = 16;
-type CachedExports = (Option<RegistrationExports>, Framework);
+type CachedExports = (Option<RegistrationExports>, Framework, bool);
 
 #[derive(Debug, Clone)]
 struct Reexport {
@@ -35,6 +35,9 @@ struct ModuleFacts {
     reexports: Vec<Reexport>,
     direct_exports: RegistrationExports,
     framework: Framework,
+    /// A CommonJS export assignment used a form the analyzer does not model, so the resolved
+    /// exports may be a subset of what the module registers.
+    exports_incomplete: bool,
 }
 
 #[derive(Default)]
@@ -51,6 +54,9 @@ struct ResolvedExports {
     exports: Option<RegistrationExports>,
     framework: Framework,
     cacheable: bool,
+    /// A resolved module (or one it re-exports) declared exports in a form the analyzer does not
+    /// model, so `exports` may be a subset of the real registration set.
+    exports_incomplete: bool,
 }
 
 #[derive(Debug)]
@@ -105,18 +111,26 @@ impl RegistrationResolver {
             &mut self.state,
             0,
         ) {
-            Ok(resolved) => Ok(RegistrationOutcome {
-                resolution: resolved.exports.map(|exports| RegistrationResolution {
-                    module_path: self
-                        .project
-                        .resolve(importer, specifier, &boundary)
-                        .ok()
-                        .flatten(),
-                    exports,
-                    framework: resolved.framework,
-                }),
-                reason: None,
-            }),
+            Ok(resolved) => {
+                // A module that resolved but declared some exports in an unmodeled CommonJS form
+                // may register more than the analyzer could see. Report it so the corpus is marked
+                // incomplete, while still using the exports that did resolve.
+                let reason = resolved.exports_incomplete.then(|| {
+                    "some exports use a CommonJS form the analyzer does not model".to_owned()
+                });
+                Ok(RegistrationOutcome {
+                    resolution: resolved.exports.map(|exports| RegistrationResolution {
+                        module_path: self
+                            .project
+                            .resolve(importer, specifier, &boundary)
+                            .ok()
+                            .flatten(),
+                        exports,
+                        framework: resolved.framework,
+                    }),
+                    reason,
+                })
+            }
             // A module the filesystem refused to hand over is an operational failure, exactly as
             // it is for a definition source: the analyzer could not read input it was told to
             // read, and silently continuing would understate the corpus. Everything else here
@@ -145,6 +159,7 @@ fn resolve_exports(
             exports: None,
             framework: Framework::Unknown,
             cacheable: true,
+            exports_incomplete: false,
         });
     }
     let Some(path) = project.resolve(importer, specifier, boundary)? else {
@@ -152,15 +167,17 @@ fn resolve_exports(
             exports: None,
             framework: Framework::Unknown,
             cacheable: true,
+            exports_incomplete: false,
         });
     };
     let remaining_depth = MAX_REEXPORT_DEPTH - depth;
     let cache_key = (path.clone(), remaining_depth);
-    if let Some((exports, framework)) = state.exports.get(&cache_key) {
+    if let Some((exports, framework, exports_incomplete)) = state.exports.get(&cache_key) {
         return Ok(ResolvedExports {
             exports: exports.clone(),
             framework: *framework,
             cacheable: true,
+            exports_incomplete: *exports_incomplete,
         });
     }
     if !state.active.insert(path.clone()) {
@@ -168,6 +185,7 @@ fn resolve_exports(
             exports: None,
             framework: Framework::Unknown,
             cacheable: false,
+            exports_incomplete: false,
         });
     }
     let resolved = resolve_active_exports(&path, boundary, project, state, depth);
@@ -177,9 +195,14 @@ fn resolve_exports(
     state.active.remove(&path);
     let resolved = resolved?;
     if resolved.cacheable {
-        state
-            .exports
-            .insert(cache_key, (resolved.exports.clone(), resolved.framework));
+        state.exports.insert(
+            cache_key,
+            (
+                resolved.exports.clone(),
+                resolved.framework,
+                resolved.exports_incomplete,
+            ),
+        );
     }
     Ok(resolved)
 }
@@ -204,11 +227,13 @@ fn resolve_active_exports(
             exports: None,
             framework: Framework::Unknown,
             cacheable: true,
+            exports_incomplete: false,
         });
     };
     let mut exports = module.direct_exports;
     let mut framework = module.framework;
     let mut cacheable = true;
+    let mut exports_incomplete = module.exports_incomplete;
     for reexport in module.reexports {
         let (available, available_framework) = if is_supported_module(&reexport.module) {
             (
@@ -219,6 +244,7 @@ fn resolve_active_exports(
             let resolved =
                 resolve_exports(path, &reexport.module, boundary, project, state, depth + 1)?;
             cacheable &= resolved.cacheable;
+            exports_incomplete |= resolved.exports_incomplete;
             (resolved.exports.unwrap_or_default(), resolved.framework)
         };
         framework = merge_framework(framework, available_framework);
@@ -235,6 +261,7 @@ fn resolve_active_exports(
         exports: Some(exports),
         framework,
         cacheable,
+        exports_incomplete,
     })
 }
 
@@ -336,6 +363,10 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
 
     let mut direct_export_names = Vec::new();
     let mut reexports = Vec::new();
+    // Set when a CommonJS `module.exports`/`exports.x` assignment uses a form the analyzer cannot
+    // turn into an export, so the file resolves to *fewer* registrations than it really has. The
+    // caller reports the file incomplete rather than treating the partial result as authoritative.
+    let mut exports_incomplete = false;
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         match node.kind() {
@@ -362,6 +393,23 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                 } else {
                     direct_export_names.extend(export_specifiers(node, source));
                 }
+            }
+            "assignment_expression" => {
+                collect_commonjs_export_assignment(
+                    node,
+                    source,
+                    &mut direct_export_names,
+                    &mut reexports,
+                    &mut exports_incomplete,
+                );
+            }
+            "call_expression" => {
+                collect_object_assign_exports(
+                    node,
+                    source,
+                    &mut reexports,
+                    &mut exports_incomplete,
+                );
             }
             _ => {}
         }
@@ -392,6 +440,350 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
         reexports,
         direct_exports,
         framework,
+        exports_incomplete,
+    }
+}
+
+/// Records a CommonJS `module.exports = …` or `exports.<name> = …` assignment as exports.
+///
+/// Only forms that can hide a registration set incompleteness — a factory call, an aliased object,
+/// an unresolvable spread. A plain value export (`exports.helper = () => {}`) is not a registration
+/// container and is left silent, so an ordinary CommonJS module does not warn.
+fn collect_commonjs_export_assignment(
+    node: Node<'_>,
+    source: &[u8],
+    direct_export_names: &mut Vec<(String, String)>,
+    reexports: &mut Vec<Reexport>,
+    incomplete: &mut bool,
+) {
+    // A well-formed assignment always has both sides; a partial one from error recovery matches
+    // nothing below, so no separate guard is needed.
+    let target = node
+        .child_by_field_name("left")
+        .and_then(|left| commonjs_export_target(left, source));
+    match export_position(node) {
+        // Not a module export: `module`/`exports` inside a callable are ordinary names.
+        ExportPosition::InsideCallable => return,
+        // A conditional export cannot be resolved, but if it touches the exports object a
+        // registration may be hidden behind it, so the module fails closed.
+        ExportPosition::ModuleConditional => {
+            if target.is_some() {
+                *incomplete = true;
+            }
+            return;
+        }
+        ExportPosition::ModuleBody => {}
+    }
+    let right = node.child_by_field_name("right");
+    match (target, right) {
+        (Some(CommonjsExportTarget::All), Some(right)) => {
+            collect_commonjs_object_exports(
+                right,
+                source,
+                direct_export_names,
+                reexports,
+                incomplete,
+            );
+        }
+        // A bracket export names something the analyzer cannot resolve; fail closed.
+        (Some(CommonjsExportTarget::Opaque), _) => *incomplete = true,
+        (Some(CommonjsExportTarget::Named(name)), Some(right)) => {
+            if let Some((module, imported)) = required_member(right, source) {
+                // `exports.step = require('./a').step`
+                reexports.push(Reexport {
+                    module: module.to_owned(),
+                    specifiers: vec![(imported.to_owned(), name.to_owned())],
+                    star: false,
+                });
+            } else if require_specifier(right, source).is_some() {
+                // `exports.steps = require('./a')` assigns the whole module object to one name; the
+                // analyzer does not model namespace-member registration, so it may hide steps.
+                *incomplete = true;
+            } else if right.kind() == "identifier" {
+                // `exports.Given = Given` re-exports a local binding; resolves against
+                // `local_registrations`, contributing nothing when the local is not a registration.
+                direct_export_names.push((node_text(right, source).to_owned(), name.to_owned()));
+            } else if matches!(
+                right.kind(),
+                "call_expression" | "member_expression" | "subscript_expression"
+            ) {
+                // `exports.Given = makeGiven()` or `= cucumber.Given` can carry a registration the
+                // analyzer cannot resolve, so it fails closed rather than dropping it silently. A
+                // literal or other inert value exports nothing and stays quiet.
+                *incomplete = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Records the object or call on the right of `module.exports = …`.
+fn collect_commonjs_object_exports(
+    right: Node<'_>,
+    source: &[u8],
+    direct_export_names: &mut Vec<(String, String)>,
+    reexports: &mut Vec<Reexport>,
+    incomplete: &mut bool,
+) {
+    if let Some(module) = require_specifier(right, source) {
+        // `module.exports = require('./a')`
+        reexports.push(Reexport {
+            module: module.to_owned(),
+            specifiers: Vec::new(),
+            star: true,
+        });
+        return;
+    }
+    if right.kind() != "object" {
+        // A factory call, an aliased identifier, or any other whole-object form the analyzer
+        // cannot introspect can hide registrations.
+        *incomplete = true;
+        return;
+    }
+    let mut cursor = right.walk();
+    for property in right.named_children(&mut cursor) {
+        match property.kind() {
+            "shorthand_property_identifier" => {
+                let name = node_text(property, source);
+                direct_export_names.push((name.to_owned(), name.to_owned()));
+            }
+            "pair" => {
+                let exported = property
+                    .child_by_field_name("key")
+                    .and_then(|key| property_name(key, source));
+                let value = property.child_by_field_name("value");
+                if let (Some(exported), Some(value)) = (exported, value) {
+                    if value.kind() == "identifier" {
+                        direct_export_names
+                            .push((node_text(value, source).to_owned(), exported.to_owned()));
+                    } else {
+                        // `Given: makeGiven()` and other non-identifier values are containers the
+                        // analyzer cannot introspect.
+                        *incomplete = true;
+                    }
+                } else {
+                    // A computed key, or a malformed pair, is a form the analyzer cannot model.
+                    *incomplete = true;
+                }
+            }
+            "spread_element" => {
+                if let Some(module) = property
+                    .named_child(0)
+                    .and_then(|argument| require_specifier(argument, source))
+                {
+                    reexports.push(Reexport {
+                        module: module.to_owned(),
+                        specifiers: Vec::new(),
+                        star: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            // A method definition or computed key can carry a registration the analyzer cannot see.
+            _ => *incomplete = true,
+        }
+    }
+}
+
+/// Records `Object.assign(module.exports, require('./a'), { … })` as re-exports.
+fn collect_object_assign_exports(
+    node: Node<'_>,
+    source: &[u8],
+    reexports: &mut Vec<Reexport>,
+    incomplete: &mut bool,
+) {
+    // An `Object.assign` call always carries an argument list; the absent case matches nothing.
+    let arguments = (call_member(node, source) == Some(("Object", "assign")))
+        .then(|| node.child_by_field_name("arguments"))
+        .flatten();
+    let Some(arguments) = arguments else {
+        return;
+    };
+    let mut cursor = arguments.walk();
+    let mut arguments = arguments.named_children(&mut cursor);
+    // The first argument is the assignment target; it must be `module.exports` for this to be an
+    // export merge rather than an unrelated `Object.assign`.
+    let is_export_merge = arguments.next().is_some_and(|target| {
+        matches!(
+            commonjs_export_target(target, source),
+            Some(CommonjsExportTarget::All)
+        )
+    });
+    if !is_export_merge {
+        return;
+    }
+    match export_position(node) {
+        // A merge inside a callable does not touch the module record.
+        ExportPosition::InsideCallable => return,
+        // A conditional merge into `module.exports` may hide registrations; fail closed.
+        ExportPosition::ModuleConditional => {
+            *incomplete = true;
+            return;
+        }
+        ExportPosition::ModuleBody => {}
+    }
+    for argument in arguments {
+        if let Some(module) = require_specifier(argument, source) {
+            reexports.push(Reexport {
+                module: module.to_owned(),
+                specifiers: Vec::new(),
+                star: true,
+            });
+        } else {
+            *incomplete = true;
+        }
+    }
+}
+
+enum CommonjsExportTarget<'a> {
+    All,
+    Named(&'a str),
+    /// An `exports`/`module.exports` target the analyzer recognizes but cannot name — a bracket
+    /// access such as `exports[name]` or `module.exports['Given']`. It touches the exports object,
+    /// so a registration behind it must fail closed rather than being silently dropped.
+    Opaque,
+}
+
+/// Where an assignment or call sits relative to the module record.
+enum ExportPosition {
+    /// A direct statement of the program body: a real, unconditional CommonJS export.
+    ModuleBody,
+    /// Module scope but under control flow — an `if`, loop, `try`, or bare block — so whether it
+    /// runs cannot be known statically. An export here cannot be resolved but must not vanish.
+    ModuleConditional,
+    /// Inside a function or class, where `module`/`exports` are ordinary names rather than the
+    /// module record, so an assignment to them is not a module export at all.
+    InsideCallable,
+}
+
+/// Classifies where `node` sits: a direct module-body statement, module scope under control flow, or
+/// inside a function or class.
+fn export_position(node: Node<'_>) -> ExportPosition {
+    // A callable or class anywhere above means `module`/`exports` here are ordinary names bound in
+    // that scope, not the module record.
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if matches!(
+            parent.kind(),
+            "function_declaration"
+                | "generator_function_declaration"
+                | "function_expression"
+                | "generator_function"
+                | "arrow_function"
+                | "method_definition"
+                | "class_declaration"
+                | "abstract_class_declaration"
+                | "class"
+        ) {
+            return ExportPosition::InsideCallable;
+        }
+        current = parent;
+    }
+    // At module scope: a direct body statement (`program → expression_statement → node`) is an
+    // unconditional export; anything reached through control flow — an `if`, loop, `try`, or bare
+    // block — is conditional.
+    let direct_body = node.parent().is_some_and(|statement| {
+        statement.kind() == "expression_statement"
+            && statement
+                .parent()
+                .is_some_and(|parent| parent.kind() == "program")
+    });
+    if direct_body {
+        ExportPosition::ModuleBody
+    } else {
+        ExportPosition::ModuleConditional
+    }
+}
+
+/// Recognizes an assignment's left-hand side as a CommonJS export target: `module.exports` (→ `All`),
+/// `exports.<name>` / `module.exports.<name>` (→ `Named`), or a bracket access on either (→ `Opaque`,
+/// which fails closed).
+fn commonjs_export_target<'a>(
+    node: Node<'_>,
+    source: &'a [u8],
+) -> Option<CommonjsExportTarget<'a>> {
+    match node.kind() {
+        "member_expression" => {
+            let object = node.child_by_field_name("object")?;
+            let name = node
+                .child_by_field_name("property")
+                .filter(|property| property.kind() == "property_identifier")
+                .map(|property| node_text(property, source))?;
+            match object.kind() {
+                // `module.exports = …` / `exports.name = …`
+                "identifier" => match (node_text(object, source), name) {
+                    ("module", "exports") => Some(CommonjsExportTarget::All),
+                    ("exports", _) => Some(CommonjsExportTarget::Named(name)),
+                    _ => None,
+                },
+                // `module.exports.name = …` names a single export off the module object.
+                "member_expression" if is_module_exports(object, source) => {
+                    Some(CommonjsExportTarget::Named(name))
+                }
+                _ => None,
+            }
+        }
+        // `exports[…] = …` / `module.exports[…] = …`. A static key could be modeled, but the
+        // documented contract only requires the form to fail closed, so every bracket export is
+        // opaque and marks the module incomplete.
+        "subscript_expression" => {
+            let object = node.child_by_field_name("object")?;
+            let targets_exports = (object.kind() == "identifier"
+                && node_text(object, source) == "exports")
+                || is_module_exports(object, source);
+            targets_exports.then_some(CommonjsExportTarget::Opaque)
+        }
+        _ => None,
+    }
+}
+
+/// Whether `node` is exactly the member expression `module.exports`.
+fn is_module_exports(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "member_expression"
+        && node.child_by_field_name("object").is_some_and(|object| {
+            object.kind() == "identifier" && node_text(object, source) == "module"
+        })
+        && node
+            .child_by_field_name("property")
+            .is_some_and(|property| node_text(property, source) == "exports")
+}
+
+/// Returns the specifier of a `require('…')` call, unwrapping transparent wrappers.
+fn require_specifier<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    (call_identifier(node, source) == Some("require"))
+        .then(|| call_string_argument(node, source))
+        .flatten()
+}
+
+/// Returns `(module, member)` for `require('…').member`.
+fn required_member<'a>(node: Node<'_>, source: &'a [u8]) -> Option<(&'a str, &'a str)> {
+    if node.kind() != "member_expression" {
+        return None;
+    }
+    let module = require_specifier(node.child_by_field_name("object")?, source)?;
+    let property = node.child_by_field_name("property")?;
+    (property.kind() == "property_identifier").then(|| (module, node_text(property, source)))
+}
+
+/// Returns the `(object, property)` identifiers of a plain `object.property(...)` call.
+fn call_member<'a>(call: Node<'_>, source: &'a [u8]) -> Option<(&'a str, &'a str)> {
+    let function = call.child_by_field_name("function")?;
+    if function.kind() != "member_expression" {
+        return None;
+    }
+    let object = function.child_by_field_name("object")?;
+    let property = function.child_by_field_name("property")?;
+    (object.kind() == "identifier" && property.kind() == "property_identifier")
+        .then(|| (node_text(object, source), node_text(property, source)))
+}
+
+/// Returns the static name of an object-literal property key.
+fn property_name<'a>(key: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    match key.kind() {
+        "property_identifier" => Some(node_text(key, source)),
+        "string" => string_literal(key, source),
+        _ => None,
     }
 }
 
