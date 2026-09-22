@@ -231,7 +231,7 @@ async function installRelease(rawVersion, env) {
   if (extracted.status !== 0 || extracted.error) {
     throw new Error(`failed to extract ${basename(archive)}`);
   }
-  for (const name of [target.binaryName, "LICENSE", "THIRD-PARTY-LICENSES.md"]) {
+  for (const name of [target.binaryName, "LICENSE"]) {
     const extractedPath = join(installDirectory, name);
     if (!existsSync(extractedPath) || !lstatSync(extractedPath).isFile()) {
       throw new Error(`release archive did not contain a regular ${name} file`);
@@ -245,7 +245,7 @@ async function installRelease(rawVersion, env) {
 
 export function validateArchiveMemberNames(output, binaryName) {
   const members = output.split(/\r?\n/).filter(Boolean);
-  const expected = [binaryName, "LICENSE", "THIRD-PARTY-LICENSES.md"];
+  const expected = [binaryName, "LICENSE"];
   if (members.length !== expected.length || members.some((name, index) => name !== expected[index])) {
     throw new Error(`unexpected release archive members: ${members.join(", ")}`);
   }

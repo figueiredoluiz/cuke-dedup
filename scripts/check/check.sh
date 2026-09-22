@@ -74,7 +74,6 @@ npm run check:versions
 if [[ "$mode" == "full" ]]; then
   npm run pack:check
   node scripts/release/prepare-npm-packages.mjs --check
-  python3 scripts/release/generate-third-party-licenses.py --check
 fi
 
 python3 -m unittest discover -s scripts/release -p 'test_*.py'

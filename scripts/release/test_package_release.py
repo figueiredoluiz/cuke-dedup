@@ -32,7 +32,7 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertEqual(archive.extractfile(member).read(), b"native executable")
                 self.assertEqual(
                     archive.getnames(),
-                    ["cuke-dedup", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+                    ["cuke-dedup", "LICENSE"],
                 )
 
     def test_windows_archive_has_a_deterministic_executable(self) -> None:
@@ -48,7 +48,7 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertEqual(archive.read("cuke-dedup.exe"), b"windows executable")
                 self.assertEqual(
                     archive.namelist(),
-                    ["cuke-dedup.exe", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+                    ["cuke-dedup.exe", "LICENSE"],
                 )
 
     def test_verifier_checks_checksum_and_extracts_only_expected_binary(self) -> None:

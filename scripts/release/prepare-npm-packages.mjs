@@ -16,7 +16,7 @@ for (const target of Object.values(TARGETS)) {
   const packageManifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   assert.deepEqual(
     packageManifest.files,
-    [`bin/${binaryName}`, "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md"],
+    [`bin/${binaryName}`, "README.md", "LICENSE"],
     `${packageManifest.name} must publish its binary, README, and legal notices`,
   );
   if (artifacts === "--check") {
@@ -33,6 +33,5 @@ for (const target of Object.values(TARGETS)) {
     await chmod(destination, 0o755);
   }
   await copyFile("LICENSE", join(packageRoot, "LICENSE"));
-  await copyFile("THIRD-PARTY-LICENSES.md", join(packageRoot, "THIRD-PARTY-LICENSES.md"));
   await writeFile(join(packageRoot, "README.md"), renderPlatformReadme(packageManifest));
 }

@@ -13,7 +13,7 @@ import zipfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LEGAL_FILES = [PROJECT_ROOT / "LICENSE", PROJECT_ROOT / "THIRD-PARTY-LICENSES.md"]
+LEGAL_FILES = [PROJECT_ROOT / "LICENSE"]
 
 
 def archive_entries(binary: Path, binary_name: str) -> list[tuple[str, bytes, int]]:
