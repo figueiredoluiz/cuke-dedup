@@ -1726,6 +1726,47 @@ fn module_scoped_constants_reach_the_handler_fingerprint() {
     );
 }
 
+/// A module constant declared after the registrations that read it still resolves.
+///
+/// A handler is a deferred callback: by the time it runs, the module has finished initializing, so
+/// a later-declared module constant holds its value. Declaration order is a temporal-dead-zone rule
+/// for a synchronous handler body, not for a value read from an enclosing scope. Same-value
+/// later-declared constants therefore collapse into one handler; conflicting later-declared values
+/// stay distinct, exactly as a declared-before pair does. Reverting the enclosing-scope exemption
+/// in `LocalConstants::binding` drops the same-value finding, which is the mutation this pins.
+#[test]
+fn module_constants_declared_after_the_registrations_still_resolve() {
+    let (_directory, config) = config();
+    let rules = |left_name: &str, right_name: &str, declarations: &str| {
+        let extracted = definitions(&format!(
+            "Then('the fore gauge is settled', () => {{ expect(gauge()).toBe({left_name}); }});\n\
+             Then('the aft gauge is settled', () => {{ expect(gauge()).toBe({right_name}); }});\n\
+             {declarations}"
+        ));
+        assert_eq!(extracted.len(), 2);
+        let mut rules: Vec<Rule> = analyze(extracted, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .filter(|rule| matches!(rule, Rule::DuplicateHandler))
+            .collect();
+        rules.sort();
+        rules.dedup();
+        rules
+    };
+
+    assert_eq!(
+        rules("AFT_A", "AFT_B", "const AFT_A = 1;\nconst AFT_B = 1;"),
+        vec![Rule::DuplicateHandler]
+    );
+    // Opposite-answer control: conflicting later-declared values must not collapse.
+    assert_eq!(
+        rules("DIF_A", "DIF_B", "const DIF_A = 1;\nconst DIF_B = 2;"),
+        Vec::<Rule>::new()
+    );
+}
+
 #[test]
 fn called_local_functions_contribute_their_assertions_to_the_handler() {
     let (_directory, config) = config();

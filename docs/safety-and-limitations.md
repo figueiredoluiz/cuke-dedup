@@ -25,10 +25,6 @@ resource limits keep failures visible and bound the work performed.
   overlap witnesses.
 - Bounded fuzzy indexes preserve a deterministic sample in highly repetitive vocabularies but do
   not promise every possible pair after a work limit is reached.
-- A module-scoped constant declared *after* the registrations that read it is not resolved, even
-  though the handler body runs later and the value is initialized by then. Declaration order is the
-  conservative rule shared with handler-local constants, where a reference before the declaration is
-  a temporal-dead-zone error. The effect is a missed duplicate, never an invented one.
 - A handler produced by calling a generator function, such as
   `Given('a step', (function* () { … })())`, is not compared. Calling a generator returns a
   suspended object and never runs the body, so the registered handler is that object rather than a
