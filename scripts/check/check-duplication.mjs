@@ -126,7 +126,7 @@ const SCOPES = [
         || path.startsWith("tests/")
         || path.startsWith("fuzz/"),
     ),
-    maximumPercentage: 5.91,
+    maximumPercentage: 5.88,
     maximumDuplicatedLines: 1209,
     minimumFiles: 12,
     minimumLines: 15_000,

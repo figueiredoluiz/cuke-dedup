@@ -456,14 +456,14 @@ fn collect_commonjs_export_assignment(
     reexports: &mut Vec<Reexport>,
     incomplete: &mut bool,
 ) {
-    let (Some(left), Some(right)) = (
-        node.child_by_field_name("left"),
-        node.child_by_field_name("right"),
-    ) else {
-        return;
-    };
-    match commonjs_export_target(left, source) {
-        Some(CommonjsExportTarget::All) => {
+    // A well-formed assignment always has both sides; a partial one from error recovery matches
+    // nothing below, so no separate guard is needed.
+    let target = node
+        .child_by_field_name("left")
+        .and_then(|left| commonjs_export_target(left, source));
+    let right = node.child_by_field_name("right");
+    match (target, right) {
+        (Some(CommonjsExportTarget::All), Some(right)) => {
             collect_commonjs_object_exports(
                 right,
                 source,
@@ -472,7 +472,7 @@ fn collect_commonjs_export_assignment(
                 incomplete,
             );
         }
-        Some(CommonjsExportTarget::Named(name)) => {
+        (Some(CommonjsExportTarget::Named(name)), Some(right)) => {
             if let Some((module, imported)) = required_member(right, source) {
                 // `exports.step = require('./a').step`
                 reexports.push(Reexport {
@@ -491,7 +491,7 @@ fn collect_commonjs_export_assignment(
             }
             // Any other right-hand side is a plain value export, not a registration container.
         }
-        None => {}
+        _ => {}
     }
 }
 
@@ -526,18 +526,21 @@ fn collect_commonjs_object_exports(
                 direct_export_names.push((name.to_owned(), name.to_owned()));
             }
             "pair" => {
-                let (Some(key), Some(value)) = (
-                    property.child_by_field_name("key"),
-                    property.child_by_field_name("value"),
-                ) else {
-                    continue;
-                };
-                if let (Some(exported), true) =
-                    (property_name(key, source), value.kind() == "identifier")
-                {
-                    direct_export_names
-                        .push((node_text(value, source).to_owned(), exported.to_owned()));
+                let exported = property
+                    .child_by_field_name("key")
+                    .and_then(|key| property_name(key, source));
+                let value = property.child_by_field_name("value");
+                if let (Some(exported), Some(value)) = (exported, value) {
+                    if value.kind() == "identifier" {
+                        direct_export_names
+                            .push((node_text(value, source).to_owned(), exported.to_owned()));
+                    } else {
+                        // `Given: makeGiven()` and other non-identifier values are containers the
+                        // analyzer cannot introspect.
+                        *incomplete = true;
+                    }
                 } else {
+                    // A computed key, or a malformed pair, is a form the analyzer cannot model.
                     *incomplete = true;
                 }
             }
@@ -568,23 +571,24 @@ fn collect_object_assign_exports(
     reexports: &mut Vec<Reexport>,
     incomplete: &mut bool,
 ) {
-    if call_member(node, source) != Some(("Object", "assign")) {
-        return;
-    }
-    let Some(arguments) = node.child_by_field_name("arguments") else {
+    // An `Object.assign` call always carries an argument list; the absent case matches nothing.
+    let arguments = (call_member(node, source) == Some(("Object", "assign")))
+        .then(|| node.child_by_field_name("arguments"))
+        .flatten();
+    let Some(arguments) = arguments else {
         return;
     };
     let mut cursor = arguments.walk();
     let mut arguments = arguments.named_children(&mut cursor);
     // The first argument is the assignment target; it must be `module.exports` for this to be an
     // export merge rather than an unrelated `Object.assign`.
-    let Some(target) = arguments.next() else {
-        return;
-    };
-    if !matches!(
-        commonjs_export_target(target, source),
-        Some(CommonjsExportTarget::All)
-    ) {
+    let is_export_merge = arguments.next().is_some_and(|target| {
+        matches!(
+            commonjs_export_target(target, source),
+            Some(CommonjsExportTarget::All)
+        )
+    });
+    if !is_export_merge {
         return;
     }
     for argument in arguments {
@@ -644,9 +648,6 @@ fn required_member<'a>(node: Node<'_>, source: &'a [u8]) -> Option<(&'a str, &'a
 
 /// Returns the `(object, property)` identifiers of a plain `object.property(...)` call.
 fn call_member<'a>(call: Node<'_>, source: &'a [u8]) -> Option<(&'a str, &'a str)> {
-    if call.kind() != "call_expression" {
-        return None;
-    }
     let function = call.child_by_field_name("function")?;
     if function.kind() != "member_expression" {
         return None;
