@@ -7,6 +7,16 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Fixed
 
+- CommonJS barrel modules that re-export step registrations through `module.exports` — an object of
+  local bindings, `module.exports = require('./steps')`, an object spread, `Object.assign`, or
+  `exports.x = …` — now resolve, so definitions behind them are analyzed instead of silently
+  missing. An export form the analyzer still cannot model marks the corpus incomplete rather than
+  resolving to nothing, so a hidden registration is reported rather than passing as a clean run.
+- A module constant declared *after* the registrations that read it now resolves. A handler is a
+  deferred callback, so by the time it runs the module has finished initializing; declaration order
+  was a temporal-dead-zone rule wrongly shared with the synchronous handler body. Two handlers that
+  read the same later-declared value are now recognized as duplicates, so affected reports gain
+  findings.
 - Extraction of large generated bundles no longer takes minutes. Resolving each assignment to its
   lexical scope followed the parse tree's ancestors, which tree-sitter answers by restarting from
   the root, so a deeply nested minified file cost time quadratic in its nesting; and alias
