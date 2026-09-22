@@ -254,15 +254,18 @@ pub(super) fn detect_registrations(
                     Some(module) if is_supported_module(module) => {
                         Some(registration_exports_for_module(module))
                     }
-                    Some(module) => resolve_local_module_exports(
-                        node,
-                        module,
-                        file_path,
-                        resolver,
-                        &mut discovered,
-                        &mut effective_framework,
-                        &mut module_paths,
-                    )?,
+                    Some(module) => {
+                        let resolved = resolve_local_module_exports(
+                            node,
+                            module,
+                            file_path,
+                            resolver,
+                            &mut discovered,
+                            &mut effective_framework,
+                            &mut module_paths,
+                        );
+                        resolved?
+                    }
                     _ => None,
                 };
                 if !is_type_only_declaration(node)
@@ -295,15 +298,18 @@ pub(super) fn detect_registrations(
                     collect_exports(node, source, &available, &mut discovered.aliases);
                 }
             }
-            "variable_declarator" => collect_variable_registration(
-                node,
-                source,
-                file_path,
-                resolver,
-                &mut discovered,
-                &mut effective_framework,
-                &mut module_paths,
-            )?,
+            "variable_declarator" => {
+                let collected = collect_variable_registration(
+                    node,
+                    source,
+                    file_path,
+                    resolver,
+                    &mut discovered,
+                    &mut effective_framework,
+                    &mut module_paths,
+                );
+                collected?
+            }
             "function_declaration" => {
                 shadow_named_declaration(node, source, &mut discovered.shadowed_defaults);
                 collect_wrapper_candidate(node, source, &mut discovered);
@@ -750,15 +756,18 @@ fn collect_variable_registration<'tree>(
                 Some(module) if is_supported_module(module) => {
                     Some(registration_exports_for_module(module))
                 }
-                Some(module) => resolve_local_module_exports(
-                    value,
-                    module,
-                    file_path,
-                    resolver,
-                    discovered,
-                    effective_framework,
-                    module_paths,
-                )?,
+                Some(module) => {
+                    let resolved = resolve_local_module_exports(
+                        value,
+                        module,
+                        file_path,
+                        resolver,
+                        discovered,
+                        effective_framework,
+                        module_paths,
+                    );
+                    resolved?
+                }
                 None => None,
             }
         } else if create_bdd {

@@ -227,3 +227,56 @@ fn configured_registrations_enable_lowercase_global_step_names() {
         1
     );
 }
+
+#[test]
+fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
+    use cuke_dedup::source_adapter::{SourceAdapter, SourceExtractionSession};
+
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("package.json"), "{}").unwrap();
+    fs::write(
+        project.path().join("barrel.js"),
+        "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
+    )
+    .unwrap();
+    let adapter: &dyn SourceAdapter = SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| adapter.language() == SourceLanguage::JavaScript)
+        .expect("a JavaScript adapter is registered");
+    let file = SourceFile {
+        path: project.path().join("steps.js"),
+        language: SourceLanguage::JavaScript,
+    };
+    let extract = |source: &str| {
+        let mut session = SourceExtractionSession::new(project.path());
+        adapter
+            .extract_with_session(source, &file, &mut session)
+            .unwrap()
+            .definitions
+            .len()
+    };
+
+    // A project-local barrel resolves whether imported through CommonJS `require` or an ESM
+    // specifier — the two importer paths share one resolution helper.
+    assert_eq!(
+        extract(
+            "const { Given: reg } = require('./barrel');\nreg('cjs a', () => {});\nreg('cjs b', () => {});"
+        ),
+        2
+    );
+    assert_eq!(
+        extract(
+            "import { Given as reg } from './barrel';\nreg('esm a', () => {});\nreg('esm b', () => {});"
+        ),
+        2
+    );
+    // A `require` with no specifier, and one of an unresolvable local module, register nothing.
+    assert_eq!(extract("const missing = require();\n"), 0);
+    assert_eq!(
+        extract("const { Given: reg } = require('./nope');\nreg('x', () => {});"),
+        0
+    );
+    // Error-recovered declarations with no name or value register nothing and never panic.
+    assert_eq!(extract("const = 5;\nvar ;\nlet x;"), 0);
+}
