@@ -134,6 +134,10 @@ Nested, asynchronous, generator, conditional, multi-statement, reordered, rewrit
 dynamically constructed wrappers cannot be inferred safely. Declare those names when they still
 take the matcher first and handler second.
 
+`registrations` also enables bare registration names that are not ambient by default, including
+lowercase `given`/`when`/`then` used as globals. Without an entry here they are recognised only
+through a resolved import (see `safety-and-limitations.md`).
+
 ## Trusted assertion modules
 
 `assertionModules` names module specifiers whose `expect` export is a real assertion factory.

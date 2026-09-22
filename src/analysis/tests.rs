@@ -1767,6 +1767,37 @@ fn module_constants_declared_after_the_registrations_still_resolve() {
     );
 }
 
+/// A constant does not resolve into a member property that shares its name.
+///
+/// `foo` and `bar` are module constants of the same value, but `obj.foo` and `obj.bar` are member
+/// accesses, not references to those bindings, so neither constant's value substitutes into the
+/// property. The two assertion subjects therefore stay distinct — resolving the property through
+/// the constant would collapse them and invent an equivalence between handlers reading different
+/// properties. The observable is `behavior_signature`, whose assert subject carries the structural
+/// property; the constant values never reach `alpha_normalized`, which is why an earlier probe that
+/// watched a `duplicate-handler` finding was invalid. Adding `property_identifier` to the
+/// constant-substitution gate in `serialize_ast` collapses the two subjects, which is the
+/// conflation this pins against.
+#[test]
+fn a_constant_does_not_resolve_into_a_same_named_member_property() {
+    let extracted = definitions(
+        "const foo = 1;\nconst bar = 1;\n\
+         Then('the fore probe reads foo', () => { expect(obj.foo).toBe('ready'); });\n\
+         Then('the aft probe reads bar', () => { expect(obj.bar).toBe('ready'); });",
+    );
+    assert_eq!(extracted.len(), 2);
+    // Both assertions resolved with a member subject.
+    assert!(extracted.iter().all(|definition| {
+        definition.handler.behavior_signature.len() == 1
+            && definition.handler.behavior_signature[0].starts_with("assert:expect#toBe:")
+    }));
+    // Distinct properties despite equal-valued same-named constants: the value is not substituted.
+    assert_ne!(
+        extracted[0].handler.behavior_signature,
+        extracted[1].handler.behavior_signature,
+    );
+}
+
 #[test]
 fn called_local_functions_contribute_their_assertions_to_the_handler() {
     let (_directory, config) = config();

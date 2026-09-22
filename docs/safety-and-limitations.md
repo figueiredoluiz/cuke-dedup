@@ -20,6 +20,10 @@ resource limits keep failures visible and bound the work performed.
   references remain usable for matcher and usage rules but are not compared by name.
 - Malformed JavaScript and TypeScript fail closed. Unsupported regular-expression constructs warn;
   malformed matcher escapes are operational errors.
+- Lowercase `given`/`when`/`then` are recognised only through a resolved import (for example
+  `const { given } = createBdd(test)`), never as ambient globals. A bare lowercase call with no
+  import registers nothing, so an unrelated lowercase helper is not mistaken for a step. Name it in
+  the `registrations` configuration (see `configuration.md`) to enable it as a global registration.
 - One analysis root is one corpus. Analyze independent monorepo packages separately.
 - Regular expressions are matched against feature steps but are never reversed into invented
   overlap witnesses.

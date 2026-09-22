@@ -187,3 +187,43 @@ fn report_context_is_the_single_public_rendering_entry_point() {
         .unwrap()
         .contains("Analyzed 0 definitions"));
 }
+
+#[test]
+fn configured_registrations_enable_lowercase_global_step_names() {
+    use cuke_dedup::source_adapter::{SourceAdapter, SourceExtractionSession};
+
+    let project = tempfile::tempdir().unwrap();
+    let file = SourceFile {
+        path: project.path().join("steps.ts"),
+        language: SourceLanguage::TypeScript,
+    };
+    let adapter: &dyn SourceAdapter = SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| adapter.language() == SourceLanguage::TypeScript)
+        .expect("a TypeScript adapter is registered");
+    let source = "given('a lowercase global step', () => work());";
+
+    // Lowercase `given`/`when`/`then` are not ambient globals: a bare call with no import and no
+    // configuration registers nothing, so the analyzer never invents a step from an unrelated
+    // lowercase helper.
+    let mut plain = SourceExtractionSession::new(project.path());
+    assert!(adapter
+        .extract_with_session(source, &file, &mut plain)
+        .unwrap()
+        .definitions
+        .is_empty());
+
+    // The `registrations` configuration is the documented opt-in: naming `given` there enables it
+    // as a bare global registration name.
+    let mut configured =
+        SourceExtractionSession::with_registrations(project.path(), &["given".into()]);
+    assert_eq!(
+        adapter
+            .extract_with_session(source, &file, &mut configured)
+            .unwrap()
+            .definitions
+            .len(),
+        1
+    );
+}
