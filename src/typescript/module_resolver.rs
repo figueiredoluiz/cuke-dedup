@@ -394,7 +394,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     direct_export_names.extend(export_specifiers(node, source));
                 }
             }
-            "assignment_expression" => {
+            "assignment_expression" if is_module_scoped_expression(node) => {
                 collect_commonjs_export_assignment(
                     node,
                     source,
@@ -403,7 +403,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     &mut exports_incomplete,
                 );
             }
-            "call_expression" => {
+            "call_expression" if is_module_scoped_expression(node) => {
                 collect_object_assign_exports(
                     node,
                     source,
@@ -488,8 +488,15 @@ fn collect_commonjs_export_assignment(
                 // `exports.Given = Given` re-exports a local binding; resolves against
                 // `local_registrations`, contributing nothing when the local is not a registration.
                 direct_export_names.push((node_text(right, source).to_owned(), name.to_owned()));
+            } else if matches!(
+                right.kind(),
+                "call_expression" | "member_expression" | "subscript_expression"
+            ) {
+                // `exports.Given = makeGiven()` or `= cucumber.Given` can carry a registration the
+                // analyzer cannot resolve, so it fails closed rather than dropping it silently. A
+                // literal or other inert value exports nothing and stays quiet.
+                *incomplete = true;
             }
-            // Any other right-hand side is a plain value export, not a registration container.
         }
         _ => {}
     }
@@ -609,7 +616,21 @@ enum CommonjsExportTarget<'a> {
     Named(&'a str),
 }
 
-/// Recognizes `module.exports` (→ `All`) and `exports.<name>` (→ `Named`) on an assignment's left.
+/// Whether an assignment or call is evaluated at module load — a statement of the program body —
+/// rather than inside a function or class that may never run. Only such an operation is a real
+/// CommonJS export; the same syntax nested in a helper assigns to whatever `module`/`exports` names
+/// it can see, not the module record.
+fn is_module_scoped_expression(node: Node<'_>) -> bool {
+    node.parent().is_some_and(|statement| {
+        statement.kind() == "expression_statement"
+            && statement
+                .parent()
+                .is_some_and(|parent| parent.kind() == "program")
+    })
+}
+
+/// Recognizes `module.exports` and `module.exports.<name>` (→ `All`/`Named`) and `exports.<name>`
+/// (→ `Named`) on an assignment's left.
 fn commonjs_export_target<'a>(
     node: Node<'_>,
     source: &'a [u8],
@@ -618,15 +639,34 @@ fn commonjs_export_target<'a>(
         return None;
     }
     let object = node.child_by_field_name("object")?;
-    let property = node.child_by_field_name("property")?;
-    if object.kind() != "identifier" || property.kind() != "property_identifier" {
-        return None;
-    }
-    match (node_text(object, source), node_text(property, source)) {
-        ("module", "exports") => Some(CommonjsExportTarget::All),
-        ("exports", name) => Some(CommonjsExportTarget::Named(name)),
+    let name = node
+        .child_by_field_name("property")
+        .filter(|property| property.kind() == "property_identifier")
+        .map(|property| node_text(property, source))?;
+    match object.kind() {
+        // `module.exports = …` / `exports.name = …`
+        "identifier" => match (node_text(object, source), name) {
+            ("module", "exports") => Some(CommonjsExportTarget::All),
+            ("exports", _) => Some(CommonjsExportTarget::Named(name)),
+            _ => None,
+        },
+        // `module.exports.name = …` names a single export off the module object.
+        "member_expression" if is_module_exports(object, source) => {
+            Some(CommonjsExportTarget::Named(name))
+        }
         _ => None,
     }
+}
+
+/// Whether `node` is exactly the member expression `module.exports`.
+fn is_module_exports(node: Node<'_>, source: &[u8]) -> bool {
+    node.kind() == "member_expression"
+        && node.child_by_field_name("object").is_some_and(|object| {
+            object.kind() == "identifier" && node_text(object, source) == "module"
+        })
+        && node
+            .child_by_field_name("property")
+            .is_some_and(|property| node_text(property, source) == "exports")
 }
 
 /// Returns the specifier of a `require('…')` call, unwrapping transparent wrappers.

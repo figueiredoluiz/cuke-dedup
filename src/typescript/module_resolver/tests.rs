@@ -705,3 +705,51 @@ fn commonjs_star_re_export_of_a_missing_module_resolves_to_nothing() {
         .is_some_and(|resolution| !resolution.exports.is_empty());
     assert!(!surfaced);
 }
+
+/// `module.exports.Given = Given` names a single export off the module object and resolves.
+#[test]
+fn commonjs_nested_module_exports_member_resolves_a_named_export() {
+    let barrel = concat!(
+        "const { Given } = require('@cucumber/cucumber');\n",
+        "module.exports.Given = Given;"
+    );
+    let outcome = resolve_barrel(&[("barrel.js", barrel)], "./barrel");
+    assert_eq!(
+        exported_names(&outcome),
+        [("Given".to_owned(), "Given".to_owned())]
+    );
+    assert_eq!(outcome.reason, None);
+}
+
+/// A named export whose value is a call or namespace member can hide a registration, so it fails
+/// closed; an inert literal value exports nothing and stays quiet.
+#[test]
+fn commonjs_opaque_named_export_values_fail_closed_but_inert_values_stay_quiet() {
+    for barrel in [
+        "exports.Given = makeGiven();",
+        "exports.Given = cucumber.Given;",
+    ] {
+        let outcome = resolve_barrel(&[("barrel.js", barrel)], "./barrel");
+        assert!(exported_names(&outcome).is_empty(), "{barrel}");
+        assert!(outcome.reason.is_some(), "{barrel}");
+    }
+
+    let inert = resolve_barrel(&[("barrel.js", "exports.version = 5;")], "./barrel");
+    assert!(exported_names(&inert).is_empty());
+    assert_eq!(inert.reason, None);
+}
+
+/// A `module.exports` assignment or `Object.assign` nested in a function that may never run is not
+/// a module export: only a statement of the program body is.
+#[test]
+fn commonjs_exports_inside_a_function_are_not_module_exports() {
+    for barrel in [
+        "const { Given } = require('@cucumber/cucumber');\nfunction setup() { module.exports = { Given }; }",
+        "const { Given } = require('@cucumber/cucumber');\nfunction setup() { Object.assign(module.exports, { Given }); }",
+        "const { Given } = require('@cucumber/cucumber');\nclass C { m() { module.exports = { Given }; } }",
+    ] {
+        let outcome = resolve_barrel(&[("barrel.js", barrel)], "./barrel");
+        assert!(exported_names(&outcome).is_empty(), "{barrel}");
+        assert_eq!(outcome.reason, None, "{barrel}");
+    }
+}
