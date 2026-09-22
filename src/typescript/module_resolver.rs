@@ -394,7 +394,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     direct_export_names.extend(export_specifiers(node, source));
                 }
             }
-            "assignment_expression" if is_module_scoped_expression(node) => {
+            "assignment_expression" => {
                 collect_commonjs_export_assignment(
                     node,
                     source,
@@ -403,7 +403,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     &mut exports_incomplete,
                 );
             }
-            "call_expression" if is_module_scoped_expression(node) => {
+            "call_expression" => {
                 collect_object_assign_exports(
                     node,
                     source,
@@ -461,6 +461,19 @@ fn collect_commonjs_export_assignment(
     let target = node
         .child_by_field_name("left")
         .and_then(|left| commonjs_export_target(left, source));
+    match export_position(node) {
+        // Not a module export: `module`/`exports` inside a callable are ordinary names.
+        ExportPosition::InsideCallable => return,
+        // A conditional export cannot be resolved, but if it touches the exports object a
+        // registration may be hidden behind it, so the module fails closed.
+        ExportPosition::ModuleConditional => {
+            if target.is_some() {
+                *incomplete = true;
+            }
+            return;
+        }
+        ExportPosition::ModuleBody => {}
+    }
     let right = node.child_by_field_name("right");
     match (target, right) {
         (Some(CommonjsExportTarget::All), Some(right)) => {
@@ -472,6 +485,8 @@ fn collect_commonjs_export_assignment(
                 incomplete,
             );
         }
+        // A bracket export names something the analyzer cannot resolve; fail closed.
+        (Some(CommonjsExportTarget::Opaque), _) => *incomplete = true,
         (Some(CommonjsExportTarget::Named(name)), Some(right)) => {
             if let Some((module, imported)) = required_member(right, source) {
                 // `exports.step = require('./a').step`
@@ -598,6 +613,16 @@ fn collect_object_assign_exports(
     if !is_export_merge {
         return;
     }
+    match export_position(node) {
+        // A merge inside a callable does not touch the module record.
+        ExportPosition::InsideCallable => return,
+        // A conditional merge into `module.exports` may hide registrations; fail closed.
+        ExportPosition::ModuleConditional => {
+            *incomplete = true;
+            return;
+        }
+        ExportPosition::ModuleBody => {}
+    }
     for argument in arguments {
         if let Some(module) = require_specifier(argument, source) {
             reexports.push(Reexport {
@@ -614,45 +639,100 @@ fn collect_object_assign_exports(
 enum CommonjsExportTarget<'a> {
     All,
     Named(&'a str),
+    /// An `exports`/`module.exports` target the analyzer recognizes but cannot name — a bracket
+    /// access such as `exports[name]` or `module.exports['Given']`. It touches the exports object,
+    /// so a registration behind it must fail closed rather than being silently dropped.
+    Opaque,
 }
 
-/// Whether an assignment or call is evaluated at module load — a statement of the program body —
-/// rather than inside a function or class that may never run. Only such an operation is a real
-/// CommonJS export; the same syntax nested in a helper assigns to whatever `module`/`exports` names
-/// it can see, not the module record.
-fn is_module_scoped_expression(node: Node<'_>) -> bool {
-    node.parent().is_some_and(|statement| {
+/// Where an assignment or call sits relative to the module record.
+enum ExportPosition {
+    /// A direct statement of the program body: a real, unconditional CommonJS export.
+    ModuleBody,
+    /// Module scope but under control flow — an `if`, loop, `try`, or bare block — so whether it
+    /// runs cannot be known statically. An export here cannot be resolved but must not vanish.
+    ModuleConditional,
+    /// Inside a function or class, where `module`/`exports` are ordinary names rather than the
+    /// module record, so an assignment to them is not a module export at all.
+    InsideCallable,
+}
+
+/// Classifies where `node` sits: a direct module-body statement, module scope under control flow, or
+/// inside a function or class.
+fn export_position(node: Node<'_>) -> ExportPosition {
+    // A callable or class anywhere above means `module`/`exports` here are ordinary names bound in
+    // that scope, not the module record.
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if matches!(
+            parent.kind(),
+            "function_declaration"
+                | "generator_function_declaration"
+                | "function_expression"
+                | "generator_function"
+                | "arrow_function"
+                | "method_definition"
+                | "class_declaration"
+                | "abstract_class_declaration"
+                | "class"
+        ) {
+            return ExportPosition::InsideCallable;
+        }
+        current = parent;
+    }
+    // At module scope: a direct body statement (`program → expression_statement → node`) is an
+    // unconditional export; anything reached through control flow — an `if`, loop, `try`, or bare
+    // block — is conditional.
+    let direct_body = node.parent().is_some_and(|statement| {
         statement.kind() == "expression_statement"
             && statement
                 .parent()
                 .is_some_and(|parent| parent.kind() == "program")
-    })
+    });
+    if direct_body {
+        ExportPosition::ModuleBody
+    } else {
+        ExportPosition::ModuleConditional
+    }
 }
 
-/// Recognizes `module.exports` and `module.exports.<name>` (→ `All`/`Named`) and `exports.<name>`
-/// (→ `Named`) on an assignment's left.
+/// Recognizes an assignment's left-hand side as a CommonJS export target: `module.exports` (→ `All`),
+/// `exports.<name>` / `module.exports.<name>` (→ `Named`), or a bracket access on either (→ `Opaque`,
+/// which fails closed).
 fn commonjs_export_target<'a>(
     node: Node<'_>,
     source: &'a [u8],
 ) -> Option<CommonjsExportTarget<'a>> {
-    if node.kind() != "member_expression" {
-        return None;
-    }
-    let object = node.child_by_field_name("object")?;
-    let name = node
-        .child_by_field_name("property")
-        .filter(|property| property.kind() == "property_identifier")
-        .map(|property| node_text(property, source))?;
-    match object.kind() {
-        // `module.exports = …` / `exports.name = …`
-        "identifier" => match (node_text(object, source), name) {
-            ("module", "exports") => Some(CommonjsExportTarget::All),
-            ("exports", _) => Some(CommonjsExportTarget::Named(name)),
-            _ => None,
-        },
-        // `module.exports.name = …` names a single export off the module object.
-        "member_expression" if is_module_exports(object, source) => {
-            Some(CommonjsExportTarget::Named(name))
+    match node.kind() {
+        "member_expression" => {
+            let object = node.child_by_field_name("object")?;
+            let name = node
+                .child_by_field_name("property")
+                .filter(|property| property.kind() == "property_identifier")
+                .map(|property| node_text(property, source))?;
+            match object.kind() {
+                // `module.exports = …` / `exports.name = …`
+                "identifier" => match (node_text(object, source), name) {
+                    ("module", "exports") => Some(CommonjsExportTarget::All),
+                    ("exports", _) => Some(CommonjsExportTarget::Named(name)),
+                    _ => None,
+                },
+                // `module.exports.name = …` names a single export off the module object.
+                "member_expression" if is_module_exports(object, source) => {
+                    Some(CommonjsExportTarget::Named(name))
+                }
+                _ => None,
+            }
+        }
+        // `exports[…] = …` / `module.exports[…] = …`. A static key could be modeled, but the
+        // documented contract only requires the form to fail closed, so every bracket export is
+        // opaque and marks the module incomplete.
+        "subscript_expression" => {
+            let object = node.child_by_field_name("object")?;
+            let targets_exports = (object.kind() == "identifier"
+                && node_text(object, source) == "exports")
+                || is_module_exports(object, source);
+            targets_exports.then_some(CommonjsExportTarget::Opaque)
         }
         _ => None,
     }

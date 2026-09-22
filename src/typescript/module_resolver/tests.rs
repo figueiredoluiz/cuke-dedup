@@ -753,3 +753,45 @@ fn commonjs_exports_inside_a_function_are_not_module_exports() {
         assert_eq!(outcome.reason, None, "{barrel}");
     }
 }
+
+/// A `module.exports`/`Object.assign` export under module-level control flow cannot be resolved,
+/// but it touches the exports object, so it fails closed rather than passing as clean. A top-level
+/// conditional that assigns something else, and an assignment inside a function, stay quiet.
+#[test]
+fn commonjs_conditional_module_level_exports_fail_closed() {
+    let prelude = "const { Given } = require('@cucumber/cucumber');\n";
+    for barrel in [
+        "if (enabled) { module.exports = { Given }; }",
+        "for (;;) { Object.assign(module.exports, { Given }); }",
+        "try { module.exports = { Given }; } catch (e) {}",
+    ] {
+        let outcome = resolve_barrel(&[("barrel.js", &format!("{prelude}{barrel}"))], "./barrel");
+        assert!(exported_names(&outcome).is_empty(), "{barrel}");
+        assert!(outcome.reason.is_some(), "{barrel}");
+    }
+
+    for barrel in [
+        "if (x) { other = 1; }",
+        "function setup() { module.exports = { Given }; }",
+    ] {
+        let outcome = resolve_barrel(&[("barrel.js", &format!("{prelude}{barrel}"))], "./barrel");
+        assert!(exported_names(&outcome).is_empty(), "{barrel}");
+        assert_eq!(outcome.reason, None, "{barrel}");
+    }
+}
+
+/// A bracket-notation export target on `exports`/`module.exports` — static or dynamic key — names
+/// something the analyzer does not model, so it fails closed instead of being dropped silently.
+#[test]
+fn commonjs_bracket_notation_exports_fail_closed() {
+    let prelude = "const { Given } = require('@cucumber/cucumber');\n";
+    for barrel in [
+        "exports['Given'] = Given;",
+        "module.exports['Given'] = Given;",
+        "exports[name] = Given;",
+    ] {
+        let outcome = resolve_barrel(&[("barrel.js", &format!("{prelude}{barrel}"))], "./barrel");
+        assert!(exported_names(&outcome).is_empty(), "{barrel}");
+        assert!(outcome.reason.is_some(), "{barrel}");
+    }
+}

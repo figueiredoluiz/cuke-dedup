@@ -149,9 +149,10 @@ A resolved barrel re-exports registrations through either module system:
   in the module body count; the same syntax inside a function or class is not a module export.
 
 A CommonJS `module.exports`/`exports.X` assignment written in a form the analyzer does not model —
-a factory call, a namespace member, an aliased object, an unresolvable spread — marks the corpus
-incomplete rather than resolving silently to nothing, so a barrel that might hide registrations is
-reported instead of passing as clean.
+a factory call, a namespace member, an aliased object, an unresolvable spread, a bracket target
+(`exports['X']`), or one evaluated conditionally at module scope (`if (…) module.exports = …`) —
+marks the corpus incomplete rather than resolving silently to nothing, so a barrel that might hide
+registrations is reported instead of passing as clean.
 
 Static project configs may use JSONC and relative JSON `extends` strings or arrays, up to 16 files
 deep. Workspace entrypoints honor `exports` before `main` and index-file fallbacks.
