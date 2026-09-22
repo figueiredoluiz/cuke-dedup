@@ -254,28 +254,15 @@ pub(super) fn detect_registrations(
                     Some(module) if is_supported_module(module) => {
                         Some(registration_exports_for_module(module))
                     }
-                    Some(module) => {
-                        let outcome = resolver.registration_exports(file_path, module)?;
-                        if let Some(reason) = outcome.reason {
-                            discovered
-                                .unresolved_reasons
-                                .entry(module.to_owned())
-                                .or_insert(UnresolvedModuleReason {
-                                    reason,
-                                    row: node.start_position().row,
-                                    byte_offset: node.start_byte(),
-                                    byte_column: node.start_position().column,
-                                });
-                        }
-                        outcome.resolution.map(|resolution| {
-                            if let Some(path) = resolution.module_path {
-                                module_paths.insert(module.to_owned(), path);
-                            }
-                            effective_framework =
-                                merge_framework(effective_framework, resolution.framework);
-                            resolution.exports
-                        })
-                    }
+                    Some(module) => resolve_local_module_exports(
+                        node,
+                        module,
+                        file_path,
+                        resolver,
+                        &mut discovered,
+                        &mut effective_framework,
+                        &mut module_paths,
+                    )?,
                     _ => None,
                 };
                 if !is_type_only_declaration(node)
@@ -308,7 +295,15 @@ pub(super) fn detect_registrations(
                     collect_exports(node, source, &available, &mut discovered.aliases);
                 }
             }
-            "variable_declarator" => collect_variable_registration(node, source, &mut discovered),
+            "variable_declarator" => collect_variable_registration(
+                node,
+                source,
+                file_path,
+                resolver,
+                &mut discovered,
+                &mut effective_framework,
+                &mut module_paths,
+            )?,
             "function_declaration" => {
                 shadow_named_declaration(node, source, &mut discovered.shadowed_defaults);
                 collect_wrapper_candidate(node, source, &mut discovered);
@@ -690,32 +685,88 @@ fn collect_shadowing_imports(
     }
 }
 
+/// Resolves a non-supported (project-local) module specifier through the registration resolver, as
+/// the ESM import path does, recording an unresolved reason and merging framework/module-path
+/// provenance. Returns the resolved exports, or `None` when the specifier is unresolvable.
+fn resolve_local_module_exports<'tree>(
+    node: Node<'tree>,
+    module: &str,
+    file_path: &Path,
+    resolver: &mut RegistrationResolver,
+    discovered: &mut RegistrationDiscovery<'tree>,
+    effective_framework: &mut Framework,
+    module_paths: &mut BTreeMap<String, std::path::PathBuf>,
+) -> Result<Option<RegistrationExports>> {
+    let outcome = resolver.registration_exports(file_path, module)?;
+    if let Some(reason) = outcome.reason {
+        discovered
+            .unresolved_reasons
+            .entry(module.to_owned())
+            .or_insert(UnresolvedModuleReason {
+                reason,
+                row: node.start_position().row,
+                byte_offset: node.start_byte(),
+                byte_column: node.start_position().column,
+            });
+    }
+    Ok(outcome.resolution.map(|resolution| {
+        if let Some(path) = resolution.module_path {
+            module_paths.insert(module.to_owned(), path);
+        }
+        *effective_framework = merge_framework(*effective_framework, resolution.framework);
+        resolution.exports
+    }))
+}
+
 fn collect_variable_registration<'tree>(
     declaration: Node<'tree>,
     source: &[u8],
+    file_path: &Path,
+    resolver: &mut RegistrationResolver,
     discovered: &mut RegistrationDiscovery<'tree>,
-) {
+    effective_framework: &mut Framework,
+    module_paths: &mut BTreeMap<String, std::path::PathBuf>,
+) -> Result<()> {
     let Some(name) = declaration.child_by_field_name("name") else {
-        return;
+        return Ok(());
     };
     if name.kind() == "object_pattern" {
         shadow_pattern_defaults(name, source, &mut discovered.shadowed_defaults);
     }
     let Some(value) = declaration.child_by_field_name("value") else {
         shadow_default_name(name, source, &mut discovered.shadowed_defaults);
-        return;
+        return Ok(());
     };
 
     if value.kind() == "call_expression" {
         let function = call_name(value, source);
-        let supported_require = function == Some("require")
-            && call_string_argument(value, source).is_some_and(is_supported_module);
         let create_bdd =
             function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
-        if supported_require || create_bdd {
-            let exports = call_string_argument(value, source)
-                .map(registration_exports_for_module)
-                .unwrap_or_else(|| registration_exports_for_framework(Framework::PlaywrightBdd));
+        // The exports a `require`/`createBdd` binding provides: a recognized package by name, a
+        // project-local barrel resolved through the resolver — the CommonJS mirror of a local ESM
+        // import — or the Playwright-BDD factory's registrations.
+        let exports = if function == Some("require") {
+            match call_string_argument(value, source) {
+                Some(module) if is_supported_module(module) => {
+                    Some(registration_exports_for_module(module))
+                }
+                Some(module) => resolve_local_module_exports(
+                    value,
+                    module,
+                    file_path,
+                    resolver,
+                    discovered,
+                    effective_framework,
+                    module_paths,
+                )?,
+                None => None,
+            }
+        } else if create_bdd {
+            Some(registration_exports_for_framework(Framework::PlaywrightBdd))
+        } else {
+            None
+        };
+        if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
             match name.kind() {
                 "object_pattern" => {
                     collect_pattern_aliases(name, source, &exports, &mut discovered.aliases)
@@ -745,6 +796,7 @@ fn collect_variable_registration<'tree>(
             discovered.shadowed_defaults.insert(local.to_owned());
         }
     }
+    Ok(())
 }
 
 /// Collects only bindings with static module evidence for Playwright-BDD's factory.

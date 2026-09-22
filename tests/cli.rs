@@ -1580,6 +1580,56 @@ fn local_barrel_reexports_are_recognized_as_registration_sources() {
 }
 
 #[test]
+fn commonjs_require_of_a_local_barrel_resolves_registrations() {
+    let directory = tempfile::tempdir().unwrap();
+    // A CommonJS barrel re-exporting a registration, imported through a project-local `require`
+    // under a new name — the CommonJS mirror of the ESM case above. Resolving the local barrel is
+    // the only evidence these register steps, so a regression drops both definitions.
+    write(
+        directory.path(),
+        "support/world.js",
+        "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
+    );
+    write(
+        directory.path(),
+        "steps.js",
+        "const { Given: registerStep } = require('./support/world');\nregisterStep('cjs require barrel step', () => first());\nregisterStep('cjs require barrel step', () => second());\n",
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--threshold", "100"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("duplicate-matcher"))
+        .stdout(predicate::str::contains("Analyzed 2 definitions"));
+}
+
+#[test]
+fn commonjs_require_of_a_local_non_registration_module_registers_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    // The opposite-answer control: a project-local `require` whose module exports no registration
+    // must not invent step definitions. Only a resolved registration binding counts.
+    write(
+        directory.path(),
+        "support/helpers.js",
+        "module.exports = { formatDate: (d) => String(d) };\n",
+    );
+    write(
+        directory.path(),
+        "steps.js",
+        "const { formatDate } = require('./support/helpers');\nformatDate('not a step');\nformatDate('also not a step');\n",
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--threshold", "100"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Analyzed 0 definitions"));
+}
+
+#[test]
 fn project_config_extends_cycles_and_excessive_depth_never_resolve() {
     let cycle = tempfile::tempdir().unwrap();
     write(
