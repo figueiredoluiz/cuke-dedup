@@ -3620,3 +3620,28 @@ fn a_binary_exclusion_also_makes_the_corpus_incomplete() {
         .stderr(predicate::str::contains("steps.js (binary)"))
         .stderr(predicate::str::contains("corpus is incomplete"));
 }
+
+#[test]
+fn a_long_exclusion_list_is_summarized_rather_than_printed_in_full() {
+    // A repository can vendor more generated files than a diagnostic should name, so the list is
+    // bounded and the remainder counted.
+    let directory = tempfile::tempdir().unwrap();
+    let bundle = format!("!function(n){{{}}}(0);\n", "var a=1,b=2,c=3;".repeat(500));
+    for index in 0..12 {
+        write(
+            directory.path(),
+            &format!("public/vendor{index}.js"),
+            &bundle,
+        );
+    }
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('an analyzed step', () => work());\n",
+    );
+
+    analyze_root(directory.path())
+        .code(0)
+        .stderr(predicate::str::contains("excluded 12 discovered"))
+        .stderr(predicate::str::contains(", and 2 more"));
+}

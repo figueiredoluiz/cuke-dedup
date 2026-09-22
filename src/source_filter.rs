@@ -12,7 +12,7 @@
 
 use crate::resource_limits::{MINIFIED_MEAN_LINE_BYTES, SOURCE_CLASSIFICATION_PREFIX_BYTES};
 use crate::typescript::frameworks::registration_modules;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -91,6 +91,8 @@ pub(crate) fn inspect(path: &Path, registrations: &[String]) -> Option<ExcludedS
         match file.read(&mut prefix[filled..]) {
             Ok(0) => break,
             Ok(read) => filled += read,
+            // A read that fails partway leaves classification undecided. Extraction reports the
+            // same failure with full context, so it is not duplicated here.
             Err(_) => return None,
         }
     }
@@ -186,12 +188,13 @@ fn mentions_registration(prefix: &[u8], registrations: &[String]) -> bool {
         .map(|name| name.as_bytes())
         .collect::<BTreeSet<_>>();
 
+    let angles = angle_bracket_pairs(prefix);
     identifiers(prefix).any(|identifier| {
         let name = &prefix[identifier.start..identifier.end];
         // The name is checked before the call, because a set lookup is far cheaper than scanning
         // the trivia that may follow every identifier in the prefix.
         (qualifiable.contains(&name) || (!identifier.qualified && bare_only.contains(&name)))
-            && is_call_callee(prefix, identifier.end)
+            && is_call_callee(prefix, identifier.end, &angles)
     })
 }
 
@@ -307,7 +310,7 @@ fn identifiers(prefix: &[u8]) -> impl Iterator<Item = Identifier> + '_ {
 /// formatting nor type syntax decides whether an authored file is excluded. None of these
 /// sequences follows a registration name anywhere in the reference bundles, so accepting them
 /// costs no exclusion.
-fn is_call_callee(prefix: &[u8], from: usize) -> bool {
+fn is_call_callee(prefix: &[u8], from: usize, angles: &BTreeMap<usize, usize>) -> bool {
     let mut index = from;
     loop {
         let Some(next) = skip_trivia(prefix, index) else {
@@ -320,8 +323,8 @@ fn is_call_callee(prefix: &[u8], from: usize) -> bool {
             // `(Given)('a step', handler)`, and `!` is a non-null assertion.
             Some(b')' | b'!') => index += 1,
             // An instantiation expression, `Given<Type>('a step', handler)`.
-            Some(b'<') => match skip_angle_brackets(prefix, index) {
-                Some(next) => index = next,
+            Some(b'<') => match angles.get(&index) {
+                Some(close) => index = close + 1,
                 None => return false,
             },
             _ => match skip_type_operator(prefix, index) {
@@ -332,24 +335,33 @@ fn is_call_callee(prefix: &[u8], from: usize) -> bool {
     }
 }
 
-/// Skips a balanced `<...>` starting at `from`, returning the byte after it.
-fn skip_angle_brackets(prefix: &[u8], from: usize) -> Option<usize> {
-    let mut depth = 0_usize;
-    for (offset, byte) in prefix[from..].iter().enumerate() {
+/// Pairs every `<` in the prefix with its closing `>`, in one pass.
+///
+/// Scanning forward from each `<` separately is quadratic: a prefix of repeated `Given<` gives one
+/// unbalanced scan per occurrence, each running to the end. Pairing with a stack answers every
+/// query from a single pass and keeps the same semantics — the innermost unclosed `<` matches, a
+/// type argument list cannot span a statement, and the `>` of an arrow is punctuation. Capping the
+/// scan length instead would stop recognizing a long but valid type argument list, and so could
+/// exclude an authored file.
+fn angle_bracket_pairs(prefix: &[u8]) -> BTreeMap<usize, usize> {
+    let mut unclosed = Vec::new();
+    let mut pairs = BTreeMap::new();
+    for (index, byte) in prefix.iter().enumerate() {
         match byte {
-            b'<' => depth += 1,
+            b'<' => unclosed.push(index),
+            b'>' if index > 0 && prefix[index - 1] == b'=' => {}
             b'>' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(from + offset + 1);
+                if let Some(start) = unclosed.pop() {
+                    pairs.insert(start, index);
                 }
             }
-            // A type argument list cannot span a statement, so an unbalanced `<` was a comparison.
-            b';' | b'{' | b'}' => return None,
+            // An unbalanced `<` before a statement boundary was a comparison, not a type argument
+            // list, so everything still open is abandoned.
+            b';' | b'{' | b'}' => unclosed.clear(),
             _ => {}
         }
     }
-    None
+    pairs
 }
 
 /// Skips an `as` or `satisfies` operator and the type that follows, returning the next byte.
@@ -421,18 +433,17 @@ fn whitespace_length(prefix: &[u8], at: usize) -> Option<usize> {
     if byte.is_ascii() {
         return byte.is_ascii_whitespace().then_some(1);
     }
-    // A UTF-8 character is at most four bytes, and an invalid sequence is not whitespace.
-    let end = (at + 4).min(prefix.len());
-    let character = std::str::from_utf8(&prefix[at..end])
-        .ok()
-        .and_then(|text| text.chars().next())
-        .or_else(|| {
-            (at + 1..end)
-                .rev()
-                .filter_map(|shorter| std::str::from_utf8(&prefix[at..shorter]).ok())
-                .find_map(|text| text.chars().next())
-        })?;
-    (character.is_whitespace() || character == '\u{feff}').then(|| character.len_utf8())
+    // Take the character's length from its lead byte and decode exactly that, so a character cut
+    // off by the end of the prefix, a continuation byte or an invalid lead all fall out as "not
+    // whitespace" without a second decoding attempt.
+    let length = match byte {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return None,
+    };
+    let text = std::str::from_utf8(prefix.get(at..at + length)?).ok()?;
+    (text.starts_with(char::is_whitespace) || text.starts_with('\u{feff}')).then_some(length)
 }
 
 /// Reports whether line geometry matches generated output rather than authored code.
@@ -845,6 +856,10 @@ mod tests {
             // An arrow before a comma: if the `>` of `=>` were counted as closing the type
             // argument list, the following comma would read as the end of the cast.
             "(Given as Map<() => void, string>)('a step', () => work());",
+            // A bare instantiation whose type argument contains an arrow. The `>` of `=>` is
+            // punctuation, so pairing it with the `<` would end the type list early.
+            "Given<() => void>('a step', () => work());",
+            "Given<Array<() => void>>('a step', () => work());",
         ] {
             let source = format!("{filler}{wrapped}{filler}");
             assert_eq!(classify(source.as_bytes(), &[]), None, "{wrapped}");
@@ -915,6 +930,73 @@ mod tests {
     }
 
     #[test]
+    fn each_exclusion_reports_its_own_word() {
+        // The word reaches the diagnostic, so each variant needs to round-trip.
+        for (bytes, expected, word) in [
+            (
+                b"BZh91AY&SY\x00payload".to_vec(),
+                ExcludedSource::Compressed,
+                "compressed",
+            ),
+            (b"var a = 1;\0".to_vec(), ExcludedSource::Binary, "binary"),
+            (
+                "var a=1,b=2,c=3;".repeat(500).into_bytes(),
+                ExcludedSource::Minified,
+                "minified",
+            ),
+        ] {
+            assert_eq!(classify(&bytes, &[]), Some(expected));
+            assert_eq!(expected.as_str(), word);
+        }
+    }
+
+    #[test]
+    fn an_import_keyword_reached_through_a_member_access_is_not_an_import() {
+        // `t.from('./x')` is a method call on some object, not a module import, so it must not
+        // stand in for the provenance evidence a real import provides.
+        let filler = "var a=1,b=2,c=3;".repeat(500);
+        for member in [
+            "t.from('./chunk')",
+            "t.require('./chunk')",
+            "t.import('./chunk')",
+        ] {
+            let source = format!("{filler}{member};{filler}");
+            assert_eq!(
+                classify(source.as_bytes(), &[]),
+                Some(ExcludedSource::Minified),
+                "{member}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unterminated_comment_after_an_import_keyword_is_not_an_import() {
+        let filler = "var a=1,b=2,c=3;".repeat(500);
+        for broken in ["import(/* never closed", "from /* never closed"] {
+            let source = format!("{filler}{broken}{filler}");
+            assert_eq!(
+                classify(source.as_bytes(), &[]),
+                Some(ExcludedSource::Minified),
+                "{broken}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_type_operator_that_runs_to_the_end_of_the_prefix_is_not_a_call() {
+        // The type never closes within what was inspected, so no call can be proven from it.
+        let filler = "var a=1,b=2,c=3;".repeat(500);
+        let source = format!(
+            "{filler}Given as SomeVeryLongTypeName{}",
+            "Alias".repeat(200)
+        );
+        assert_eq!(
+            classify(source.as_bytes(), &[]),
+            Some(ExcludedSource::Minified)
+        );
+    }
+
+    #[test]
     fn an_unterminated_comment_does_not_run_past_the_prefix() {
         let filler = "var a=1,b=2,c=3;".repeat(500);
         let source = format!("{filler}Given/* never closed{filler}");
@@ -922,6 +1004,43 @@ mod tests {
             classify(source.as_bytes(), &[]),
             Some(ExcludedSource::Minified)
         );
+    }
+
+    #[test]
+    fn repeated_unbalanced_type_arguments_do_not_scale_quadratically() {
+        // Scanning forward from each `<` separately makes this input quadratic: every `Given<`
+        // starts an unbalanced scan that runs to the end of the prefix. A valid type argument
+        // list has no length limit, so the fix has to be a single pass rather than a cap.
+        let prefix = "Given<"
+            .repeat(SOURCE_CLASSIFICATION_PREFIX_BYTES / 6)
+            .into_bytes();
+
+        let started = std::time::Instant::now();
+        let verdict = classify(&prefix, &[]);
+        let elapsed = started.elapsed();
+
+        assert_eq!(verdict, Some(ExcludedSource::Minified));
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "classification took {elapsed:?} on {} bytes of unbalanced type arguments",
+            prefix.len()
+        );
+    }
+
+    #[test]
+    fn a_type_argument_list_longer_than_any_cap_still_guards_a_file() {
+        // The control for the case above: a cap on the scan would stop recognizing this call and
+        // exclude an authored file, so length alone must not decide.
+        let union = (0..400)
+            .map(|index| format!("Type{index}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let source = format!("Given<{union}>('a step', () => work());");
+        assert!(
+            source.len() > 2_048,
+            "the type list must exceed any plausible cap"
+        );
+        assert_eq!(classify(source.as_bytes(), &[]), None);
     }
 
     #[test]

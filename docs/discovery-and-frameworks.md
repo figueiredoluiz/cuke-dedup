@@ -77,6 +77,11 @@ content: public/vendor.js (minified), public/blob.js (binary)
 Because classification reads a bounded prefix, a bundle larger than the 8 MiB input limit is
 excluded rather than ending the run.
 
+`--baseline-from-ref` requires a complete baseline corpus, so it fails when the baseline revision
+contains a file that would be excluded — the comparison would otherwise subtract findings from a
+corpus that was never fully analyzed. Add the generated paths to `exclude`, or narrow
+`definitions`, before comparing against a reference.
+
 The `minified` signal is line geometry, which separates generated output from authored code in
 both minified styles — collapsed onto one line, and wrapped at a fixed width. Geometry alone
 cannot distinguish a one-line bundle from authored code that happens to be one very long line, so
