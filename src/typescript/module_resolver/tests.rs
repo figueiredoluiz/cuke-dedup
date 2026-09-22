@@ -483,3 +483,121 @@ export { GivenEsm, World, CjsGiven, CjsWorld, rest, deepCjs, CjsWhen, fromDynami
     );
     assert_eq!(resolution.framework, Framework::PlaywrightBdd);
 }
+
+/// Resolve `specifier` from a temp root holding the given `(filename, contents)` files.
+fn resolve_barrel(files: &[(&str, &str)], specifier: &str) -> RegistrationOutcome {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    let importer = directory.path().join("steps.js");
+    fs::write(&importer, "").unwrap();
+    for (name, contents) in files {
+        fs::write(directory.path().join(name), contents).unwrap();
+    }
+    let mut resolver = RegistrationResolver::for_root(directory.path());
+    resolver.registration_exports(&importer, specifier).unwrap()
+}
+
+fn exported_names(outcome: &RegistrationOutcome) -> Vec<(String, String)> {
+    outcome
+        .resolution
+        .as_ref()
+        .unwrap()
+        .exports
+        .iter()
+        .map(|(name, export)| (name.clone(), export.canonical.clone()))
+        .collect()
+}
+
+/// `module.exports = { X }`, `{ X: local }`, and `exports.X = local` each re-export a registration.
+#[test]
+fn commonjs_module_exports_barrels_resolve_every_modeled_form() {
+    let cucumber = "const { Given } = require('@cucumber/cucumber');\n";
+    let cases: &[(&str, &str)] = &[
+        ("object", "module.exports = { Given };"),
+        ("pair", "module.exports = { Given: Given };"),
+        ("member", "exports.Given = Given;"),
+    ];
+    for (label, exports) in cases {
+        let outcome = resolve_barrel(
+            &[("barrel.js", &format!("{cucumber}{exports}"))],
+            "./barrel",
+        );
+        assert_eq!(
+            exported_names(&outcome),
+            [("Given".to_owned(), "Given".to_owned())],
+            "{label}"
+        );
+        assert_eq!(outcome.reason, None, "{label}");
+    }
+}
+
+/// `module.exports = require('./inner')`, its spread, and `Object.assign` star re-export a local
+/// CJS barrel, which also pins that CJS re-exports chain through the resolver's recursion.
+#[test]
+fn commonjs_star_re_export_forms_follow_a_local_barrel() {
+    let inner = (
+        "inner.js",
+        "const { When } = require('@cucumber/cucumber');\nmodule.exports = { When };",
+    );
+    let cases: &[(&str, &str)] = &[
+        ("require", "module.exports = require('./inner');"),
+        ("spread", "module.exports = { ...require('./inner') };"),
+        (
+            "object-assign",
+            "Object.assign(module.exports, require('./inner'));",
+        ),
+    ];
+    for (label, barrel) in cases {
+        let outcome = resolve_barrel(&[("barrel.js", barrel), inner], "./barrel");
+        assert_eq!(
+            exported_names(&outcome),
+            [("When".to_owned(), "When".to_owned())],
+            "{label}"
+        );
+        assert_eq!(outcome.reason, None, "{label}");
+    }
+}
+
+/// A spread re-export merged with a named export keeps both.
+#[test]
+fn commonjs_spread_barrel_merges_a_re_export_with_a_named_export() {
+    let inner = (
+        "inner.js",
+        "const { When } = require('@cucumber/cucumber');\nmodule.exports = { When };",
+    );
+    let barrel = (
+        "barrel.js",
+        "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { ...require('./inner'), Given };",
+    );
+    let outcome = resolve_barrel(&[barrel, inner], "./barrel");
+    assert_eq!(
+        exported_names(&outcome),
+        [
+            ("Given".to_owned(), "Given".to_owned()),
+            ("When".to_owned(), "When".to_owned())
+        ],
+    );
+    assert_eq!(outcome.reason, None);
+}
+
+/// An unmodeled `module.exports` form fails closed with a reason; a genuinely empty module stays
+/// quiet — the opposite-answer control proving the reason means "unmodeled", not "no exports".
+#[test]
+fn an_unmodeled_commonjs_export_form_marks_the_module_incomplete() {
+    let unmodeled = resolve_barrel(
+        &[("barrel.js", "module.exports = makeSteps();")],
+        "./barrel",
+    );
+    assert!(exported_names(&unmodeled).is_empty());
+    assert!(
+        unmodeled.reason.is_some(),
+        "unmodeled form must record a reason"
+    );
+
+    let empty = resolve_barrel(&[("barrel.js", "const unrelated = 1;")], "./barrel");
+    assert!(exported_names(&empty).is_empty());
+    assert_eq!(
+        empty.reason, None,
+        "a genuinely empty module must stay quiet"
+    );
+}

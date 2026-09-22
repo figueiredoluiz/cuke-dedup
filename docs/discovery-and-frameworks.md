@@ -139,6 +139,19 @@ Registration imports can be resolved through:
 - The nearest package's `imports` mappings.
 - Packages declared by the analysis root's `workspaces`.
 
+A resolved barrel re-exports registrations through either module system:
+
+- ESM `export { X } from './a'`, `export * from './a'`, aliased re-exports, and a split
+  `import { X } from './a'; export { X }`.
+- CommonJS `module.exports = { X }`, `module.exports = require('./a')`,
+  `module.exports = { ...require('./a'), X }`, `Object.assign(module.exports, require('./a'))`, and
+  `exports.X = require('./a').X` (or a local binding).
+
+A CommonJS `module.exports`/`exports.X` assignment written in a form the analyzer does not model —
+a factory call, an aliased object, an unresolvable spread — marks the corpus incomplete rather than
+resolving silently to nothing, so a barrel that might hide registrations is reported instead of
+passing as clean.
+
 Static project configs may use JSONC and relative JSON `extends` strings or arrays, up to 16 files
 deep. Workspace entrypoints honor `exports` before `main` and index-file fallbacks.
 

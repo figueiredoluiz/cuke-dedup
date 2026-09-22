@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "knownMissBaseline": 3,
   "minimumRecall": 0.6,
-  "minimumCases": 56,
+  "minimumCases": 57,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
@@ -673,6 +673,20 @@
           "matchers": [
             "cross package registration",
             "cross package registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "local-commonjs-barrel-reexport",
+      "path": "local-cjs-barrel",
+      "expectedDefinitions": 2,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cjs barrel registration",
+            "cjs barrel registration"
           ]
         }
       ]
