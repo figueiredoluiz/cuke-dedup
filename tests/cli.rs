@@ -550,17 +550,34 @@ exec "$BASELINE_TEST_REAL_GIT" "$@"
     }
 }
 
+/// Writes a file of `bytes` length whose content is ordinary authored text.
+///
+/// Size is the property under test, so the filler has to be something the analyzer would
+/// otherwise accept: real UTF-8, no NUL bytes, and authored line geometry. A sparse file of NUL
+/// bytes would instead be excluded as binary content and never reach the size limit at all.
 fn write_sized(root: &Path, relative: &str, bytes: u64) {
+    use std::io::Write;
+
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(path)
-        .unwrap()
-        .set_len(bytes)
         .unwrap();
+    let mut writer = std::io::BufWriter::new(file);
+    let line = b"// filler line of authored text\n";
+    let mut written = 0_u64;
+    while written + line.len() as u64 <= bytes {
+        writer.write_all(line).unwrap();
+        written += line.len() as u64;
+    }
+    while written < bytes {
+        writer.write_all(b"/").unwrap();
+        written += 1;
+    }
+    writer.flush().unwrap();
 }
 
 fn copy_tree(source: &Path, destination: &Path) {
@@ -3454,4 +3471,152 @@ fn ambiguous_step_severity_and_suppression_are_distinguishable_from_absence() {
         "the literal wins at runtime"
     );
     assert_eq!(report["summary"]["findings"], 0);
+}
+
+/// Analyzes `root` with default options and returns the assertion handle.
+fn analyze_root(root: &Path) -> assert_cmd::assert::Assert {
+    analyze_root_with(root, &[])
+}
+
+/// Analyzes `root` with extra arguments and returns the assertion handle.
+fn analyze_root_with(root: &Path, arguments: &[&str]) -> assert_cmd::assert::Assert {
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command.current_dir(root).arg(".").args(arguments).assert()
+}
+
+#[test]
+fn generated_bundles_are_excluded_and_reported_without_failing_the_run() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('an analyzed step', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "public/vendor.js",
+        &format!("!function(n){{{}}}(0);\n", "var a=1,b=2,c=3;".repeat(500)),
+    );
+    let mut binary = b"var a = 1;".to_vec();
+    binary.push(0);
+    fs::write(directory.path().join("public/blob.js"), binary).unwrap();
+
+    analyze_root(directory.path())
+        .code(0)
+        .stderr(predicate::str::contains("public/vendor.js (minified)"))
+        .stderr(predicate::str::contains("public/blob.js (binary)"))
+        // The run still analyzes what remains: an exclusion is not a failure, and the surviving
+        // source must not be lost alongside the generated one.
+        .stderr(predicate::str::contains("produced 0 definitions").not());
+}
+
+#[test]
+fn an_oversized_bundle_is_excluded_rather_than_failing_the_input_limit() {
+    // Classification reads a bounded prefix precisely so that a bundle larger than the input
+    // limit is cut instead of ending the run. Reading the whole file first would make the
+    // largest vendored bundles — the ones most worth excluding — a hard error instead.
+    let directory = tempfile::tempdir().unwrap();
+    let line = "var a=1,b=2,c=3;".repeat(500);
+    let mut bundle = String::from("/*! vendored bundle */\n");
+    while bundle.len() < 9 * 1024 * 1024 {
+        bundle.push_str(&line);
+    }
+    write(directory.path(), "public/huge.js", &bundle);
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('an analyzed step', () => work());\n",
+    );
+
+    analyze_root(directory.path())
+        .code(0)
+        .stderr(predicate::str::contains("public/huge.js (minified)"))
+        .stderr(predicate::str::contains("input limit").not());
+}
+
+#[test]
+fn a_bundle_that_registers_steps_is_analyzed_rather_than_excluded() {
+    // The opposite-answer control for exclusion: identical geometry to the bundle above, but it
+    // registers steps, so it must be analyzed and its duplicate reported.
+    let directory = tempfile::tempdir().unwrap();
+    let filler = "var a=1,b=2,c=3;".repeat(500);
+    write(
+        directory.path(),
+        "bundled.js",
+        &format!(
+            "{filler}Given('a bundled step', () => work());Given('a bundled step', () => work());{filler}"
+        ),
+    );
+
+    analyze_root(directory.path()).stderr(predicate::str::contains("bundled.js (minified)").not());
+}
+
+#[test]
+fn a_minified_exclusion_makes_the_corpus_incomplete_so_strict_gates_fail_closed() {
+    // A minified exclusion is a heuristic decision, so it must never let a gate pass while a
+    // discovered file went unanalyzed. This file registers steps through a renaming import whose
+    // call site is a bare `G(...)`, then has its module path stripped, leaving nothing the prefix
+    // scan can recognize — the residual uncertainty the exclusion cannot rule out.
+    let directory = tempfile::tempdir().unwrap();
+    let filler = "var a=1,b=2,c=3;".repeat(500);
+    write(
+        directory.path(),
+        "bundle.js",
+        &format!("{filler}G('a step', () => work());G('a step', () => work());{filler}"),
+    );
+    write(
+        directory.path(),
+        "features/example.feature",
+        "Feature: f\n  Scenario: s\n    Given a step\n",
+    );
+
+    analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+        .code(2)
+        .stderr(predicate::str::contains("bundle.js (minified)"))
+        .stderr(predicate::str::contains("corpus is incomplete"));
+}
+
+#[test]
+fn a_run_with_nothing_excluded_stays_complete() {
+    // The opposite-answer control for the case above. Every content signal is a heuristic, so any
+    // exclusion marks the corpus incomplete; without this control, a rule that marked every run
+    // incomplete would pass the case above and look correct.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "Given('an analyzed step', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "features/example.feature",
+        "Feature: f\n  Scenario: s\n    Given an analyzed step\n",
+    );
+
+    analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+        .code(0)
+        .stderr(predicate::str::contains("excluded").not())
+        .stderr(predicate::str::contains("corpus is incomplete").not());
+}
+
+#[test]
+fn a_binary_exclusion_also_makes_the_corpus_incomplete() {
+    // A NUL byte is not proof that a file holds no definitions: JavaScript permits one inside a
+    // comment, and such a file extracts normally once the exclusion is lifted. So a binary
+    // exclusion cannot report a complete corpus either.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "features/example.feature",
+        "Feature: f\n  Scenario: s\n    Given a step\n",
+    );
+    let mut source = b"const { Given } = require('@cucumber/cucumber');\n// ".to_vec();
+    source.push(0);
+    source.extend_from_slice(b"\nGiven('a step', () => work());\n");
+    fs::write(directory.path().join("steps.js"), source).unwrap();
+
+    analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+        .code(2)
+        .stderr(predicate::str::contains("steps.js (binary)"))
+        .stderr(predicate::str::contains("corpus is incomplete"));
 }

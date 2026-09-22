@@ -29,6 +29,8 @@ pub(crate) const MAX_GHERKIN_MARKDOWN_PROBES: usize = 128;
 pub(crate) const GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE: usize = 32;
 pub(crate) const MAX_CANDIDATE_COMPARISONS: usize = 2_000_000;
 pub(crate) const MAX_STRUCTURAL_CLASS_COMPARISONS: usize = 250_000;
+pub(crate) const SOURCE_CLASSIFICATION_PREFIX_BYTES: usize = 64 * 1024;
+pub(crate) const MINIFIED_MEAN_LINE_BYTES: usize = 200;
 
 #[derive(Debug)]
 struct InputLimitExceeded {
@@ -177,5 +179,7 @@ mod tests {
         assert_eq!(GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE, 32);
         assert_eq!(MAX_CANDIDATE_COMPARISONS, 2_000_000);
         assert_eq!(MAX_STRUCTURAL_CLASS_COMPARISONS, 250_000);
+        assert_eq!(SOURCE_CLASSIFICATION_PREFIX_BYTES, 64 * 1024);
+        assert_eq!(MINIFIED_MEAN_LINE_BYTES, 200);
     }
 }

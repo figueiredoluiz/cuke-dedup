@@ -76,4 +76,5 @@ pub mod modes;
 pub mod reporters;
 mod resource_limits;
 pub mod source_adapter;
+mod source_filter;
 pub mod typescript;
