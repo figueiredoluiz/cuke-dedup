@@ -2,7 +2,7 @@
 
 mod assertions;
 mod ast;
-mod frameworks;
+pub(crate) mod frameworks;
 mod handler;
 mod matcher;
 mod module_resolver;

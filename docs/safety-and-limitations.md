@@ -49,6 +49,7 @@ when CI must reject degraded analysis.
 | Project-resolution metadata files | 1,024 files / 16 MiB total |
 | Project-resolution mappings | 16,384 |
 | Workspace discovery entries | 100,000 |
+| Content-classification prefix per discovered source | 64 KiB |
 | Imported registration modules | 1,024 modules / 64 MiB total |
 | Memoized module path/depth states | 16,384 |
 

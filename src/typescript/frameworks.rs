@@ -26,7 +26,7 @@ pub(super) enum RegistrationExportKind {
 pub(super) type RegistrationExports = BTreeMap<String, RegistrationExport>;
 
 /// Every registration name CukeDedup understands, including lowercase aliases.
-pub(super) const REGISTRATIONS: [&str; 8] = [
+pub(crate) const REGISTRATIONS: [&str; 8] = [
     "Given",
     "When",
     "Then",
@@ -41,7 +41,7 @@ pub(super) const REGISTRATIONS: [&str; 8] = [
 ///
 /// The lowercase aliases are deliberately absent: `given` is a plausible identifier in ordinary
 /// code, so treating a bare call as a registration would invent step definitions.
-pub(super) const DEFAULT_REGISTRATIONS: [&str; 4] = ["Given", "When", "Then", "defineStep"];
+pub(crate) const DEFAULT_REGISTRATIONS: [&str; 4] = ["Given", "When", "Then", "defineStep"];
 
 pub(super) const CUCUMBER_MODULE: &str = "@cucumber/cucumber";
 pub(super) const LEGACY_CUCUMBER_MODULE: &str = "cucumber";
@@ -90,6 +90,16 @@ const FRAMEWORK_REGISTRY: &[FrameworkRegistration] = &[
         exports: ExportStyle::Calls { factory: None },
     },
 ];
+
+/// Every module path known to export step registrations.
+///
+/// Sourced from the framework registry so that adding a framework extends every caller, rather
+/// than leaving a second list to drift out of step with this one.
+pub(crate) fn registration_modules() -> impl Iterator<Item = &'static str> {
+    FRAMEWORK_REGISTRY
+        .iter()
+        .flat_map(|registration| registration.modules.iter().copied())
+}
 
 fn registration_for_module(module: &str) -> Option<&'static FrameworkRegistration> {
     FRAMEWORK_REGISTRY

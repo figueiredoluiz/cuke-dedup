@@ -175,6 +175,7 @@ struct Diagnostics {
 struct ExtractedCorpus {
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
+    excluded_sources: Vec<(PathBuf, crate::source_filter::ExcludedSource)>,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
     feature_files_without_steps: usize,
@@ -361,6 +362,7 @@ fn extract_corpus(
     let mut corpus = ExtractedCorpus {
         definitions: Vec::new(),
         feature_steps: Vec::new(),
+        excluded_sources: Vec::new(),
         definition_files_with_definitions: 0,
         parsed_feature_files: 0,
         feature_files_without_steps: 0,
@@ -384,6 +386,19 @@ fn extract_definitions(
         &config.assertion_modules,
     );
     for file in &files.definitions {
+        // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
+        // a source extension. They cannot contain an authored definition, so they are excluded
+        // before parsing rather than analyzed and discarded.
+        if let Some(excluded) = crate::source_filter::inspect(&file.path, &config.registrations) {
+            // Every one of these signals is a heuristic over file content, not a proof: a NUL
+            // byte or an archive header can appear inside an authored comment or string, and
+            // minified geometry cannot be told apart from one very long authored line. So the
+            // analyzed corpus no longer represents everything discovered, and
+            // `--fail-on-incomplete` must fail closed rather than let a duplicate pass the gate.
+            corpus.incomplete = true;
+            corpus.excluded_sources.push((file.path.clone(), excluded));
+            continue;
+        }
         let adapter = source_adapter::adapter_for_language(file.language);
         match adapter
             .extract_file_with_session(file, &mut extraction_session)
@@ -416,6 +431,7 @@ fn extract_definitions(
             .then(left.location.line.cmp(&right.location.line))
             .then(left.location.column.cmp(&right.location.column))
     });
+    report_excluded_sources(config, &corpus.excluded_sources, diagnostics);
     if corpus.definitions.is_empty() {
         let message = if files.definitions.is_empty() {
             "no step definitions were extracted because no definition source files were discovered"
@@ -432,6 +448,47 @@ fn extract_definitions(
             diagnostics.warnings.push(message);
         }
     }
+}
+
+/// Maximum excluded paths named individually before the warning summarizes the remainder.
+const MAX_LISTED_EXCLUDED_SOURCES: usize = 10;
+
+/// Records excluded sources as a warning so an exclusion is never silent.
+///
+/// The exclusion is a heuristic over file content, so a reader has to be able to see which files
+/// it removed and why. It stays a warning rather than an error because generated output in a
+/// repository is ordinary and must not fail an otherwise clean run.
+fn report_excluded_sources(
+    config: &Config,
+    excluded: &[(PathBuf, crate::source_filter::ExcludedSource)],
+    diagnostics: &mut Diagnostics,
+) {
+    if excluded.is_empty() {
+        return;
+    }
+    let listed = excluded
+        .iter()
+        .take(MAX_LISTED_EXCLUDED_SOURCES)
+        .map(|(path, reason)| {
+            let relative = path
+                .strip_prefix(&config.root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            format!("{relative} ({})", reason.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let remainder = excluded.len().saturating_sub(MAX_LISTED_EXCLUDED_SOURCES);
+    let suffix = if remainder == 0 {
+        String::new()
+    } else {
+        format!(", and {remainder} more")
+    };
+    diagnostics.warnings.push(format!(
+        "excluded {} discovered definition source file(s) as generated or non-source content: {listed}{suffix}",
+        excluded.len()
+    ));
 }
 
 fn collect_extraction_diagnostics(
@@ -531,6 +588,8 @@ fn analyze_corpus(
     let ExtractedCorpus {
         definitions,
         feature_steps,
+        // Reported during extraction; analysis works only from what survived exclusion.
+        excluded_sources: _,
         definition_files_with_definitions,
         parsed_feature_files,
         feature_files_without_steps,
