@@ -255,26 +255,16 @@ pub(super) fn detect_registrations(
                         Some(registration_exports_for_module(module))
                     }
                     Some(module) => {
-                        let outcome = resolver.registration_exports(file_path, module)?;
-                        if let Some(reason) = outcome.reason {
-                            discovered
-                                .unresolved_reasons
-                                .entry(module.to_owned())
-                                .or_insert(UnresolvedModuleReason {
-                                    reason,
-                                    row: node.start_position().row,
-                                    byte_offset: node.start_byte(),
-                                    byte_column: node.start_position().column,
-                                });
-                        }
-                        outcome.resolution.map(|resolution| {
-                            if let Some(path) = resolution.module_path {
-                                module_paths.insert(module.to_owned(), path);
-                            }
-                            effective_framework =
-                                merge_framework(effective_framework, resolution.framework);
-                            resolution.exports
-                        })
+                        let resolved = resolve_local_module_exports(
+                            node,
+                            module,
+                            file_path,
+                            resolver,
+                            &mut discovered,
+                            &mut effective_framework,
+                            &mut module_paths,
+                        );
+                        resolved?
                     }
                     _ => None,
                 };
@@ -308,7 +298,18 @@ pub(super) fn detect_registrations(
                     collect_exports(node, source, &available, &mut discovered.aliases);
                 }
             }
-            "variable_declarator" => collect_variable_registration(node, source, &mut discovered),
+            "variable_declarator" => {
+                let collected = collect_variable_registration(
+                    node,
+                    source,
+                    file_path,
+                    resolver,
+                    &mut discovered,
+                    &mut effective_framework,
+                    &mut module_paths,
+                );
+                collected?
+            }
             "function_declaration" => {
                 shadow_named_declaration(node, source, &mut discovered.shadowed_defaults);
                 collect_wrapper_candidate(node, source, &mut discovered);
@@ -331,7 +332,13 @@ pub(super) fn detect_registrations(
 
     for (pattern, namespace) in &discovered.namespace_destructures {
         if let Some(exports) = discovered.namespaces.get(namespace) {
-            collect_pattern_aliases(*pattern, source, exports, &mut discovered.aliases);
+            collect_pattern_aliases(
+                *pattern,
+                source,
+                exports,
+                &mut discovered.aliases,
+                &mut discovered.create_bdd_factories,
+            );
         }
     }
 
@@ -690,61 +697,127 @@ fn collect_shadowing_imports(
     }
 }
 
+/// Resolves a non-supported (project-local) module specifier through the registration resolver, as
+/// the ESM import path does, recording an unresolved reason and merging framework/module-path
+/// provenance. Returns the resolved exports, or `None` when the specifier is unresolvable.
+fn resolve_local_module_exports<'tree>(
+    node: Node<'tree>,
+    module: &str,
+    file_path: &Path,
+    resolver: &mut RegistrationResolver,
+    discovered: &mut RegistrationDiscovery<'tree>,
+    effective_framework: &mut Framework,
+    module_paths: &mut BTreeMap<String, std::path::PathBuf>,
+) -> Result<Option<RegistrationExports>> {
+    let outcome = resolver.registration_exports(file_path, module)?;
+    if let Some(reason) = outcome.reason {
+        discovered
+            .unresolved_reasons
+            .entry(module.to_owned())
+            .or_insert(UnresolvedModuleReason {
+                reason,
+                row: node.start_position().row,
+                byte_offset: node.start_byte(),
+                byte_column: node.start_position().column,
+            });
+    }
+    Ok(outcome.resolution.map(|resolution| {
+        if let Some(path) = resolution.module_path {
+            module_paths.insert(module.to_owned(), path);
+        }
+        *effective_framework = merge_framework(*effective_framework, resolution.framework);
+        resolution.exports
+    }))
+}
+
 fn collect_variable_registration<'tree>(
     declaration: Node<'tree>,
     source: &[u8],
+    file_path: &Path,
+    resolver: &mut RegistrationResolver,
     discovered: &mut RegistrationDiscovery<'tree>,
-) {
-    let Some(name) = declaration.child_by_field_name("name") else {
-        return;
-    };
-    if name.kind() == "object_pattern" {
-        shadow_pattern_defaults(name, source, &mut discovered.shadowed_defaults);
-    }
-    let Some(value) = declaration.child_by_field_name("value") else {
-        shadow_default_name(name, source, &mut discovered.shadowed_defaults);
-        return;
-    };
+    effective_framework: &mut Framework,
+    module_paths: &mut BTreeMap<String, std::path::PathBuf>,
+) -> Result<()> {
+    // A variable_declarator always carries a name field (error recovery inserts a MISSING
+    // node rather than dropping it), so the absent case is unreachable and simply yields
+    // nothing; wrapping the body avoids a defensive branch no input can exercise.
+    if let Some(name) = declaration.child_by_field_name("name") {
+        if name.kind() == "object_pattern" {
+            shadow_pattern_defaults(name, source, &mut discovered.shadowed_defaults);
+        }
+        let Some(value) = declaration.child_by_field_name("value") else {
+            shadow_default_name(name, source, &mut discovered.shadowed_defaults);
+            return Ok(());
+        };
 
-    if value.kind() == "call_expression" {
-        let function = call_name(value, source);
-        let supported_require = function == Some("require")
-            && call_string_argument(value, source).is_some_and(is_supported_module);
-        let create_bdd =
-            function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
-        if supported_require || create_bdd {
-            let exports = call_string_argument(value, source)
-                .map(registration_exports_for_module)
-                .unwrap_or_else(|| registration_exports_for_framework(Framework::PlaywrightBdd));
-            match name.kind() {
-                "object_pattern" => {
-                    collect_pattern_aliases(name, source, &exports, &mut discovered.aliases)
+        if value.kind() == "call_expression" {
+            let function = call_name(value, source);
+            let create_bdd =
+                function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
+            // The exports a `require`/`createBdd` binding provides: a recognized package by name, a
+            // project-local barrel resolved through the resolver — the CommonJS mirror of a local ESM
+            // import — or the Playwright-BDD factory's registrations.
+            let exports = if function == Some("require") {
+                match call_string_argument(value, source) {
+                    Some(module) if is_supported_module(module) => {
+                        Some(registration_exports_for_module(module))
+                    }
+                    Some(module) => {
+                        let resolved = resolve_local_module_exports(
+                            value,
+                            module,
+                            file_path,
+                            resolver,
+                            discovered,
+                            effective_framework,
+                            module_paths,
+                        );
+                        resolved?
+                    }
+                    None => None,
                 }
-                "identifier" => {
-                    discovered
-                        .namespaces
-                        .insert(node_text(name, source).to_owned(), exports);
+            } else if create_bdd {
+                Some(registration_exports_for_framework(Framework::PlaywrightBdd))
+            } else {
+                None
+            };
+            if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
+                match name.kind() {
+                    "object_pattern" => collect_pattern_aliases(
+                        name,
+                        source,
+                        &exports,
+                        &mut discovered.aliases,
+                        &mut discovered.create_bdd_factories,
+                    ),
+                    "identifier" => {
+                        discovered
+                            .namespaces
+                            .insert(node_text(name, source).to_owned(), exports);
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+        } else if name.kind() == "object_pattern" && value.kind() == "identifier" {
+            discovered
+                .namespace_destructures
+                .push((name, node_text(value, source).to_owned()));
+        } else if name.kind() == "identifier" && value.kind() == "identifier" {
+            discovered.assignments.push((
+                node_text(name, source).to_owned(),
+                node_text(value, source).to_owned(),
+            ));
+        }
+
+        if name.kind() == "identifier" {
+            let local = node_text(name, source);
+            if DEFAULT_REGISTRATIONS.contains(&local) {
+                discovered.shadowed_defaults.insert(local.to_owned());
             }
         }
-    } else if name.kind() == "object_pattern" && value.kind() == "identifier" {
-        discovered
-            .namespace_destructures
-            .push((name, node_text(value, source).to_owned()));
-    } else if name.kind() == "identifier" && value.kind() == "identifier" {
-        discovered.assignments.push((
-            node_text(name, source).to_owned(),
-            node_text(value, source).to_owned(),
-        ));
     }
-
-    if name.kind() == "identifier" {
-        let local = node_text(name, source);
-        if DEFAULT_REGISTRATIONS.contains(&local) {
-            discovered.shadowed_defaults.insert(local.to_owned());
-        }
-    }
+    Ok(())
 }
 
 /// Collects only bindings with static module evidence for Playwright-BDD's factory.
@@ -966,6 +1039,7 @@ fn collect_pattern_aliases(
     source: &[u8],
     exports: &RegistrationExports,
     aliases: &mut RegistrationExports,
+    create_bdd_factories: &mut BTreeSet<String>,
 ) {
     let mut cursor = pattern.walk();
     for child in pattern.named_children(&mut cursor) {
@@ -987,7 +1061,13 @@ fn collect_pattern_aliases(
         };
         if let Some(registration) = exports.get(original) {
             if alias.chars().all(is_identifier_character) {
-                aliases.insert(alias.to_owned(), registration.clone());
+                // A destructured factory (Playwright-BDD's `createBdd`) enters the factory path, as
+                // it does for an ESM import; every other export is a call alias.
+                if registration.kind == RegistrationExportKind::Factory {
+                    create_bdd_factories.insert(alias.to_owned());
+                } else {
+                    aliases.insert(alias.to_owned(), registration.clone());
+                }
             }
         }
     }

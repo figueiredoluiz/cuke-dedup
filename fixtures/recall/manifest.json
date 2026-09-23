@@ -680,13 +680,20 @@
     {
       "name": "local-commonjs-barrel-reexport",
       "path": "local-cjs-barrel",
-      "expectedDefinitions": 2,
+      "expectedDefinitions": 4,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
           "matchers": [
             "cjs barrel registration",
             "cjs barrel registration"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cjs barrel require registration",
+            "cjs barrel require registration"
           ]
         }
       ]
