@@ -31,6 +31,9 @@ function newestSource() {
   };
   walk(resolve("src"));
   consider(resolve("Cargo.toml"));
+  // A dependency-only bump touches the lockfile without touching `src` or the manifest, and can
+  // change analyzer behavior through a rebuilt dependency, so it counts toward staleness too.
+  consider(resolve("Cargo.lock"));
   return newest;
 }
 
