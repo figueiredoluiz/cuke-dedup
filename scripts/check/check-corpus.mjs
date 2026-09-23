@@ -6,11 +6,55 @@ import {
   readFile,
   rm,
 } from "node:fs/promises";
+import { readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
+// The corpus check runs whatever binary is on disk. A binary older than the sources silently
+// analyzes with stale behavior, so a passing or failing run reflects code that is no longer
+// checked out — a repeatedly confusing failure mode locally. Warn (never fail: CI always builds
+// fresh, and the warning is for the local edit-then-check loop) when the binary predates any
+// source or is missing.
+function newestSource() {
+  let newest = { mtimeMs: 0, path: null };
+  const consider = (path) => {
+    const { mtimeMs } = statSync(path);
+    if (mtimeMs > newest.mtimeMs) newest = { mtimeMs, path };
+  };
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else consider(full);
+    }
+  };
+  walk(resolve("src"));
+  consider(resolve("Cargo.toml"));
+  return newest;
+}
+
+function warnIfBinaryStale(binaryPath) {
+  let binaryMtimeMs;
+  try {
+    binaryMtimeMs = statSync(binaryPath).mtimeMs;
+  } catch {
+    process.stderr.write(
+      `\n⚠️  ${binaryPath} is missing — run \`cargo build --release\` before the corpus check.\n\n`,
+    );
+    return;
+  }
+  const newest = newestSource();
+  if (newest.mtimeMs > binaryMtimeMs) {
+    process.stderr.write(
+      `\n⚠️  ${binaryPath} is older than ${newest.path} — it may analyze with stale behavior.\n` +
+        `    Run \`cargo build --release\` before the corpus check.\n\n`,
+    );
+  }
+}
+
 const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
+warnIfBinaryStale(binary);
 const corpus = resolve(process.argv[3] || "fixtures/corpus");
 const manifest = JSON.parse(await readFile(join(corpus, "manifest.json"), "utf8"));
 assert.equal(manifest.schemaVersion, 1);
