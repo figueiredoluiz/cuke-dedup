@@ -5,6 +5,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-24
+
 ### Changed
 
 - A discovered source file that cannot be parsed no longer aborts the whole scan. By default its
@@ -18,9 +20,19 @@ All notable changes to CukeDedup are documented in this file. The project follow
   the baseline could not extract may appear as new; `--fail-on-incomplete` restores the rejection. A
   baseline that produced a hard error, discovered definition files yet extracted no definitions, or
   has definitions but no discovered feature files, still fails regardless.
+- Generated, compressed, and minified sources are excluded before parsing instead of being analyzed
+  and discarded. A binary file, an archive or compression signature, or minified line geometry no
+  longer contributes definitions; each exclusion is reported as a warning naming the file and its
+  reason. Because the analyzed corpus then no longer represents everything discovered, the run is
+  marked incomplete so `--fail-on-incomplete` fails closed rather than letting a duplicate hidden in
+  an excluded bundle pass the gate.
 
 ### Fixed
 
+- Regex matchers that differ only by effective or reordered flags now share one matcher identity, so
+  a pair such as `/step/gi` and `/step/ig`, or two matchers whose only difference is a `g`, `y`, or
+  `d` flag that does not change what text they match, is reported as `duplicate-matcher` instead of
+  being missed.
 - CommonJS barrel modules that re-export step registrations through `module.exports` — an object of
   local bindings, `module.exports = require('./steps')`, an object spread, `Object.assign`, or
   `exports.x = …` — now resolve, so definitions behind them are analyzed instead of silently
@@ -318,6 +330,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.8.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.4.0...v0.5.0
