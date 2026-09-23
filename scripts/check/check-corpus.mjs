@@ -10,6 +10,12 @@ import { readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  countMatches,
+  expectedTotal as sumExpected,
+  findingOwners,
+  locationLabel,
+} from "./lib/recall-oracle.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
 // analyzes with stale behavior, so a passing or failing run reflects code that is no longer
@@ -262,10 +268,7 @@ async function validateRecallCorpus(temporary) {
     const expectedFindings = testCase.expectedFindings || [];
     // `count` lets one expectation stand for several findings sharing every asserted field. It
     // defaults to 1 so existing entries keep their exact meaning.
-    const expectedTotal = expectedFindings.reduce(
-      (total, expected) => total + (expected.count ?? 1),
-      0,
-    );
+    const expectedTotal = sumExpected(expectedFindings);
     for (const expected of expectedFindings) {
       assertFindingCount(
         activeFindings,
@@ -279,7 +282,7 @@ async function validateRecallCorpus(temporary) {
     // still balance. Requiring a one-to-one mapping closes that, and `count` still lets a single
     // expectation own several findings.
     for (const finding of activeFindings) {
-      const owners = expectedFindings.filter((expected) => findingMatches(finding, expected));
+      const owners = findingOwners(finding, expectedFindings);
       assert.equal(
         owners.length,
         1,
@@ -355,73 +358,7 @@ async function validateRecallCorpus(temporary) {
  * @param {string} context Message prefix identifying the case and the kind of expectation.
  */
 function assertFindingCount(findings, expected, count, context) {
-  const matches = findings.filter((finding) => findingMatches(finding, expected));
-  assert.equal(matches.length, count, `${context}: ${JSON.stringify(expected)}`);
-}
-
-/**
- * Renders a source location as the `path:line` form the manifest uses for related locations.
- *
- * @param {{path: string, line: number}} location Location from a finding.
- * @returns {string} Comparable label.
- */
-function locationLabel(location) {
-  return `${location.path}:${location.line}`;
-}
-
-/**
- * Returns whether one finding satisfies one manifest expectation.
- *
- * Every field is optional and omitting one widens the match, so an expectation asserts exactly what
- * it names and nothing more. `relatedLocations` is the exception worth knowing about: it compares
- * unordered but exactly, because a subset must not satisfy it.
- *
- * @param {object} finding Active finding from a report.
- * @param {object} expected Expectation from the manifest.
- * @returns {boolean} True when every field the expectation names agrees.
- */
-function findingMatches(finding, expected) {
-  if (finding.rule !== expected.rule) return false;
-  if (expected.primaryPath && finding.primary.path !== expected.primaryPath) return false;
-  if (expected.primaryLine && finding.primary.line !== expected.primaryLine) return false;
-  // Two findings can share a primary location and differ only in which definitions they involve, so
-  // related locations are part of a finding's identity. Compared unordered and exactly: a subset
-  // must not satisfy the expectation, or shrinking a group would stay green.
-  if (expected.relatedLocations) {
-    const actual = finding.related.map(locationLabel).sort();
-    const wanted = [...expected.relatedLocations].sort();
-    if (actual.length !== wanted.length) return false;
-    if (!actual.every((label, index) => label === wanted[index])) return false;
-  }
-  if (expected.relatedCount !== undefined && finding.related.length !== expected.relatedCount) {
-    return false;
-  }
-  if (expected.messageIncludes && !finding.message.includes(expected.messageIncludes)) {
-    return false;
-  }
-  // Cluster evidence is the documented contract for groups past the pair/cluster boundary: one
-  // finding carrying the complete member count and how many pair findings it stands in for. Without
-  // this a cluster could report the wrong count, or lose the truncation signal, and the manifest
-  // would still match on rule and locations alone.
-  if (expected.cluster) {
-    const cluster = finding.evidence?.cluster;
-    if (!cluster) return false;
-    for (const [field, value] of Object.entries(expected.cluster)) {
-      if (cluster[field] !== value) return false;
-    }
-  }
-  if (expected.cluster === false && finding.evidence?.cluster) {
-    return false;
-  }
-  if (expected.matchers) {
-    const comparison = finding.evidence.comparison;
-    if (!comparison) return false;
-    const actual = [comparison.leftMatcher, comparison.rightMatcher].sort();
-    const wanted = [...expected.matchers].sort();
-    return actual.length === wanted.length
-      && actual.every((matcher, index) => matcher === wanted[index]);
-  }
-  return true;
+  assert.equal(countMatches(findings, expected), count, `${context}: ${JSON.stringify(expected)}`);
 }
 
 /**

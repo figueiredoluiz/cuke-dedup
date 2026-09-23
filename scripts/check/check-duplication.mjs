@@ -44,6 +44,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { filterExisting, parseGitSources } from "./lib/rust-sources.mjs";
 
 /// Every Rust source in the repository, which the scopes below must account for exactly once.
 ///
@@ -57,25 +58,20 @@ import { spawnSync } from "node:child_process";
 /// missed real sources under a directory that merely shares the name, and could never be complete.
 /// `--cached --others --exclude-standard` covers tracked and new-but-not-ignored files alike, so a
 /// source is measured before it is committed.
-const ALL_RUST_SOURCES = [
-  ...new Set(
-    spawnSync(
-      "git",
-      ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.rs"],
-      { encoding: "utf8" },
-    ).stdout.split("\n").filter(Boolean),
+// `--cached` lists index entries, so two ordinary states need handling. During an unresolved merge a
+// conflicted path appears once per stage — three times, verified — which `parseGitSources` collapses
+// so the scope-overlap assertion does not trip on an overlap that does not exist. And a file deleted
+// without staging the deletion is still in the index, so `filterExisting` measures what is on disk —
+// the working tree is what the ceilings describe — rather than failing later with ENOENT. Both are
+// unit-tested in lib/rust-sources.test.mjs.
+const ALL_RUST_SOURCES = filterExisting(
+  parseGitSources(
+    spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.rs"], {
+      encoding: "utf8",
+    }).stdout,
   ),
-]
-  // `--cached` lists index entries, so two ordinary states need handling. During an unresolved
-  // merge a conflicted path appears once per stage — three times, verified — which would otherwise
-  // trip the scope-overlap assertion with an overlap that does not exist; the Set above collapses
-  // that. And a file deleted without staging the deletion is still in the index, which would fail
-  // the run with ENOENT while staging it rather than with a duplication verdict.
-  //
-  // Measuring what is on disk is also the correct reading: the working tree is what the ceilings
-  // describe. A local deletion therefore shifts the figures rather than being ignored, which the
-  // stale-ceiling check reports.
-  .filter((path) => existsSync(path));
+  existsSync,
+);
 
 /// How far below its ceiling a scope may sit before the ceiling is treated as stale.
 ///

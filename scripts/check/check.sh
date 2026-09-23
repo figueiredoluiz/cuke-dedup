@@ -68,6 +68,7 @@ if [[ "$mode" == "full" ]]; then
 fi
 
 npm test
+npm run check:test
 npm run skills:check
 npm run check:versions
 
