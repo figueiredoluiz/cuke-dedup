@@ -733,76 +733,78 @@ fn collect_variable_registration<'tree>(
     effective_framework: &mut Framework,
     module_paths: &mut BTreeMap<String, std::path::PathBuf>,
 ) -> Result<()> {
-    let Some(name) = declaration.child_by_field_name("name") else {
-        return Ok(());
-    };
-    if name.kind() == "object_pattern" {
-        shadow_pattern_defaults(name, source, &mut discovered.shadowed_defaults);
-    }
-    let Some(value) = declaration.child_by_field_name("value") else {
-        shadow_default_name(name, source, &mut discovered.shadowed_defaults);
-        return Ok(());
-    };
-
-    if value.kind() == "call_expression" {
-        let function = call_name(value, source);
-        let create_bdd =
-            function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
-        // The exports a `require`/`createBdd` binding provides: a recognized package by name, a
-        // project-local barrel resolved through the resolver — the CommonJS mirror of a local ESM
-        // import — or the Playwright-BDD factory's registrations.
-        let exports = if function == Some("require") {
-            match call_string_argument(value, source) {
-                Some(module) if is_supported_module(module) => {
-                    Some(registration_exports_for_module(module))
-                }
-                Some(module) => {
-                    let resolved = resolve_local_module_exports(
-                        value,
-                        module,
-                        file_path,
-                        resolver,
-                        discovered,
-                        effective_framework,
-                        module_paths,
-                    );
-                    resolved?
-                }
-                None => None,
-            }
-        } else if create_bdd {
-            Some(registration_exports_for_framework(Framework::PlaywrightBdd))
-        } else {
-            None
-        };
-        if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
-            match name.kind() {
-                "object_pattern" => {
-                    collect_pattern_aliases(name, source, &exports, &mut discovered.aliases)
-                }
-                "identifier" => {
-                    discovered
-                        .namespaces
-                        .insert(node_text(name, source).to_owned(), exports);
-                }
-                _ => {}
-            }
+    // A variable_declarator always carries a name field (error recovery inserts a MISSING
+    // node rather than dropping it), so the absent case is unreachable and simply yields
+    // nothing; wrapping the body avoids a defensive branch no input can exercise.
+    if let Some(name) = declaration.child_by_field_name("name") {
+        if name.kind() == "object_pattern" {
+            shadow_pattern_defaults(name, source, &mut discovered.shadowed_defaults);
         }
-    } else if name.kind() == "object_pattern" && value.kind() == "identifier" {
-        discovered
-            .namespace_destructures
-            .push((name, node_text(value, source).to_owned()));
-    } else if name.kind() == "identifier" && value.kind() == "identifier" {
-        discovered.assignments.push((
-            node_text(name, source).to_owned(),
-            node_text(value, source).to_owned(),
-        ));
-    }
+        let Some(value) = declaration.child_by_field_name("value") else {
+            shadow_default_name(name, source, &mut discovered.shadowed_defaults);
+            return Ok(());
+        };
 
-    if name.kind() == "identifier" {
-        let local = node_text(name, source);
-        if DEFAULT_REGISTRATIONS.contains(&local) {
-            discovered.shadowed_defaults.insert(local.to_owned());
+        if value.kind() == "call_expression" {
+            let function = call_name(value, source);
+            let create_bdd =
+                function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
+            // The exports a `require`/`createBdd` binding provides: a recognized package by name, a
+            // project-local barrel resolved through the resolver — the CommonJS mirror of a local ESM
+            // import — or the Playwright-BDD factory's registrations.
+            let exports = if function == Some("require") {
+                match call_string_argument(value, source) {
+                    Some(module) if is_supported_module(module) => {
+                        Some(registration_exports_for_module(module))
+                    }
+                    Some(module) => {
+                        let resolved = resolve_local_module_exports(
+                            value,
+                            module,
+                            file_path,
+                            resolver,
+                            discovered,
+                            effective_framework,
+                            module_paths,
+                        );
+                        resolved?
+                    }
+                    None => None,
+                }
+            } else if create_bdd {
+                Some(registration_exports_for_framework(Framework::PlaywrightBdd))
+            } else {
+                None
+            };
+            if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
+                match name.kind() {
+                    "object_pattern" => {
+                        collect_pattern_aliases(name, source, &exports, &mut discovered.aliases)
+                    }
+                    "identifier" => {
+                        discovered
+                            .namespaces
+                            .insert(node_text(name, source).to_owned(), exports);
+                    }
+                    _ => {}
+                }
+            }
+        } else if name.kind() == "object_pattern" && value.kind() == "identifier" {
+            discovered
+                .namespace_destructures
+                .push((name, node_text(value, source).to_owned()));
+        } else if name.kind() == "identifier" && value.kind() == "identifier" {
+            discovered.assignments.push((
+                node_text(name, source).to_owned(),
+                node_text(value, source).to_owned(),
+            ));
+        }
+
+        if name.kind() == "identifier" {
+            let local = node_text(name, source);
+            if DEFAULT_REGISTRATIONS.contains(&local) {
+                discovered.shadowed_defaults.insert(local.to_owned());
+            }
         }
     }
     Ok(())
