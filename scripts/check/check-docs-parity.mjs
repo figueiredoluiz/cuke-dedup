@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { cliFlags, configKeys, structBody } from "./lib/docs-parity.mjs";
+import { cliFlags, configKeys, flagDocumented, structBody } from "./lib/docs-parity.mjs";
 
 const root = resolve(process.argv[2] || ".");
 const cliSource = readFileSync(join(root, "src/cli.rs"), "utf8");
@@ -44,7 +44,8 @@ assert.ok(keys.length >= 18, `expected to parse the RawConfig keys, found only $
 
 const missing = [];
 for (const flag of flags) {
-  if (docs.includes(flag) || UNDOCUMENTED_ALLOWED.has(flag)) continue;
+  // Match the whole flag token, so `--exclude` is not satisfied by `--exclude-defaults`.
+  if (flagDocumented(docs, flag) || UNDOCUMENTED_ALLOWED.has(flag)) continue;
   missing.push(`CLI flag ${flag}`);
 }
 // A config key is matched as a quoted or code-spanned JSON key so a coincidental prose word does not
