@@ -332,7 +332,13 @@ pub(super) fn detect_registrations(
 
     for (pattern, namespace) in &discovered.namespace_destructures {
         if let Some(exports) = discovered.namespaces.get(namespace) {
-            collect_pattern_aliases(*pattern, source, exports, &mut discovered.aliases);
+            collect_pattern_aliases(
+                *pattern,
+                source,
+                exports,
+                &mut discovered.aliases,
+                &mut discovered.create_bdd_factories,
+            );
         }
     }
 
@@ -778,9 +784,13 @@ fn collect_variable_registration<'tree>(
             };
             if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
                 match name.kind() {
-                    "object_pattern" => {
-                        collect_pattern_aliases(name, source, &exports, &mut discovered.aliases)
-                    }
+                    "object_pattern" => collect_pattern_aliases(
+                        name,
+                        source,
+                        &exports,
+                        &mut discovered.aliases,
+                        &mut discovered.create_bdd_factories,
+                    ),
                     "identifier" => {
                         discovered
                             .namespaces
@@ -1029,6 +1039,7 @@ fn collect_pattern_aliases(
     source: &[u8],
     exports: &RegistrationExports,
     aliases: &mut RegistrationExports,
+    create_bdd_factories: &mut BTreeSet<String>,
 ) {
     let mut cursor = pattern.walk();
     for child in pattern.named_children(&mut cursor) {
@@ -1050,7 +1061,13 @@ fn collect_pattern_aliases(
         };
         if let Some(registration) = exports.get(original) {
             if alias.chars().all(is_identifier_character) {
-                aliases.insert(alias.to_owned(), registration.clone());
+                // A destructured factory (Playwright-BDD's `createBdd`) enters the factory path, as
+                // it does for an ESM import; every other export is a call alias.
+                if registration.kind == RegistrationExportKind::Factory {
+                    create_bdd_factories.insert(alias.to_owned());
+                } else {
+                    aliases.insert(alias.to_owned(), registration.clone());
+                }
             }
         }
     }

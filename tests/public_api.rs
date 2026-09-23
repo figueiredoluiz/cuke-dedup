@@ -9,17 +9,26 @@ use cuke_dedup::reporters::{
     ReportContext,
 };
 use cuke_dedup::source_adapter::{
-    Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapterRegistration,
-    SOURCE_ADAPTER_REGISTRY,
+    Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapter,
+    SourceAdapterRegistration, SOURCE_ADAPTER_REGISTRY,
 };
 use cuke_dedup::typescript;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+/// The registered adapter for `language`, for tests that drive extraction directly.
+fn registered_adapter(language: SourceLanguage) -> &'static dyn SourceAdapter {
+    SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| adapter.language() == language)
+        .expect("an adapter is registered for the language")
+}
+
 #[test]
 fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults() {
-    use cuke_dedup::source_adapter::{SourceAdapter, SourceExtractionSession};
+    use cuke_dedup::source_adapter::SourceExtractionSession;
     use std::panic::{RefUnwindSafe, UnwindSafe};
     fn assert_auto_traits<T: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe>() {}
     assert_auto_traits::<SourceExtractionSession>();
@@ -190,18 +199,14 @@ fn report_context_is_the_single_public_rendering_entry_point() {
 
 #[test]
 fn configured_registrations_enable_lowercase_global_step_names() {
-    use cuke_dedup::source_adapter::{SourceAdapter, SourceExtractionSession};
+    use cuke_dedup::source_adapter::SourceExtractionSession;
 
     let project = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: project.path().join("steps.ts"),
         language: SourceLanguage::TypeScript,
     };
-    let adapter: &dyn SourceAdapter = SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .map(|registration| registration.adapter)
-        .find(|adapter| adapter.language() == SourceLanguage::TypeScript)
-        .expect("a TypeScript adapter is registered");
+    let adapter = registered_adapter(SourceLanguage::TypeScript);
     let source = "given('a lowercase global step', () => work());";
 
     // Lowercase `given`/`when`/`then` are not ambient globals: a bare call with no import and no
@@ -230,7 +235,7 @@ fn configured_registrations_enable_lowercase_global_step_names() {
 
 #[test]
 fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
-    use cuke_dedup::source_adapter::{SourceAdapter, SourceExtractionSession};
+    use cuke_dedup::source_adapter::SourceExtractionSession;
 
     let project = tempfile::tempdir().unwrap();
     fs::write(project.path().join("package.json"), "{}").unwrap();
@@ -239,11 +244,7 @@ fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
         "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
     )
     .unwrap();
-    let adapter: &dyn SourceAdapter = SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .map(|registration| registration.adapter)
-        .find(|adapter| adapter.language() == SourceLanguage::JavaScript)
-        .expect("a JavaScript adapter is registered");
+    let adapter = registered_adapter(SourceLanguage::JavaScript);
     let file = SourceFile {
         path: project.path().join("steps.js"),
         language: SourceLanguage::JavaScript,
@@ -279,4 +280,35 @@ fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
     );
     // Error-recovered declarations with no name or value register nothing and never panic.
     assert_eq!(extract("const = 5;\nvar ;\nlet x;"), 0);
+}
+
+#[test]
+fn local_barrel_re_exporting_the_bdd_factory_resolves_through_require() {
+    use cuke_dedup::source_adapter::SourceExtractionSession;
+
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("package.json"), "{}").unwrap();
+    // A local barrel re-exporting Playwright-BDD's `createBdd` factory. Destructuring it from a
+    // local `require` must enter the factory path, exactly as an ESM import would, or the steps it
+    // creates are missed.
+    fs::write(
+        project.path().join("barrel.js"),
+        "const { createBdd } = require('playwright-bdd');\nmodule.exports = { createBdd };\n",
+    )
+    .unwrap();
+    let adapter = registered_adapter(SourceLanguage::JavaScript);
+    let file = SourceFile {
+        path: project.path().join("steps.js"),
+        language: SourceLanguage::JavaScript,
+    };
+    let mut session = SourceExtractionSession::new(project.path());
+    let definitions = adapter
+        .extract_with_session(
+            "const { createBdd } = require('./barrel');\nconst { Given } = createBdd();\nGiven('a step', () => {});\nGiven('a step', () => {});",
+            &file,
+            &mut session,
+        )
+        .unwrap()
+        .definitions;
+    assert_eq!(definitions.len(), 2);
 }
