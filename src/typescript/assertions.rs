@@ -396,8 +396,8 @@ impl AssertionBindings {
                     name,
                     source,
                     &mut destructured,
-                    &mut trusted,
-                    &mut BTreeMap::new(),
+                    Some(&mut trusted),
+                    None,
                     false,
                 );
                 self.identifiers.extend(destructured.into_keys());
@@ -625,9 +625,7 @@ fn collect_assignment_targets(
             "type_annotation" => continue,
             _ => {}
         }
-        let mut children = Vec::new();
-        super::ast::push_named_children_reverse(node, &mut children);
-        stack.extend(children.into_iter().map(|child| (child, depth)));
+        super::ast::push_named_children_reverse_scoped(node, depth, &mut stack);
     }
 }
 
@@ -799,8 +797,8 @@ fn namespace_alias_writes(
                         left,
                         source,
                         &mut locals,
-                        &mut BTreeSet::new(),
-                        &mut shallow_locals,
+                        None,
+                        Some(&mut shallow_locals),
                         true,
                     );
                 }
@@ -1281,12 +1279,32 @@ fn shorthand_key_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     (!text.contains('\\')).then(|| text.to_owned())
 }
 
+/// Records a destructured matcher local: it always enters the local identifier map, and a
+/// top-level binding off a known `expect` also enters the trust set when one is being collected.
+fn record_matcher_local(
+    identifiers: &mut BTreeMap<String, usize>,
+    trusted: &mut Option<&mut BTreeSet<String>>,
+    local: String,
+    depth: usize,
+    known_expect: bool,
+    top_level: bool,
+) {
+    identifiers.insert(local.clone(), depth + 1);
+    if known_expect && top_level {
+        if let Some(trusted) = trusted.as_deref_mut() {
+            trusted.insert(local);
+        }
+    }
+}
+
 fn collect_expect_pattern(
     pattern: Node<'_>,
     source: &[u8],
     identifiers: &mut BTreeMap<String, usize>,
-    trusted: &mut BTreeSet<String>,
-    shallow: &mut BTreeMap<String, usize>,
+    // The trust pass reads only `trusted`, the mutation pass only `shallow`; each leaves the other
+    // `None` rather than handing over a scratch collection it never reads.
+    mut trusted: Option<&mut BTreeSet<String>>,
+    mut shallow: Option<&mut BTreeMap<String, usize>>,
     include_defaults: bool,
 ) {
     // An explicit worklist rather than recursion. A bound here would have to decide what the
@@ -1325,7 +1343,9 @@ fn collect_expect_pattern(
                         if binding.kind() == "identifier" {
                             // A rest binding holds the same properties as the value it copied,
                             // so it sits at that value's own level, not one below it.
-                            shallow.insert(node_text(binding, source).to_owned(), depth);
+                            if let Some(shallow) = shallow.as_deref_mut() {
+                                shallow.insert(node_text(binding, source).to_owned(), depth);
+                            }
                         }
                     }
                 }
@@ -1335,10 +1355,14 @@ fn collect_expect_pattern(
                     let known_not = name.as_deref().is_some_and(is_matcher_member);
                     if known_expect || (include_defaults && (known_not || name.is_none())) {
                         let local = node_text(property, source).to_owned();
-                        identifiers.insert(local.clone(), depth + 1);
-                        if known_expect && top_level {
-                            trusted.insert(local);
-                        }
+                        record_matcher_local(
+                            identifiers,
+                            &mut trusted,
+                            local,
+                            depth,
+                            known_expect,
+                            top_level,
+                        );
                     }
                 }
                 "pair_pattern" => {
@@ -1385,10 +1409,14 @@ fn collect_expect_pattern(
                         known_expect || (include_defaults && (known_not || name.is_none()));
                     if supported && value.kind() == "identifier" {
                         let local = node_text(value, source).to_owned();
-                        identifiers.insert(local.clone(), depth + 1);
-                        if known_expect && top_level {
-                            trusted.insert(local);
-                        }
+                        record_matcher_local(
+                            identifiers,
+                            &mut trusted,
+                            local,
+                            depth,
+                            known_expect,
+                            top_level,
+                        );
                     } else if supported && include_defaults && value.kind() == "object_pattern" {
                         // `{ expect: { not: negated } }` names the same object as
                         // `api.expect.not`, so a write through either must revoke trust
