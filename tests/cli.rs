@@ -3832,3 +3832,68 @@ fn a_long_exclusion_list_is_summarized_rather_than_printed_in_full() {
         .stderr(predicate::str::contains("excluded 12 discovered"))
         .stderr(predicate::str::contains(", and 2 more"));
 }
+
+// ===========================================================================================
+// KNOWN-ISSUE REGRESSIONS
+//
+// Each shipped bug and each accepted reviewer finding earns one permanent case here, exercised
+// through the built binary end to end (not only a unit test), and named
+// `regression_<pr-or-issue>_<slug>`. A unit test confirms what its author thought to check; this
+// tier is what stops a known class from silently returning through the whole tool. Add a case here
+// as part of fixing the finding, and confirm it fails before the fix and passes after.
+// ===========================================================================================
+
+#[test]
+fn regression_pr56_cjs_barrel_require_resolves_registrations_end_to_end() {
+    // PR #55/#56: a project-local CommonJS barrel that re-exports a registration, imported by
+    // `require`, must resolve so its definitions are analyzed. If barrel resolution regresses the
+    // two `Given` calls register nothing — 0 definitions, no finding, exit 0 — so this exact
+    // observable (2 definitions collapse to one duplicate-matcher finding) is the discriminator.
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "package.json", "{}\n");
+    write(
+        directory.path(),
+        "barrel.js",
+        "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
+    );
+    write(
+        directory.path(),
+        "steps.js",
+        "const { Given } = require('./barrel');\nGiven('the same step', () => first());\nGiven('the same step', () => second());\n",
+    );
+
+    analyze_root(directory.path())
+        .code(1)
+        .stdout(predicate::str::contains("Analyzed 2 definitions"))
+        .stdout(predicate::str::contains("duplicate-matcher"));
+}
+
+#[test]
+fn regression_pr55_unmodeled_cjs_export_fails_closed_end_to_end() {
+    // PR #55: a CommonJS barrel whose export form the analyzer cannot model (here a call result)
+    // must FAIL CLOSED — mark the corpus incomplete and name the unmodeled form — rather than
+    // resolve silently to nothing. A regression would drop the registration with no warning and let
+    // `--fail-on-incomplete` pass. The discriminator is the "CommonJS form the analyzer does not
+    // model" warning plus exit 2 under `--fail-on-incomplete`; a silent resolution shows neither.
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "package.json", "{}\n");
+    write(
+        directory.path(),
+        "barrel.js",
+        "module.exports = makeApi();\n",
+    );
+    write(
+        directory.path(),
+        "steps.js",
+        "const { Given } = require('./barrel');\nGiven('a step', () => work());\n",
+    );
+
+    analyze_root(directory.path())
+        .code(0)
+        .stderr(predicate::str::contains(
+            "CommonJS form the analyzer does not model",
+        ));
+    analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+        .code(2)
+        .stderr(predicate::str::contains("corpus is incomplete"));
+}
