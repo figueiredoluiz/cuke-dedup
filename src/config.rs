@@ -78,6 +78,8 @@ struct RawConfig {
     #[serde(default)]
     fail_on_incomplete: Option<bool>,
     #[serde(default)]
+    fail_on_unparseable: Option<bool>,
+    #[serde(default)]
     registrations: Option<Vec<String>>,
     #[serde(default)]
     assertion_modules: Option<Vec<String>>,
@@ -152,6 +154,8 @@ pub(crate) struct CliConfigOverrides {
     pub(crate) require_definitions: Option<bool>,
     /// Whether bounded or incomplete analysis is an operational failure.
     pub(crate) fail_on_incomplete: Option<bool>,
+    /// Whether an unparseable source file is an operational failure rather than tolerated.
+    pub(crate) fail_on_unparseable: Option<bool>,
     pub(crate) max_candidate_comparisons: Option<usize>,
     pub(crate) max_structural_class_comparisons: Option<usize>,
 }
@@ -190,6 +194,9 @@ pub struct Config {
     pub require_definitions: bool,
     /// Whether an incomplete corpus or truncated analysis is an operational failure.
     pub fail_on_incomplete: bool,
+    /// Whether a source file that cannot be parsed is an operational failure rather than a
+    /// tolerated, reported incompleteness.
+    pub fail_on_unparseable: bool,
     /// Additional local function names that register step definitions.
     pub registrations: Vec<String>,
     /// Additional module specifiers whose `expect` export is a trusted assertion factory.
@@ -335,6 +342,9 @@ impl Config {
         if let Some(value) = cli_overrides.fail_on_incomplete {
             config.fail_on_incomplete = value;
         }
+        if let Some(value) = cli_overrides.fail_on_unparseable {
+            config.fail_on_unparseable = value;
+        }
         if let Some(value) = cli_overrides.max_candidate_comparisons {
             config.max_candidate_comparisons = value;
         }
@@ -377,6 +387,7 @@ impl Config {
             require_features: false,
             require_definitions: false,
             fail_on_incomplete: false,
+            fail_on_unparseable: false,
             registrations: Vec::new(),
             assertion_modules: Vec::new(),
             parameter_types: BTreeMap::new(),
@@ -425,6 +436,9 @@ impl Config {
         }
         if let Some(value) = raw.fail_on_incomplete {
             self.fail_on_incomplete = value;
+        }
+        if let Some(value) = raw.fail_on_unparseable {
+            self.fail_on_unparseable = value;
         }
         if let Some(value) = raw.registrations {
             self.registrations = value;

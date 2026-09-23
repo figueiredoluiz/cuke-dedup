@@ -2517,7 +2517,9 @@ Given('valid step', () => valid());
     assert_eq!(extracted.definitions.len(), 2);
     assert_eq!(extracted.diagnostics.len(), 3);
     assert!(extracted.diagnostics.iter().any(|diagnostic| {
-        diagnostic.level == ExtractionDiagnosticLevel::Error
+        // A whole-file parse failure is a tolerated completeness warning, not a hard error; the
+        // CLI decides fatality via `--fail-on-unparseable`/`--fail-on-incomplete`.
+        diagnostic.level == ExtractionDiagnosticLevel::Warning
             && diagnostic.message.contains("syntax errors")
     }));
     assert!(extracted.diagnostics.iter().any(|diagnostic| {
