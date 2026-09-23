@@ -81,8 +81,9 @@ excluded rather than ending the run.
 a generated bundle, contains an unparseable file, or hits a work limit, the comparison still
 proceeds against the findings it did extract and a warning notes that a finding the baseline could
 not extract may surface as new. Pass `--fail-on-incomplete` to reject an incomplete baseline
-instead. A baseline that produced a hard error, or that discovered definition files yet extracted no
-definitions at all, cannot be subtracted and always fails regardless of the flag.
+instead. A baseline that produced a hard error, that discovered definition files yet extracted no
+definitions at all, or that has definitions but no discovered feature files, cannot be subtracted
+and always fails regardless of the flag.
 
 The `minified` signal is line geometry, which separates generated output from authored code in
 both minified styles — collapsed onto one line, and wrapped at a fixed width. Geometry alone

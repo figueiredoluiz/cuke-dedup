@@ -74,8 +74,8 @@ struct CheckOptions {
     fail_on_incomplete: bool,
 
     /// Fail with exit code 2 when a discovered source file cannot be parsed. By default an
-    /// unparseable file is skipped, its error-recovered definitions are still analyzed, and the run
-    /// is reported as incomplete rather than aborted.
+    /// unparseable file still contributes its error-recovered definitions, and the run is reported
+    /// as incomplete rather than aborted.
     #[arg(long, global = true)]
     fail_on_unparseable: bool,
 

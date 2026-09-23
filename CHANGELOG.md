@@ -16,8 +16,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
   to run. When the baseline excludes a generated bundle, contains an unparseable file, or hits a
   work limit, the comparison proceeds against the findings it did extract and warns that a finding
   the baseline could not extract may appear as new; `--fail-on-incomplete` restores the rejection. A
-  baseline that produced a hard error, or discovered definition files yet extracted no definitions,
-  still fails regardless.
+  baseline that produced a hard error, discovered definition files yet extracted no definitions, or
+  has definitions but no discovered feature files, still fails regardless.
 
 ### Fixed
 
