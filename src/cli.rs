@@ -73,6 +73,12 @@ struct CheckOptions {
     #[arg(long, global = true)]
     fail_on_incomplete: bool,
 
+    /// Fail with exit code 2 when a discovered source file cannot be parsed. By default an
+    /// unparseable file still contributes its error-recovered definitions, and the run is reported
+    /// as incomplete rather than aborted.
+    #[arg(long, global = true)]
+    fail_on_unparseable: bool,
+
     /// Fail with exit code 2 when no step definitions are extracted.
     #[arg(long, global = true)]
     require_definitions: bool,
@@ -290,6 +296,7 @@ fn resolve_invocation(cli: Cli) -> Result<Invocation> {
         CliConfigOverrides {
             require_definitions: cli.options.require_definitions.then_some(true),
             fail_on_incomplete: cli.options.fail_on_incomplete.then_some(true),
+            fail_on_unparseable: cli.options.fail_on_unparseable.then_some(true),
             max_candidate_comparisons: cli.options.max_candidate_comparisons,
             max_structural_class_comparisons: cli.options.max_structural_class_comparisons,
         },
@@ -509,10 +516,18 @@ fn collect_extraction_diagnostics(
             diagnostic.message
         );
         let completeness = source_adapter::is_completeness_diagnostic(&diagnostic);
-        // An unresolved registration import hides every definition it would have introduced, so
-        // the corpus is incomplete regardless of which files changed.
+        let unparseable = source_adapter::is_unparseable_diagnostic(&diagnostic);
+        // An unresolved registration import — or a file that could not be parsed — hides every
+        // definition it would have introduced, so the corpus is incomplete regardless of which
+        // files changed.
         *corpus_incomplete |= completeness;
         match diagnostic.level {
+            // An unparseable file is tolerated by default: its error-recovered definitions still
+            // contribute and the corpus is marked incomplete above. `--fail-on-unparseable`
+            // restores the hard stop without also failing on other kinds of incompleteness.
+            ExtractionDiagnosticLevel::Warning if unparseable && config.fail_on_unparseable => {
+                diagnostics.errors.push(message);
+            }
             ExtractionDiagnosticLevel::Warning if changed_or_full_run || completeness => {
                 diagnostics.warnings.push(message);
             }
@@ -668,16 +683,23 @@ fn apply_baseline_mode(
 ) -> Result<Option<modes::BaselineOutcome>> {
     if let Some(revision) = &options.baseline_from_ref {
         let (_snapshot, root) = modes::baseline_snapshot(&config.root, revision)?;
-        // Freeze the current policy instead of loading historical rule/config overrides.
+        // Freeze the current policy instead of loading historical rule/config overrides. The
+        // baseline revision inherits the run's own strictness rather than being forced strict: an
+        // incomplete history (a vendored bundle excluded, an unparseable file, a bounded analysis)
+        // still yields a sound subtraction for the findings it did extract, so it is tolerated by
+        // default and reported. `--fail-on-incomplete` flows through `base_config` to surface that
+        // incompleteness as an error and reject the baseline.
         let mut base_config = config.clone();
         base_config.root = root;
-        base_config.fail_on_incomplete = true;
         let files = discovery::discover(&base_config)?;
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
         let extracted = extract_corpus(&base_config, &files, &None, &mut base_diagnostics);
         let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics)?;
-        if base.run_incomplete
-            || !base_diagnostics.errors.is_empty()
+        // A baseline that produced a hard error, or that discovered definition files yet extracted
+        // no definitions, or that has no features to anchor usage, cannot be subtracted at all —
+        // those always bail. Soft incompleteness only bails under `--fail-on-incomplete`, which
+        // routes through `base_diagnostics.errors` above.
+        if !base_diagnostics.errors.is_empty()
             || (!files.definitions.is_empty() && base.result.definitions.is_empty())
             || (files.features.is_empty() && !base.result.definitions.is_empty())
         {
@@ -691,6 +713,11 @@ fn apply_baseline_mode(
                     .collect::<Vec<_>>()
                     .join("; ")
             );
+        }
+        if base.run_incomplete {
+            diagnostics.warnings.push(format!(
+                "baseline revision `{revision}` is incomplete, so a finding it did not extract may appear as new; pass --fail-on-incomplete to reject an incomplete baseline"
+            ));
         }
         apply_finding_modes(
             &mut base.result,
@@ -904,6 +931,74 @@ mod tests {
         assert!(parse_positive_usize("0").is_err());
         assert!(parse_positive_usize("-1").is_err());
         assert!(parse_positive_usize("many").is_err());
+    }
+
+    #[test]
+    fn unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag() {
+        use crate::discovery::SourceLanguage;
+        use crate::model::SourceLocation;
+        use crate::source_adapter::{ExtractionDiagnostic, SourceFile};
+
+        let directory = tempfile::tempdir().unwrap();
+        let file = SourceFile {
+            path: directory.path().join("steps.ts"),
+            language: SourceLanguage::TypeScript,
+        };
+        let unparseable = || {
+            ExtractionDiagnostic::new(
+                ExtractionDiagnosticLevel::Warning,
+                SourceLocation::new("steps.ts", 1, 1, 1, 1),
+                format!(
+                    "{}, so analysis is incomplete",
+                    source_adapter::UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX
+                ),
+            )
+        };
+        let route = |config: &Config, diagnostic: ExtractionDiagnostic| {
+            let mut diagnostics = Diagnostics {
+                warnings: Vec::new(),
+                errors: Vec::new(),
+            };
+            let mut incomplete = false;
+            collect_extraction_diagnostics(
+                config,
+                &file,
+                &None,
+                vec![diagnostic],
+                &mut diagnostics,
+                &mut incomplete,
+            );
+            (diagnostics, incomplete)
+        };
+
+        let mut config =
+            Config::load(directory.path(), ConfigOverrides::default()).expect("config loads");
+
+        // Default: an unparseable file is a completeness warning, not an error.
+        let (diagnostics, incomplete) = route(&config, unparseable());
+        assert!(incomplete);
+        assert!(diagnostics.errors.is_empty());
+        assert_eq!(diagnostics.warnings.len(), 1);
+
+        // `--fail-on-unparseable`: the same diagnostic becomes a hard error, still marking the
+        // corpus incomplete.
+        config.fail_on_unparseable = true;
+        let (diagnostics, incomplete) = route(&config, unparseable());
+        assert!(incomplete);
+        assert_eq!(diagnostics.errors.len(), 1);
+        assert!(diagnostics.warnings.is_empty());
+
+        // Opposite-answer control: an unrelated warning is neither escalated by the flag nor
+        // treated as a completeness signal, so the flag targets only the unparseable case.
+        let dynamic = ExtractionDiagnostic::new(
+            ExtractionDiagnosticLevel::Warning,
+            SourceLocation::new("steps.ts", 2, 1, 2, 1),
+            "dynamic or unsupported step matcher cannot be analyzed statically",
+        );
+        let (diagnostics, incomplete) = route(&config, dynamic);
+        assert!(!incomplete);
+        assert!(diagnostics.errors.is_empty());
+        assert_eq!(diagnostics.warnings.len(), 1);
     }
 
     #[test]

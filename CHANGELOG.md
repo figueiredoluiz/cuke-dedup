@@ -5,6 +5,20 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Changed
+
+- A discovered source file that cannot be parsed no longer aborts the whole scan. By default its
+  error-recovered definitions are still analyzed and the parse failure is reported as a completeness
+  warning, so a single malformed file does not stop the run. The new `--fail-on-unparseable`
+  (config `failOnUnparseable`) restores a hard stop for exactly that case, and the existing
+  `--fail-on-incomplete` still rejects it as one kind of corpus incompleteness.
+- `--baseline-from-ref` now tolerates an incomplete baseline revision by default instead of refusing
+  to run. When the baseline excludes a generated bundle, contains an unparseable file, or hits a
+  work limit, the comparison proceeds against the findings it did extract and warns that a finding
+  the baseline could not extract may appear as new; `--fail-on-incomplete` restores the rejection. A
+  baseline that produced a hard error, discovered definition files yet extracted no definitions, or
+  has definitions but no discovered feature files, still fails regardless.
+
 ### Fixed
 
 - CommonJS barrel modules that re-export step registrations through `module.exports` — an object of

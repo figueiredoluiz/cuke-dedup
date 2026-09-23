@@ -18,8 +18,12 @@ resource limits keep failures visible and bound the work performed.
 - Dynamic framework configuration may require explicit `features` or `definitions` patterns.
 - Named handlers declared in the same file resolve to their bodies. Imported or unresolved handler
   references remain usable for matcher and usage rules but are not compared by name.
-- Malformed JavaScript and TypeScript fail closed. Unsupported regular-expression constructs warn;
-  malformed matcher escapes are operational errors.
+- A file that cannot be parsed as JavaScript or TypeScript is tolerated by default: its
+  error-recovered definitions are still analyzed and the parse failure is reported as a completeness
+  warning, so the run is visibly incomplete rather than silently clean. `--fail-on-unparseable`
+  restores a hard stop for exactly that case, and `--fail-on-incomplete` rejects it as one kind of
+  corpus incompleteness. Unsupported regular-expression constructs warn; malformed matcher escapes
+  are operational errors.
 - Lowercase `given`/`when`/`then` are recognised only through a resolved import (for example
   `const { given } = createBdd(test)`), never as ambient globals. A bare lowercase call with no
   import registers nothing, so an unrelated lowercase helper is not mistaken for a step. Name it in

@@ -33,7 +33,8 @@ use self::suppression::inline_suppressions;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
     adapter_for_language, grammar_for_language, AdapterSessionState, SourceAdapter,
-    SourceExtractionSession, StatefulSourceAdapter, UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
+    SourceExtractionSession, StatefulSourceAdapter, UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX,
+    UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
 };
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
@@ -234,10 +235,14 @@ fn extract_detailed_impl(
     let mut unresolved_registration_calls = UnresolvedRegistrationCalls::default();
     if root.has_error() {
         let syntax_node = first_syntax_error(root).unwrap_or(root);
+        // A parse failure still leaves error-recovered definitions worth analyzing, so it does not
+        // discard the file. It is a completeness signal (via its message prefix), which marks the
+        // corpus incomplete; the CLI keeps the run non-fatal unless `--fail-on-unparseable` or
+        // `--fail-on-incomplete` is set, so the level here stays a warning.
         diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Error,
+            level: ExtractionDiagnosticLevel::Warning,
             location: node_location(file, syntax_node, source_bytes),
-            message: "source contains JavaScript/TypeScript syntax errors, so analysis is incomplete; fix the syntax, use a .tsx extension for JSX, or narrow definition discovery".to_owned(),
+            message: format!("{UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX}, so analysis is incomplete; fix the syntax, use a .tsx extension for JSX, or narrow definition discovery"),
         });
     }
     collect_calls(

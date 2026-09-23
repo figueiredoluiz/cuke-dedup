@@ -194,9 +194,27 @@ fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
             .count(),
         1
     );
-    // Explicit current-source errors still fail even when the allowance is generous.
+    // A current-source parse failure is tolerated by default, but `--fail-on-unparseable` keeps it
+    // fatal even under a generous new-finding allowance.
     write(&scope, "broken.ts", "Given('bad', () => {");
-    run("99", 2);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(&scope)
+        .args([
+            ".",
+            "--baseline-from-ref",
+            "HEAD",
+            "--fail-on-new",
+            "99",
+            "--fail-on-unparseable",
+            "--rule",
+            "duplicate-matcher=warning",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "source contains JavaScript/TypeScript syntax errors",
+        ));
     fs::remove_file(scope.join("broken.ts")).unwrap();
     assert_eq!(git(&["rev-parse", "HEAD"]), before_head);
     assert_eq!(git(&["ls-files", "--stage"]), before_index);
@@ -295,13 +313,57 @@ fn baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_vali
         Command::cargo_bin("cuke-dedup")
             .unwrap()
             .current_dir(root.path())
-            .args([".", "--baseline-from-ref", "HEAD", "--fail-on-new=0"])
+            .args([
+                ".",
+                "--baseline-from-ref",
+                "HEAD",
+                "--fail-on-new=0",
+                "--fail-on-incomplete",
+            ])
             .assert()
             .code(2)
             .stderr(
                 predicate::str::contains("baseline").and(predicate::str::contains("incomplete")),
             );
     }
+}
+
+#[test]
+fn baseline_from_ref_tolerates_incomplete_history_by_default_and_reports_it() {
+    let valid_feature = "Feature: Example\n  Scenario: Example\n    Given shared\n";
+    let root = tempfile::tempdir().unwrap();
+    // Base revision: a real definition plus an unparseable sibling. The baseline still extracts the
+    // real definition, so it can be subtracted; the parse failure only makes it incomplete, which
+    // is the tolerated case (distinct from the hard failures the rejection test above pins, where
+    // the base extracts no definitions at all).
+    write(root.path(), "steps.ts", "Given('shared', () => work());");
+    write(root.path(), "broken.ts", "Given('broken', () => {");
+    write(root.path(), "example.feature", valid_feature);
+    init_repository(root.path());
+    // Working tree: the unparseable sibling is gone, so the current corpus is complete.
+    fs::remove_file(root.path().join("broken.ts")).unwrap();
+
+    // Default: the incomplete baseline is tolerated and the comparison proceeds, with a warning
+    // that a finding the baseline could not extract may surface as new.
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root.path())
+        .args([".", "--baseline-from-ref", "HEAD"])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("baseline revision `HEAD` is incomplete")
+                .and(predicate::str::contains("--fail-on-incomplete")),
+        );
+
+    // `--fail-on-incomplete` restores the rejection.
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root.path())
+        .args([".", "--baseline-from-ref", "HEAD", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("incomplete"));
 }
 
 #[test]
@@ -354,6 +416,7 @@ fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
             "HEAD",
             "--max-structural-class-comparisons",
             "2",
+            "--fail-on-incomplete",
         ])
         .assert()
         .code(2)
@@ -2322,7 +2385,7 @@ fn an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass() {
 }
 
 #[test]
-fn a_malformed_unchanged_definition_cannot_make_changed_analysis_pass() {
+fn a_malformed_unchanged_definition_is_reported_in_changed_mode_and_gated_by_the_flag() {
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
@@ -2332,15 +2395,78 @@ fn a_malformed_unchanged_definition_cannot_make_changed_analysis_pass() {
     init_repository(directory.path());
     write(directory.path(), "changed.txt", "changed\n");
 
+    // Default: the malformed unchanged definition is tolerated, not aborted, but its parse failure
+    // is a completeness signal so it is still reported even though it is an unchanged file. It
+    // cannot silently make the run pass — the warning surfaces the incompleteness.
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
         .current_dir(directory.path())
         .args([".", "--changed-since", "HEAD"])
         .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "source contains JavaScript/TypeScript syntax errors",
+        ));
+
+    // `--fail-on-unparseable` restores the hard stop for exactly this case.
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--changed-since", "HEAD", "--fail-on-unparseable"])
+        .assert()
         .code(2)
         .stderr(predicate::str::contains(
             "source contains JavaScript/TypeScript syntax errors",
         ));
+}
+
+#[test]
+fn an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "valid.ts",
+        "Given('an analyzed step', () => work());\n",
+    );
+    write(directory.path(), "broken.ts", "Given('broken', () => {\n");
+
+    // Default: the unparseable file does not abort the scan. The valid file's definition is still
+    // analyzed and the parse failure is reported, so the run is visibly incomplete, not silently
+    // clean.
+    analyze_root(directory.path())
+        .success()
+        .stderr(predicate::str::contains(
+            "source contains JavaScript/TypeScript syntax errors",
+        ));
+
+    // `--fail-on-unparseable` turns exactly this case into a hard failure.
+    analyze_root_with(directory.path(), &["--fail-on-unparseable"])
+        .code(2)
+        .stderr(predicate::str::contains(
+            "source contains JavaScript/TypeScript syntax errors",
+        ));
+
+    // `--fail-on-incomplete` also rejects it, as one kind of corpus incompleteness.
+    analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+        .code(2)
+        .stderr(predicate::str::contains("incomplete"));
+}
+
+#[test]
+fn a_corpus_of_only_parseable_files_reports_no_syntax_incompleteness() {
+    // Opposite-answer control for the tolerance case above: with no unparseable file the run is
+    // clean and silent, so the warning there is caused by the parse failure rather than emitted
+    // unconditionally, and `--fail-on-unparseable` does not fire.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "valid.ts",
+        "Given('an analyzed step', () => work());\n",
+    );
+    analyze_root(directory.path()).success().stderr(
+        predicate::str::contains("source contains JavaScript/TypeScript syntax errors").not(),
+    );
+    analyze_root_with(directory.path(), &["--fail-on-unparseable"]).success();
 }
 
 #[test]
@@ -3334,7 +3460,7 @@ Given('valid step', () => valid());
 }
 
 #[test]
-fn malformed_definition_sources_fail_closed_with_actionable_extension_guidance() {
+fn malformed_definition_sources_are_reported_with_actionable_extension_guidance() {
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
@@ -3342,13 +3468,24 @@ fn malformed_definition_sources_fail_closed_with_actionable_extension_guidance()
         "Given('JSX step', () => <section>ready</section>);\n",
     );
 
+    // By default the parse failure is tolerated but reported, and the report still carries the
+    // actionable extension guidance rather than aborting the run.
     let mut malformed = Command::cargo_bin("cuke-dedup").unwrap();
     malformed
         .current_dir(directory.path())
         .arg(".")
         .assert()
-        .code(2)
+        .success()
         .stderr(predicate::str::contains("analysis is incomplete"))
+        .stderr(predicate::str::contains("use a .tsx extension"));
+
+    // `--fail-on-unparseable` restores the hard stop, keeping the same guidance.
+    let mut strict = Command::cargo_bin("cuke-dedup").unwrap();
+    strict
+        .current_dir(directory.path())
+        .args([".", "--fail-on-unparseable"])
+        .assert()
+        .code(2)
         .stderr(predicate::str::contains("use a .tsx extension"));
 
     fs::rename(

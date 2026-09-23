@@ -11,6 +11,12 @@ use std::path::{Path, PathBuf};
 pub(crate) const UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX: &str =
     "unresolved step-registration calls:";
 
+/// Prefix of the diagnostic emitted when a source file cannot be parsed as valid JavaScript or
+/// TypeScript. A parse failure hides every definition the file would have contributed, so it is a
+/// completeness signal; `--fail-on-unparseable` promotes it to a hard error.
+pub(crate) const UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX: &str =
+    "source contains JavaScript/TypeScript syntax errors";
+
 /// Parser language selected for a definition source.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +88,16 @@ pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> b
     diagnostic
         .message
         .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)
+        || is_unparseable_diagnostic(diagnostic)
+}
+
+/// Reports whether a diagnostic marks a source that could not be parsed at all. Distinct from the
+/// broader completeness check so `--fail-on-unparseable` can gate this one case without also
+/// forcing every other incompleteness to abort.
+pub(crate) fn is_unparseable_diagnostic(diagnostic: &ExtractionDiagnostic) -> bool {
+    diagnostic
+        .message
+        .starts_with(UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX)
 }
 
 /// Definitions and non-fatal diagnostics extracted from one source.

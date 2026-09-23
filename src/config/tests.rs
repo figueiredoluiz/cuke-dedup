@@ -108,6 +108,7 @@ fn raw_configuration_applies_every_boolean_and_collection_field() {
           "requireFeatures":true,
           "requireDefinitions":true,
           "failOnIncomplete":true,
+          "failOnUnparseable":true,
           "registrations":["step"],
           "assertionModules":["./support/fixtures"],
           "parameterTypes":{"colour":"red|green"},
@@ -129,6 +130,7 @@ fn raw_configuration_applies_every_boolean_and_collection_field() {
         config.root.join("artifacts/report.html")
     );
     assert!(config.require_features && config.require_definitions && config.fail_on_incomplete);
+    assert!(config.fail_on_unparseable);
     assert_eq!(config.registrations, ["step"]);
     assert_eq!(config.assertion_modules, ["./support/fixtures"]);
     assert_eq!(config.parameter_types["colour"], "red|green");

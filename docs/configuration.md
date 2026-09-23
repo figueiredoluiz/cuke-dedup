@@ -45,6 +45,7 @@ JavaScript projects may use the `cukeDedup` key in `package.json`; other project
   "requireDefinitions": true,
   "requireFeatures": true,
   "failOnIncomplete": false,
+  "failOnUnparseable": false,
   "registrations": ["defineDomainStep"],
   "parameterTypes": { "colour": "red|green|amber" },
   "maxCandidateComparisons": 2000000,

@@ -77,10 +77,13 @@ content: public/vendor.js (minified), public/blob.js (binary)
 Because classification reads a bounded prefix, a bundle larger than the 8 MiB input limit is
 excluded rather than ending the run.
 
-`--baseline-from-ref` requires a complete baseline corpus, so it fails when the baseline revision
-contains a file that would be excluded — the comparison would otherwise subtract findings from a
-corpus that was never fully analyzed. Add the generated paths to `exclude`, or narrow
-`definitions`, before comparing against a reference.
+`--baseline-from-ref` tolerates an incomplete baseline revision by default: if the revision excludes
+a generated bundle, contains an unparseable file, or hits a work limit, the comparison still
+proceeds against the findings it did extract and a warning notes that a finding the baseline could
+not extract may surface as new. Pass `--fail-on-incomplete` to reject an incomplete baseline
+instead. A baseline that produced a hard error, that discovered definition files yet extracted no
+definitions at all, or that has definitions but no discovered feature files, cannot be subtracted
+and always fails regardless of the flag.
 
 The `minified` signal is line geometry, which separates generated output from authored code in
 both minified styles — collapsed onto one line, and wrapped at a fixed width. Geometry alone
@@ -170,6 +173,7 @@ CukeDedup therefore reports the condition instead of presenting missing evidence
 The corpus is marked incomplete when, for example:
 
 - An imported registration module cannot be resolved statically.
+- A discovered source file cannot be parsed (tolerated by default; `--fail-on-unparseable` fails it).
 - A converted Gherkin Markdown file parses but yields no concrete steps.
 - Candidate analysis reaches a configured or hard work limit.
 
