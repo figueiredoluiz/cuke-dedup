@@ -1,7 +1,7 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::similarity::{
     handler_runtime_compatible, handler_similarity_with_relationship, is_near_matcher,
-    matcher_similarity, round_score,
+    is_parameterizable_matcher, matcher_similarity, round_score,
 };
 use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
@@ -237,7 +237,8 @@ pub(super) fn analyze_definition_pairs(
         } else {
             0.0
         };
-        let parameterization_candidate = structural_handler && matcher_similarity >= 0.6;
+        let parameterization_candidate =
+            structural_handler && is_parameterizable_matcher(left, right, matcher_similarity);
         let near_duplicate_candidate = !parameterization_candidate
             && near_handler
             && matcher_is_needed
@@ -272,7 +273,7 @@ pub(super) fn analyze_definition_pairs(
             if parameterization_candidate && rule_is_active(Rule::ParameterizationCandidate) {
                 Some(Rule::ParameterizationCandidate)
             } else if near_duplicate_candidate
-                && handler_similarity >= HANDLER_SIMILARITY_GATE
+                && handler_similarity >= config.near_duplicate_handler_similarity
                 && rule_is_active(Rule::NearDuplicateStep)
             {
                 Some(Rule::NearDuplicateStep)

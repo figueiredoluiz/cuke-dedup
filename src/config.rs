@@ -72,6 +72,8 @@ struct RawConfig {
     #[serde(default)]
     threshold: Option<f64>,
     #[serde(default)]
+    near_duplicate_handler_similarity: Option<f64>,
+    #[serde(default)]
     require_features: Option<bool>,
     #[serde(default)]
     require_definitions: Option<bool>,
@@ -188,6 +190,9 @@ pub struct Config {
     pub output: PathBuf,
     /// Maximum percentage of definitions allowed in active duplication errors.
     pub threshold: f64,
+    /// Minimum handler similarity (0.5–1.0) for a `near-duplicate-step` finding. Raising it demands
+    /// more handler evidence, suppressing systematically-named steps whose handlers differ.
+    pub near_duplicate_handler_similarity: f64,
     /// Whether finding no feature files is an operational failure.
     pub require_features: bool,
     /// Whether extracting no step definitions is an operational failure.
@@ -384,6 +389,7 @@ impl Config {
             reporters: vec![ReporterKind::Terminal],
             output: PathBuf::from("reports/cuke-dedup"),
             threshold: 0.0,
+            near_duplicate_handler_similarity: 0.70,
             require_features: false,
             require_definitions: false,
             fail_on_incomplete: false,
@@ -427,6 +433,9 @@ impl Config {
         }
         if let Some(value) = raw.threshold {
             self.threshold = value;
+        }
+        if let Some(value) = raw.near_duplicate_handler_similarity {
+            self.near_duplicate_handler_similarity = value;
         }
         if let Some(value) = raw.require_features {
             self.require_features = value;
@@ -526,6 +535,11 @@ impl Config {
         }
         if !self.threshold.is_finite() || !(0.0..=100.0).contains(&self.threshold) {
             bail!("threshold must be a finite percentage from 0 through 100");
+        }
+        if !self.near_duplicate_handler_similarity.is_finite()
+            || !(0.5..=1.0).contains(&self.near_duplicate_handler_similarity)
+        {
+            bail!("nearDuplicateHandlerSimilarity must be a finite value from 0.5 through 1.0");
         }
         for (name, pattern) in &self.parameter_types {
             if name.is_empty() || name.contains(['{', '}']) {

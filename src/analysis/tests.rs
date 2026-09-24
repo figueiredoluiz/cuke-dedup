@@ -27,6 +27,14 @@ fn config() -> (tempfile::TempDir, Config) {
     (directory, config)
 }
 
+// A config whose `near-duplicate-step` handler-similarity floor is lowered, for tests that exercise
+// near-duplicate mechanics at handler shapes below the 0.70 default.
+fn config_with_near_floor(floor: f64) -> (tempfile::TempDir, Config) {
+    let (directory, mut config) = config();
+    config.near_duplicate_handler_similarity = floor;
+    (directory, config)
+}
+
 #[test]
 fn public_analysis_rejects_mutated_configs_above_hard_safety_ceilings() {
     let (_directory, mut config) = config();
@@ -522,7 +530,7 @@ fn parameterized_inline_calls_keep_execution_context_without_handler_findings() 
 
 #[test]
 fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
-    let (_dir, cfg) = config();
+    let (_dir, cfg) = config_with_near_floor(0.5);
     let mut limited_cfg = cfg.clone();
     limited_cfg.max_candidate_comparisons = 1;
     for callback in ["() =>", "function()", "async () =>"] {
@@ -1539,7 +1547,7 @@ fn assertion_factories_are_trusted_by_provenance_across_runners() {
     let conflicting = |import: &str, assertion: &str| {
         let extracted = definitions(&format!(
             "{import}\nThen('the alpha gauge is settled', () => {{ {assertion}(1); }});\n\
-             Then('the archive reading has finished', () => {{ {assertion}(2); }});"
+             Then('the beta gauge is settled', () => {{ {assertion}(2); }});"
         ));
         assert_eq!(extracted.len(), 2, "{import}");
         analyze(extracted, Vec::new(), &config)
@@ -1582,7 +1590,7 @@ fn module_scoped_constants_reach_the_handler_fingerprint() {
     let rules = |module: &str, left: &str, right: &str| {
         let extracted = definitions(&format!(
             "{module}\nThen('the alpha gauge is settled', () => {{ {left} }});\n\
-             Then('the archive reading has finished', () => {{ {right} }});"
+             Then('the beta gauge is settled', () => {{ {right} }});"
         ));
         assert_eq!(extracted.len(), 2, "{module} | {left} | {right}");
         let result = analyze(extracted, Vec::new(), &config).unwrap();
@@ -1667,22 +1675,22 @@ fn module_scoped_constants_reach_the_handler_fingerprint() {
         (
             "parameter",
             "function buildOne(SHARED) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
-            "function buildTwo(SHARED) { Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+            "function buildTwo(SHARED) { Then('the beta gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
         ),
         (
             "declaration",
             "function buildOne() { const SHARED = 7; Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
-            "function buildTwo() { const SHARED = 8; Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+            "function buildTwo() { const SHARED = 8; Then('the beta gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
         ),
         (
             "catch binding",
             "try { work(); } catch (SHARED) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
-            "try { work(); } catch (SHARED) { Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+            "try { work(); } catch (SHARED) { Then('the beta gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
         ),
         (
             "loop head",
             "for (const SHARED of [7]) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
-            "for (const SHARED of [8]) { Then('the archive reading has finished', () => expect(gauge()).toBe(SHARED)); }",
+            "for (const SHARED of [8]) { Then('the beta gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
         ),
     ] {
         let captured = definitions(&format!("const SHARED = 1;\n{first}\n{second}"));
@@ -1804,7 +1812,7 @@ fn called_local_functions_contribute_their_assertions_to_the_handler() {
     let rules = |left: &str, right: &str| {
         let extracted = definitions(&format!(
             "Then('the alpha gauge is settled', () => {{ {left} }});\n\
-             Then('the archive reading has finished', () => {{ {right} }});"
+             Then('the beta gauge is settled', () => {{ {right} }});"
         ));
         assert_eq!(extracted.len(), 2, "{left} | {right}");
         let result = analyze(extracted, Vec::new(), &config).unwrap();
@@ -2501,7 +2509,7 @@ Given("I am on the login page", async function () {
         definitions[1].handler.structural
     );
     assert!(handler_similarity(&definitions[0], &definitions[1]) >= 0.6);
-    let (_directory, config) = config();
+    let (_directory, config) = config_with_near_floor(0.5);
     let candidates = definition_pair_candidates(&definitions, &config);
     assert!(candidates.contains_pair(0, 1));
     assert_eq!(
@@ -2601,7 +2609,7 @@ fn matcher_blocking_semantic_boundary_is_table_driven() {
         },
     ];
 
-    let (_directory, config) = config();
+    let (_directory, config) = config_with_near_floor(0.5);
     for case in cases {
         let definitions = definitions(&format!(
             "Given('I am on login page', {}); Given('I am on the login page', {});",
@@ -2726,6 +2734,79 @@ fn homogeneous_handler_groups_generate_linear_candidates() {
     let definitions = definitions(&source);
     let (_directory, config) = config();
     assert!(definition_pair_candidates(&definitions, &config).len() <= definitions.len() * 2);
+}
+
+#[test]
+fn parameterization_requires_a_bounded_value_like_matcher_difference() {
+    // The handlers are structurally identical (both `locator(<string>).toBeVisible()`), differing
+    // only in an erased literal, so the matcher shape is the sole decider. Literal erasure collapses
+    // unrelated one-call handlers into one class, so without a matcher guard the corpus flagged pairs
+    // that merely share a prefix (kiali: "the AI chatbot toggle button should be visible" vs
+    // "…window should be open") or conflict in polarity. A real parameterization differs in a single
+    // value. Reverting the gate to `matcher_similarity >= 0.6` makes both negatives fire.
+    let fires = |left_matcher: &str, right_matcher: &str| {
+        let source = format!(
+            "Then('{left_matcher}', async ({{ page }}) => {{ await expect(page.locator('#a')).toBeVisible(); }});\n\
+             Then('{right_matcher}', async ({{ page }}) => {{ await expect(page.locator('#b')).toBeVisible(); }});"
+        );
+        let definitions = definitions(&source);
+        assert_eq!(
+            definitions[0].handler.structural, definitions[1].handler.structural,
+            "handlers must be structurally equal so only the matcher shape decides"
+        );
+        let (_directory, config) = config();
+        analyze(definitions, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .any(|finding| finding.rule == Rule::ParameterizationCandidate)
+    };
+    // Single value word differs -> a genuine parameterization candidate (positive control).
+    assert!(fires(
+        "the save button is shown",
+        "the cancel button is shown"
+    ));
+    // Shares a prefix but the change is a multi-word phrase describing different behavior (scores
+    // >= 0.6, but changes five words) -> not a parameterization.
+    assert!(!fires(
+        "the AI chatbot toggle button should be visible",
+        "the AI chatbot window should be open"
+    ));
+    // Opposite polarity -> not a parameterization.
+    assert!(!fires(
+        "the panel should be shown",
+        "the panel should not be shown"
+    ));
+}
+
+#[test]
+fn near_duplicate_handler_similarity_floor_is_configurable() {
+    // Similarly-worded steps whose handlers share only half their behavior (handler similarity 0.5:
+    // one call of two in common). The corpus showed most such pairs are systematically-named steps
+    // acting on different things, so the default 0.70 floor suppresses them; lowering the
+    // configurable floor to 0.5 restores the finding. Reverting the emit gate to the fixed 0.5
+    // constant makes the default case fire, so this pins both the default and the knob.
+    let source = "\
+When('I am on login page', async ({ page }) => { await page.goto('/login'); await page.waitForSelector('#user'); });
+When('I am on the login page', async ({ page }) => { await page.goto('/login'); });
+";
+    let fires = |floor: Option<f64>| {
+        let definitions = definitions(source);
+        let (_directory, config) = match floor {
+            Some(floor) => config_with_near_floor(floor),
+            None => config(),
+        };
+        analyze(definitions, Vec::new(), &config)
+            .unwrap()
+            .findings
+            .iter()
+            .any(|finding| finding.rule == Rule::NearDuplicateStep)
+    };
+    assert!(
+        !fires(None),
+        "the default 0.70 floor suppresses a 0.5-handler-similarity near-duplicate"
+    );
+    assert!(fires(Some(0.5)), "lowering the floor to 0.5 restores it");
 }
 
 #[test]
@@ -4684,7 +4765,7 @@ fn static_computed_property_access_shares_a_handler_fingerprint() {
     let outcome = |left: &str, right: &str| {
         let source = format!(
             "Then('the alpha gauge is settled', () => {{ {left} }}); \
-             Then('the archive reading has finished', () => {{ {right} }});"
+             Then('the beta gauge is settled', () => {{ {right} }});"
         );
         let extracted = definitions(&source);
         assert_eq!(extracted.len(), 2, "{source}");
@@ -4798,7 +4879,7 @@ fn loop_head_bindings_shadow_an_outer_handler_constant() {
     let outcome = |left: &str, right: &str| {
         let source = format!(
             "Then('the alpha gauge is settled', () => {{ {left} }}); \
-             Then('the archive reading has finished', () => {{ {right} }});"
+             Then('the beta gauge is settled', () => {{ {right} }});"
         );
         let extracted = definitions(&source);
         assert_eq!(extracted.len(), 2, "{source}");
@@ -5022,7 +5103,7 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
         let handler = format!("expect(state)[{index}].toBe('ready');");
         let source = format!(
             "Then('the alpha gauge is settled', () => {{ {handler} }}); \
-             Then('the archive reading has finished', () => {{ {handler} }});"
+             Then('the beta gauge is settled', () => {{ {handler} }});"
         );
         let extracted = definitions(&source);
         assert_eq!(extracted.len(), 2, "{source}");
@@ -5119,7 +5200,7 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
     let (chain, _, _) = {
         let source = "Then('the alpha gauge is settled', () => { \
                       expect(state).not.resolves.toBe('ready'); }); \
-                      Then('the archive reading has finished', () => { \
+                      Then('the beta gauge is settled', () => { \
                       expect(state).not.resolves.toBe('ready'); });";
         let extracted = definitions(source);
         assert_eq!(extracted.len(), 2, "{source}");
