@@ -20,10 +20,13 @@ All notable changes to CukeDedup are documented in this file. The project follow
   the baseline could not extract may appear as new; `--fail-on-incomplete` restores the rejection. A
   baseline that produced a hard error, discovered definition files yet extracted no definitions, or
   has definitions but no discovered feature files, still fails regardless.
-- Generated, compressed, and minified sources are excluded before parsing instead of being analyzed
-  and discarded. A binary file, an archive or compression signature, or minified line geometry no
-  longer contributes definitions; each exclusion is reported as a warning naming the file and its
-  reason. Because the analyzed corpus then no longer represents everything discovered, the run is
+- Binary, compressed, and minified sources are excluded before parsing instead of being analyzed and
+  discarded. Classification reads a bounded prefix of the content: a NUL byte or an archive or
+  compression signature marks a file binary or compressed, and line geometry marks it minified — but
+  a file that carries recognized step-registration evidence, such as a framework import or a
+  registration call, is kept even when it looks minified, because authored code can be one very long
+  line. Excluded files are reported as warnings that name them, up to a cap, and summarize any
+  remainder. Because the analyzed corpus then no longer represents everything discovered, the run is
   marked incomplete so `--fail-on-incomplete` fails closed rather than letting a duplicate hidden in
   an excluded bundle pass the gate.
 
