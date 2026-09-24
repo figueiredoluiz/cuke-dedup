@@ -1,6 +1,6 @@
 {
   "name": "cuke-dedup",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Static analysis for duplicate and reusable Cucumber step definitions",
   "type": "module",
   "bin": {
@@ -50,13 +50,13 @@
     "npm/platforms/*"
   ],
   "optionalDependencies": {
-    "cuke-dedup-darwin-arm64": "0.7.0",
-    "cuke-dedup-darwin-x64": "0.7.0",
-    "cuke-dedup-linux-arm64-gnu": "0.7.0",
-    "cuke-dedup-linux-arm64-musl": "0.7.0",
-    "cuke-dedup-linux-x64-gnu": "0.7.0",
-    "cuke-dedup-linux-x64-musl": "0.7.0",
-    "cuke-dedup-windows-arm64-msvc": "0.7.0",
-    "cuke-dedup-windows-x64-msvc": "0.7.0"
+    "cuke-dedup-darwin-arm64": "0.8.0",
+    "cuke-dedup-darwin-x64": "0.8.0",
+    "cuke-dedup-linux-arm64-gnu": "0.8.0",
+    "cuke-dedup-linux-arm64-musl": "0.8.0",
+    "cuke-dedup-linux-x64-gnu": "0.8.0",
+    "cuke-dedup-linux-x64-musl": "0.8.0",
+    "cuke-dedup-windows-arm64-msvc": "0.8.0",
+    "cuke-dedup-windows-x64-msvc": "0.8.0"
   }
 }
