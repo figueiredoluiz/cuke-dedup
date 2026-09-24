@@ -2777,6 +2777,11 @@ fn parameterization_requires_a_bounded_value_like_matcher_difference() {
         "the panel should be shown",
         "the panel should not be shown"
     ));
+    // A `dis-` prefix opposite is a polarity conflict, not a value to parameterize.
+    assert!(!fires(
+        "the client should connect",
+        "the client should disconnect"
+    ));
 }
 
 #[test]

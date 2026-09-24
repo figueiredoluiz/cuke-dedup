@@ -536,10 +536,10 @@ impl Config {
         if !self.threshold.is_finite() || !(0.0..=100.0).contains(&self.threshold) {
             bail!("threshold must be a finite percentage from 0 through 100");
         }
-        if !self.near_duplicate_handler_similarity.is_finite()
-            || !(0.5..=1.0).contains(&self.near_duplicate_handler_similarity)
-        {
-            bail!("nearDuplicateHandlerSimilarity must be a finite value from 0.5 through 1.0");
+        // A range check also rejects NaN (`contains` is false for it); config files cannot express a
+        // non-finite value, so no separate `is_finite` guard is reachable here.
+        if !(0.5..=1.0).contains(&self.near_duplicate_handler_similarity) {
+            bail!("nearDuplicateHandlerSimilarity must be a value from 0.5 through 1.0");
         }
         for (name, pattern) in &self.parameter_types {
             if name.is_empty() || name.contains(['{', '}']) {

@@ -122,7 +122,7 @@ fn words(value: &str) -> Vec<String> {
 
 fn prefixed_opposites(positive: &str, negative: &str) -> bool {
     positive.len() >= 4
-        && ["in", "un", "non"]
+        && ["in", "un", "non", "dis"]
             .iter()
             .any(|prefix| negative.strip_prefix(prefix) == Some(positive))
 }
