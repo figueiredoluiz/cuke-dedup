@@ -2782,6 +2782,14 @@ fn parameterization_requires_a_bounded_value_like_matcher_difference() {
         "the client should connect",
         "the client should disconnect"
     ));
+    // The `in-` prefix and its assimilated forms `il-`/`im-`/`ir-` are opposites too.
+    assert!(!fires("the value is valid", "the value is invalid"));
+    assert!(!fires(
+        "the argument is logical",
+        "the argument is illogical"
+    ));
+    assert!(!fires("the action is possible", "the action is impossible"));
+    assert!(!fires("the layout is regular", "the layout is irregular"));
 }
 
 #[test]
