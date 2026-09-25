@@ -1,6 +1,6 @@
 use super::ast::{
-    import_has_runtime_bindings, import_module, is_top_level_variable, is_type_only_declaration,
-    is_type_only_specifier, string_literal,
+    import_has_runtime_bindings, import_module, import_statement_module, is_top_level_variable,
+    is_type_only_declaration, is_type_only_specifier, string_literal,
 };
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
@@ -269,7 +269,7 @@ impl AssertionBindings {
         if is_type_only_declaration(import) {
             return trusted;
         }
-        let Some(module) = assertion_import_module(import, source) else {
+        let Some(module) = import_statement_module(import, source) else {
             return trusted;
         };
         let exact_assertion_module = ASSERTION_MODULES.contains(&module);
@@ -406,19 +406,6 @@ impl AssertionBindings {
         }
         trusted
     }
-}
-
-fn assertion_import_module<'a>(import: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
-    if let Some(module) = import_module(import, source) {
-        return Some(module);
-    }
-    let mut cursor = import.walk();
-    let module = import
-        .named_children(&mut cursor)
-        .find(|child| child.kind() == "import_require_clause")
-        .and_then(|clause| clause.child_by_field_name("source"))
-        .and_then(|literal| string_literal(literal, source));
-    module
 }
 
 fn resolved_facade_modules(

@@ -315,14 +315,6 @@ Step('not exported by createBdd', () => work());
 
 #[test]
 fn project_reexports_preserve_playwright_decorator_registration_provenance() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("package.json"), "{}").unwrap();
-    fs::write(
-        directory.path().join("decorators.ts"),
-        "export { Given as Setup } from 'playwright-bdd/decorators';\n",
-    )
-    .unwrap();
-    let path = directory.path().join("steps.ts");
     let source = r#"
 import { Setup } from './decorators';
 class WorkspaceSteps {
@@ -330,14 +322,13 @@ class WorkspaceSteps {
   async prepare() { await work(); }
 }
 "#;
-    fs::write(&path, source).unwrap();
-    let source_file = SourceFile {
-        path,
-        language: SourceLanguage::TypeScript,
-    };
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
-
-    let extracted = extract_detailed_impl(source, &source_file, &mut session).unwrap();
+    let extracted = extract_in_project(
+        &[(
+            "decorators.ts",
+            "export { Given as Setup } from 'playwright-bdd/decorators';\n",
+        )],
+        source,
+    );
     assert!(extracted.diagnostics.is_empty());
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].registration, "Given");
@@ -4054,4 +4045,96 @@ fn assertion_event_components_escape_delimiters_so_computed_keys_do_not_forge_ch
         computed_delimited[0].handler.behavior_signature,
     );
     assert!(computed_delimited[0].handler.behavior_signature[0].contains("not\\.toBe"));
+}
+
+/// Extracts `source` as `steps.ts` in a project holding `files`.
+fn extract_in_project(files: &[(&str, &str)], source: &str) -> Extraction {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    for (name, contents) in files {
+        fs::write(directory.path().join(name), contents).unwrap();
+    }
+    let path = directory.path().join("steps.ts");
+    fs::write(&path, source).unwrap();
+    let source_file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
+    extract_detailed_impl(source, &source_file, &mut session).unwrap()
+}
+
+/// A default import and TypeScript's `import x = require()` across module kinds. Import-equals binds
+/// `module.exports`, so it registers for a package and a project module alike. A default import never
+/// does: no supported package has a default export (each sets `__esModule`), and a project module's
+/// `export default` is not modeled. A member call on it must warn rather than register or vanish.
+/// Each registering row has a control with the same call and module that must not register.
+#[test]
+fn default_and_import_equals_bindings_register_only_where_they_bind_the_module() {
+    let modules = [
+        ("barrel.ts", "export { Given } from '@cucumber/cucumber';\n"),
+        (
+            "cjs.js",
+            "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
+        ),
+    ];
+    let call = "c.Given('a step', () => work());\n";
+    // The expected warning: none, the generic unresolved-registration one, or one naming the module.
+    let generic = "look like step registrations";
+    for (import, registered, warning) in [
+        ("import c from '@cucumber/cucumber';\n", 0, Some(generic)),
+        ("import c = require('@cucumber/cucumber');\n", 1, None),
+        ("import c = require('./cjs');\n", 1, None),
+        ("import c from './barrel';\n", 0, Some(generic)),
+        (
+            "import c from './missing';\n",
+            0,
+            Some("module `./missing`"),
+        ),
+        (
+            "import c = require('./missing');\n",
+            0,
+            Some("module `./missing`"),
+        ),
+    ] {
+        let extracted = extract_in_project(&modules, &format!("{import}{call}"));
+        assert_eq!(extracted.definitions.len(), registered, "{import}");
+        let messages: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        match warning {
+            None => assert!(messages.is_empty(), "{import}: {messages:?}"),
+            Some(expected) => assert!(
+                messages.iter().any(|message| message.contains(expected)),
+                "{import}: {messages:?}"
+            ),
+        }
+    }
+}
+
+/// Every runtime import form binds its local name, so an imported `Given` is never the ambient
+/// global. A type-only import is erased, so the ambient global still applies: that control proves
+/// the call itself would register.
+#[test]
+fn every_runtime_import_form_shadows_the_ambient_registration_global() {
+    let modules = [(
+        "cjs.js",
+        "module.exports = { Given: (text, fn) => text };\n",
+    )];
+    let call = "Given('a step', () => work());\n";
+    for import in [
+        "import Given from './cjs';\n",
+        "import * as Given from './cjs';\n",
+        "import Given = require('./cjs');\n",
+        "import { Given } from './cjs';\n",
+    ] {
+        let extracted = extract_in_project(&modules, &format!("{import}{call}"));
+        assert!(extracted.definitions.is_empty(), "{import}");
+    }
+    for control in ["", "import type Given from './cjs';\n"] {
+        let extracted = extract_in_project(&modules, &format!("{control}{call}"));
+        assert_eq!(extracted.definitions.len(), 1, "control: {control:?}");
+    }
 }

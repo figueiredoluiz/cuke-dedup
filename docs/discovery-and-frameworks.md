@@ -7,9 +7,18 @@ never executes framework configuration, package scripts, or test code.
 
 | Workflow | Supported modules and forms |
 | --- | --- |
-| Cucumber.js | `@cucumber/cucumber` and legacy `cucumber`; ESM, CJS, aliases, namespaces, and static local re-exports. |
+| Cucumber.js | `@cucumber/cucumber` and legacy `cucumber`; ESM, CJS, aliases, namespaces, TypeScript `import x = require()`, and static local re-exports. |
 | Playwright-BDD | `createBdd()` registrations from `playwright-bdd`, plus class-method `Given`, `When`, `Then`, and `Step` decorators from `playwright-bdd/decorators`. |
 | Cypress Cucumber | `@badeball/cypress-cucumber-preprocessor`, plus legacy `cypress-cucumber-preprocessor/steps`. |
+
+`import cucumber = require('@cucumber/cucumber')` binds the whole module, as `require` does, so
+`cucumber.Given(…)` registers. A default import does not. No supported package has a default
+export: each CommonJS entry sets `__esModule`, so TypeScript and Babel interop resolve the default
+to `undefined`. A project module's `export default` value is not modeled. A registration-style
+member call on a default import is reported as unresolved rather than registered.
+
+Any runtime import of a name — named, default, namespace or `import x = require()` — means that name
+is not the ambient registration global. A type-only import is erased, so it does not.
 
 Package entrypoints are matched exactly. The root of the legacy Cypress package is not a step
 registration module; use its `/steps` entrypoint. Plain Playwright projects are supported when
@@ -151,11 +160,23 @@ A resolved barrel re-exports registrations through either module system:
   `module.exports.X = X`, and `exports.X = require('./a').X` (or a local binding). Only assignments
   in the module body count; the same syntax inside a function or class is not a module export.
 
-A CommonJS `module.exports`/`exports.X` assignment written in a form the analyzer does not model —
-a factory call, a namespace member, an aliased object, an unresolvable spread, a bracket target
-(`exports['X']`), or one evaluated conditionally at module scope (`if (…) module.exports = …`) —
-marks the corpus incomplete rather than resolving silently to nothing, so a barrel that might hide
-registrations is reported instead of passing as clean.
+A CommonJS `module.exports`/`exports.X` value is followed when it is an object literal or a
+`require`, directly or through a single top-level `const` (`const api = { Given };
+module.exports = api`). A value that provably cannot carry a registration is inert and exports
+nothing quietly. That covers a literal, and a function or class that never names a registration or a
+module other than a Node built-in (`module.exports = async function act() {…}`, `module.exports =
+class Page {}`). It also covers an array or object made only of such values, and a top-level
+function, class or `const` holding one.
+
+Any other value marks the corpus incomplete rather than resolving silently to nothing, so a barrel
+that might hide registrations is reported instead of passing as clean. That includes:
+- a factory call or `new` instance;
+- a namespace member, or a function that forwards to a registration, including through a bracket
+  key (`bdd['Given']`);
+- a `let`/`var` binding, or one whose value may have changed: reassigned, given a property that is
+  not inert, or reaching another binding or a call (passed, wrapped, aliased, stored or returned);
+- an unresolvable spread or a bracket target (`exports['X']`);
+- an export evaluated conditionally at module scope (`if (…) module.exports = …`).
 
 Static project configs may use JSONC and `extends` strings or arrays, up to 16 files deep. A
 relative base must resolve. A package base — `@example/config/tsconfig.json`, or a bare package

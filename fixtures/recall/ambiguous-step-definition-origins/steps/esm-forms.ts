@@ -24,7 +24,9 @@ given("the eta brake holds firm", () => g2());
 Renamed("the rho cable tightens {word}", () => r1());
 Renamed("the rho cable tightens fully", () => r2());
 
-// A default import reached through a member call.
+// Control: a default import binds no registrations. The package has no default export (its
+// CommonJS entry sets `__esModule`, so interop yields `undefined`), so this call fails at runtime
+// and must not register.
 cucumberDefault.Given("the sigma wheel locks {word}", () => s1());
 cucumberDefault.Given("the sigma wheel locks hard", () => s2());
 

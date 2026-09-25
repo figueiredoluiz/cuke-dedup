@@ -638,7 +638,7 @@ fn commonjs_unmodeled_export_shapes_flag_incomplete_and_non_exports_stay_quiet()
     for barrel in [
         "module.exports = { Given: makeGiven() };",
         "module.exports = { [key]: Given };",
-        "module.exports = { register() {} };",
+        "module.exports = { register(text, fn) { Given(text, fn); } };",
         "module.exports = { ...other };",
         "Object.assign(module.exports, other);",
     ] {
@@ -794,4 +794,160 @@ fn commonjs_bracket_notation_exports_fail_closed() {
         assert!(exported_names(&outcome).is_empty(), "{barrel}");
         assert!(outcome.reason.is_some(), "{barrel}");
     }
+}
+
+/// Which `module.exports`/`exports.x` values must fail closed. A value is quiet only when it provably
+/// cannot carry a registration; each quiet row has an incomplete control that differs in the one
+/// property that decides it. The observable is the incompleteness reason: `None` means the module
+/// is treated as fully modeled, so a wrong "quiet" would hide a registration without a warning.
+#[test]
+fn commonjs_export_values_are_quiet_only_when_provably_inert() {
+    let quiet = [
+        // Value kind: a function, arrow, class, or literal that never names a registration.
+        "module.exports = async function act(value) { return value; };",
+        "module.exports = (a) => a + 1;",
+        // A bracket key is evidence only when it can name a registration.
+        "module.exports = (list, index) => list[index] + list['size'];",
+        "module.exports = class Page { open() { return 1; } };",
+        "module.exports = 'text';",
+        "module.exports = [{ matcher: 'a', code: 'b' }, 2];",
+        "module.exports = { name: 'x', run() { return 1; }, nested: { list: [1] } };",
+        // Builtin modules cannot register, so referring to one keeps a function inert.
+        "const path = require('path');\nmodule.exports = function base(f) { return path.basename(f); };",
+        "const fs = require('node:fs');\nmodule.exports = () => fs.existsSync('x');",
+        // A comment inside an object literal is not a property.
+        "module.exports = {\n  // helpers\n  run() { return 1; },\n};",
+        // Identifier export: resolved through a single top-level declaration.
+        "function helper() { return 1; }\nmodule.exports = helper;",
+        // Calling or constructing a declared name cannot change it.
+        "function helper() { return 1; }\nhelper();\nmodule.exports = helper;",
+        "class Store { get() { return 1; } }\nnew Store();\nmodule.exports = Store;",
+        "class Store { get() { return 1; } }\nmodule.exports = Store;",
+        "const settings = { retries: 2 };\nmodule.exports = settings;",
+        // Reading a property, testing it, or writing below the first property keeps the value:
+        // an importer reaches only a direct property (`api.Given`), never `api.nested.Given`.
+        "const api = { nested: {} };\nif (api.nested && typeof api === 'object') { log(api.nested); }\napi.nested.Given = Given;\nmodule.exports = api;",
+        // A registration name the module declares itself is that local value, not the global.
+        "const Given = {};\nGiven.gateway = function gateway() { return 1; };\nmodule.exports = Given;",
+        // ...so a function that refers to it stays inert. Here the taint check alone decides.
+        "const Given = { base: 1 };\nmodule.exports = function run() { return Given.base; };",
+        // Named exports and `Object.assign` arguments follow the same rule.
+        "exports.run = function run() { return 1; };",
+        "exports.config = { retries: 2 };",
+        "Object.assign(module.exports, { run() { return 1; } });",
+    ];
+    for barrel in quiet {
+        let outcome = resolve_barrel(&[("barrel.js", barrel)], "./barrel");
+        assert!(exported_names(&outcome).is_empty(), "{barrel}");
+        assert_eq!(outcome.reason, None, "must be quiet: {barrel}");
+    }
+
+    let incomplete = [
+        // Taint through the body: a registration global, a registration member, a local
+        // registration binding, a non-builtin or dynamic module, or a tainted top-level name.
+        "module.exports = function steps() { Given('a', () => {}); };",
+        "module.exports = (bdd) => bdd.Given('a', () => {});",
+        "module.exports = (bdd) => bdd['Given']('a', () => {});",
+        // A legacy octal escape (`\107` is `G`) is not decoded, so the key must still count.
+        "module.exports = (bdd) => bdd['\\107iven']('a', () => {});",
+        "module.exports = (bdd) => bdd[`Given`]('a', () => {});",
+        "const { Given } = require('@cucumber/cucumber');\nmodule.exports = () => Given('a', () => {});",
+        "const lib = require('./lib');\nmodule.exports = function run() { return lib.x; };",
+        "module.exports = function load(name) { return require(name); };",
+        "module.exports = () => import('./steps');",
+        "const register = (text, fn) => Given(text, fn);\nmodule.exports = () => register('a', () => {});",
+        "module.exports = class Steps { static Given = Given; };",
+        // A renamed import binds only its alias, so the global `Given` stays a registration. A
+        // builtin source is what makes this discriminating: a non-builtin import taints every name
+        // it binds either way.
+        "import { Given as G } from 'util';\nmodule.exports = () => Given('a', () => {});",
+        "module.exports = { step: (text, fn) => Given(text, fn) };",
+        // Unmodeled value kinds.
+        "module.exports = new Logger();",
+        "module.exports = makeSteps();",
+        "module.exports = flag ? a : b;",
+        "module.exports = { nested: { Given } };",
+        // Identifier export whose binding is not a single static value.
+        "let settings = { retries: 2 };\nmodule.exports = settings;",
+        "var settings = { retries: 2 };\nmodule.exports = settings;",
+        "const settings = { a: 1 };\nconst settings = { b: 2 };\nmodule.exports = settings;",
+        "const { settings } = require('./config');\nmodule.exports = settings;",
+        "module.exports = undeclared;",
+        "const settings = makeSettings();\nmodule.exports = settings;",
+        "function helper() { return Given; }\nmodule.exports = helper;",
+        // Mutation after declaration.
+        "const api = {};\napi.Given = Given;\nmodule.exports = api;",
+        "const api = {};\napi['Given'] = Given;\nmodule.exports = api;",
+        "const api = {};\nattach(api);\nmodule.exports = api;",
+        "const api = {};\napi.register(Given);\nmodule.exports = api;",
+        "function helper() {}\nhelper = other;\nmodule.exports = helper;",
+        // Escape: once the value reaches another binding or a call, it can be written through
+        // from there, however it got there.
+        "const api = {};\nattach({ api });\nmodule.exports = api;",
+        "const api = {};\nattach([api]);\nmodule.exports = api;",
+        "const api = {};\nregistry.api = api;\nmodule.exports = api;",
+        "const api = {};\nfunction expose() { return api; }\nmodule.exports = api;",
+        "const settings = { retries: 2 };\nconst alias = settings;\nmodule.exports = alias;",
+        // Named exports and `Object.assign` arguments that are not inert.
+        "exports.api = { Given };",
+        "exports.logger = new Logger();",
+        "Object.assign(module.exports, { step: (t, f) => Given(t, f) });",
+    ];
+    for barrel in incomplete {
+        let outcome = resolve_barrel(&[("barrel.js", barrel)], "./barrel");
+        assert!(outcome.reason.is_some(), "must fail closed: {barrel}");
+    }
+}
+
+/// An identifier export follows a `const` to its value: an object literal exports its registrations
+/// and a `require` re-exports the module, exactly as the direct forms do.
+#[test]
+fn commonjs_identifier_exports_follow_a_const_to_its_value() {
+    let registration = "const { Given } = require('@cucumber/cucumber');\n";
+    let object = resolve_barrel(
+        &[(
+            "barrel.js",
+            &format!("{registration}const api = {{ Given }};\nmodule.exports = api;"),
+        )],
+        "./barrel",
+    );
+    assert_eq!(
+        exported_names(&object),
+        [("Given".to_owned(), "Given".to_owned())]
+    );
+    assert_eq!(object.reason, None);
+
+    let module = resolve_barrel(
+        &[
+            (
+                "barrel.js",
+                "const inner = require('./inner');\nmodule.exports = inner;",
+            ),
+            (
+                "inner.js",
+                &format!("{registration}module.exports = {{ Given }};"),
+            ),
+        ],
+        "./barrel",
+    );
+    assert_eq!(
+        exported_names(&module),
+        [("Given".to_owned(), "Given".to_owned())]
+    );
+    assert_eq!(module.reason, None);
+
+    // A comment inside an exporting object is not a property. The object is not inert (it exports
+    // a registration), so this reaches the property loop rather than being classified whole.
+    let commented = resolve_barrel(
+        &[(
+            "barrel.js",
+            &format!("{registration}module.exports = {{\n  // steps\n  Given,\n}};"),
+        )],
+        "./barrel",
+    );
+    assert_eq!(
+        exported_names(&commented),
+        [("Given".to_owned(), "Given".to_owned())]
+    );
+    assert_eq!(commented.reason, None);
 }

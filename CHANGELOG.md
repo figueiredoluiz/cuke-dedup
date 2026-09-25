@@ -33,6 +33,19 @@ All notable changes to CukeDedup are documented in this file. The project follow
   package's `tsconfig` field, now resolves to its `.json` file.
 - A package `exports` or `imports` target, or a package config base, can no longer hide a `..` or
   `node_modules` segment behind a backslash separator.
+- TypeScript's `import cucumber = require('@cucumber/cucumber')` now registers steps called through
+  the binding (`cucumber.Given(…)`), and import-equals of a project module resolves its exports as
+  `require` does. A default import still does not register, since no supported package has a
+  default export.
+- A default, namespace or import-equals binding named `Given` (or another registration name) no
+  longer counts as the ambient registration global. Previously only named imports shadowed it, so
+  `import Given from './helpers'; Given(…)` invented a definition.
+- Fewer false "incomplete corpus" warnings from CommonJS helpers. A `module.exports`/`exports.x`
+  value that provably cannot carry a registration is now inert instead of unmodeled. Examples are a
+  helper function, a class, or a data literal that never names a registration or a non-built-in
+  module. A `const` it is exported through is followed to its object literal or `require`. On 27
+  real repositories these warnings fell from 747 to 589, with no change to definitions or findings. A function assigned to `exports.x` that refers to such a module now fails closed, where
+  before it was silently trusted.
 
 ## [0.8.0] - 2026-09-24
 
