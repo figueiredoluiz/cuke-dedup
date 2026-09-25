@@ -3972,3 +3972,48 @@ fn regression_pr62_workspace_tsconfig_field_names_a_suffixless_base() {
         .stdout(predicate::str::contains("Analyzed 2 definitions"))
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
+
+#[test]
+fn regression_pr62_workspace_package_base_stays_inside_its_package() {
+    // Security review finding: a known workspace package named by `extends` could reach any JSON in
+    // the root through a traversing subpath, including an in-root `node_modules` base, and import
+    // its aliases. The alias here exists only in that leaked base, so without the boundary both
+    // definitions resolve and a duplicate is reported; with it the base is refused and reported.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "package.json",
+        r#"{"name":"root","workspaces":["packages/*"]}"#,
+    );
+    write(
+        directory.path(),
+        "packages/config/package.json",
+        r#"{"name":"shared-config"}"#,
+    );
+    write(
+        directory.path(),
+        "node_modules/leak/tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@steps/*":["../../support/*"]}}}"#,
+    );
+    write(
+        directory.path(),
+        "tsconfig.json",
+        r#"{"extends":"shared-config/../../node_modules/leak/tsconfig.json"}"#,
+    );
+    write(
+        directory.path(),
+        "support/bdd.ts",
+        "export { Given } from '@cucumber/cucumber';\n",
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@steps/bdd';\nGiven('the same step', () => first());\nGiven('the same step', () => second());\n",
+    );
+
+    analyze_root(directory.path())
+        .stdout(predicate::str::contains("Analyzed 0 definitions"))
+        .stderr(predicate::str::contains(
+            "resolves outside package or uses an invalid segment",
+        ));
+}

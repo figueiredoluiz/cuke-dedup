@@ -409,6 +409,8 @@ fn package_map_targets_cover_conditions_arrays_wildcards_and_errors() {
         "../outside.ts",
         "./../outside.ts",
         "./node_modules/x.ts",
+        r"./src\..\..\outside.ts",
+        r"./node_modules\x.ts",
         "bare",
     ] {
         assert!(
@@ -1084,16 +1086,25 @@ fn resolves_in_project(files: &[(&str, &str)], specifier: &str) -> bool {
 }
 
 fn resolve_in_project(files: &[(&str, &str)], specifier: &str) -> Result<Option<PathBuf>> {
+    let directory = write_project(files);
+    resolve_from_root_step(directory.path(), specifier)
+}
+
+/// Writes `(path, contents)` pairs, plus an empty `steps.ts` importer, into a fresh directory.
+fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     for (path, contents) in files {
         let path = directory.path().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
     }
-    let importer = directory.path().join("steps.ts");
-    fs::write(&importer, "").unwrap();
-    let root = directory.path().canonicalize().unwrap();
-    ProjectResolution::for_root(&root).resolve(&importer, specifier, &root)
+    fs::write(directory.path().join("steps.ts"), "").unwrap();
+    directory
+}
+
+fn resolve_from_root_step(directory: &Path, specifier: &str) -> Result<Option<PathBuf>> {
+    let root = directory.canonicalize().unwrap();
+    ProjectResolution::for_root(&root).resolve(&root.join("steps.ts"), specifier, &root)
 }
 
 #[test]
@@ -1183,7 +1194,8 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
 
     // A known workspace package is not an unavailable dependency: a base missing from it is a
     // configuration error, whether named by subpath or by the manifest's `tsconfig` field, and a
-    // `tsconfig` field naming a script is refused like a script `extends`.
+    // `tsconfig` field naming a script is refused like a script `extends`. A package base stays inside
+    // its package, like an `exports` target: traversal, `node_modules` and absolute paths are refused.
     for (manifest, extends, expected) in [
         (
             r#"{"name":"shared-config"}"#,
@@ -1200,12 +1212,45 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
             "shared-config",
             "executable `tsconfig` base",
         ),
+        (
+            r#"{"name":"shared-config"}"#,
+            "shared-config/../../tsconfig.base.json",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config"}"#,
+            "shared-config/node_modules/other/tsconfig.json",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"../../tsconfig.base.json"}"#,
+            "shared-config",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config"}"#,
+            r"shared-config/node_modules\other\tsconfig.json",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"..\\..\\tsconfig.base.json"}"#,
+            "shared-config",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"/etc/tsconfig.json"}"#,
+            "shared-config",
+            "resolves outside the package",
+        ),
     ] {
-        let tsconfig = format!(r#"{{"extends":"{extends}"}}"#);
+        let tsconfig = serde_json::json!({ "extends": extends }).to_string();
         let error = resolve_in_project(
             &[
                 ("package.json", workspace),
                 ("packages/config/package.json", manifest),
+                // Present, so a refusal is the boundary and not a missing file.
+                ("tsconfig.base.json", "{}"),
+                ("packages/config/node_modules/other/tsconfig.json", "{}"),
                 ("tsconfig.json", &tsconfig),
             ],
             "@shared/world",
@@ -1231,4 +1276,68 @@ fn relative_extends_names_a_dotted_json_base_without_its_suffix() {
         ],
         "@/world"
     ));
+}
+
+#[test]
+fn package_tsconfig_field_accepts_a_windows_current_directory_prefix() {
+    // `.\` names the package directory like `./`. Prefixing it with another `./` would read the `.`
+    // as an invalid segment and reject a config TypeScript accepts on Windows.
+    let result = resolve_in_project(
+        &[
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config","tsconfig":".\\configs\\base.json"}"#,
+            ),
+            ("tsconfig.json", r#"{"extends":"shared-config"}"#),
+        ],
+        "@shared/world",
+    );
+    assert!(
+        !result.is_err_and(|error| error.to_string().contains("invalid segment")),
+        "a `.\\` prefix is not an invalid segment"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn package_extends_refuse_a_symlink_out_of_the_workspace_package() {
+    // The segment check sees only the written path; a symlinked base inside the package that points
+    // elsewhere in the root, or into the package's own `node_modules`, is refused by the check on
+    // the canonical path instead.
+    for target in [
+        "outside.json",
+        "packages/config/node_modules/x/tsconfig.json",
+    ] {
+        let directory = write_project(&[
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config"}"#,
+            ),
+            (target, "{}"),
+            (
+                "tsconfig.json",
+                r#"{"extends":"shared-config/linked.json"}"#,
+            ),
+        ]);
+        std::os::unix::fs::symlink(
+            directory.path().join(target),
+            directory.path().join("packages/config/linked.json"),
+        )
+        .unwrap();
+        let error = resolve_from_root_step(directory.path(), "@shared/world")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("outside workspace package"),
+            "{target}: {error}"
+        );
+    }
 }

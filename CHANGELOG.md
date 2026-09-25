@@ -25,10 +25,14 @@ All notable changes to CukeDedup are documented in this file. The project follow
   `@tsconfig/recommended/tsconfig.json`, `expo/tsconfig.base`, or a shared config package — no
   longer rejects the whole config when that base is not in the repository. A base in a workspace
   package resolves, including through the package's `tsconfig` field, and a workspace package that
-  lacks the named config is reported as an error; other package bases are skipped, so the project's
-  own `baseUrl` and `paths` aliases resolve again. A base named without its suffix, whether
-  relative (`./tsconfig.base`) or through a package's `tsconfig` field, now resolves to its `.json`
-  file.
+  lacks the named config is reported as an error. Such a base stays inside its package: a `..` or
+  `node_modules` segment, an absolute `tsconfig` field, or a symlink out of the package or into its
+  `node_modules` is refused.
+  Other package bases are skipped, so the project's own `baseUrl` and `paths` aliases resolve
+  again. A base named without its suffix, whether relative (`./tsconfig.base`) or through a
+  package's `tsconfig` field, now resolves to its `.json` file.
+- A package `exports` or `imports` target, or a package config base, can no longer hide a `..` or
+  `node_modules` segment behind a backslash separator.
 
 ## [0.8.0] - 2026-09-24
 

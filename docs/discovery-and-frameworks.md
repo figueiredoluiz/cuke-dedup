@@ -160,12 +160,15 @@ registrations is reported instead of passing as clean.
 Static project configs may use JSONC and `extends` strings or arrays, up to 16 files deep. A
 relative base must resolve. A package base — `@example/config/tsconfig.json`, or a bare package
 name that follows the package's `tsconfig` field — resolves when it is a workspace package inside
-the analysis root, and naming a config that workspace package lacks is an error. However a base is
-named, one without its suffix (`./tsconfig.base`) means the `.json` file. Any other package base,
-typically a shared base such as `@tsconfig/recommended` or `expo/tsconfig.base` installed in
-`node_modules`, is skipped rather than failing the config, so the project's own `baseUrl` and
-`paths` still apply; an alias defined only by a skipped base stays unresolved and is reported.
-Workspace entrypoints honor `exports` before `main` and index-file fallbacks.
+the analysis root, and naming a config that workspace package lacks is an error. Like an `exports`
+target, such a base stays inside its package: a subpath or `tsconfig` field with a `..` or
+`node_modules` segment (separated by `/` or `\`), an absolute field, or a symlink that leads out of
+the package or into its `node_modules` is refused.
+However a base is named, one without its suffix (`./tsconfig.base`) means the `.json` file. Any
+other package base, typically a shared base such as `@tsconfig/recommended` or `expo/tsconfig.base`
+installed in `node_modules`, is skipped rather than failing the config, so the project's own
+`baseUrl` and `paths` still apply; an alias defined only by a skipped base stays unresolved and is
+reported. Workspace entrypoints honor `exports` before `main` and index-file fallbacks.
 
 Resolution remains inside canonical analysis and package roots. It does not inspect packages in
 `node_modules`, and JavaScript configuration inheritance is not evaluated: a base with a script
