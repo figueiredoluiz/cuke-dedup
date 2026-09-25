@@ -5,6 +5,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-25
+
 ### Changed
 
 - `parameterization-candidate` is more precise. A pair is now proposed only when the matchers differ
@@ -379,6 +381,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.9.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.5.0...v0.6.0
