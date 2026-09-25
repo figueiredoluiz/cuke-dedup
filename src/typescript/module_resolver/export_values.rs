@@ -367,6 +367,8 @@ impl<'tree> ExportScope<'tree> {
                     all_inert
                 })
             }
+            // A call can retain or mutate a member value passed as an argument.
+            "arguments" => false,
             _ => true,
         }
     }

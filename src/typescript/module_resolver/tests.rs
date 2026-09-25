@@ -834,8 +834,6 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         "const settings = ({ retries: 2 });\nmodule.exports = (settings);",
         // Reading a property into another name is a read, not a write into the object.
         "const settings = { retries: 2 };\nlet copy;\ncopy = settings.retries;\nmodule.exports = settings;",
-        // Reading a property, or testing it, keeps the value.
-        "const api = { nested: {} };\nif (api.nested && typeof api === 'object') { log(api.nested); }\nmodule.exports = api;",
         // A registration name the module declares itself is that local value, not the global.
         "const Given = {};\nGiven.gateway = function gateway() { return 1; };\nmodule.exports = Given;",
         // ...so a function that refers to it stays inert. Here the taint check alone decides.
@@ -904,6 +902,8 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         "const api = {};\napi['Given'] = Given;\nmodule.exports = api;",
         // A write through a member chain changes the root: an importer can call `api.nested.step`.
         "const api = { nested: {} };\napi.nested.step = Given;\nmodule.exports = api;",
+        // Passing a nested object to an unmodeled call lets that call attach a registration.
+        "const api = { nested: {} };\nif (api.nested && typeof api === 'object') { log(api.nested); }\nmodule.exports = api;",
         // Parentheses around the member change nothing: these are still a write and a method call.
         "const api = {};\n(api.Given) = Given;\nmodule.exports = api;",
         "const api = {};\n(api.register)(Given);\nmodule.exports = api;",
