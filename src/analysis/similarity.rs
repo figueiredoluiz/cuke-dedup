@@ -91,7 +91,30 @@ fn matcher_change_word_span(left: &str, right: &str) -> usize {
     {
         suffix += 1;
     }
-    (left.len() - prefix - suffix).max(right.len() - prefix - suffix)
+    let left_change = &left[prefix..left.len() - suffix];
+    let right_change = &right[prefix..right.len() - suffix];
+    // One parameter can stand in for a single contiguous change. A word shared between the trimmed
+    // change regions splits them into two separate edits only when it sits *strictly inside* a
+    // region — a word both before and after it — as "button" does in "red button shown" vs "blue
+    // button hidden". A shared word that only ever sits at a region edge is an overlap within one
+    // shifted value ("New York" vs "York City"), which a single parameter still covers.
+    if splits_into_separate_changes(left_change, right_change) {
+        return usize::MAX;
+    }
+    left_change.len().max(right_change.len())
+}
+
+/// Whether a word shared between the two change regions is flanked (has both a preceding and a
+/// following word) in either region, marking two disjoint edits rather than one shifted value.
+fn splits_into_separate_changes(left: &[String], right: &[String]) -> bool {
+    let flanked = |region: &[String], word: &String| {
+        region
+            .iter()
+            .enumerate()
+            .any(|(index, candidate)| candidate == word && index > 0 && index + 1 < region.len())
+    };
+    left.iter()
+        .any(|word| right.contains(word) && (flanked(left, word) || flanked(right, word)))
 }
 
 fn has_polarity_conflict(left: &str, right: &str) -> bool {

@@ -2790,6 +2790,15 @@ fn parameterization_requires_a_bounded_value_like_matcher_difference() {
     ));
     assert!(!fires("the action is possible", "the action is impossible"));
     assert!(!fires("the layout is regular", "the layout is irregular"));
+    // Two disjoint changes with a shared word flanked between them ("button") is not one
+    // parameterizable value, even though only three words differ overall.
+    assert!(!fires("the red button shown", "the blue button hidden"));
+    // But a shared word only at a region edge is an overlap within one shifted value, which a single
+    // parameter still covers.
+    assert!(fires(
+        "the New York office is open",
+        "the York City office is open"
+    ));
 }
 
 #[test]
