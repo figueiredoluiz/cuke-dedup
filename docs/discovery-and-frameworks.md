@@ -178,11 +178,13 @@ that might hide registrations is reported instead of passing as clean. That incl
 - an unresolvable spread or a bracket target (`exports['X']`);
 - an export evaluated conditionally at module scope (`if (…) module.exports = …`).
 
-One boundary remains. A helper that calls a function it receives as a parameter is inert, so a
-registration passed in (`helper(Given, 'a step', fn)`) is not tracked and its definition is missed
-without a warning. Treating every call through a parameter as a possible registration would flag
-ordinary callback helpers such as `items.map(fn)`. `registrations` does not cover this shape
-either, because it expects the matcher as the first argument.
+A helper that calls a function it receives as a parameter is inert on the export side: treating
+every call through a parameter as a possible registration would flag ordinary callback helpers
+such as `items.map(fn)`. The risk is caught where the helper is used instead. A call that passes a
+registration as an argument (`helper(Given, 'a step', fn)`, `helper(cucumber.Given, …)`) is
+reported as an unresolved step registration and marks the corpus incomplete. A parameter or local
+declaration that merely shares the name, such as a fixture named `Given`, is a local value and
+does not count.
 
 Static project configs may use JSONC and `extends` strings or arrays, up to 16 files deep. A
 relative base must resolve. A package base — `@example/config/tsconfig.json`, or a bare package

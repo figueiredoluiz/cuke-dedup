@@ -485,7 +485,7 @@ fn extend_untrusted_bindings(
     shadowed.extend(locals.into_iter().filter(|local| !trusted.contains(local)));
 }
 
-fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+pub(super) fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         match node.kind() {

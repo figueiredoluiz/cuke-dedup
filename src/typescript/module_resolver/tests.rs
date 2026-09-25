@@ -810,9 +810,10 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         "module.exports = (list, index) => list[index] + list['size'];",
         // Calling through a string key that is not a registration is not evidence either.
         "module.exports = (api, t) => api['run'](t);",
-        // Boundary: calling a function received as a parameter stays inert. A registration passed
-        // in (`helper(Given, …)`) is not tracked; tainting every callback would flag ordinary
-        // helpers such as `items.map(fn)`. Documented in discovery-and-frameworks.md.
+        // Calling a function received as a parameter stays inert here: tainting every callback
+        // would flag ordinary helpers such as `items.map(fn)`. A registration passed in
+        // (`helper(Given, …)`) is reported at the call site instead; see
+        // `passing_a_registration_to_a_function_is_reported`.
         "module.exports = (register, t, f) => register(t, f);",
         "module.exports = class Page { open() { return 1; } };",
         "module.exports = 'text';",

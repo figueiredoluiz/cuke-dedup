@@ -46,8 +46,9 @@ All notable changes to CukeDedup are documented in this file. The project follow
   module. A `const` it is exported through is followed to its object literal or `require`. On 27
   real repositories these warnings fell from 747 to 592, with no change to definitions or findings.
   A function assigned to `exports.x` that refers to such a module now fails closed, where before it
-  was silently trusted. A helper that calls a function passed to it as a parameter is still inert,
-  so a registration handed to it (`helper(Given, …)`) is not tracked.
+  was silently trusted. A helper that calls a function passed to it stays inert; instead, a call
+  that passes a registration as an argument (`helper(Given, 'a step', fn)`) is now reported as an
+  unresolved step registration and marks the corpus incomplete.
 
 ## [0.8.0] - 2026-09-24
 

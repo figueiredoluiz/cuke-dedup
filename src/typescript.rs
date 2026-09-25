@@ -10,7 +10,7 @@ mod project_resolution;
 mod registrations;
 mod suppression;
 
-use self::assertions::AssertionBindings;
+use self::assertions::{collect_binding_names, AssertionBindings};
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding,
@@ -150,12 +150,20 @@ struct UnresolvedRegistrationCalls {
     count: usize,
     first_location: Option<SourceLocation>,
     modules: BTreeMap<String, (usize, SourceLocation)>,
+    /// Calls that hand a registration to a function the analyzer does not model.
+    passed: usize,
+    first_passed: Option<SourceLocation>,
 }
 
 impl UnresolvedRegistrationCalls {
     fn record(&mut self, location: SourceLocation) {
         self.count = self.count.saturating_add(1);
         self.first_location.get_or_insert(location);
+    }
+
+    fn record_passed(&mut self, location: SourceLocation) {
+        self.passed = self.passed.saturating_add(1);
+        self.first_passed.get_or_insert(location);
     }
 
     fn record_module(&mut self, module: &str, location: SourceLocation) {
@@ -262,6 +270,16 @@ fn extract_detailed_impl(
             ),
         });
     }
+    if let Some(location) = unresolved_registration_calls.first_passed {
+        diagnostics.push(ExtractionDiagnostic {
+            level: ExtractionDiagnosticLevel::Warning,
+            location,
+            message: format!(
+                "{UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX} {} call(s) pass a step registration to a function the analyzer does not model; definitions may be missing",
+                unresolved_registration_calls.passed
+            ),
+        });
+    }
     let mut explained_modules = BTreeSet::new();
     for (module, (count, location)) in unresolved_registration_calls.modules {
         let cause = registrations::unresolved_module_reason(&registrations, &module)
@@ -326,6 +344,9 @@ fn collect_calls<'tree>(
                     UnresolvedRegistration::Module(module) => {
                         unresolved_registration_calls.record_module(module, location)
                     }
+                    UnresolvedRegistration::Passed => {
+                        unresolved_registration_calls.record_passed(location)
+                    }
                 }
             }
             let definition = if node
@@ -349,6 +370,83 @@ fn collect_calls<'tree>(
 enum UnresolvedRegistration<'a> {
     Generic,
     Module(&'a str),
+    /// `helper(Given, 'a step', fn)`: a registration handed to another function, which may call it.
+    Passed,
+}
+
+/// Whether the name an argument starts from (`Given`, or `cucumber` in `cucumber.Given`) is bound
+/// inside an enclosing function: a parameter, or a declaration directly in an enclosing block. Such
+/// a name is a local value, such as a fixture named `Given`, not the file's registration binding.
+fn base_is_locally_bound(argument: Node<'_>, source: &[u8]) -> bool {
+    let mut base = argument;
+    while let Some(inner) = match base.kind() {
+        "member_expression" => base.child_by_field_name("object"),
+        "parenthesized_expression" => base.named_child(0),
+        _ => None,
+    } {
+        base = inner;
+    }
+    if base.kind() != "identifier" {
+        return false;
+    }
+    let name = node_text(base, source);
+    let mut bound = BTreeSet::new();
+    let mut current = base;
+    while let Some(scope) = current.parent() {
+        match scope.kind() {
+            "arrow_function"
+            | "function_expression"
+            | "function_declaration"
+            | "generator_function"
+            | "generator_function_declaration"
+            | "method_definition" => {
+                for field in ["parameters", "parameter"] {
+                    if let Some(parameters) = scope.child_by_field_name(field) {
+                        collect_binding_names(parameters, source, &mut bound);
+                    }
+                }
+            }
+            "catch_clause" => {
+                if let Some(parameter) = scope.child_by_field_name("parameter") {
+                    collect_binding_names(parameter, source, &mut bound);
+                }
+            }
+            "statement_block" => {
+                let mut cursor = scope.walk();
+                for statement in scope.named_children(&mut cursor) {
+                    match statement.kind() {
+                        "lexical_declaration" | "variable_declaration" => {
+                            let mut declarators = statement.walk();
+                            for declarator in statement.named_children(&mut declarators) {
+                                if let Some(pattern) = declarator.child_by_field_name("name") {
+                                    collect_binding_names(pattern, source, &mut bound);
+                                }
+                            }
+                        }
+                        "function_declaration"
+                        | "generator_function_declaration"
+                        | "class_declaration"
+                        | "abstract_class_declaration"
+                        | "enum_declaration" => {
+                            // A declaration always carries its name.
+                            bound.extend(
+                                statement
+                                    .child_by_field_name("name")
+                                    .map(|name| node_text(name, source).to_owned()),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        if bound.contains(name) {
+            return true;
+        }
+        current = scope;
+    }
+    false
 }
 
 fn unresolved_registration_call<'a>(
@@ -360,6 +458,28 @@ fn unresolved_registration_call<'a>(
         || decorator_registration_name(function, context.source, context.registrations).is_some()
     {
         return None;
+    }
+    // A registration passed as an argument can be called by the receiving function, whose body the
+    // analyzer does not follow. The definition it registers would be missed, so it is reported.
+    let passes_registration = call
+        .child_by_field_name("arguments")
+        .is_some_and(|arguments| {
+            let mut cursor = arguments.walk();
+            let passes = arguments.named_children(&mut cursor).any(|argument| {
+                !base_is_locally_bound(argument, context.source)
+                    && (registration_name(argument, context.source, context.registrations)
+                        .is_some()
+                        || decorator_registration_name(
+                            argument,
+                            context.source,
+                            context.registrations,
+                        )
+                        .is_some())
+            });
+            passes
+        });
+    if passes_registration {
+        return Some(UnresolvedRegistration::Passed);
     }
     if let Some(module) =
         unresolved_registration_module(function, context.source, context.registrations)

@@ -4138,3 +4138,85 @@ fn every_runtime_import_form_shadows_the_ambient_registration_global() {
         assert_eq!(extracted.definitions.len(), 1, "control: {control:?}");
     }
 }
+
+/// A registration handed to another function can be called there, in a body the analyzer does not
+/// follow, so the call is reported and the corpus marked incomplete. The controls use the same
+/// shape without a registration: no registration argument, a local value that merely shares the
+/// name (a fixture parameter or block declaration), or the registration call itself.
+#[test]
+fn passing_a_registration_to_a_function_is_reported() {
+    let modules = [(
+        "helper.js",
+        "module.exports = (register, text, fn) => register(text, fn);\n",
+    )];
+    let passed = "pass a step registration to a function";
+    for (source, reported) in [
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import * as cucumber from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(cucumber.Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import cucumber = require('@cucumber/cucumber');\nimport helper from './helper';\nhelper((cucumber.Given), 'a step', () => work());\n",
+            true,
+        ),
+        // The ambient global counts when nothing binds the name locally.
+        (
+            "import helper from './helper';\nhelper(Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import helper from './helper';\nhelper('a step', () => work());\n",
+            false,
+        ),
+        // A fixture parameter or local declaration that shares the name is a local value. Each
+        // imports the real registration too, so only the local binding keeps the call quiet.
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport const fixtures = { When: [({ Given }, use) => use(Given)] };\n",
+            false,
+        ),
+        (
+            "import * as cucumber from '@cucumber/cucumber';\nexport const fixtures = { When: [(cucumber, use) => use(cucumber.Given)] };\n",
+            false,
+        ),
+        (
+            "import * as cucumber from '@cucumber/cucumber';\nexport const fixtures = { When: [(cucumber, use) => use((cucumber.Given))] };\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport function setup(use) {\n  const Given = make();\n  use(Given);\n}\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport function setup(use) {\n  function Given() {}\n  use(Given);\n}\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport function setup(use) {\n  class Given {}\n  use(Given);\n}\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\ntry { run(); } catch (Given) { use(Given); }\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nGiven('a step', () => work());\n",
+            false,
+        ),
+    ] {
+        let extracted = extract_in_project(&modules, source);
+        let messages: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(
+            messages.iter().any(|message| message.contains(passed)),
+            reported,
+            "{source}: {messages:?}"
+        );
+    }
+}
