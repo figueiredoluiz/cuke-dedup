@@ -3897,3 +3897,34 @@ fn regression_pr55_unmodeled_cjs_export_fails_closed_end_to_end() {
         .code(2)
         .stderr(predicate::str::contains("corpus is incomplete"));
 }
+
+#[test]
+fn regression_corpus_tsconfig_package_extends_keeps_path_aliases() {
+    // Real-repo corpus: 11 projects' tsconfigs extend a package base (`@tsconfig/recommended/…`,
+    // `expo/tsconfig.base`, …) that is not installed where the analyzer runs. That used to reject the
+    // whole config, so no `paths` alias resolved and registrations behind an aliased barrel vanished
+    // — here 0 definitions and a clean exit. Skipping the unavailable base keeps the project's own
+    // alias working: both definitions resolve and the duplicate is reported.
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "package.json", "{}\n");
+    write(
+        directory.path(),
+        "tsconfig.json",
+        r#"{"extends":"@tsconfig/recommended/tsconfig.json","compilerOptions":{"baseUrl":".","paths":{"@/*":["./*"]}}}"#,
+    );
+    write(
+        directory.path(),
+        "support/bdd.ts",
+        "export { Given } from '@cucumber/cucumber';\n",
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@/support/bdd';\nGiven('the same step', () => first());\nGiven('the same step', () => second());\n",
+    );
+
+    analyze_root(directory.path())
+        .code(1)
+        .stdout(predicate::str::contains("Analyzed 2 definitions"))
+        .stdout(predicate::str::contains("duplicate-matcher"));
+}

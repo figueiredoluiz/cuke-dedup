@@ -19,6 +19,16 @@ All notable changes to CukeDedup are documented in this file. The project follow
   different things; set the floor to 0.5 to restore the previous behaviour. Reports lose these
   lower-confidence findings on upgrade.
 
+### Fixed
+
+- A `tsconfig.json` or `jsconfig.json` that `extends` a package base — such as
+  `@tsconfig/recommended/tsconfig.json`, `expo/tsconfig.base`, or a shared config package — no
+  longer rejects the whole config when that base is not in the repository. A base in a workspace
+  package resolves, including through the package's `tsconfig` field, and a workspace package that
+  lacks the named config is reported as an error; other package bases are skipped, so the project's
+  own `baseUrl` and `paths` aliases resolve again. A relative base named without its suffix
+  (`./tsconfig.base`) now resolves to `tsconfig.base.json`.
+
 ## [0.8.0] - 2026-09-24
 
 ### Changed
