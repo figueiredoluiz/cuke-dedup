@@ -20,6 +20,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
+mod export_values;
+use export_values::{ExportScope, ExportValue};
+
+/// What a module's export statements declare, gathered in one walk.
+#[derive(Default)]
+struct ExportFacts {
+    /// `(local, exported)` pairs, resolved against local registrations once the walk ends.
+    direct_export_names: Vec<(String, String)>,
+    reexports: Vec<Reexport>,
+    /// Set when a CommonJS `module.exports`/`exports.x` assignment uses a form the analyzer cannot
+    /// turn into an export, so the file resolves to *fewer* registrations than it really has. The
+    /// caller reports the file incomplete rather than treating the partial result as authoritative.
+    incomplete: bool,
+}
+
 const MAX_REEXPORT_DEPTH: usize = 16;
 type CachedExports = (Option<RegistrationExports>, Framework, bool);
 
@@ -361,12 +376,8 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
         push_named_children_reverse(node, &mut stack);
     }
 
-    let mut direct_export_names = Vec::new();
-    let mut reexports = Vec::new();
-    // Set when a CommonJS `module.exports`/`exports.x` assignment uses a form the analyzer cannot
-    // turn into an export, so the file resolves to *fewer* registrations than it really has. The
-    // caller reports the file incomplete rather than treating the partial result as authoritative.
-    let mut exports_incomplete = false;
+    let scope = ExportScope::new(tree.root_node(), source);
+    let mut facts = ExportFacts::default();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         match node.kind() {
@@ -376,7 +387,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     source,
                     &create_bdd_aliases,
                     &mut local_registrations,
-                    &mut direct_export_names,
+                    &mut facts.direct_export_names,
                 );
             }
             "export_statement" if !is_type_only_declaration(node) => {
@@ -384,32 +395,23 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     let specifiers = export_specifiers(node, source);
                     let star = is_star_export(node);
                     if star || !specifiers.is_empty() {
-                        reexports.push(Reexport {
+                        facts.reexports.push(Reexport {
                             module: module.to_owned(),
                             specifiers,
                             star,
                         });
                     }
                 } else {
-                    direct_export_names.extend(export_specifiers(node, source));
+                    facts
+                        .direct_export_names
+                        .extend(export_specifiers(node, source));
                 }
             }
             "assignment_expression" => {
-                collect_commonjs_export_assignment(
-                    node,
-                    source,
-                    &mut direct_export_names,
-                    &mut reexports,
-                    &mut exports_incomplete,
-                );
+                collect_commonjs_export_assignment(node, source, &scope, &mut facts);
             }
             "call_expression" => {
-                collect_object_assign_exports(
-                    node,
-                    source,
-                    &mut reexports,
-                    &mut exports_incomplete,
-                );
+                collect_object_assign_exports(node, source, &scope, &mut facts);
             }
             _ => {}
         }
@@ -417,6 +419,11 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     }
 
     let mut direct_exports = RegistrationExports::new();
+    let ExportFacts {
+        direct_export_names,
+        mut reexports,
+        incomplete: exports_incomplete,
+    } = facts;
     for (local, exported) in direct_export_names {
         if let Some(registration) = local_registrations.get(&local).cloned() {
             direct_exports.insert(exported, registration);
@@ -446,15 +453,14 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
 
 /// Records a CommonJS `module.exports = …` or `exports.<name> = …` assignment as exports.
 ///
-/// Only forms that can hide a registration set incompleteness — a factory call, an aliased object,
-/// an unresolvable spread. A plain value export (`exports.helper = () => {}`) is not a registration
-/// container and is left silent, so an ordinary CommonJS module does not warn.
-fn collect_commonjs_export_assignment(
-    node: Node<'_>,
-    source: &[u8],
-    direct_export_names: &mut Vec<(String, String)>,
-    reexports: &mut Vec<Reexport>,
-    incomplete: &mut bool,
+/// Only a value that could hide a registration sets incompleteness; see `export_values`. An inert
+/// value (`exports.helper = () => {}`, `module.exports = class Page {}`) cannot, and is left
+/// silent, so an ordinary CommonJS module does not warn.
+fn collect_commonjs_export_assignment<'a>(
+    node: Node<'a>,
+    source: &'a [u8],
+    scope: &ExportScope<'a>,
+    facts: &mut ExportFacts,
 ) {
     // A well-formed assignment always has both sides; a partial one from error recovery matches
     // nothing below, so no separate guard is needed.
@@ -468,7 +474,7 @@ fn collect_commonjs_export_assignment(
         // registration may be hidden behind it, so the module fails closed.
         ExportPosition::ModuleConditional => {
             if target.is_some() {
-                *incomplete = true;
+                facts.incomplete = true;
             }
             return;
         }
@@ -477,20 +483,14 @@ fn collect_commonjs_export_assignment(
     let right = node.child_by_field_name("right");
     match (target, right) {
         (Some(CommonjsExportTarget::All), Some(right)) => {
-            collect_commonjs_object_exports(
-                right,
-                source,
-                direct_export_names,
-                reexports,
-                incomplete,
-            );
+            collect_commonjs_object_exports(right, source, scope, facts);
         }
         // A bracket export names something the analyzer cannot resolve; fail closed.
-        (Some(CommonjsExportTarget::Opaque), _) => *incomplete = true,
+        (Some(CommonjsExportTarget::Opaque), _) => facts.incomplete = true,
         (Some(CommonjsExportTarget::Named(name)), Some(right)) => {
             if let Some((module, imported)) = required_member(right, source) {
                 // `exports.step = require('./a').step`
-                reexports.push(Reexport {
+                facts.reexports.push(Reexport {
                     module: module.to_owned(),
                     specifiers: vec![(imported.to_owned(), name.to_owned())],
                     star: false,
@@ -498,54 +498,61 @@ fn collect_commonjs_export_assignment(
             } else if require_specifier(right, source).is_some() {
                 // `exports.steps = require('./a')` assigns the whole module object to one name; the
                 // analyzer does not model namespace-member registration, so it may hide steps.
-                *incomplete = true;
+                facts.incomplete = true;
             } else if right.kind() == "identifier" {
                 // `exports.Given = Given` re-exports a local binding; resolves against
                 // `local_registrations`, contributing nothing when the local is not a registration.
-                direct_export_names.push((node_text(right, source).to_owned(), name.to_owned()));
-            } else if matches!(
-                right.kind(),
-                "call_expression" | "member_expression" | "subscript_expression"
-            ) {
-                // `exports.Given = makeGiven()` or `= cucumber.Given` can carry a registration the
-                // analyzer cannot resolve, so it fails closed rather than dropping it silently. A
-                // literal or other inert value exports nothing and stays quiet.
-                *incomplete = true;
+                facts
+                    .direct_export_names
+                    .push((node_text(right, source).to_owned(), name.to_owned()));
+            } else if !matches!(scope.classify(right, source), ExportValue::Inert) {
+                // `exports.Given = makeGiven()`, `= cucumber.Given`, or `= { Given }` can carry a
+                // registration the analyzer cannot resolve, so it fails closed rather than dropping
+                // it silently. An inert value exports nothing and stays quiet.
+                facts.incomplete = true;
             }
         }
         _ => {}
     }
 }
 
-/// Records the object or call on the right of `module.exports = …`.
-fn collect_commonjs_object_exports(
-    right: Node<'_>,
-    source: &[u8],
-    direct_export_names: &mut Vec<(String, String)>,
-    reexports: &mut Vec<Reexport>,
-    incomplete: &mut bool,
+/// Records the value on the right of `module.exports = …`.
+fn collect_commonjs_object_exports<'a>(
+    right: Node<'a>,
+    source: &'a [u8],
+    scope: &ExportScope<'a>,
+    facts: &mut ExportFacts,
 ) {
-    if let Some(module) = require_specifier(right, source) {
-        // `module.exports = require('./a')`
-        reexports.push(Reexport {
-            module: module.to_owned(),
-            specifiers: Vec::new(),
-            star: true,
-        });
-        return;
-    }
-    if right.kind() != "object" {
-        // A factory call, an aliased identifier, or any other whole-object form the analyzer
-        // cannot introspect can hide registrations.
-        *incomplete = true;
-        return;
-    }
+    let right = match scope.classify(right, source) {
+        // `module.exports = require('./a')`, directly or through a `const`.
+        ExportValue::Module(module) => {
+            facts.reexports.push(Reexport {
+                module: module.to_owned(),
+                specifiers: Vec::new(),
+                star: true,
+            });
+            return;
+        }
+        // `module.exports = class Page {}`, a plain helper function, a literal.
+        ExportValue::Inert => return,
+        // An object literal, directly or through an unmutated `const`.
+        ExportValue::Object(object) => object,
+        // A factory call, an instance, a mutated or reassigned binding, or any other form the
+        // analyzer cannot introspect can hide registrations.
+        ExportValue::Opaque => {
+            facts.incomplete = true;
+            return;
+        }
+    };
     let mut cursor = right.walk();
     for property in right.named_children(&mut cursor) {
         match property.kind() {
+            "comment" => {}
             "shorthand_property_identifier" => {
                 let name = node_text(property, source);
-                direct_export_names.push((name.to_owned(), name.to_owned()));
+                facts
+                    .direct_export_names
+                    .push((name.to_owned(), name.to_owned()));
             }
             "pair" => {
                 let exported = property
@@ -554,16 +561,17 @@ fn collect_commonjs_object_exports(
                 let value = property.child_by_field_name("value");
                 if let (Some(exported), Some(value)) = (exported, value) {
                     if value.kind() == "identifier" {
-                        direct_export_names
+                        facts
+                            .direct_export_names
                             .push((node_text(value, source).to_owned(), exported.to_owned()));
-                    } else {
-                        // `Given: makeGiven()` and other non-identifier values are containers the
-                        // analyzer cannot introspect.
-                        *incomplete = true;
+                    } else if !scope.is_inert(value, source) {
+                        // `Given: makeGiven()` and other values that are not inert are containers
+                        // the analyzer cannot introspect.
+                        facts.incomplete = true;
                     }
                 } else {
                     // A computed key, or a malformed pair, is a form the analyzer cannot model.
-                    *incomplete = true;
+                    facts.incomplete = true;
                 }
             }
             "spread_element" => {
@@ -571,27 +579,29 @@ fn collect_commonjs_object_exports(
                     .named_child(0)
                     .and_then(|argument| require_specifier(argument, source))
                 {
-                    reexports.push(Reexport {
+                    facts.reexports.push(Reexport {
                         module: module.to_owned(),
                         specifiers: Vec::new(),
                         star: true,
                     });
                 } else {
-                    *incomplete = true;
+                    facts.incomplete = true;
                 }
             }
-            // A method definition or computed key can carry a registration the analyzer cannot see.
-            _ => *incomplete = true,
+            // A method that never refers to a registration is inert; see `export_values`.
+            "method_definition" if scope.is_inert(property, source) => {}
+            // Any other method, or an unmodeled property form, can carry a registration.
+            _ => facts.incomplete = true,
         }
     }
 }
 
 /// Records `Object.assign(module.exports, require('./a'), { … })` as re-exports.
-fn collect_object_assign_exports(
-    node: Node<'_>,
-    source: &[u8],
-    reexports: &mut Vec<Reexport>,
-    incomplete: &mut bool,
+fn collect_object_assign_exports<'a>(
+    node: Node<'a>,
+    source: &'a [u8],
+    scope: &ExportScope<'a>,
+    facts: &mut ExportFacts,
 ) {
     // An `Object.assign` call always carries an argument list; the absent case matches nothing.
     let arguments = (call_member(node, source) == Some(("Object", "assign")))
@@ -618,20 +628,20 @@ fn collect_object_assign_exports(
         ExportPosition::InsideCallable => return,
         // A conditional merge into `module.exports` may hide registrations; fail closed.
         ExportPosition::ModuleConditional => {
-            *incomplete = true;
+            facts.incomplete = true;
             return;
         }
         ExportPosition::ModuleBody => {}
     }
     for argument in arguments {
         if let Some(module) = require_specifier(argument, source) {
-            reexports.push(Reexport {
+            facts.reexports.push(Reexport {
                 module: module.to_owned(),
                 specifiers: Vec::new(),
                 star: true,
             });
-        } else {
-            *incomplete = true;
+        } else if !scope.is_inert(argument, source) {
+            facts.incomplete = true;
         }
     }
 }

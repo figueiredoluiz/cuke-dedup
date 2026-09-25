@@ -1,6 +1,6 @@
 use super::ast::{
-    import_has_runtime_bindings, import_module, is_top_level_variable, is_type_only_declaration,
-    is_type_only_specifier, string_literal,
+    import_has_runtime_bindings, import_module, import_statement_module, is_top_level_variable,
+    is_type_only_declaration, is_type_only_specifier, string_literal,
 };
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
@@ -269,7 +269,7 @@ impl AssertionBindings {
         if is_type_only_declaration(import) {
             return trusted;
         }
-        let Some(module) = assertion_import_module(import, source) else {
+        let Some(module) = import_statement_module(import, source) else {
             return trusted;
         };
         let exact_assertion_module = ASSERTION_MODULES.contains(&module);
@@ -408,19 +408,6 @@ impl AssertionBindings {
     }
 }
 
-fn assertion_import_module<'a>(import: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
-    if let Some(module) = import_module(import, source) {
-        return Some(module);
-    }
-    let mut cursor = import.walk();
-    let module = import
-        .named_children(&mut cursor)
-        .find(|child| child.kind() == "import_require_clause")
-        .and_then(|clause| clause.child_by_field_name("source"))
-        .and_then(|literal| string_literal(literal, source));
-    module
-}
-
 fn resolved_facade_modules(
     root: Node<'_>,
     source: &[u8],
@@ -498,7 +485,7 @@ fn extend_untrusted_bindings(
     shadowed.extend(locals.into_iter().filter(|local| !trusted.contains(local)));
 }
 
-fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
+pub(super) fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         match node.kind() {
@@ -1116,7 +1103,7 @@ fn add_scope_binding(
     collect_binding_names(pattern, source, scopes.entry(scope.id()).or_default());
 }
 
-fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Option<&'static str> {
+pub(super) fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Option<&'static str> {
     (0..loop_node.child_count()).find_map(|index| {
         let child = loop_node.child(index)?;
         (child.end_byte() <= binding.start_byte()).then(|| match child.kind() {

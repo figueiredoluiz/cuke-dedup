@@ -1,7 +1,8 @@
 use super::ast::{
     call_string_argument, export_has_runtime_bindings, import_has_runtime_bindings,
-    import_has_runtime_module_reference, import_module, is_top_level_variable,
-    is_type_only_declaration, is_type_only_specifier, push_named_children_reverse,
+    import_has_runtime_module_reference, import_module, import_statement_module,
+    is_top_level_variable, is_type_only_declaration, is_type_only_specifier,
+    push_named_children_reverse,
 };
 use super::frameworks::{
     framework_for_module, is_supported_module, registration_exports_for_framework,
@@ -249,7 +250,7 @@ pub(super) fn detect_registrations(
     while let Some(node) = stack.pop() {
         match node.kind() {
             "import_statement" if import_has_runtime_bindings(node) => {
-                let module = import_module(node, source);
+                let module = import_statement_module(node, source);
                 let exports = match module {
                     Some(module) if is_supported_module(module) => {
                         Some(registration_exports_for_module(module))
@@ -563,8 +564,11 @@ enum ImportBinding<'a> {
     /// A named specifier, carrying the exported name and the local name it binds. The local name
     /// is the alias when one is written and the exported name otherwise.
     Named { exported: &'a str, local: &'a str },
-    /// A namespace import, carrying the local name bound to the whole module.
+    /// A binding to the whole module: a namespace import, or TypeScript's `import x = require()`.
     Namespace(&'a str),
+    /// A default import. It binds no registrations (see `collect_imports`), but it still owns its
+    /// local name and names its module when a member call on it cannot be resolved.
+    Default(&'a str),
 }
 
 /// Reports every runtime binding an import clause introduces.
@@ -594,9 +598,14 @@ fn for_each_import_binding(
                     .map_or(exported, |alias| node_text(alias, source));
                 on_binding(ImportBinding::Named { exported, local });
             }
-            "namespace_import" => {
+            "namespace_import" | "import_require_clause" => {
                 if let Some(identifier) = first_named_kind(node, "identifier") {
                     on_binding(ImportBinding::Namespace(node_text(identifier, source)));
+                }
+            }
+            "import_clause" => {
+                if let Some(identifier) = first_named_kind(node, "identifier") {
+                    on_binding(ImportBinding::Default(node_text(identifier, source)));
                 }
             }
             _ => {}
@@ -619,7 +628,8 @@ fn collect_unresolved_imports(
                     .insert(local.to_owned(), module.to_owned());
             }
         }
-        ImportBinding::Namespace(namespace) => {
+        // A member call on either names the unresolved module in its warning.
+        ImportBinding::Namespace(namespace) | ImportBinding::Default(namespace) => {
             discovered
                 .unresolved_namespaces
                 .insert(namespace.to_owned(), module.to_owned());
@@ -627,6 +637,13 @@ fn collect_unresolved_imports(
     });
 }
 
+/// Binds an import's names to the registrations its module exports.
+///
+/// A default import binds no registrations. No supported package has a default export: each
+/// CommonJS entry sets `__esModule`, so TypeScript and Babel interop resolve the default to
+/// `undefined`, and the ES module entry exports named bindings only. A project module's
+/// `export default` value is not modeled. A member call on a default import therefore reads as an
+/// unresolved registration and is reported, never registered.
 fn collect_imports(
     import: Node<'_>,
     source: &[u8],
@@ -648,6 +665,8 @@ fn collect_imports(
         ImportBinding::Namespace(namespace) => {
             namespaces.insert(namespace.to_owned(), exports.clone());
         }
+        // See above: a default import binds no registrations.
+        ImportBinding::Default(_) => {}
     });
 }
 
@@ -682,15 +701,21 @@ fn collect_shadowing_imports(
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
-        if node.kind() == "import_specifier" && !is_type_only_specifier(node) {
-            let local = node
+        // Every runtime import form binds a local name: a named specifier its alias or name, and a
+        // default, namespace or import-equals binding its identifier.
+        let local = match node.kind() {
+            "import_specifier" if !is_type_only_specifier(node) => node
                 .child_by_field_name("alias")
-                .or_else(|| node.child_by_field_name("name"));
-            if let Some(local) = local {
-                let local = node_text(local, source);
-                if DEFAULT_REGISTRATIONS.contains(&local) {
-                    shadowed_defaults.insert(local.to_owned());
-                }
+                .or_else(|| node.child_by_field_name("name")),
+            "import_clause" | "namespace_import" | "import_require_clause" => {
+                first_named_kind(node, "identifier")
+            }
+            _ => None,
+        };
+        if let Some(local) = local {
+            let local = node_text(local, source);
+            if DEFAULT_REGISTRATIONS.contains(&local) {
+                shadowed_defaults.insert(local.to_owned());
             }
         }
         push_named_children_reverse(node, &mut stack);

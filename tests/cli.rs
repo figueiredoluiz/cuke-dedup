@@ -4017,3 +4017,126 @@ fn regression_pr62_workspace_package_base_stays_inside_its_package() {
             "resolves outside package or uses an invalid segment",
         ));
 }
+
+#[test]
+fn regression_corpus_default_import_does_not_become_an_ambient_registration() {
+    // A default import binds its own local name, so `Given` here is the helper module's default
+    // export, not the ambient registration global. Only named imports used to shadow the global,
+    // so this invented a definition. The type-only control is erased at runtime, so there the
+    // global does apply and the same call registers.
+    for (import, definitions) in [
+        ("import Given from './helpers';\n", "Analyzed 0 definitions"),
+        (
+            "import type Given from './helpers';\n",
+            "Analyzed 1 definition",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "package.json", "{}\n");
+        write(
+            directory.path(),
+            "helpers.js",
+            "module.exports = { Given: (text, fn) => text };\n",
+        );
+        write(
+            directory.path(),
+            "steps.ts",
+            &format!("{import}Given('a phantom step', () => work());\n"),
+        );
+        analyze_root(directory.path()).stdout(predicate::str::contains(definitions));
+    }
+}
+
+#[test]
+fn regression_corpus_inert_commonjs_export_is_not_an_incomplete_barrel() {
+    // Real-repo corpus: 27 projects required local helpers written as `module.exports = async
+    // function …`, a class, or a data array. Only object literals and `require` were modeled, so
+    // each helper marked the corpus incomplete. A helper that names no registration is inert and
+    // stays quiet; the control forwards to `Given`, a possible wrapper, and must still fail closed.
+    // Review finding: an object that escapes into a call, even wrapped in another object, can be
+    // given a registration there, so it must fail closed as well, and so must a function that
+    // reaches a registration through a bracket key, a name assigned one later, or a member it
+    // picks at runtime.
+    for (helper, warns) in [
+        (
+            "module.exports = async function act(value) { return value; };\n",
+            false,
+        ),
+        (
+            "const { Given } = require('@cucumber/cucumber');\nmodule.exports = (text, fn) => Given(text, fn);\n",
+            true,
+        ),
+        (
+            "const api = {};\nattach({ api });\nmodule.exports = api;\n",
+            true,
+        ),
+        (
+            "module.exports = (bdd, text, fn) => bdd['Given'](text, fn);\n",
+            true,
+        ),
+        (
+            "let register;\nregister = Given;\nmodule.exports = { step: (t, f) => register(t, f) };\n",
+            true,
+        ),
+        (
+            "module.exports = (bdd, name, t, f) => bdd[name](t, f);\n",
+            true,
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "package.json", "{}\n");
+        write(directory.path(), "action.js", helper);
+        write(
+            directory.path(),
+            "steps.js",
+            "const { Given } = require('@cucumber/cucumber');\nconst act = require('./action');\nGiven('a step', () => act(1));\n",
+        );
+        let assert = analyze_root(directory.path())
+            .stdout(predicate::str::contains("Analyzed 1 definition"));
+        let unmodeled = predicate::str::contains("CommonJS form the analyzer does not model");
+        if warns {
+            assert.stderr(unmodeled);
+        } else {
+            assert.stderr(unmodeled.not());
+        }
+    }
+}
+
+#[test]
+fn regression_pr63_registration_passed_to_a_helper_is_reported() {
+    // Review finding: a helper that calls a function it receives is inert on the export side, so
+    // `helper(Given, …)` registered a step the analyzer never saw, with no warning. The call site
+    // now reports it as incomplete, whether the registration is a direct argument or nested in an
+    // object. The control passes a fixture parameter that is merely named `Given`, which is a local
+    // value and must stay quiet.
+    for (steps, reported) in [
+        (
+            "const { Given } = require('@cucumber/cucumber');\nconst helper = require('./helper');\nhelper(Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "const { Given } = require('@cucumber/cucumber');\nconst helper = require('./helper');\nhelper({ register: Given }, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "const { Given } = require('@cucumber/cucumber');\nconst fixtures = { When: [({ Given }, use) => use(Given)] };\nmodule.exports = fixtures;\n",
+            false,
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "package.json", "{}\n");
+        write(
+            directory.path(),
+            "helper.js",
+            "module.exports = (register, text, fn) => register(text, fn);\n",
+        );
+        write(directory.path(), "steps.js", steps);
+        let assert = analyze_root(directory.path());
+        let passed = predicate::str::contains("pass a step registration to a function");
+        if reported {
+            assert.stderr(passed);
+        } else {
+            assert.stderr(passed.not());
+        }
+    }
+}

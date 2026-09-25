@@ -315,14 +315,6 @@ Step('not exported by createBdd', () => work());
 
 #[test]
 fn project_reexports_preserve_playwright_decorator_registration_provenance() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("package.json"), "{}").unwrap();
-    fs::write(
-        directory.path().join("decorators.ts"),
-        "export { Given as Setup } from 'playwright-bdd/decorators';\n",
-    )
-    .unwrap();
-    let path = directory.path().join("steps.ts");
     let source = r#"
 import { Setup } from './decorators';
 class WorkspaceSteps {
@@ -330,14 +322,13 @@ class WorkspaceSteps {
   async prepare() { await work(); }
 }
 "#;
-    fs::write(&path, source).unwrap();
-    let source_file = SourceFile {
-        path,
-        language: SourceLanguage::TypeScript,
-    };
-    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
-
-    let extracted = extract_detailed_impl(source, &source_file, &mut session).unwrap();
+    let extracted = extract_in_project(
+        &[(
+            "decorators.ts",
+            "export { Given as Setup } from 'playwright-bdd/decorators';\n",
+        )],
+        source,
+    );
     assert!(extracted.diagnostics.is_empty());
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].registration, "Given");
@@ -4054,4 +4045,313 @@ fn assertion_event_components_escape_delimiters_so_computed_keys_do_not_forge_ch
         computed_delimited[0].handler.behavior_signature,
     );
     assert!(computed_delimited[0].handler.behavior_signature[0].contains("not\\.toBe"));
+}
+
+/// Extracts `source` as `steps.ts` in a project holding `files`.
+fn extract_in_project(files: &[(&str, &str)], source: &str) -> Extraction {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    for (name, contents) in files {
+        fs::write(directory.path().join(name), contents).unwrap();
+    }
+    let path = directory.path().join("steps.ts");
+    fs::write(&path, source).unwrap();
+    let source_file = SourceFile {
+        path,
+        language: SourceLanguage::TypeScript,
+    };
+    let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
+    extract_detailed_impl(source, &source_file, &mut session).unwrap()
+}
+
+/// A default import and TypeScript's `import x = require()` across module kinds. Import-equals binds
+/// `module.exports`, so it registers for a package and a project module alike. A default import never
+/// does: no supported package has a default export (each sets `__esModule`), and a project module's
+/// `export default` is not modeled. A member call on it must warn rather than register or vanish.
+/// Each registering row has a control with the same call and module that must not register.
+#[test]
+fn default_and_import_equals_bindings_register_only_where_they_bind_the_module() {
+    let modules = [
+        ("barrel.ts", "export { Given } from '@cucumber/cucumber';\n"),
+        (
+            "cjs.js",
+            "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
+        ),
+    ];
+    let call = "c.Given('a step', () => work());\n";
+    // The expected warning: none, the generic unresolved-registration one, or one naming the module.
+    let generic = "look like step registrations";
+    for (import, registered, warning) in [
+        ("import c from '@cucumber/cucumber';\n", 0, Some(generic)),
+        ("import c = require('@cucumber/cucumber');\n", 1, None),
+        ("import c = require('./cjs');\n", 1, None),
+        ("import c from './barrel';\n", 0, Some(generic)),
+        (
+            "import c from './missing';\n",
+            0,
+            Some("module `./missing`"),
+        ),
+        (
+            "import c = require('./missing');\n",
+            0,
+            Some("module `./missing`"),
+        ),
+    ] {
+        let extracted = extract_in_project(&modules, &format!("{import}{call}"));
+        assert_eq!(extracted.definitions.len(), registered, "{import}");
+        let messages: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        match warning {
+            None => assert!(messages.is_empty(), "{import}: {messages:?}"),
+            Some(expected) => assert!(
+                messages.iter().any(|message| message.contains(expected)),
+                "{import}: {messages:?}"
+            ),
+        }
+    }
+}
+
+/// Every runtime import form binds its local name, so an imported `Given` is never the ambient
+/// global. A type-only import is erased, so the ambient global still applies: that control proves
+/// the call itself would register.
+#[test]
+fn every_runtime_import_form_shadows_the_ambient_registration_global() {
+    let modules = [(
+        "cjs.js",
+        "module.exports = { Given: (text, fn) => text };\n",
+    )];
+    let call = "Given('a step', () => work());\n";
+    for import in [
+        "import Given from './cjs';\n",
+        "import * as Given from './cjs';\n",
+        "import Given = require('./cjs');\n",
+        "import { Given } from './cjs';\n",
+    ] {
+        let extracted = extract_in_project(&modules, &format!("{import}{call}"));
+        assert!(extracted.definitions.is_empty(), "{import}");
+    }
+    for control in ["", "import type Given from './cjs';\n"] {
+        let extracted = extract_in_project(&modules, &format!("{control}{call}"));
+        assert_eq!(extracted.definitions.len(), 1, "control: {control:?}");
+    }
+}
+
+/// A registration handed to another function can be called there, in a body the analyzer does not
+/// follow, so the call is reported and the corpus marked incomplete. The controls use the same
+/// shape without a registration: no registration argument, a local value that merely shares the
+/// name (a fixture parameter or block declaration), or the registration call itself.
+#[test]
+fn passing_a_registration_to_a_function_is_reported() {
+    let modules = [(
+        "helper.js",
+        "module.exports = (register, text, fn) => register(text, fn);\n",
+    )];
+    let passed = "pass a step registration to a function";
+    for (source, reported) in [
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import * as cucumber from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(cucumber.Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import cucumber = require('@cucumber/cucumber');\nimport helper from './helper';\nhelper((cucumber.Given), 'a step', () => work());\n",
+            true,
+        ),
+        // The ambient global counts when nothing binds the name locally.
+        (
+            "import helper from './helper';\nhelper(Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import helper from './helper';\nhelper('a step', () => work());\n",
+            false,
+        ),
+        // A registration nested in an argument value is passed as surely as a direct one.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ register: Given }, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ Given }, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper([Given], 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(new Wrapper(Given));\n",
+            true,
+        ),
+        // Value-preserving positions carry the registration itself.
+        (
+            "import { Given, When } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(flag ? Given : When);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given || fallback);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(function () { if (ready) { return Given; } });\n",
+            true,
+        ),
+        // A return is found through any control flow, and a yield counts as a return.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => { try { return Given; } finally { done(); } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(function () { switch (kind) { case 'given': return Given; default: return null; } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => { for (const item of items) { if (item) { return Given; } } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(function* () { yield Given; });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ register() { return Given; } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ get register() { return Given; } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper((setup(), Given));\n",
+            true,
+        ),
+        // Spreading a literal carries its elements; spreading a registration copies its properties.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(...[Given]);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ ...Given }, [...Given]);\n",
+            false,
+        ),
+        // A compound assignment yields the combined value, not the registration.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nlet value = '';\nhelper(value += Given);\n",
+            false,
+        ),
+        // A comma expression is its last operand only.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper((Given, 42));\n",
+            false,
+        ),
+        // A nested function's return is its own, not the outer function's.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => { function inner() { return Given; } return 1; });\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(register = Given);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given.bind(null), 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given.toString());\n",
+            false,
+        ),
+        // Consuming positions yield a new value, not the registration.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given.name, typeof Given, Given !== undefined);\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(new Given(), Given ? 1 : 2);\n",
+            false,
+        ),
+        // Controls: a nested object without a registration, and a registration that is called
+        // inside a callback (extracted as a definition, not passed).
+        (
+            "import helper from './helper';\nhelper({ register: other, list: [1] }, 'a step', () => work());\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => Given('a step', () => work()));\n",
+            false,
+        ),
+        // A fixture parameter or local declaration that shares the name is a local value. Each
+        // imports the real registration too, so only the local binding keeps the call quiet.
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport const fixtures = { When: [({ Given }, use) => use(Given)] };\n",
+            false,
+        ),
+        (
+            "import * as cucumber from '@cucumber/cucumber';\nexport const fixtures = { When: [(cucumber, use) => use(cucumber.Given)] };\n",
+            false,
+        ),
+        (
+            "import * as cucumber from '@cucumber/cucumber';\nexport const fixtures = { When: [(cucumber, use) => use((cucumber.Given))] };\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport function setup(use) {\n  const Given = make();\n  use(Given);\n}\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport function setup(use) {\n  function Given() {}\n  use(Given);\n}\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nexport function setup(use) {\n  class Given {}\n  use(Given);\n}\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\ntry { run(); } catch (Given) { use(Given); }\n",
+            false,
+        ),
+        // A loop declaration binds for its body; a bare loop target assigns the outer name.
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (const Given of values) { use(Given); }\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (let Given = first(); Given; Given = next()) { use(Given); }\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (Given of values) { use(Given); }\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (const item of values) { use({ Given }); }\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nGiven('a step', () => work());\n",
+            false,
+        ),
+    ] {
+        let extracted = extract_in_project(&modules, source);
+        let messages: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(
+            messages.iter().any(|message| message.contains(passed)),
+            reported,
+            "{source}: {messages:?}"
+        );
+    }
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "knownMissBaseline": 3,
+  "knownMissBaseline": 1,
   "minimumRecall": 0.6,
   "minimumCases": 57,
   "cases": [
@@ -33,7 +33,7 @@
     {
       "name": "ambiguous-step-definition-origins-cover-every-registration-shape",
       "path": "ambiguous-step-definition-origins",
-      "expectedDefinitions": 28,
+      "expectedDefinitions": 30,
       "expectedExit": 1,
       "expectedFindings": [
         {
@@ -161,6 +161,15 @@
             "steps/esm-forms.ts:24",
             "steps/esm-forms.ts:25"
           ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 58,
+          "relatedLocations": [
+            "steps/esm-forms.ts:34",
+            "steps/esm-forms.ts:35"
+          ]
         }
       ],
       "expectedAbsent": [
@@ -183,22 +192,11 @@
           "rule": "ambiguous-step",
           "primaryPath": "features/definition-origins.feature",
           "primaryLine": 61
-        }
-      ],
-      "knownMisses": [
-        {
-          "id": "default-import-registration",
-          "rule": "ambiguous-step",
-          "primaryPath": "features/definition-origins.feature",
-          "primaryLine": 55,
-          "reason": "Registration bindings are collected only from `import_specifier` nodes in module_resolver.rs, so a default import reached through a member call never becomes a registration. `import_has_runtime_bindings` (ast.rs:64) already counts it as a runtime binding and assertions.rs handles `import_require_clause`, so the omission is on the registration path alone. Both definitions are invisible, which also holds `expectedDefinitions` at 28 instead of 32."
         },
         {
-          "id": "import-equals-registration",
           "rule": "ambiguous-step",
           "primaryPath": "features/definition-origins.feature",
-          "primaryLine": 58,
-          "reason": "Registration bindings are collected only from `import_specifier` nodes in module_resolver.rs, so TypeScript's `import x = require(...)` form never becomes a registration. `import_has_runtime_bindings` (ast.rs:64) already counts it as a runtime binding and assertions.rs handles `import_require_clause`, so the omission is on the registration path alone. Both definitions are invisible, which also holds `expectedDefinitions` at 28 instead of 32."
+          "primaryLine": 55
         }
       ]
     },

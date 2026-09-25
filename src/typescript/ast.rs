@@ -120,6 +120,21 @@ pub(super) fn export_has_runtime_bindings(node: Node<'_>) -> bool {
     has_runtime_specifier
 }
 
+/// Returns the module an import statement loads, including TypeScript's `import x = require('m')`,
+/// whose specifier sits inside the require clause rather than on the statement.
+pub(super) fn import_statement_module<'a>(import: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    import_module(import, source).or_else(|| {
+        direct_named_child(import, "import_require_clause")
+            .and_then(|clause| clause.child_by_field_name("source"))
+            .and_then(|literal| string_literal(literal, source))
+    })
+}
+
+/// Returns whether a `lexical_declaration` declares `const` bindings rather than `let`.
+pub(super) fn is_const_declaration(declaration: Node<'_>) -> bool {
+    has_direct_token(declaration, "const")
+}
+
 fn has_direct_token(node: Node<'_>, token: &str) -> bool {
     (0..node.child_count()).any(|index| {
         node.child(index)
