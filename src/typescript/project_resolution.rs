@@ -44,6 +44,8 @@ struct PackageInfo {
     imports: Option<Value>,
     exports: Option<Value>,
     main: Option<String>,
+    /// The `tsconfig` field TypeScript reads when a config `extends` the bare package name.
+    tsconfig: Option<String>,
     workspaces: Vec<String>,
 }
 
@@ -216,8 +218,11 @@ impl ProjectResolution {
                 )
             })?;
             for entry in entries {
-                let base = self.resolve_extends(path, &entry, root)?;
-                effective.merge(self.load_project_config(&base, root, depth + 1)?.clone());
+                // A package base that is not available inside the root is skipped; see
+                // `resolve_extends`.
+                if let Some(base) = self.resolve_extends(path, &entry, root)? {
+                    effective.merge(self.load_project_config(&base, root, depth + 1)?.clone());
+                }
             }
         }
         let Some(options) = object.get("compilerOptions") else {
@@ -271,34 +276,118 @@ impl ProjectResolution {
         Ok(effective)
     }
 
-    fn resolve_extends(&self, config: &Path, extends: &str, root: &Path) -> Result<PathBuf> {
-        if !is_relative_module(extends) {
-            bail!(
-                "project config extends only supports static JSON paths inside the analysis root: `{extends}` in {}",
-                config.display()
-            );
-        }
-        let base = config.parent().unwrap_or(root).join(extends);
-        if base
-            .extension()
-            .is_some_and(|extension| extension != "json")
-        {
+    /// Resolves one `extends` entry to a static JSON base inside the analysis root, or `None` when a
+    /// package base is not available here.
+    ///
+    /// A relative entry must resolve: a missing base is a repository configuration error. A package
+    /// entry — how shared bases such as `@tsconfig/recommended/tsconfig.json` or `expo/tsconfig.base`
+    /// are written — resolves only to a file inside a workspace package in the root, where a missing
+    /// base is also an error; resolution never reads `node_modules`. Any other package base is
+    /// skipped rather than rejecting the whole config, so the project's own `baseUrl` and `paths`
+    /// still apply. An alias that only a skipped base defines stays unresolved and is reported,
+    /// never invented.
+    fn resolve_extends(
+        &mut self,
+        config: &Path,
+        extends: &str,
+        root: &Path,
+    ) -> Result<Option<PathBuf>> {
+        if is_executable_config(Path::new(extends)) {
             bail!(
                 "project config extends only supports static JSON paths; `{extends}` in {} would require executing repository code",
                 config.display()
             );
         }
-        for candidate in [
-            base.clone(),
-            base.with_extension("json"),
-            base.join("tsconfig.json"),
-        ] {
+        if is_relative_module(extends) {
+            let base = config.parent().unwrap_or(root).join(extends);
+            for candidate in config_base_candidates(&base) {
+                if candidate.is_file() {
+                    return self
+                        .canonical_contained(&candidate, root, "project config extends target")
+                        .map(Some);
+                }
+            }
+            bail!(
+                "project config extends target `{extends}` from {} could not be resolved",
+                config.display()
+            );
+        }
+        if !is_bare_module(extends) {
+            bail!(
+                "project config extends only supports relative paths or package names inside the analysis root: `{extends}` in {}",
+                config.display()
+            );
+        }
+        let Some((name, subpath)) = split_package_specifier(extends) else {
+            return Ok(None);
+        };
+        self.initialize_workspaces(root)?;
+        let Some(package) = self
+            .workspace_packages
+            .as_ref()
+            .and_then(|packages| packages.get(name))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        // A package base stays inside its package, like an `exports` target: no traversal, no
+        // `node_modules`, and no symlink out of the package root.
+        let mut candidates = Vec::new();
+        if subpath.is_empty() {
+            if let Some(field) = package.tsconfig.as_deref() {
+                // A leading separator is rooted on every platform; Windows `is_absolute` also wants a
+                // drive, so `/etc/x` alone does not count there.
+                if Path::new(field).is_absolute() || field.starts_with(['/', '\\']) {
+                    bail!(
+                        "package `{name}` `tsconfig` field `{field}` resolves outside the package"
+                    );
+                }
+                // `./` and Windows `.\` both name the package directory itself.
+                let relative = field
+                    .strip_prefix("./")
+                    .or_else(|| field.strip_prefix(".\\"))
+                    .unwrap_or(field);
+                let target = format!("./{relative}");
+                reject_invalid_package_target(&target, "package `tsconfig` field")?;
+                let field = package.root.join(target);
+                if is_executable_config(&field) {
+                    bail!(
+                        "package `{name}` names an executable `tsconfig` base, which static resolution refuses to run"
+                    );
+                }
+                candidates.extend(config_base_candidates(&field));
+            }
+            candidates.push(package.root.join("tsconfig.json"));
+        } else {
+            reject_invalid_package_target(
+                &format!("./{subpath}"),
+                "project config extends subpath",
+            )?;
+            candidates.extend(config_base_candidates(&package.root.join(subpath)));
+        }
+        for candidate in candidates {
             if candidate.is_file() {
-                return self.canonical_contained(&candidate, root, "project config extends target");
+                let base =
+                    self.canonical_contained(&candidate, root, "project config extends target")?;
+                // Checked on the canonical path, so a symlink cannot lead out of the package or into
+                // its `node_modules`.
+                let inside = base.strip_prefix(&package.root).is_ok_and(|relative| {
+                    !relative
+                        .components()
+                        .any(|component| component.as_os_str() == "node_modules")
+                });
+                if !inside {
+                    bail!(
+                        "project config extends target `{extends}` resolves outside workspace package `{name}` or into its `node_modules`"
+                    );
+                }
+                return Ok(Some(base));
             }
         }
+        // The package is known to exist here, so a missing base is a configuration error, not an
+        // unavailable dependency.
         bail!(
-            "project config extends target `{extends}` from {} could not be resolved",
+            "project config extends target `{extends}` from {} names workspace package `{name}` but no config file there",
             config.display()
         )
     }
@@ -554,6 +643,7 @@ impl ProjectResolution {
             imports,
             exports,
             main: optional_string(object, "main", &manifest)?,
+            tsconfig: optional_string(object, "tsconfig", &manifest)?,
             workspaces: workspace_patterns(object.get("workspaces"), &manifest)?,
         };
         self.packages.insert(package_root, package.clone());
@@ -828,7 +918,8 @@ fn target_candidates(value: &Value, capture: Option<&str>, kind: &str) -> Result
 fn reject_invalid_package_target(target: &str, kind: &str) -> Result<()> {
     if !target.starts_with("./")
         || target
-            .split('/')
+            // A backslash separates path components on Windows, so it must not hide a segment.
+            .split(['/', '\\'])
             .skip(1)
             .any(|segment| matches!(segment, "." | ".." | "node_modules"))
     {
@@ -899,6 +990,25 @@ fn with_appended_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut value = path.as_os_str().to_owned();
     value.push(suffix);
     PathBuf::from(value)
+}
+
+/// Files a config base may name, as TypeScript resolves them: the exact path, the path with `.json`
+/// appended (so `tsconfig.base` means `tsconfig.base.json`, not `tsconfig.json`), and a directory's
+/// `tsconfig.json`.
+fn config_base_candidates(base: &Path) -> [PathBuf; 3] {
+    [
+        base.to_owned(),
+        with_appended_suffix(base, ".json"),
+        base.join("tsconfig.json"),
+    ]
+}
+
+/// A config base with a script extension would have to be executed, which static resolution refuses.
+/// Any other suffix — `tsconfig.base`, `tsconfig.app` — is a JSON file named without `.json`.
+fn is_executable_config(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "js" | "cjs" | "mjs" | "ts" | "cts" | "mts"))
 }
 
 fn extension_substitutions(path: &Path) -> Option<Vec<PathBuf>> {

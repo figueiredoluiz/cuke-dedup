@@ -409,6 +409,8 @@ fn package_map_targets_cover_conditions_arrays_wildcards_and_errors() {
         "../outside.ts",
         "./../outside.ts",
         "./node_modules/x.ts",
+        r"./src\..\..\outside.ts",
+        r"./node_modules\x.ts",
         "bare",
     ] {
         assert!(
@@ -443,10 +445,14 @@ fn project_config_validation_reports_each_unsafe_static_shape() {
             "string targets",
         ),
         (
-            r#"{"extends":"package-config"}"#,
-            "only supports static JSON paths",
+            r#"{"extends":"/etc/tsconfig.json"}"#,
+            "relative paths or package names",
         ),
         (r#"{"extends":"./config.js"}"#, "would require executing"),
+        (
+            r#"{"extends":"shared-config/base.mjs"}"#,
+            "would require executing",
+        ),
         (r#"{"extends":"./missing"}"#, "could not be resolved"),
     ] {
         let error = config_error(source);
@@ -1058,6 +1064,7 @@ fn package_export_targets_outside_the_analysis_root_are_refused() {
         imports: None,
         exports: Some(serde_json::json!({".": "./index.ts"})),
         main: None,
+        tsconfig: None,
         workspaces: Vec::new(),
     };
 
@@ -1070,4 +1077,272 @@ fn package_export_targets_outside_the_analysis_root_are_refused() {
             .contains("package export target resolves outside the analysis root"),
         "{error:#}"
     );
+}
+
+/// Builds a project from `(path, contents)` pairs and reports whether `specifier` resolves from a
+/// step file at the root.
+fn resolves_in_project(files: &[(&str, &str)], specifier: &str) -> bool {
+    resolve_in_project(files, specifier).unwrap().is_some()
+}
+
+fn resolve_in_project(files: &[(&str, &str)], specifier: &str) -> Result<Option<PathBuf>> {
+    let directory = write_project(files);
+    resolve_from_root_step(directory.path(), specifier)
+}
+
+/// Writes `(path, contents)` pairs, plus an empty `steps.ts` importer, into a fresh directory.
+fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        let path = directory.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+    fs::write(directory.path().join("steps.ts"), "").unwrap();
+    directory
+}
+
+fn resolve_from_root_step(directory: &Path, specifier: &str) -> Result<Option<PathBuf>> {
+    let root = directory.canonicalize().unwrap();
+    ProjectResolution::for_root(&root).resolve(&root.join("steps.ts"), specifier, &root)
+}
+
+#[test]
+fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
+    // Shared config bases are written as package names. A workspace base inside the root is read;
+    // any other package base is skipped (`node_modules` is never read) instead of rejecting the whole
+    // config, so the project's own `paths` keep resolving. Before, every such config failed and no
+    // alias in the project resolved.
+    let workspace = r#"{"name":"root","workspaces":["packages/*"]}"#;
+    let base_paths = r#"{"compilerOptions":{"paths":{"@shared/*":["shared/*"]}}}"#;
+
+    // A workspace base named with its `.json` subpath contributes its `paths`.
+    assert!(resolves_in_project(
+        &[
+            ("package.json", workspace),
+            (
+                "packages/config/package.json",
+                r#"{"name":"@example/config"}"#
+            ),
+            ("packages/config/tsconfig.json", base_paths),
+            ("packages/config/shared/world.ts", ""),
+            (
+                "tsconfig.json",
+                r#"{"extends":"@example/config/tsconfig.json"}"#
+            ),
+        ],
+        "@shared/world"
+    ));
+    // A dotted subpath names `<name>.json`: `tsconfig.base` is `tsconfig.base.json`.
+    assert!(resolves_in_project(
+        &[
+            ("package.json", workspace),
+            (
+                "packages/config/package.json",
+                r#"{"name":"@example/config"}"#
+            ),
+            ("packages/config/tsconfig.base.json", base_paths),
+            ("packages/config/shared/world.ts", ""),
+            (
+                "tsconfig.json",
+                r#"{"extends":"@example/config/tsconfig.base"}"#
+            ),
+        ],
+        "@shared/world"
+    ));
+    // A bare package name follows the manifest's `tsconfig` field.
+    assert!(resolves_in_project(
+        &[
+            ("package.json", workspace),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config","tsconfig":"configs/base.json"}"#,
+            ),
+            ("packages/config/configs/base.json", base_paths),
+            ("packages/config/configs/shared/world.ts", ""),
+            ("tsconfig.json", r#"{"extends":"shared-config"}"#),
+        ],
+        "@shared/world"
+    ));
+    // The `tsconfig` field names its base the way `extends` does: `configs/base` is `base.json`.
+    assert!(resolves_in_project(
+        &[
+            ("package.json", workspace),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config","tsconfig":"./configs/base"}"#,
+            ),
+            ("packages/config/configs/base.json", base_paths),
+            ("packages/config/configs/shared/world.ts", ""),
+            ("tsconfig.json", r#"{"extends":"shared-config"}"#),
+        ],
+        "@shared/world"
+    ));
+    // Unavailable external bases are skipped, as is a scope with no package name; the project's own
+    // alias still resolves.
+    let external = [
+        (
+            "tsconfig.json",
+            r#"{"extends":["@tsconfig/recommended/tsconfig.json","expo/tsconfig.base","@tsconfig"],
+                "compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+        ),
+        ("src/world.ts", ""),
+    ];
+    assert!(resolves_in_project(&external, "@/world"));
+    // Opposite control: an alias only a skipped base could define stays unresolved, never invented.
+    assert!(!resolves_in_project(&external, "@shared/world"));
+
+    // A known workspace package is not an unavailable dependency: a base missing from it is a
+    // configuration error, whether named by subpath or by the manifest's `tsconfig` field, and a
+    // `tsconfig` field naming a script is refused like a script `extends`. A package base stays inside
+    // its package, like an `exports` target: traversal, `node_modules` and absolute paths are refused.
+    for (manifest, extends, expected) in [
+        (
+            r#"{"name":"shared-config"}"#,
+            "shared-config/configs/bsae.json",
+            "names workspace package",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"configs/missing.json"}"#,
+            "shared-config",
+            "names workspace package",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"configs/base.js"}"#,
+            "shared-config",
+            "executable `tsconfig` base",
+        ),
+        (
+            r#"{"name":"shared-config"}"#,
+            "shared-config/../../tsconfig.base.json",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config"}"#,
+            "shared-config/node_modules/other/tsconfig.json",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"../../tsconfig.base.json"}"#,
+            "shared-config",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config"}"#,
+            r"shared-config/node_modules\other\tsconfig.json",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"..\\..\\tsconfig.base.json"}"#,
+            "shared-config",
+            "invalid segment",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"/etc/tsconfig.json"}"#,
+            "shared-config",
+            "resolves outside the package",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"\\etc\\tsconfig.json"}"#,
+            "shared-config",
+            "resolves outside the package",
+        ),
+    ] {
+        let tsconfig = serde_json::json!({ "extends": extends }).to_string();
+        let error = resolve_in_project(
+            &[
+                ("package.json", workspace),
+                ("packages/config/package.json", manifest),
+                // Present, so a refusal is the boundary and not a missing file.
+                ("tsconfig.base.json", "{}"),
+                ("packages/config/node_modules/other/tsconfig.json", "{}"),
+                ("tsconfig.json", &tsconfig),
+            ],
+            "@shared/world",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(expected), "{extends}: {error}");
+    }
+}
+
+#[test]
+fn relative_extends_names_a_dotted_json_base_without_its_suffix() {
+    // `./tsconfig.base` means `tsconfig.base.json`. The old suffix check read `.base` as a script
+    // extension and rejected the whole config.
+    assert!(resolves_in_project(
+        &[
+            (
+                "tsconfig.base.json",
+                r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+            ),
+            ("tsconfig.json", r#"{"extends":"./tsconfig.base"}"#),
+            ("src/world.ts", ""),
+        ],
+        "@/world"
+    ));
+}
+
+#[test]
+fn package_tsconfig_field_accepts_a_windows_current_directory_prefix() {
+    // `.\` names the package directory like `./`. Prefixing it with another `./` would read the `.`
+    // as an invalid segment and reject a config TypeScript accepts on Windows.
+    let result = resolve_in_project(
+        &[
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config","tsconfig":".\\configs\\base.json"}"#,
+            ),
+            ("tsconfig.json", r#"{"extends":"shared-config"}"#),
+        ],
+        "@shared/world",
+    );
+    assert!(
+        !result.is_err_and(|error| error.to_string().contains("invalid segment")),
+        "a `.\\` prefix is not an invalid segment"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn package_extends_refuse_a_symlink_out_of_the_workspace_package() {
+    // The segment check sees only the written path; a symlinked base inside the package that points
+    // elsewhere in the root, or into the package's own `node_modules`, is refused by the check on
+    // the canonical path instead.
+    for target in [
+        "outside.json",
+        "packages/config/node_modules/x/tsconfig.json",
+    ] {
+        let directory = write_project(&[
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config"}"#,
+            ),
+            (target, "{}"),
+            (
+                "tsconfig.json",
+                r#"{"extends":"shared-config/linked.json"}"#,
+            ),
+        ]);
+        std::os::unix::fs::symlink(
+            directory.path().join(target),
+            directory.path().join("packages/config/linked.json"),
+        )
+        .unwrap();
+        let error = resolve_from_root_step(directory.path(), "@shared/world")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("outside workspace package"),
+            "{target}: {error}"
+        );
+    }
 }
