@@ -824,6 +824,9 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         "class Store { get() { return 1; } }\nnew Store();\nmodule.exports = Store;",
         "class Store { get() { return 1; } }\nmodule.exports = Store;",
         "const settings = { retries: 2 };\nmodule.exports = settings;",
+        "const settings = ({ retries: 2 });\nmodule.exports = (settings);",
+        // Reading a property into another name is a read, not a write into the object.
+        "const settings = { retries: 2 };\nlet copy;\ncopy = settings.retries;\nmodule.exports = settings;",
         // Reading a property, testing it, or writing below the first property keeps the value:
         // an importer reaches only a direct property (`api.Given`), never `api.nested.Given`.
         "const api = { nested: {} };\nif (api.nested && typeof api === 'object') { log(api.nested); }\napi.nested.Given = Given;\nmodule.exports = api;",
@@ -862,9 +865,21 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         // it binds either way.
         "import { Given as G } from 'util';\nmodule.exports = () => Given('a', () => {});",
         "module.exports = { step: (text, fn) => Given(text, fn) };",
+        // A later assignment carries taint as a declaration does, wherever it runs and whatever
+        // it assigns to.
+        "let register;\nregister = Given;\nmodule.exports = { step: (t, f) => register(t, f) };",
+        "let register;\nfunction init() { register = Given; }\nmodule.exports = (t, f) => register(t, f);",
+        "register = Given;\nmodule.exports = (t, f) => register(t, f);",
+        "let register;\n({ Given: register } = require('@cucumber/cucumber'));\nmodule.exports = (t, f) => register(t, f);",
+        "let register = noop;\nregister ||= Given;\nmodule.exports = (t, f) => register(t, f);",
+        "const cache = {};\ncache.lib = require('./steps');\nmodule.exports = (t, f) => cache.lib.register(t, f);",
         // Unmodeled value kinds.
         "module.exports = new Logger();",
         "module.exports = makeSteps();",
+        // A comment inside parentheses is not the value; the call is.
+        "module.exports = (/* wrapped */ makeSteps());",
+        // A default value is not a binding: `Given` stays the global, so the wrapper is tainted.
+        "const { register = Given } = {};\nmodule.exports = (t, f) => Given(t, f);",
         "module.exports = flag ? a : b;",
         "module.exports = { nested: { Given } };",
         // Identifier export whose binding is not a single static value.
@@ -878,6 +893,9 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         // Mutation after declaration.
         "const api = {};\napi.Given = Given;\nmodule.exports = api;",
         "const api = {};\napi['Given'] = Given;\nmodule.exports = api;",
+        // Parentheses around the member change nothing: these are still a write and a method call.
+        "const api = {};\n(api.Given) = Given;\nmodule.exports = api;",
+        "const api = {};\n(api.register)(Given);\nmodule.exports = api;",
         "const api = {};\nattach(api);\nmodule.exports = api;",
         "const api = {};\napi.register(Given);\nmodule.exports = api;",
         "function helper() {}\nhelper = other;\nmodule.exports = helper;",

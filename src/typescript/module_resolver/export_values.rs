@@ -23,9 +23,6 @@ use super::{commonjs_export_target, require_specifier};
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
-/// How far an identifier is followed through `const` aliases before the value counts as opaque.
-const MAX_ALIAS_DEPTH: usize = 8;
-
 /// Member names that read as a registration even on an unknown object (`cucumber.Given`). The
 /// lowercase forms are left out because `.then(…)` is ordinary promise code.
 const REGISTRATION_MEMBERS: [&str; 5] = ["Given", "When", "Then", "Step", "defineStep"];
@@ -121,13 +118,12 @@ impl<'tree> ExportScope<'tree> {
                 "lexical_declaration" | "variable_declaration" => {
                     let constant = is_const_declaration(statement);
                     let mut cursor = statement.walk();
-                    for declarator in statement.named_children(&mut cursor) {
-                        let (Some(name), value) = (
-                            declarator.child_by_field_name("name"),
-                            declarator.child_by_field_name("value"),
-                        ) else {
-                            continue;
-                        };
+                    // A declarator always has a name; the only other children are comments.
+                    let declarators = statement.named_children(&mut cursor).filter_map(|node| {
+                        node.child_by_field_name("name")
+                            .map(|name| (node, name, node.child_by_field_name("value")))
+                    });
+                    for (declarator, name, value) in declarators {
                         let names = bound_names(name, source);
                         let single = name.kind() == "identifier" && constant;
                         for bound in &names {
@@ -145,6 +141,28 @@ impl<'tree> ExportScope<'tree> {
                 }
                 _ => {}
             }
+        }
+
+        // An assignment anywhere in the file gives a name a new value, so its right side is a taint
+        // source too: `let register; register = Given;` makes `register` a registration wherever
+        // it is read, whether the assignment runs at module scope, inside a function, targets an
+        // undeclared global, or destructures. A property write (`cache.lib = require('./steps')`)
+        // taints the object it writes into, since reading that object reaches the value.
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            if matches!(
+                node.kind(),
+                "assignment_expression" | "augmented_assignment_expression"
+            ) {
+                // An assignment always has both sides; error recovery keeps MISSING nodes.
+                if let (Some(left), Some(right)) = (
+                    node.child_by_field_name("left"),
+                    node.child_by_field_name("right"),
+                ) {
+                    provenance.push((bound_names(left, source), right));
+                }
+            }
+            push_named_children_reverse(node, &mut stack);
         }
 
         // A registration name the module does not declare itself is the ambient global.
@@ -179,47 +197,47 @@ impl<'tree> ExportScope<'tree> {
     }
 
     /// Classifies one export value.
+    ///
+    /// An identifier is followed once, to its declaration. Following further is never needed:
+    /// `const alias = settings` makes `settings` escape (see `mutated_names`), so an initializer
+    /// that is itself a name classifies as opaque.
     pub(super) fn classify(&self, value: Node<'tree>, source: &'tree [u8]) -> ExportValue<'tree> {
-        let mut value = value;
-        for _ in 0..MAX_ALIAS_DEPTH {
-            while value.kind() == "parenthesized_expression" {
-                match value.named_child(0) {
-                    Some(inner) => value = inner,
-                    None => return ExportValue::Opaque,
-                }
-            }
-            if let Some(module) = require_specifier(value, source) {
-                return ExportValue::Module(module);
-            }
-            if self.is_inert(value, source) {
-                return ExportValue::Inert;
-            }
-            match value.kind() {
-                "object" => return ExportValue::Object(value),
-                "identifier" => {
-                    let name = node_text(value, source);
-                    if self.mutated.contains(name) {
-                        return ExportValue::Opaque;
-                    }
-                    match self.declarations.get(name) {
-                        // A function or class declaration is inert unless it refers to a
-                        // registration, which would make it a possible wrapper.
-                        Some(Some(declaration)) if is_callable_declaration(*declaration) => {
-                            return if self.tainted.contains(name) {
-                                ExportValue::Opaque
-                            } else {
-                                ExportValue::Inert
-                            };
-                        }
-                        // A `const` is followed to its initializer, which is classified in turn.
-                        Some(Some(initializer)) => value = *initializer,
-                        _ => return ExportValue::Opaque,
-                    }
-                }
-                _ => return ExportValue::Opaque,
-            }
+        let value = unparenthesized(value);
+        if value.kind() != "identifier" || self.is_inert(value, source) {
+            return self.classify_expression(value, source);
         }
-        ExportValue::Opaque
+        let name = node_text(value, source);
+        if self.mutated.contains(name) {
+            return ExportValue::Opaque;
+        }
+        match self.declarations.get(name) {
+            // A function or class declaration is inert unless it refers to a registration, which
+            // would make it a possible wrapper.
+            Some(Some(declaration)) if is_callable_declaration(*declaration) => {
+                if self.tainted.contains(name) {
+                    ExportValue::Opaque
+                } else {
+                    ExportValue::Inert
+                }
+            }
+            Some(Some(initializer)) => {
+                self.classify_expression(unparenthesized(*initializer), source)
+            }
+            _ => ExportValue::Opaque,
+        }
+    }
+
+    /// Classifies a value without following a name it refers to.
+    fn classify_expression(&self, value: Node<'tree>, source: &'tree [u8]) -> ExportValue<'tree> {
+        if let Some(module) = require_specifier(value, source) {
+            ExportValue::Module(module)
+        } else if self.is_inert(value, source) {
+            ExportValue::Inert
+        } else if value.kind() == "object" {
+            ExportValue::Object(value)
+        } else {
+            ExportValue::Opaque
+        }
     }
 
     /// Whether `value` provably cannot carry a registration, without following identifiers.
@@ -243,10 +261,7 @@ impl<'tree> ExportScope<'tree> {
                     push_named_children_reverse(node, &mut stack);
                 }
                 // A key never carries a registration, so only the value is checked.
-                "pair" => match node.child_by_field_name("value") {
-                    Some(value) => stack.push(value),
-                    None => return false,
-                },
+                "pair" => stack.extend(node.child_by_field_name("value")),
                 _ => return false,
             }
         }
@@ -285,9 +300,14 @@ impl<'tree> ExportScope<'tree> {
 
     /// Whether one occurrence of a declared name leaves its value as declared.
     fn keeps_value(&self, occurrence: Node<'_>, source: &[u8]) -> bool {
-        let Some(parent) = occurrence.parent() else {
-            return true;
-        };
+        let occurrence = outside_parentheses(occurrence);
+        // An identifier always sits under a parent node; the program root is never one.
+        occurrence
+            .parent()
+            .is_some_and(|parent| self.parent_keeps_value(parent, occurrence, source))
+    }
+
+    fn parent_keeps_value(&self, parent: Node<'_>, occurrence: Node<'_>, source: &[u8]) -> bool {
         let is_field = |field: &str| parent.child_by_field_name(field) == Some(occurrence);
         match parent.kind() {
             // The declaration itself.
@@ -314,9 +334,14 @@ impl<'tree> ExportScope<'tree> {
 
     /// Whether a direct property use (`api.x`, `api[x]`) leaves the object as declared.
     fn member_use_keeps_value(&self, member: Node<'_>, source: &[u8]) -> bool {
-        let Some(parent) = member.parent() else {
-            return true;
-        };
+        let member = outside_parentheses(member);
+        // A member expression always sits under a parent node.
+        member
+            .parent()
+            .is_none_or(|parent| self.member_parent_keeps_value(parent, member, source))
+    }
+
+    fn member_parent_keeps_value(&self, parent: Node<'_>, member: Node<'_>, source: &[u8]) -> bool {
         match parent.kind() {
             "assignment_expression" | "augmented_assignment_expression"
                 if parent.child_by_field_name("left") == Some(member) =>
@@ -339,6 +364,36 @@ impl<'tree> ExportScope<'tree> {
             _ => true,
         }
     }
+}
+
+/// The outermost parentheses around `node`, or `node` itself. Parentheses change nothing, so a use
+/// is judged where they end: `(api).x` is a read and `(api.Given) = Given` is a write.
+fn outside_parentheses(mut node: Node<'_>) -> Node<'_> {
+    while let Some(parent) = node
+        .parent()
+        .filter(|parent| parent.kind() == "parenthesized_expression")
+    {
+        node = parent;
+    }
+    node
+}
+
+/// The expression inside any parentheses, skipping comments: `( /* c */ make() )` is the call.
+fn unparenthesized(mut node: Node<'_>) -> Node<'_> {
+    // Parentheses always hold an expression; the grammar has no empty form.
+    while let Some(inner) = (node.kind() == "parenthesized_expression")
+        .then(|| {
+            let mut cursor = node.walk();
+            let inner = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() != "comment");
+            inner
+        })
+        .flatten()
+    {
+        node = inner;
+    }
+    node
 }
 
 fn declare<'tree>(
