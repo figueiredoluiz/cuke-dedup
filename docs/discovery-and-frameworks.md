@@ -172,11 +172,17 @@ Any other value marks the corpus incomplete rather than resolving silently to no
 that might hide registrations is reported instead of passing as clean. That includes:
 - a factory call or `new` instance;
 - a namespace member, or a function that forwards to a registration, including through a bracket
-  key (`bdd['Given']`);
+  key (`bdd['Given']`) or a member it picks at runtime (`bdd[name](…)`);
 - a `let`/`var` binding, or one whose value may have changed: reassigned, given a property that is
   not inert, or reaching another binding or a call (passed, wrapped, aliased, stored or returned);
 - an unresolvable spread or a bracket target (`exports['X']`);
 - an export evaluated conditionally at module scope (`if (…) module.exports = …`).
+
+One boundary remains. A helper that calls a function it receives as a parameter is inert, so a
+registration passed in (`helper(Given, 'a step', fn)`) is not tracked and its definition is missed
+without a warning. Treating every call through a parameter as a possible registration would flag
+ordinary callback helpers such as `items.map(fn)`. `registrations` does not cover this shape
+either, because it expects the matcher as the first argument.
 
 Static project configs may use JSONC and `extends` strings or arrays, up to 16 files deep. A
 relative base must resolve. A package base — `@example/config/tsconfig.json`, or a bare package

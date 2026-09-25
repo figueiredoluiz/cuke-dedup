@@ -44,9 +44,10 @@ All notable changes to CukeDedup are documented in this file. The project follow
   value that provably cannot carry a registration is now inert instead of unmodeled. Examples are a
   helper function, a class, or a data literal that never names a registration or a non-built-in
   module. A `const` it is exported through is followed to its object literal or `require`. On 27
-  real repositories these warnings fell from 747 to 590, with no change to definitions or findings.
+  real repositories these warnings fell from 747 to 592, with no change to definitions or findings.
   A function assigned to `exports.x` that refers to such a module now fails closed, where before it
-  was silently trusted.
+  was silently trusted. A helper that calls a function passed to it as a parameter is still inert,
+  so a registration handed to it (`helper(Given, …)`) is not tracked.
 
 ## [0.8.0] - 2026-09-24
 

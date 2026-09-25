@@ -497,6 +497,9 @@ fn references_taint(node: Node<'_>, source: &[u8], tainted: &BTreeSet<String>) -
                     return true;
                 }
             }
+            // `bdd[name](text, fn)` calls a member chosen at runtime, which may be a registration.
+            // A read through a dynamic key (`list[index]`) is not evidence; only a call is.
+            "call_expression" if calls_dynamic_member(node) => return true,
             "import_statement" => {
                 let builtin = node
                     .child_by_field_name("source")
@@ -511,6 +514,15 @@ fn references_taint(node: Node<'_>, source: &[u8], tainted: &BTreeSet<String>) -
         push_named_children_reverse(node, &mut stack);
     }
     false
+}
+
+/// Whether a call's callee is a member picked by a key that is not a string, such as `bdd[name]`.
+fn calls_dynamic_member(call: Node<'_>) -> bool {
+    call.child_by_field_name("function")
+        .map(unparenthesized)
+        .filter(|function| function.kind() == "subscript_expression")
+        .and_then(|function| function.child_by_field_name("index"))
+        .is_some_and(|index| !matches!(index.kind(), "string" | "template_string"))
 }
 
 /// `require(…)` or a dynamic `import(…)`.

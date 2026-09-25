@@ -808,6 +808,12 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         "module.exports = (a) => a + 1;",
         // A bracket key is evidence only when it can name a registration.
         "module.exports = (list, index) => list[index] + list['size'];",
+        // Calling through a string key that is not a registration is not evidence either.
+        "module.exports = (api, t) => api['run'](t);",
+        // Boundary: calling a function received as a parameter stays inert. A registration passed
+        // in (`helper(Given, …)`) is not tracked; tainting every callback would flag ordinary
+        // helpers such as `items.map(fn)`. Documented in discovery-and-frameworks.md.
+        "module.exports = (register, t, f) => register(t, f);",
         "module.exports = class Page { open() { return 1; } };",
         "module.exports = 'text';",
         "module.exports = [{ matcher: 'a', code: 'b' }, 2];",
@@ -854,6 +860,9 @@ fn commonjs_export_values_are_quiet_only_when_provably_inert() {
         // A legacy octal escape (`\107` is `G`) is not decoded, so the key must still count.
         "module.exports = (bdd) => bdd['\\107iven']('a', () => {});",
         "module.exports = (bdd) => bdd[`Given`]('a', () => {});",
+        // A member chosen at runtime and called may be a registration.
+        "module.exports = (bdd, name, t, f) => bdd[name](t, f);",
+        "module.exports = (bdd, name, t, f) => (bdd[name])(t, f);",
         "const { Given } = require('@cucumber/cucumber');\nmodule.exports = () => Given('a', () => {});",
         "const lib = require('./lib');\nmodule.exports = function run() { return lib.x; };",
         "module.exports = function load(name) { return require(name); };",

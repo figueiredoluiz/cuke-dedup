@@ -4055,7 +4055,8 @@ fn regression_corpus_inert_commonjs_export_is_not_an_incomplete_barrel() {
     // stays quiet; the control forwards to `Given`, a possible wrapper, and must still fail closed.
     // Review finding: an object that escapes into a call, even wrapped in another object, can be
     // given a registration there, so it must fail closed as well, and so must a function that
-    // reaches a registration through a bracket key or through a name assigned one later.
+    // reaches a registration through a bracket key, a name assigned one later, or a member it
+    // picks at runtime.
     for (helper, warns) in [
         (
             "module.exports = async function act(value) { return value; };\n",
@@ -4075,6 +4076,10 @@ fn regression_corpus_inert_commonjs_export_is_not_an_incomplete_barrel() {
         ),
         (
             "let register;\nregister = Given;\nmodule.exports = { step: (t, f) => register(t, f) };\n",
+            true,
+        ),
+        (
+            "module.exports = (bdd, name, t, f) => bdd[name](t, f);\n",
             true,
         ),
     ] {
