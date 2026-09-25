@@ -1242,6 +1242,11 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
             "shared-config",
             "resolves outside the package",
         ),
+        (
+            r#"{"name":"shared-config","tsconfig":"\\etc\\tsconfig.json"}"#,
+            "shared-config",
+            "resolves outside the package",
+        ),
     ] {
         let tsconfig = serde_json::json!({ "extends": extends }).to_string();
         let error = resolve_in_project(

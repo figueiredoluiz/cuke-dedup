@@ -335,7 +335,9 @@ impl ProjectResolution {
         let mut candidates = Vec::new();
         if subpath.is_empty() {
             if let Some(field) = package.tsconfig.as_deref() {
-                if Path::new(field).is_absolute() {
+                // A leading separator is rooted on every platform; Windows `is_absolute` also wants a
+                // drive, so `/etc/x` alone does not count there.
+                if Path::new(field).is_absolute() || field.starts_with(['/', '\\']) {
                     bail!(
                         "package `{name}` `tsconfig` field `{field}` resolves outside the package"
                     );
