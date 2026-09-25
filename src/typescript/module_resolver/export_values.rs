@@ -272,8 +272,8 @@ impl<'tree> ExportScope<'tree> {
     ///
     /// Only the uses listed below leave a name's value as declared; every other use counts as an
     /// escape, because once the value reaches another binding or a call it can be written through
-    /// from there. Only a direct property can hold a registration an importer reaches
-    /// (`api.Given`), so a write deeper than that (`api.nested.Given = …`) cannot hide one.
+    /// from there. A write through a member chain (`api.nested.step = Given`) changes the value as
+    /// surely as a direct one, since an importer can call `api.nested.step(…)`.
     /// Shadowing is ignored, which only ever makes a name opaque rather than inert.
     fn mutated_names(&self, root: Node<'_>, source: &[u8]) -> BTreeSet<String> {
         let mut mutated = BTreeSet::new();
@@ -343,6 +343,12 @@ impl<'tree> ExportScope<'tree> {
 
     fn member_parent_keeps_value(&self, parent: Node<'_>, member: Node<'_>, source: &[u8]) -> bool {
         match parent.kind() {
+            // `api.nested.step`: judge the whole chain, so a write at its end reaches `api`.
+            "member_expression" | "subscript_expression"
+                if parent.child_by_field_name("object") == Some(member) =>
+            {
+                self.member_use_keeps_value(parent, source)
+            }
             "assignment_expression" | "augmented_assignment_expression"
                 if parent.child_by_field_name("left") == Some(member) =>
             {
