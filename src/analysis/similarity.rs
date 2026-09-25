@@ -29,7 +29,7 @@ pub(super) fn is_near_matcher(
     right: &StepDefinition,
     similarity: f64,
 ) -> bool {
-    if left.matcher_kind != right.matcher_kind {
+    if !matchers_compatible(left, right) {
         return false;
     }
     let length = left
@@ -42,8 +42,79 @@ pub(super) fn is_near_matcher(
     } else {
         LONG_SIMILARITY_GATE
     };
-    !has_polarity_conflict(&left.normalized_matcher, &right.normalized_matcher)
-        && similarity >= similarity_gate
+    similarity >= similarity_gate
+}
+
+// Floor below which two matchers are too dissimilar to be worth proposing a shared parameter for.
+const PARAMETERIZATION_SIMILARITY_GATE: f64 = 0.6;
+
+// A parameterization candidate should differ in a small, value-like region — the token or two that
+// would become the parameter — not in a whole multi-word phrase describing different behavior. Real
+// corpus false positives paired matchers whose only shared part was a prefix ("the AI chatbot
+// toggle button should be visible" vs "…window should be open"); legitimate ones differ in a single
+// value ("switches to dark theme" vs "…light theme"). Handlers alone cannot tell these apart because
+// literal erasure collapses both into one structural class, so the matcher difference is the signal.
+const MAX_PARAMETERIZED_CHANGE_WORDS: usize = 3;
+
+/// Whether two matchers may describe the same step parameterized by a value: same kind, no polarity
+/// conflict, similar enough, and differing only in a bounded value-like region.
+pub(super) fn is_parameterizable_matcher(
+    left: &StepDefinition,
+    right: &StepDefinition,
+    similarity: f64,
+) -> bool {
+    matchers_compatible(left, right)
+        && similarity >= PARAMETERIZATION_SIMILARITY_GATE
+        && matcher_change_word_span(&left.normalized_matcher, &right.normalized_matcher)
+            <= MAX_PARAMETERIZED_CHANGE_WORDS
+}
+
+/// Same matcher syntax and no negation/opposite-word conflict — the shared prerequisite for treating
+/// two matchers as variants of one step.
+fn matchers_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
+    left.matcher_kind == right.matcher_kind
+        && !has_polarity_conflict(&left.normalized_matcher, &right.normalized_matcher)
+}
+
+/// The number of words that differ between two matchers after stripping their common leading and
+/// trailing words — the size of the region a single parameter would have to stand in for.
+fn matcher_change_word_span(left: &str, right: &str) -> usize {
+    let left = words(left);
+    let right = words(right);
+    let min = left.len().min(right.len());
+    let mut prefix = 0;
+    while prefix < min && left[prefix] == right[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < min - prefix && left[left.len() - 1 - suffix] == right[right.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let left_change = &left[prefix..left.len() - suffix];
+    let right_change = &right[prefix..right.len() - suffix];
+    // One parameter can stand in for a single contiguous change. A word shared between the trimmed
+    // change regions splits them into two separate edits only when it sits *strictly inside* a
+    // region — a word both before and after it — as "button" does in "red button shown" vs "blue
+    // button hidden". A shared word that only ever sits at a region edge is an overlap within one
+    // shifted value ("New York" vs "York City"), which a single parameter still covers.
+    if splits_into_separate_changes(left_change, right_change) {
+        return usize::MAX;
+    }
+    left_change.len().max(right_change.len())
+}
+
+/// Whether a word shared between the two change regions is flanked (has both a preceding and a
+/// following word) in either region, marking two disjoint edits rather than one shifted value.
+fn splits_into_separate_changes(left: &[String], right: &[String]) -> bool {
+    let flanked = |region: &[String], word: &String| {
+        region
+            .iter()
+            .enumerate()
+            .any(|(index, candidate)| candidate == word && index > 0 && index + 1 < region.len())
+    };
+    left.iter()
+        .any(|word| right.contains(word) && (flanked(left, word) || flanked(right, word)))
 }
 
 fn has_polarity_conflict(left: &str, right: &str) -> bool {
@@ -74,7 +145,7 @@ fn words(value: &str) -> Vec<String> {
 
 fn prefixed_opposites(positive: &str, negative: &str) -> bool {
     positive.len() >= 4
-        && ["in", "un", "non"]
+        && ["in", "un", "non", "dis", "il", "im", "ir"]
             .iter()
             .any(|prefix| negative.strip_prefix(prefix) == Some(positive))
 }

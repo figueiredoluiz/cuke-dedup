@@ -42,6 +42,7 @@ JavaScript projects may use the `cukeDedup` key in `package.json`; other project
   "excludeDefaults": true,
   "includeHidden": false,
   "threshold": 5,
+  "nearDuplicateHandlerSimilarity": 0.7,
   "requireDefinitions": true,
   "requireFeatures": true,
   "failOnIncomplete": false,

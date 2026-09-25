@@ -49,6 +49,40 @@ fn threshold_defaults_to_zero_and_rejects_out_of_range_values() {
 }
 
 #[test]
+fn near_duplicate_floor_applies_from_config_and_rejects_out_of_range() {
+    let directory = tempfile::tempdir().unwrap();
+    // Absent -> default 0.70.
+    assert_eq!(
+        Config::load(directory.path(), ConfigOverrides::default())
+            .unwrap()
+            .near_duplicate_handler_similarity,
+        0.70
+    );
+    let path = directory.path().join(".cuke-dedup.json");
+    // Present and valid -> applied.
+    fs::write(&path, r#"{"nearDuplicateHandlerSimilarity":0.8}"#).unwrap();
+    assert_eq!(
+        Config::load(directory.path(), ConfigOverrides::default())
+            .unwrap()
+            .near_duplicate_handler_similarity,
+        0.8
+    );
+    // Outside the 0.5..=1.0 range -> rejected.
+    for invalid in ["0.4", "1.1"] {
+        fs::write(
+            &path,
+            format!(r#"{{"nearDuplicateHandlerSimilarity":{invalid}}}"#),
+        )
+        .unwrap();
+        let error = Config::load(directory.path(), ConfigOverrides::default()).unwrap_err();
+        assert!(
+            error.to_string().contains("0.5 through 1.0"),
+            "{invalid}: {error:#}"
+        );
+    }
+}
+
+#[test]
 fn configuration_rejects_empty_or_malformed_public_selectors() {
     assert!("unknown"
         .parse::<ReporterKind>()

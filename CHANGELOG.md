@@ -5,6 +5,20 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Changed
+
+- `parameterization-candidate` is more precise. A pair is now proposed only when the matchers differ
+  in a small, value-like region — the token a parameter would replace — with compatible syntax and no
+  polarity conflict, instead of on any matcher similarity ≥ 0.6. Matchers that merely share a prefix
+  then diverge into different multi-word phrases, or that conflict in polarity, no longer collapse
+  into a suggestion when literal erasure makes their handlers look identical. On real repositories
+  this removed roughly 40% of these findings as false suggestions.
+- `near-duplicate-step` now requires the handlers to be at least **0.70** similar by default, up from
+  0.50, and the floor is configurable through `nearDuplicateHandlerSimilarity` (0.5–1.0). This
+  suppresses systematically-named steps whose matchers are near-identical but whose handlers act on
+  different things; set the floor to 0.5 to restore the previous behaviour. Reports lose these
+  lower-confidence findings on upgrade.
+
 ## [0.8.0] - 2026-09-24
 
 ### Changed

@@ -3,5 +3,6 @@
   "rules": {
     "duplicate-handler": "off",
     "unused-definition": "off"
-  }
+  },
+  "nearDuplicateHandlerSimilarity": 0.5
 }

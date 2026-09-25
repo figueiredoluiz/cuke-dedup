@@ -1,4 +1,7 @@
 {
   "threshold": 100,
-  "rules": { "unused-definition": "off" }
+  "rules": {
+    "unused-definition": "off"
+  },
+  "nearDuplicateHandlerSimilarity": 0.5
 }

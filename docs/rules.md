@@ -55,9 +55,14 @@ is intentional domain vocabulary.
 
 ### near-duplicate-step
 
-Matcher wording is close and meaningful handlers share at least 50% ordered behavior, with
-compatible structural or canonical-call evidence. Similar prose alone and unrelated actions do
-not qualify. Review the pair and consolidate only when both definitions express the same behavior.
+Matcher wording is close and meaningful handlers share enough ordered behavior, with compatible
+structural or canonical-call evidence. Similar prose alone and unrelated actions do not qualify.
+Review the pair and consolidate only when both definitions express the same behavior.
+
+The required handler-similarity floor defaults to **0.70** and is configurable through
+`nearDuplicateHandlerSimilarity` (0.5–1.0). Raising it demands more handler evidence, which
+suppresses systematically-named steps whose matchers are near-identical but whose handlers act on
+different things; lowering it toward 0.5 restores the older, looser behaviour.
 
 When handlers are not structurally equivalent, they must share canonical action evidence: either
 a call action, including direct and fluent forms such as `page.click()` and
@@ -73,10 +78,13 @@ fuzzy matches when one callback adds or reorders assertions; exact matcher check
 
 ### parameterization-candidate
 
-Handlers preserve the same control flow and calls after literal normalization, and their matcher
-texts are sufficiently similar. Findings remain pair-specific so reports retain the differing
-literals and matcher text. Replace repeated literals with a parameter when it makes the test
-vocabulary clearer.
+Handlers preserve the same control flow and calls after literal normalization, and their matchers
+differ only in a small, value-like region — the token or two a parameter would stand in for — with
+compatible syntax and no polarity conflict. Matchers that share a prefix but then differ in a
+multi-word phrase describing different behaviour, or that conflict in polarity, are not proposed even
+when literal erasure collapses their handlers into one shape. Findings remain pair-specific so
+reports retain the differing literals and matcher text. Replace repeated literals with a parameter
+when it makes the test vocabulary clearer.
 
 Expected assertion values and polarity are not erased for this rule. For example,
 `expect(state).toBe('ready')` and `expect(state).toBe('idle')` express distinct expectations and

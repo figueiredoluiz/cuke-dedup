@@ -495,7 +495,8 @@ fn matcher_blocking_survivors_retain_computed_similarity_evidence() {
     let expected_matcher_similarity = matcher_similarity(&left, &right);
     let definitions = [left, right];
     let directory = tempfile::tempdir().unwrap();
-    let config = Config::load(directory.path(), Default::default()).unwrap();
+    let mut config = Config::load(directory.path(), Default::default()).unwrap();
+    config.near_duplicate_handler_similarity = 0.5;
     let generated = definition_pair_candidates(&definitions, &config);
     let candidate = generated.candidates.values().next().unwrap();
     assert_eq!(generated.candidates.len(), 1);
