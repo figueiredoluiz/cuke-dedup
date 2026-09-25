@@ -47,8 +47,9 @@ All notable changes to CukeDedup are documented in this file. The project follow
   real repositories these warnings fell from 747 to 592, with no change to definitions or findings.
   A function assigned to `exports.x` that refers to such a module now fails closed, where before it
   was silently trusted. A helper that calls a function passed to it stays inert; instead, a call
-  that passes a registration as an argument (`helper(Given, 'a step', fn)`) is now reported as an
-  unresolved step registration and marks the corpus incomplete.
+  that passes a registration as an argument, directly or inside an object, array, returned function
+  or constructor argument (`helper(Given, 'a step', fn)`, `helper({ register: Given })`), is now
+  reported as an unresolved step registration and marks the corpus incomplete.
 
 ## [0.8.0] - 2026-09-24
 

@@ -181,10 +181,17 @@ that might hide registrations is reported instead of passing as clean. That incl
 A helper that calls a function it receives as a parameter is inert on the export side: treating
 every call through a parameter as a possible registration would flag ordinary callback helpers
 such as `items.map(fn)`. The risk is caught where the helper is used instead. A call that passes a
-registration as an argument (`helper(Given, 'a step', fn)`, `helper(cucumber.Given, …)`) is
-reported as an unresolved step registration and marks the corpus incomplete. A parameter or local
-declaration that merely shares the name, such as a fixture named `Given`, is a local value and
-does not count.
+registration as an argument is reported as an unresolved step registration and marks the corpus
+incomplete. That covers a direct argument (`helper(Given, 'a step', fn)`, `helper(cucumber.Given,
+…)`) and one carried through an argument value unchanged: an object or array
+(`helper({ register: Given })`), a ternary branch, an `||`/`&&`/`??` operand, the last operand of a
+comma expression, a function or object method that returns or yields it through any control flow, a
+constructor argument, or `Given.bind(…)`. An expression that consumes the registration and
+yields something new — `Given.name`, `typeof Given`, `Given !== undefined`, `new Given()` — does not
+pass it. A registration called inside a callback (`helper(() => Given('a step', fn))`) is extracted
+as a definition instead. A name bound locally —
+a parameter, a `catch` binding, a loop or block declaration — that merely shares the name, such as
+a fixture named `Given`, is a local value and does not count.
 
 Static project configs may use JSONC and `extends` strings or arrays, up to 16 files deep. A
 relative base must resolve. A package base — `@example/config/tsconfig.json`, or a bare package

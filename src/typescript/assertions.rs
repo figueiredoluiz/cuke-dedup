@@ -1103,7 +1103,7 @@ fn add_scope_binding(
     collect_binding_names(pattern, source, scopes.entry(scope.id()).or_default());
 }
 
-fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Option<&'static str> {
+pub(super) fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Option<&'static str> {
     (0..loop_node.child_count()).find_map(|index| {
         let child = loop_node.child(index)?;
         (child.end_byte() <= binding.start_byte()).then(|| match child.kind() {

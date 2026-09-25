@@ -10,7 +10,7 @@ mod project_resolution;
 mod registrations;
 mod suppression;
 
-use self::assertions::{collect_binding_names, AssertionBindings};
+use self::assertions::{collect_binding_names, loop_binding_keyword, AssertionBindings};
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding,
@@ -374,6 +374,136 @@ enum UnresolvedRegistration<'a> {
     Passed,
 }
 
+/// Whether a registration appears anywhere in a call's arguments as a value rather than being
+/// called: directly (`helper(Given)`), inside an object or array (`helper({ register: Given })`,
+/// `helper([Given])`), returned from a function (`helper(() => Given)`), or handed to a constructor.
+/// A nested call is not entered: it checks its own arguments, and a registration it calls
+/// (`helper(() => Given('a', fn))`) is extracted as a definition. Since calls are never entered, a
+/// registration reached here is always a value, never a callee, and each node is walked once.
+fn arguments_pass_registration(arguments: Node<'_>, context: &AdapterContext<'_, '_>) -> bool {
+    let mut stack = vec![arguments];
+    while let Some(node) = stack.pop() {
+        let passed = match node.kind() {
+            // `Given.bind(null)` is still the registration, bound; any other call yields something
+            // new and checks its own arguments.
+            "call_expression" => {
+                let bound = node
+                    .child_by_field_name("function")
+                    .filter(|function| function.kind() == "member_expression")
+                    .filter(|function| {
+                        function
+                            .child_by_field_name("property")
+                            .is_some_and(|property| node_text(property, context.source) == "bind")
+                    })
+                    .and_then(|function| function.child_by_field_name("object"));
+                stack.extend(bound);
+                continue;
+            }
+            "identifier" | "member_expression" | "subscript_expression" => {
+                (registration_name(node, context.source, context.registrations).is_some()
+                    || decorator_registration_name(node, context.source, context.registrations)
+                        .is_some())
+                    && !base_is_locally_bound(node, context.source)
+            }
+            // `{ Given }` passes the binding under its own name.
+            "shorthand_property_identifier" => {
+                context
+                    .registrations
+                    .recognizes_alias(node_text(node, context.source))
+                    && !base_is_locally_bound(node, context.source)
+            }
+            _ => false,
+        };
+        if passed {
+            return true;
+        }
+        push_value_positions(node, context.source, &mut stack);
+    }
+    false
+}
+
+/// Pushes the children of `node` whose value can be `node`'s own value. Only these can carry a
+/// registration through unchanged: `[Given]`, `{ step: Given }`, `flag ? Given : When`,
+/// `Given || fallback`, `() => Given`. Everything else consumes the registration and yields
+/// something new — `Given.name`, `typeof Given`, `Given !== undefined`, `new Given()` — so the walk
+/// stops there rather than report a value that is not the registration.
+fn push_value_positions<'tree>(node: Node<'tree>, source: &[u8], stack: &mut Vec<Node<'tree>>) {
+    let field = |name: &str| node.child_by_field_name(name);
+    match node.kind() {
+        "arguments"
+        | "array"
+        | "object"
+        | "parenthesized_expression"
+        | "as_expression"
+        | "satisfies_expression"
+        | "non_null_expression"
+        | "await_expression" => {
+            let mut cursor = node.walk();
+            stack.extend(node.named_children(&mut cursor));
+        }
+        "pair" | "assignment_expression" => stack.extend(field("value").or(field("right"))),
+        // Spreading a literal carries its elements (`...[Given]`); spreading anything else copies
+        // its own properties into a new container (`...Given`), which is not the registration.
+        "spread_element" => stack.extend(
+            node.named_child(0)
+                .filter(|operand| matches!(operand.kind(), "array" | "object")),
+        ),
+        // `(a, b)` evaluates to its last operand only.
+        "sequence_expression" => {
+            let mut cursor = node.walk();
+            stack.extend(node.named_children(&mut cursor).last());
+        }
+        "ternary_expression" => stack.extend(
+            [field("consequence"), field("alternative")]
+                .into_iter()
+                .flatten(),
+        ),
+        "binary_expression" => {
+            let preserves = field("operator")
+                .is_some_and(|operator| matches!(node_text(operator, source), "||" | "&&" | "??"));
+            if preserves {
+                stack.extend([field("left"), field("right")].into_iter().flatten());
+            }
+        }
+        // A function or object method passes whatever it returns or yields; its parameters are not
+        // values.
+        "arrow_function" | "function_expression" | "generator_function" | "method_definition" => {
+            match field("body") {
+                Some(body) if body.kind() == "statement_block" => push_returned_values(body, stack),
+                body => stack.extend(body),
+            }
+        }
+        // A constructor stores its arguments; the class it constructs is consumed.
+        "new_expression" => stack.extend(field("arguments")),
+        _ => {}
+    }
+}
+
+/// Pushes the value of every `return` and `yield` in a function body, through any control flow —
+/// `if`, `try`, `switch`, loops — but not into a nested function, whose returns are its own.
+fn push_returned_values<'tree>(body: Node<'tree>, stack: &mut Vec<Node<'tree>>) {
+    let mut pending = vec![body];
+    while let Some(node) = pending.pop() {
+        match node.kind() {
+            "arrow_function"
+            | "function_expression"
+            | "function_declaration"
+            | "generator_function"
+            | "generator_function_declaration"
+            | "method_definition"
+            | "class"
+            | "class_declaration" => continue,
+            "return_statement" | "yield_expression" => {
+                let mut cursor = node.walk();
+                stack.extend(node.named_children(&mut cursor));
+            }
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+}
+
 /// Whether the name an argument starts from (`Given`, or `cucumber` in `cucumber.Given`) is bound
 /// inside an enclosing function: a parameter, or a declaration directly in an enclosing block. Such
 /// a name is a local value, such as a fixture named `Given`, not the file's registration binding.
@@ -386,7 +516,7 @@ fn base_is_locally_bound(argument: Node<'_>, source: &[u8]) -> bool {
     } {
         base = inner;
     }
-    if base.kind() != "identifier" {
+    if !matches!(base.kind(), "identifier" | "shorthand_property_identifier") {
         return false;
     }
     let name = node_text(base, source);
@@ -403,6 +533,28 @@ fn base_is_locally_bound(argument: Node<'_>, source: &[u8]) -> bool {
                 for field in ["parameters", "parameter"] {
                     if let Some(parameters) = scope.child_by_field_name(field) {
                         collect_binding_names(parameters, source, &mut bound);
+                    }
+                }
+            }
+            // `for (const Given of values)`: a loop declaration binds for the loop body. A bare
+            // `for (Given of values)` assigns an outer name and binds nothing.
+            "for_in_statement" => {
+                if let Some(left) = scope
+                    .child_by_field_name("left")
+                    .filter(|left| loop_binding_keyword(scope, *left).is_some())
+                {
+                    collect_binding_names(left, source, &mut bound);
+                }
+            }
+            "for_statement" => {
+                if let Some(initializer) = scope.child_by_field_name("initializer").filter(|node| {
+                    matches!(node.kind(), "lexical_declaration" | "variable_declaration")
+                }) {
+                    let mut declarators = initializer.walk();
+                    for declarator in initializer.named_children(&mut declarators) {
+                        if let Some(pattern) = declarator.child_by_field_name("name") {
+                            collect_binding_names(pattern, source, &mut bound);
+                        }
                     }
                 }
             }
@@ -463,21 +615,7 @@ fn unresolved_registration_call<'a>(
     // analyzer does not follow. The definition it registers would be missed, so it is reported.
     let passes_registration = call
         .child_by_field_name("arguments")
-        .is_some_and(|arguments| {
-            let mut cursor = arguments.walk();
-            let passes = arguments.named_children(&mut cursor).any(|argument| {
-                !base_is_locally_bound(argument, context.source)
-                    && (registration_name(argument, context.source, context.registrations)
-                        .is_some()
-                        || decorator_registration_name(
-                            argument,
-                            context.source,
-                            context.registrations,
-                        )
-                        .is_some())
-            });
-            passes
-        });
+        .is_some_and(|arguments| arguments_pass_registration(arguments, context));
     if passes_registration {
         return Some(UnresolvedRegistration::Passed);
     }

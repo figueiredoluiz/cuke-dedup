@@ -4106,11 +4106,16 @@ fn regression_corpus_inert_commonjs_export_is_not_an_incomplete_barrel() {
 fn regression_pr63_registration_passed_to_a_helper_is_reported() {
     // Review finding: a helper that calls a function it receives is inert on the export side, so
     // `helper(Given, …)` registered a step the analyzer never saw, with no warning. The call site
-    // now reports it as incomplete. The control passes a fixture parameter that is merely named
-    // `Given`, which is a local value and must stay quiet.
+    // now reports it as incomplete, whether the registration is a direct argument or nested in an
+    // object. The control passes a fixture parameter that is merely named `Given`, which is a local
+    // value and must stay quiet.
     for (steps, reported) in [
         (
             "const { Given } = require('@cucumber/cucumber');\nconst helper = require('./helper');\nhelper(Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "const { Given } = require('@cucumber/cucumber');\nconst helper = require('./helper');\nhelper({ register: Given }, 'a step', () => work());\n",
             true,
         ),
         (

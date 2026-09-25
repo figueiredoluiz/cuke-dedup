@@ -4172,6 +4172,124 @@ fn passing_a_registration_to_a_function_is_reported() {
             "import helper from './helper';\nhelper('a step', () => work());\n",
             false,
         ),
+        // A registration nested in an argument value is passed as surely as a direct one.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ register: Given }, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ Given }, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper([Given], 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => Given, 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(new Wrapper(Given));\n",
+            true,
+        ),
+        // Value-preserving positions carry the registration itself.
+        (
+            "import { Given, When } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(flag ? Given : When);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given || fallback);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(function () { if (ready) { return Given; } });\n",
+            true,
+        ),
+        // A return is found through any control flow, and a yield counts as a return.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => { try { return Given; } finally { done(); } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(function () { switch (kind) { case 'given': return Given; default: return null; } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => { for (const item of items) { if (item) { return Given; } } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(function* () { yield Given; });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ register() { return Given; } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ get register() { return Given; } });\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper((setup(), Given));\n",
+            true,
+        ),
+        // Spreading a literal carries its elements; spreading a registration copies its properties.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(...[Given]);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper({ ...Given }, [...Given]);\n",
+            false,
+        ),
+        // A compound assignment yields the combined value, not the registration.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nlet value = '';\nhelper(value += Given);\n",
+            false,
+        ),
+        // A comma expression is its last operand only.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper((Given, 42));\n",
+            false,
+        ),
+        // A nested function's return is its own, not the outer function's.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => { function inner() { return Given; } return 1; });\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(register = Given);\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given.bind(null), 'a step', () => work());\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given.toString());\n",
+            false,
+        ),
+        // Consuming positions yield a new value, not the registration.
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(Given.name, typeof Given, Given !== undefined);\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(new Given(), Given ? 1 : 2);\n",
+            false,
+        ),
+        // Controls: a nested object without a registration, and a registration that is called
+        // inside a callback (extracted as a definition, not passed).
+        (
+            "import helper from './helper';\nhelper({ register: other, list: [1] }, 'a step', () => work());\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nimport helper from './helper';\nhelper(() => Given('a step', () => work()));\n",
+            false,
+        ),
         // A fixture parameter or local declaration that shares the name is a local value. Each
         // imports the real registration too, so only the local binding keeps the call quiet.
         (
@@ -4201,6 +4319,23 @@ fn passing_a_registration_to_a_function_is_reported() {
         (
             "import { Given } from '@cucumber/cucumber';\ntry { run(); } catch (Given) { use(Given); }\n",
             false,
+        ),
+        // A loop declaration binds for its body; a bare loop target assigns the outer name.
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (const Given of values) { use(Given); }\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (let Given = first(); Given; Given = next()) { use(Given); }\n",
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (Given of values) { use(Given); }\n",
+            true,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';\nfor (const item of values) { use({ Given }); }\n",
+            true,
         ),
         (
             "import { Given } from '@cucumber/cucumber';\nGiven('a step', () => work());\n",
