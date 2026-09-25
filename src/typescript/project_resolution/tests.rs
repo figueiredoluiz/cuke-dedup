@@ -1153,11 +1153,26 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
         ],
         "@shared/world"
     ));
-    // Unavailable external bases are skipped; the project's own alias still resolves.
+    // The `tsconfig` field names its base the way `extends` does: `configs/base` is `base.json`.
+    assert!(resolves_in_project(
+        &[
+            ("package.json", workspace),
+            (
+                "packages/config/package.json",
+                r#"{"name":"shared-config","tsconfig":"./configs/base"}"#,
+            ),
+            ("packages/config/configs/base.json", base_paths),
+            ("packages/config/configs/shared/world.ts", ""),
+            ("tsconfig.json", r#"{"extends":"shared-config"}"#),
+        ],
+        "@shared/world"
+    ));
+    // Unavailable external bases are skipped, as is a scope with no package name; the project's own
+    // alias still resolves.
     let external = [
         (
             "tsconfig.json",
-            r#"{"extends":["@tsconfig/recommended/tsconfig.json","expo/tsconfig.base"],
+            r#"{"extends":["@tsconfig/recommended/tsconfig.json","expo/tsconfig.base","@tsconfig"],
                 "compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
         ),
         ("src/world.ts", ""),
@@ -1167,15 +1182,23 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
     assert!(!resolves_in_project(&external, "@shared/world"));
 
     // A known workspace package is not an unavailable dependency: a base missing from it is a
-    // configuration error, whether named by subpath or by the manifest's `tsconfig` field.
-    for (manifest, extends) in [
+    // configuration error, whether named by subpath or by the manifest's `tsconfig` field, and a
+    // `tsconfig` field naming a script is refused like a script `extends`.
+    for (manifest, extends, expected) in [
         (
             r#"{"name":"shared-config"}"#,
             "shared-config/configs/bsae.json",
+            "names workspace package",
         ),
         (
             r#"{"name":"shared-config","tsconfig":"configs/missing.json"}"#,
             "shared-config",
+            "names workspace package",
+        ),
+        (
+            r#"{"name":"shared-config","tsconfig":"configs/base.js"}"#,
+            "shared-config",
+            "executable `tsconfig` base",
         ),
     ] {
         let tsconfig = format!(r#"{{"extends":"{extends}"}}"#);
@@ -1189,10 +1212,7 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
         )
         .unwrap_err()
         .to_string();
-        assert!(
-            error.contains("names workspace package"),
-            "{extends}: {error}"
-        );
+        assert!(error.contains(expected), "{extends}: {error}");
     }
 }
 

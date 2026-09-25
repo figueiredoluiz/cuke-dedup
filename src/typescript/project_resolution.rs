@@ -341,6 +341,7 @@ impl ProjectResolution {
             }
             field
                 .into_iter()
+                .flat_map(|field| config_base_candidates(&field))
                 .chain([package.root.join("tsconfig.json")])
                 .collect()
         } else {

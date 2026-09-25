@@ -26,8 +26,9 @@ All notable changes to CukeDedup are documented in this file. The project follow
   longer rejects the whole config when that base is not in the repository. A base in a workspace
   package resolves, including through the package's `tsconfig` field, and a workspace package that
   lacks the named config is reported as an error; other package bases are skipped, so the project's
-  own `baseUrl` and `paths` aliases resolve again. A relative base named without its suffix
-  (`./tsconfig.base`) now resolves to `tsconfig.base.json`.
+  own `baseUrl` and `paths` aliases resolve again. A base named without its suffix, whether
+  relative (`./tsconfig.base`) or through a package's `tsconfig` field, now resolves to its `.json`
+  file.
 
 ## [0.8.0] - 2026-09-24
 

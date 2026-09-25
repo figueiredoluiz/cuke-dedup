@@ -3928,3 +3928,47 @@ fn regression_corpus_tsconfig_package_extends_keeps_path_aliases() {
         .stdout(predicate::str::contains("Analyzed 2 definitions"))
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
+
+#[test]
+fn regression_pr62_workspace_tsconfig_field_names_a_suffixless_base() {
+    // Review finding: a workspace package's `tsconfig` field names its base the way `extends` does,
+    // so `./configs/base` means `configs/base.json`. Only the literal path was tried, the base
+    // failed to resolve, and its alias with it — 0 definitions. The alias lives only in the base, so
+    // the finding appears only when the field resolves with the `.json` suffix.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "package.json",
+        r#"{"name":"root","workspaces":["packages/*"]}"#,
+    );
+    write(
+        directory.path(),
+        "packages/config/package.json",
+        r#"{"name":"shared-config","tsconfig":"./configs/base"}"#,
+    );
+    write(
+        directory.path(),
+        "packages/config/configs/base.json",
+        r#"{"compilerOptions":{"paths":{"@steps/*":["./support/*"]}}}"#,
+    );
+    write(
+        directory.path(),
+        "packages/config/configs/support/bdd.ts",
+        "export { Given } from '@cucumber/cucumber';\n",
+    );
+    write(
+        directory.path(),
+        "tsconfig.json",
+        r#"{"extends":"shared-config"}"#,
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@steps/bdd';\nGiven('the same step', () => first());\nGiven('the same step', () => second());\n",
+    );
+
+    analyze_root(directory.path())
+        .code(1)
+        .stdout(predicate::str::contains("Analyzed 2 definitions"))
+        .stdout(predicate::str::contains("duplicate-matcher"));
+}
