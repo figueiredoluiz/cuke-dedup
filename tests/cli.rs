@@ -2425,19 +2425,30 @@ fn an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags()
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
+        ".cuke-dedup.json",
+        r#"{"rules":{"duplicate-matcher":"warning"},"threshold":100}"#,
+    );
+    write(
+        directory.path(),
         "valid.ts",
-        "Given('an analyzed step', () => work());\n",
+        "Given('an analyzed step', () => first());\nGiven('an analyzed step', () => second());\n",
     );
     write(directory.path(), "broken.ts", "Given('broken', () => {\n");
 
     // Default: the unparseable file does not abort the scan. The valid file's definition is still
     // analyzed and the parse failure is reported, so the run is visibly incomplete, not silently
     // clean.
-    analyze_root(directory.path())
+    analyze_root_with(directory.path(), &["--reporters", "json"])
         .success()
         .stderr(predicate::str::contains(
             "source contains JavaScript/TypeScript syntax errors",
         ));
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["corpus"]["incomplete"], true);
+    assert_eq!(report["summary"]["byRule"]["duplicate-matcher"], 1);
 
     // `--fail-on-unparseable` turns exactly this case into a hard failure.
     analyze_root_with(directory.path(), &["--fail-on-unparseable"])
