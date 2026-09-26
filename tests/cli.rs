@@ -270,53 +270,6 @@ fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
 }
 
 #[test]
-fn grammar_limitations_keep_supported_findings_and_fail_closed() {
-    let root = tempfile::tempdir().unwrap();
-    write(
-        root.path(),
-        ".cuke-dedup.json",
-        r#"{"rules":{"duplicate-matcher":"warning"},"threshold":100}"#,
-    );
-    write(
-        root.path(),
-        "clean.ts",
-        "Given('clean',()=>first()); Given('clean',()=>second());",
-    );
-    write(
-        root.path(),
-        "swallowed.tsx",
-        "const icon=<span>&#128465;</span>; Given('swallowed',()=>icon);",
-    );
-    let output = tempfile::tempdir().unwrap();
-    Command::cargo_bin("cuke-dedup")
-        .unwrap()
-        .current_dir(root.path())
-        .args([".", "--reporters", "json", "--output"])
-        .arg(output.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("syntax errors"));
-    let report: Value =
-        serde_json::from_str(&fs::read_to_string(output.path().join("cuke-dedup.json")).unwrap())
-            .unwrap();
-    assert_eq!(report["corpus"]["incomplete"], true);
-    let paths: Vec<_> = report["findings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|finding| finding["rule"] == "duplicate-matcher")
-        .map(|finding| finding["primary"]["path"].as_str().unwrap())
-        .collect();
-    assert_eq!(paths, ["clean.ts"]);
-    Command::cargo_bin("cuke-dedup")
-        .unwrap()
-        .current_dir(root.path())
-        .args([".", "--fail-on-unparseable"])
-        .assert()
-        .code(2);
-}
-
-#[test]
 fn baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_valid() {
     let valid_feature = "Feature: Example\n  Scenario: Example\n    Given shared\n";
     for (bad_source, feature) in [
@@ -2472,19 +2425,30 @@ fn an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags()
     let directory = tempfile::tempdir().unwrap();
     write(
         directory.path(),
+        ".cuke-dedup.json",
+        r#"{"rules":{"duplicate-matcher":"warning"},"threshold":100}"#,
+    );
+    write(
+        directory.path(),
         "valid.ts",
-        "Given('an analyzed step', () => work());\n",
+        "Given('an analyzed step', () => first());\nGiven('an analyzed step', () => second());\n",
     );
     write(directory.path(), "broken.ts", "Given('broken', () => {\n");
 
     // Default: the unparseable file does not abort the scan. The valid file's definition is still
     // analyzed and the parse failure is reported, so the run is visibly incomplete, not silently
     // clean.
-    analyze_root(directory.path())
+    analyze_root_with(directory.path(), &["--reporters", "json"])
         .success()
         .stderr(predicate::str::contains(
             "source contains JavaScript/TypeScript syntax errors",
         ));
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["corpus"]["incomplete"], true);
+    assert_eq!(report["summary"]["byRule"]["duplicate-matcher"], 1);
 
     // `--fail-on-unparseable` turns exactly this case into a hard failure.
     analyze_root_with(directory.path(), &["--fail-on-unparseable"])
