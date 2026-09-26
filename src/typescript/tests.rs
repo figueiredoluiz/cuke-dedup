@@ -2540,6 +2540,89 @@ fn supported_regexes_remain_authoritative_under_resource_limits() {
     }
 }
 
+// Canary for valid constructs outside the pinned grammars. When an upgrade accepts a row, move its
+// expectation to the parseable controls rather than deleting coverage. Every case is synthetic.
+#[test]
+fn grammar_limitations_stay_incomplete_without_inventing_registrations() {
+    let controls = [
+        (
+            SourceLanguage::Tsx,
+            "const n=<panel>body</panel>; Given('clean',()=>n);",
+        ),
+        (
+            SourceLanguage::TypeScript,
+            "const x=<T>(v:T)=>v; const b=1<2; Given('clean',()=>x(b));",
+        ),
+        (
+            SourceLanguage::JavaScript,
+            "import x from './x.json' with {type:'json'}; Given('clean',()=>x);",
+        ),
+    ];
+    for (language, source) in controls {
+        let extracted = extract_detailed(source, &file(language)).unwrap();
+        assert!(extracted.diagnostics.is_empty(), "{source}");
+        assert_eq!(extracted.definitions.len(), 1, "{source}");
+    }
+    let limitations = [
+        (
+            SourceLanguage::TypeScript,
+            "const x=f<typeof import('x')>();",
+        ),
+        (
+            SourceLanguage::TypeScript,
+            "const x=tag.a<{on:boolean}>`x`;",
+        ),
+        (
+            SourceLanguage::TypeScript,
+            "export type * as ns from './x';",
+        ),
+        (SourceLanguage::TypeScript, "type F=(string)=>void;"),
+        (SourceLanguage::TypeScript, "type T=import('x').T[];"),
+        (
+            SourceLanguage::TypeScript,
+            "const x={} as unknown as (typeof module)['key'];",
+        ),
+        (SourceLanguage::Tsx, "const x=<a href='?a=1&b=2' />;"),
+        (SourceLanguage::Tsx, "const x=<a>a&b</a>;"),
+        (SourceLanguage::Tsx, "const x=<a>&#128465;</a>;"),
+        (SourceLanguage::Tsx, "const x=<a title='&#128465;' />;"),
+        (SourceLanguage::JavaScript, "const x=<button in />;"),
+    ];
+    for (language, construct) in limitations {
+        let source =
+            format!("Given('before',()=>first());\n{construct}\nGiven('after',()=>last());");
+        let extracted = extract_detailed(&source, &file(language)).unwrap();
+        let matchers: Vec<_> = extracted
+            .definitions
+            .iter()
+            .map(|definition| definition.matcher.as_str())
+            .collect();
+        assert!(
+            matchers
+                .iter()
+                .all(|matcher| ["before", "after"].contains(matcher)),
+            "{construct}"
+        );
+        let diagnostics: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| crate::source_adapter::is_unparseable_diagnostic(diagnostic))
+            .collect();
+        assert_eq!(diagnostics.len(), 1, "{construct}");
+        assert_eq!(
+            diagnostics[0].level,
+            ExtractionDiagnosticLevel::Warning,
+            "{construct}"
+        );
+    }
+    let invalid = extract_detailed("const broken=;", &file(SourceLanguage::TypeScript)).unwrap();
+    assert!(invalid.definitions.is_empty());
+    assert!(invalid
+        .diagnostics
+        .iter()
+        .any(crate::source_adapter::is_unparseable_diagnostic));
+}
+
 #[test]
 fn deeply_nested_handlers_do_not_use_the_process_stack() {
     let depth = 8_000;
