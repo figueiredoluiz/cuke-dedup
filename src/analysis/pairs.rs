@@ -170,15 +170,18 @@ pub(super) fn analyze_definition_pairs(
         let right_index = candidate.right;
         let left = &definitions[left_index];
         let right = &definitions[right_index];
+        let positional = left.framework == crate::model::Framework::JestCucumber
+            || right.framework == crate::model::Framework::JestCucumber;
         let relationships = classes.relationships(left_index, right_index);
         let exact_matcher = relationships.exact_matcher;
-        let normalized_matcher = relationships.normalized_matcher;
+        let normalized_matcher = relationships.normalized_matcher && !positional;
         let same_handler = relationships.same_handler;
         let same_structure = relationships.same_structure;
         let meaningful_handlers = left.handler.comparable
             && right.handler.comparable
             && !left.handler.trivial
-            && !right.handler.trivial;
+            && !right.handler.trivial
+            && handler_runtime_compatible(left, right);
         let pair_work = PairWorkInput {
             left,
             right,
@@ -209,9 +212,11 @@ pub(super) fn analyze_definition_pairs(
             .contains(CandidateSource::StructuralHandler)
             && !normalized_matcher
             && !same_handler
+            && !(positional && exact_matcher)
             && same_structure
             && meaningful_handlers;
         let near_handler = candidate.sources.can_feed_near_matcher()
+            && !(positional && same_handler)
             && relationships.same_deferred_assertions
             && !structural_handler
             && !normalized_matcher
@@ -355,7 +360,11 @@ pub(super) fn analyze_definition_pairs(
                     right_index,
                     left,
                     right,
-                    message: "Different matchers use the same normalized implementation",
+                    message: if positional {
+                        "Scenario steps use the same normalized implementation"
+                    } else {
+                        "Different matchers use the same normalized implementation"
+                    },
                     matcher_similarity,
                     handler_similarity,
                     matcher_difference: Cow::Owned(matcher_difference(left, right)),
@@ -525,10 +534,7 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
         ));
         classes.normalized_matcher.push(intern_class(
             &mut normalized_matchers,
-            (
-                definition.matcher_kind,
-                definition.normalized_matcher.as_str(),
-            ),
+            matcher_partition(definition, classes.normalized_matcher.len()),
         ));
         classes.alpha_handler.push(intern_class(
             &mut alpha_handlers,
@@ -550,6 +556,19 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
         ));
     }
     classes
+}
+
+/// Positional Jest steps never belong to one global matcher class. Keeping their partitions
+/// distinct also lets equal-text handlers reach all three handler candidate sources.
+fn matcher_partition(
+    definition: &StepDefinition,
+    index: usize,
+) -> (MatcherKind, &str, Option<usize>) {
+    (
+        definition.matcher_kind,
+        &definition.normalized_matcher,
+        (definition.framework == crate::model::Framework::JestCucumber).then_some(index),
+    )
 }
 
 fn intern_class<K: Eq + Hash>(classes: &mut HashMap<K, usize>, key: K) -> usize {
@@ -647,10 +666,12 @@ pub(super) fn definition_pair_candidates(
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
-        normalized_matchers
-            .entry((definition.matcher_kind, &definition.normalized_matcher))
-            .or_default()
-            .push(index);
+        if definition.framework != crate::model::Framework::JestCucumber {
+            normalized_matchers
+                .entry((definition.matcher_kind, &definition.normalized_matcher))
+                .or_default()
+                .push(index);
+        }
         if definition.handler.comparable && !definition.handler.trivial {
             handlers
                 .entry((
@@ -695,11 +716,11 @@ pub(super) fn definition_pair_candidates(
     }
 
     for group in sorted_groups(handlers) {
-        let mut matcher_groups: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
+        let mut matcher_groups: HashMap<_, Vec<usize>> = HashMap::new();
         for index in group {
             let definition = &definitions[index];
             matcher_groups
-                .entry((definition.matcher_kind, &definition.normalized_matcher))
+                .entry(matcher_partition(definition, index))
                 .or_default()
                 .push(index);
         }
@@ -729,11 +750,11 @@ pub(super) fn definition_pair_candidates(
                 handler_group_by_definition[index] = handler_group;
             }
         }
-        let mut matcher_groups: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
+        let mut matcher_groups: HashMap<_, Vec<usize>> = HashMap::new();
         for &index in &group {
             let definition = &definitions[index];
             matcher_groups
-                .entry((definition.matcher_kind, &definition.normalized_matcher))
+                .entry(matcher_partition(definition, index))
                 .or_default()
                 .push(index);
         }

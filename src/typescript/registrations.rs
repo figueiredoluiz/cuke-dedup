@@ -39,12 +39,31 @@ pub(super) struct RegistrationNames {
 }
 
 impl RegistrationNames {
+    pub(super) fn has_callback_framework(&self) -> bool {
+        super::framework_callbacks::is_new_framework(self.framework)
+            || self
+                .aliases
+                .values()
+                .chain(
+                    self.namespaces
+                        .values()
+                        .flat_map(|exports| exports.values()),
+                )
+                .any(|export| super::framework_callbacks::is_new_framework(export.framework))
+    }
+
     pub(super) fn recognizes_alias(&self, name: &str) -> bool {
-        self.aliases.contains_key(name)
+        self.aliases
+            .get(name)
+            .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
     }
 
     pub(super) fn recognizes_namespace(&self, name: &str) -> bool {
-        self.namespaces.contains_key(name)
+        self.namespaces.get(name).is_some_and(|exports| {
+            exports
+                .values()
+                .any(|export| !super::framework_callbacks::is_new_framework(export.framework))
+        })
     }
 }
 
@@ -560,7 +579,7 @@ fn forwarded_callee(
 }
 
 /// A runtime binding introduced by an import clause.
-enum ImportBinding<'a> {
+pub(super) enum ImportBinding<'a> {
     /// A named specifier, carrying the exported name and the local name it binds. The local name
     /// is the alias when one is written and the exported name otherwise.
     Named { exported: &'a str, local: &'a str },
@@ -577,7 +596,7 @@ enum ImportBinding<'a> {
 /// `collect_shadowing_imports` deliberately does not share this walk: it still descends through
 /// type-only specifiers, and it resolves the local name from the alias or name node rather than
 /// from their text, so folding it in here would change which names it sees.
-fn for_each_import_binding(
+pub(super) fn for_each_import_binding(
     import: Node<'_>,
     source: &[u8],
     mut on_binding: impl FnMut(ImportBinding<'_>),

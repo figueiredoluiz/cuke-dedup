@@ -5,6 +5,12 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- Reports identify Jest-Cucumber string matchers with the additive `literal` matcher kind; their text is preserved rather than normalized as a Cucumber Expression. Existing frameworks' matcher kinds and fingerprints are unchanged.
+
+- Extract step definitions from `vitest-cucumber-plugin` ESM registrations and statically resolved inline `jest-cucumber` scenario callbacks, including immutable aliases and lexical shadowing checks. Jest's positional steps support handler-reuse findings without global matcher-collision or unused-definition findings; handler comparisons involving either framework require matching framework conventions. Unsupported Jest setup such as `autoBindSteps`, named callbacks, generators, async callbacks, and escaped helpers remains visibly incomplete. Runner configuration inference and the separate `@amiceli/vitest-cucumber` package are not included.
+
 ## [0.9.0] - 2026-09-25
 
 ### Changed

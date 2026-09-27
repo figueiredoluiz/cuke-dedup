@@ -23,6 +23,7 @@ pub(super) fn definition_comparison(
 
 fn definition_semantic_fingerprint(definition: &StepDefinition) -> String {
     let matcher_kind = match definition.matcher_kind {
+        MatcherKind::Literal => "literal",
         MatcherKind::CucumberExpression => "cucumber-expression",
         MatcherKind::RegularExpression => "regular-expression",
     };

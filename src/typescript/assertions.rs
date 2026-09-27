@@ -924,7 +924,7 @@ fn namespace_alias_writes(
     modules
 }
 
-fn collect_binding_scopes(
+pub(super) fn collect_binding_scopes(
     root: Node<'_>,
     source: &[u8],
 ) -> (BindingScopes, ScopeRanges, ScopeParents) {
@@ -1124,7 +1124,7 @@ fn is_module_var(declarator: Node<'_>) -> bool {
         && nearest_function_scope(declarator.parent()).is_none()
 }
 
-fn is_local_scope(node: Node<'_>) -> bool {
+pub(super) fn is_local_scope(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
         "function_declaration"
@@ -1207,7 +1207,7 @@ fn is_module_declaration(node: Node<'_>) -> bool {
     false
 }
 
-fn is_erased_declaration(mut node: Node<'_>) -> bool {
+pub(super) fn is_erased_declaration(mut node: Node<'_>) -> bool {
     loop {
         if node.kind() == "ambient_declaration" {
             return true;

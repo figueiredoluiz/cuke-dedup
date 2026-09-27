@@ -14,6 +14,8 @@ Configure a rule as `off`, `warning`, or `error`. The CLI also accepts `warn` as
 | `parameterization-candidate` | Warning | Handler structures differ primarily in literal values. |
 | `unused-definition` | Warning | No discovered feature step uses the definition. |
 
+Jest-Cucumber's inline scenario steps are positional rather than global matcher registrations. `duplicate-matcher`, `normalized-matcher`, `ambiguous-step`, `overlapping-matcher`, and `unused-definition` do not apply to them. The three handler-reuse rules still apply across Jest scenarios, and `duplicate-handler` can report identical matcher text. Handler pairs involving Jest-Cucumber or Vitest Cucumber Plugin must belong to the same framework, preserving their different argument conventions.
+
 ### duplicate-matcher
 
 Two definitions have the same matcher kind, source text, and effective regular-expression flags.

@@ -16,6 +16,7 @@ resource limits keep failures visible and bound the work performed.
 ## Static-analysis boundaries
 
 - Dynamic framework configuration may require explicit `features` or `definitions` patterns.
+- Jest-Cucumber setup provenance is limited to statically resolved inline synchronous callbacks and immutable aliases. Unmodeled setup, including `autoBindSteps`, named/escaped callbacks, generators, async callbacks, and dynamic properties, remains incomplete. Its positional steps are excluded from global matcher and feature-usage rules. Vitest support covers the ESM `vitest-cucumber-plugin` package, not the separate `@amiceli/vitest-cucumber` API. See [supported registrations](discovery-and-frameworks.md#supported-registrations).
 - Named handlers declared in the same file resolve to their bodies. Imported or unresolved handler
   references remain usable for matcher and usage rules but are not compared by name.
 - A file that cannot be parsed as JavaScript or TypeScript is tolerated by default: its
@@ -25,7 +26,7 @@ resource limits keep failures visible and bound the work performed.
   corpus incompleteness. Unsupported regular-expression constructs warn; malformed matcher escapes
   are operational errors.
 - Extension routing is authoritative and no file is ever re-parsed with a different grammar. The pinned tree-sitter JavaScript 0.25 and TypeScript/TSX 0.23 grammars do not accept every construct the languages themselves allow, so some valid source lands in that completeness warning today: tagged template literals with type arguments (the styled-components `` styled.button<{…}>`…` `` form), `export type * as … from`, function-type parameters named after a predefined type (`(string) => void`), call type arguments containing `typeof import(…)`, `import(…).Type[]` type references, chained assertions such as `as unknown as (typeof module)["key"]`, bare `&` and decimal character references longer than five digits in JSX text or attribute strings, and `in` as a JSX attribute name in `.js` files. Flow sources, stage-proposal syntax such as the pipeline operator, and the spec-removed `assert { … }` import-assertion spelling are outside the supported languages by design. Unparseable modules never contribute trusted exports to registration resolution. Error recovery may retain registrations outside the rejected construct, but callers must not rely on that partial result: the run stays visibly incomplete.
-- Lowercase `given`/`when`/`then` are recognised only through a resolved import (for example
+- Lowercase `given`/`when`/`then` are recognised through a resolved import or a proven Jest-Cucumber scenario callback (for example
   `const { given } = createBdd(test)`), never as ambient globals. A bare lowercase call with no
   import registers nothing, so an unrelated lowercase helper is not mistaken for a step. Name it in
   the `registrations` configuration (see `configuration.md`) to enable it as a global registration.

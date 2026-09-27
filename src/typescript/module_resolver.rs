@@ -297,6 +297,10 @@ pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framew
             Framework::CypressCucumber
         }
         (Framework::CucumberJs, _) | (_, Framework::CucumberJs) => Framework::CucumberJs,
+        (Framework::JestCucumber, _) | (_, Framework::JestCucumber) => Framework::JestCucumber,
+        (Framework::VitestCucumber, _) | (_, Framework::VitestCucumber) => {
+            Framework::VitestCucumber
+        }
         _ => Framework::Unknown,
     }
 }
