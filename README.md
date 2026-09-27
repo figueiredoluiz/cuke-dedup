@@ -10,7 +10,7 @@ either one.
 It supports:
 
 - JavaScript, JSX, TypeScript, and TSX step definitions.
-- Cucumber.js, Playwright-BDD, and Cypress Cucumber projects.
+- Cucumber.js, Playwright-BDD, Cypress Cucumber, Jest-Cucumber, and Vitest Cucumber Plugin projects.
 - Classic `.feature` files and Gherkin Markdown `.feature.md` files.
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.
 - Thresholds, baselines, changed-file analysis, suppressions, and ignore files.
@@ -68,6 +68,8 @@ use `cuke-dedup ./check` to analyze a directory literally named `check`.
 | Cucumber.js | `@cucumber/cucumber` and legacy `cucumber`; ESM, CJS, aliases, namespaces, and static local re-exports. |
 | Playwright-BDD | `createBdd()` registrations and `playwright-bdd/decorators` class-method decorators. |
 | Cypress Cucumber | `@badeball/cypress-cucumber-preprocessor` and legacy `cypress-cucumber-preprocessor/steps`. |
+| Jest-Cucumber | `jest-cucumber` inline `defineFeature` → scenario → step callbacks; handler-reuse rules. |
+| Vitest Cucumber Plugin | ESM `Given`, `When`, and `Then` exports from `vitest-cucumber-plugin`; global step registry. |
 
 Package entrypoints are matched exactly. Plain Playwright projects are supported when their
 Gherkin bindings use Cucumber.js or Playwright-BDD.

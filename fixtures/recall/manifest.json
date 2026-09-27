@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "knownMissBaseline": 1,
   "minimumRecall": 0.6,
-  "minimumCases": 57,
+  "minimumCases": 59,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
@@ -2392,6 +2392,161 @@
           "matchers": [
             "workspace package registration",
             "workspace package registration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vitest-cucumber-plugin-global-registrations",
+      "path": "vitest-cucumber-plugin",
+      "expectedDefinitions": 4,
+      "expectedExit": 1,
+      "expectedFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "shipment.feature",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "steps.ts:4",
+            "steps.ts:5"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is ready"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment is ready"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "jest-cucumber-scenario-local-handlers",
+      "path": "jest-cucumber",
+      "expectedDefinitions": 5,
+      "expectedFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "steps.test.ts",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.test.ts:11"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "steps.test.ts",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.test.ts:15"
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.test.ts",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.test.ts:11"
+          ]
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.test.ts",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.test.ts:11"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "shipment.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "steps.test.ts",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.test.ts:11"
+          ]
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.test.ts",
+          "primaryLine": 7
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "plugin parcel is ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel is ready",
+            "plugin parcel is ready"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel is ready",
+            "plugin parcel is ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
           ]
         }
       ]

@@ -2,6 +2,7 @@
 
 mod assertions;
 mod ast;
+mod framework_callbacks;
 pub(crate) mod frameworks;
 mod handler;
 mod matcher;
@@ -141,6 +142,7 @@ struct AdapterContext<'source, 'tree> {
     file: &'source SourceFile,
     framework: Framework,
     registrations: &'source RegistrationNames,
+    framework_calls: &'source framework_callbacks::FrameworkCalls,
     assertions: &'source AssertionBindings,
     handler_bindings: &'source BTreeMap<String, Vec<HandlerBinding<'tree>>>,
 }
@@ -221,6 +223,17 @@ fn extract_detailed_impl(
         &session.configured_registrations,
     )?;
     let framework = registrations.framework;
+    let framework_calls = if registrations.has_callback_framework() {
+        framework_callbacks::discover(
+            root,
+            source_bytes,
+            &file.path,
+            &mut session.resolver,
+            &registrations,
+        )?
+    } else {
+        framework_callbacks::FrameworkCalls::default()
+    };
     let assertions = AssertionBindings::discover(
         root,
         source_bytes,
@@ -235,6 +248,7 @@ fn extract_detailed_impl(
         file,
         framework,
         registrations: &registrations,
+        framework_calls: &framework_calls,
         assertions: &assertions,
         handler_bindings: &handler_bindings,
     };
@@ -606,6 +620,25 @@ fn unresolved_registration_call<'a>(
     context: &'a AdapterContext<'_, '_>,
 ) -> Option<UnresolvedRegistration<'a>> {
     let function = call.child_by_field_name("function")?;
+    if context
+        .framework_calls
+        .incomplete
+        .contains(&function.start_byte())
+    {
+        return Some(UnresolvedRegistration::Generic);
+    }
+    if context
+        .framework_calls
+        .handled
+        .contains(&function.start_byte())
+    {
+        return None;
+    }
+    if registration_name(function, context.source, context.registrations)
+        .is_some_and(|(_, _, framework)| framework_callbacks::is_new_framework(framework))
+    {
+        return Some(UnresolvedRegistration::Generic);
+    }
     if registration_name(function, context.source, context.registrations).is_some()
         || decorator_registration_name(function, context.source, context.registrations).is_some()
     {
@@ -657,7 +690,17 @@ fn extract_call<'tree>(
     let source = context.source;
     let function = call.child_by_field_name("function")?;
     let (callee, registration, registration_framework) =
-        registration_name(function, source, context.registrations)?;
+        context.framework_calls.registration(function).or_else(|| {
+            registration_name(function, source, context.registrations).filter(
+                |(_, _, framework)| {
+                    !framework_callbacks::is_new_framework(*framework)
+                        && !context
+                            .framework_calls
+                            .shadowed
+                            .contains(&function.start_byte())
+                },
+            )
+        })?;
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
     let arguments: Vec<_> = arguments.named_children(&mut cursor).collect();
@@ -665,8 +708,13 @@ fn extract_call<'tree>(
         return None;
     }
     let matcher_node = arguments[0];
-    let (matcher, matcher_kind, matcher_flags) =
+    let (matcher, mut matcher_kind, matcher_flags) =
         extract_matcher(matcher_node, context, diagnostics)?;
+    if registration_framework == Framework::JestCucumber
+        && matcher_kind == MatcherKind::CucumberExpression
+    {
+        matcher_kind = MatcherKind::Literal;
+    }
     let handler = arguments.iter().rev().copied().find(|node| {
         matches!(
             node.kind(),

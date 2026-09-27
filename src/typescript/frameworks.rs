@@ -21,6 +21,9 @@ pub(super) enum RegistrationExportKind {
     Call,
     Decorator,
     Factory,
+    Feature,
+    Unsupported,
+    NonRegistration,
 }
 
 pub(super) type RegistrationExports = BTreeMap<String, RegistrationExport>;
@@ -62,11 +65,23 @@ struct FrameworkRegistration {
 enum ExportStyle {
     Calls { factory: Option<&'static str> },
     Decorators,
+    Jest,
+    Vitest,
 }
 
 // Match exact entrypoints, never prefixes: lookalike packages/subpaths are not trusted.
 // The legacy Cypress root exports a preprocessor, not step registrations.
 const FRAMEWORK_REGISTRY: &[FrameworkRegistration] = &[
+    FrameworkRegistration {
+        modules: &["jest-cucumber"],
+        framework: Framework::JestCucumber,
+        exports: ExportStyle::Jest,
+    },
+    FrameworkRegistration {
+        modules: &["vitest-cucumber-plugin"],
+        framework: Framework::VitestCucumber,
+        exports: ExportStyle::Vitest,
+    },
     FrameworkRegistration {
         modules: &[CUCUMBER_MODULE, LEGACY_CUCUMBER_MODULE],
         framework: Framework::CucumberJs,
@@ -146,6 +161,44 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
         return registration_exports_for_framework(Framework::Unknown);
     };
     let framework = entry.framework;
+    let special = match entry.exports {
+        ExportStyle::Jest => Some((
+            &[
+                "defineFeature",
+                "autoBindSteps",
+                "loadFeature",
+                "loadFeatures",
+                "parseFeature",
+                "setJestCucumberConfiguration",
+                "generateCodeFromFeature",
+                "generateCodeWithSeparateFunctionsFromFeature",
+            ][..],
+            RegistrationExportKind::Feature,
+        )),
+        ExportStyle::Vitest => Some((&["Given", "When", "Then"][..], RegistrationExportKind::Call)),
+        _ => None,
+    };
+    if let Some((names, kind)) = special {
+        return names
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_owned(),
+                    RegistrationExport {
+                        canonical: (*name).to_owned(),
+                        kind: if *name == "autoBindSteps" {
+                            RegistrationExportKind::Unsupported
+                        } else if framework == Framework::JestCucumber && *name != "defineFeature" {
+                            RegistrationExportKind::NonRegistration
+                        } else {
+                            kind
+                        },
+                        framework,
+                    },
+                )
+            })
+            .collect();
+    }
     if let ExportStyle::Calls { factory } = entry.exports {
         let mut exports = registration_exports_for_framework(framework);
         if let Some(factory) = factory {
@@ -186,6 +239,9 @@ mod tests {
             .flat_map(|entry| entry.modules.iter().copied())
         {
             let exports = registration_exports_for_module(module);
+            if matches!(module, "jest-cucumber" | "vitest-cucumber-plugin") {
+                continue; // Their distinct contracts are exercised by framework_callbacks.
+            }
             let decorators = module == PLAYWRIGHT_DECORATORS_MODULE;
             let expected_kind = if decorators {
                 RegistrationExportKind::Decorator
@@ -227,6 +283,8 @@ mod tests {
         let expected = [
             ("@cucumber/cucumber", Framework::CucumberJs),
             ("cucumber", Framework::CucumberJs),
+            ("jest-cucumber", Framework::JestCucumber),
+            ("vitest-cucumber-plugin", Framework::VitestCucumber),
             ("playwright-bdd", Framework::PlaywrightBdd),
             ("playwright-bdd/decorators", Framework::PlaywrightBdd),
             (
@@ -257,6 +315,8 @@ mod tests {
             "cypress-cucumber-preprocessor",
             "cypress-cucumber-preprocessor/steps-extra",
             "playwright-bdd/decorators-extra",
+            "jest-cucumber-extra",
+            "vitest-cucumber-plugin-extra",
         ] {
             assert!(!is_supported_module(unsupported), "{unsupported}");
             assert_eq!(

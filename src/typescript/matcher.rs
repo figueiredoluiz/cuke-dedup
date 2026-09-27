@@ -190,6 +190,7 @@ pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
 pub fn normalize_matcher(matcher: &str, kind: MatcherKind) -> String {
     let normalized: String = matcher.nfkc().collect();
     let normalized = match kind {
+        MatcherKind::Literal => return matcher.to_owned(),
         MatcherKind::CucumberExpression => CUCUMBER_PLACEHOLDER
             .replace_all(&normalized, |captures: &regex::Captures<'_>| {
                 format!("{{{}}}", captures[1].trim())

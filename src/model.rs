@@ -56,6 +56,8 @@ impl SourceLocation {
 /// Syntax used by a step definition matcher.
 #[non_exhaustive]
 pub enum MatcherKind {
+    /// Literal text in a positional Jest-Cucumber step, without expression placeholders.
+    Literal,
     /// A Cucumber Expression such as `I have {int} items`.
     CucumberExpression,
     /// A JavaScript regular expression.
@@ -73,6 +75,10 @@ pub enum Framework {
     PlaywrightBdd,
     /// Cypress step definitions registered through the Badeball Cucumber preprocessor.
     CypressCucumber,
+    /// Jest-Cucumber's positional, scenario-local step callbacks.
+    JestCucumber,
+    /// Global registrations exported by vitest-cucumber-plugin.
+    VitestCucumber,
     /// No supported framework import could be inferred.
     Unknown,
 }

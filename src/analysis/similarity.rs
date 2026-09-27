@@ -167,6 +167,13 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
 }
 
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
+    use crate::model::Framework::{JestCucumber, VitestCucumber};
+    if left.framework != right.framework
+        && (matches!(left.framework, JestCucumber | VitestCucumber)
+            || matches!(right.framework, JestCucumber | VitestCucumber))
+    {
+        return false;
+    }
     match (method_semantics(left), method_semantics(right)) {
         (Some(left), Some(right)) => left == right,
         _ => true,

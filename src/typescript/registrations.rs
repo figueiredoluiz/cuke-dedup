@@ -30,6 +30,7 @@ pub(super) struct UnresolvedModuleReason {
 pub(super) struct RegistrationNames {
     pub(super) module_paths: BTreeMap<String, std::path::PathBuf>,
     aliases: RegistrationExports,
+    fallback_aliases: BTreeSet<String>,
     namespaces: BTreeMap<String, RegistrationExports>,
     unresolved_aliases: BTreeMap<String, String>,
     unresolved_namespaces: BTreeMap<String, String>,
@@ -39,12 +40,37 @@ pub(super) struct RegistrationNames {
 }
 
 impl RegistrationNames {
+    pub(super) fn fallback_export(&self, name: &str) -> Option<&RegistrationExport> {
+        self.aliases
+            .get(name)
+            .filter(|_| self.fallback_aliases.contains(name))
+    }
+
+    pub(super) fn has_callback_framework(&self) -> bool {
+        super::framework_callbacks::is_new_framework(self.framework)
+            || self
+                .aliases
+                .values()
+                .chain(
+                    self.namespaces
+                        .values()
+                        .flat_map(|exports| exports.values()),
+                )
+                .any(|export| super::framework_callbacks::is_new_framework(export.framework))
+    }
+
     pub(super) fn recognizes_alias(&self, name: &str) -> bool {
-        self.aliases.contains_key(name)
+        self.aliases
+            .get(name)
+            .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
     }
 
     pub(super) fn recognizes_namespace(&self, name: &str) -> bool {
-        self.namespaces.contains_key(name)
+        self.namespaces.get(name).is_some_and(|exports| {
+            exports
+                .values()
+                .any(|export| !super::framework_callbacks::is_new_framework(export.framework))
+        })
     }
 }
 
@@ -59,6 +85,7 @@ pub(super) enum RegistrationCallee<'tree, 'source> {
 #[derive(Default)]
 struct RegistrationDiscovery<'tree> {
     aliases: RegistrationExports,
+    fallback_aliases: BTreeSet<String>,
     namespaces: BTreeMap<String, RegistrationExports>,
     assignments: Vec<(String, String)>,
     namespace_destructures: Vec<(Node<'tree>, String)>,
@@ -345,6 +372,7 @@ pub(super) fn detect_registrations(
 
     for name in DEFAULT_REGISTRATIONS {
         if !discovered.shadowed_defaults.contains(name) && !discovered.aliases.contains_key(name) {
+            discovered.fallback_aliases.insert(name.to_owned());
             discovered.aliases.insert(
                 name.to_owned(),
                 RegistrationExport {
@@ -372,6 +400,9 @@ pub(super) fn detect_registrations(
     // Project-declared wrappers win over inference: the operator asserted these names register
     // steps, so they apply even when the body is too dynamic to analyze.
     for name in configured {
+        if !discovered.aliases.contains_key(name) {
+            discovered.fallback_aliases.insert(name.clone());
+        }
         discovered
             .aliases
             .entry(name.clone())
@@ -386,6 +417,7 @@ pub(super) fn detect_registrations(
     Ok(RegistrationNames {
         module_paths,
         aliases: discovered.aliases,
+        fallback_aliases: discovered.fallback_aliases,
         namespaces: discovered.namespaces,
         unresolved_aliases: discovered.unresolved_aliases,
         unresolved_namespaces: discovered.unresolved_namespaces,
@@ -434,9 +466,12 @@ fn collect_wrapper_candidate<'tree>(
         return;
     }
     let name = node_text(name, source).to_owned();
-    let Some(forwards_to) = forwarded_callee(body, &name, &parameters, source) else {
+    let Some(forwards_to) =
+        forwarded_callee(body, &name, &parameters, source).and_then(unwrap_registration_callee)
+    else {
         return;
     };
+    let forwards_to = node_text(forwards_to, source).to_owned();
     discovered
         .wrapper_candidates
         .push(WrapperCandidate { name, forwards_to });
@@ -446,7 +481,7 @@ fn collect_wrapper_candidate<'tree>(
 ///
 /// Destructuring, defaults, and rest parameters all break the positional correspondence the
 /// wrapper rule depends on, so they disqualify the candidate rather than being guessed at.
-fn plain_parameter_names(parameters: Node<'_>, source: &[u8]) -> Option<Vec<String>> {
+pub(super) fn plain_parameter_names(parameters: Node<'_>, source: &[u8]) -> Option<Vec<String>> {
     let mut cursor = parameters.walk();
     let mut names = Vec::new();
     for parameter in parameters.named_children(&mut cursor) {
@@ -516,12 +551,12 @@ fn unwrap_parenthesized(mut node: Node<'_>) -> Node<'_> {
 /// *i* of the wrapper, for the matcher and handler positions. A wrapper that reorders, rewrites,
 /// or synthesizes those arguments would make the extracted matcher and handler belong to
 /// different steps.
-fn forwarded_callee(
-    body: Node<'_>,
+pub(super) fn forwarded_callee<'tree>(
+    body: Node<'tree>,
     name: &str,
     parameters: &[String],
     source: &[u8],
-) -> Option<String> {
+) -> Option<Node<'tree>> {
     if body.named_child_count() != 1 {
         return None;
     }
@@ -556,11 +591,11 @@ fn forwarded_callee(
             return None;
         }
     }
-    Some(callee.to_owned())
+    Some(function)
 }
 
 /// A runtime binding introduced by an import clause.
-enum ImportBinding<'a> {
+pub(super) enum ImportBinding<'a> {
     /// A named specifier, carrying the exported name and the local name it binds. The local name
     /// is the alias when one is written and the exported name otherwise.
     Named { exported: &'a str, local: &'a str },
@@ -577,7 +612,7 @@ enum ImportBinding<'a> {
 /// `collect_shadowing_imports` deliberately does not share this walk: it still descends through
 /// type-only specifiers, and it resolves the local name from the alias or name node rather than
 /// from their text, so folding it in here would change which names it sees.
-fn for_each_import_binding(
+pub(super) fn for_each_import_binding(
     import: Node<'_>,
     source: &[u8],
     mut on_binding: impl FnMut(ImportBinding<'_>),

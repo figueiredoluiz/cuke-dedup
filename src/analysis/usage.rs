@@ -754,7 +754,7 @@ pub(super) fn analyze_unused(
         return;
     }
     for (index, definition) in definitions.iter().enumerate() {
-        if used.contains(&index) {
+        if used.contains(&index) || definition.framework == crate::model::Framework::JestCucumber {
             continue;
         }
         findings.push(Finding {
@@ -788,8 +788,16 @@ fn compile_matcher(
     definition: &StepDefinition,
     parameter_types: &BTreeMap<String, String>,
 ) -> (CompiledMatcher, Option<String>) {
-    match definition.matcher_kind {
-        MatcherKind::RegularExpression => {
+    match (definition.framework, definition.matcher_kind) {
+        (crate::model::Framework::JestCucumber, _) | (_, MatcherKind::Literal) => (
+            CompiledMatcher {
+                regex: None,
+                expression: None,
+                authoritative: false,
+            },
+            None,
+        ),
+        (_, MatcherKind::RegularExpression) => {
             if definition.matcher.len() > MAX_REGEX_PATTERN_BYTES {
                 return (
                     CompiledMatcher {
@@ -823,7 +831,7 @@ fn compile_matcher(
                 error,
             )
         }
-        MatcherKind::CucumberExpression => {
+        (_, MatcherKind::CucumberExpression) => {
             match cucumber_regex_expression(&definition.matcher) {
                 CucumberRegexExpression::Compiled(expression) => {
                     let (regex, error) = compile_definition_regex(&expression, definition);
