@@ -67,34 +67,39 @@ fn local_framework_barrels_resolve_without_granting_assertion_facade_trust() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("package.json"), "{}").unwrap();
     std::fs::write(directory.path().join("barrel.ts"), "export { defineFeature } from 'jest-cucumber'; export { Given } from 'vitest-cucumber-plugin'; export const expect = custom;").unwrap();
-    let source = "import { defineFeature, Given, expect } from './barrel'; defineFeature(feature, test => test('one', ({given}) => { given('first outcome', () => expect(value).toBe(1)); given('second outcome', () => expect(value).toBe(2)); })); Given('plugin first', () => work()); Given('plugin second', () => work());";
-    let file = SourceFile {
-        path: directory.path().join("steps.ts"),
-        language: SourceLanguage::TypeScript,
-    };
-    std::fs::write(&file.path, source).unwrap();
-    let extraction = typescript::extract_detailed(source, &file).unwrap();
-    assert_eq!(extraction.definitions.len(), 4);
-    assert!(
-        extraction.diagnostics.is_empty(),
-        "{:?}",
-        extraction.diagnostics
-    );
-    let result = analyze(
-        extraction.definitions,
-        Vec::new(),
-        &Config::load(directory.path(), ConfigOverrides::default()).unwrap(),
-    )
-    .unwrap();
-    assert!(result
-        .findings
-        .iter()
-        .any(|finding| finding.rule == Rule::DuplicateHandler));
-    // The untrusted expect is an ordinary call: its literal variation remains parameterizable.
-    assert!(result
-        .findings
-        .iter()
-        .any(|finding| finding.rule == Rule::ParameterizationCandidate));
+    for (setup, callee) in [
+        ("", "Given"),
+        ("function pluginStep(p, h) { Given(p, h); }", "pluginStep"),
+    ] {
+        let source = format!("import {{ defineFeature, Given, expect }} from './barrel'; {setup} defineFeature(feature, test => test('one', ({{given}}) => {{ given('first outcome', () => expect(value).toBe(1)); given('second outcome', () => expect(value).toBe(2)); }})); {callee}('plugin first', () => work()); {callee}('plugin second', () => work());");
+        let file = SourceFile {
+            path: directory.path().join("steps.ts"),
+            language: SourceLanguage::TypeScript,
+        };
+        std::fs::write(&file.path, &source).unwrap();
+        let extraction = typescript::extract_detailed(&source, &file).unwrap();
+        assert_eq!(extraction.definitions.len(), 4);
+        assert!(
+            extraction.diagnostics.is_empty(),
+            "{:?}",
+            extraction.diagnostics
+        );
+        let result = analyze(
+            extraction.definitions,
+            Vec::new(),
+            &Config::load(directory.path(), ConfigOverrides::default()).unwrap(),
+        )
+        .unwrap();
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.rule == Rule::DuplicateHandler));
+        // The untrusted expect is an ordinary call: its literal variation remains parameterizable.
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.rule == Rule::ParameterizationCandidate));
+    }
 }
 
 #[test]
@@ -126,6 +131,98 @@ fn unsupported_jest_setup_keeps_cli_reports_incomplete() {
 
 fn has(rules: &BTreeSet<Rule>, rule: Rule) -> bool {
     rules.contains(&rule)
+}
+
+#[test]
+fn forwarding_wrappers_use_lexical_targets_and_immediate_execution() {
+    let forms = [
+        ("function step(p, h) { given(p, h); }", true),
+        ("function step(p, h) { return given(p, h); }", true),
+        (
+            "function inner(p, h) { given(p, h); } function step(p, h) { inner(p, h); }",
+            true,
+        ),
+        ("function step(p, h, given) { given(p, h); }", false),
+        (
+            "function step(p, h) { given(p, h); } step = unrelated;",
+            false,
+        ),
+        (
+            "function step(p, h) { given(p, h); } given = unrelated;",
+            false,
+        ),
+        ("async function step(p, h) { given(p, h); }", false),
+        ("function* step(p, h) { given(p, h); }", false),
+        ("function step(p, h) { given(h, p); }", false),
+        ("function step(p, h) { later(() => given(p, h)); }", false),
+    ];
+    for (wrapper, supported) in forms {
+        let body = format!(
+            "{wrapper} step('first action', () => work()); step('second action', () => work());"
+        );
+        for source in [
+            format!("import {{Given as given}} from 'vitest-cucumber-plugin'; {body}"),
+            format!("import {{defineFeature}} from 'jest-cucumber'; defineFeature(feature, test => test('one', ({{given}}) => {{{body}}}));"),
+            format!("const {{defineFeature}} = require('jest-cucumber'); defineFeature(feature, test => test('one', ({{given}}) => {{{body}}}));"),
+        ] {
+            let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+            assert_eq!(frameworks.len(), if supported { 2 } else { 0 }, "{source}: {diagnostics:?}");
+            assert_eq!(has(&rules, Rule::DuplicateHandler), supported, "{source}: {rules:?}");
+            assert_eq!(diagnostics.is_empty(), supported, "{source}: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+fn ambient_jest_fallback_preserves_literal_kind_and_positional_rules() {
+    let source = "import 'jest-cucumber'; Given('literal { int }', () => work()); Given('literal {int}', () => work());";
+    let file = SourceFile {
+        path: "steps.ts".into(),
+        language: SourceLanguage::TypeScript,
+    };
+    let extracted = typescript::extract_detailed(source, &file).unwrap();
+    assert_eq!(extracted.definitions.len(), 2);
+    for definition in extracted.definitions {
+        assert_eq!(
+            definition.matcher_kind,
+            cuke_dedup::model::MatcherKind::Literal
+        );
+        assert_eq!(definition.matcher, definition.normalized_matcher);
+    }
+    let (_, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+    assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
+    assert!(diagnostics.is_empty());
+}
+
+#[test]
+fn fallback_scope_and_writes_never_gain_registration_trust() {
+    let calls = "Given('first action', () => work()); Given('second action', () => work());";
+    for package in ["jest-cucumber", "vitest-cucumber-plugin"] {
+        for (setup, body, supported) in [
+            (
+                "import type { Given } from 'unrelated';",
+                calls.to_owned(),
+                true,
+            ),
+            (
+                "",
+                format!("function unrelated(Given) {{ {calls} }}"),
+                false,
+            ),
+            ("Given = unrelated;", calls.to_owned(), false),
+            ("", format!("{{ const Given = unrelated; {calls} }}"), false),
+        ] {
+            let source = format!("import '{package}'; {setup} {body}");
+            let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+            assert_eq!(frameworks.len(), if supported { 2 } else { 0 }, "{source}");
+            assert_eq!(has(&rules, Rule::DuplicateHandler), supported, "{source}");
+            assert_eq!(
+                diagnostics.is_empty(),
+                supported,
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
 }
 
 fn assert_no_handler_findings(rules: &BTreeSet<Rule>) {

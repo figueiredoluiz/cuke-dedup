@@ -54,6 +54,7 @@ pub(super) fn is_new_framework(framework: Framework) -> bool {
 #[derive(Clone)]
 enum Value {
     Export(RegistrationExport),
+    Fallback(RegistrationExport),
     Namespace(RegistrationExports),
     Scenario,
     Steps,
@@ -91,6 +92,7 @@ enum Origin<'tree> {
     Required(Node<'tree>, Value),
     Initializer(Node<'tree>),
     Parameter(Node<'tree>),
+    Forwarded(Node<'tree>),
 }
 
 struct Binding<'tree> {
@@ -108,13 +110,41 @@ struct Bindings<'tree, 'source> {
     bindings: BTreeMap<Key, Option<Binding<'tree>>>,
     writes: BTreeSet<Key>,
     requires: BTreeMap<usize, Value>,
+    registrations: &'source super::registrations::RegistrationNames,
+    forwarded_targets: BTreeSet<usize>,
 }
 
 impl<'tree> Bindings<'tree, '_> {
     fn shadow_declaration(&mut self, node: Node<'tree>, root: Node<'tree>) {
         if let Some(name) = node.child_by_field_name("name") {
             let key = self.key(node.parent().unwrap_or(root), node_text(name, self.source));
-            self.bindings.insert(key, None);
+            let target = (node.kind() == "function_declaration"
+                && !node
+                    .children(&mut node.walk())
+                    .any(|child| child.kind() == "async"))
+            .then(|| {
+                super::registrations::forwarded_callee(
+                    node.child_by_field_name("body")?,
+                    node_text(name, self.source),
+                    &super::registrations::plain_parameter_names(
+                        node.child_by_field_name("parameters")?,
+                        self.source,
+                    )?,
+                    self.source,
+                )
+            })
+            .flatten();
+            self.forwarded_targets
+                .extend(target.map(|target| target.start_byte()));
+            let binding = target.map(|target| Binding {
+                origin: Origin::Forwarded(target),
+                properties: Vec::new(),
+                certain: true,
+            });
+            self.bindings
+                .entry(key)
+                .and_modify(|binding| *binding = None)
+                .or_insert(binding);
         }
     }
 
@@ -232,6 +262,11 @@ impl<'tree> Bindings<'tree, '_> {
                 if !ignore_writes && self.writes.contains(&key) {
                     return self.value(node, depth + 1, true).map(|_| Value::Unknown);
                 }
+                if key.0 == self.root {
+                    if let Some(export) = self.registrations.fallback_export(name) {
+                        return Some(Value::Fallback(export.clone()));
+                    }
+                }
                 let binding = self.bindings.get(&key)?.as_ref()?;
                 let mut value = match &binding.origin {
                     Origin::Imported(value) => Some(value.clone()),
@@ -244,6 +279,12 @@ impl<'tree> Bindings<'tree, '_> {
                     Origin::Parameter(callback) => {
                         self.callback_value(*callback, depth + 1, ignore_writes)
                     }
+                    Origin::Forwarded(target) => self
+                        .value(*target, depth + 1, ignore_writes)
+                        .filter(|value| {
+                            matches!(value, Value::Export(export) | Value::Fallback(export)
+                            if export.kind == RegistrationExportKind::Call)
+                        }),
                     _ => None,
                 }?;
                 if !binding.certain {
@@ -350,6 +391,7 @@ pub(super) fn discover<'tree>(
     source: &[u8],
     file: &Path,
     resolver: &mut RegistrationResolver,
+    registrations: &super::registrations::RegistrationNames,
 ) -> Result<FrameworkCalls> {
     let (scopes, _, parents) = collect_binding_scopes(root, source);
     let mut bindings = Bindings {
@@ -361,6 +403,8 @@ pub(super) fn discover<'tree>(
         bindings: BTreeMap::new(),
         writes: BTreeSet::new(),
         requires: BTreeMap::new(),
+        registrations,
+        forwarded_targets: BTreeSet::new(),
     };
     let mut nodes = Vec::new();
     let mut pending = vec![(root, root.id())];
@@ -543,7 +587,10 @@ pub(super) fn discover<'tree>(
         let known = call
             .child_by_field_name("function")
             .and_then(|function| bindings.value(function, 0, false));
-        if matches!(known, Some(Value::Export(_) | Value::Scenario)) {
+        if matches!(
+            known,
+            Some(Value::Export(_) | Value::Fallback(_) | Value::Scenario)
+        ) {
             continue;
         }
         let mut arguments: Vec<_> = call.child_by_field_name("arguments").into_iter().collect();
@@ -577,10 +624,18 @@ pub(super) fn discover<'tree>(
                 result.shadowed.insert(function.start_byte());
             }
         }
-        match bindings.value(function, 0, false) {
-            Some(Value::Export(export)) if export.kind == RegistrationExportKind::Call => {
+        let value = bindings.value(function, 0, false);
+        let fallback = matches!(&value, Some(Value::Fallback(_)));
+        match value {
+            Some(Value::Export(export) | Value::Fallback(export))
+                if export.kind == RegistrationExportKind::Call =>
+            {
                 result.handled.insert(function.start_byte());
-                let executes = export.framework != Framework::JestCucumber
+                if bindings.forwarded_targets.contains(&function.start_byte()) {
+                    continue;
+                }
+                let executes = fallback
+                    || export.framework != Framework::JestCucumber
                     || nearest_function_scope(call.parent()).is_some_and(|callback| {
                         matches!(
                             bindings.callback_value(callback, 0, false),

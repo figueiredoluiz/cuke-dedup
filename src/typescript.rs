@@ -224,7 +224,13 @@ fn extract_detailed_impl(
     )?;
     let framework = registrations.framework;
     let framework_calls = if registrations.has_callback_framework() {
-        framework_callbacks::discover(root, source_bytes, &file.path, &mut session.resolver)?
+        framework_callbacks::discover(
+            root,
+            source_bytes,
+            &file.path,
+            &mut session.resolver,
+            &registrations,
+        )?
     } else {
         framework_callbacks::FrameworkCalls::default()
     };

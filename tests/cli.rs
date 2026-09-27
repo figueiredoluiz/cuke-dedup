@@ -3855,6 +3855,145 @@ fn a_long_exclusion_list_is_summarized_rather_than_printed_in_full() {
 // ===========================================================================================
 
 #[test]
+fn regression_framework_review_fallback_registrations_preserve_outcomes() {
+    for package in ["jest-cucumber", "vitest-cucumber-plugin"] {
+        for (callee, setup) in [
+            ("Given", ""),
+            ("step", ""),
+            ("alias", "const alias = Given;"),
+            ("wrapper", "function wrapper(p, h) { Given(p, h); }"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            write(
+                directory.path(),
+                ".cuke-dedup.json",
+                r#"{"registrations":["step"],"threshold":100}"#,
+            );
+            write(directory.path(), "steps.ts", &format!("import '{package}'; {setup} {callee}('first action', () => work()); {callee}('second action', () => work());"));
+            write(directory.path(), "steps.feature", "Feature: fallback\n Scenario: controls\n  Given first action\n  Then second action\n");
+            analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+                .code(0)
+                .stdout(predicate::str::contains("Analyzed 2 definitions"))
+                .stdout(predicate::str::contains("duplicate-handler"));
+        }
+    }
+}
+
+#[test]
+fn regression_framework_review_configured_import_does_not_trust_custom_assertions() {
+    for module in ["./helpers", "@jest/globals"] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            ".cuke-dedup.json",
+            r#"{"registrations":["step"],"threshold":100}"#,
+        );
+        write(
+            directory.path(),
+            "helpers.ts",
+            "export const step = customStep; export const expect = customExpect;",
+        );
+        write(directory.path(), "steps.ts", &format!("import 'vitest-cucumber-plugin'; import {{step}} from './helpers'; import {{expect}} from '{module}'; step('first action', () => expect(value).toBe(1)); step('second action', () => expect(value).toBe(2));"));
+        write(
+            directory.path(),
+            "steps.feature",
+            "Feature: trust\n Scenario: control\n  Given first action\n  Then second action\n",
+        );
+        let result = analyze_root_with(directory.path(), &["--fail-on-incomplete"])
+            .code(0)
+            .stdout(predicate::str::contains("Analyzed 2 definitions"))
+            .stdout(predicate::str::contains("duplicate-handler").not());
+        if module == "./helpers" {
+            result.stdout(predicate::str::contains("parameterization-candidate"));
+        } else {
+            result.stdout(predicate::str::contains("parameterization-candidate").not());
+        }
+    }
+}
+
+#[test]
+fn regression_framework_review_wrapped_callees_keep_registration_identity() {
+    for callee in [
+        "given",
+        "(given)",
+        "(given as typeof given)",
+        "(given satisfies typeof given)",
+        "given!",
+        "((given as typeof given)!)",
+    ] {
+        for framework in [
+            "@cucumber/cucumber",
+            "vitest-cucumber-plugin",
+            "jest-cucumber",
+        ] {
+            for (arguments, second_handler, definitions, duplicate) in [
+                ("p, h", "() => { prepare(); work(); }", 2, true),
+                ("p, h", "() => expect(value).toBe(2)", 2, false),
+                ("h, p", "() => { prepare(); work(); }", 0, false),
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                let first_handler = if second_handler.contains("expect") {
+                    "() => expect(value).toBe(1)"
+                } else {
+                    second_handler
+                };
+                let body = format!("function step(p, h) {{ {callee}({arguments}); }} step('first action', {first_handler}); step('second action', {second_handler});");
+                let source = if framework == "jest-cucumber" {
+                    format!("import {{defineFeature}} from '{framework}'; defineFeature(feature, test => test('one', ({{given}}) => {{ {body} }}));")
+                } else {
+                    format!("import {{Given as given}} from '{framework}'; {body}")
+                };
+                write(
+                    directory.path(),
+                    "steps.ts",
+                    &format!("import {{expect}} from '@jest/globals'; {source}"),
+                );
+                write(directory.path(), "steps.feature", "Feature: callee\n Scenario: controls\n  Given first action\n  Then second action\n");
+                analyze_root_with(
+                    directory.path(),
+                    &[
+                        "--threshold",
+                        "100",
+                        "--reporters",
+                        "json",
+                        "--output",
+                        "report",
+                    ],
+                )
+                .code(0);
+                let report: Value = serde_json::from_slice(
+                    &fs::read(directory.path().join("report/cuke-dedup.json")).unwrap(),
+                )
+                .unwrap();
+                let context = format!("{framework}: {callee}({arguments}), {second_handler}");
+                assert_eq!(
+                    report["summary"]["definitionsAnalyzed"], definitions,
+                    "{context}"
+                );
+                assert_eq!(
+                    report["summary"]["byRule"]["duplicate-handler"]
+                        .as_u64()
+                        .unwrap_or(0),
+                    u64::from(duplicate),
+                    "{context}"
+                );
+                assert!(
+                    report["summary"]["byRule"]["parameterization-candidate"].is_null(),
+                    "{context}"
+                );
+                assert!(
+                    report["summary"]["byRule"]["near-duplicate-step"].is_null(),
+                    "{context}"
+                );
+                if definitions > 0 {
+                    assert_eq!(report["corpus"]["incomplete"], false, "{context}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn regression_pr56_cjs_barrel_require_resolves_registrations_end_to_end() {
     // PR #55/#56: a project-local CommonJS barrel that re-exports a registration, imported by
     // `require`, must resolve so its definitions are analyzed. If barrel resolution regresses the
