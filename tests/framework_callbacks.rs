@@ -115,18 +115,23 @@ fn unsupported_jest_setup_keeps_cli_reports_incomplete() {
         "Feature: scope\n Scenario: first\n  Given first action\n",
     )
     .unwrap();
-    let report = directory.path().join("report");
+    let (output, value) = strict_report(directory.path());
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unresolved step-registration calls"));
+    assert_eq!(value["corpus"]["incomplete"], true);
+}
+
+fn strict_report(directory: &std::path::Path) -> (std::process::Output, serde_json::Value) {
+    let report = directory.join("report");
     let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("cuke-dedup"))
-        .arg(directory.path())
+        .arg(directory)
         .args(["--fail-on-incomplete", "--reporters", "json", "--output"])
         .arg(&report)
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unresolved step-registration calls"));
-    let value: serde_json::Value =
+    let value =
         serde_json::from_slice(&std::fs::read(report.join("cuke-dedup.json")).unwrap()).unwrap();
-    assert_eq!(value["corpus"]["incomplete"], true);
+    (output, value)
 }
 
 fn has(rules: &BTreeSet<Rule>, rule: Rule) -> bool {
@@ -691,5 +696,194 @@ fn unmodeled_aliases_keep_framework_evidence_without_registering_steps() {
         let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
         assert!(frameworks.is_empty(), "{source}");
         assert!(!diagnostics.is_empty(), "silent unsupported alias: {source}");
+    }
+}
+
+#[test]
+fn known_helpers_preserve_complete_handler_outcomes() {
+    for helper in [
+        "loadFeature",
+        "loadFeatures",
+        "parseFeature",
+        "setJestCucumberConfiguration",
+        "generateCodeFromFeature",
+        "generateCodeWithSeparateFunctionsFromFeature",
+    ] {
+        for setup in [
+            format!("const {{defineFeature, {helper}: help}} = require('jest-cucumber');"),
+            format!("import {{defineFeature, {helper} as help}} from 'jest-cucumber';"),
+            format!("import * as jc from 'jest-cucumber'; const {{defineFeature}}=jc; const help=jc.{helper};"),
+            format!("import jc = require('jest-cucumber'); const {{defineFeature, ['{helper}']: help}}=jc;"),
+            format!("const jc=require('jest-cucumber'); const {{defineFeature}}=jc; const help=jc['{helper}'];"),
+        ] {
+            for (callback, pending) in [("steps =>", "steps.pending"), ("function(steps)", "steps['pending']")] {
+                for equal in [true, false] {
+                    let right = if equal { 1 } else { 2 };
+                    let source = format!("import {{expect}} from '@jest/globals'; {setup} help('example'); consume({{help}}); defineFeature(feature, test => test('one', {callback} {{ const {{given, pending: wait}}=steps; {pending}(); wait(); consume({{wait}}); given('first',()=>expect(value).toBe(1)); given('second',()=>expect(value).toBe({right})); }}));");
+                    let (definitions, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+                    assert_eq!(definitions.len(), 2, "{source}: {diagnostics:?}");
+                    assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+                    assert_eq!(has(&rules, Rule::DuplicateHandler), equal, "{source}: {rules:?}");
+                    if !equal {
+                        assert!(!has(&rules, Rule::NearDuplicateStep));
+                        assert!(!has(&rules, Rule::ParameterizationCandidate));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn helper_exemptions_do_not_hide_uncertain_or_escaped_registrations() {
+    for (setup, count) in [
+        ("jc.missing();", 2),
+        ("jc[key]();", 2),
+        ("const {loadFeature: help = fallback}=jc; help();", 2),
+        ("const {[key]: help}=jc; help();", 2),
+        ("let help=jc.loadFeature; help();", 2),
+        ("const help=jc.loadFeature; help=other; help();", 0),
+        ("jc.loadFeature=other; jc.loadFeature();", 0),
+        ("consume(jc); jc.loadFeature();", 0),
+        ("jc.loadFeature(jc);", 0),
+        ("jc.loadFeature({jc});", 0),
+        ("for (jc of values) {}", 0),
+        ("({value: jc}=source);", 0),
+    ] {
+        let source = format!("import * as jc from 'jest-cucumber'; {setup} jc.defineFeature(feature,t=>t('one',({{given}})=>{{given('first',()=>work());given('second',()=>work());}}));");
+        let (definitions, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        assert_eq!(definitions.len(), count, "{source}: {diagnostics:?}");
+        assert_eq!(has(&rules, Rule::DuplicateHandler), count == 2, "{source}");
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+    for callback in ["async steps =>", "function* (steps)"] {
+        let source = format!("import {{defineFeature}} from 'jest-cucumber'; defineFeature(feature,t=>t('one',{callback} {{steps.pending();steps.given('first',()=>work());}}));");
+        let (definitions, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        assert!(definitions.is_empty());
+        assert!(!diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn helper_barrels_require_export_provenance_and_keep_strict_cli_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("sample.feature"),
+        "Feature: helpers\n Scenario: one\n  Given first\n",
+    )
+    .unwrap();
+    for (barrel, complete) in [
+        ("export {defineFeature, loadFeature} from 'jest-cucumber';", true),
+        ("module.exports=require('jest-cucumber');", true),
+        ("const jc=require('jest-cucumber'); exports.defineFeature=jc.defineFeature; exports.loadFeature=jc.loadFeature;", false),
+        ("export {defineFeature} from 'jest-cucumber'; export const loadFeature=unrelated;", false),
+    ] {
+        std::fs::write(directory.path().join("barrel.ts"), barrel).unwrap();
+        std::fs::write(directory.path().join("steps.ts"), "const {defineFeature, loadFeature}=require('./barrel'); loadFeature('sample.feature'); defineFeature(feature,t=>t('one',({given})=>given('first',()=>work())));").unwrap();
+        let (output, value) = strict_report(directory.path());
+        assert_eq!(output.status.code(), Some(if complete { 0 } else { 2 }), "{barrel}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(value["corpus"]["incomplete"], !complete);
+    }
+}
+
+#[test]
+fn callback_discovery_preserves_outcomes_through_adjacent_syntax() {
+    for setup in [
+        "export default function() {};",
+        "function unrelated({value}, handler) { target(value, handler); }",
+        "let unrelated; class Other {} enum Choice { One }",
+        "declare class Other {} declare const erased: unknown;",
+        "import Alias = Other.Member; require(dynamicModule);",
+        "function local(loadFeature) { loadFeature(); }",
+        "function local() { class loadFeature {} }",
+        "const {loadFeature: help}=jc; consume(help); jc.loadFeature('sample');",
+        "for (const jc of objects) { consume(jc); }",
+        "factory().value = 1;",
+    ] {
+        let source = format!("import * as jc from 'jest-cucumber'; {setup} jc.defineFeature(feature,t=>t('one',({{given}})=>{{given('first',()=>work());given('second',()=>work());}}));");
+        let (definitions, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        assert_eq!(definitions.len(), 2, "{source}: {diagnostics:?}");
+        assert!(has(&rules, Rule::DuplicateHandler), "{source}");
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+    for setup in [
+        "const {...rest}=jc; rest.missing();",
+        "const {loadFeature: help, ...rest}=jc; rest.missing();",
+    ] {
+        let source = format!("import * as jc from 'jest-cucumber'; {setup}");
+        let (definitions, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        assert!(definitions.is_empty());
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+    let mut source = "import * as jc from 'jest-cucumber'; const a0=jc;".to_owned();
+    for n in 1..40 {
+        source.push_str(&format!("const a{n}=a{};", n - 1));
+    }
+    for mutate in ["", "a39=unknown;"] {
+        let (definitions, rules, diagnostics) = outcomes(
+            &format!("{source} {mutate} a39.defineFeature(feature, setup);"),
+            SourceLanguage::TypeScript,
+        );
+        assert!(definitions.is_empty());
+        assert!(rules.is_empty());
+        assert!(!diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn deep_alias_writes_and_escapes_invalidate_roots_without_losing_uncertainty() {
+    for (package, control, member) in [
+        ("jest-cucumber", "root.defineFeature(feature,t=>t('one',({given})=>{given('first',()=>work());given('second',()=>work());}));", "defineFeature"),
+        ("vitest-cucumber-plugin", "root.Given('first',()=>work());root.Given('second',()=>work());", "Given"),
+    ] {
+        for length in [1, 30, 32, 33, 40, 96] {
+            let mut source = format!("import * as root from '{package}'; const a0=root;");
+            for n in 1..length {
+                source.push_str(&format!("const a{n}=a{};", n - 1));
+            }
+            let alias = format!("a{}", length - 1);
+            for (effect, count, incomplete) in [
+                (String::new(), 2, false),
+                (format!("{alias}.{member}=other;"), 0, true),
+                (format!("{alias}['{member}']=other;"), 0, true),
+                (format!("{alias}=other;"), 0, true),
+                (format!("consume({alias});"), 0, true),
+                (format!("consume({{{alias}}});"), 0, true),
+                (format!("for ({alias} of values) {{}}"), 0, true),
+                (format!("{alias}.missing();"), 2, true),
+                ("const x=y; const y=x; x.property=other;".into(), 2, false),
+                ("function x(p,h){y(p,h);} function y(p,h){x(p,h);} x('unknown',()=>work());".into(), 2, true),
+            ] {
+                let input = format!("{source} {effect} {control}");
+                let (definitions, rules, diagnostics) = outcomes(&input, SourceLanguage::TypeScript);
+                assert_eq!(definitions.len(), count, "{input}: {diagnostics:?}");
+                assert_eq!(has(&rules, Rule::DuplicateHandler), count == 2, "{input}");
+                assert_eq!(!diagnostics.is_empty(), incomplete, "{input}: {diagnostics:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn deep_alias_cli_rejects_incomplete_setup_and_mutated_root_findings() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("sample.feature"),
+        "Feature: aliases\n Scenario: one\n  Given first\n",
+    )
+    .unwrap();
+    let mut prefix = "import * as root from 'jest-cucumber'; const a0=root;".to_owned();
+    for n in 1..40 {
+        prefix.push_str(&format!("const a{n}=a{};", n - 1));
+    }
+    for (effect, count) in [
+        ("a39.defineFeature(feature, setup);", 2),
+        ("a39.defineFeature=unknown;", 0),
+    ] {
+        std::fs::write(directory.path().join("steps.ts"), format!("{prefix} {effect} root.defineFeature(feature,t=>t('one',({{given}})=>{{given('first',()=>work());given('second',()=>work());}}));")).unwrap();
+        let (output, value) = strict_report(directory.path());
+        assert_eq!(output.status.code(), Some(2), "{effect}");
+        assert_eq!(value["corpus"]["incomplete"], true);
+        assert_eq!(value["corpus"]["definitionsExtracted"], count);
     }
 }

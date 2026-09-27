@@ -23,6 +23,7 @@ pub(super) enum RegistrationExportKind {
     Factory,
     Feature,
     Unsupported,
+    NonRegistration,
 }
 
 pub(super) type RegistrationExports = BTreeMap<String, RegistrationExport>;
@@ -162,7 +163,16 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
     let framework = entry.framework;
     let special = match entry.exports {
         ExportStyle::Jest => Some((
-            &["defineFeature", "autoBindSteps"][..],
+            &[
+                "defineFeature",
+                "autoBindSteps",
+                "loadFeature",
+                "loadFeatures",
+                "parseFeature",
+                "setJestCucumberConfiguration",
+                "generateCodeFromFeature",
+                "generateCodeWithSeparateFunctionsFromFeature",
+            ][..],
             RegistrationExportKind::Feature,
         )),
         ExportStyle::Vitest => Some((&["Given", "When", "Then"][..], RegistrationExportKind::Call)),
@@ -178,6 +188,8 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
                         canonical: (*name).to_owned(),
                         kind: if *name == "autoBindSteps" {
                             RegistrationExportKind::Unsupported
+                        } else if framework == Framework::JestCucumber && *name != "defineFeature" {
+                            RegistrationExportKind::NonRegistration
                         } else {
                             kind
                         },

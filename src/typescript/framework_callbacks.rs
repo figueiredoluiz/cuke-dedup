@@ -58,11 +58,16 @@ enum Value {
     Namespace(RegistrationExports),
     Scenario,
     Steps,
-    /// Framework evidence survived, but its exact callable value is unproved.
+    /// Framework-derived or depth-limited value whose callable origin remains unproved.
     Unknown,
 }
 
 impl Value {
+    /// Non-registration provenance survives aliases but grants no execution or assertion trust.
+    fn is_non_registration(&self) -> bool {
+        matches!(self, Self::Export(export) if export.kind == RegistrationExportKind::NonRegistration)
+    }
+
     fn property(self, name: &str) -> Option<Self> {
         match self {
             Self::Namespace(exports) => exports.get(name).cloned().map(Self::Export),
@@ -72,12 +77,16 @@ impl Value {
             Self::Steps
                 if matches!(
                     name,
-                    "given" | "when" | "then" | "and" | "but" | "defineStep"
+                    "given" | "when" | "then" | "and" | "but" | "defineStep" | "pending"
                 ) =>
             {
                 Some(Self::Export(RegistrationExport {
                     canonical: name.to_owned(),
-                    kind: RegistrationExportKind::Call,
+                    kind: if name == "pending" {
+                        RegistrationExportKind::NonRegistration
+                    } else {
+                        RegistrationExportKind::Call
+                    },
                     framework: Framework::JestCucumber,
                 }))
             }
@@ -248,7 +257,7 @@ impl<'tree> Bindings<'tree, '_> {
 
     fn value(&self, node: Node<'tree>, depth: usize, ignore_writes: bool) -> Option<Value> {
         if depth > 32 {
-            return None;
+            return Some(Value::Unknown);
         }
         let node = unwrap_registration_callee(node)?;
         let callee = if node.kind() == "shorthand_property_identifier" {
@@ -282,7 +291,8 @@ impl<'tree> Bindings<'tree, '_> {
                     Origin::Forwarded(target) => self
                         .value(*target, depth + 1, ignore_writes)
                         .filter(|value| {
-                            matches!(value, Value::Export(export) | Value::Fallback(export)
+                            matches!(value, Value::Unknown)
+                                || matches!(value, Value::Export(export) | Value::Fallback(export)
                             if export.kind == RegistrationExportKind::Call)
                         }),
                     _ => None,
@@ -354,10 +364,7 @@ impl<'tree> Bindings<'tree, '_> {
         }
     }
 
-    fn invalidate(&mut self, target: Node<'tree>, depth: usize) {
-        if depth > 32 {
-            return;
-        }
+    fn invalidate(&mut self, target: Node<'tree>) {
         let mut stack = vec![target];
         while let Some(node) = stack.pop() {
             match node.kind() {
@@ -371,7 +378,7 @@ impl<'tree> Bindings<'tree, '_> {
                             ..
                         })) = self.bindings.get(&key)
                         {
-                            self.invalidate(*value, depth + 1);
+                            stack.push(*value);
                         }
                     }
                 }
@@ -573,7 +580,7 @@ pub(super) fn discover<'tree>(
             _ => None,
         };
         if let Some(target) = target {
-            bindings.invalidate(target, 0);
+            bindings.invalidate(target);
         }
     }
     // Unknown code can mutate a framework object handed to it, including through a container.
@@ -586,7 +593,8 @@ pub(super) fn discover<'tree>(
     {
         let known = call
             .child_by_field_name("function")
-            .and_then(|function| bindings.value(function, 0, false));
+            .and_then(|function| bindings.value(function, 0, false))
+            .filter(|value| !value.is_non_registration());
         if matches!(
             known,
             Some(Value::Export(_) | Value::Fallback(_) | Value::Scenario)
@@ -595,15 +603,17 @@ pub(super) fn discover<'tree>(
         }
         let mut arguments: Vec<_> = call.child_by_field_name("arguments").into_iter().collect();
         while let Some(argument) = arguments.pop() {
-            if bindings.value(argument, 0, false).is_some() {
-                escaped.push(argument);
+            if let Some(value) = bindings.value(argument, 0, false) {
+                if !value.is_non_registration() {
+                    escaped.push(argument);
+                }
             } else if argument.kind() != "call_expression" {
                 super::push_value_positions(argument, source, &mut arguments);
             }
         }
     }
     for argument in escaped {
-        bindings.invalidate(argument, 0);
+        bindings.invalidate(argument);
     }
     let mut result = FrameworkCalls::default();
     for call in nodes
@@ -625,6 +635,7 @@ pub(super) fn discover<'tree>(
             }
         }
         let value = bindings.value(function, 0, false);
+        let non_registration = value.as_ref().is_some_and(Value::is_non_registration);
         let fallback = matches!(&value, Some(Value::Fallback(_)));
         match value {
             Some(Value::Export(export) | Value::Fallback(export))
@@ -655,7 +666,7 @@ pub(super) fn discover<'tree>(
                     result.incomplete.insert(function.start_byte());
                 }
             }
-            Some(Value::Export(_)) | Some(Value::Scenario) => {
+            Some(Value::Export(_)) | Some(Value::Scenario) if !non_registration => {
                 result.handled.insert(function.start_byte());
                 let callback = call.child_by_field_name("arguments").and_then(|arguments| {
                     arguments
@@ -671,6 +682,9 @@ pub(super) fn discover<'tree>(
                 }
             }
             _ => {
+                if non_registration {
+                    result.handled.insert(function.start_byte());
+                }
                 // Mutated roots, dynamic properties and escaped framework values are incomplete.
                 let mut references = vec![function];
                 references.extend(
@@ -679,8 +693,10 @@ pub(super) fn discover<'tree>(
                         .flat_map(|args| args.named_children(&mut args.walk()).collect::<Vec<_>>()),
                 );
                 if references.into_iter().any(|node| {
-                    let base = node.child_by_field_name("object").unwrap_or(node);
-                    bindings.value(base, 0, true).is_some()
+                    bindings
+                        .value(node, 0, false)
+                        .or_else(|| bindings.value(node, 0, true))
+                        .is_some_and(|value| !value.is_non_registration())
                 }) {
                     result.handled.insert(function.start_byte());
                     result.incomplete.insert(function.start_byte());
