@@ -4563,6 +4563,16 @@ fn registration_aliases_follow_the_nearest_runtime_binding() {
             1,
         ),
         (
+            "const bdd=require('playwright-bdd');const {createBdd:factory}=bdd;factory('ghost',()=>{start();finish();});const {Given:step}=require('@cucumber/cucumber');step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "const bdd=require('playwright-bdd');function nested(require){const bdd=require('playwright-bdd');const {createBdd:factory}=bdd;factory('ghost',()=>{start();finish();});}const {Given:step}=require('@cucumber/cucumber');step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
             "const {Given:step}=require('@cucumber/cucumber');function nested(){type step=number;step('first',()=>{start();finish();});step('second',()=>{start();finish();});}",
             2,
             1,
@@ -4603,8 +4613,9 @@ fn configured_registration_name_keeps_its_explicit_global_policy() {
                 r#"{"registrations":["step"],"threshold":100}"#,
             );
         }
-        write(directory.path(), "steps.ts", "function nested(){function step(text,handler){return handler;}step('first',()=>{start();finish();});step('second',()=>{start();finish();});}");
+        write(directory.path(), "steps.ts", "function nested(){function step(text,handler){return handler;}pass({step});step('first',()=>{start();finish();});step('second',()=>{start();finish();});}");
         let report = registration_jsonl_report(directory.path());
+        assert_eq!(report["corpus"]["incomplete"], configured);
         let summary = &report["summary"];
         assert_eq!(
             summary["definitionsAnalyzed"],
