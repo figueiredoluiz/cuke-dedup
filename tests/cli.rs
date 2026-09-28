@@ -1907,6 +1907,137 @@ fn oversized_registration_modules_cannot_silently_remove_definitions() {
 }
 
 #[test]
+fn ambiguous_steps_follow_the_selected_corpus_not_package_boundaries() {
+    for local_conflict in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        for (suite, import) in [
+            (
+                "alpha",
+                "import { Given } from '@badeball/cypress-cucumber-preprocessor';",
+            ),
+            (
+                "beta",
+                "const { Given } = require('@badeball/cypress-cucumber-preprocessor');",
+            ),
+        ] {
+            let root = directory.path().join(suite);
+            write(&root, "package.json", &format!(r#"{{"name":"{suite}"}}"#));
+            write(
+                &root,
+                ".cypress-cucumber-preprocessorrc.json",
+                r#"{"stepDefinitions":["*.js"]}"#,
+            );
+            write(
+                &root,
+                "steps.js",
+                &format!("{import}\nGiven('the lamp is on', () => {{}});\n"),
+            );
+            write(
+                &root,
+                "lamp.feature",
+                &format!("@{suite}\nFeature: Lamp\n Scenario: Lit\n  Given the lamp is on\n"),
+            );
+        }
+        if local_conflict {
+            write(
+                directory.path(),
+                "alpha/extra.js",
+                "import { Then } from '@badeball/cypress-cucumber-preprocessor';\nThen(/^the lamp is (on|off)$/, () => {});\n",
+            );
+        }
+        let extra = u64::from(local_conflict);
+        // root, definition filter, feature filter, definitions, steps, ambiguous steps
+        for (root, definitions, features, definition_count, step_count, ambiguous_count) in [
+            (".", "**/*.js", "**/*.feature", 2 + extra, 2, 2),
+            ("alpha", "**/*.js", "**/*.feature", 1 + extra, 1, extra),
+            ("beta", "**/*.js", "**/*.feature", 1, 1, 0),
+            (".", "alpha/*.js", "alpha/*.feature", 1 + extra, 1, extra),
+            (".", "beta/*.js", "beta/*.feature", 1, 1, 0),
+            (".", "**/*.js", "alpha/*.feature", 2 + extra, 1, 1),
+            (".", "alpha/*.js", "**/*.feature", 1 + extra, 2, 2 * extra),
+        ] {
+            let context = format!("{root}: {definitions}, {features}, conflict={local_conflict}");
+            let output = Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(directory.path())
+                .args([
+                    root,
+                    "--definitions",
+                    definitions,
+                    "--features",
+                    features,
+                    "--threshold",
+                    "100",
+                    "--reporters",
+                    "jsonl",
+                    "--no-metrics",
+                ])
+                .assert()
+                .code(i32::from(ambiguous_count > 0))
+                .get_output()
+                .stdout
+                .clone();
+            let records: Vec<Value> = String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let summary = records.last().unwrap();
+            assert_eq!(summary["type"], "summary", "{context}");
+            assert_eq!(
+                summary["summary"]["definitionsAnalyzed"], definition_count,
+                "{context}"
+            );
+            assert_eq!(
+                summary["summary"]["featureStepsAnalyzed"], step_count,
+                "{context}"
+            );
+            assert_eq!(summary["corpus"]["incomplete"], false, "{context}");
+            let ambiguous: Vec<_> = records
+                .iter()
+                .filter(|record| record["rule"] == "ambiguous-step")
+                .collect();
+            assert_eq!(ambiguous.len() as u64, ambiguous_count, "{context}");
+            let prefix = if root == "." { "alpha/" } else { "" };
+            let mut expected_related = vec![format!("{prefix}steps.js")];
+            if local_conflict && definitions != "beta/*.js" && root != "beta" {
+                expected_related.push(format!("{prefix}extra.js"));
+            }
+            if root == "." && definitions == "**/*.js" {
+                expected_related.push("beta/steps.js".to_string());
+            }
+            expected_related.sort();
+            let mut primary_paths = Vec::new();
+            for finding in ambiguous {
+                assert_eq!(finding["active"], true, "{context}");
+                assert_eq!(finding["primary"]["line"], 4, "{context}");
+                primary_paths.push(finding["primary"]["path"].as_str().unwrap());
+                let related = finding["related"].as_array().unwrap();
+                assert_eq!(related.len() as u64, definition_count, "{context}");
+                assert!(
+                    related.iter().all(|location| location["line"] == 2),
+                    "{context}"
+                );
+                let mut paths: Vec<_> = related
+                    .iter()
+                    .map(|location| location["path"].as_str().unwrap())
+                    .collect();
+                paths.sort();
+                assert_eq!(paths, expected_related, "{context}");
+            }
+            primary_paths.sort();
+            let expected_primary = match (ambiguous_count, root) {
+                (0, _) => vec![],
+                (2, _) => vec!["alpha/lamp.feature", "beta/lamp.feature"],
+                (_, ".") => vec!["alpha/lamp.feature"],
+                _ => vec!["lamp.feature"],
+            };
+            assert_eq!(primary_paths, expected_primary, "{context}");
+        }
+    }
+}
+
+#[test]
 fn matcher_overlap_is_reported_without_a_feature_corpus() {
     let directory = tempfile::tempdir().unwrap();
     write(

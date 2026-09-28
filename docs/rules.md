@@ -36,6 +36,8 @@ One concrete step from the discovered feature corpus matches multiple definition
 not speculate about steps absent from the corpus; `overlapping-matcher` handles that case. Narrow
 one matcher or remove the duplicate.
 
+The selected definitions form one comparison corpus; CukeDedup does not infer which definitions a runner loads for each feature. Before changing matchers in a monorepo or a suite with feature-local Cypress steps, check that the reported definitions actually coexist at runtime. Scope both definitions and features to that registry as described in [Corpus boundaries](discovery-and-frameworks.md#corpus-boundaries). Filtering only features still compares each selected step against every selected definition.
+
 ### overlapping-matcher
 
 Static analysis can synthesize a concrete Cucumber Expression accepted by two definitions, even
