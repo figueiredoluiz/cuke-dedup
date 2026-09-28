@@ -35,7 +35,6 @@ pub(super) struct FrameworkCalls {
     registrations: BTreeMap<usize, Registration>,
     pub(super) handled: BTreeSet<usize>,
     pub(super) incomplete: BTreeSet<usize>,
-    pub(super) shadowed: BTreeSet<usize>,
 }
 
 impl FrameworkCalls {
@@ -623,17 +622,6 @@ pub(super) fn discover<'tree>(
         let Some(function) = call.child_by_field_name("function") else {
             continue;
         };
-        let mut base = function;
-        while let Some(RegistrationCallee::Property { object, .. }) =
-            registration_callee(base, source)
-        {
-            base = object;
-        }
-        if let Some(RegistrationCallee::Identifier(name)) = registration_callee(base, source) {
-            if bindings.key(base, name).0 != root.id() {
-                result.shadowed.insert(function.start_byte());
-            }
-        }
         let value = bindings.value(function, 0, false);
         let non_registration = value.as_ref().is_some_and(Value::is_non_registration);
         let fallback = matches!(&value, Some(Value::Fallback(_)));

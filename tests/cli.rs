@@ -4421,3 +4421,307 @@ fn regression_pr63_registration_passed_to_a_helper_is_reported() {
         }
     }
 }
+
+fn registration_jsonl_report(root: &Path) -> Value {
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .args([
+            root.to_str().unwrap(),
+            "--definitions",
+            "steps.ts",
+            "--reporters",
+            "jsonl",
+            "--no-metrics",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        matches!(output.status.code(), Some(0 | 1)),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let report: Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(report["type"], "summary");
+    report
+}
+
+#[test]
+fn registration_loader_provenance_respects_runtime_scopes() {
+    let body = "('first operation', () => { start(); finish(); }); step('second operation', () => { start(); finish(); });";
+    for (prefix, suffix, trusted) in [
+        ("", "", true),
+        ("function require() {}", "", false),
+        ("", "function require() {}", false),
+        ("const require = other;", "", false),
+        ("", "let require;", false),
+        ("if (flag) { var require; }", "", false),
+        ("class require {}", "", false),
+        ("enum require { Other }", "", false),
+        ("namespace require { export const other = 1; }", "", false),
+        ("import require from './other';", "", false),
+        ("require = other;", "", false),
+        ("({require} = other);", "", false),
+        ("function later() { require = other; }", "", false),
+        ("function scope(require) {", "}", false),
+        ("const scope = (require) => {", "};", false),
+        ("function* scope(require) {", "}", false),
+        ("{", "const require = other; }", false),
+        ("try {} catch (require) {", "}", false),
+        ("for (const require of loaders) {", "}", false),
+        ("function sibling(require) { require = other; }", "", true),
+        ("function sibling(require) { const {Given: step} = require('@cucumber/cucumber'); step('ghost', () => { start(); finish(); }); }", "", true),
+        ("{ const require = other; }", "", true),
+        ("type require = string; interface require {}", "", true),
+        ("import type { require } from './other';", "", true),
+        ("declare var require: any;", "", true),
+        ("namespace scope { declare const require: any;", "}", true),
+    ] {
+        for local in [false, true] {
+            for (module, binding) in [
+                ("@cucumber/cucumber", "const { Given: step } = require(MODULE);"),
+                ("@cucumber/cucumber", "const api = require(MODULE); const {Given: step} = api;"),
+                ("playwright-bdd", "const {createBdd} = require(MODULE); const {Given: step} = createBdd();"),
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                write(directory.path(), "barrel.cjs", &format!("module.exports = require('{module}');"));
+                write(directory.path(), "other.ts", "export default function other() {};");
+                let module = if local { "./barrel.cjs" } else { module };
+                let binding = binding.replace("MODULE", &format!("'{module}'"));
+                write(directory.path(), "steps.ts", &format!("{prefix} {binding} step{body} {suffix}"));
+                let context = format!("{prefix} {binding} ... {suffix}");
+                let report = registration_jsonl_report(directory.path());
+                let summary = &report["summary"];
+                assert_eq!(summary["definitionsAnalyzed"], if trusted {2} else {0}, "{context}");
+                assert_eq!(summary["byRule"]["duplicate-handler"].as_u64().unwrap_or(0), u64::from(trusted), "{context}");
+            }
+        }
+    }
+}
+
+#[test]
+fn registration_aliases_follow_the_nearest_runtime_binding() {
+    let cases = [
+        (
+            "const {Given:step}=require('@cucumber/cucumber'); function sibling(require){const {Given:step}=require('@cucumber/cucumber');step('ghost',()=>{start();finish();});} step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "function nested(){const {Given:step}=require('@cucumber/cucumber');step('first',()=>{start();finish();});step('second',()=>{start();finish();});} function sibling(){step('ghost',()=>{start();finish();});} step('outside',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "const {Given:step}=require('@cucumber/cucumber');function nested(require){step('first',()=>{start();finish();});step('second',()=>{start();finish();});}",
+            2,
+            1,
+        ),
+        (
+            "const {Given:step}=require('@cucumber/cucumber');function nested(){const step=unrelated;step('ghost',()=>{start();finish();});}step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "const api=require('@cucumber/cucumber');function nested(require){const api=require('@cucumber/cucumber');api.Given('ghost',()=>{start();finish();});}api.Given('first',()=>{start();finish();});api.Given('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "function nested(){const api=require('@cucumber/cucumber');api.Given('first',()=>{start();finish();});api.Given('second',()=>{start();finish();});}function sibling(){api.Given('ghost',()=>{start();finish();});}",
+            2,
+            1,
+        ),
+        (
+            "const api=require('@cucumber/cucumber');const {Given:step}=api;function nested(require){const api=require('@cucumber/cucumber');const {Given:step}=api;step('ghost',()=>{start();finish();});}step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "const {Given:g}=require('@cucumber/cucumber');const step=g;function nested(require){const {Given:g}=require('@cucumber/cucumber');const step=g;step('ghost',()=>{start();finish();});}step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "const {createBdd}=require('playwright-bdd');const {Given:step}=createBdd();function nested(require){const {createBdd}=require('playwright-bdd');const {Given:step}=createBdd();step('ghost',()=>{start();finish();});}step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "function nested(){const {createBdd}=require('playwright-bdd');const {Given:step}=createBdd();step('first',()=>{start();finish();});step('second',()=>{start();finish();});}function sibling(){step('ghost',()=>{start();finish();});}",
+            2,
+            1,
+        ),
+        (
+            "import {defineFeature} from 'jest-cucumber';function nested(){const {Given:step}=require('@cucumber/cucumber');step('first',()=>{start();finish();});step('second',()=>{start();finish();});}",
+            2,
+            1,
+        ),
+        (
+            "import {defineFeature} from 'jest-cucumber';const {Given:step}=require('@cucumber/cucumber');function nested(require){const {Given:step}=require('@cucumber/cucumber');step('ghost',()=>{start();finish();});}step('first',()=>{start();finish();});step('second',()=>{start();finish();});",
+            2,
+            1,
+        ),
+        (
+            "const {Given:step}=require('@cucumber/cucumber');function nested(){type step=number;step('first',()=>{start();finish();});step('second',()=>{start();finish();});}",
+            2,
+            1,
+        ),
+        (
+            "import {Given as step} from '@cucumber/cucumber';function nested(require){step('first',()=>{start();finish();});step('second',()=>{start();finish();});}",
+            2,
+            1,
+        ),
+        (
+            "import {expect} from '@jest/globals';const {Given:step}=require('@cucumber/cucumber');function nested(){const step=unrelated;step('ghost',()=>expect(1).toBe(1));}step('first',()=>expect(1).toBe(1));step('second',()=>expect(1).toBe(2));",
+            2,
+            0,
+        ),
+    ];
+    for (source, definitions, duplicates) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "steps.ts", source);
+        let report = registration_jsonl_report(directory.path());
+        let summary = &report["summary"];
+        assert_eq!(summary["definitionsAnalyzed"], definitions, "{source}");
+        assert_eq!(
+            summary["byRule"]["duplicate-handler"].as_u64().unwrap_or(0),
+            duplicates,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn configured_registration_name_keeps_its_explicit_global_policy() {
+    for configured in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        if configured {
+            write(
+                directory.path(),
+                ".cuke-dedup.json",
+                r#"{"registrations":["step"],"threshold":100}"#,
+            );
+        }
+        write(directory.path(), "steps.ts", "function nested(){function step(text,handler){return handler;}step('first',()=>{start();finish();});step('second',()=>{start();finish();});}");
+        let report = registration_jsonl_report(directory.path());
+        let summary = &report["summary"];
+        assert_eq!(
+            summary["definitionsAnalyzed"],
+            if configured { 2 } else { 0 }
+        );
+        assert_eq!(
+            summary["byRule"]["duplicate-handler"].as_u64().unwrap_or(0),
+            u64::from(configured)
+        );
+    }
+}
+
+#[test]
+fn registration_barrels_cannot_reexport_a_shadowed_loader() {
+    for export in [
+        "module.exports = require('@cucumber/cucumber');",
+        "const api = require('@cucumber/cucumber'); module.exports = api;",
+        "exports.Given = require('@cucumber/cucumber').Given;",
+        "module.exports = {...require('@cucumber/cucumber')};",
+        "Object.assign(module.exports, require('@cucumber/cucumber'));",
+        "const {Given} = require('@cucumber/cucumber'); module.exports = {Given};",
+        "const {createBdd} = require('playwright-bdd'); const {Given} = createBdd(); module.exports = {Given};",
+    ] {
+        for shadowed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let prefix = if shadowed { "function require() {}" } else { "" };
+            write(directory.path(), "barrel.ts", &format!("{prefix} {export}"));
+            write(directory.path(), "steps.ts", "import {Given as step} from './barrel'; step('first operation', () => {start(); finish();}); step('second operation', () => {start(); finish();});");
+            write(directory.path(), "steps.feature", "Feature: operations\n  Scenario: two steps\n    Given first operation\n    Given second operation\n");
+            let report = registration_jsonl_report(directory.path());
+            let summary = &report["summary"];
+            let trusted = !shadowed;
+            assert_eq!(summary["definitionsAnalyzed"], if trusted {2} else {0}, "{prefix} {export}");
+            assert_eq!(summary["byRule"]["duplicate-handler"].as_u64().unwrap_or(0), u64::from(trusted), "{prefix} {export}");
+            assert_eq!(report["corpus"]["incomplete"], shadowed, "{prefix} {export}");
+        }
+    }
+}
+
+#[test]
+fn shadowed_loader_barrel_completeness_follows_exported_local_values() {
+    for (barrel, incomplete) in [
+        ("function require() {} const {Given} = require('@cucumber/cucumber'); const alias = Given; module.exports = {alias};", true),
+        ("function require() {} const {Given} = (require)('@cucumber/cucumber'); const alias = Given; module.exports = {alias};", true),
+        ("function require() {} const {Given} = (require as any)('@cucumber/cucumber'); const alias = Given; module.exports = {alias};", true),
+        ("function require() {} const ignored = require('@cucumber/cucumber'); const helper = () => {}; module.exports = {helper};", false),
+        ("function require() {} const ignored = require('@cucumber/cucumber'); module.exports = {helper: () => {}};", false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "barrel.ts", barrel);
+        write(directory.path(), "steps.ts", "import {alias as step} from './barrel'; step('first', () => {});");
+        write(directory.path(), "steps.feature", "Feature: probe\n  Scenario: one\n    Given first\n");
+        let report = registration_jsonl_report(directory.path());
+        let result = report;
+        assert_eq!(result["summary"]["definitionsAnalyzed"], 0, "{barrel}");
+        assert_eq!(result["corpus"]["incomplete"], incomplete, "{barrel}");
+    }
+}
+
+#[test]
+fn registration_loader_import_forms_preserve_conflicting_assertions() {
+    for (binding, callee, uses_loader) in [
+        (
+            "import {Given as step} from '@cucumber/cucumber';",
+            "step",
+            false,
+        ),
+        (
+            "import api = require('@cucumber/cucumber');",
+            "api.Given",
+            true,
+        ),
+        (
+            "const api = require('@cucumber/cucumber');",
+            "api.Given",
+            true,
+        ),
+        ("import {Given as step} from './barrel';", "step", false),
+    ] {
+        for shadowed in [false, true] {
+            for conflicting in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                write(
+                    directory.path(),
+                    "barrel.ts",
+                    "export {Given} from '@cucumber/cucumber';",
+                );
+                let prefix = if shadowed {
+                    "function require() {}"
+                } else {
+                    ""
+                };
+                let value = if conflicting { 2 } else { 1 };
+                write(directory.path(), "steps.ts", &format!("import {{expect}} from '@jest/globals'; {prefix} {binding} {callee}('first operation', () => expect(1).toBe(1)); {callee}('second operation', () => expect(1).toBe({value}));"));
+                let report = registration_jsonl_report(directory.path());
+                let summary = &report["summary"];
+                let trusted = !uses_loader || !shadowed;
+                let context = format!("{prefix} {binding} conflicting={conflicting}");
+                assert_eq!(
+                    summary["definitionsAnalyzed"],
+                    if trusted { 2 } else { 0 },
+                    "{context}"
+                );
+                for rule in [
+                    "duplicate-handler",
+                    "near-duplicate-step",
+                    "parameterization-candidate",
+                ] {
+                    let expected =
+                        u64::from(trusted && !conflicting && rule == "duplicate-handler");
+                    assert_eq!(
+                        summary["byRule"][rule].as_u64().unwrap_or(0),
+                        expected,
+                        "{context} {rule}"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -1,6 +1,7 @@
+use super::assertions::RequireBindings;
 use super::ast::{
-    call_string_argument, import_has_runtime_bindings, import_module, is_star_export,
-    is_top_level_variable, is_type_only_declaration, is_type_only_specifier,
+    call_string_argument, import_has_runtime_bindings, import_module, import_requires_loader,
+    is_star_export, is_top_level_variable, is_type_only_declaration, is_type_only_specifier,
     push_named_children_reverse, string_literal,
 };
 use super::frameworks::{
@@ -341,13 +342,17 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
 
 fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     let source = source.as_bytes();
+    let scope = ExportScope::new(tree.root_node(), source);
     let mut create_bdd_aliases = BTreeSet::new();
     let mut local_registrations = RegistrationExports::new();
     let mut imported_bindings = BTreeMap::new();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         match node.kind() {
-            "import_statement" if import_has_runtime_bindings(node) => {
+            "import_statement"
+                if import_has_runtime_bindings(node)
+                    && (!import_requires_loader(node) || scope.loader.available(node)) =>
+            {
                 if let Some(module) = import_module(node, source) {
                     collect_imported_binding_origins(node, source, module, &mut imported_bindings);
                     if is_supported_module(module) {
@@ -373,6 +378,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                     source,
                     &mut create_bdd_aliases,
                     &mut local_registrations,
+                    &scope.loader,
                 );
             }
             _ => {}
@@ -380,7 +386,6 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
         push_named_children_reverse(node, &mut stack);
     }
 
-    let scope = ExportScope::new(tree.root_node(), source);
     let mut facts = ExportFacts::default();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
@@ -426,7 +431,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     let ExportFacts {
         direct_export_names,
         mut reexports,
-        incomplete: exports_incomplete,
+        incomplete: mut exports_incomplete,
     } = facts;
     for (local, exported) in direct_export_names {
         if let Some(registration) = local_registrations.get(&local).cloned() {
@@ -440,6 +445,8 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
                 specifiers: vec![(imported.clone(), exported)],
                 star: false,
             });
+        } else if scope.rejected_loader_dependencies.contains(&local) {
+            exports_incomplete = true;
         }
     }
     let framework = direct_exports
@@ -492,14 +499,14 @@ fn collect_commonjs_export_assignment<'a>(
         // A bracket export names something the analyzer cannot resolve; fail closed.
         (Some(CommonjsExportTarget::Opaque), _) => facts.incomplete = true,
         (Some(CommonjsExportTarget::Named(name)), Some(right)) => {
-            if let Some((module, imported)) = required_member(right, source) {
+            if let Some((module, imported)) = required_member(right, source, &scope.loader) {
                 // `exports.step = require('./a').step`
                 facts.reexports.push(Reexport {
                     module: module.to_owned(),
                     specifiers: vec![(imported.to_owned(), name.to_owned())],
                     star: false,
                 });
-            } else if require_specifier(right, source).is_some() {
+            } else if require_specifier(right, source, &scope.loader).is_some() {
                 // `exports.steps = require('./a')` assigns the whole module object to one name; the
                 // analyzer does not model namespace-member registration, so it may hide steps.
                 facts.incomplete = true;
@@ -581,7 +588,7 @@ fn collect_commonjs_object_exports<'a>(
             "spread_element" => {
                 if let Some(module) = property
                     .named_child(0)
-                    .and_then(|argument| require_specifier(argument, source))
+                    .and_then(|argument| require_specifier(argument, source, &scope.loader))
                 {
                     facts.reexports.push(Reexport {
                         module: module.to_owned(),
@@ -638,7 +645,7 @@ fn collect_object_assign_exports<'a>(
         ExportPosition::ModuleBody => {}
     }
     for argument in arguments {
-        if let Some(module) = require_specifier(argument, source) {
+        if let Some(module) = require_specifier(argument, source, &scope.loader) {
             facts.reexports.push(Reexport {
                 module: module.to_owned(),
                 specifiers: Vec::new(),
@@ -764,18 +771,26 @@ fn is_module_exports(node: Node<'_>, source: &[u8]) -> bool {
 }
 
 /// Returns the specifier of a `require('…')` call, unwrapping transparent wrappers.
-fn require_specifier<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
-    (call_identifier(node, source) == Some("require"))
+fn require_specifier<'a>(
+    node: Node<'_>,
+    source: &'a [u8],
+    loader: &RequireBindings,
+) -> Option<&'a str> {
+    (call_identifier(node, source) == Some("require") && loader.available(node))
         .then(|| call_string_argument(node, source))
         .flatten()
 }
 
 /// Returns `(module, member)` for `require('…').member`.
-fn required_member<'a>(node: Node<'_>, source: &'a [u8]) -> Option<(&'a str, &'a str)> {
+fn required_member<'a>(
+    node: Node<'_>,
+    source: &'a [u8],
+    loader: &RequireBindings,
+) -> Option<(&'a str, &'a str)> {
     if node.kind() != "member_expression" {
         return None;
     }
-    let module = require_specifier(node.child_by_field_name("object")?, source)?;
+    let module = require_specifier(node.child_by_field_name("object")?, source, loader)?;
     let property = node.child_by_field_name("property")?;
     (property.kind() == "property_identifier").then(|| (module, node_text(property, source)))
 }
@@ -875,6 +890,7 @@ fn collect_commonjs_imports(
     source: &[u8],
     create_bdd_aliases: &mut BTreeSet<String>,
     local_registrations: &mut RegistrationExports,
+    loader: &RequireBindings,
 ) {
     let (Some(pattern), Some(value)) = (
         declarator.child_by_field_name("name"),
@@ -882,7 +898,10 @@ fn collect_commonjs_imports(
     ) else {
         return;
     };
-    if pattern.kind() != "object_pattern" || call_identifier(value, source) != Some("require") {
+    if pattern.kind() != "object_pattern"
+        || call_identifier(value, source) != Some("require")
+        || !loader.available(value)
+    {
         return;
     }
     let Some(module) = call_string_argument(value, source) else {
