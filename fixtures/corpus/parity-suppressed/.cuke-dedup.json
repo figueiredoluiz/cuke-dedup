@@ -1,0 +1,4 @@
+{
+  "threshold": 100,
+  "rules": {"duplicate-matcher": "warning"}
+}

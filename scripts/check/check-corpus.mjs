@@ -110,82 +110,192 @@ try {
 
   const recall = await validateRecallCorpus(temporary);
 
-  const parityRoot = join(corpus, "threshold-group");
-  const parityOutput = join(temporary, "reporter-parity");
-  const parity = spawnSync(
-    binary,
-    [".", "--reporters", "terminal,json,html,sarif", "--output", parityOutput],
-    { cwd: parityRoot, encoding: "utf8" },
-  );
-  assert.equal(parity.status, 0, parity.stderr);
-  const json = JSON.parse(await readFile(join(parityOutput, "cuke-dedup.json"), "utf8"));
-  const html = await readFile(join(parityOutput, "cuke-dedup.html"), "utf8");
-  const sarif = JSON.parse(await readFile(join(parityOutput, "cuke-dedup.sarif"), "utf8"));
-  const jsonlRun = spawnSync(
-    binary,
-    [".", "--reporters", "jsonl"],
-    { cwd: parityRoot, encoding: "utf8" },
-  );
-  assert.equal(jsonlRun.status, 0, jsonlRun.stderr);
-  const jsonl = jsonlRun.stdout.trimEnd().split("\n").map((line) => JSON.parse(line));
-  const jsonlFindings = jsonl.filter((record) => record.type === "finding");
-  const jsonlSummary = jsonl.at(-1);
-  const embedded = html.match(/<script type="application\/json" id="report-data">([\s\S]*?)<\/script>/);
-  assert.ok(embedded, "HTML report is missing embedded report data");
-  assert.deepEqual(JSON.parse(embedded[1]), json, "HTML and JSON report data differ");
-
-  const active = json.findings.filter((finding) => finding.suppression === null);
-  assert.equal(json.summary.findings, active.length);
-  assert.equal((parity.stdout.match(/^  \[(?:error|warning)\]/gm) || []).length, active.length);
-  assert.equal((html.match(/<article class="finding"/g) || []).length, active.length);
-  assert.equal(sarif.runs[0].results.length, active.length);
-  assert.equal(jsonlFindings.length, json.findings.length);
-  assert.equal(jsonlSummary.type, "summary");
-  assert.equal(jsonlSummary.schemaVersion, "3");
-  assert.equal(typeof jsonlSummary.toolVersion, "string");
-  assert.equal(jsonlSummary.recordCount, jsonl.length);
-  assert.equal(jsonlSummary.truncated, false);
-  assert.deepEqual(jsonlSummary.summary, json.summary);
-  assert.ok(jsonlSummary.metrics.filesDiscovered > 0);
-  for (const record of jsonlFindings) {
-    assert.equal(record.schemaVersion, "3");
-    assert.equal(typeof record.toolVersion, "string");
-    assert.match(record.fingerprint, /^[0-9a-f]{32}$/);
-    assert.equal(typeof record.active, "boolean");
-    assert.equal(typeof record.contributesToThreshold, "boolean");
-    assert.equal(typeof record.primary.path, "string");
-    assert.equal(typeof record.primary.line, "number");
-    assert.equal(typeof record.evidence, "object");
-    assert.ok(Array.isArray(record.truncatedFields));
-  }
-  for (const finding of active) {
-    assert.match(parity.stdout, new RegExp(escapeRegex(finding.rule)));
-    assert.match(parity.stdout, new RegExp(escapeRegex(finding.message)));
-    assert.match(parity.stdout, new RegExp(escapeRegex(finding.primary.path)));
-    assert.ok(
-      sarif.runs[0].results.some((result) =>
-        result.ruleId === finding.rule
-        && result.message.text === finding.message
-        && result.locations[0].physicalLocation.artifactLocation.uri === finding.primary.path),
-      `SARIF lost ${finding.rule} at ${finding.primary.path}`,
-    );
-    assert.ok(
-      jsonlFindings.some((record) =>
-        record.active
-        && record.rule === finding.rule
-        && record.message === finding.message
-        && record.primary.path === finding.primary.path),
-      `JSONL lost ${finding.rule} at ${finding.primary.path}`,
-    );
+  const parityCases = [
+    { name: "threshold-group", root: join(corpus, "threshold-group"), exit: 0, errors: 2 },
+    { name: "cluster-boundary", root: join(recallRoot, "exact-group-cluster-boundary"), exit: 0, clusters: 2 },
+    { name: "warning", root: join(recallRoot, "gherkin-step-sources"), exit: 0, warnings: 1 },
+    { name: "suppressed", root: join(corpus, "parity-suppressed"), exit: 0, suppressed: 1 },
+    { name: "incomplete", root: join(corpus, "malformed-matcher"), exit: 2, incomplete: true },
+  ];
+  let parityFindings = 0;
+  for (const parityCase of parityCases) {
+    parityFindings += await validateReporterParity(parityCase, temporary);
   }
   console.log(
-    `Validated ${manifest.cases.length} behavior cases, ${recall.cases} recall cases, and ${active.length} findings across terminal, JSON, JSONL, HTML, and SARIF.`,
+    `Validated ${manifest.cases.length} behavior cases, ${recall.cases} recall cases, and ${parityFindings} parity findings across terminal, JSON, JSONL, HTML, and SARIF.`,
   );
   console.log(
     `Recall baseline: ${recall.detected}/${recall.desired} desired findings (${(recall.ratio * 100).toFixed(1)}%); ${recall.knownMisses} explicit known misses.`,
   );
 } finally {
   await rm(temporary, { recursive: true, force: true });
+}
+
+function parityFinding(finding) {
+  return {
+    rule: finding.rule,
+    severity: finding.severity,
+    message: finding.message,
+    primary: finding.primary,
+    related: finding.related,
+    relatedLocationsTruncated: finding.relatedLocationsTruncated,
+    suggestedAction: finding.suggestedAction,
+    suppression: finding.suppression,
+    evidence: {
+      matcherSimilarity: finding.evidence.matcherSimilarity,
+      handlerSimilarity: finding.evidence.handlerSimilarity,
+      matcherDifference: finding.evidence.matcherDifference,
+      handlerEvidence: finding.evidence.handlerEvidence,
+      comparison: finding.evidence.comparison ?? null,
+      cluster: finding.evidence.cluster ?? null,
+    },
+  };
+}
+
+function sarifLocation(location) {
+  const physical = location.physicalLocation;
+  return {
+    path: physical.artifactLocation.uri,
+    line: physical.region.startLine,
+    column: physical.region.startColumn,
+    endLine: physical.region.endLine,
+    endColumn: physical.region.endColumn,
+  };
+}
+
+function displayLocation(location) {
+  return `${location.path}:${location.line}:${location.column}`;
+}
+
+function htmlEscape(value) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
+async function validateReporterParity({ name, root, exit, errors, warnings, suppressed, clusters, incomplete }, temporary) {
+  const output = join(temporary, "reporter-parity", name);
+  const run = spawnSync(binary, [".", "--reporters", "terminal,json,html,sarif", "--output", output],
+    { cwd: root, encoding: "utf8" });
+  const stream = spawnSync(binary, [".", "--reporters", "jsonl"],
+    { cwd: root, encoding: "utf8" });
+  assert.equal(run.status, exit, `${name}: terminal/report exit: ${run.stderr}`);
+  assert.equal(stream.status, exit, `${name}: JSONL exit: ${stream.stderr}`);
+  const json = JSON.parse(await readFile(join(output, "cuke-dedup.json"), "utf8"));
+  const html = await readFile(join(output, "cuke-dedup.html"), "utf8");
+  const sarif = JSON.parse(await readFile(join(output, "cuke-dedup.sarif"), "utf8"));
+  const jsonl = stream.stdout.trimEnd().split("\n").map((line) => JSON.parse(line));
+  const records = jsonl.slice(0, -1);
+  const summary = jsonl.at(-1);
+  const embedded = html.match(/<script type="application\/json" id="report-data">([\s\S]*?)<\/script>/);
+  assert.ok(embedded, `${name}: HTML embedded JSON missing`);
+  assert.deepEqual(JSON.parse(embedded[1]), json, `${name}: HTML and JSON differ`);
+  assert.equal(summary.type, "summary", `${name}: JSONL summary missing`);
+  assert.equal(summary.schemaVersion, "3", `${name}: JSONL schema`);
+  assert.equal(typeof summary.toolVersion, "string", `${name}: JSONL tool version`);
+  assert.ok(summary.metrics.filesDiscovered > 0, `${name}: discovered files`);
+  assert.equal(summary.recordCount, jsonl.length, `${name}: JSONL record count`);
+  assert.equal(summary.truncated, false, `${name}: JSONL stream truncated`);
+  assert.deepEqual(summary.summary, json.summary, `${name}: JSONL summary differs`);
+  assert.deepEqual(summary.corpus, json.corpus, `${name}: JSONL corpus diagnostics differ`);
+  assert.deepEqual(summary.analysis, json.analysis, `${name}: JSONL analysis diagnostics differ`);
+  assert.equal(summary.corpus.incomplete, incomplete === true, `${name}: incomplete fixture control`);
+
+  const active = json.findings.filter((finding) => finding.suppression === null);
+  assert.equal(json.findingsTruncated, 0, `${name}: buffered JSON truncated`);
+  assert.equal(json.summary.findings, active.length, `${name}: active count`);
+  assert.equal(json.summary.suppressed, json.findings.length - active.length, `${name}: suppressed count`);
+  if (errors !== undefined) assert.equal(json.summary.errors, errors, `${name}: error control`);
+  if (warnings !== undefined) assert.equal(json.summary.warnings, warnings, `${name}: warning control`);
+  if (suppressed !== undefined) assert.equal(json.summary.suppressed, suppressed, `${name}: suppression control`);
+  if (clusters !== undefined) assert.equal(json.findings.filter((finding) => finding.evidence.cluster).length,
+    clusters, `${name}: cluster control`);
+  assert.equal(records.length, json.findings.length, `${name}: JSONL findings count`);
+  assert.deepEqual(records.map(parityFinding).sort(byJson), json.findings.map(parityFinding).sort(byJson),
+    `${name}: JSONL and JSON finding metadata differ`);
+  for (const record of records) {
+    assert.equal(record.type, "finding", `${name}: JSONL record type`);
+    assert.equal(record.schemaVersion, "3", `${name}: JSONL finding schema`);
+    assert.equal(record.toolVersion, summary.toolVersion, `${name}: JSONL finding tool version`);
+    assert.equal(typeof record.contributesToThreshold, "boolean", `${name}: threshold participation`);
+    assert.match(record.fingerprint, /^[0-9a-f]{32}$/, `${name}: JSONL identity`);
+    assert.equal(record.active, record.suppression === null, `${name}: JSONL active state`);
+    assert.deepEqual(record.truncatedFields, [], `${name}: fixture exceeds JSONL text limit`);
+  }
+
+  const results = sarif.runs[0].results;
+  const invocation = sarif.runs[0].invocations[0];
+  assert.equal(results.length, active.length, `${name}: SARIF active count`);
+  assert.equal(invocation.executionSuccessful, exit === 0, `${name}: SARIF execution status`);
+  assert.equal(invocation.properties.activeFindings, json.summary.findings, `${name}: SARIF active summary`);
+  assert.equal(invocation.properties.suppressedFindings, json.summary.suppressed, `${name}: SARIF suppressed summary`);
+  assert.equal(invocation.properties.findingsTruncated, json.findingsTruncated, `${name}: SARIF truncation`);
+  assert.equal(invocation.properties.thresholdPassed, json.summary.duplication.passed, `${name}: SARIF threshold`);
+  assert.equal(invocation.properties.duplicatedDefinitions, json.summary.duplication.duplicatedDefinitions,
+    `${name}: SARIF duplicated definitions`);
+  assert.equal(invocation.properties.totalDefinitions, json.summary.duplication.totalDefinitions,
+    `${name}: SARIF total definitions`);
+  assert.equal(invocation.properties.duplicationPercentage, json.summary.duplication.percentage,
+    `${name}: SARIF duplication percentage`);
+  assert.deepEqual(invocation.properties.contributingRules, json.summary.duplication.rules,
+    `${name}: SARIF contributing rules`);
+  assert.equal(invocation.properties.retainedFindings, results.length, `${name}: SARIF retained count`);
+  assert.deepEqual(invocation.properties.corpus, json.corpus, `${name}: SARIF corpus diagnostics`);
+  assert.deepEqual(invocation.properties.analysis, json.analysis, `${name}: SARIF analysis diagnostics`);
+
+  const activeRecords = records.filter((record) => record.active);
+  assert.equal(activeRecords.length, active.length, `${name}: JSONL active count`);
+  assert.deepEqual(results.map((result) => result.partialFingerprints["cukeDedupFingerprint/v3"]).sort(),
+    activeRecords.map((record) => record.fingerprint).sort(), `${name}: SARIF identities differ`);
+  for (const result of results) {
+    const fingerprint = result.partialFingerprints["cukeDedupFingerprint/v3"];
+    const record = activeRecords.find((candidate) => candidate.fingerprint === fingerprint);
+    assert.ok(record, `${name}: SARIF identity ${fingerprint} missing from JSONL`);
+    assert.equal(result.ruleId, record.rule, `${name}: SARIF rule`);
+    assert.equal(result.level, record.severity, `${name}: SARIF severity`);
+    assert.equal(result.message.text, record.message, `${name}: SARIF message`);
+    assert.deepEqual(sarifLocation(result.locations[0]), record.primary, `${name}: SARIF primary location`);
+    assert.deepEqual(result.relatedLocations.map(sarifLocation), record.related,
+      `${name}: SARIF related locations`);
+    assert.equal(result.properties.relatedLocationsTruncated, record.relatedLocationsTruncated,
+      `${name}: SARIF related truncation`);
+    assert.equal(result.properties.clusterSize, record.evidence.cluster?.memberCount ?? null,
+      `${name}: SARIF cluster size`);
+  }
+  assert.equal((run.stdout.match(/^  \[(?:error|warning)\]/gm) || []).length, active.length,
+    `${name}: terminal visible count`);
+  const cards = html.match(/<article class="finding"[\s\S]*?<\/article>/g) || [];
+  assert.equal(cards.length, active.length,
+    `${name}: HTML visible count`);
+  for (const finding of active) {
+    assert.match(run.stdout, new RegExp(escapeRegex(`[${finding.severity}] ${finding.message}`)),
+      `${name}: terminal severity/message`);
+    assert.ok(run.stdout.includes(`--> ${displayLocation(finding.primary)}`), `${name}: terminal primary location`);
+    for (const related of finding.related) {
+      assert.ok(run.stdout.includes(`related: ${displayLocation(related)}`), `${name}: terminal related location`);
+    }
+    const card = cards.find((item) => item.includes(`data-rule="${finding.rule}"`)
+      && item.includes(`data-severity="${finding.severity}"`)
+      && item.includes(`<h2>${htmlEscape(finding.message)}</h2>`)
+      && item.includes(`<p class="location">${htmlEscape(displayLocation(finding.primary))}</p>`));
+    assert.ok(card, `${name}: HTML severity/message/primary location`);
+    for (const related of finding.related) {
+      assert.ok(card.includes(`<li><code>${htmlEscape(displayLocation(related))}</code></li>`),
+        `${name}: HTML related location`);
+    }
+  }
+  assert.match(run.stdout, new RegExp(`Found ${json.summary.findings} findings?\\.`), `${name}: terminal summary`);
+  assert.match(run.stdout, new RegExp(`Analyzed ${json.summary.definitionsAnalyzed} definitions? and ${json.summary.featureStepsAnalyzed} feature steps?: ${json.summary.errors} errors?, ${json.summary.warnings} warnings?, ${json.summary.suppressed} suppressed`),
+    `${name}: terminal counts`);
+  assert.match(html, new RegExp(`${json.summary.definitionsAnalyzed} definitions?`), `${name}: HTML definition count`);
+  assert.match(html, new RegExp(`${json.summary.featureStepsAnalyzed} feature steps?`), `${name}: HTML feature count`);
+  assert.match(html, new RegExp(`${json.summary.errors} errors?`), `${name}: HTML error count`);
+  assert.match(html, new RegExp(`${json.summary.warnings} warnings?`), `${name}: HTML warning count`);
+  assert.match(html, new RegExp(`${json.summary.suppressed} suppressed`), `${name}: HTML suppressed count`);
+  return json.findings.length;
+}
+
+function byJson(left, right) {
+  return JSON.stringify(left).localeCompare(JSON.stringify(right));
 }
 
 /**
@@ -256,6 +366,10 @@ async function validateRecallCorpus(temporary) {
       testCase.expectedDefinitions,
       `${testCase.name}: definitions`,
     );
+    assert.ok(Number.isSafeInteger(testCase.expectedFeatureSteps) && testCase.expectedFeatureSteps >= 0,
+      `${testCase.name}: expectedFeatureSteps must declare a nonnegative integer`);
+    assert.equal(report.summary.featureStepsAnalyzed, testCase.expectedFeatureSteps,
+      `${testCase.name}: extracted feature steps`);
     for (const [source, expected] of Object.entries(testCase.expectedCandidateSources || {})) {
       assert.equal(
         report.analysis.candidateSources[source]?.evaluated,

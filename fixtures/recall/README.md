@@ -26,6 +26,8 @@ When a known miss is fixed, move it to `expectedFindings` and reduce
 
 The fixtures are synthetic and contain no private project data.
 
+Every recall case pins `expectedFeatureSteps`, including cases without feature files. The count is extracted keyword step records, not runner executions: feature and rule `Background` steps each count once in their source position, while a populated `Scenario Outline` contributes its step lines once per `Examples` data row. The `gherkin-axes` cases separately pin backgrounds and rules, outline rows, continuations, and classic plus Markdown files; `gherkin-attachments` pins that tags, data-table rows, and doc-string lines do not add steps. The earlier simple and mixed Gherkin cases remain as controls.
+
 The `precision-*` cases exercise assertion provenance through the built CLI:
 trusted/unrelated ESM and CJS imports, different external and local values,
 inline/local equivalence, nested shadowing, erased/runtime namespaces, decorators,

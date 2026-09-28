@@ -2,12 +2,13 @@
   "schemaVersion": 1,
   "knownMissBaseline": 1,
   "minimumRecall": 0.6,
-  "minimumCases": 59,
+  "minimumCases": 64,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
       "path": "ambient-global-case",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -34,6 +35,7 @@
       "name": "ambiguous-step-definition-origins-cover-every-registration-shape",
       "path": "ambiguous-step-definition-origins",
       "expectedDefinitions": 30,
+      "expectedFeatureSteps": 20,
       "expectedExit": 1,
       "expectedFindings": [
         {
@@ -204,6 +206,7 @@
       "name": "ambiguous-step-identity-pins-the-finding-key",
       "path": "ambiguous-step-identity",
       "expectedDefinitions": 15,
+      "expectedFeatureSteps": 11,
       "expectedExit": 1,
       "expectedFindings": [
         {
@@ -289,6 +292,7 @@
       "name": "ambiguous-step-origins-cover-every-construct",
       "path": "ambiguous-step-origins",
       "expectedDefinitions": 29,
+      "expectedFeatureSteps": 17,
       "expectedExit": 1,
       "expectedFindings": [
         {
@@ -430,6 +434,7 @@
       "name": "assertion-modules-declared-trust-every-import-form",
       "path": "assertion-modules-declared",
       "expectedDefinitions": 10,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [],
       "expectedAbsent": [
         {
@@ -473,6 +478,7 @@
       "name": "assertion-modules-undeclared-stay-untrusted",
       "path": "assertion-modules-undeclared",
       "expectedDefinitions": 10,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "parameterization-candidate",
@@ -516,6 +522,7 @@
       "name": "assertion-runner-provenance-trusts-known-factories",
       "path": "assertion-runner-provenance",
       "expectedDefinitions": 10,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "parameterization-candidate",
@@ -560,6 +567,7 @@
       "name": "assertion-subjects-and-chains-preserve-precision",
       "path": "assertion-precision",
       "expectedDefinitions": 14,
+      "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
         "matcherBlocking": 3
       },
@@ -621,6 +629,7 @@
       "name": "b1-computed-positions-match-dot-access",
       "path": "b1-computed-positions",
       "expectedDefinitions": 6,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -665,6 +674,7 @@
       "name": "cross-package-relative-reexport",
       "path": "cross-package",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -679,6 +689,7 @@
       "name": "local-commonjs-barrel-reexport",
       "path": "local-cjs-barrel",
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -700,6 +711,7 @@
       "name": "direct-and-fluent-action-equivalence",
       "path": "direct-fluent-action",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
@@ -717,6 +729,7 @@
       "name": "duplicate-matcher-precision-requires-kind-text-and-flags",
       "path": "duplicate-matcher-precision",
       "expectedDefinitions": 24,
+      "expectedFeatureSteps": 1,
       "expectedExit": 0,
       "expectedFindings": [
         {
@@ -836,6 +849,7 @@
       "name": "empty-markdown-does-not-prove-unused-definitions",
       "path": "empty-markdown-dialect",
       "expectedDefinitions": 1,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "unused-definition"
@@ -846,6 +860,7 @@
       "name": "exact-group-cluster-boundary-splits-at-five-members",
       "path": "exact-group-cluster-boundary",
       "expectedDefinitions": 17,
+      "expectedFeatureSteps": 1,
       "expectedExit": 0,
       "expectedFindings": [
         {
@@ -948,6 +963,7 @@
       "name": "exact-match-remains-detectable",
       "path": "exact-match",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -962,6 +978,7 @@
       "name": "fuzzy-wording-with-varied-handler-shape",
       "path": "fuzzy-varied-handler",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
@@ -976,9 +993,115 @@
       ]
     },
     {
+      "name": "gherkin-backgrounds-and-rules",
+      "path": "gherkin-axes",
+      "arguments": [
+        "--features",
+        "features/grouping.feature"
+      ],
+      "expectedDefinitions": 4,
+      "expectedFeatureSteps": 5,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "unused-definition",
+          "count": 3
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 4
+        }
+      ]
+    },
+    {
+      "name": "gherkin-outline-examples-rows",
+      "path": "gherkin-axes",
+      "arguments": [
+        "--features",
+        "features/outline.feature"
+      ],
+      "expectedDefinitions": 4,
+      "expectedFeatureSteps": 4,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "unused-definition",
+          "count": 3
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 5
+        }
+      ]
+    },
+    {
+      "name": "gherkin-continuation-keywords",
+      "path": "gherkin-axes",
+      "arguments": [
+        "--features",
+        "features/continuations.feature"
+      ],
+      "expectedDefinitions": 4,
+      "expectedFeatureSteps": 4,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "unused-definition",
+          "count": 3
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 6
+        }
+      ]
+    },
+    {
+      "name": "gherkin-classic-and-markdown-files",
+      "path": "gherkin-axes",
+      "arguments": [
+        "--features",
+        "features/multi*.feature*"
+      ],
+      "expectedDefinitions": 4,
+      "expectedFeatureSteps": 2,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "unused-definition",
+          "count": 3
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 7
+        }
+      ]
+    },
+    {
+      "name": "gherkin-attachments-do-not-create-steps",
+      "path": "gherkin-attachments",
+      "expectedDefinitions": 2,
+      "expectedFeatureSteps": 3,
+      "expectedExit": 0,
+      "expectedFindings": [{"rule": "unused-definition", "primaryPath": "steps.ts", "primaryLine": 5}],
+      "expectedAbsent": [{"rule": "unused-definition", "primaryPath": "steps.ts", "primaryLine": 4}]
+    },
+    {
       "name": "gherkin-step-sources-contribute-concrete-steps",
       "path": "gherkin-step-sources",
       "expectedDefinitions": 5,
+      "expectedFeatureSteps": 7,
       "expectedExit": 0,
       "expectedFindings": [
         {
@@ -1014,6 +1137,7 @@
       "name": "legacy-cucumber-registration-modules",
       "path": "legacy-cucumber-modules",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -1028,6 +1152,7 @@
       "name": "legacy-cypress-steps-entrypoint",
       "path": "legacy-cypress-steps",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -1042,6 +1167,7 @@
       "name": "local-function-provenance-limits-expansion",
       "path": "local-function-provenance",
       "expectedDefinitions": 24,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1191,6 +1317,7 @@
       "name": "local-registration-wrapper",
       "path": "local-wrapper",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -1205,6 +1332,7 @@
       "name": "matcher-overlap-is-synthesised-without-features",
       "path": "matcher-overlap",
       "expectedDefinitions": 14,
+      "expectedFeatureSteps": 1,
       "expectedFindings": [
         {
           "rule": "overlapping-matcher",
@@ -1282,6 +1410,7 @@
       "name": "module-constant-values-reach-the-fingerprint",
       "path": "module-constant-values",
       "expectedDefinitions": 24,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1410,6 +1539,7 @@
       "name": "normalized-matcher-covers-four-axes-and-four-exclusions",
       "path": "normalized-matcher-axes",
       "expectedDefinitions": 24,
+      "expectedFeatureSteps": 1,
       "expectedExit": 0,
       "expectedFindings": [
         {
@@ -1534,6 +1664,7 @@
       "name": "open1-nested-alias-revokes-matcher-trust",
       "path": "open1-nested-alias",
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1571,6 +1702,7 @@
       "name": "open2-computed-modifier-preserves-semantics",
       "path": "open2-computed-modifier",
       "expectedDefinitions": 6,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1608,6 +1740,7 @@
       "name": "package-imports-registration",
       "path": "package-imports",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -1622,6 +1755,7 @@
       "name": "playwright-bdd-decorator-registrations",
       "path": "playwright-decorators",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -1636,6 +1770,7 @@
       "name": "polarity-conflict-is-intentionally-not-near",
       "path": "polarity",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "near-duplicate-step",
@@ -1650,6 +1785,7 @@
       "name": "precision-decorator-values",
       "path": "precision-decorator-values",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1671,6 +1807,7 @@
       "name": "precision-erased-runtime",
       "path": "precision-erased-runtime",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1692,6 +1829,7 @@
       "name": "precision-external-values",
       "path": "precision-external-values",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1713,6 +1851,7 @@
       "name": "precision-import-cjs",
       "path": "precision-import-cjs",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1734,6 +1873,7 @@
       "name": "precision-import-esm",
       "path": "precision-import-esm",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1755,6 +1895,7 @@
       "name": "precision-inline-local",
       "path": "precision-inline-local",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
@@ -1769,6 +1910,7 @@
       "name": "precision-local-values",
       "path": "precision-local-values",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1790,6 +1932,7 @@
       "name": "precision-mixed-positive",
       "path": "precision-mixed-positive",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1804,6 +1947,7 @@
       "name": "precision-nested-shadow",
       "path": "precision-nested-shadow",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -1825,6 +1969,7 @@
       "name": "precision-renamed-local",
       "path": "precision-renamed-local",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1839,6 +1984,7 @@
       "name": "regex-flag-identity-keeps-semantic-flags",
       "path": "regex-flag-identity",
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -1862,6 +2008,7 @@
       "name": "rest-alias-depth-decides-shared-mutation",
       "path": "rest-alias-depth",
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -1903,6 +2050,7 @@
         "callbacks.ts"
       ],
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
@@ -1930,6 +2078,7 @@
         "candidates.ts"
       ],
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
@@ -1976,6 +2125,7 @@
         "1"
       ],
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
@@ -2020,6 +2170,7 @@
         "computed-key-mutation.ts"
       ],
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -2052,6 +2203,7 @@
         "computed-key-trust.cjs"
       ],
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -2093,6 +2245,7 @@
         "deferred-assertions.ts"
       ],
       "expectedDefinitions": 8,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
@@ -2148,6 +2301,7 @@
         "tdz.ts"
       ],
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -2180,6 +2334,7 @@
         "named-default.ts"
       ],
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
@@ -2221,6 +2376,7 @@
         "alias.ts,control.ts"
       ],
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -2253,6 +2409,7 @@
         "negation-mutation.ts"
       ],
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -2285,6 +2442,7 @@
         "nested.ts"
       ],
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
@@ -2303,6 +2461,7 @@
         "require-mutation.cjs"
       ],
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedAbsent": [
         {
           "rule": "duplicate-handler",
@@ -2335,6 +2494,7 @@
         "wrapped.ts"
       ],
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "near-duplicate-step",
@@ -2372,6 +2532,7 @@
       "name": "typescript-path-alias-registration",
       "path": "path-alias",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -2386,6 +2547,7 @@
       "name": "workspace-package-entrypoint-registration",
       "path": "workspace-entrypoint",
       "expectedDefinitions": 2,
+      "expectedFeatureSteps": 0,
       "expectedFindings": [
         {
           "rule": "duplicate-matcher",
@@ -2400,6 +2562,7 @@
       "name": "vitest-cucumber-plugin-global-registrations",
       "path": "vitest-cucumber-plugin",
       "expectedDefinitions": 4,
+      "expectedFeatureSteps": 1,
       "expectedExit": 1,
       "expectedFindings": [
         {
@@ -2454,6 +2617,7 @@
       "name": "jest-cucumber-scenario-local-handlers",
       "path": "jest-cucumber",
       "expectedDefinitions": 5,
+      "expectedFeatureSteps": 5,
       "expectedFindings": [
         {
           "rule": "duplicate-handler",
