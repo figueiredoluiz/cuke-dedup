@@ -10,6 +10,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { TARGETS, targetFor } from "../../../npm/lib/targets.mjs";
@@ -283,15 +284,23 @@ export function verifyProvenance(archive, provenance, version, spawn = spawnSync
   }
 }
 
-async function download(url, destination) {
-  const response = await fetch(url, {
-    redirect: "follow",
-    headers: { "user-agent": "cuke-dedup-action" },
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`failed to download ${url}: HTTP ${response.status}`);
+// A tag may resolve shortly before its release assets finish publishing.
+export async function download(url, destination, wait = delay) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await fetch(url, {
+      redirect: "follow",
+      headers: { "user-agent": "cuke-dedup-action" },
+    });
+    if (response.ok && response.body) {
+      await pipeline(response.body, createWriteStream(destination));
+      return;
+    }
+    await response.body?.cancel().catch(() => {});
+    if (response.status !== 404 || attempt === 9) {
+      throw new Error(`failed to download ${url}: HTTP ${response.status}`);
+    }
+    await wait(Math.min(1000 * 2 ** attempt, 10000));
   }
-  await pipeline(response.body, createWriteStream(destination));
 }
 
 export function verifyChecksum(archive, checksumFile) {
