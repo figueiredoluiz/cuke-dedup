@@ -13,6 +13,7 @@
 //! may have changed: it was reassigned, given a property that is not inert, or reached another
 //! binding or a call, where a registration could be attached to it.
 
+use super::super::assertions::RequireBindings;
 use super::super::ast::{
     call_string_argument, is_const_declaration, push_named_children_reverse, string_literal,
 };
@@ -82,9 +83,12 @@ pub(super) struct ExportScope<'tree> {
     /// marks a name with no single static value — `let`, `var`, a destructured binding, an import,
     /// or a name declared twice.
     declarations: BTreeMap<String, Option<Node<'tree>>>,
+    pub(super) loader: RequireBindings,
     /// Names that may carry a registration: an undeclared registration global, a binding from a
     /// non-builtin module, or a declaration that refers to one.
     tainted: BTreeSet<String>,
+    /// Local values that depend on a call to a shadowed or uncertain `require`.
+    pub(super) rejected_loader_dependencies: BTreeSet<String>,
     /// Top-level names whose value may have changed after declaration; see `mutated_names`.
     mutated: BTreeSet<String>,
 }
@@ -187,9 +191,30 @@ impl<'tree> ExportScope<'tree> {
             }
         }
 
+        let loader = RequireBindings::discover(root, source);
+        let mut rejected_loader_dependencies = BTreeSet::new();
+        loop {
+            let before = rejected_loader_dependencies.len();
+            for (names, subtree) in &provenance {
+                if depends_on_rejected_loader(
+                    *subtree,
+                    source,
+                    &rejected_loader_dependencies,
+                    &loader,
+                ) {
+                    rejected_loader_dependencies.extend(names.iter().cloned());
+                }
+            }
+            if rejected_loader_dependencies.len() == before {
+                break;
+            }
+        }
+
         let mut scope = Self {
+            loader,
             declarations,
             tainted,
+            rejected_loader_dependencies,
             mutated: BTreeSet::new(),
         };
         scope.mutated = scope.mutated_names(root, source);
@@ -229,7 +254,7 @@ impl<'tree> ExportScope<'tree> {
 
     /// Classifies a value without following a name it refers to.
     fn classify_expression(&self, value: Node<'tree>, source: &'tree [u8]) -> ExportValue<'tree> {
-        if let Some(module) = require_specifier(value, source) {
+        if let Some(module) = require_specifier(value, source, &self.loader) {
             ExportValue::Module(module)
         } else if self.is_inert(value, source) {
             ExportValue::Inert
@@ -518,6 +543,30 @@ fn references_taint(node: Node<'_>, source: &[u8], tainted: &BTreeSet<String>) -
                 }
             }
             _ => {}
+        }
+        push_named_children_reverse(node, &mut stack);
+    }
+    false
+}
+
+fn depends_on_rejected_loader(
+    node: Node<'_>,
+    source: &[u8],
+    dependent: &BTreeSet<String>,
+    loader: &RequireBindings,
+) -> bool {
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if matches!(node.kind(), "identifier" | "shorthand_property_identifier")
+            && dependent.contains(node_text(node, source))
+        {
+            return true;
+        }
+        if node.kind() == "call_expression"
+            && super::call_identifier(node, source) == Some("require")
+            && !loader.available(node)
+        {
+            return true;
         }
         push_named_children_reverse(node, &mut stack);
     }

@@ -1,8 +1,9 @@
+use super::assertions::{collect_binding_scopes, RequireBindings};
 use super::ast::{
     call_string_argument, export_has_runtime_bindings, import_has_runtime_bindings,
-    import_has_runtime_module_reference, import_module, import_statement_module,
-    is_top_level_variable, is_type_only_declaration, is_type_only_specifier,
-    push_named_children_reverse,
+    import_has_runtime_module_reference, import_module, import_requires_loader,
+    import_statement_module, is_top_level_variable, is_type_only_declaration,
+    is_type_only_specifier, push_named_children_reverse,
 };
 use super::frameworks::{
     framework_for_module, is_supported_module, registration_exports_for_framework,
@@ -37,13 +38,82 @@ pub(super) struct RegistrationNames {
     /// Why a specifier could not be resolved statically, keyed by module specifier.
     unresolved_reasons: BTreeMap<String, UnresolvedModuleReason>,
     pub(super) framework: Framework,
+    scoped: ScopedRegistrations,
+    configured: BTreeSet<String>,
+}
+
+type BindingKey = (usize, String);
+
+/// Runtime lexical bindings and the registration evidence attached to each binding.
+/// A name bound locally with no entry in these maps is untrusted, even when an outer
+/// binding has the same spelling.
+#[derive(Default)]
+struct ScopedRegistrations {
+    root: usize,
+    bindings: BTreeMap<usize, BTreeSet<String>>,
+    aliases: BTreeMap<BindingKey, RegistrationExport>,
+    namespaces: BTreeMap<BindingKey, RegistrationExports>,
+    factories: BTreeSet<BindingKey>,
+}
+
+impl ScopedRegistrations {
+    fn new(root: Node<'_>, source: &[u8]) -> Self {
+        let (bindings, _, _) = collect_binding_scopes(root, source);
+        Self {
+            root: root.id(),
+            bindings,
+            aliases: BTreeMap::new(),
+            namespaces: BTreeMap::new(),
+            factories: BTreeSet::new(),
+        }
+    }
+
+    fn key(&self, node: Node<'_>, name: &str) -> BindingKey {
+        let mut parent = Some(node);
+        while let Some(scope) = parent {
+            if self
+                .bindings
+                .get(&scope.id())
+                .is_some_and(|names| names.contains(name))
+            {
+                return (scope.id(), name.to_owned());
+            }
+            parent = scope.parent();
+        }
+        (self.root, name.to_owned())
+    }
+
+    fn alias(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExport> {
+        self.aliases.get(&self.key(node, name))
+    }
+
+    fn namespace(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExports> {
+        self.namespaces.get(&self.key(node, name))
+    }
+
+    fn factory(&self, node: Node<'_>, name: &str) -> bool {
+        self.factories.contains(&self.key(node, name))
+    }
 }
 
 impl RegistrationNames {
     pub(super) fn fallback_export(&self, name: &str) -> Option<&RegistrationExport> {
-        self.aliases
-            .get(name)
+        self.scoped
+            .aliases
+            .get(&(self.scoped.root, name.to_owned()))
             .filter(|_| self.fallback_aliases.contains(name))
+    }
+
+    pub(super) fn recognizes_alias_at(&self, node: Node<'_>, name: &str) -> bool {
+        let registration = if self.configured.contains(name) {
+            self.scoped
+                .aliases
+                .get(&(self.scoped.root, name.to_owned()))
+        } else {
+            self.scoped.alias(node, name)
+        };
+        registration
+            .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
     }
 
     pub(super) fn has_callback_framework(&self) -> bool {
@@ -60,17 +130,21 @@ impl RegistrationNames {
     }
 
     pub(super) fn recognizes_alias(&self, name: &str) -> bool {
-        self.aliases
-            .get(name)
+        self.scoped
+            .aliases
+            .get(&(self.scoped.root, name.to_owned()))
             .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
     }
 
     pub(super) fn recognizes_namespace(&self, name: &str) -> bool {
-        self.namespaces.get(name).is_some_and(|exports| {
-            exports
-                .values()
-                .any(|export| !super::framework_callbacks::is_new_framework(export.framework))
-        })
+        self.scoped
+            .namespaces
+            .get(&(self.scoped.root, name.to_owned()))
+            .is_some_and(|exports| {
+                exports
+                    .values()
+                    .any(|export| !super::framework_callbacks::is_new_framework(export.framework))
+            })
     }
 }
 
@@ -84,10 +158,12 @@ pub(super) enum RegistrationCallee<'tree, 'source> {
 
 #[derive(Default)]
 struct RegistrationDiscovery<'tree> {
+    loader: Option<RequireBindings>,
     aliases: RegistrationExports,
     fallback_aliases: BTreeSet<String>,
     namespaces: BTreeMap<String, RegistrationExports>,
     assignments: Vec<(String, String)>,
+    scoped_assignments: Vec<(Node<'tree>, Node<'tree>)>,
     namespace_destructures: Vec<(Node<'tree>, String)>,
     shadowed_defaults: BTreeSet<String>,
     unresolved_aliases: BTreeMap<String, String>,
@@ -97,6 +173,7 @@ struct RegistrationDiscovery<'tree> {
     create_bdd_factories: BTreeSet<String>,
     /// Locally declared functions that may forward to a registration, resolved after imports.
     wrapper_candidates: Vec<WrapperCandidate>,
+    scoped: ScopedRegistrations,
 }
 
 /// A local function that forwards its own leading parameters to `forwards_to`.
@@ -145,10 +222,16 @@ fn registration_binding<'a>(
     registrations: &'a RegistrationNames,
 ) -> Option<(String, &'a RegistrationExport)> {
     let registration = match registration_callee(function, source)? {
-        RegistrationCallee::Identifier(name) => registrations.aliases.get(name),
+        RegistrationCallee::Identifier(name) if registrations.configured.contains(name) => {
+            registrations
+                .scoped
+                .aliases
+                .get(&(registrations.scoped.root, name.to_owned()))
+        }
+        RegistrationCallee::Identifier(name) => registrations.scoped.alias(function, name),
         RegistrationCallee::Property { object, name } => registrations
-            .namespaces
-            .get(node_text(object, source))?
+            .scoped
+            .namespace(object, node_text(object, source))?
             .get(name.as_ref()),
     }?;
     Some((node_text(function, source).to_owned(), registration))
@@ -181,16 +264,22 @@ pub(super) fn unresolved_registration_module<'a>(
     registrations: &'a RegistrationNames,
 ) -> Option<&'a str> {
     match registration_callee(function, source)? {
-        RegistrationCallee::Identifier(name) => registrations
-            .unresolved_aliases
-            .get(name)
-            .map(String::as_str),
-        RegistrationCallee::Property { object, name } if REGISTRATIONS.contains(&name.as_ref()) => {
+        RegistrationCallee::Identifier(name)
+            if registrations.scoped.key(function, name).0 == registrations.scoped.root =>
+        {
             registrations
-                .unresolved_namespaces
-                .get(node_text(object, source))
+                .unresolved_aliases
+                .get(name)
                 .map(String::as_str)
         }
+        RegistrationCallee::Property { object, name } if REGISTRATIONS.contains(&name.as_ref()) => {
+            let namespace = node_text(object, source);
+            (registrations.scoped.key(object, namespace).0 == registrations.scoped.root)
+                .then(|| registrations.unresolved_namespaces.get(namespace))
+                .flatten()
+                .map(String::as_str)
+        }
+        RegistrationCallee::Identifier(_) => None,
         RegistrationCallee::Property { .. } => None,
     }
 }
@@ -238,17 +327,21 @@ pub(super) fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<
 pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
     let mut stack = vec![root];
     let mut framework = Framework::Unknown;
+    let loader = RequireBindings::discover(root, source);
     while let Some(node) = stack.pop() {
         let runtime_module_reference = match node.kind() {
             "import_statement" => import_has_runtime_module_reference(node),
             "export_statement" => export_has_runtime_bindings(node),
             _ => false,
         };
-        if runtime_module_reference {
+        if runtime_module_reference && (!import_requires_loader(node) || loader.available(node)) {
             if let Some(module) = import_module(node, source) {
                 framework = merge_framework(framework, framework_for_module(module));
             }
-        } else if node.kind() == "call_expression" && call_name(node, source) == Some("require") {
+        } else if node.kind() == "call_expression"
+            && call_name(node, source) == Some("require")
+            && loader.available(node)
+        {
             if let Some(evidence) = call_string_argument(node, source).map(framework_for_module) {
                 framework = merge_framework(framework, evidence);
             }
@@ -266,8 +359,17 @@ pub(super) fn detect_registrations(
     resolver: &mut RegistrationResolver,
     configured: &BTreeSet<String>,
 ) -> Result<RegistrationNames> {
+    let loader = RequireBindings::discover(root, source);
+    let create_bdd_factories =
+        collect_create_bdd_factories(root, source, file_path, resolver, &loader)?;
+    let mut scoped = ScopedRegistrations::new(root, source);
+    for name in &create_bdd_factories {
+        scoped.factories.insert((root.id(), name.clone()));
+    }
     let mut discovered = RegistrationDiscovery {
-        create_bdd_factories: collect_create_bdd_factories(root, source, file_path, resolver)?,
+        loader: Some(loader),
+        create_bdd_factories,
+        scoped,
         ..RegistrationDiscovery::default()
     };
     let mut effective_framework = framework;
@@ -277,7 +379,13 @@ pub(super) fn detect_registrations(
     while let Some(node) = stack.pop() {
         match node.kind() {
             "import_statement" if import_has_runtime_bindings(node) => {
-                let module = import_statement_module(node, source);
+                let module = (!import_requires_loader(node)
+                    || discovered
+                        .loader
+                        .as_ref()
+                        .is_some_and(|loader| loader.available(node)))
+                .then(|| import_statement_module(node, source))
+                .flatten();
                 let exports = match module {
                     Some(module) if is_supported_module(module) => {
                         Some(registration_exports_for_module(module))
@@ -299,14 +407,16 @@ pub(super) fn detect_registrations(
                 if !is_type_only_declaration(node)
                     && exports.as_ref().is_some_and(|exports| !exports.is_empty())
                 {
+                    let exports = exports.unwrap_or_default();
                     collect_imports(
                         node,
                         source,
-                        &exports.unwrap_or_default(),
+                        &exports,
                         &mut discovered.aliases,
                         &mut discovered.namespaces,
                         &mut discovered.create_bdd_factories,
                     );
+                    record_import_bindings(node, source, &exports, &mut discovered.scoped);
                 } else if !is_type_only_declaration(node) && exports.is_none() {
                     if let Some(module) = module {
                         collect_unresolved_imports(node, source, module, &mut discovered);
@@ -323,7 +433,15 @@ pub(super) fn detect_registrations(
             {
                 if let Some(module) = import_module(node, source) {
                     let available = registration_exports_for_module(module);
-                    collect_exports(node, source, &available, &mut discovered.aliases);
+                    let mut aliases = RegistrationExports::new();
+                    collect_exports(node, source, &available, &mut aliases);
+                    for (name, registration) in aliases {
+                        discovered
+                            .scoped
+                            .aliases
+                            .insert((root.id(), name.clone()), registration.clone());
+                        discovered.aliases.insert(name, registration);
+                    }
                 }
             }
             "variable_declarator" => {
@@ -359,14 +477,20 @@ pub(super) fn detect_registrations(
     }
 
     for (pattern, namespace) in &discovered.namespace_destructures {
-        if let Some(exports) = discovered.namespaces.get(namespace) {
-            collect_pattern_aliases(
-                *pattern,
-                source,
-                exports,
-                &mut discovered.aliases,
-                &mut discovered.create_bdd_factories,
-            );
+        if let Some(exports) = discovered.scoped.namespace(*pattern, namespace).cloned() {
+            let mut aliases = RegistrationExports::new();
+            let mut factories = BTreeSet::new();
+            collect_pattern_aliases(*pattern, source, &exports, &mut aliases, &mut factories);
+            for (local, registration) in aliases {
+                let key = discovered.scoped.key(*pattern, &local);
+                discovered.scoped.aliases.insert(key, registration.clone());
+                discovered.aliases.insert(local, registration);
+            }
+            for local in factories {
+                let key = discovered.scoped.key(*pattern, &local);
+                discovered.scoped.factories.insert(key);
+                discovered.create_bdd_factories.insert(local);
+            }
         }
     }
 
@@ -382,6 +506,14 @@ pub(super) fn detect_registrations(
                 },
             );
         }
+        if let Some(registration) = discovered.aliases.get(name) {
+            if discovered.fallback_aliases.contains(name) {
+                discovered
+                    .scoped
+                    .aliases
+                    .insert((root.id(), name.to_owned()), registration.clone());
+            }
+        }
     }
 
     let mut changed = true;
@@ -394,6 +526,23 @@ pub(super) fn detect_registrations(
                     .insert(alias.clone(), registration)
                     .is_none();
             }
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (local, target) in &discovered.scoped_assignments {
+            let target_name = node_text(*target, source);
+            let Some(registration) = discovered.scoped.alias(*target, target_name).cloned() else {
+                continue;
+            };
+            let key = discovered.scoped.key(*local, node_text(*local, source));
+            changed |= discovered
+                .scoped
+                .aliases
+                .insert(key, registration)
+                .is_none();
         }
     }
 
@@ -411,6 +560,13 @@ pub(super) fn detect_registrations(
                 kind: RegistrationExportKind::Call,
                 framework: effective_framework,
             });
+        if let Some(registration) = discovered.aliases.get(name) {
+            discovered
+                .scoped
+                .aliases
+                .entry((root.id(), name.clone()))
+                .or_insert_with(|| registration.clone());
+        }
     }
     resolve_wrapper_candidates(&mut discovered);
 
@@ -423,6 +579,8 @@ pub(super) fn detect_registrations(
         unresolved_namespaces: discovered.unresolved_namespaces,
         unresolved_reasons: discovered.unresolved_reasons,
         framework: effective_framework,
+        scoped: discovered.scoped,
+        configured: configured.clone(),
     })
 }
 
@@ -515,14 +673,29 @@ fn resolve_wrapper_candidates(discovered: &mut RegistrationDiscovery<'_>) {
     let mut pending: Vec<usize> = (0..discovered.wrapper_candidates.len()).collect();
     while let Some(index) = pending.pop() {
         let candidate = &discovered.wrapper_candidates[index];
-        if discovered.aliases.contains_key(&candidate.name) {
+        if discovered
+            .scoped
+            .aliases
+            .contains_key(&(discovered.scoped.root, candidate.name.clone()))
+        {
             continue;
         }
-        let Some(registration) = discovered.aliases.get(&candidate.forwards_to).cloned() else {
+        let Some(registration) = discovered
+            .scoped
+            .aliases
+            .get(&(discovered.scoped.root, candidate.forwards_to.clone()))
+            .cloned()
+        else {
             continue;
         };
         let name = candidate.name.clone();
-        discovered.aliases.insert(name.clone(), registration);
+        discovered
+            .aliases
+            .insert(name.clone(), registration.clone());
+        discovered
+            .scoped
+            .aliases
+            .insert((discovered.scoped.root, name.clone()), registration);
         // Only the wrappers that forward to the name just resolved can newly become resolvable.
         if let Some(unlocked) = callers.get(name.as_str()) {
             pending.extend(unlocked.iter().copied());
@@ -705,6 +878,32 @@ fn collect_imports(
     });
 }
 
+fn record_import_bindings(
+    import: Node<'_>,
+    source: &[u8],
+    exports: &RegistrationExports,
+    scoped: &mut ScopedRegistrations,
+) {
+    for_each_import_binding(import, source, |binding| match binding {
+        ImportBinding::Named { exported, local } => {
+            if let Some(registration) = exports.get(exported) {
+                let key = (scoped.root, local.to_owned());
+                if registration.kind == RegistrationExportKind::Factory {
+                    scoped.factories.insert(key);
+                } else {
+                    scoped.aliases.insert(key, registration.clone());
+                }
+            }
+        }
+        ImportBinding::Namespace(local) => {
+            scoped
+                .namespaces
+                .insert((scoped.root, local.to_owned()), exports.clone());
+        }
+        ImportBinding::Default(_) => {}
+    });
+}
+
 fn collect_exports(
     export: Node<'_>,
     source: &[u8],
@@ -813,12 +1012,20 @@ fn collect_variable_registration<'tree>(
 
         if value.kind() == "call_expression" {
             let function = call_name(value, source);
-            let create_bdd =
-                function.is_some_and(|name| discovered.create_bdd_factories.contains(name));
+            let create_bdd = function.is_some_and(|name| {
+                value
+                    .child_by_field_name("function")
+                    .is_some_and(|callee| discovered.scoped.factory(callee, name))
+            });
             // The exports a `require`/`createBdd` binding provides: a recognized package by name, a
             // project-local barrel resolved through the resolver — the CommonJS mirror of a local ESM
             // import — or the Playwright-BDD factory's registrations.
-            let exports = if function == Some("require") {
+            let exports = if function == Some("require")
+                && discovered
+                    .loader
+                    .as_ref()
+                    .is_some_and(|loader| loader.available(value))
+            {
                 match call_string_argument(value, source) {
                     Some(module) if is_supported_module(module) => {
                         Some(registration_exports_for_module(module))
@@ -844,17 +1051,32 @@ fn collect_variable_registration<'tree>(
             };
             if let Some(exports) = exports.filter(|exports| !exports.is_empty()) {
                 match name.kind() {
-                    "object_pattern" => collect_pattern_aliases(
-                        name,
-                        source,
-                        &exports,
-                        &mut discovered.aliases,
-                        &mut discovered.create_bdd_factories,
-                    ),
+                    "object_pattern" => {
+                        let mut aliases = RegistrationExports::new();
+                        let mut factories = BTreeSet::new();
+                        collect_pattern_aliases(
+                            name,
+                            source,
+                            &exports,
+                            &mut aliases,
+                            &mut factories,
+                        );
+                        for (local, registration) in aliases {
+                            let key = discovered.scoped.key(name, &local);
+                            discovered.scoped.aliases.insert(key, registration.clone());
+                            discovered.aliases.insert(local, registration);
+                        }
+                        for local in factories {
+                            let key = discovered.scoped.key(name, &local);
+                            discovered.scoped.factories.insert(key);
+                            discovered.create_bdd_factories.insert(local);
+                        }
+                    }
                     "identifier" => {
-                        discovered
-                            .namespaces
-                            .insert(node_text(name, source).to_owned(), exports);
+                        let local = node_text(name, source).to_owned();
+                        let key = discovered.scoped.key(name, &local);
+                        discovered.scoped.namespaces.insert(key, exports.clone());
+                        discovered.namespaces.insert(local, exports);
                     }
                     _ => {}
                 }
@@ -868,6 +1090,7 @@ fn collect_variable_registration<'tree>(
                 node_text(name, source).to_owned(),
                 node_text(value, source).to_owned(),
             ));
+            discovered.scoped_assignments.push((name, value));
         }
 
         if name.kind() == "identifier" {
@@ -891,12 +1114,16 @@ fn collect_create_bdd_factories(
     source: &[u8],
     file_path: &Path,
     resolver: &mut RegistrationResolver,
+    loader: &RequireBindings,
 ) -> Result<BTreeSet<String>> {
     let mut factories = BTreeSet::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         match node.kind() {
-            "import_statement" if import_has_runtime_bindings(node) => {
+            "import_statement"
+                if import_has_runtime_bindings(node)
+                    && (!import_requires_loader(node) || loader.available(node)) =>
+            {
                 let exports = match import_module(node, source) {
                     Some(module) if is_supported_module(module) => {
                         Some(registration_exports_for_module(module))
@@ -922,6 +1149,7 @@ fn collect_create_bdd_factories(
                 if pattern.kind() == "object_pattern"
                     && value.kind() == "call_expression"
                     && call_name(value, source) == Some("require")
+                    && loader.available(value)
                     && call_string_argument(value, source)
                         == Some(super::frameworks::PLAYWRIGHT_MODULE)
                 {
@@ -1004,10 +1232,10 @@ fn collect_named_binding_aliases(
     }
 }
 
-fn collect_assignment(
-    assignment: Node<'_>,
+fn collect_assignment<'tree>(
+    assignment: Node<'tree>,
     source: &[u8],
-    discovered: &mut RegistrationDiscovery<'_>,
+    discovered: &mut RegistrationDiscovery<'tree>,
 ) {
     let (Some(left), Some(right)) = (
         assignment.child_by_field_name("left"),
@@ -1026,6 +1254,7 @@ fn collect_assignment(
         discovered
             .assignments
             .push((local.to_owned(), node_text(right, source).to_owned()));
+        discovered.scoped_assignments.push((left, right));
     }
 }
 

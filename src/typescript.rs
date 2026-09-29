@@ -11,7 +11,7 @@ mod project_resolution;
 mod registrations;
 mod suppression;
 
-use self::assertions::{collect_binding_names, loop_binding_keyword, AssertionBindings};
+use self::assertions::AssertionBindings;
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding,
@@ -414,18 +414,14 @@ fn arguments_pass_registration(arguments: Node<'_>, context: &AdapterContext<'_,
                 continue;
             }
             "identifier" | "member_expression" | "subscript_expression" => {
-                (registration_name(node, context.source, context.registrations).is_some()
+                registration_name(node, context.source, context.registrations).is_some()
                     || decorator_registration_name(node, context.source, context.registrations)
-                        .is_some())
-                    && !base_is_locally_bound(node, context.source)
+                        .is_some()
             }
             // `{ Given }` passes the binding under its own name.
-            "shorthand_property_identifier" => {
-                context
-                    .registrations
-                    .recognizes_alias(node_text(node, context.source))
-                    && !base_is_locally_bound(node, context.source)
-            }
+            "shorthand_property_identifier" => context
+                .registrations
+                .recognizes_alias_at(node, node_text(node, context.source)),
             _ => false,
         };
         if passed {
@@ -518,103 +514,6 @@ fn push_returned_values<'tree>(body: Node<'tree>, stack: &mut Vec<Node<'tree>>) 
     }
 }
 
-/// Whether the name an argument starts from (`Given`, or `cucumber` in `cucumber.Given`) is bound
-/// inside an enclosing function: a parameter, or a declaration directly in an enclosing block. Such
-/// a name is a local value, such as a fixture named `Given`, not the file's registration binding.
-fn base_is_locally_bound(argument: Node<'_>, source: &[u8]) -> bool {
-    let mut base = argument;
-    while let Some(inner) = match base.kind() {
-        "member_expression" => base.child_by_field_name("object"),
-        "parenthesized_expression" => base.named_child(0),
-        _ => None,
-    } {
-        base = inner;
-    }
-    if !matches!(base.kind(), "identifier" | "shorthand_property_identifier") {
-        return false;
-    }
-    let name = node_text(base, source);
-    let mut bound = BTreeSet::new();
-    let mut current = base;
-    while let Some(scope) = current.parent() {
-        match scope.kind() {
-            "arrow_function"
-            | "function_expression"
-            | "function_declaration"
-            | "generator_function"
-            | "generator_function_declaration"
-            | "method_definition" => {
-                for field in ["parameters", "parameter"] {
-                    if let Some(parameters) = scope.child_by_field_name(field) {
-                        collect_binding_names(parameters, source, &mut bound);
-                    }
-                }
-            }
-            // `for (const Given of values)`: a loop declaration binds for the loop body. A bare
-            // `for (Given of values)` assigns an outer name and binds nothing.
-            "for_in_statement" => {
-                if let Some(left) = scope
-                    .child_by_field_name("left")
-                    .filter(|left| loop_binding_keyword(scope, *left).is_some())
-                {
-                    collect_binding_names(left, source, &mut bound);
-                }
-            }
-            "for_statement" => {
-                if let Some(initializer) = scope.child_by_field_name("initializer").filter(|node| {
-                    matches!(node.kind(), "lexical_declaration" | "variable_declaration")
-                }) {
-                    let mut declarators = initializer.walk();
-                    for declarator in initializer.named_children(&mut declarators) {
-                        if let Some(pattern) = declarator.child_by_field_name("name") {
-                            collect_binding_names(pattern, source, &mut bound);
-                        }
-                    }
-                }
-            }
-            "catch_clause" => {
-                if let Some(parameter) = scope.child_by_field_name("parameter") {
-                    collect_binding_names(parameter, source, &mut bound);
-                }
-            }
-            "statement_block" => {
-                let mut cursor = scope.walk();
-                for statement in scope.named_children(&mut cursor) {
-                    match statement.kind() {
-                        "lexical_declaration" | "variable_declaration" => {
-                            let mut declarators = statement.walk();
-                            for declarator in statement.named_children(&mut declarators) {
-                                if let Some(pattern) = declarator.child_by_field_name("name") {
-                                    collect_binding_names(pattern, source, &mut bound);
-                                }
-                            }
-                        }
-                        "function_declaration"
-                        | "generator_function_declaration"
-                        | "class_declaration"
-                        | "abstract_class_declaration"
-                        | "enum_declaration" => {
-                            // A declaration always carries its name.
-                            bound.extend(
-                                statement
-                                    .child_by_field_name("name")
-                                    .map(|name| node_text(name, source).to_owned()),
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-        if bound.contains(name) {
-            return true;
-        }
-        current = scope;
-    }
-    false
-}
-
 fn unresolved_registration_call<'a>(
     call: Node<'_>,
     context: &'a AdapterContext<'_, '_>,
@@ -691,15 +590,8 @@ fn extract_call<'tree>(
     let function = call.child_by_field_name("function")?;
     let (callee, registration, registration_framework) =
         context.framework_calls.registration(function).or_else(|| {
-            registration_name(function, source, context.registrations).filter(
-                |(_, _, framework)| {
-                    !framework_callbacks::is_new_framework(*framework)
-                        && !context
-                            .framework_calls
-                            .shadowed
-                            .contains(&function.start_byte())
-                },
-            )
+            registration_name(function, source, context.registrations)
+                .filter(|(_, _, framework)| !framework_callbacks::is_new_framework(*framework))
         })?;
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
