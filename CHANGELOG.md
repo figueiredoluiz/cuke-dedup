@@ -5,11 +5,22 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-29
+
 ### Added
 
 - Reports identify Jest-Cucumber string matchers with the additive `literal` matcher kind; their text is preserved rather than normalized as a Cucumber Expression. Existing frameworks' matcher kinds and fingerprints are unchanged.
 
 - Extract step definitions from `vitest-cucumber-plugin` ESM registrations and statically resolved inline `jest-cucumber` scenario callbacks, including immutable aliases and lexical shadowing checks. Jest's positional steps support handler-reuse findings without global matcher-collision or unused-definition findings; handler comparisons involving either framework require matching framework conventions. Unsupported Jest setup such as `autoBindSteps`, named callbacks, generators, async callbacks, and escaped helpers remains visibly incomplete. Runner configuration inference and the separate `@amiceli/vitest-cucumber` package are not included.
+
+### Fixed
+
+- Resolve registration aliases, namespaces, and Playwright-BDD factories through their nearest runtime binding. Shadowed or modified `require` calls no longer create phantom step definitions, and nested aliases do not leak into unrelated scopes. Genuine CommonJS and ESM registrations remain supported.
+- Mark unresolved barrel exports derived from rejected CommonJS loaders as incomplete, including aliases and wrapped loader calls, while keeping unrelated inert helpers complete.
+
+### Changed
+
+- Expand regression coverage for parser limitations, ambiguous matchers, Gherkin outlines and backgrounds, and parity across terminal, JSON, JSONL, HTML, and SARIF reports.
 
 ## [0.9.0] - 2026-09-25
 
@@ -387,6 +398,7 @@ Initial public release.
 - Native Cargo and npm distributions for eight supported targets.
 - A checksum-verified GitHub Action and an agent-oriented CukeDedup skill.
 
+[0.10.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.6.0...v0.7.0
