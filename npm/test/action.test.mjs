@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildArguments,
   buildEffectiveConfigArguments,
+  download,
   releaseTarget,
   reportOutputs,
   resolveReportDirectory,
@@ -295,4 +296,75 @@ test("action accepts only the exact release archive structure", () => {
     ),
     /unexpected release archive members/,
   );
+});
+
+test("action retries only missing release assets with bounded backoff", async (t) => {
+  for (const [statuses, error] of [
+    [[200], null],
+    [[404, 200], null],
+    [["cancel", 200], null],
+    [[...Array(9).fill(404), 200], null],
+    [Array(10).fill(404), "HTTP 404"],
+    [[403], "HTTP 403"],
+    [[500], "HTTP 500"],
+    [[404, 503], "HTTP 503"],
+    [[204], "HTTP 204"],
+    [["network"], "network failure"],
+    [["stream"], "stream failure"],
+  ]) {
+    await t.test(statuses.join(","), async (t) => {
+      const directory = await mkdtemp(join(tmpdir(), "cuke-download-"));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      const destination = join(directory, "asset");
+      const url = "https://example.invalid/release/asset";
+      const waits = [];
+      let calls = 0;
+      let cancelled = 0;
+      t.mock.method(globalThis, "fetch", async (requested, options) => {
+        assert.equal(requested, url);
+        assert.equal(options.redirect, "follow");
+        const status = statuses[calls++];
+        assert.notEqual(status, undefined, "unexpected extra download attempt");
+        if (status === "network") throw new Error("network failure");
+        if (status === "stream") return new Response(new ReadableStream({
+          start(controller) { controller.error(new Error("stream failure")); },
+        }));
+        const response = new Response(status === 204 ? null : "asset bytes", { status: status === "cancel" ? 404 : status });
+        if (!response.ok) {
+          const cancel = response.body.cancel.bind(response.body);
+          t.mock.method(response.body, "cancel", async () => {
+            cancelled++;
+            await cancel();
+            if (status === "cancel") throw new Error("cleanup failed");
+          });
+        }
+        return response;
+      });
+      const result = download(url, destination, async (delay) => { waits.push(delay); });
+      if (error) {
+        await assert.rejects(result, (cause) => {
+          assert.ok(cause.message.includes(error), cause.message);
+          if (error.startsWith("HTTP")) assert.ok(cause.message.includes(url));
+          return true;
+        });
+        if (statuses[0] !== "stream") await assert.rejects(readFile(destination), { code: "ENOENT" });
+      } else {
+        await result;
+        assert.equal(await readFile(destination, "utf8"), "asset bytes");
+      }
+      assert.equal(calls, statuses.length);
+      assert.deepEqual(waits, [1000, 2000, 4000, 8000, 10000, 10000, 10000, 10000, 10000].slice(0, calls - 1));
+      assert.equal(cancelled, statuses.filter((s) => s === "cancel" || (typeof s === "number" && s >= 400)).length);
+    });
+  }
+});
+
+test("action does not retry destination write failures", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-download-write-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => new Response("asset bytes"));
+  await assert.rejects(download("https://example.invalid/asset", directory, async () => {
+    assert.fail("write failures must not trigger a retry");
+  }), (error) => ["EISDIR", "EPERM", "EACCES"].includes(error.code));
+  assert.equal(fetchMock.mock.callCount(), 1);
 });

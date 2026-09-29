@@ -63,6 +63,8 @@ no repository secret or expanded permission. A self-hosted runner must provide `
 For security-sensitive workflows, pin CukeDedup to the release tag's full commit SHA. Use
 `continue-on-error` only when a later step deliberately evaluates the `exit-code` output.
 
+The GitHub Action retries HTTP 404 responses while release assets become available, with at most ten attempts and 65 seconds of total backoff per asset. Other HTTP errors, network failures, and stream failures stop immediately. This tolerates short publication delays; it does not guarantee that a release build will finish within the retry window. Checksum and provenance verification remain required.
+
 ## Changed-file analysis
 
 Report only findings that involve files changed from a Git revision while still comparing those
