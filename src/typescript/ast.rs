@@ -191,6 +191,11 @@ pub(super) fn string_literal<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a
     text.get(1..text.len() - 1)
 }
 
+/// Import-equals depends on CommonJS loader provenance, unlike ordinary ESM syntax.
+pub(super) fn import_requires_loader(node: Node<'_>) -> bool {
+    direct_named_child(node, "import_require_clause").is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

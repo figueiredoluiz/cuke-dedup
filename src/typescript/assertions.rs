@@ -37,6 +37,30 @@ const ASSERTION_MODULES: [&str; 7] = [
     "bun:test",
 ];
 
+/// Loader provenance shared by registration discovery and CommonJS export resolution.
+/// Module writes are conservatively unordered; local declarations affect only their own scope.
+pub(super) struct RequireBindings {
+    module_shadowed: bool,
+    shadow_ranges: BTreeMap<String, Vec<(usize, usize)>>,
+}
+
+impl RequireBindings {
+    pub(super) fn discover(root: Node<'_>, source: &[u8]) -> Self {
+        let (scopes, ranges, _) = collect_binding_scopes(root, source);
+        let shadow_ranges = collect_scoped_bindings(scopes, ranges);
+        let module_shadowed =
+            module_runtime_binding_exists(root, source, "require", &shadow_ranges);
+        Self {
+            module_shadowed,
+            shadow_ranges,
+        }
+    }
+
+    pub(super) fn available(&self, node: Node<'_>) -> bool {
+        !self.module_shadowed && !position_is_shadowed(&self.shadow_ranges, "require", node)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct AssertionBindings {
     identifiers: BTreeSet<String>,
@@ -941,6 +965,7 @@ pub(super) fn collect_binding_scopes(
             enclosing
         };
         match node.kind() {
+            "ambient_declaration" => continue,
             "function_declaration"
             | "generator_function_declaration"
             | "function_expression"

@@ -1116,6 +1116,8 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
     ] {
         let source =
             format!("{write} {cjs} Then('state', ({{state}}) => api.expect(state).toBe('ready'));");
+        assert!(definitions(&source).is_empty(), "{write}");
+        let source = format!("import {{Then}} from '@cucumber/cucumber'; {write} const api = require('@playwright/test'); Then('state', ({{state}}) => api.expect(state).toBe('ready'));");
         assert!(
             definitions(&source)[0]
                 .handler
