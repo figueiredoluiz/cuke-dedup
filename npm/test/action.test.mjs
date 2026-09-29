@@ -343,8 +343,8 @@ test("action retries only missing release assets with bounded backoff", async (t
       const result = download(url, destination, async (delay) => { waits.push(delay); });
       if (error) {
         await assert.rejects(result, (cause) => {
-          assert.ok(cause.message.includes(error), cause.message);
-          if (error.startsWith("HTTP")) assert.ok(cause.message.includes(url));
+          assert.equal(cause.message, error.startsWith("HTTP")
+            ? `failed to download ${url}: ${error}` : error);
           return true;
         });
         if (statuses[0] !== "stream") await assert.rejects(readFile(destination), { code: "ENOENT" });
