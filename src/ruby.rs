@@ -625,7 +625,7 @@ fn literal_string(raw: &str) -> Option<String> {
     if raw.len() < 2 || !matches!(quote, '\'' | '"') || !raw.ends_with(quote) {
         return None;
     }
-    let mut chars = raw[1..raw.len() - 1].chars();
+    let mut chars = raw[1..raw.len() - 1].chars().peekable();
     let mut value = String::new();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
@@ -639,6 +639,7 @@ fn literal_string(raw: &str) -> Option<String> {
             'n' if quote == '"' => value.push('\n'),
             'r' if quote == '"' => value.push('\r'),
             't' if quote == '"' => value.push('\t'),
+            'u' if quote == '"' => value.push_str(&unicode_escape(&mut chars)?),
             c if quote == '\'' => {
                 value.push('\\');
                 value.push(c);
@@ -649,10 +650,55 @@ fn literal_string(raw: &str) -> Option<String> {
     Some(value)
 }
 
+/// Decodes Unicode scalar escapes; Ruby does not use UTF-16 surrogate pairs.
+fn unicode_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<String> {
+    let braced = chars.peek() == Some(&'{');
+    let mut digits = String::new();
+    if braced {
+        chars.next();
+        loop {
+            let ch = chars.next()?;
+            if ch == '}' {
+                break;
+            }
+            if ch == '\n' {
+                return None;
+            }
+            digits.push(ch);
+        }
+    } else {
+        for _ in 0..4 {
+            digits.push(chars.next()?);
+        }
+        if !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+    }
+    let mut decoded = String::new();
+    for scalar in digits.split_ascii_whitespace() {
+        if scalar.len() > 6 || !scalar.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        decoded.push(char::from_u32(u32::from_str_radix(scalar, 16).ok()?)?);
+    }
+    Some(decoded)
+}
+
+/// Full Unicode folds can consume multiple literal ASCII letters in Ruby, unlike Rust regex.
+fn compatible_ignorecase_literal(pattern: &str) -> bool {
+    let folded = pattern.to_ascii_lowercase();
+    pattern.is_ascii()
+        && !pattern.chars().any(|c| r"\.[](){}*+?|".contains(c))
+        && !["ss", "ff", "fi", "fl", "st"]
+            .iter()
+            .any(|fold| folded.contains(fold))
+}
+
 /// Ruby line anchors are multiline by default; unsupported constructs never reach JS conversion.
 pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
     if pattern.len() > crate::resource_limits::MAX_REGEX_PATTERN_BYTES
-        || flags.chars().any(|flag| flag != 'm')
+        || flags.chars().any(|flag| !matches!(flag, 'm' | 'i'))
+        || (flags.contains('i') && !compatible_ignorecase_literal(pattern))
         || pattern.contains("[[:")
         || pattern.contains("&&")
         || ["++", "*+", "?+", "}+"]
@@ -662,6 +708,9 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
         return None;
     }
     let mut result = String::from(if flags.contains('m') { "(?ms:" } else { "(?m:" });
+    if flags.contains('i') {
+        result.insert(2, 'i');
+    }
     let mut chars = pattern.chars().peekable();
     let mut in_class = false;
     let mut first_class_member = false;
