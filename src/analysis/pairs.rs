@@ -207,15 +207,18 @@ pub(super) fn analyze_definition_pairs(
             && !normalized_matcher
             && same_handler
             && meaningful_handlers;
-        let structural_handler = candidate
-            .sources
-            .contains(CandidateSource::StructuralHandler)
+        let structural_handler = left.framework != crate::model::Framework::CucumberRuby
+            && candidate
+                .sources
+                .contains(CandidateSource::StructuralHandler)
             && !normalized_matcher
             && !same_handler
             && !(positional && exact_matcher)
             && same_structure
             && meaningful_handlers;
-        let near_handler = candidate.sources.can_feed_near_matcher()
+        let near_handler = (left.framework != crate::model::Framework::CucumberRuby
+            || same_handler)
+            && candidate.sources.can_feed_near_matcher()
             && !(positional && same_handler)
             && relationships.same_deferred_assertions
             && !structural_handler

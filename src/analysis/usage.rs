@@ -742,6 +742,45 @@ fn witness_literal(literal: &str) -> String {
     output
 }
 
+pub(super) fn apply_indirect_usage(
+    definitions: &[StepDefinition],
+    usage: Option<&crate::source_adapter::IndirectStepUsage>,
+    config: &Config,
+    outcome: &mut FeatureUsageOutcome,
+) {
+    if !definitions
+        .iter()
+        .any(|d| d.framework == crate::model::Framework::CucumberRuby)
+    {
+        return;
+    }
+    let Some(usage) = usage.filter(|usage| !usage.unknown) else {
+        outcome.used.extend(0..definitions.len());
+        outcome.incomplete.push(
+            "Ruby indirect step usage is unresolved; unused-definition findings are disabled"
+                .to_owned(),
+        );
+        return;
+    };
+    if usage.texts.is_empty() {
+        return;
+    }
+    let mut matched = Vec::new();
+    scan_windows(
+        definitions,
+        &config.parameter_types,
+        matcher_window_size(),
+        |start, compiled, index, _| {
+            for text in &usage.texts {
+                index.matches(compiled, text, &mut matched);
+                outcome
+                    .used
+                    .extend(matched.iter().map(|index| index + start));
+            }
+        },
+    );
+}
+
 pub(super) fn analyze_unused(
     definitions: &[StepDefinition],
     used: &BTreeSet<usize>,
@@ -808,10 +847,15 @@ fn compile_matcher(
                     Some(regex_limit_message(definition)),
                 );
             }
-            let Some(expression) = crate::typescript::rust_regex_expression(
-                &definition.matcher,
-                &definition.matcher_flags,
-            ) else {
+            let expression = if definition.framework == crate::model::Framework::CucumberRuby {
+                crate::ruby::regex_expression(&definition.matcher, &definition.matcher_flags)
+            } else {
+                crate::typescript::rust_regex_expression(
+                    &definition.matcher,
+                    &definition.matcher_flags,
+                )
+            };
+            let Some(expression) = expression else {
                 return (
                     CompiledMatcher {
                         regex: None,

@@ -25,6 +25,8 @@ pub struct FeatureFile {
 /// Deterministically ordered files discovered for one analysis run.
 #[non_exhaustive]
 pub struct DiscoveredFiles {
+    /// Resolved source-loading edges used by definition extraction.
+    pub dependencies: Vec<source_adapter::SourceDependency>,
     /// Gherkin feature files and their selected parser formats.
     pub features: Vec<FeatureFile>,
     /// JavaScript or TypeScript definition sources.
@@ -101,6 +103,9 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         }
 
         if let Some(language) = source_language(relative) {
+            if language == SourceLanguage::Ruby && definition_globs.is_none() {
+                continue;
+            }
             if definition_globs
                 .as_ref()
                 .map(|globs| globs.iter().any(|(matcher, _)| matcher.is_match(relative)))
@@ -137,6 +142,7 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         })
         .map(|(_, pattern)| pattern.clone())
         .collect();
+    crate::ruby::dependencies::resolve(config, &excludes, &mut files);
     Ok(files)
 }
 

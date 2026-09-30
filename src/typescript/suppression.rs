@@ -71,6 +71,7 @@ fn inline_suppression_diagnostic(
     message: &str,
 ) -> ExtractionDiagnostic {
     ExtractionDiagnostic {
+        kind: crate::source_adapter::ExtractionDiagnosticKind::Other,
         level: ExtractionDiagnosticLevel::Error,
         location: SourceLocation::new(&file.path, zero_based_line + 1, 1, zero_based_line + 1, 1),
         message: message.to_owned(),

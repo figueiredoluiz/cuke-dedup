@@ -69,10 +69,22 @@ pub fn analyze_with_diagnostics(
     feature_steps: Vec<FeatureStep>,
     config: &Config,
 ) -> Result<AnalysisOutcome> {
-    Ok(analyze_internal(definitions, feature_steps, config, false)?.0)
+    Ok(analyze_internal(definitions, feature_steps, config, false, None)?.0)
+}
+
+/// Analyzes definitions with indirect usage merged from every selected Ruby source.
+/// Missing metadata in the older entry points conservatively disables Ruby unused findings.
+pub fn analyze_with_step_usage(
+    definitions: Vec<StepDefinition>,
+    feature_steps: Vec<FeatureStep>,
+    config: &Config,
+    usage: &crate::source_adapter::IndirectStepUsage,
+) -> Result<AnalysisOutcome> {
+    Ok(analyze_internal(definitions, feature_steps, config, false, Some(usage))?.0)
 }
 
 pub(crate) fn analyze_for_cli(
+    indirect_usage: &crate::source_adapter::IndirectStepUsage,
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
     config: &Config,
@@ -81,7 +93,13 @@ pub(crate) fn analyze_for_cli(
     AnalysisCensus,
     suppression::UnmatchedSuppressionOutcome,
 )> {
-    analyze_internal(definitions, feature_steps, config, true)
+    analyze_internal(
+        definitions,
+        feature_steps,
+        config,
+        true,
+        Some(indirect_usage),
+    )
 }
 
 fn analyze_internal(
@@ -89,6 +107,7 @@ fn analyze_internal(
     feature_steps: Vec<FeatureStep>,
     config: &Config,
     include_unmatched_suppressions: bool,
+    indirect_usage: Option<&crate::source_adapter::IndirectStepUsage>,
 ) -> Result<(
     AnalysisOutcome,
     AnalysisCensus,
@@ -96,13 +115,23 @@ fn analyze_internal(
 )> {
     config.validate_analysis_limits()?;
     let mut findings = Vec::new();
+    let ruby = definitions
+        .iter()
+        .any(|d| d.framework == crate::model::Framework::CucumberRuby);
+    if ruby
+        && definitions
+            .iter()
+            .any(|d| d.framework != crate::model::Framework::CucumberRuby)
+    {
+        bail!("Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots");
+    }
     let suppressions = suppression::SuppressionIndex::new(config, &definitions);
     let pair_analysis =
         pairs::analyze_definition_pairs(&definitions, config, &suppressions, &mut findings);
     let overlap_budget = config
         .max_candidate_comparisons
         .saturating_sub(pair_analysis.census.candidate_comparisons_evaluated);
-    let usage = usage::analyze_feature_usage(
+    let mut usage = usage::analyze_feature_usage(
         &definitions,
         &feature_steps,
         config,
@@ -110,6 +139,7 @@ fn analyze_internal(
         &mut findings,
         overlap_budget,
     );
+    usage::apply_indirect_usage(&definitions, indirect_usage, config, &mut usage);
     usage::analyze_unused(
         &definitions,
         &usage.used,

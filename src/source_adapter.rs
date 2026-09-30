@@ -21,6 +21,8 @@ pub(crate) const UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX: &str =
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceLanguage {
+    /// Ruby Cucumber sources selected explicitly by definition globs.
+    Ruby,
     /// JavaScript, JSX, or their module variants.
     JavaScript,
     /// TypeScript or its module variants.
@@ -32,6 +34,7 @@ pub enum SourceLanguage {
 /// Returns the tree-sitter grammar registered for a definition-source language.
 pub(crate) fn grammar_for_language(language: SourceLanguage) -> tree_sitter::Language {
     match language {
+        SourceLanguage::Ruby => tree_sitter_ruby::LANGUAGE.into(),
         SourceLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
         SourceLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         SourceLanguage::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
@@ -57,10 +60,28 @@ pub enum ExtractionDiagnosticLevel {
     Error,
 }
 
+/// Machine-readable effect of an extraction diagnostic, independent of its wording.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtractionDiagnosticKind {
+    /// Compatibility mode used by [`ExtractionDiagnostic::new`]; classify legacy message prefixes.
+    LegacyMessage,
+    /// A source load whose target has not been included in the source graph.
+    Dependency,
+    /// An advisory or error that does not itself signal missing definitions.
+    Other,
+    /// Static extraction may have missed definitions.
+    Incomplete,
+    /// Source syntax could not be fully parsed; also signals incomplete extraction.
+    Unparseable,
+}
+
 /// A source-localized problem encountered while extracting definitions.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractionDiagnostic {
+    /// Machine-readable completeness and parse status.
+    pub kind: ExtractionDiagnosticKind,
     /// Diagnostic impact.
     pub level: ExtractionDiagnosticLevel,
     /// Source position of the affected matcher.
@@ -70,13 +91,31 @@ pub struct ExtractionDiagnostic {
 }
 
 impl ExtractionDiagnostic {
-    /// Creates a source-localized extraction diagnostic.
+    /// Creates a diagnostic with legacy message-prefix classification.
+    ///
+    /// New adapters should use [`Self::with_kind`] to classify diagnostics independently of text.
     pub fn new(
         level: ExtractionDiagnosticLevel,
         location: SourceLocation,
         message: impl Into<String>,
     ) -> Self {
+        Self::with_kind(
+            ExtractionDiagnosticKind::LegacyMessage,
+            level,
+            location,
+            message,
+        )
+    }
+
+    /// Creates an explicitly classified diagnostic without inferring its effect from its message.
+    pub fn with_kind(
+        kind: ExtractionDiagnosticKind,
+        level: ExtractionDiagnosticLevel,
+        location: SourceLocation,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
+            kind,
             level,
             location,
             message: message.into(),
@@ -85,19 +124,94 @@ impl ExtractionDiagnostic {
 }
 
 pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> bool {
-    diagnostic
-        .message
-        .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)
-        || is_unparseable_diagnostic(diagnostic)
+    match diagnostic.kind {
+        ExtractionDiagnosticKind::Incomplete
+        | ExtractionDiagnosticKind::Unparseable
+        | ExtractionDiagnosticKind::Dependency => true,
+        ExtractionDiagnosticKind::Other => false,
+        ExtractionDiagnosticKind::LegacyMessage => {
+            diagnostic
+                .message
+                .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)
+                || is_unparseable_diagnostic(diagnostic)
+        }
+    }
 }
 
-/// Reports whether a diagnostic marks a source that could not be parsed at all. Distinct from the
-/// broader completeness check so `--fail-on-unparseable` can gate this one case without also
-/// forcing every other incompleteness to abort.
+/// Reports a parse failure separately from other causes of incomplete extraction.
 pub(crate) fn is_unparseable_diagnostic(diagnostic: &ExtractionDiagnostic) -> bool {
-    diagnostic
-        .message
-        .starts_with(UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX)
+    match diagnostic.kind {
+        ExtractionDiagnosticKind::Unparseable => true,
+        ExtractionDiagnosticKind::LegacyMessage => diagnostic
+            .message
+            .starts_with(UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX),
+        ExtractionDiagnosticKind::Other
+        | ExtractionDiagnosticKind::Incomplete
+        | ExtractionDiagnosticKind::Dependency => false,
+    }
+}
+
+/// A statically resolved source-loading edge.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceDependency {
+    /// Source location of the loading call.
+    pub location: SourceLocation,
+    /// Canonical Ruby source included by that call.
+    pub target: PathBuf,
+}
+
+impl SourceDependency {
+    /// Records a loading call and its resolved source.
+    pub fn new(location: SourceLocation, target: PathBuf) -> Self {
+        Self { location, target }
+    }
+}
+
+/// Potential Ruby step invocations, separate from concrete Gherkin execution evidence.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IndirectStepUsage {
+    /// Statically decoded possible step texts, including deferred calls.
+    pub texts: std::collections::BTreeSet<String>,
+    /// An unresolved invocation prevents proving any Ruby definition unused.
+    pub unknown: bool,
+}
+
+impl IndirectStepUsage {
+    /// Combines source metadata; absent metadata is conservatively unknown.
+    pub fn extend(&mut self, other: Option<Self>) {
+        match other {
+            Some(other) => {
+                self.texts.extend(other.texts);
+                self.unknown |= other.unknown;
+            }
+            None => self.unknown = true,
+        }
+    }
+}
+
+/// A source-declared parameter type, resolved without executing its transformer.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceParameterType {
+    /// Literal registry name, or unknown when static name resolution failed.
+    pub name: Option<String>,
+    /// Validated Rust-compatible matching expression; absent for an unresolved declaration.
+    pub expression: Option<String>,
+    /// Location of the declaration, used to diagnose collisions across files.
+    pub location: SourceLocation,
+}
+
+impl SourceParameterType {
+    /// Constructs source metadata; unresolved names or expressions must retain uncertainty.
+    pub fn new(name: Option<String>, expression: Option<String>, location: SourceLocation) -> Self {
+        Self {
+            name,
+            expression,
+            location,
+        }
+    }
 }
 
 /// Definitions and non-fatal diagnostics extracted from one source.
@@ -106,6 +220,10 @@ pub(crate) fn is_unparseable_diagnostic(diagnostic: &ExtractionDiagnostic) -> bo
 pub struct Extraction {
     /// Successfully extracted definitions.
     pub definitions: Vec<StepDefinition>,
+    /// Parameter declarations; merge the complete source registry before matching expressions.
+    pub parameter_types: Vec<SourceParameterType>,
+    /// Optional indirect usage metadata; merge across every selected Ruby source.
+    pub indirect_usage: Option<IndirectStepUsage>,
     /// Problems that did not prevent extraction of the rest of the file.
     pub diagnostics: Vec<ExtractionDiagnostic>,
 }
@@ -116,6 +234,8 @@ impl Extraction {
         Self {
             definitions,
             diagnostics,
+            indirect_usage: None,
+            parameter_types: Vec::new(),
         }
     }
 }
@@ -126,6 +246,7 @@ impl Extraction {
 /// session per analysis root rather than sharing it between unrelated repositories.
 #[derive(Default)]
 pub struct SourceExtractionSession {
+    dependencies: std::collections::BTreeSet<(PathBuf, usize, usize)>,
     root: Option<PathBuf>,
     registrations: Vec<String>,
     assertion_modules: Vec<String>,
@@ -150,6 +271,23 @@ pub(crate) trait StatefulSourceAdapter: SourceAdapter {
 }
 
 impl SourceExtractionSession {
+    /// Supplies resolved loading edges from discovery without executing dependencies.
+    pub fn with_dependencies(mut self, dependencies: &[SourceDependency]) -> Self {
+        self.dependencies.extend(dependencies.iter().map(|edge| {
+            (
+                edge.location.path.clone(),
+                edge.location.line,
+                edge.location.column,
+            )
+        }));
+        self
+    }
+
+    pub(crate) fn dependency_resolved(&self, location: &SourceLocation) -> bool {
+        self.dependencies
+            .contains(&(location.path.clone(), location.line, location.column))
+    }
+
     /// Creates an extraction session whose imported modules must remain inside `root`.
     pub fn new(root: &Path) -> Self {
         Self::with_registrations(root, &[])
@@ -314,6 +452,7 @@ macro_rules! register_source_adapters {
 }
 
 register_source_adapters! {
+    Ruby => crate::ruby::RUBY_ADAPTER : ".rb";
     JavaScript => crate::typescript::JAVASCRIPT_ADAPTER : ".mjs", ".cjs", ".jsx", ".js";
     TypeScript => crate::typescript::TYPESCRIPT_ADAPTER : ".mts", ".cts", ".ts";
     Tsx => crate::typescript::TSX_ADAPTER : ".tsx";

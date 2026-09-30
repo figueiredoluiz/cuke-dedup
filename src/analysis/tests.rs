@@ -2006,7 +2006,13 @@ fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
     assert!(generated.census.skipped_candidate_comparisons > 0);
     assert!(generated.census.candidate_sources["structuralHandler"].skipped > 0);
 
-    let (outcome, census, _) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
+    let (outcome, census, _) = analyze_for_cli(
+        &crate::source_adapter::IndirectStepUsage::default(),
+        class_definitions,
+        Vec::new(),
+        &config,
+    )
+    .unwrap();
     assert!(!outcome.result.findings.is_empty());
     assert_eq!(outcome.incomplete.len(), 1);
     assert!(outcome.incomplete[0].contains("partial findings are available"));
@@ -2362,7 +2368,13 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     config.max_candidate_comparisons = 100;
     config.max_structural_class_comparisons = 1;
 
-    let (outcome, census, _) = analyze_for_cli(class_definitions, Vec::new(), &config).unwrap();
+    let (outcome, census, _) = analyze_for_cli(
+        &crate::source_adapter::IndirectStepUsage::default(),
+        class_definitions,
+        Vec::new(),
+        &config,
+    )
+    .unwrap();
     assert_eq!(census.truncated_structural_classes, 5);
     assert_eq!(outcome.incomplete.len(), 1);
     assert!(outcome.incomplete[0].contains("and 2 more"));
@@ -2370,7 +2382,13 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     let definitions = definitions(
         "Given('one', () => action(1));\nGiven('two', () => action(2));\nGiven('three', () => action(3));",
     );
-    let (outcome, census, _) = analyze_for_cli(definitions, Vec::new(), &config).unwrap();
+    let (outcome, census, _) = analyze_for_cli(
+        &crate::source_adapter::IndirectStepUsage::default(),
+        definitions,
+        Vec::new(),
+        &config,
+    )
+    .unwrap();
     assert_eq!(census.truncated_structural_classes, 1);
     assert!(!outcome.incomplete[0].contains("and 0 more"));
 }

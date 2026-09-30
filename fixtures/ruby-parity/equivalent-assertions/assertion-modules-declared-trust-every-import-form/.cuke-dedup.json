@@ -1,0 +1,10 @@
+{
+  "threshold": 100,
+  "rules": {
+    "unused-definition": "off"
+  },
+  "assertionModules": [
+    "../providers/assertions",
+    "./providers/assertions"
+  ]
+}

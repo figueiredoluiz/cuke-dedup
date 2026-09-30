@@ -1,0 +1,4 @@
+ignored/
+included/*.rb
+!included/steps.rb
+**/*.generated.rb

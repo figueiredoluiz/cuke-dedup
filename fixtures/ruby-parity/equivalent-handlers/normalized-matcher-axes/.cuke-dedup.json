@@ -1,0 +1,1 @@
+{"threshold":100,"rules":{"unused-definition":"off","duplicate-handler":"off","near-duplicate-step":"off","parameterization-candidate":"off","ambiguous-step":"off","overlapping-matcher":"off"}}

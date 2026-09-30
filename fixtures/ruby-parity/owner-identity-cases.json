@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "mappings": [],
+  "groupOracles": {
+    "owner-identity-qualified-missing-owner": {
+      "path": "owner-identity/qualified-missing-owner",
+      "definitionsPattern": "entry.rb",
+      "definitions": 0,
+      "featureSteps": 2,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ]
+    },
+    "owner-identity-autoloaded-owner": {
+      "path": "owner-identity/autoloaded-owner",
+      "definitionsPattern": "entry.rb",
+      "definitions": 0,
+      "featureSteps": 2,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,621 @@
+{
+  "schemaVersion": 1,
+  "sourceManifest": "fixtures/recall/manifest.json",
+  "groupOracles": {
+    "gherkin-backgrounds-and-rules": {
+      "sourceCase": "gherkin-backgrounds-and-rules",
+      "path": "gherkin/backgrounds-rules",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--features",
+        "features/grouping.feature"
+      ],
+      "definitions": 4,
+      "featureSteps": 5,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        }
+      ],
+      "expectedExit": 0
+    },
+    "gherkin-outline-examples-rows": {
+      "sourceCase": "gherkin-outline-examples-rows",
+      "path": "gherkin/outline-examples",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--features",
+        "features/outline.feature"
+      ],
+      "definitions": 4,
+      "featureSteps": 4,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "expectedExit": 0
+    },
+    "gherkin-continuation-keywords": {
+      "sourceCase": "gherkin-continuation-keywords",
+      "path": "gherkin/continuations",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--features",
+        "features/continuations.feature"
+      ],
+      "definitions": 4,
+      "featureSteps": 4,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        }
+      ],
+      "expectedExit": 0
+    },
+    "gherkin-classic-and-markdown-files": {
+      "sourceCase": "gherkin-classic-and-markdown-files",
+      "path": "gherkin/mixed-feature-formats",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--features",
+        "features/multi*.feature*"
+      ],
+      "definitions": 4,
+      "featureSteps": 2,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "expectedExit": 0
+    },
+    "gherkin-attachments-do-not-create-steps": {
+      "sourceCase": "gherkin-attachments-do-not-create-steps",
+      "path": "gherkin/attachments",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 3,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        }
+      ],
+      "expectedExit": 0
+    },
+    "gherkin-step-sources-contribute-concrete-steps": {
+      "sourceCase": "gherkin-step-sources-contribute-concrete-steps",
+      "path": "gherkin/step-sources",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 5,
+      "featureSteps": 7,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 14
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 8
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 11
+        }
+      ],
+      "expectedExit": 0
+    },
+    "empty-markdown-does-not-prove-unused-definitions": {
+      "sourceCase": "empty-markdown-does-not-prove-unused-definitions",
+      "path": "gherkin/empty-markdown",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 0,
+      "complete": false,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        }
+      ],
+      "expectedExit": 2,
+      "reason": "The Markdown feature file parses but yields no steps; retain incomplete status so an empty corpus cannot prove the registration unused."
+    },
+    "ambiguous-step-identity-pins-the-finding-key": {
+      "sourceCase": "ambiguous-step-identity-pins-the-finding-key",
+      "path": "gherkin/ambiguous-identity",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 15,
+      "featureSteps": 11,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps.rb:2",
+            "steps.rb:3"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.rb:6",
+            "steps.rb:7",
+            "steps.rb:8"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 10,
+          "relatedLocations": [
+            "steps.rb:11",
+            "steps.rb:12"
+          ],
+          "messageIncludes": "3 ambiguous expansions"
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "steps.rb:15",
+            "steps.rb:16"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "steps.rb:15",
+            "steps.rb:17"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 27,
+          "relatedLocations": [
+            "steps.rb:20",
+            "steps.rb:21"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 30,
+          "relatedLocations": [
+            "steps.rb:20",
+            "steps.rb:21"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 33
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/identity.feature",
+          "primaryLine": 36
+        }
+      ],
+      "expectedExit": 1
+    },
+    "exact-group-cluster-boundary-splits-at-five-members": {
+      "sourceCase": "exact-group-cluster-boundary-splits-at-five-members",
+      "path": "gherkin/cluster-boundary",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 17,
+      "featureSteps": 1,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2,
+          "relatedLocations": [
+            "steps.rb:3"
+          ],
+          "matchers": [
+            "the alpha gate opens",
+            "the alpha gate opens"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "steps.rb:4"
+          ],
+          "matchers": [
+            "the alpha gate opens",
+            "the alpha gate opens"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps.rb:5"
+          ],
+          "matchers": [
+            "the alpha gate opens",
+            "the alpha gate opens"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 8,
+          "relatedLocations": [
+            "steps.rb:9",
+            "steps.rb:10",
+            "steps.rb:11",
+            "steps.rb:12"
+          ],
+          "cluster": {
+            "memberCount": 5,
+            "pairFindingsCollapsed": 4,
+            "membersTruncated": false
+          }
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 15,
+          "relatedLocations": [
+            "steps.rb:16"
+          ],
+          "matchers": [
+            "the delta pump runs",
+            "the delta pump runs"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 16,
+          "relatedLocations": [
+            "steps.rb:17"
+          ],
+          "matchers": [
+            "the delta pump runs",
+            "the delta pump runs"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 20,
+          "relatedLocations": [
+            "steps.rb:21",
+            "steps.rb:22",
+            "steps.rb:23",
+            "steps.rb:24"
+          ],
+          "cluster": {
+            "memberCount": 5,
+            "pairFindingsCollapsed": 4,
+            "membersTruncated": false
+          }
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 9
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 10
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 11
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ],
+      "reason": "The source fixture intentionally has one unrelated feature step; the 12 unused-definition findings are additional independent Ruby outcomes and are exhaustively owned here alongside the exact duplicate-matcher boundary findings.",
+      "expectedExit": 0
+    },
+    "gherkin-table-cell-escapes": {
+      "sourceCase": "gherkin-table-cell-escapes",
+      "path": "gherkin/table-escapes",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 3,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "steps.rb:2"
+          ],
+          "matchers": [
+            "path {word}",
+            "path {word}"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/path-outline.feature",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "steps.rb:1",
+            "steps.rb:2"
+          ],
+          "messageIncludes": "3 ambiguous expansions"
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ]
+    },
+    "malformed-table-neighbor": {
+      "sourceCase": "malformed-table-neighbor",
+      "path": "gherkin/malformed-table-neighbor",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 3,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "steps.rb:2"
+          ],
+          "matchers": [
+            "path {word}",
+            "path {word}"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/valid-neighbor.feature",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "steps.rb:1",
+            "steps.rb:2"
+          ],
+          "messageIncludes": "3 ambiguous expansions"
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/ragged-extra-cell.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/missing-final-pipe.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "reason": "Malformed outline tables make the corpus incomplete and contribute no step expansions; the valid neighboring outline still contributes all three escaped paths and its ambiguity."
+    }
+  },
+  "mappings": [
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-backgrounds-and-rules",
+      "fixtureGroup": "gherkin-backgrounds-and-rules"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-outline-examples-rows",
+      "fixtureGroup": "gherkin-outline-examples-rows"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-continuation-keywords",
+      "fixtureGroup": "gherkin-continuation-keywords"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-classic-and-markdown-files",
+      "fixtureGroup": "gherkin-classic-and-markdown-files"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-attachments-do-not-create-steps",
+      "fixtureGroup": "gherkin-attachments-do-not-create-steps"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-step-sources-contribute-concrete-steps",
+      "fixtureGroup": "gherkin-step-sources-contribute-concrete-steps"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "empty-markdown-does-not-prove-unused-definitions",
+      "fixtureGroup": "empty-markdown-does-not-prove-unused-definitions"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambiguous-step-identity-pins-the-finding-key",
+      "fixtureGroup": "ambiguous-step-identity-pins-the-finding-key"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "exact-group-cluster-boundary-splits-at-five-members",
+      "fixtureGroup": "exact-group-cluster-boundary-splits-at-five-members"
+    }
+  ]
+}

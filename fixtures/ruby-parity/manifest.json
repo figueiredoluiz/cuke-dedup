@@ -1,0 +1,1599 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Complete source-corpus counterpart inventory, with one explicit scenario-local framework exclusion. Fixture coverage does not claim passing implementation or complete Rust unit-test parity.",
+  "sourceManifests": [
+    "fixtures/corpus/manifest.json",
+    "fixtures/recall/manifest.json"
+  ],
+  "groupOracles": {
+    "registration-identical": {
+      "path": "registration/identical",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "a violet token",
+            "another violet token"
+          ]
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedExit": 1
+    },
+    "registration-conflicting": {
+      "path": "registration/conflicting",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedExit": 0
+    },
+    "registration-uncertain-dynamic": {
+      "path": "registration/uncertain",
+      "definitionsPattern": "dynamic.rb",
+      "definitions": 0,
+      "featureSteps": 0,
+      "complete": false,
+      "reason": "Dynamic matcher provenance never grants trusted registration status.",
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedExit": 2
+    },
+    "registration-uncertain-nested": {
+      "path": "registration/uncertain",
+      "definitionsPattern": "nested.rb",
+      "definitions": 0,
+      "featureSteps": 0,
+      "complete": false,
+      "reason": "Nested registration execution is uncertain and must remain incomplete.",
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedExit": 2
+    },
+    "registration-shadowing": {
+      "path": "registration/scope",
+      "definitions": 0,
+      "featureSteps": 0,
+      "complete": false,
+      "reason": "A method redefinition removes registration trust conservatively.",
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedExit": 2
+    },
+    "matcher-family": {
+      "path": "matcher",
+      "definitions": 8,
+      "featureSteps": 0,
+      "complete": true,
+      "reason": "Includes exact duplicate and near-wording positive controls plus regex, exact-text, and polarity distinctions.",
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        },
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "steps.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 6
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 7
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 8
+        }
+      ],
+      "requiredAbsent": [],
+      "expectedExit": 1
+    },
+    "assertion-and-polarity": {
+      "path": "assertions",
+      "definitions": 6,
+      "featureSteps": 0,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the exact assertion",
+            "another exact assertion"
+          ]
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 6
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is verified",
+            "the parcel is now verified"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the account is enabled",
+            "the account is not enabled"
+          ]
+        }
+      ],
+      "expectedExit": 1,
+      "reason": "Identical source reuse is distinct from assertion trust. An undeclared expect method must not create assertion-based similarity; opposite effects must remain distinct."
+    },
+    "usage-indirect": {
+      "path": "usage",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "reason": "Literal step invocation marks its target used; unrelated definition remains unused.",
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "expectedExit": 0
+    },
+    "load-relative": {
+      "path": "loads/relative",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "reason": "Literal require_relative visits source once; feature evidence must preserve ambiguity.",
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "loaded registration",
+            "loaded registration"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/entry.feature",
+          "primaryLine": 3
+        }
+      ],
+      "expectedExit": 1,
+      "requiredAbsent": []
+    },
+    "load-unresolved": {
+      "path": "loads/unresolved",
+      "definitions": 1,
+      "featureSteps": 0,
+      "complete": false,
+      "reason": "Dynamic/external loads remain incomplete while preserving independent local definitions.",
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ],
+      "expectedExit": 2
+    },
+    "load-cycle": {
+      "path": "loads/cycle",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "reason": "Cycle terminates and contributes each step source once.",
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cycle-safe local registration",
+            "cycle-safe local registration"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/cycle.feature",
+          "primaryLine": 3
+        }
+      ],
+      "expectedExit": 1,
+      "requiredAbsent": []
+    },
+    "load-provider-root": {
+      "path": "loads/provider-root",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "reason": "Configured rubyLoadPaths root resolves one provider without executing it.",
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "entry registration",
+            "provider registration"
+          ]
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "providers/provider.rb",
+          "primaryLine": 1
+        }
+      ],
+      "expectedExit": 1,
+      "requiredAbsent": []
+    },
+    "discovery-explicit-root": {
+      "path": "discovery",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the visible discovery control",
+            "the visible discovery control"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/discovery.feature",
+          "primaryLine": 3
+        }
+      ],
+      "expectedExit": 1,
+      "requiredAbsent": []
+    },
+    "polarity": {
+      "path": "polarity",
+      "definitions": 4,
+      "featureSteps": 2,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the account is enabled",
+            "the account is not enabled"
+          ]
+        }
+      ],
+      "expectedExit": 0,
+      "reason": "Preserve the original polarity-negative configuration and add a meaningful member-call positive. Disabling similarity cannot satisfy both."
+    }
+  },
+  "cases": [
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "configured-threshold-at-limit",
+      "path": "threshold-group",
+      "sourceCaseSha256": "7745e2cf049a6eea6c3b946be185fcc43f3d095038022a3fc8612dfa96b42f39",
+      "behaviorClass": "configured-threshold-at-limit",
+      "requiredStatus": "covered",
+      "fixtureGroup": "configured-threshold-at-limit",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "threshold-over-limit",
+      "path": "threshold-group",
+      "sourceCaseSha256": "05d6cd90018fbff1768bf34754ad4127b8e56d6654b6aed664e7fc6d7b17e0b1",
+      "behaviorClass": "threshold-over-limit",
+      "requiredStatus": "covered",
+      "fixtureGroup": "threshold-over-limit",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "explicit-exclusion-patterns",
+      "path": "exclusions",
+      "sourceCaseSha256": "1a48d135d1f94b0048441b480a925090dbdf7448c413500c613a22b90210b4d5",
+      "behaviorClass": "explicit-exclusion-patterns",
+      "requiredStatus": "covered",
+      "fixtureGroup": "explicit-exclusion-patterns",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "comma-separated-exclusion-patterns",
+      "path": "exclusions",
+      "sourceCaseSha256": "f779f1ce0ac7e7578fb77a8ccc9755539b26d7bc8c0f2f6487e4ee0133f65fe7",
+      "behaviorClass": "comma-separated-exclusion-patterns",
+      "requiredStatus": "covered",
+      "fixtureGroup": "comma-separated-exclusion-patterns",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "gitignore-exclusion",
+      "path": "gitignore",
+      "sourceCaseSha256": "2b6d46c11f17847cbe69020fae3a7b3f064fd13601379e520b9bb3e1003c7c32",
+      "behaviorClass": "gitignore-exclusion",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gitignore-exclusion",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "nested-root-directory-exclusion",
+      "path": "nested-root/packages/e2e",
+      "sourceCaseSha256": "5b412de0718577c0996e02fb44adbc151429d4adc039de57b82f943fb4beeda6",
+      "behaviorClass": "nested-root-directory-exclusion",
+      "requiredStatus": "covered",
+      "fixtureGroup": "nested-root-directory-exclusion",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "gherkin-markdown-default-discovery",
+      "path": "gherkin-markdown",
+      "sourceCaseSha256": "497553c4424262212399d9bea0be3abf7c741c565e322ac7d221f9ffabc3fba8",
+      "behaviorClass": "gherkin-markdown-default-discovery",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-markdown-default-discovery",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-bdd-framework-discovery",
+      "path": "framework-config",
+      "sourceCaseSha256": "a2122c4ab249823192cdee8e24c42c5d7ae42b2e6aba9e613d8bdf41aabef78f",
+      "behaviorClass": "playwright-bdd-framework-discovery",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-playwright-bdd-framework-discovery",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-bdd-local-fixture-duplicate-handler",
+      "path": "playwright-bdd-local-fixture",
+      "sourceCaseSha256": "648dc631f5e1a9402a6b468bab5f1a79500da78f0e3e46f6a9dcf21c4c15bdf5",
+      "behaviorClass": "playwright-bdd-local-fixture-duplicate-handler",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-fixture-facade",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "cypress-cucumber-framework-discovery",
+      "path": "cypress-config",
+      "sourceCaseSha256": "623e4c18f48ff36485fc1fb06b0cd4a6bef12c893283e6ca14c8f09baac0bd85",
+      "behaviorClass": "cypress-cucumber-framework-discovery",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-cypress-cucumber-framework-discovery",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "cuke-dedup-ignore-file",
+      "path": "cuke-dedup-ignore",
+      "sourceCaseSha256": "e47200139becfb9e8bc4afcabbb46d6f95b46bdbcc83ea52dce2e61191b3feb9",
+      "behaviorClass": "cuke-dedup-ignore-file",
+      "requiredStatus": "covered",
+      "fixtureGroup": "cuke-dedup-ignore-file",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "multi-package-cross-package-detection",
+      "path": "multi-package",
+      "sourceCaseSha256": "e6754d85d33cb50e400b70c3e2746f02634928e47b1cb5fc4d8cccdd9834e1c3",
+      "behaviorClass": "multi-package-cross-package-detection",
+      "requiredStatus": "covered",
+      "fixtureGroup": "multi-package-cross-package-detection",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "adversarial-parser-and-handler-behavior",
+      "path": "adversarial",
+      "sourceCaseSha256": "bea8e12216ff97bcd9df70e8964c4b8e0ea565763411490d11915a33e2a4afd3",
+      "behaviorClass": "adversarial-parser-and-handler-behavior",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-adversarial-parser-and-handler-behavior",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "parser-and-analysis-regressions",
+      "path": "parser-regressions",
+      "sourceCaseSha256": "70225a23072f297f5cf1c9901eaa8ddeacd7eaebd3867911c1398c4930bc97f1",
+      "behaviorClass": "parser-and-analysis-regressions",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-parser-and-analysis-regressions",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "all-registered-source-adapters",
+      "path": "mixed-source-adapters",
+      "sourceCaseSha256": "abda8e166018f1b568bee45a1289d265cd35884ae29d6da6c9477f62f99a6a1c",
+      "behaviorClass": "all-registered-source-adapters",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-adapter-shapes",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "localized-unicode-gherkin",
+      "path": "localized-unicode",
+      "sourceCaseSha256": "ebad2d853d412cfa86bcfa067f4431a387b343fa08e003beaaf417179064e028",
+      "behaviorClass": "localized-unicode-gherkin",
+      "requiredStatus": "covered",
+      "fixtureGroup": "localized-unicode-gherkin",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "malformed-matcher-keeps-valid-definitions",
+      "path": "malformed-matcher",
+      "sourceCaseSha256": "bf916632a9875b71021860dee8713b1606df2b922553226bdae96b0f067cd1c9",
+      "behaviorClass": "malformed-matcher-keeps-valid-definitions",
+      "requiredStatus": "covered",
+      "fixtureGroup": "malformed-matcher-keeps-valid-definitions",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "hidden-and-default-exclusion-overrides",
+      "path": "discovery-overrides",
+      "sourceCaseSha256": "b1a7671999ea1d75e25780780055ecb47f6c48f0f4d3382281fadd98834d7519",
+      "behaviorClass": "hidden-and-default-exclusion-overrides",
+      "requiredStatus": "covered",
+      "fixtureGroup": "hidden-and-default-exclusion-overrides",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "mixed-esm-and-cjs-registration-syntax",
+      "path": "mixed-esm-cjs",
+      "sourceCaseSha256": "e521bd215ea5dd18153f3a099d0054cd9c2ac7ba6e1cc314f71cacda108ef862",
+      "behaviorClass": "mixed-esm-and-cjs-registration-syntax",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-mixed-esm-and-cjs-registration-syntax",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "mixed-framework-detection-is-per-file",
+      "path": "mixed-frameworks",
+      "sourceCaseSha256": "85ef61eca15c73bf63cb3c32ba4414c46adbef02d66bed19478671c6110c2f43",
+      "behaviorClass": "mixed-framework-detection-is-per-file",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-mixed-framework-detection-is-per-file",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "spanish-classic-gherkin-dialect",
+      "path": "spanish-dialect",
+      "sourceCaseSha256": "9396ca1491998e52d3008770ca9c69b69b7ed8d77287a01e11c52d3633d7a6b0",
+      "behaviorClass": "spanish-classic-gherkin-dialect",
+      "requiredStatus": "covered",
+      "fixtureGroup": "spanish-classic-gherkin-dialect",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native project fixture preserves the source configuration, discovery and final-outcome contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-injected-fixture-handler-renames",
+      "path": "playwright-auth-fixtures",
+      "sourceCaseSha256": "87ef5ca6bbad04c55dc9b0f297a7ba202300f61b0fd168c743ac4e232bac86a3",
+      "behaviorClass": "playwright-injected-fixture-handler-renames",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-playwright-injected-fixture-handler-renames",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-decorator-handler-fingerprints",
+      "path": "playwright-decorators",
+      "sourceCaseSha256": "3a51fdba5b4fcd91d2e8ddc331b7019c47c52e764c5dbb7777a89a7d2960a630",
+      "behaviorClass": "playwright-decorator-handler-fingerprints",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-playwright-decorator-handler-fingerprints",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambient-global-registration-case-sensitivity",
+      "path": "ambient-global-case",
+      "sourceCaseSha256": "10964fa2c5c5c8f32c4d57e5e4f40ba0c092e988ec27acaee1308419a0a557ac",
+      "behaviorClass": "ambient-global-registration-case-sensitivity",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-ambient-alias",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambiguous-step-definition-origins-cover-every-registration-shape",
+      "path": "ambiguous-step-definition-origins",
+      "sourceCaseSha256": "6111d296eec11defe948789fb618c8460a88b197afb4a84e8a856f4448a6596b",
+      "behaviorClass": "ambiguous-step-definition-origins-cover-every-registration-shape",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-registration-origins",
+      "requiredBehavior": "Preserve the source final findings for ambiguous-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambiguous-step-identity-pins-the-finding-key",
+      "path": "ambiguous-step-identity",
+      "sourceCaseSha256": "044f795dbbcb309f807fed72410f04ec3479ecf882fdc9645d5fda179a0bc958",
+      "behaviorClass": "ambiguous-step-identity-pins-the-finding-key",
+      "requiredStatus": "covered",
+      "fixtureGroup": "ambiguous-step-identity-pins-the-finding-key",
+      "requiredBehavior": "Preserve the source final findings for ambiguous-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambiguous-step-origins-cover-every-construct",
+      "path": "ambiguous-step-origins",
+      "sourceCaseSha256": "2c0cdcb4c26a4eed5b9c63a37a1286ef9b2efcaa5ad2e93c683fd7fc56f8bfdb",
+      "behaviorClass": "ambiguous-step-origins-cover-every-construct",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-gherkin-origins",
+      "requiredBehavior": "Preserve the source final findings for ambiguous-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-modules-declared-trust-every-import-form",
+      "path": "assertion-modules-declared",
+      "sourceCaseSha256": "1a4ba45545c95791552de061806c74f95825d42716602eccd8bada4afc434216",
+      "behaviorClass": "assertion-modules-declared-trust-every-import-form",
+      "requiredStatus": "covered",
+      "fixtureGroup": "assertion-modules-declared-trust-every-import-form",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Named factory Method capture, namespace Hash access, provider constant alias, require namespace and require values_at capture preserve all five import-binding dimensions.",
+        "Excluded syntax only: ESM named/namespace declarations, TypeScript import-equals and CommonJS destructuring; Ruby require/require_relative and value bindings preserve their trust semantics.",
+        "The two groups use identical source/provider bytes and differ only in assertionModules opt-in."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-modules-undeclared-stay-untrusted",
+      "path": "assertion-modules-undeclared",
+      "sourceCaseSha256": "6bb740474ab94c71689b278ae0fabeb7290d8b91583508387790437c36e3c948",
+      "behaviorClass": "assertion-modules-undeclared-stay-untrusted",
+      "requiredStatus": "covered",
+      "fixtureGroup": "assertion-modules-undeclared-stay-untrusted",
+      "requiredBehavior": "Preserve the source final findings for parameterization-candidate and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Named factory Method capture, namespace Hash access, provider constant alias, require namespace and require values_at capture preserve all five import-binding dimensions.",
+        "Excluded syntax only: ESM named/namespace declarations, TypeScript import-equals and CommonJS destructuring; Ruby require/require_relative and value bindings preserve their trust semantics.",
+        "The two groups use identical source/provider bytes and differ only in assertionModules opt-in."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-runner-provenance-trusts-known-factories",
+      "path": "assertion-runner-provenance",
+      "sourceCaseSha256": "b91a168a8fed411599b525f4ef339ada43952a335cb9b10b0a7806fb96df0ade",
+      "behaviorClass": "assertion-runner-provenance-trusts-known-factories",
+      "requiredStatus": "covered",
+      "fixtureGroup": "assertion-runner-provenance-trusts-known-factories",
+      "requiredBehavior": "Preserve the source final findings for parameterization-candidate and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Four explicitly declared provider source identities retain trusted factories and one undeclared identity with identical source retains ordinary-call parameterization. Terminal and two-link fluent matcher shapes are both exercised.",
+        "Precisely excluded: built-in recognition of @playwright/test, vitest, bun:test and chai exports. The matcher strings preserve source ownership only; Ruby provider names make no claim to implement those frameworks."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-subjects-and-chains-preserve-precision",
+      "path": "assertion-precision",
+      "sourceCaseSha256": "adc2a9c04fc7921eef332e175ea5935838796c1c280cd11e5ce569d2e1547b95",
+      "behaviorClass": "assertion-subjects-and-chains-preserve-precision",
+      "requiredStatus": "covered",
+      "fixtureGroup": "assertion-subjects-and-chains-preserve-precision",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "All seven pairs retain distinct object fields, negation, equal assertion block/expression control, direct literal conflict, aliased factory conflict, local-value provenance and method-handler literal conflict.",
+        "Ruby bound Method handlers replace decorator handlers; decorator metadata and erased async/await syntax are inapplicable, while callable-body assertion semantics remain covered.",
+        "Source matcherBlocking=3 is a TypeScript candidate implementation census rather than an assertion outcome; Ruby final finding ownership and all absent pairs are authoritative."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "b1-computed-positions-match-dot-access",
+      "path": "b1-computed-positions",
+      "sourceCaseSha256": "146349f292c9bf137f051b0354f396561b1739b0e102dd293e1515e1a8d6e97e",
+      "behaviorClass": "b1-computed-positions-match-dot-access",
+      "requiredStatus": "covered",
+      "fixtureGroup": "b1-computed-positions-match-dot-access",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Static public_send at terminal matcher, factory option and chain modifier positions preserves literal-key dispatch. Conflicting values stay apart and equal computed assertions retain exact reuse.",
+        "JavaScript bracket-call syntax itself is excluded; literal-string/symbol reflective dispatch is the Ruby semantic analogue."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "cross-package-relative-reexport",
+      "path": "cross-package",
+      "sourceCaseSha256": "d05e248a9c9d20f84f77aae1a64f4d85fcfe9aa3fa7741d82cf904df89c80a1e",
+      "behaviorClass": "cross-package-relative-reexport",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-relative-reexport",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "local-commonjs-barrel-reexport",
+      "path": "local-cjs-barrel",
+      "sourceCaseSha256": "a1f8931651311ee76d7e6babc184a1bb5364bd3fc13e4db286bc1b937c27e3d7",
+      "behaviorClass": "local-commonjs-barrel-reexport",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-barrel-reexport",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "direct-and-fluent-action-equivalence",
+      "path": "direct-fluent-action",
+      "sourceCaseSha256": "8dd00e72e9eaa6f0a2f04c6411a30435d8dba053dd29c1d7135025af0fe75125",
+      "behaviorClass": "direct-and-fluent-action-equivalence",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-direct-and-fluent-action-equivalence",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "duplicate-matcher-precision-requires-kind-text-and-flags",
+      "path": "duplicate-matcher-precision",
+      "sourceCaseSha256": "e262d50e4cb5ff1d43537109271ddb294b7a6b3e36e70fac768a08546d92e01c",
+      "behaviorClass": "duplicate-matcher-precision-requires-kind-text-and-flags",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-duplicate-matcher-precision-requires-kind-text-and-flags",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "empty-markdown-does-not-prove-unused-definitions",
+      "path": "empty-markdown-dialect",
+      "sourceCaseSha256": "82994091406635a0d0cc3cc43d562e93dbcc4e34ffef035dcdccdab27d78897f",
+      "behaviorClass": "empty-markdown-does-not-prove-unused-definitions",
+      "requiredStatus": "covered",
+      "fixtureGroup": "empty-markdown-does-not-prove-unused-definitions",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "exact-group-cluster-boundary-splits-at-five-members",
+      "path": "exact-group-cluster-boundary",
+      "sourceCaseSha256": "19855c24a486302d6c811cdde154cdcd61a1ebe50b67b4eef2a6a9b87b20dcb3",
+      "behaviorClass": "exact-group-cluster-boundary-splits-at-five-members",
+      "requiredStatus": "covered",
+      "fixtureGroup": "exact-group-cluster-boundary-splits-at-five-members",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "exact-match-remains-detectable",
+      "path": "exact-match",
+      "sourceCaseSha256": "168d3a7aaf20254949387829cb3bb546f0159058b8515b5c46575d3502c257d2",
+      "behaviorClass": "exact-match-remains-detectable",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-exact-match-remains-detectable",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "fuzzy-wording-with-varied-handler-shape",
+      "path": "fuzzy-varied-handler",
+      "sourceCaseSha256": "e86725b8baaf124ad595a37994c6ae7381442ea3006bddf0be1adda9083a183d",
+      "behaviorClass": "fuzzy-wording-with-varied-handler-shape",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-fuzzy-wording-with-varied-handler-shape",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-backgrounds-and-rules",
+      "path": "gherkin-axes",
+      "sourceCaseSha256": "427bf743f0855ec3f624bdf93a7c52e206b974d0accbec6538f7326cf8c93d33",
+      "behaviorClass": "gherkin-backgrounds-and-rules",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-backgrounds-and-rules",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-outline-examples-rows",
+      "path": "gherkin-axes",
+      "sourceCaseSha256": "ba517188a2e415c4f8a249f93120773471892a33ccaf644a4f7aed1a91c0ed72",
+      "behaviorClass": "gherkin-outline-examples-rows",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-outline-examples-rows",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-continuation-keywords",
+      "path": "gherkin-axes",
+      "sourceCaseSha256": "ff0e23e332d03ff02f6145e5b7e40d247e3690551c54613b84cc992a9f1f8b89",
+      "behaviorClass": "gherkin-continuation-keywords",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-continuation-keywords",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-classic-and-markdown-files",
+      "path": "gherkin-axes",
+      "sourceCaseSha256": "dd72fa8f65be4e66efc142ab640f73f0e3de8cede26e14ee4e41c8061787d0cd",
+      "behaviorClass": "gherkin-classic-and-markdown-files",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-classic-and-markdown-files",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-attachments-do-not-create-steps",
+      "path": "gherkin-attachments",
+      "sourceCaseSha256": "628231ea558dc59a688a6ed339956e46abf7c5b4618093adb01a8ef0e3580e16",
+      "behaviorClass": "gherkin-attachments-do-not-create-steps",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-attachments-do-not-create-steps",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-step-sources-contribute-concrete-steps",
+      "path": "gherkin-step-sources",
+      "sourceCaseSha256": "7626aa70c352ba34d947b57d3d0a900a2f5867ff2fbe18bfd084d5f31efe3b81",
+      "behaviorClass": "gherkin-step-sources-contribute-concrete-steps",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-step-sources-contribute-concrete-steps",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "legacy-cucumber-registration-modules",
+      "path": "legacy-cucumber-modules",
+      "sourceCaseSha256": "f8dd21871758f22786e6bbd5699e36b26dc0ed7abda59bc24c93f3bc89b328ac",
+      "behaviorClass": "legacy-cucumber-registration-modules",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-legacy-provider",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "legacy-cypress-steps-entrypoint",
+      "path": "legacy-cypress-steps",
+      "sourceCaseSha256": "8bdcb75684b73c941cb51d5747c606ad3a80f9c057cb18ceb6e0b06ae1d40a97",
+      "behaviorClass": "legacy-cypress-steps-entrypoint",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-legacy-cypress-steps-entrypoint",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "local-function-provenance-limits-expansion",
+      "path": "local-function-provenance",
+      "sourceCaseSha256": "9ac6686b675e75481ac4d15529d6873a8901594d4fc6263dfa37a5bc65173f26",
+      "behaviorClass": "local-function-provenance-limits-expansion",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-local-callables",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler, near-duplicate-step, parameterization-candidate and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "local-registration-wrapper",
+      "path": "local-wrapper",
+      "sourceCaseSha256": "fc369295f9829183f48841193f05da6444545e3af7e885880d304acef905dcac",
+      "behaviorClass": "local-registration-wrapper",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-wrapper",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "matcher-overlap-is-synthesised-without-features",
+      "path": "matcher-overlap",
+      "sourceCaseSha256": "b1dd93e9e08922e28000234c7149cfb7ad12c5eda97f85e6b570f072b549bb99",
+      "behaviorClass": "matcher-overlap-is-synthesised-without-features",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-matcher-overlap-is-synthesised-without-features",
+      "requiredBehavior": "Preserve the source final findings for ambiguous-step, duplicate-matcher, overlapping-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "module-constant-values-reach-the-fingerprint",
+      "path": "module-constant-values",
+      "sourceCaseSha256": "74f28d1fb4f64739b03c2d21bf0cee73d7c91c4b32d3955b406990963f282640",
+      "behaviorClass": "module-constant-values-reach-the-fingerprint",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-module-constant-values-reach-the-fingerprint",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler, near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "normalized-matcher-covers-four-axes-and-four-exclusions",
+      "path": "normalized-matcher-axes",
+      "sourceCaseSha256": "4633fb954b7a90e03fafce3f1148b49cb2aeb7964e8fcefbdd11566662bae692",
+      "behaviorClass": "normalized-matcher-covers-four-axes-and-four-exclusions",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-normalized-matcher-covers-four-axes-and-four-exclusions",
+      "requiredBehavior": "Preserve the source final findings for normalized-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "open1-nested-alias-revokes-matcher-trust",
+      "path": "open1-nested-alias",
+      "sourceCaseSha256": "972c00c3be8766b9460d34f82ab3f375f18348238288098baf898c45e79d6369",
+      "behaviorClass": "open1-nested-alias-revokes-matcher-trust",
+      "requiredStatus": "covered",
+      "fixtureGroup": "open1-nested-alias-revokes-matcher-trust",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler, near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Nested namespace/factory/modifier alias write invalidates the reached builder; separate untouched provider instance retains duplicate and near findings.",
+        "Nested JS destructuring becomes explicit nested Ruby reads; binding depth and write reachability are preserved."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "open2-computed-modifier-preserves-semantics",
+      "path": "open2-computed-modifier",
+      "sourceCaseSha256": "b8419115f4c3d38d2fe85ded61df7d5fa81c496e0b65904220f56fb4fb73f3d0",
+      "behaviorClass": "open2-computed-modifier-preserves-semantics",
+      "requiredStatus": "covered",
+      "fixtureGroup": "open2-computed-modifier-preserves-semantics",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Computed modifier literal conflicts, equal-assertion exact positive and computed-negation versus unmodified effect conflict all remain independently asserted."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "package-imports-registration",
+      "path": "package-imports",
+      "sourceCaseSha256": "3bbae9f81634fd2307a04abceee9378e2a5be1a4030860b2a427f81112adf818",
+      "behaviorClass": "package-imports-registration",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-package-load-root",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "playwright-bdd-decorator-registrations",
+      "path": "playwright-decorators",
+      "sourceCaseSha256": "e70124aa3f512414371a758bcafb617d2a2c9995335b0057f6f5d8626a5de7ca",
+      "behaviorClass": "playwright-bdd-decorator-registrations",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-playwright-bdd-decorator-registrations",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "polarity-conflict-is-intentionally-not-near",
+      "path": "polarity",
+      "sourceCaseSha256": "13901bd5ad612c09775781c041f2154fbfcca70f3a634cb07cbb8a0cb892dce7",
+      "behaviorClass": "polarity-conflict-is-intentionally-not-near",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-polarity-conflict-is-intentionally-not-near",
+      "requiredBehavior": "Do not report the opposite-polarity account matcher as near-duplicate; in the same fixture, preserve the positive near-duplicate parcel wording pair.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-decorator-values",
+      "path": "precision-decorator-values",
+      "sourceCaseSha256": "8b2d100460938ad89f22fb3221ab375f3c740771d984dd5871b351e110d38366",
+      "behaviorClass": "precision-decorator-values",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-precision-decorator-values",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-erased-runtime",
+      "path": "precision-erased-runtime",
+      "sourceCaseSha256": "620a5f39dc9cf5d70219fab774dbae700a70247c3d1ca88280291acdc273f8b2",
+      "behaviorClass": "precision-erased-runtime",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-erased-runtime",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-external-values",
+      "path": "precision-external-values",
+      "sourceCaseSha256": "6cb57eae5bdc55439687468c35b3ccf855f6d5f33a1d860b53599ee166e27025",
+      "behaviorClass": "precision-external-values",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-external-values",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-import-cjs",
+      "path": "precision-import-cjs",
+      "sourceCaseSha256": "bc4b86b1b6192b266a05213267dc33524311125008aeaad509c48425547aa642",
+      "behaviorClass": "precision-import-cjs",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-import-cjs",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-import-esm",
+      "path": "precision-import-esm",
+      "sourceCaseSha256": "dd5215c13594f29a02db15e74ce100edaf3b2e7d76a4b12f5ed94da7baefe04d",
+      "behaviorClass": "precision-import-esm",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-import-esm",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-inline-local",
+      "path": "precision-inline-local",
+      "sourceCaseSha256": "ae063294ae15651da7dbea791bc3f408710bf8abee0deecffe37886822f85b6d",
+      "behaviorClass": "precision-inline-local",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-inline-local",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-local-values",
+      "path": "precision-local-values",
+      "sourceCaseSha256": "a1cb7897f69f3affc09f1353b36c7c704490a0108914bd3409da8c80cbceeb1a",
+      "behaviorClass": "precision-local-values",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-local-values",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-mixed-positive",
+      "path": "precision-mixed-positive",
+      "sourceCaseSha256": "2f895f8de2910c1302b1696e3ed12bab193471da20d9d2b1ed7489a3bee8740c",
+      "behaviorClass": "precision-mixed-positive",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-mixed-positive",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-nested-shadow",
+      "path": "precision-nested-shadow",
+      "sourceCaseSha256": "3f797d0b10f97bf8c6d3d88d39b08749f220589ea88097460ac808e3a9ee2147",
+      "behaviorClass": "precision-nested-shadow",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-nested-shadow",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-renamed-local",
+      "path": "precision-renamed-local",
+      "sourceCaseSha256": "3bf3c63ceafd38c19de93595489a8b05f2de8f91f349778e66b2122612b19d49",
+      "behaviorClass": "precision-renamed-local",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-precision-renamed-local",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "regex-flag-identity-keeps-semantic-flags",
+      "path": "regex-flag-identity",
+      "sourceCaseSha256": "49fbcb77cb742049bdf8110d89fd5b11758f89c0a0432e707491fe9cdbe16fcc",
+      "behaviorClass": "regex-flag-identity-keeps-semantic-flags",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-regex-flag-identity-keeps-semantic-flags",
+      "requiredBehavior": "Preserve the source final findings for duplicate-matcher and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "rest-alias-depth-decides-shared-mutation",
+      "path": "rest-alias-depth",
+      "sourceCaseSha256": "f454dc955dd58d1540f3da867071b6877dc53e580c1be57687f00638184d98c5",
+      "behaviorClass": "rest-alias-depth-decides-shared-mutation",
+      "requiredStatus": "covered",
+      "fixtureGroup": "rest-alias-depth-decides-shared-mutation",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler, near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Ruby Object#dup preserves the object-rest shallow-copy contract: replacing copy.not leaves original.not unchanged; writing copy.not.object_containing mutates the shared nested builder and revokes trust."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-callback-call-evidence",
+      "path": "review-gaps",
+      "sourceCaseSha256": "48d05daef2a18f5d32a05c6a90c78f9031b759c30bc86f0b22a3d74d27361672",
+      "behaviorClass": "review-gap-callback-call-evidence",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-review-gap-callback-call-evidence",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-candidate-filter",
+      "path": "review-gaps",
+      "sourceCaseSha256": "3c860d532c8b2fc98820afe86158fb5e7970d6e65cccf16bdd514d5b3ada36af",
+      "behaviorClass": "review-gap-candidate-filter",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-review-gap-candidate-filter",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-candidate-small-budget",
+      "path": "review-gaps",
+      "sourceCaseSha256": "5e25a530b78c3f3d11fa9da51319afb66e52a2906170b854706bf41fc822f285",
+      "behaviorClass": "review-gap-candidate-small-budget",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-review-gap-candidate-small-budget",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-computed-key-mutation",
+      "path": "review-gaps",
+      "sourceCaseSha256": "f423b5b9aee6d4f70d0047716636e033aacd0e6f61ed21e826a01b54fb72a31d",
+      "behaviorClass": "review-gap-computed-key-mutation",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-computed-key-mutation",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Runtime Hash key aliases an unknown provider member; mutation may reach the factory and must revoke trust without inventing a trusted key."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-computed-key-trust",
+      "path": "review-gaps",
+      "sourceCaseSha256": "54f5f9a751b125979d17a6a007bd8a9109b288896970b8d04981bbc52fba701b",
+      "behaviorClass": "review-gap-computed-key-trust",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-computed-key-trust",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Static literal expect key grants declared factory trust; object-valued runtime key grants none. Both positive and unknown nested-builder pairs preserve source outcomes.",
+        "Ruby literal-symbol key translates the static JavaScript literal-string key; dynamic key is the factory value itself, never a spelling shortcut."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-deferred-assertions",
+      "path": "review-gaps",
+      "sourceCaseSha256": "ca0bcdbc7b939a2eb57e5bc48d1c6ba1819ce22525c325e05f07906bc62136b8",
+      "behaviorClass": "review-gap-deferred-assertions",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-deferred-assertions",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Hash/array nested callbacks, lambda/proc sibling callable forms, differing wrappers with equivalent deferred assertions, deferred expected-value conflict and polarity conflict all retain final outcomes.",
+        "Immediate invocation inside deferred callbacks keeps lambda versus proc execution semantics distinct, analogous to arrow versus ordinary-function calling conventions; those effects cannot be discarded just because a wrapper is shared.",
+        "JavaScript generators have no source case here and are not claimed covered."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-lexical-tdz",
+      "path": "review-gaps",
+      "sourceCaseSha256": "08921c8976aab4a8884be849b9523c166422e17bc5acfa47094fe8b3ad898bf5",
+      "behaviorClass": "review-gap-lexical-tdz",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-handlers-review-gap-lexical-tdz",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-handlers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-named-default",
+      "path": "review-gaps",
+      "sourceCaseSha256": "ec9624bc87dfa1fd3312a3d1980eb0eda12f6192b1587d01d4589ceb87f6b1bf",
+      "behaviorClass": "review-gap-named-default",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-factory-alias",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-namespace-alias",
+      "path": "review-gaps",
+      "sourceCaseSha256": "e7f7184a4531afa32a20d935ae3f7128b50ee20c8fdda8c743eb5c29ae825879",
+      "behaviorClass": "review-gap-namespace-alias",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-namespace-alias",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Namespace Hash alias mutation replaces the reached factory and removes trust; separate file provider instance preserves the unmutated control. Source cross-file negative pair remains absent."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-negation-mutation",
+      "path": "review-gaps",
+      "sourceCaseSha256": "3d97e9000f2d0b25f96316146dacd25b57b0cd7d645d239d0cee35c37367ddc7",
+      "behaviorClass": "review-gap-negation-mutation",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-negation-mutation",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Static computed negated-factory alias reaches the same nested builder; its mutation revokes trusted assertion reuse."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-nested-matcher",
+      "path": "review-gaps",
+      "sourceCaseSha256": "dae9bc4d8577b2e6d7cd39b9b4d402204f2320179a12b7a28cad1407e4e03b0f",
+      "behaviorClass": "review-gap-nested-matcher",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-nested-matcher",
+      "requiredBehavior": "Preserve the source final findings for duplicate-handler and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Trusted outer expectation and trusted nested object-containing builder preserve exact assertion reuse, including the builder argument and subject."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-require-mutation",
+      "path": "review-gaps",
+      "sourceCaseSha256": "9a39c4af90e70aca19dd6786bae74504bbe64b55a34adab59c288b1feb367721",
+      "behaviorClass": "review-gap-require-mutation",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-factory-mutation",
+      "requiredBehavior": "Preserve the source final non-finding outcome and its uncertainty/completeness conditions under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-wrapped-callee",
+      "path": "review-gaps",
+      "sourceCaseSha256": "dabead6e27844f930c1bd0e879317f10de79ecc3e4eae8c261c4482edd0dfa7f",
+      "behaviorClass": "review-gap-wrapped-callee",
+      "requiredStatus": "covered",
+      "fixtureGroup": "review-gap-wrapped-callee",
+      "requiredBehavior": "Preserve the source final findings for near-duplicate-step and every listed absent control under Ruby-native syntax.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-assertions-cases.json.",
+      "semanticCoverage": [
+        "Grouped callable wrappers preserve factory identity: conflicting values stay apart while grouped/direct equal assertions retain near similarity.",
+        "Precisely excluded syntax: TypeScript as-any and non-null assertions are erased and have no Ruby form; extra transparent parentheses preserve their runtime equivalence dimension."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "typescript-path-alias-registration",
+      "path": "path-alias",
+      "sourceCaseSha256": "96411d7dc86dd8099740beda9b1eee3ed83401669d69a0ef89a374df4a82914a",
+      "behaviorClass": "typescript-path-alias-registration",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-alias-load-root",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "workspace-package-entrypoint-registration",
+      "path": "workspace-entrypoint",
+      "sourceCaseSha256": "21e45a4199ce803f30f5c42230361de8742ab6d40005e6fdf67e8b25301f149f",
+      "behaviorClass": "workspace-package-entrypoint-registration",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-provider-workspace-load-root",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-providers-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "vitest-cucumber-plugin-global-registrations",
+      "path": "vitest-cucumber-plugin",
+      "sourceCaseSha256": "51dadb22c806604aceac69a8f6c8d85ffcff0603ee3696de20aeef18610fbc04",
+      "behaviorClass": "vitest-cucumber-plugin-global-registrations",
+      "requiredStatus": "covered",
+      "fixtureGroup": "equivalent-vitest-cucumber-plugin-global-registrations",
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Executable Ruby counterpart; source dimensions and narrow syntax/API exclusions are recorded in equivalent-boundaries-cases.json."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "jest-cucumber-scenario-local-handlers",
+      "path": "jest-cucumber",
+      "sourceCaseSha256": "96720752c3e406298e998de3762224005e1f2e6d00e362266ed32f7d28d86eed",
+      "behaviorClass": "jest-cucumber-scenario-local-handlers",
+      "requiredStatus": "framework-inapplicable",
+      "fixtureGroup": null,
+      "requiredBehavior": "No direct Ruby syntax or framework API equivalent; any underlying semantic dimension is mapped separately to Ruby-native cases.",
+      "rationale": "Jest-Cucumber registers scenario-local positional handlers; Cucumber Ruby uses global matcher registrations. Applying global ambiguity/unused rules would change the framework contract. Shared handler behavior is covered separately by Ruby handler counterparts."
+    }
+  ],
+  "additionalRequiredDimensions": [
+    {
+      "id": "ruby-load-path-provider-root",
+      "requiredStatus": "covered",
+      "fixtureGroup": "load-provider-root",
+      "requiredBehavior": "Configured Ruby provider roots resolve in deterministic order; dependency cycles terminate and each source is visited once."
+    },
+    {
+      "id": "reachable-helper-metaprogramming-scope",
+      "requiredStatus": "contract-design-required",
+      "fixtureGroup": "loads/helper-invalidation",
+      "fixtureFiles": [
+        "loads/helper-invalidation/entry.rb",
+        "loads/helper-invalidation/lib/unrelated_helper.rb",
+        "loads/helper-invalidation/features/entry.feature"
+      ],
+      "rationale": "The synthetic helper uses deferred dynamic dispatch on an unrelated helper receiver. The current broad invalidation outcome needs a scope and phase design; no desired completeness or definition count is asserted."
+    },
+    {
+      "id": "trusted-ruby-assertion-providers",
+      "requiredStatus": "covered",
+      "rationale": "Original explicitly configured provider sources have declared/undeclared, alias and mutation controls in equivalent-assertions-cases.json. Desired outcomes remain independent of implementation acceptance.",
+      "fixtureGroup": "assertion-modules-declared-trust-every-import-form"
+    },
+    {
+      "id": "gherkin-unknown-table-escapes",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-table-cell-escapes",
+      "requiredBehavior": "Preserve unknown backslashes and recognized escapes in Examples expansions with source ownership."
+    },
+    {
+      "id": "gherkin-malformed-table-neighbor",
+      "requiredStatus": "covered",
+      "fixtureGroup": "malformed-table-neighbor",
+      "requiredBehavior": "Reject malformed table widths and retain valid neighboring findings with strict incompleteness."
+    },
+    {
+      "id": "dependency-usage-no-load",
+      "requiredStatus": "covered",
+      "fixtureGroup": "dependency-usage-no-load",
+      "requiredBehavior": "Dependency usage uncertainty must withhold unsupported unused claims while retaining duplicate and ambiguity findings; complete source controls retain unrelated unused findings."
+    },
+    {
+      "id": "dependency-usage-resolved",
+      "requiredStatus": "covered",
+      "fixtureGroup": "dependency-usage-resolved",
+      "requiredBehavior": "Dependency usage uncertainty must withhold unsupported unused claims while retaining duplicate and ambiguity findings; complete source controls retain unrelated unused findings."
+    },
+    {
+      "id": "dependency-usage-missing",
+      "requiredStatus": "covered",
+      "fixtureGroup": "dependency-usage-missing",
+      "requiredBehavior": "Dependency usage uncertainty must withhold unsupported unused claims while retaining duplicate and ambiguity findings; complete source controls retain unrelated unused findings."
+    },
+    {
+      "id": "dependency-usage-dynamic-target",
+      "requiredStatus": "covered",
+      "fixtureGroup": "dependency-usage-dynamic-target",
+      "requiredBehavior": "Dependency usage uncertainty must withhold unsupported unused claims while retaining duplicate and ambiguity findings; complete source controls retain unrelated unused findings."
+    },
+    {
+      "id": "handler-context-nested-exact",
+      "requiredStatus": "covered",
+      "fixtureGroup": "handler-context-nested-exact",
+      "requiredBehavior": "Exact nested handler trees retain effects and lexical capture identity; shadowed parameters remain independent of outer captured values."
+    },
+    {
+      "id": "handler-context-nested-conflict",
+      "requiredStatus": "covered",
+      "fixtureGroup": "handler-context-nested-conflict",
+      "requiredBehavior": "Exact nested handler trees retain effects and lexical capture identity; shadowed parameters remain independent of outer captured values."
+    },
+    {
+      "id": "handler-context-captured-files",
+      "requiredStatus": "covered",
+      "fixtureGroup": "handler-context-captured-files",
+      "requiredBehavior": "Exact nested handler trees retain effects and lexical capture identity; shadowed parameters remain independent of outer captured values."
+    },
+    {
+      "id": "handler-context-shadowed-captures",
+      "requiredStatus": "covered",
+      "fixtureGroup": "handler-context-shadowed-captures",
+      "requiredBehavior": "Exact nested handler trees retain effects and lexical capture identity; shadowed parameters remain independent of outer captured values."
+    },
+    {
+      "id": "regex-classes-ascii-word",
+      "requiredStatus": "covered",
+      "fixtureGroup": "regex-classes-ascii-word",
+      "requiredBehavior": "Ruby shorthand classes preserve ASCII boundaries; noncapturing groups and m dot-all preserve final feature matching."
+    },
+    {
+      "id": "regex-classes-nonascii-word",
+      "requiredStatus": "covered",
+      "fixtureGroup": "regex-classes-nonascii-word",
+      "requiredBehavior": "Ruby shorthand classes preserve ASCII boundaries; noncapturing groups and m dot-all preserve final feature matching."
+    },
+    {
+      "id": "regex-classes-dotall",
+      "requiredStatus": "covered",
+      "fixtureGroup": "regex-classes-dotall",
+      "requiredBehavior": "Ruby shorthand classes preserve ASCII boundaries; noncapturing groups and m dot-all preserve final feature matching."
+    },
+    {
+      "id": "ruby-provider-registration-context",
+      "requiredStatus": "partial",
+      "fixtureFiles": [
+        "provider-context-cases.json"
+      ],
+      "rationale": "Provider-context groups are executed by the checker. Local receiver construction and dispatch effects remain an unsatisfied outcome; unknown provenance never grants registration trust."
+    }
+  ],
+  "groupManifests": [
+    "project-cases.json",
+    "gherkin-cases.json",
+    "dependency-usage-cases.json",
+    "handler-context-cases.json",
+    "regex-classes-cases.json",
+    "provider-context-cases.json",
+    "regex-punctuation-cases.json",
+    "parameter-type-cases.json",
+    "regex-brace-cases.json",
+    "owner-identity-cases.json",
+    "equivalent-assertions-cases.json",
+    "equivalent-providers-cases.json",
+    "equivalent-handlers-cases.json",
+    "equivalent-boundaries-cases.json"
+  ]
+}

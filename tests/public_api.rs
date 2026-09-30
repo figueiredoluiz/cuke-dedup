@@ -312,3 +312,60 @@ fn local_barrel_re_exporting_the_bdd_factory_resolves_through_require() {
         .definitions;
     assert_eq!(definitions.len(), 2);
 }
+
+#[test]
+fn adapters_can_classify_diagnostics_without_language_specific_messages() {
+    use cuke_dedup::source_adapter::ExtractionDiagnosticKind;
+    let diagnostic = ExtractionDiagnostic::with_kind(
+        ExtractionDiagnosticKind::Incomplete,
+        ExtractionDiagnosticLevel::Warning,
+        SourceLocation::new("steps.rb", 1, 1, 1, 1),
+        "external glue unavailable",
+    );
+    assert_eq!(diagnostic.kind, ExtractionDiagnosticKind::Incomplete);
+    assert_eq!(diagnostic.message, "external glue unavailable");
+}
+
+#[test]
+fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+    let file = SourceFile {
+        path: root.path().join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let extracted = registered_adapter(SourceLanguage::Ruby).extract(
+        "Given('target') { first() }; Then('unused') { second() }; def helper; step 'target'; end", &file).unwrap();
+    let features = cuke_dedup::gherkin::extract(
+        "Feature: usage\n Scenario: other\n  Given other\n",
+        &root.path().join("suite.feature"),
+    )
+    .unwrap();
+    let legacy =
+        analyze_with_diagnostics(extracted.definitions.clone(), features.clone(), &config).unwrap();
+    assert!(!legacy.incomplete.is_empty());
+    assert!(!legacy
+        .result
+        .findings
+        .iter()
+        .any(|f| f.rule == Rule::UnusedDefinition));
+    let mut usage = extracted.indirect_usage.unwrap();
+    let known = cuke_dedup::analysis::analyze_with_step_usage(
+        extracted.definitions.clone(),
+        features.clone(),
+        &config,
+        &usage,
+    )
+    .unwrap();
+    let unused: Vec<_> = known
+        .result
+        .findings
+        .iter()
+        .filter(|f| f.rule == Rule::UnusedDefinition)
+        .collect();
+    assert_eq!(unused.len(), 1);
+    assert!(unused[0].message.contains("`unused`"));
+    assert!(known.incomplete.is_empty());
+    usage.extend(None);
+    assert!(usage.unknown);
+}

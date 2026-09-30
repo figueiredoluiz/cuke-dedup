@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "dependency-usage-no-load": {
+      "path": "dependency-usage/no-load",
+      "arguments": [
+        "--definitions",
+        "entry.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "entry.rb",
+          "primaryLine": 1,
+          "matchers": [
+            "caller",
+            "caller"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "suite.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "entry.rb",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "entry.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "dependency-usage-resolved": {
+      "path": "dependency-usage/resolved",
+      "arguments": [
+        "--definitions",
+        "entry.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "entry.rb",
+          "primaryLine": 2,
+          "matchers": [
+            "caller",
+            "caller"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "suite.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "entry.rb",
+          "primaryLine": 5
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "dependency-usage-missing": {
+      "path": "dependency-usage/missing",
+      "arguments": [
+        "--definitions",
+        "entry.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "entry.rb",
+          "primaryLine": 2,
+          "matchers": [
+            "caller",
+            "caller"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "suite.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "dependency-usage-dynamic-target": {
+      "path": "dependency-usage/dynamic-target",
+      "arguments": [
+        "--definitions",
+        "entry.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "entry.rb",
+          "primaryLine": 2,
+          "matchers": [
+            "caller",
+            "caller"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "suite.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    }
+  },
+  "mappings": []
+}
