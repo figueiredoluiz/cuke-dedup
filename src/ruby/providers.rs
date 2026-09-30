@@ -207,16 +207,16 @@ impl Providers {
                 let Some(key) = graph.reference(receiver, unit) else {
                     continue;
                 };
-                let Some(registrar) = graph.value(&key, unit, receiver, &mut BTreeSet::new())
-                else {
-                    continue;
-                };
                 if !node
                     .child_by_field_name("method")
                     .is_some_and(|n| text(n, &input.source) == "call")
                 {
                     continue;
                 }
+                let Some(registrar) = graph.value(&key, unit, receiver, &mut BTreeSet::new())
+                else {
+                    continue;
+                };
                 if node.parent() == Some(root) {
                     safe.insert((unit, receiver.id()));
                     result

@@ -24,7 +24,7 @@ impl Bindings {
             match node.kind() {
                 "block" | "do_block" | "lambda" | "method" | "singleton_method" | "class"
                 | "module" | "singleton_class" => continue,
-                "for" | "rescue" | "in" | "match_pattern" | "test_pattern" => {
+                "for" | "rescue" | "in_clause" | "match_pattern" | "test_pattern" => {
                     result.uncertain = true
                 }
                 "binary"
@@ -76,8 +76,10 @@ impl Bindings {
                     }
                 }
             }
-            if matches!(node.kind(), "for" | "in" | "match_pattern" | "test_pattern")
-                || (node.kind() == "rescue" && node.child_by_field_name("variable").is_some())
+            if matches!(
+                node.kind(),
+                "for" | "in_clause" | "match_pattern" | "test_pattern"
+            ) || (node.kind() == "rescue" && node.child_by_field_name("variable").is_some())
                 || (node.kind() == "binary"
                     && node
                         .child_by_field_name("operator")

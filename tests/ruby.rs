@@ -2,17 +2,20 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 
+fn project_command(root: &std::path::Path, patterns: &str) -> Command {
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command.arg(root).args([
+        "--definitions",
+        patterns,
+        "--reporters",
+        "jsonl",
+        "--no-metrics",
+    ]);
+    command
+}
+
 fn run_project(root: &std::path::Path, patterns: &str, extra: &[&str]) -> std::process::Output {
-    Command::cargo_bin("cuke-dedup")
-        .unwrap()
-        .arg(root)
-        .args([
-            "--definitions",
-            patterns,
-            "--reporters",
-            "jsonl",
-            "--no-metrics",
-        ])
+    project_command(root, patterns)
         .args(extra)
         .output()
         .unwrap()
@@ -2471,4 +2474,123 @@ fn ruby_instance_identity_counts_ineligible_and_qualified_reopenings() {
         assert_discovery(rows, if trusted { 2 } else { 0 }, !trusted, &source);
         assert_handler_finding(&serde_json::Value::Array(rows.to_vec()), trusted, &source);
     }
+}
+
+/// Checks comparison and discovery together so uncertainty cannot silently look complete.
+fn assert_handler_outcome(source: &str, definitions: usize, trusted: bool) {
+    let (_, rows, _) = analyze(source, &[]);
+    assert_discovery(rows.as_array().unwrap(), definitions, !trusted, source);
+    assert_handler_finding(&rows, trusted, source);
+}
+
+/// Enclosing scopes are rejected before handler fingerprinting can grant equivalence.
+#[test]
+fn ruby_nested_registration_scopes_never_reach_handler_comparison() {
+    for (before, after, trusted) in [
+        ("", "", true),
+        ("x = 1; def define;", "end", false),
+        ("class Host;", "end", false),
+        ("module Host;", "end", false),
+        ("%w[a b].each do |x|", "end", false),
+        ("[1].each { |x|", "}", false),
+        ("factory = ->(x) {", "}", false),
+        ("class << self;", "end", false),
+    ] {
+        let source = format!(
+            "{before} Given('first') {{ consume(x) }}; Then('second') {{ consume(x) }}; {after}"
+        );
+        assert_handler_outcome(&source, if trusted { 2 } else { 0 }, trusted);
+    }
+}
+
+/// Direct constants retain registrar identity; unsupported forwarding shapes fail closed.
+#[test]
+fn ruby_constant_call_and_forwarding_outcomes() {
+    for (extra, trusted) in [
+        ("", true),
+        (
+            "def self.forward(text, &handler); GIVEN.call(text, &handler); end",
+            true,
+        ),
+        ("def self.forward; GIVEN.call('fixed'); end", false),
+        ("def self.forward(text); GIVEN.call(text); end", false),
+        (
+            "def self.forward(text, &handler); effect(); GIVEN.call(text, &handler); end",
+            false,
+        ),
+        (
+            "def self.forward(text, &handler); GIVEN.call('changed', &handler); end",
+            false,
+        ),
+        (
+            "def self.forward(text, &handler); GIVEN.call(text, &other); end",
+            false,
+        ),
+        ("def self.forward(text, &handler); GIVEN.call; end", false),
+        ("GIVEN.other", false),
+        ("later { GIVEN.call('nested') {} }", false),
+    ] {
+        let source = format!("ROOT = method(:Given); module Provider; GIVEN = ::ROOT; {extra}; end; Provider::GIVEN.call('first') {{ work() }}; Provider::GIVEN.call('second') {{ work() }}");
+        assert_handler_outcome(&source, if trusted { 2 } else { 0 }, trusted);
+    }
+}
+
+/// Binding uncertainty and parameter forms are checked through final handler findings.
+#[test]
+fn ruby_binding_fallbacks_and_parameter_forms() {
+    for (prefix, body, trusted) in [
+        ("", "|*args| consume(args)", true),
+        ("", "|**args| consume(args)", true),
+        ("", "|&handler| consume(handler)", true),
+        ("for item in []; end;", "work()", false),
+        ("case value; in [x]; end;", "consume(x)", false),
+        ("", "case value; in [x]; consume(x); end", false),
+        ("", "case value; when 1; work(); end", true),
+        ("/(?<name>x)/ =~ input;", "work()", false),
+        ("", "/(?<name>x)/ =~ input", false),
+        (
+            "",
+            "begin; work(); rescue => error; consume(error); end",
+            false,
+        ),
+        ("", "value => [x]; consume(x)", false),
+        ("", "x = 1; consume(x:)", false),
+    ] {
+        let source = format!("{prefix} Given('first') {{ {body} }}; Then('second') {{ {body} }}");
+        assert_handler_outcome(&source, 2, trusted);
+    }
+}
+
+/// Non-call constant receivers must not trigger repeated dependency-graph searches.
+#[test]
+fn ruby_non_registration_constant_calls_scale_with_loaded_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    for index in 0..500 {
+        let source = if index == 499 {
+            "CONFIG = 1".to_owned()
+        } else {
+            format!("require_relative 'p{}'", index + 1)
+        };
+        fs::write(dir.path().join(format!("p{index}.rb")), source).unwrap();
+    }
+    fs::write(
+        dir.path().join("steps.rb"),
+        format!(
+            "require_relative 'p0'; {}; Given('first') {{ work() }}; Then('second') {{ work() }}",
+            "CONFIG.fetch;".repeat(2000)
+        ),
+    )
+    .unwrap();
+    let output = project_command(dir.path(), "*.rb")
+        .timeout(std::time::Duration::from_secs(10))
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "non-call scaling exceeded its budget or failed"
+    );
+    let rows = records(output.stdout);
+    assert_discovery(&rows, 2, false, "non-call scaling");
+    assert_handler_finding(&Value::Array(rows), true, "non-call scaling");
 }
