@@ -32,6 +32,7 @@ impl RegistrationEffects {
         source: &str,
         aliases: &super::registration_aliases::RegistrationAliases,
         wrappers: &super::registration_wrappers::RegistrationWrappers,
+        proof: Option<&super::providers::Proof>,
     ) -> Self {
         let mut effects = Self {
             wrappers: wrappers.effects.clone(),
@@ -57,6 +58,7 @@ impl RegistrationEffects {
                     .is_some_and(|p| p.kind() == "scope_resolution")
                 && !declaration_name(node)
                 && !world_argument(node, source)
+                && !proof.is_some_and(|p| p.isolated_constants.contains(&node.start_byte()))
             {
                 if let Some((absolute, parts)) = constant_path(node, source) {
                     if let Some(paths) = declarations.lookup_candidates(node, absolute, &parts) {
@@ -94,6 +96,7 @@ impl RegistrationEffects {
                     .is_some_and(|name| protected_method(text(name, source))),
                 "call" => {
                     !aliases.capture(node)
+                        && !proof.is_some_and(|p| p.isolated_calls.contains(&node.start_byte()))
                         && !inside_deferred_body(node, source, aliases, wrappers)
                         && may_replace_dsl(node, source)
                 }

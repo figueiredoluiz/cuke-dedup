@@ -16,14 +16,7 @@ impl RegistrationAliases {
             return result;
         }
         let nodes = descendants(root);
-        let mut references = BTreeMap::<_, Vec<_>>::new();
-        for node in nodes
-            .iter()
-            .copied()
-            .filter(|node| node.kind() == "identifier")
-        {
-            references.entry(text(node, source)).or_default().push(node);
-        }
+        let references = identifier_references(&nodes, source);
         for assignment in nodes
             .iter()
             .copied()
@@ -66,19 +59,9 @@ impl RegistrationAliases {
                 .copied()
                 .filter(|node| *node != binding)
                 .all(|reference| {
-                    let Some(call) = reference.parent() else {
+                    let Some(call) = closed_call(reference, assignment, source) else {
                         return false;
                     };
-                    if call.kind() != "call"
-                        || call.parent() != Some(root)
-                        || call.start_byte() < assignment.end_byte()
-                        || call.child_by_field_name("receiver") != Some(reference)
-                        || !call
-                            .child_by_field_name("method")
-                            .is_some_and(|method| text(method, source) == "call")
-                    {
-                        return false;
-                    }
                     calls.push(call.id());
                     true
                 });
@@ -92,6 +75,20 @@ impl RegistrationAliases {
         result
     }
 
+    pub(super) fn extend_provider(&mut self, root: Node<'_>, proof: &super::providers::Proof) {
+        for node in descendants(root)
+            .into_iter()
+            .filter(|node| node.kind() == "call")
+        {
+            if proof.captures.contains(&node.start_byte()) {
+                self.captures.insert(node.id());
+            }
+            if let Some(name) = proof.calls.get(&node.start_byte()) {
+                self.calls.insert(node.id(), name.clone());
+            }
+        }
+    }
+
     pub(super) fn capture(&self, node: Node<'_>) -> bool {
         self.captures.contains(&node.id())
     }
@@ -99,4 +96,33 @@ impl RegistrationAliases {
     pub(super) fn registration(&self, node: Node<'_>) -> Option<&str> {
         self.calls.get(&node.id()).map(String::as_str)
     }
+}
+
+/// Indexes every same-spelled reference, including assignments and nested scopes.
+pub(super) fn identifier_references<'a>(
+    nodes: &[Node<'a>],
+    source: &'a str,
+) -> BTreeMap<&'a str, Vec<Node<'a>>> {
+    let mut references = BTreeMap::<_, Vec<_>>::new();
+    for node in nodes.iter().copied().filter(|n| n.kind() == "identifier") {
+        references.entry(text(node, source)).or_default().push(node);
+    }
+    references
+}
+
+/// A registration alias may only be called after assignment in the same root scope.
+pub(super) fn closed_call<'a>(
+    reference: Node<'a>,
+    assignment: Node<'a>,
+    source: &str,
+) -> Option<Node<'a>> {
+    let call = reference.parent()?;
+    (call.kind() == "call"
+        && call.parent() == assignment.parent()
+        && call.start_byte() >= assignment.end_byte()
+        && call.child_by_field_name("receiver") == Some(reference)
+        && call
+            .child_by_field_name("method")
+            .is_some_and(|n| text(n, source) == "call"))
+    .then_some(call)
 }
