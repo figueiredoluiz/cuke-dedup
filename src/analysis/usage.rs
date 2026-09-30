@@ -671,12 +671,18 @@ fn witness_for(
 /// sample. Anything using real regular-expression syntax could accept infinitely many strings
 /// with no canonical representative, and guessing one would produce false overlap reports.
 fn literal_alternative(pattern: &str) -> Option<String> {
-    let trimmed = pattern.trim();
-    let trimmed = match (trimmed.strip_prefix("(?:"), trimmed.strip_prefix('(')) {
-        (Some(inner), _) => inner.strip_suffix(')')?,
-        (None, Some(inner)) => inner.strip_suffix(')')?,
-        _ => trimmed,
-    };
+    let mut trimmed = pattern.trim();
+    // Scoped multiline wrappers preserve literal alternatives; the final witness is still
+    // checked against both compiled matchers before any overlap finding is emitted.
+    loop {
+        let inner = trimmed
+            .strip_prefix("(?:")
+            .or_else(|| trimmed.strip_prefix("(?m:"))
+            .or_else(|| trimmed.strip_prefix("(?ms:"))
+            .or_else(|| trimmed.strip_prefix('('));
+        let Some(inner) = inner else { break };
+        trimmed = inner.strip_suffix(')')?;
+    }
     let first = trimmed.split('|').next()?;
     if first.is_empty()
         || first

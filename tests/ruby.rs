@@ -1486,3 +1486,85 @@ fn malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls()
         .iter()
         .any(|row| row["rule"] == "duplicate-handler"));
 }
+
+#[test]
+fn ruby_review_matcher_text_does_not_spend_budget_on_internal_identity() {
+    let (exit, rows, _) = analyze(
+        "Given('abx') { alpha() }; Given('cdz') { beta() }; Given('efq') { gamma() }",
+        &["--max-candidate-comparisons", "1", "--fail-on-incomplete"],
+    );
+    assert_eq!(exit, 0);
+    let summary = rows.as_array().unwrap().last().unwrap();
+    assert_eq!(summary["corpus"]["incomplete"], false);
+    assert_eq!(
+        summary["analysis"]["candidateSources"]["matcherBlocking"]["evaluated"],
+        0
+    );
+    let (_, rows, _) = analyze(
+        "Given('a  panel') { open() }; Given('a panel') { close() }",
+        &[],
+    );
+    assert!(rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["rule"] == "normalized-matcher"));
+    assert!(!rows.to_string().contains("ruby:CucumberExpression"));
+}
+
+#[test]
+fn ruby_review_block_forms_preserve_call_ownership_and_effects() {
+    for (left, right, duplicate) in [
+        ("{ work() }", "do work() end", true),
+        (
+            "{ |value| store(value) }",
+            "do |value| store(value) end",
+            true,
+        ),
+        ("{ later { work() } }", "do later do work() end end", true),
+        ("{ work(1) }", "do work(2) end", false),
+        ("{ before(); after() }", "do after(); before() end", false),
+        (
+            "{ |value| store(value) }",
+            "do |value| store(other) end",
+            false,
+        ),
+        (
+            "{ outer inner { work() } }",
+            "{ outer inner do work() end }",
+            false,
+        ),
+        ("{ |value| value }", "do |value| value end", false),
+    ] {
+        let source = format!("Given('first') {left}\nThen('second') {right}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_eq!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["rule"] == "duplicate-handler"),
+            duplicate,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn ruby_review_custom_parameter_overlap_requires_a_valid_witness() {
+    for (pattern, other, overlap) in [
+        ("/red|blue/", "/red|green/", true),
+        ("/red|blue/", "/green/", false),
+        ("/[a-z]+/", "/[a-z]+/", false),
+    ] {
+        let source = format!("ParameterType(name: 'tone', regexp: {pattern}, transformer: ->(v) {{ v }})\nParameterType(name: 'shade', regexp: {other}, transformer: ->(v) {{ v }})\nGiven('paint {{tone}}') {{ brush() }}\nGiven('paint {{shade}}') {{ spray() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_eq!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["rule"] == "overlapping-matcher"),
+            overlap,
+            "{source}"
+        );
+    }
+}

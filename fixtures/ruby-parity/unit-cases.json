@@ -160,7 +160,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "f6974a3d2b512dd77f1378f764e3d491966715512dc260e9d2ac1d4592f848c3",
+      "sourceSha256": "ec328a43abb8b7487e1c89c6b2a42d882e690b2eb53be29bfdb1cbf5e708e790",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",

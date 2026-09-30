@@ -563,13 +563,15 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
 
 /// Positional Jest steps never belong to one global matcher class. Keeping their partitions
 /// distinct also lets equal-text handlers reach all three handler candidate sources.
-fn matcher_partition(
-    definition: &StepDefinition,
-    index: usize,
-) -> (MatcherKind, &str, Option<usize>) {
+type MatcherPartition<'a> = (MatcherKind, &'a str, Option<&'a str>, Option<usize>);
+
+fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartition<'_> {
     (
         definition.matcher_kind,
         &definition.normalized_matcher,
+        // Language-specific regex identity belongs in the key, never in comparison/report text.
+        (definition.framework == crate::model::Framework::CucumberRuby)
+            .then_some(definition.matcher_flags.as_str()),
         (definition.framework == crate::model::Framework::JestCucumber).then_some(index),
     )
 }
@@ -664,14 +666,14 @@ pub(super) fn definition_pair_candidates(
     let comparison_classes = comparison_classes(definitions);
     let behavior_events = behavior_event_ids(definitions);
     let behavior_anchor_events = behavior_anchor_event_ids(definitions);
-    let mut normalized_matchers: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
+    let mut normalized_matchers: HashMap<MatcherPartition<'_>, Vec<usize>> = HashMap::new();
     let mut handlers: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
         if definition.framework != crate::model::Framework::JestCucumber {
             normalized_matchers
-                .entry((definition.matcher_kind, &definition.normalized_matcher))
+                .entry(matcher_partition(definition, index))
                 .or_default()
                 .push(index);
         }

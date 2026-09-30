@@ -8,11 +8,7 @@ const SHORT_SIMILARITY_GATE: f64 = 0.92;
 const LONG_SIMILARITY_GATE: f64 = 0.90;
 
 fn matcher_comparison_text(definition: &StepDefinition) -> &str {
-    if definition.framework == crate::model::Framework::CucumberRuby {
-        &definition.matcher
-    } else {
-        &definition.normalized_matcher
-    }
+    &definition.normalized_matcher
 }
 
 pub(super) fn matcher_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
