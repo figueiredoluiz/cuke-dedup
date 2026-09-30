@@ -1461,3 +1461,28 @@ fn ruby_parameter_type_uncertainty_never_preserves_manual_pattern_trust() {
         assert_eq!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"), definitions > 0, "{declaration}");
     }
 }
+
+#[test]
+fn malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls() {
+    for source in [
+        "step '",
+        "step \"",
+        "send '",
+        "ParameterType(name: '",
+        "Given('",
+    ] {
+        let (exit, rows, _) = analyze(source, &["--fail-on-incomplete"]);
+        assert_eq!(exit, 2, "{source}");
+        assert_eq!(
+            rows.as_array().unwrap().last().unwrap()["corpus"]["incomplete"],
+            true,
+            "{source}"
+        );
+    }
+    let (_, rows, _) = analyze("Given('first') { work() }\nGiven('second') { work() }", &[]);
+    assert!(rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["rule"] == "duplicate-handler"));
+}

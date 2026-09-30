@@ -411,6 +411,7 @@ fn extract_definitions(
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
         // before parsing rather than analyzed and discarded.
+        // Ruby has separate parser and resource checks; the source-filter heuristics assume JS syntax.
         if let Some(excluded) = (file.language != source_adapter::SourceLanguage::Ruby)
             .then(|| crate::source_filter::inspect(&file.path, &config.registrations))
             .flatten()

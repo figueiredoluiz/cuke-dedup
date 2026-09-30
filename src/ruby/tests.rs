@@ -163,3 +163,21 @@ fn parameter_type_metadata_is_available_without_running_a_transformer() {
         .unwrap();
     assert!(!extraction.diagnostics.is_empty());
 }
+
+#[test]
+fn malformed_ruby_literal_boundaries_preserve_valid_values() {
+    for (raw, expected) in [
+        ("", None),
+        ("'", None),
+        ("\"", None),
+        ("'value", None),
+        ("''", Some("")),
+        ("\"\"", Some("")),
+        ("'value'", Some("value")),
+        ("\"value\"", Some("value")),
+        ("'日本'", Some("日本")),
+        ("\"a\\nb\"", Some("a\nb")),
+    ] {
+        assert_eq!(super::literal_string(raw).as_deref(), expected, "{raw:?}");
+    }
+}
