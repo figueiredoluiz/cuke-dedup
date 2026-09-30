@@ -1,6 +1,217 @@
 use super::regex_expression;
 
 #[test]
+fn local_registration_aliases_preserve_final_findings_without_granting_unknown_trust() {
+    use crate::model::Rule;
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    let dir = tempfile::tempdir().unwrap();
+    let file = SourceFile {
+        path: dir.path().join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let config = crate::config::Config::load(dir.path(), Default::default()).unwrap();
+    let direct = "Given('same') { first() }; Given('same') { second() }";
+    for keyword in ["Given", "When", "Then", "And", "But"] {
+        for (prefix, calls, definitions, complete, duplicate) in [
+            ("", direct, 2, true, true),
+            (
+                "given = method(:Given);",
+                "given.call('same') { first() }; given.call('same') { second() }",
+                2,
+                true,
+                true,
+            ),
+            (
+                "given = method('Given');",
+                "given.call('same') { first() }; Given('same') { second() }",
+                2,
+                true,
+                true,
+            ),
+            (
+                "given = method(:Given); other = method(:Then);",
+                "given.call('same') { first() }; other.call('same') { second() }",
+                2,
+                true,
+                true,
+            ),
+            ("given = method(:Given);", direct, 2, true, true),
+            (
+                "given = method(:Given);",
+                "given.call('alpha') { first() }; given.call('omega') { second() }",
+                2,
+                true,
+                false,
+            ),
+            (
+                "given = method(:Given); given = foreign;",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given); consume(given);",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given); copy = given;",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given.call('early') { first() }; given = method(:Given);",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given); def nested(given); given.call('same') { first() }; end;",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given); if enabled; given.call('same') { first() }; end;",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given);",
+                "Given('same') { given.call('same') { first() } }",
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given); given.call = replacement;",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given); given ||= replacement;",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given);",
+                "given.call('same') { eval(dynamic) }",
+                1,
+                false,
+                false,
+            ),
+            (
+                "given = ->(text, &handler) { :ignored };",
+                "given.call('same') { first() }; given.call('same') { second() }",
+                0,
+                true,
+                false,
+            ),
+            ("given = foreign.method(:Given);", direct, 0, false, false),
+            ("given = method(:untrusted);", direct, 0, false, false),
+            (
+                "def method(name); foreign; end; given = method(:Given);",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "class Method; def call(*args); :ignored; end; end; given = method(:Given);",
+                direct,
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given);",
+                "given.call(dynamic) { first() }",
+                0,
+                false,
+                false,
+            ),
+            (
+                "given = method(:Given);",
+                "given.call('same', &handler)",
+                0,
+                false,
+                false,
+            ),
+        ] {
+            let source = format!("{prefix}\n{calls}").replace("Given", keyword);
+            let extraction = super::RUBY_ADAPTER.extract(&source, &file).unwrap();
+            assert_eq!(extraction.definitions.len(), definitions, "{source}");
+            assert_eq!(
+                extraction.diagnostics.is_empty(),
+                complete,
+                "{source}: {:?}",
+                extraction.diagnostics
+            );
+            let result = crate::analysis::analyze_with_step_usage(
+                extraction.definitions,
+                vec![],
+                &config,
+                &extraction.indirect_usage.unwrap(),
+            )
+            .unwrap()
+            .result;
+            assert_eq!(
+                result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateMatcher),
+                duplicate,
+                "{source}"
+            );
+            assert!(
+                !result.findings.iter().any(|f| matches!(
+                    f.rule,
+                    Rule::DuplicateHandler | Rule::ParameterizationCandidate
+                )),
+                "{source}"
+            );
+        }
+        let source = format!("given = method(:{keyword})\ngiven.call('alpha') {{ work() }}\ngiven.call('omega') {{ work() }}");
+        let extraction = super::RUBY_ADAPTER.extract(&source, &file).unwrap();
+        assert!(extraction.diagnostics.is_empty());
+        assert_eq!(
+            extraction
+                .definitions
+                .iter()
+                .map(|d| (d.registration.as_str(), d.location.line))
+                .collect::<Vec<_>>(),
+            [(keyword, 2), (keyword, 3)]
+        );
+        let outcome = crate::analysis::analyze_with_step_usage(
+            extraction.definitions,
+            vec![],
+            &config,
+            &extraction.indirect_usage.unwrap(),
+        )
+        .unwrap();
+        assert!(outcome.incomplete.is_empty());
+        assert!(outcome
+            .result
+            .findings
+            .iter()
+            .any(|f| f.rule == Rule::DuplicateHandler));
+    }
+}
+
+#[test]
 fn unresolved_dependency_usage_is_exposed_by_the_direct_adapter_api() {
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
     let extraction = super::RUBY_ADAPTER
