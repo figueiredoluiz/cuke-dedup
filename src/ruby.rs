@@ -14,6 +14,7 @@ pub(crate) mod dependencies;
 mod handler;
 mod ownership;
 pub(crate) mod parameters;
+mod registration_aliases;
 
 pub(crate) struct RubyAdapter;
 pub(crate) static RUBY_ADAPTER: RubyAdapter = RubyAdapter;
@@ -94,8 +95,9 @@ fn extract(
         .context("Ruby parser produced no tree")?;
     let root = tree.root_node();
     let nodes = descendants(root);
+    let aliases = registration_aliases::RegistrationAliases::collect(root, source);
     let mut result = Extraction {
-        indirect_usage: Some(indirect_usage(&nodes, source)),
+        indirect_usage: Some(indirect_usage(&nodes, source, &aliases)),
         ..Extraction::default()
     };
     if root.has_error() {
@@ -108,7 +110,7 @@ fn extract(
         ));
     }
     result.parameter_types = parameters::collect(&nodes, source, file);
-    let mut effects = ownership::RegistrationEffects::collect(root, source);
+    let mut effects = ownership::RegistrationEffects::collect(root, source, &aliases);
     if result
         .parameter_types
         .iter()
@@ -127,6 +129,8 @@ fn extract(
         ));
     }
     for (node, name) in named_calls(&nodes, source) {
+        let alias = aliases.registration(node);
+        let name = alias.unwrap_or(name);
         if matches!(name, "require" | "require_relative" | "load" | "autoload") {
             result.diagnostics.push(diagnostic(
                 file,
@@ -136,7 +140,10 @@ fn extract(
                 "Ruby source dependency is unresolved",
             ));
         }
-        if let Some(receiver) = node.child_by_field_name("receiver") {
+        if let Some(receiver) = node
+            .child_by_field_name("receiver")
+            .filter(|_| alias.is_none())
+        {
             if registration(name) && is_self_receiver(receiver) {
                 result.diagnostics.push(diagnostic(
                     file,
@@ -272,7 +279,11 @@ fn named_calls<'a>(
     })
 }
 
-fn indirect_usage(nodes: &[Node<'_>], source: &str) -> crate::source_adapter::IndirectStepUsage {
+fn indirect_usage(
+    nodes: &[Node<'_>],
+    source: &str,
+    aliases: &registration_aliases::RegistrationAliases,
+) -> crate::source_adapter::IndirectStepUsage {
     let mut usage = crate::source_adapter::IndirectStepUsage {
         unknown: nodes.iter().any(|n| {
             n.has_error()
@@ -283,6 +294,9 @@ fn indirect_usage(nodes: &[Node<'_>], source: &str) -> crate::source_adapter::In
         ..Default::default()
     };
     for (node, name) in named_calls(nodes, source) {
+        if aliases.capture(node) {
+            continue;
+        }
         if matches!(
             name,
             "send"
@@ -348,6 +362,9 @@ fn protected_method(name: &str) -> bool {
                 | "World"
                 | "lambda"
                 | "proc"
+                | "method"
+                | "public_method"
+                | "call"
                 | "method_missing"
                 | "require"
                 | "require_relative"
@@ -421,7 +438,11 @@ fn may_replace_dsl(node: Node<'_>, source: &str) -> bool {
         )
 }
 
-fn inside_deferred_body(node: Node<'_>, source: &str) -> bool {
+fn inside_deferred_body(
+    node: Node<'_>,
+    source: &str,
+    aliases: &registration_aliases::RegistrationAliases,
+) -> bool {
     let mut parent = node.parent();
     while let Some(block) = parent {
         parent = block.parent();
@@ -432,8 +453,9 @@ fn inside_deferred_body(node: Node<'_>, source: &str) -> bool {
         if call.kind() == "call" && call.child_by_field_name("block") == Some(block) {
             let method = call.child_by_field_name("method").map(|n| text(n, source));
             if call.parent().is_some_and(|p| p.kind() == "program")
-                && call.child_by_field_name("receiver").is_none()
-                && method.is_some_and(registration)
+                && (aliases.registration(call).is_some()
+                    || (call.child_by_field_name("receiver").is_none()
+                        && method.is_some_and(registration)))
             {
                 return true;
             }

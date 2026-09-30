@@ -25,7 +25,11 @@ pub(super) struct RegistrationEffects {
 }
 
 impl RegistrationEffects {
-    pub(super) fn collect(root: Node<'_>, source: &str) -> Self {
+    pub(super) fn collect(
+        root: Node<'_>,
+        source: &str,
+        aliases: &super::registration_aliases::RegistrationAliases,
+    ) -> Self {
         let mut effects = Self::default();
         let declarations = Declarations::collect(root, source);
         for node in descendants(root) {
@@ -82,7 +86,11 @@ impl RegistrationEffects {
                 "method" | "singleton_method" => node
                     .child_by_field_name("name")
                     .is_some_and(|name| protected_method(text(name, source))),
-                "call" => !inside_deferred_body(node, source) && may_replace_dsl(node, source),
+                "call" => {
+                    !aliases.capture(node)
+                        && !inside_deferred_body(node, source, aliases)
+                        && may_replace_dsl(node, source)
+                }
                 _ => false,
             };
             if !mutation {
@@ -180,7 +188,7 @@ impl Declarations {
         if path.0.first().is_some_and(|name| {
             matches!(
                 name.as_str(),
-                "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class"
+                "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class" | "Method"
             )
         }) {
             return None;
