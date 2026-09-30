@@ -16,6 +16,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Fixed
 
+- Keep Ruby matcher identity separate from normalized report/comparison text, recognize equivalent brace and `do` handler blocks without losing call ownership, synthesize supported custom-parameter overlap witnesses, and return Ruby extraction results in source order.
+
 - Reject lone quote delimiters in Ruby literal decoding without an invalid slice.
 
 ## [0.10.1] - 2026-10-01

@@ -32,9 +32,19 @@ pub(super) fn fingerprint(block: Node<'_>, root: Node<'_>, source: &str) -> Hand
     let mut tokens = Vec::new();
     let mut pending = vec![(block, false)];
     while let Some((node, closing)) = pending.pop() {
-        if node.kind() == "comment" {
+        if node.kind() == "comment"
+            || (node
+                .parent()
+                .is_some_and(|parent| matches!(parent.kind(), "block" | "do_block"))
+                && matches!(node.kind(), "{" | "}" | "do" | "end"))
+        {
             continue;
         }
+        let kind = match node.kind() {
+            "block" | "do_block" => "block",
+            "block_body" | "body_statement" => "body",
+            other => other,
+        };
         if closing {
             tokens.push((")", Cow::Borrowed("")));
             continue;
@@ -47,9 +57,9 @@ pub(super) fn fingerprint(block: Node<'_>, root: Node<'_>, source: &str) -> Hand
                 Cow::Owned((node.start_position().row + 1).to_string()),
             ));
         } else if node.child_count() == 0 {
-            tokens.push((node.kind(), Cow::Borrowed(text(node, source))));
+            tokens.push((kind, Cow::Borrowed(text(node, source))));
         } else {
-            tokens.push((node.kind(), Cow::Borrowed("(")));
+            tokens.push((kind, Cow::Borrowed("(")));
             pending.push((node, true));
             let mut cursor = node.walk();
             let children: Vec<_> = node.children(&mut cursor).collect();

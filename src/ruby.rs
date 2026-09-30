@@ -224,7 +224,7 @@ fn extract(
             matcher.clone()
         };
         result.definitions.push(StepDefinition {
-            normalized_matcher: format!("ruby:{matcher_kind:?}:{flags}:{comparison}"),
+            normalized_matcher: comparison,
             matcher,
             matcher_kind,
             matcher_flags: flags,
@@ -235,6 +235,12 @@ fn extract(
             inline_suppressions: vec![],
         });
     }
+    result
+        .definitions
+        .sort_by_key(|item| (item.location.line, item.location.column));
+    result
+        .diagnostics
+        .sort_by_key(|item| (item.location.line, item.location.column));
     Ok((result, effects))
 }
 

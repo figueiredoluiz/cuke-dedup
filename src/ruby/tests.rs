@@ -181,3 +181,28 @@ fn malformed_ruby_literal_boundaries_preserve_valid_values() {
         assert_eq!(super::literal_string(raw).as_deref(), expected, "{raw:?}");
     }
 }
+
+#[test]
+fn ruby_review_extraction_is_in_source_order() {
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    let extraction = super::RUBY_ADAPTER.extract(
+        "Given('first') { work() }\nGiven(dynamic) { work() }\nThen('last') { finish() }\nThen(other) { finish() }",
+        &SourceFile { path: "steps.rb".into(), language: SourceLanguage::Ruby },
+    ).unwrap();
+    assert_eq!(
+        extraction
+            .definitions
+            .iter()
+            .map(|d| d.location.line)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert_eq!(
+        extraction
+            .diagnostics
+            .iter()
+            .map(|d| d.location.line)
+            .collect::<Vec<_>>(),
+        [2, 4]
+    );
+}
