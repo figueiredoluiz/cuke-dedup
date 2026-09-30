@@ -256,7 +256,7 @@ impl Extraction {
 /// session per analysis root rather than sharing it between unrelated repositories.
 #[derive(Default)]
 pub struct SourceExtractionSession {
-    dependencies: std::collections::BTreeSet<(PathBuf, usize, usize)>,
+    dependencies: std::collections::BTreeMap<(PathBuf, usize, usize), SourceDependency>,
     root: Option<PathBuf>,
     registrations: Vec<String>,
     assertion_modules: Vec<String>,
@@ -285,9 +285,12 @@ impl SourceExtractionSession {
     pub fn with_dependencies(mut self, dependencies: &[SourceDependency]) -> Self {
         self.dependencies.extend(dependencies.iter().map(|edge| {
             (
-                edge.location.path.clone(),
-                edge.location.line,
-                edge.location.column,
+                (
+                    edge.location.path.clone(),
+                    edge.location.line,
+                    edge.location.column,
+                ),
+                edge.clone(),
             )
         }));
         self
@@ -295,7 +298,11 @@ impl SourceExtractionSession {
 
     pub(crate) fn dependency_resolved(&self, location: &SourceLocation) -> bool {
         self.dependencies
-            .contains(&(location.path.clone(), location.line, location.column))
+            .contains_key(&(location.path.clone(), location.line, location.column))
+    }
+
+    pub(crate) fn dependency_edges(&self) -> Vec<SourceDependency> {
+        self.dependencies.values().cloned().collect()
     }
 
     /// Creates an extraction session whose imported modules must remain inside `root`.
@@ -376,6 +383,15 @@ pub trait SourceAdapter: Sync {
 
     /// Extracts definitions from in-memory source using `file` for source locations.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction>;
+
+    /// Prepares selected-source evidence before extraction, without executing source code.
+    fn prepare_session(
+        &self,
+        _files: &[SourceFile],
+        _session: &mut SourceExtractionSession,
+    ) -> Result<()> {
+        Ok(())
+    }
 
     /// Extracts definitions while sharing bounded state with other files in the same run.
     fn extract_with_session(

@@ -10,10 +10,12 @@ use anyhow::{bail, Context, Result};
 use std::path::Path;
 use tree_sitter::Node;
 
+mod bindings;
 pub(crate) mod dependencies;
 mod handler;
 mod ownership;
 pub(crate) mod parameters;
+mod providers;
 mod registration_aliases;
 mod registration_wrappers;
 
@@ -21,11 +23,13 @@ pub(crate) struct RubyAdapter;
 pub(crate) static RUBY_ADAPTER: RubyAdapter = RubyAdapter;
 pub(crate) struct RubySession {
     effects: ownership::RegistrationEffects,
+    providers: providers::Providers,
 }
 impl AdapterSessionState for RubySession {
     fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
         Self {
             effects: Default::default(),
+            providers: Default::default(),
         }
     }
 }
@@ -50,13 +54,26 @@ impl SourceAdapter for RubyAdapter {
         mark_unresolved_dependency_usage(&mut extraction);
         Ok(extraction)
     }
+    fn prepare_session(
+        &self,
+        files: &[SourceFile],
+        session: &mut SourceExtractionSession,
+    ) -> Result<()> {
+        let providers = providers::Providers::collect(files, &session.dependency_edges())?;
+        session.state::<RubySession>()?.providers = providers;
+        Ok(())
+    }
     fn extract_with_session(
         &self,
         source: &str,
         file: &SourceFile,
         session: &mut SourceExtractionSession,
     ) -> Result<Extraction> {
-        let (mut extraction, invalidated) = extract(source, file)?;
+        let proof = session
+            .state::<RubySession>()?
+            .providers
+            .get(&file.path, source);
+        let (mut extraction, invalidated) = extract_with_proof(source, file, proof)?;
         extraction.diagnostics.retain(|diagnostic| {
             diagnostic.kind != Kind::Dependency
                 || !session.dependency_resolved(&diagnostic.location)
@@ -86,6 +103,14 @@ fn extract(
     source: &str,
     file: &SourceFile,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
+    extract_with_proof(source, file, None)
+}
+
+fn extract_with_proof(
+    source: &str,
+    file: &SourceFile,
+    proof: Option<&providers::Proof>,
+) -> Result<(Extraction, ownership::RegistrationEffects)> {
     if file.language != SourceLanguage::Ruby {
         bail!("Ruby adapter requires Ruby source");
     }
@@ -95,11 +120,15 @@ fn extract(
         .parse(source, None)
         .context("Ruby parser produced no tree")?;
     let root = tree.root_node();
+    let proof = proof.filter(|_| !root.has_error());
     let nodes = descendants(root);
-    let aliases = registration_aliases::RegistrationAliases::collect(root, source);
+    let mut aliases = registration_aliases::RegistrationAliases::collect(root, source);
+    if let Some(proof) = proof {
+        aliases.extend_provider(root, proof);
+    }
     let wrappers = registration_wrappers::RegistrationWrappers::collect(root, source, &aliases);
     let mut result = Extraction {
-        indirect_usage: Some(indirect_usage(&nodes, source, &aliases)),
+        indirect_usage: Some(indirect_usage(&nodes, source, &aliases, proof)),
         ..Extraction::default()
     };
     if root.has_error() {
@@ -112,7 +141,8 @@ fn extract(
         ));
     }
     result.parameter_types = parameters::collect(&nodes, source, file);
-    let mut effects = ownership::RegistrationEffects::collect(root, source, &aliases, &wrappers);
+    let mut effects =
+        ownership::RegistrationEffects::collect(root, source, &aliases, &wrappers, proof);
     if result
         .parameter_types
         .iter()
@@ -131,7 +161,22 @@ fn extract(
         ));
     }
     for (node, name) in named_calls(&nodes, source) {
-        if wrappers.forwarding(node) {
+        if proof.is_some_and(|p| p.unresolved_calls.contains(&node.start_byte())) {
+            result
+                .indirect_usage
+                .get_or_insert_with(Default::default)
+                .unknown = true;
+            result.diagnostics.push(diagnostic(
+                file,
+                node,
+                source,
+                Kind::Incomplete,
+                "Ruby constant provider callable has unresolved registration provenance",
+            ));
+        }
+        if wrappers.forwarding(node)
+            || proof.is_some_and(|p| p.forwarding.contains(&node.start_byte()))
+        {
             continue;
         }
         let alias = aliases.registration(node);
@@ -290,6 +335,7 @@ fn indirect_usage(
     nodes: &[Node<'_>],
     source: &str,
     aliases: &registration_aliases::RegistrationAliases,
+    proof: Option<&providers::Proof>,
 ) -> crate::source_adapter::IndirectStepUsage {
     let mut usage = crate::source_adapter::IndirectStepUsage {
         unknown: nodes.iter().any(|n| {
@@ -301,7 +347,9 @@ fn indirect_usage(
         ..Default::default()
     };
     for (node, name) in named_calls(nodes, source) {
-        if aliases.capture(node) {
+        if aliases.capture(node)
+            || proof.is_some_and(|p| p.isolated_calls.contains(&node.start_byte()))
+        {
             continue;
         }
         if matches!(

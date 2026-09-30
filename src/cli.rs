@@ -407,6 +407,20 @@ fn extract_definitions(
         &config.assertion_modules,
     )
     .with_dependencies(&files.dependencies);
+    let mut prepared = BTreeSet::new();
+    for file in &files.definitions {
+        let adapter = source_adapter::adapter_for_language(file.language);
+        if prepared.insert(adapter.name()) {
+            if let Err(error) = adapter.prepare_session(&files.definitions, &mut extraction_session)
+            {
+                corpus.incomplete = true;
+                diagnostics
+                    .errors
+                    .push(format!("failed to prepare source evidence: {error:#}"));
+                return;
+            }
+        }
+    }
     for file in &files.definitions {
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
