@@ -13,6 +13,7 @@ pub(super) struct WrapperEffects {
 }
 
 impl WrapperEffects {
+    /// Merges selected-source evidence without losing earlier mutations or unresolved references.
     pub(super) fn extend(&mut self, other: Self) {
         self.wrappers.extend(other.wrappers);
         for (name, count) in other.definitions {
@@ -23,6 +24,7 @@ impl WrapperEffects {
         self.dynamic_mutation |= other.dynamic_mutation;
     }
 
+    /// Rejects wrapper trust when aggregated evidence cannot prove a single unchanged definition.
     pub(super) fn invalidated(&self) -> bool {
         self.wrappers.iter().any(|name| {
             self.dynamic_mutation
@@ -41,6 +43,7 @@ pub(super) struct RegistrationWrappers {
 }
 
 impl RegistrationWrappers {
+    /// Proves local forwarding shapes and records effects for subsequent suite-wide ownership checks.
     pub(super) fn collect(
         root: Node<'_>,
         source: &str,
@@ -125,15 +128,18 @@ impl RegistrationWrappers {
         result
     }
 
+    /// Returns the locally resolved registrar; callers must also validate aggregate ownership.
     pub(super) fn registration(&self, node: Node<'_>) -> Option<&str> {
         self.calls.get(&node.id()).map(String::as_str)
     }
 
+    /// Identifies a proven forwarding body, which is not itself an executed registration.
     pub(super) fn forwarding(&self, node: Node<'_>) -> bool {
         self.forwarding.contains(&node.id())
     }
 }
 
+/// Keeps semantic children in source order while excluding comments and empty statements.
 fn children(node: Node<'_>) -> Vec<Node<'_>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
@@ -141,6 +147,7 @@ fn children(node: Node<'_>) -> Vec<Node<'_>> {
         .collect()
 }
 
+/// Accepts only a method body that forwards its distinct matcher and block parameters unchanged.
 fn transparent<'a>(node: Node<'a>, source: &'a str) -> Option<(&'a str, &'a str, Node<'a>)> {
     let name = text(node.child_by_field_name("name")?, source);
     if protected_method(name) {
@@ -192,6 +199,7 @@ fn transparent<'a>(node: Node<'a>, source: &'a str) -> Option<(&'a str, &'a str,
 }
 
 impl WrapperEffects {
+    /// Records literal reflective mutation targets, treating unresolved dispatch or targets as unknown.
     fn reflective_mutation(&mut self, node: Node<'_>, source: &str) {
         let Some(method) = node.child_by_field_name("method") else {
             return;

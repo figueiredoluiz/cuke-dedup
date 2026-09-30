@@ -26,6 +26,7 @@ pub(super) struct RegistrationEffects {
 }
 
 impl RegistrationEffects {
+    /// Collects source-local ownership evidence while preserving resolved captures and deferred bodies.
     pub(super) fn collect(
         root: Node<'_>,
         source: &str,
@@ -120,6 +121,7 @@ impl RegistrationEffects {
         self.unknown = true;
     }
 
+    /// Combines file effects so later sources can invalidate registrations extracted earlier.
     pub(super) fn extend(&mut self, other: Self) {
         self.wrappers.extend(other.wrappers);
         self.unknown |= other.unknown;
@@ -127,6 +129,7 @@ impl RegistrationEffects {
         self.exposed_owners.extend(other.exposed_owners);
     }
 
+    /// Reports whether wrapper uncertainty or exposed namespace mutations invalidate registration trust.
     pub(super) fn invalidated(&self) -> bool {
         self.unknown
             || self.wrappers.invalidated()

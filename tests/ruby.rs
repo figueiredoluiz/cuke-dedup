@@ -51,6 +51,7 @@ fn assert_discovery(rows: &[Value], definitions: usize, incomplete: bool, source
     assert_eq!(summary["corpus"]["incomplete"], incomplete, "{source}");
 }
 
+/// Checks CLI findings for transparent forwarding and rejects unsupported execution or argument shapes.
 #[test]
 fn ruby_transparent_wrapper_outcomes_preserve_forwarding_and_reject_uncertainty() {
     for keyword in ["Given", "When", "Then", "And", "But"] {
@@ -231,6 +232,7 @@ fn ruby_transparent_wrapper_outcomes_preserve_forwarding_and_reject_uncertainty(
     }
 }
 
+/// Requires order-independent rejection of conflicting providers while retaining unrelated-helper positives.
 #[test]
 fn ruby_wrapper_ownership_is_checked_across_selected_sources_in_both_orders() {
     let registrar = "def wrap(text, &handler); Given(text, &handler); end\nwrap('same') { first() }; wrap('same') { second() }";
@@ -246,6 +248,7 @@ fn ruby_wrapper_ownership_is_checked_across_selected_sources_in_both_orders() {
         ("attr_accessor(dynamic)", true),
         ("wrap('elsewhere') { work() }", true),
         ("def ordinary; :local; end", false),
+        ("worker = -> { :ordinary }; worker.()", false),
     ] {
         for sources in [[registrar, interference], [interference, registrar]] {
             let dir = tempfile::tempdir().unwrap();
@@ -272,6 +275,7 @@ fn ruby_wrapper_ownership_is_checked_across_selected_sources_in_both_orders() {
     }
 }
 
+/// Preserves known registrations when deferred dispatch makes indirect usage incomplete.
 #[test]
 fn ruby_wrapper_deferred_dispatch_retains_valid_registrations() {
     let source = "def wrap(text, &handler); Given(text, &handler); end\nwrap('same') { send(dynamic) }; wrap('same') { other() }";
