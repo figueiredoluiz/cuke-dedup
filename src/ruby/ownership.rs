@@ -19,18 +19,24 @@ use tree_sitter::Node;
 
 #[derive(Default)]
 pub(super) struct RegistrationEffects {
+    wrappers: super::registration_wrappers::WrapperEffects,
     unknown: bool,
     mutated_owners: BTreeSet<OwnerPath>,
     exposed_owners: BTreeSet<OwnerPath>,
 }
 
 impl RegistrationEffects {
+    /// Collects source-local ownership evidence while preserving resolved captures and deferred bodies.
     pub(super) fn collect(
         root: Node<'_>,
         source: &str,
         aliases: &super::registration_aliases::RegistrationAliases,
+        wrappers: &super::registration_wrappers::RegistrationWrappers,
     ) -> Self {
-        let mut effects = Self::default();
+        let mut effects = Self {
+            wrappers: wrappers.effects.clone(),
+            ..Self::default()
+        };
         let declarations = Declarations::collect(root, source);
         for node in descendants(root) {
             if matches!(node.kind(), "class" | "module")
@@ -88,7 +94,7 @@ impl RegistrationEffects {
                     .is_some_and(|name| protected_method(text(name, source))),
                 "call" => {
                     !aliases.capture(node)
-                        && !inside_deferred_body(node, source, aliases)
+                        && !inside_deferred_body(node, source, aliases, wrappers)
                         && may_replace_dsl(node, source)
                 }
                 _ => false,
@@ -115,14 +121,18 @@ impl RegistrationEffects {
         self.unknown = true;
     }
 
+    /// Combines file effects so later sources can invalidate registrations extracted earlier.
     pub(super) fn extend(&mut self, other: Self) {
+        self.wrappers.extend(other.wrappers);
         self.unknown |= other.unknown;
         self.mutated_owners.extend(other.mutated_owners);
         self.exposed_owners.extend(other.exposed_owners);
     }
 
+    /// Reports whether wrapper uncertainty or exposed namespace mutations invalidate registration trust.
     pub(super) fn invalidated(&self) -> bool {
         self.unknown
+            || self.wrappers.invalidated()
             || self.mutated_owners.iter().any(|owner| {
                 self.exposed_owners
                     .iter()
