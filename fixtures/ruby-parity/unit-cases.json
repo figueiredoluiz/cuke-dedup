@@ -1050,7 +1050,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "8a5e9113c22aa7d6541c67d85089d4fb58457ab8163804f7319457785cd607cf",
+      "sourceSha256": "18beae6f958cb4eeac9093ad1f62cab299766ad3e0aa2b0d909e8735094ae7b3",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",

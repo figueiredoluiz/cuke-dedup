@@ -1,7 +1,10 @@
+MAIN_REGISTRATION_GIVEN = method(:Given)
+MAIN_REGISTRATION_WHEN = method(:When)
+MAIN_REGISTRATION_THEN = method(:Then)
 module RegistrationProvider
-  GIVEN = method(:Given)
-  WHEN = method(:When)
-  THEN = method(:Then)
+  GIVEN = ::MAIN_REGISTRATION_GIVEN
+  WHEN = ::MAIN_REGISTRATION_WHEN
+  THEN = ::MAIN_REGISTRATION_THEN
   def self.register(text, &handler)
     GIVEN.call(text, &handler)
   end
