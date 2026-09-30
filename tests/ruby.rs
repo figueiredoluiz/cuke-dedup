@@ -1995,43 +1995,43 @@ fn ruby_lexical_renaming_preserves_findings_and_conflicts() {
 fn ruby_loaded_constant_providers_preserve_registration_and_reject_mutation() {
     for (provider, use_code, interference, positive) in [
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN",
             "",
             true,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN",
             "Provider::GIVEN = other",
             false,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN",
             "Provider = other",
             false,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN; register = other",
             "",
             false,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN; expose(register)",
             "",
             false,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN",
             "expose(Provider)",
             false,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN",
             "Provider::GIVEN.define_singleton_method(:call) {}",
             false,
@@ -2049,7 +2049,7 @@ fn ruby_loaded_constant_providers_preserve_registration_and_reject_mutation() {
             false,
         ),
         (
-            "module Provider; GIVEN = method(:Given); end",
+            "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
             "register = Provider::GIVEN",
             "def Given(*args); end",
             false,
@@ -2084,7 +2084,7 @@ fn ruby_provider_resolution_requires_preceding_load_edges() {
         ("register = Barrel::GIVEN; register.call('same') { first() }; register.call('same') { second() }", false),
     ] {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("provider.rb"), "module Provider; GIVEN = method(:Given); end").unwrap();
+        fs::write(dir.path().join("provider.rb"), "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end").unwrap();
         fs::write(dir.path().join("barrel.rb"), "require_relative 'provider'; module Barrel; GIVEN = Provider::GIVEN; end").unwrap();
         fs::write(dir.path().join("entry.rb"), entry).unwrap();
         let rows = records(run_project(dir.path(), "*.rb", &[]).stdout);
@@ -2181,7 +2181,7 @@ fn ruby_provider_cycles_and_lexical_constant_shadowing_do_not_gain_trust() {
         ("", "require_relative 'provider'; module Barrel; GIVEN = Provider::GIVEN; end", "label = '長い文字列長い文字列長い文字列'; register = Barrel::GIVEN; require_relative 'barrel'; register.call('same') { first() }; register.call('same') { second() }"),
     ] {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("provider.rb"), format!("{provider_prefix}\nmodule Provider; GIVEN = method(:Given); end")).unwrap();
+        fs::write(dir.path().join("provider.rb"), format!("{provider_prefix}\nROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end")).unwrap();
         fs::write(dir.path().join("barrel.rb"), barrel).unwrap();
         fs::write(dir.path().join("entry.rb"), entry).unwrap();
         let rows = records(run_project(dir.path(), "entry.rb", &[]).stdout);
@@ -2192,7 +2192,7 @@ fn ruby_provider_cycles_and_lexical_constant_shadowing_do_not_gain_trust() {
 
 #[test]
 fn ruby_same_file_provider_values_require_prior_initialization() {
-    let provider = "module Provider; GIVEN = method(:Given); end";
+    let provider = "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end";
     let consumer = "register = Provider::GIVEN; register.call('same') { first() }; register.call('same') { second() }";
     for (source, positive) in [
         (format!("{provider}; {consumer}"), true),
@@ -2232,7 +2232,7 @@ fn ruby_provider_shared_dependency_paths_are_bounded() {
     }
     fs::write(
         dir.path().join("provider.rb"),
-        "module Provider; GIVEN = method(:Given); end",
+        "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
     )
     .unwrap();
     fs::write(dir.path().join("entry.rb"), "require_relative 'a0'; register = Provider::GIVEN; register.call('unknown') { first() }; Given('same') { first() }; Given('same') { second() }").unwrap();
@@ -2295,7 +2295,7 @@ fn ruby_provider_scaling_preserves_final_outcomes() {
         let count = 6000;
         let dir = tempfile::tempdir().unwrap();
         let mut source = match shape {
-            "exports" => "module Provider;\n".to_owned(),
+            "exports" => "ROOT_GIVEN = method(:Given); module Provider;\n".to_owned(),
             "constructors" => "class Foreign; def helper; end; end\n".to_owned(),
             "loads" => {
                 for depth in 0..50 {
@@ -2307,18 +2307,19 @@ fn ruby_provider_scaling_preserves_final_outcomes() {
                 }
                 fs::write(
                     dir.path().join("p50.rb"),
-                    "module Provider; GIVEN = method(:Given); end",
+                    "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
                 )
                 .unwrap();
                 "require_relative 'p0'\n".to_owned()
             }
-            _ => "module Provider; GIVEN = method(:Given); end\n".to_owned(),
+            _ => "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end\n"
+                .to_owned(),
         };
         for index in 0..count {
             source.push_str(&match shape {
-                "exports" => format!("C{index} = method(:Given)\n"),
+                "exports" => format!("C{index} = ::ROOT_GIVEN\n"),
                 "constructors" => format!("object_{index} = Foreign.new\n"),
-                "modules" => format!("module Provider{index}; GIVEN = method(:Given); end\n"),
+                "modules" => format!("module Provider{index}; GIVEN = ::ROOT_GIVEN; end\n"),
                 _ => format!("capture_{index} = Provider::GIVEN\n"),
             });
         }
@@ -2364,7 +2365,7 @@ fn ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust() {
             ("", "register.call('same') { first() }; register.call('same') { second() }; value = )", 0),
         ] {
             let dir = tempfile::tempdir().unwrap();
-            fs::write(dir.path().join("provider.rb"), "module Provider; GIVEN = method(:Given); end").unwrap();
+            fs::write(dir.path().join("provider.rb"), "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end").unwrap();
             fs::write(dir.path().join("steps.rb"), format!("require_relative 'provider'\nGiven('control') {{ first() }}; Given('control') {{ second() }}\n{before} register = {origin}; {after}")).unwrap();
             let rows = project_records(dir.path());
             let expected = if origin == "Provider::GIVEN" && after.ends_with("value = )") { 2 } else { expected };
@@ -2386,5 +2387,88 @@ fn ruby_instance_proofs_require_parseable_consumers() {
             rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
             count == 2
         );
+    }
+}
+
+#[test]
+fn ruby_custom_factories_cannot_establish_instance_isolation() {
+    for name in ["new", "allocate"] {
+        let method = format!("def {name}; unknown_factory(); end");
+        for (factory, trusted) in [
+            (String::new(), true),
+            (method.clone(), true),
+            (format!("def self.{name}; unknown_factory(); end"), false),
+            (format!("class << self; {method}; end"), false),
+            (
+                format!("class << self; if enabled?; {method}; end; end"),
+                false,
+            ),
+        ] {
+            let source = format!("class Router; {factory}; def Given(text, &block); @value = text; end; end\nrouter = Router.new\nrouter.send(:Given, 'local') {{}}\nGiven('first') {{ work() }}; Given('second') {{ work() }}");
+            let (_, rows, _) = analyze(&source, &[]);
+            assert_discovery(
+                rows.as_array().unwrap(),
+                if trusted { 2 } else { 0 },
+                !trusted,
+                &source,
+            );
+            assert_handler_finding(&rows, trusted, &source);
+        }
+    }
+}
+
+#[test]
+fn ruby_provider_captures_require_main_receiver_and_initialized_origin() {
+    for (provider, positive) in [
+        ("ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end", true),
+        ("ROOT_GIVEN = method(:Given); module Provider; GIVEN = ROOT_GIVEN; end", true),
+        ("module Provider; GIVEN = method(:Given); end", false),
+        ("class Provider; GIVEN = method(:Given); end", false),
+        ("ROOT_GIVEN = other.method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end", false),
+        ("module Provider; GIVEN = ::ROOT_GIVEN; end; ROOT_GIVEN = method(:Given)", false),
+        ("ROOT_GIVEN = method(:Given); ROOT_GIVEN = other; module Provider; GIVEN = ::ROOT_GIVEN; end", false),
+        ("later { ROOT_GIVEN = method(:Given) }; module Provider; GIVEN = ::ROOT_GIVEN; end", false),
+        ("module Provider; end; Provider::GIVEN = method(:Given)", false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("provider.rb"), provider).unwrap();
+        fs::write(dir.path().join("steps.rb"), "require_relative 'provider'; register = Provider::GIVEN; register.call('same') { first() }; register.call('same') { second() }").unwrap();
+        let rows = project_records(dir.path());
+        assert_discovery(&rows, if positive { 2 } else { 0 }, !positive, provider);
+        assert_eq!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"), positive, "{provider}");
+    }
+}
+
+#[test]
+fn ruby_instance_identity_counts_ineligible_and_qualified_reopenings() {
+    for (reopening, trusted) in [
+        ("", true),
+        (
+            "class Unrelated; def send(*args); unknown(); end; end",
+            true,
+        ),
+        ("class Router; def send(*args); unknown(); end; end", false),
+        (
+            "class ::Router; def send(*args); unknown(); end; end",
+            false,
+        ),
+        (
+            "class Router < Object; def send(*args); unknown(); end; end",
+            false,
+        ),
+        (
+            "if condition; class ::Router; def send(*args); unknown(); end; end; end",
+            false,
+        ),
+        (
+            "module Outer; class ::Router; def send(*args); unknown(); end; end; end",
+            false,
+        ),
+    ] {
+        let source = format!("class Router; def Given(*args); end; end; {reopening}\nrouter = Router.new; router.send(:Given, 'local') {{}}; Given('first') {{ work() }}; Given('second') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        let rows = rows.as_array().unwrap();
+        assert_discovery(rows, if trusted { 2 } else { 0 }, !trusted, &source);
+        assert_handler_finding(&serde_json::Value::Array(rows.to_vec()), trusted, &source);
     }
 }

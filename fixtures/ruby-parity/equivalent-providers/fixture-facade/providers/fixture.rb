@@ -1,5 +1,6 @@
 require_relative 'assertions'
+MAIN_REGISTRATION_THEN = method(:Then)
 module FormFixture
-  THEN = method(:Then)
+  THEN = ::MAIN_REGISTRATION_THEN
   EXPECT = SyntheticAssertions.method(:expect)
 end

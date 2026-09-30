@@ -26,6 +26,7 @@ pub(super) struct Providers(BTreeMap<PathBuf, Proof>);
 
 struct Unit {
     file: SourceFile,
+    canonical_path: PathBuf,
     source: String,
     tree: Tree,
 }
@@ -79,8 +80,12 @@ impl Providers {
             let tree = parser
                 .parse(&source, None)
                 .context("Ruby provider parser returned no tree")?;
+            let Ok(canonical_path) = file.path.canonicalize() else {
+                return Ok(Self::default());
+            };
             units.push(Unit {
                 file: file.clone(),
+                canonical_path,
                 source,
                 tree,
             });
@@ -284,7 +289,10 @@ impl Graph<'_> {
                 .units
                 .iter()
                 .position(|u| u.file.path == edge.location.path);
-            let to = self.units.iter().position(|u| u.file.path == edge.target);
+            let to = self
+                .units
+                .iter()
+                .position(|u| u.canonical_path == edge.target);
             if let (Some(from), Some(to)) = (from, to) {
                 outgoing[from].push(to);
                 incoming[to] += 1;
@@ -335,34 +343,32 @@ impl Graph<'_> {
         let mut classes = BTreeMap::<String, Vec<(usize, Node<'_>, BTreeSet<&str>)>>::new();
         for (unit, input) in self.units.iter().enumerate() {
             for node in descendants(input.tree.root_node()) {
-                if node.kind() == "class"
-                    && node.parent() == Some(input.tree.root_node())
-                    && node.child_by_field_name("superclass").is_none()
-                {
+                // Inventory every declaration before considering constructor eligibility.
+                if node.kind() == "class" {
                     if let Some(name) = node
                         .child_by_field_name("name")
-                        .filter(|n| n.kind() == "constant")
+                        .and_then(|n| constant(n, &input.source))
                     {
-                        classes
-                            .entry(text(name, &input.source).to_owned())
-                            .or_default()
-                            .push((
-                                unit,
-                                node,
-                                descendants(node)
-                                    .into_iter()
-                                    .filter(|n| {
-                                        n.kind() == "method"
-                                            && n.parent().and_then(|p| p.parent()) == Some(node)
-                                    })
-                                    .filter_map(|n| n.child_by_field_name("name"))
-                                    .map(|n| text(n, &input.source))
-                                    .collect(),
-                            ));
+                        classes.entry(name).or_default().push((
+                            unit,
+                            node,
+                            descendants(node)
+                                .into_iter()
+                                .filter(|n| {
+                                    n.kind() == "method"
+                                        && n.parent().and_then(|p| p.parent()) == Some(node)
+                                })
+                                .filter_map(|n| n.child_by_field_name("name"))
+                                .map(|n| text(n, &input.source))
+                                .collect(),
+                        ));
                     }
                 }
                 // Any custom factory invalidates this deliberately bounded constructor model.
-                if node.kind() == "singleton_method"
+                if (node.kind() == "singleton_method"
+                    || (node.kind() == "method"
+                        && std::iter::successors(node.parent(), |n| n.parent())
+                            .any(|n| n.kind() == "singleton_class")))
                     && node
                         .child_by_field_name("name")
                         .is_some_and(|n| matches!(text(n, &input.source), "new" | "allocate"))
@@ -406,6 +412,14 @@ impl Graph<'_> {
                     continue;
                 };
                 let (class_unit, class, methods) = &declarations[0];
+                if class.parent() != Some(self.units[*class_unit].tree.root_node())
+                    || class.child_by_field_name("superclass").is_some()
+                    || !class
+                        .child_by_field_name("name")
+                        .is_some_and(|n| n.kind() == "constant")
+                {
+                    continue;
+                }
                 if !self.available(
                     self.position(unit, constructor, false),
                     self.position(*class_unit, *class, true),
@@ -475,41 +489,55 @@ impl Graph<'_> {
         result
     }
 
-    /// Accepts only direct exports from a single, unchanged top-level module.
+    /// Captures registrars on main; modules may only re-export proven constants.
     fn resolve_inner(&self, key: &str, visiting: &mut BTreeSet<String>) -> Option<String> {
-        let (owner, _) = key.split_once("::")?;
-        if self.namespaces.get(owner) != Some(&1) || self.definitions.contains_key(owner) {
-            return None;
-        }
-        if matches!(
-            owner,
-            "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class" | "Method"
-        ) {
-            return None;
-        }
         let definitions = self.definitions.get(key)?;
         if definitions.len() != 1 {
             return None;
         }
         let def = &definitions[0];
         let input = &self.units[def.unit];
-        if input.tree.root_node().has_error() || def.assignment.kind() != "assignment" {
+        let root = input.tree.root_node();
+        if root.has_error() || def.assignment.kind() != "assignment" {
             return None;
         }
-        // Only direct statements in a simple top-level module can publish an export.
-        let body = def.assignment.parent()?;
-        let module = body.parent()?;
-        if body.kind() != "body_statement"
-            || module.kind() != "module"
-            || module.parent() != Some(input.tree.root_node())
-        {
-            return None;
-        }
-        if self.protected_modules.contains(&module.id()) {
-            return None;
+        let top_level = def.assignment.parent() == Some(root) && !key.contains("::");
+        if top_level {
+            if self.namespaces.contains_key(key) {
+                return None;
+            }
+        } else {
+            let (owner, _) = key.split_once("::")?;
+            if self.namespaces.get(owner) != Some(&1)
+                || self.definitions.contains_key(owner)
+                || matches!(
+                    owner,
+                    "Cucumber"
+                        | "Object"
+                        | "BasicObject"
+                        | "Kernel"
+                        | "Module"
+                        | "Class"
+                        | "Method"
+                )
+            {
+                return None;
+            }
+            let body = def.assignment.parent()?;
+            let module = body.parent()?;
+            if body.kind() != "body_statement"
+                || module.kind() != "module"
+                || module.parent() != Some(root)
+                || self.protected_modules.contains(&module.id())
+            {
+                return None;
+            }
         }
         if let Some(reference) = self.reference(def.value, def.unit) {
             return self.value(&reference, def.unit, def.value, visiting);
+        }
+        if !top_level {
+            return None;
         }
         let call = def.value;
         if call.kind() != "call"
@@ -580,7 +608,7 @@ impl Graph<'_> {
             .any(|edge| {
                 self.units
                     .iter()
-                    .position(|u| u.file.path == edge.target)
+                    .position(|u| u.canonical_path == edge.target)
                     .is_some_and(|next| {
                         self.available(
                             (next, usize::MAX, usize::MAX),
@@ -685,12 +713,13 @@ mod tests {
     #[test]
     fn optional_provider_proofs_respect_both_resource_limits() {
         let dir = tempfile::tempdir().unwrap();
-        let provider = "module Provider; GIVEN = method(:Given); end";
+        std::fs::create_dir(dir.path().join("alias")).unwrap();
+        let provider = "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end";
         let consumer = "require_relative 'provider'; register = Provider::GIVEN; register.call('same') { work() }";
         let files: Vec<_> = [("provider.rb", provider), ("entry.rb", consumer)]
             .into_iter()
             .map(|(name, source)| {
-                let path = dir.path().join(name);
+                let path = dir.path().join("alias").join("..").join(name);
                 std::fs::write(&path, source).unwrap();
                 SourceFile {
                     path,
@@ -700,7 +729,7 @@ mod tests {
             .collect();
         let edges = [SourceDependency::new(
             crate::model::SourceLocation::new(files[1].path.clone(), 1, 1, 1, 28),
-            files[0].path.clone(),
+            files[0].path.canonicalize().unwrap(),
         )];
         let bytes = provider.len() + consumer.len();
         let positive = Providers::collect_with_budget(&files, &edges, (2, bytes)).unwrap();
@@ -708,6 +737,18 @@ mod tests {
             positive.get(&files[1].path, consumer).unwrap().calls.len(),
             1
         );
+        let mut unavailable = edges.clone();
+        unavailable[0].target = dir.path().join("absent.rb");
+        assert!(!Providers::collect(&files, &unavailable)
+            .unwrap()
+            .get(&files[1].path, consumer)
+            .is_some_and(|p| !p.calls.is_empty()));
+        let mut cycle = edges.to_vec();
+        cycle.push(SourceDependency::new(
+            edges[0].location.clone(),
+            files[1].path.canonicalize().unwrap(),
+        ));
+        assert!(Providers::collect(&files, &cycle).unwrap().0.is_empty());
         for budget in [(1, bytes), (2, bytes - 1)] {
             assert!(Providers::collect_with_budget(&files, &edges, budget)
                 .unwrap()
