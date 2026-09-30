@@ -242,6 +242,8 @@ incomplete-corpus behavior, and [Rules](rules.md) for severity configuration.
 
 ## Ruby dependency sources
 
+Ruby dependency paths are a configuration trust boundary: absolute paths and paths containing `..` may resolve outside the analysis root. Only analyze trusted path configuration; discovered registration bodies from those sources may appear in report snippets. Sources are read statically, never executed.
+
 `rubyLoadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
 
 ```json

@@ -5,6 +5,19 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- Experimental, opt-in static Cucumber-Ruby analysis and a Ruby/TypeScript parity corpus. Ruby discovery and rule parity remain in development; this integration checkpoint is not release-ready.
+
+### Changed
+
+- Explicit definition globs now select `.rb` files. A glob that selects both Ruby and JavaScript/TypeScript definitions is rejected; use separate runs and language-specific globs.
+- Gherkin tables with inconsistent row widths now produce a parse diagnostic and incomplete analysis, including in existing JavaScript/TypeScript projects. Table escapes retain their intended values.
+
+### Fixed
+
+- Reject lone quote delimiters in Ruby literal decoding without an invalid slice.
+
 ## [0.10.0] - 2026-09-29
 
 ### Added

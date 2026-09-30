@@ -537,7 +537,7 @@ fn regex_literal(raw: &str) -> Option<(String, String)> {
 
 fn literal_string(raw: &str) -> Option<String> {
     let quote = raw.chars().next()?;
-    if !matches!(quote, '\'' | '"') || !raw.ends_with(quote) {
+    if raw.len() < 2 || !matches!(quote, '\'' | '"') || !raw.ends_with(quote) {
         return None;
     }
     let mut chars = raw[1..raw.len() - 1].chars();
