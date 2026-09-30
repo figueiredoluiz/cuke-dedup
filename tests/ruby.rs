@@ -51,6 +51,246 @@ fn assert_discovery(rows: &[Value], definitions: usize, incomplete: bool, source
     assert_eq!(summary["corpus"]["incomplete"], incomplete, "{source}");
 }
 
+/// Checks CLI findings for transparent forwarding and rejects unsupported execution or argument shapes.
+#[test]
+fn ruby_transparent_wrapper_outcomes_preserve_forwarding_and_reject_uncertainty() {
+    for keyword in ["Given", "When", "Then", "And", "But"] {
+        for body in ["Given(text, &handler)", "Given text, &handler"] {
+            let source = format!("def wrap(text, &handler); {body}; end\nwrap('same') {{ first() }}\nwrap('same') do; second(); end").replace("Given", keyword);
+            let (exit, rows, _) = analyze(&source, &["--fail-on-incomplete"]);
+            let rows = rows.as_array().unwrap();
+            assert_discovery(rows, 2, false, &source);
+            assert_eq!(exit, 1, "{source}");
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["rule"] == "duplicate-matcher")
+                    .count(),
+                1,
+                "{source}"
+            );
+            assert!(
+                !rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+                "{source}"
+            );
+        }
+    }
+    for (declaration, calls, definitions, incomplete, handler) in [
+        (
+            "def wrap(value, &block) = Given(value, &block)",
+            "wrap('alpha') { work() }; wrap('omega') { work() }",
+            2,
+            false,
+            true,
+        ),
+        (
+            "def wrap(text, &text); Given(text, &text); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); if ready; Given(text, &handler); end; end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); foreign.Given(text, &handler); end",
+            "wrap('alpha') { work() }",
+            0,
+            false,
+            false,
+        ),
+        (
+            "def wrap(value, &block); Given(value, &block); end",
+            "wrap('alpha') { work() }; wrap('omega') { work() }",
+            2,
+            false,
+            true,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); end; def ordinary; :local; end",
+            "Given('alpha') { work() }; Given('omega') { work() }",
+            2,
+            false,
+            true,
+        ),
+        (
+            "def wrap(text, &handler); :ignored; end",
+            "wrap('alpha') { work() }; wrap('omega') { work() }",
+            0,
+            false,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); extra(); Given(text, &handler); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); extra(); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(transform(text), &handler); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &other); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text = 'fallback', &handler); Given(text, &handler); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(*text, &handler); Given(text, &handler); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); end",
+            "if ready; wrap('alpha') { work() }; end",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); end",
+            "def later; wrap('alpha') { work() }; end",
+            0,
+            true,
+            false,
+        ),
+        (
+            "wrap('early') { work() }; def wrap(text, &handler); Given(text, &handler); end",
+            "wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); end",
+            "foreign.wrap('alpha') { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); end",
+            "wrap(dynamic) { work() }",
+            0,
+            true,
+            false,
+        ),
+        (
+            "def wrap(text, &handler); Given(text, &handler); end",
+            "wrap('alpha', &handler)",
+            0,
+            true,
+            false,
+        ),
+    ] {
+        let source = format!("{declaration}\n{calls}");
+        let (exit, rows, _) = analyze(&source, &["--fail-on-incomplete"]);
+        let rows = rows.as_array().unwrap();
+        assert_discovery(rows, definitions, incomplete, &source);
+        assert_eq!(
+            exit,
+            if incomplete { 2 } else { i32::from(handler) },
+            "{source}"
+        );
+        assert_eq!(
+            rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+            handler,
+            "{source}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r["rule"] == "parameterization-candidate"),
+            "{source}"
+        );
+    }
+}
+
+/// Requires order-independent rejection of conflicting providers while retaining unrelated-helper positives.
+#[test]
+fn ruby_wrapper_ownership_is_checked_across_selected_sources_in_both_orders() {
+    let registrar = "def wrap(text, &handler); Given(text, &handler); end\nwrap('same') { first() }; wrap('same') { second() }";
+    for (interference, incomplete) in [
+        ("def wrap(text, &handler); :ignored; end", true),
+        ("alias wrap replacement", true),
+        ("undef wrap", true),
+        ("define_method(:wrap) { :ignored }", true),
+        ("send(:define_method, :wrap) { :ignored }", true),
+        ("remove_method(:wrap)", true),
+        ("alias_method(:wrap, :replacement)", true),
+        ("attr_reader(:wrap)", true),
+        ("attr_accessor(dynamic)", true),
+        ("wrap('elsewhere') { work() }", true),
+        ("def ordinary; :local; end", false),
+        ("worker = -> { :ordinary }; worker.()", false),
+    ] {
+        for sources in [[registrar, interference], [interference, registrar]] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join("a.rb"), sources[0]).unwrap();
+            fs::write(dir.path().join("b.rb"), sources[1]).unwrap();
+            let output = run_project(dir.path(), "*.rb", &["--fail-on-incomplete"]);
+            assert_eq!(
+                output.status.code(),
+                Some(if incomplete { 2 } else { 1 }),
+                "{interference}"
+            );
+            let rows = records(output.stdout);
+            assert_discovery(
+                &rows,
+                if incomplete { 0 } else { 2 },
+                incomplete,
+                interference,
+            );
+            assert!(
+                rows.iter().any(|r| r["rule"] == "duplicate-matcher") != incomplete,
+                "{interference}"
+            );
+        }
+    }
+}
+
+/// Preserves known registrations when deferred dispatch makes indirect usage incomplete.
+#[test]
+fn ruby_wrapper_deferred_dispatch_retains_valid_registrations() {
+    let source = "def wrap(text, &handler); Given(text, &handler); end\nwrap('same') { send(dynamic) }; wrap('same') { other() }";
+    let (exit, rows, _) = analyze(source, &["--fail-on-incomplete"]);
+    let rows = rows.as_array().unwrap();
+    assert_discovery(rows, 2, true, source);
+    assert_eq!(exit, 2);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["rule"] == "duplicate-matcher")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn ruby_cucumber_normalization_preserves_matcher_and_handler_boundaries() {
     for (left, right, normalized, exact, definitions, incomplete) in [
