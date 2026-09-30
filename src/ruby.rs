@@ -15,6 +15,7 @@ mod handler;
 mod ownership;
 pub(crate) mod parameters;
 mod registration_aliases;
+mod registration_wrappers;
 
 pub(crate) struct RubyAdapter;
 pub(crate) static RUBY_ADAPTER: RubyAdapter = RubyAdapter;
@@ -96,6 +97,7 @@ fn extract(
     let root = tree.root_node();
     let nodes = descendants(root);
     let aliases = registration_aliases::RegistrationAliases::collect(root, source);
+    let wrappers = registration_wrappers::RegistrationWrappers::collect(root, source, &aliases);
     let mut result = Extraction {
         indirect_usage: Some(indirect_usage(&nodes, source, &aliases)),
         ..Extraction::default()
@@ -110,7 +112,7 @@ fn extract(
         ));
     }
     result.parameter_types = parameters::collect(&nodes, source, file);
-    let mut effects = ownership::RegistrationEffects::collect(root, source, &aliases);
+    let mut effects = ownership::RegistrationEffects::collect(root, source, &aliases, &wrappers);
     if result
         .parameter_types
         .iter()
@@ -129,8 +131,13 @@ fn extract(
         ));
     }
     for (node, name) in named_calls(&nodes, source) {
+        if wrappers.forwarding(node) {
+            continue;
+        }
         let alias = aliases.registration(node);
-        let name = alias.unwrap_or(name);
+        let name = alias
+            .or_else(|| wrappers.registration(node))
+            .unwrap_or(name);
         if matches!(name, "require" | "require_relative" | "load" | "autoload") {
             result.diagnostics.push(diagnostic(
                 file,
@@ -442,6 +449,7 @@ fn inside_deferred_body(
     node: Node<'_>,
     source: &str,
     aliases: &registration_aliases::RegistrationAliases,
+    wrappers: &registration_wrappers::RegistrationWrappers,
 ) -> bool {
     let mut parent = node.parent();
     while let Some(block) = parent {
@@ -454,6 +462,7 @@ fn inside_deferred_body(
             let method = call.child_by_field_name("method").map(|n| text(n, source));
             if call.parent().is_some_and(|p| p.kind() == "program")
                 && (aliases.registration(call).is_some()
+                    || wrappers.registration(call).is_some()
                     || (call.child_by_field_name("receiver").is_none()
                         && method.is_some_and(registration)))
             {
