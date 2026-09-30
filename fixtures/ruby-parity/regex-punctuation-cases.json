@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "regex-punctuation-quoted": {
+      "path": "regex-punctuation/quoted",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    },
+    "regex-punctuation-unquoted": {
+      "path": "regex-punctuation/unquoted",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    }
+  },
+  "mappings": []
+}

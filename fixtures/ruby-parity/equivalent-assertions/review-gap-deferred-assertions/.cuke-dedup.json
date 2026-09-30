@@ -1,0 +1,10 @@
+{
+  "threshold": 100,
+  "rules": {
+    "unused-definition": "off"
+  },
+  "nearDuplicateHandlerSimilarity": 0.5,
+  "assertionModules": [
+    "../providers/assertions"
+  ]
+}

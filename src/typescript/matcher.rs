@@ -1,13 +1,8 @@
 use super::node_text;
 use crate::model::MatcherKind;
 use crate::resource_limits::compile_regex;
-use regex::Regex;
-use std::sync::LazyLock;
 use tree_sitter::Node;
 use unicode_normalization::UnicodeNormalization;
-
-static CUCUMBER_PLACEHOLDER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\{\s*([^{}]+?)\s*\}").expect("static placeholder regex"));
 
 pub(super) fn matcher_value(
     node: Node<'_>,
@@ -188,15 +183,14 @@ pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
 
 /// Canonicalizes matcher text for stable equivalence comparisons.
 pub fn normalize_matcher(matcher: &str, kind: MatcherKind) -> String {
-    let normalized: String = matcher.nfkc().collect();
     let normalized = match kind {
         MatcherKind::Literal => return matcher.to_owned(),
-        MatcherKind::CucumberExpression => CUCUMBER_PLACEHOLDER
-            .replace_all(&normalized, |captures: &regex::Captures<'_>| {
-                format!("{{{}}}", captures[1].trim())
-            })
-            .into_owned(),
-        MatcherKind::RegularExpression => normalize_regular_expression(&normalized),
+        MatcherKind::CucumberExpression => {
+            return crate::matcher::normalize_cucumber_expression(matcher);
+        }
+        MatcherKind::RegularExpression => {
+            normalize_regular_expression(&matcher.nfkc().collect::<String>())
+        }
     };
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }

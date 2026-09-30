@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "regex-braces-literal": {
+      "path": "regex-braces/literal",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    },
+    "regex-braces-literal-conflict": {
+      "path": "regex-braces/literal-conflict",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    },
+    "regex-braces-class-boundary": {
+      "path": "regex-braces/class-boundary",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    }
+  },
+  "mappings": []
+}

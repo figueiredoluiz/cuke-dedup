@@ -1,0 +1,699 @@
+{
+  "schemaVersion": 1,
+  "baselineRef": "v0.10.0",
+  "baselineCommit": "1cd341af050ba56070b89d0a636076cd7a9abed4",
+  "scope": "Initial paired rule outcomes; not exhaustive discovery or framework parity.",
+  "cases": [
+    {
+      "id": "duplicate-identical",
+      "rule": "duplicate-matcher",
+      "intent": "duplicate-identical: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the same action\", () => { page.open(\"home\"); });\nGiven(\"the same action\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the same action\") do page.open(\"home\"); end\nGiven(\"the same action\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "duplicate-distinct",
+      "rule": "duplicate-matcher",
+      "intent": "duplicate-distinct: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the first action\", () => { page.open(\"home\"); });\nGiven(\"the second action\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the first action\") do page.open(\"home\"); end\nGiven(\"the second action\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "duplicate-matcher"
+          }
+        ]
+      }
+    },
+    {
+      "id": "normalized-whitespace",
+      "rule": "normalized-matcher",
+      "intent": "normalized-whitespace: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the   panel opens\", () => { page.open(\"home\"); });\nGiven(\"the panel opens\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the   panel opens\") do page.open(\"home\"); end\nGiven(\"the panel opens\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "normalized-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "normalized-unicode-escape",
+      "rule": "normalized-matcher",
+      "intent": "Equivalent Unicode escapes must decode before Cucumber expression normalization.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the \\uff21 panel opens\", () => { page.open(\"home\"); });\nGiven(\"the A panel opens\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the \\uff21 panel opens\") do page.open(\"home\"); end\nGiven(\"the A panel opens\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "normalized-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "normalized-unicode-literal",
+      "rule": "normalized-matcher",
+      "intent": "Literal Unicode compatibility forms share Cucumber expression normalization.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the Ａ panel opens\", () => { page.open(\"home\"); });\nGiven(\"the A panel opens\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the Ａ panel opens\") do page.open(\"home\"); end\nGiven(\"the A panel opens\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "normalized-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "normalized-distinct",
+      "rule": "normalized-matcher",
+      "intent": "normalized-distinct: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the panel opens\", () => { page.open(\"home\"); });\nGiven(\"the panel closes\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the panel opens\") do page.open(\"home\"); end\nGiven(\"the panel closes\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "normalized-matcher"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ambiguous-concrete",
+      "rule": "ambiguous-step",
+      "intent": "ambiguous-concrete: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"I have {int} coins\", () => { page.open(\"home\"); });\nGiven(/^I have (\\d+) coins$/, () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"I have {int} coins\") do page.open(\"home\"); end\nGiven(/^I have (\\d+) coins$/) do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given I have 3 coins\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "ambiguous-step",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "ambiguous-disjoint",
+      "rule": "ambiguous-step",
+      "intent": "ambiguous-disjoint: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"I have {int} coins\", () => { page.open(\"home\"); });\nGiven(\"I have {int} shells\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"I have {int} coins\") do page.open(\"home\"); end\nGiven(\"I have {int} shells\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given I have 3 coins\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "ambiguous-step"
+          }
+        ]
+      }
+    },
+    {
+      "id": "overlap-expression",
+      "rule": "overlapping-matcher",
+      "intent": "overlap-expression: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"a {word} panel\", () => { page.open(\"home\"); });\nGiven(\"a violet panel\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"a {word} panel\") do page.open(\"home\"); end\nGiven(\"a violet panel\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "overlapping-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "overlap-disjoint",
+      "rule": "overlapping-matcher",
+      "intent": "overlap-disjoint: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"a {int} panel\", () => { page.open(\"home\"); });\nGiven(\"a violet panel\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"a {int} panel\") do page.open(\"home\"); end\nGiven(\"a violet panel\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "overlapping-matcher"
+          }
+        ]
+      }
+    },
+    {
+      "id": "handler-identical",
+      "rule": "duplicate-handler",
+      "intent": "handler-identical: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { page.open(\"home\"); });\nGiven(\"visit the workspace\", () => { page.open(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"open the dashboard\") do page.open(\"home\"); end\nGiven(\"visit the workspace\") do page.open(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-handler",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "handler-parameters-renamed",
+      "rule": "duplicate-handler",
+      "intent": "handler-parameters-renamed: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open {word} dashboard\", (name) => { page.open(name); });\nGiven(\"visit {word} workspace\", (value) => { page.open(value); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"open {word} dashboard\") do |name| page.open(name); end\nGiven(\"visit {word} workspace\") do |value| page.open(value); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-handler",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "handler-locals-renamed",
+      "rule": "duplicate-handler",
+      "intent": "handler-locals-renamed: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { const item = page.current(); page.open(item); });\nGiven(\"visit the workspace\", () => { const value = page.current(); page.open(value); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"open the dashboard\") do item = page.current(); page.open(item); end\nGiven(\"visit the workspace\") do value = page.current(); page.open(value); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-handler",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "handler-conflicting-actions",
+      "rule": "duplicate-handler",
+      "intent": "handler-conflicting-actions: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { page.open(\"home\"); });\nGiven(\"visit the workspace\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"open the dashboard\") do page.open(\"home\"); end\nGiven(\"visit the workspace\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "near-duplicate-step"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "handler-conflicting-argument-order",
+      "rule": "duplicate-handler",
+      "intent": "handler-conflicting-argument-order: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { page.move(left, right); });\nGiven(\"visit the workspace\", () => { page.move(right, left); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"open the dashboard\") do page.move(left, right); end\nGiven(\"visit the workspace\") do page.move(right, left); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "near-duplicate-step"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "near-identical-handlers",
+      "rule": "near-duplicate-step",
+      "intent": "near-identical-handlers: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens\", () => { page.open(\"home\"); });\nGiven(\"the dashboard panel open\", () => { page.open(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the dashboard panel opens\") do page.open(\"home\"); end\nGiven(\"the dashboard panel open\") do page.open(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "near-duplicate-step",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "near-renamed-parameters",
+      "rule": "near-duplicate-step",
+      "intent": "near-renamed-parameters: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens {word}\", (name) => { page.open(name); });\nGiven(\"the dashboard panel open {word}\", (value) => { page.open(value); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the dashboard panel opens {word}\") do |name| page.open(name); end\nGiven(\"the dashboard panel open {word}\") do |value| page.open(value); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "near-duplicate-step",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "near-conflicting-actions",
+      "rule": "near-duplicate-step",
+      "intent": "near-conflicting-actions: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens\", () => { page.open(\"home\"); });\nGiven(\"the dashboard panel open\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the dashboard panel opens\") do page.open(\"home\"); end\nGiven(\"the dashboard panel open\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "near-duplicate-step"
+          },
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "parameterization-action-literals",
+      "rule": "parameterization-candidate",
+      "intent": "parameterization-action-literals: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"switches to dark theme\", () => { page.theme(\"dark\"); });\nGiven(\"switches to light theme\", () => { page.theme(\"light\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"switches to dark theme\") do page.theme(\"dark\"); end\nGiven(\"switches to light theme\") do page.theme(\"light\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "parameterization-candidate",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "parameterization-polarity",
+      "rule": "parameterization-candidate",
+      "intent": "parameterization-polarity: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the panel is enabled\", () => { page.theme(\"dark\"); });\nGiven(\"the panel is disabled\", () => { page.theme(\"light\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the panel is enabled\") do page.theme(\"dark\"); end\nGiven(\"the panel is disabled\") do page.theme(\"light\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "parameterization-candidate"
+          },
+          {
+            "rule": "near-duplicate-step"
+          }
+        ]
+      }
+    },
+    {
+      "id": "parameterization-conflicting-actions",
+      "rule": "parameterization-candidate",
+      "intent": "parameterization-conflicting-actions: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"switches to dark theme\", () => { page.open(\"home\"); });\nGiven(\"switches to light theme\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"switches to dark theme\") do page.open(\"home\"); end\nGiven(\"switches to light theme\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "parameterization-candidate"
+          },
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "near-duplicate-step"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unused-one-definition",
+      "rule": "unused-definition",
+      "intent": "unused-one-definition: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the first action\", () => { page.open(\"home\"); });\nGiven(\"the second action\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the first action\") do page.open(\"home\"); end\nGiven(\"the second action\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given the first action\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "unused-definition",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "unused-all-used",
+      "rule": "unused-definition",
+      "intent": "unused-all-used: equivalent source intent in Cucumber.js and Cucumber-Ruby",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the first action\", () => { page.open(\"home\"); });\nGiven(\"the second action\", () => { page.close(\"home\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the first action\") do page.open(\"home\"); end\nGiven(\"the second action\") do page.close(\"home\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given the first action\n    Given the second action\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 2,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "unused-definition"
+          }
+        ]
+      }
+    },
+    {
+      "id": "normalized-matcher-kind-boundary",
+      "rule": "normalized-matcher",
+      "intent": "A regular expression and expression text do not share normalized matcher identity.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"a panel\", () => { page.open(); });\nGiven(/a panel/, () => { page.close(); });\n",
+        "ruby": "# Original paired scenario.\nGiven(\"a panel\") do page.open(); end\nGiven(/a panel/) do page.close(); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "normalized-matcher"
+          },
+          {
+            "rule": "duplicate-matcher"
+          }
+        ]
+      }
+    },
+    {
+      "id": "normalized-regex-flags-boundary",
+      "rule": "normalized-matcher",
+      "intent": "Case-sensitive and case-insensitive regexes remain distinct.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(/a panel/i, () => { page.open(); });\nGiven(/a panel/, () => { page.close(); });\n",
+        "ruby": "# Original paired scenario.\nGiven(/a panel/i) do page.open(); end\nGiven(/a panel/) do page.close(); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "normalized-matcher"
+          },
+          {
+            "rule": "duplicate-matcher"
+          }
+        ]
+      }
+    },
+    {
+      "id": "discovery-unknown-matcher",
+      "rule": "duplicate-matcher",
+      "intent": "An unresolved matcher stays incomplete while independent direct registrations retain findings.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the same action\", () => { page.open(\"home\"); });\nGiven(\"the same action\", () => { page.close(\"home\"); });\nGiven(pattern, () => { page.open(); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the same action\") do page.open(\"home\"); end\nGiven(\"the same action\") do page.close(\"home\"); end\nGiven(pattern) do page.open(); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": false,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "discovery-foreign-receiver",
+      "rule": "duplicate-matcher",
+      "intent": "An unrelated object registration does not invent a Cucumber definition or hide direct registrations.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\"; const foreign = { Given(...args) {} };\nGiven(\"the same action\", () => { page.open(\"home\"); });\nGiven(\"the same action\", () => { page.close(\"home\"); });\nforeign.Given(\"foreign\", () => { page.open(); });\n",
+        "ruby": "class Foreign; def Given(*args); end; end; foreign = Foreign.new\nGiven(\"the same action\") do page.open(\"home\"); end\nGiven(\"the same action\") do page.close(\"home\"); end\nforeign.Given(\"foreign\") do page.open(); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-matcher",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "assertion-identical",
+      "rule": "duplicate-handler",
+      "intent": "Assertion identity, expected values and deferred execution must survive handler comparison.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { expect(page.state()).toBe(\"ready\"); });\nGiven(\"the dashboard panel open\", () => { expect(page.state()).toBe(\"ready\"); });\n",
+        "ruby": "# Original paired assertion scenario.\nGiven(\"the dashboard panel opens\") do expect(page.state()).to eq(\"ready\"); end\nGiven(\"the dashboard panel open\") do expect(page.state()).to eq(\"ready\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "duplicate-handler",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": []
+      }
+    },
+    {
+      "id": "assertion-conflicting",
+      "rule": "duplicate-handler",
+      "intent": "Assertion identity, expected values and deferred execution must survive handler comparison.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { expect(page.state()).toBe(\"ready\"); });\nGiven(\"the dashboard panel open\", () => { expect(page.state()).toBe(\"idle\"); });\n",
+        "ruby": "# Original paired assertion scenario.\nGiven(\"the dashboard panel opens\") do expect(page.state()).to eq(\"ready\"); end\nGiven(\"the dashboard panel open\") do expect(page.state()).to eq(\"idle\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "near-duplicate-step"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assertion-deferred-conflicting",
+      "rule": "duplicate-handler",
+      "intent": "Assertion identity, expected values and deferred execution must survive handler comparison.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { later(() => { expect(page.state()).toBe(\"ready\"); }); });\nGiven(\"the dashboard panel open\", () => { later(() => { expect(page.state()).toBe(\"idle\"); }); });\n",
+        "ruby": "# Original paired assertion scenario.\nGiven(\"the dashboard panel opens\") do later { expect(page.state()).to eq(\"ready\") }; end\nGiven(\"the dashboard panel open\") do later { expect(page.state()).to eq(\"idle\") }; end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "near-duplicate-step"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    }
+  ]
+}

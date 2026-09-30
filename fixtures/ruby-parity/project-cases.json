@@ -1,0 +1,440 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "configured-threshold-at-limit": {
+      "path": "project-behavior/threshold",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 5,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "duplication": {
+        "duplicatedDefinitions": 3,
+        "totalDefinitions": 5,
+        "percentage": 60.0,
+        "threshold": 60.0,
+        "passed": true
+      },
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "steps.rb:2"
+          ],
+          "matchers": [
+            "shared step",
+            "shared step"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2,
+          "relatedLocations": [
+            "steps.rb:3"
+          ],
+          "matchers": [
+            "shared step",
+            "shared step"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "threshold-over-limit": {
+      "path": "project-behavior/threshold",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--threshold",
+        "59.99"
+      ],
+      "definitions": 5,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 1,
+      "duplication": {
+        "duplicatedDefinitions": 3,
+        "totalDefinitions": 5,
+        "percentage": 60.0,
+        "threshold": 59.99,
+        "passed": false
+      },
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "steps.rb:2"
+          ],
+          "matchers": [
+            "shared step",
+            "shared step"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2,
+          "relatedLocations": [
+            "steps.rb:3"
+          ],
+          "matchers": [
+            "shared step",
+            "shared step"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "explicit-exclusion-patterns": {
+      "path": "project-behavior/exclusions",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--exclude",
+        "ignored-file.rb",
+        "--exclude",
+        "ignored-directory",
+        "--exclude",
+        "generated/**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "comma-separated-exclusion-patterns": {
+      "path": "project-behavior/exclusions",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--exclude",
+        "ignored-file.rb,ignored-directory,generated/**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "gitignore-exclusion": {
+      "path": "project-behavior/gitignore",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ],
+      "materialize": [
+        {
+          "source": "ignored-steps.rb.txt",
+          "destination": "ignored/steps.rb"
+        },
+        {
+          "source": "ignored-broken.feature.txt",
+          "destination": "ignored/broken.feature"
+        }
+      ]
+    },
+    "nested-root-directory-exclusion": {
+      "path": "project-behavior/nested-root/packages/e2e",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--exclude",
+        "ignored"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "gherkin-markdown-default-discovery": {
+      "path": "project-behavior/gherkin-markdown",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "cuke-dedup-ignore-file": {
+      "path": "project-behavior/cuke-dedup-ignore",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "multi-package-cross-package-detection": {
+      "path": "project-behavior/multi-package",
+      "arguments": [
+        "--definitions",
+        "packages/**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 0,
+      "duplication": {
+        "duplicatedDefinitions": 2,
+        "totalDefinitions": 2,
+        "percentage": 100.0,
+        "threshold": 100.0,
+        "passed": true
+      },
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "packages/accounts/src/bdd/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "packages/billing/src/testing/bdd/nested/steps.rb:1"
+          ],
+          "matchers": [
+            "a shared package step",
+            "a shared package step"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "packages/accounts/features/accounts.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "packages/billing/features/billing.feature",
+          "primaryLine": 3
+        }
+      ]
+    },
+    "localized-unicode-gherkin": {
+      "path": "project-behavior/localized-unicode",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "malformed-matcher-keeps-valid-definitions": {
+      "path": "project-behavior/malformed-matcher",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "hidden-and-default-exclusion-overrides": {
+      "path": "project-behavior/discovery-overrides",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--include-hidden",
+        "--no-default-excludes"
+      ],
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "spanish-classic-gherkin-dialect": {
+      "path": "project-behavior/spanish-dialect",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    }
+  },
+  "mappings": [
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "configured-threshold-at-limit",
+      "fixtureGroup": "configured-threshold-at-limit"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "threshold-over-limit",
+      "fixtureGroup": "threshold-over-limit"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "explicit-exclusion-patterns",
+      "fixtureGroup": "explicit-exclusion-patterns"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "comma-separated-exclusion-patterns",
+      "fixtureGroup": "comma-separated-exclusion-patterns"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "gitignore-exclusion",
+      "fixtureGroup": "gitignore-exclusion"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "nested-root-directory-exclusion",
+      "fixtureGroup": "nested-root-directory-exclusion"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "gherkin-markdown-default-discovery",
+      "fixtureGroup": "gherkin-markdown-default-discovery"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "cuke-dedup-ignore-file",
+      "fixtureGroup": "cuke-dedup-ignore-file"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "multi-package-cross-package-detection",
+      "fixtureGroup": "multi-package-cross-package-detection"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "localized-unicode-gherkin",
+      "fixtureGroup": "localized-unicode-gherkin"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "malformed-matcher-keeps-valid-definitions",
+      "fixtureGroup": "malformed-matcher-keeps-valid-definitions"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "hidden-and-default-exclusion-overrides",
+      "fixtureGroup": "hidden-and-default-exclusion-overrides"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "spanish-classic-gherkin-dialect",
+      "fixtureGroup": "spanish-classic-gherkin-dialect"
+    }
+  ],
+  "observedCurrentMismatches": []
+}

@@ -1,0 +1,1910 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Complete shared handler/matcher behavioral dimensions translated from the assigned source cases; desired outcomes never inferred from current Ruby observations.",
+  "groupOracles": {
+    "equivalent-handlers-adversarial-parser-and-handler-behavior": {
+      "sourceCase": "adversarial-parser-and-handler-behavior",
+      "path": "equivalent-handlers/adversarial",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 5,
+      "featureSteps": 4,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps/beta.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ]
+    },
+    "equivalent-handlers-parser-and-analysis-regressions": {
+      "sourceCase": "parser-and-analysis-regressions",
+      "path": "equivalent-handlers/parser-regressions",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 6,
+      "featureSteps": 6,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "normalized-matcher"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        },
+        {
+          "rule": "ambiguous-step"
+        },
+        {
+          "rule": "overlapping-matcher"
+        }
+      ]
+    },
+    "equivalent-handlers-direct-and-fluent-action-equivalence": {
+      "sourceCase": "direct-and-fluent-action-equivalence",
+      "path": "equivalent-handlers/direct-fluent-action",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "I click the save button",
+            "I click save button"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      }
+    },
+    "equivalent-handlers-fuzzy-wording-with-varied-handler-shape": {
+      "sourceCase": "fuzzy-wording-with-varied-handler-shape",
+      "path": "equivalent-handlers/fuzzy-varied-handler",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "I am on login page",
+            "I am on the login page"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ],
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      }
+    },
+    "equivalent-handlers-duplicate-matcher-precision-requires-kind-text-and-flags": {
+      "sourceCase": "duplicate-matcher-precision-requires-kind-text-and-flags",
+      "path": "equivalent-handlers/duplicate-matcher-precision",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 24,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "other-steps.rb",
+          "primaryLine": 6,
+          "relatedLocations": [
+            "steps.rb:49"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 11,
+          "relatedLocations": [
+            "steps.rb:12"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 36,
+          "relatedLocations": [
+            "steps.rb:37"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps.rb:41"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 45,
+          "relatedLocations": [
+            "steps.rb:46"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 62,
+          "relatedLocations": [
+            "steps.rb:63"
+          ],
+          "cluster": false
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 17
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 21
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 25
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 29
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 53
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 57
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 11
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 36
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 40
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 45
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 62
+        }
+      ]
+    },
+    "equivalent-handlers-normalized-matcher-covers-four-axes-and-four-exclusions": {
+      "sourceCase": "normalized-matcher-covers-four-axes-and-four-exclusions",
+      "path": "equivalent-handlers/normalized-matcher-axes",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 24,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 12,
+          "relatedLocations": [
+            "steps.rb:13"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 17,
+          "relatedLocations": [
+            "steps.rb:18"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 22,
+          "relatedLocations": [
+            "steps.rb:23"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 26,
+          "relatedLocations": [
+            "steps.rb:27"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 51,
+          "relatedLocations": [
+            "steps.rb:52"
+          ],
+          "cluster": false
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 56,
+          "relatedLocations": [
+            "steps.rb:57"
+          ],
+          "cluster": false
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 32
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 32
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 36
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 36
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 41
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 41
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 45
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 45
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 60
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 60
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 64
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 64
+        }
+      ]
+    },
+    "equivalent-handlers-matcher-overlap-is-synthesised-without-features": {
+      "sourceCase": "matcher-overlap-is-synthesised-without-features",
+      "path": "equivalent-handlers/matcher-overlap",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 14,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "overlap.rb",
+          "primaryLine": 6
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "overlap.rb",
+          "primaryLine": 10
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "overlap.rb",
+          "primaryLine": 13
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the delta valve is sealed",
+            "the delta valve is sealed"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/proven.feature",
+          "primaryLine": 9
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.rb",
+          "primaryLine": 6
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.rb",
+          "primaryLine": 10
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.rb",
+          "primaryLine": 11
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.rb",
+          "primaryLine": 14
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "exclusions.rb",
+          "primaryLine": 15
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "proven.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "overlapping-matcher",
+          "primaryPath": "proven.rb",
+          "primaryLine": 6
+        }
+      ]
+    },
+    "equivalent-handlers-precision-local-values": {
+      "sourceCase": "precision-local-values",
+      "path": "equivalent-handlers/precision-local-values",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-inline-local": {
+      "sourceCase": "precision-inline-local",
+      "path": "equivalent-handlers/precision-inline-local",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-renamed-local": {
+      "sourceCase": "precision-renamed-local",
+      "path": "equivalent-handlers/precision-renamed-local",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ]
+    },
+    "equivalent-handlers-precision-nested-shadow": {
+      "sourceCase": "precision-nested-shadow",
+      "path": "equivalent-handlers/precision-nested-shadow",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-external-values": {
+      "sourceCase": "precision-external-values",
+      "path": "equivalent-handlers/precision-external-values",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-import-esm": {
+      "sourceCase": "precision-import-esm",
+      "path": "equivalent-handlers/precision-import-esm",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-import-cjs": {
+      "sourceCase": "precision-import-cjs",
+      "path": "equivalent-handlers/precision-import-cjs",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-erased-runtime": {
+      "sourceCase": "precision-erased-runtime",
+      "path": "equivalent-handlers/precision-erased-runtime",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-handlers-precision-mixed-positive": {
+      "sourceCase": "precision-mixed-positive",
+      "path": "equivalent-handlers/precision-mixed-positive",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ]
+    },
+    "equivalent-handlers-review-gap-callback-call-evidence": {
+      "sourceCase": "review-gap-callback-call-evidence",
+      "path": "equivalent-handlers/callbacks",
+      "arguments": [
+        "--definitions",
+        "steps.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the invoice grid is refreshed",
+            "the invoice list is refreshed"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the admin applies the discount rule",
+            "the admin applies the shipping rule"
+          ]
+        },
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ]
+    },
+    "equivalent-handlers-review-gap-candidate-filter": {
+      "sourceCase": "review-gap-candidate-filter",
+      "path": "equivalent-handlers/candidates",
+      "arguments": [
+        "--definitions",
+        "steps.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      },
+      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required."
+    },
+    "equivalent-handlers-review-gap-candidate-small-budget": {
+      "sourceCase": "review-gap-candidate-small-budget",
+      "path": "equivalent-handlers/candidates",
+      "arguments": [
+        "--definitions",
+        "steps.rb",
+        "--max-candidate-comparisons",
+        "1"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "expectedCandidateSources": {
+        "matcherBlocking": 1
+      },
+      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required."
+    },
+    "equivalent-handlers-review-gap-lexical-tdz": {
+      "sourceCase": "review-gap-lexical-tdz",
+      "path": "equivalent-handlers/lexical-early-read",
+      "arguments": [
+        "--definitions",
+        "steps.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "reason": "Opaque nested block parameters prevent an outer literal from granting assertion trust. Ruby nil-initialization is not represented as TypeScript TDZ uncertainty."
+    },
+    "equivalent-handlers-regex-flag-identity-keeps-semantic-flags": {
+      "sourceCase": "regex-flag-identity-keeps-semantic-flags",
+      "path": "equivalent-handlers/regex-flag-identity",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "steps.rb:6"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "normalized-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ]
+    },
+    "equivalent-handlers-module-constant-values-reach-the-fingerprint": {
+      "sourceCase": "module-constant-values-reach-the-fingerprint",
+      "path": "equivalent-handlers/module-constant-values",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 24,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the alpha meter reaches its bound",
+            "the alpha meter reaches its limit"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the alpha panel shows its label",
+            "the alpha panel shows its tag"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the top slot is pressed first",
+            "the top slot is pressed second"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the alpha meter reaches its bound",
+            "the alpha meter reaches its limit"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the alpha panel shows its label",
+            "the alpha panel shows its tag"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the nested slot is pressed first",
+            "the nested slot is pressed second"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the top slot is pressed first",
+            "the top slot is pressed second"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the delta valve settles at its early mark",
+            "the delta valve settles at its late mark"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the delta valve settles at its early mark",
+            "the delta valve settles at its late mark"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the epsilon lever locks at its high notch",
+            "the epsilon lever locks at its low notch"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the beta dial holds its first stop",
+            "the beta dial holds its second stop"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the gamma probe tracks a mutable first point",
+            "the gamma probe tracks a mutable second point"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the delta sensor samples a nested first slot",
+            "the delta sensor samples a nested second slot"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the nested slot is pressed first",
+            "the nested slot is pressed second"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the omega brake holds a local stop",
+            "the omega brake holds a module stop"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the capstan winds to a first limit",
+            "the capstan winds to a second limit"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the derrick swings to a first span",
+            "the derrick swings to a second span"
+          ]
+        }
+      ]
+    }
+  },
+  "mappings": [
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "adversarial-parser-and-handler-behavior",
+      "fixtureGroup": "equivalent-handlers-adversarial-parser-and-handler-behavior"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "parser-and-analysis-regressions",
+      "fixtureGroup": "equivalent-handlers-parser-and-analysis-regressions"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "direct-and-fluent-action-equivalence",
+      "fixtureGroup": "equivalent-handlers-direct-and-fluent-action-equivalence"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "fuzzy-wording-with-varied-handler-shape",
+      "fixtureGroup": "equivalent-handlers-fuzzy-wording-with-varied-handler-shape"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "duplicate-matcher-precision-requires-kind-text-and-flags",
+      "fixtureGroup": "equivalent-handlers-duplicate-matcher-precision-requires-kind-text-and-flags"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "normalized-matcher-covers-four-axes-and-four-exclusions",
+      "fixtureGroup": "equivalent-handlers-normalized-matcher-covers-four-axes-and-four-exclusions"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "matcher-overlap-is-synthesised-without-features",
+      "fixtureGroup": "equivalent-handlers-matcher-overlap-is-synthesised-without-features"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-local-values",
+      "fixtureGroup": "equivalent-handlers-precision-local-values"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-inline-local",
+      "fixtureGroup": "equivalent-handlers-precision-inline-local"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-renamed-local",
+      "fixtureGroup": "equivalent-handlers-precision-renamed-local"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-nested-shadow",
+      "fixtureGroup": "equivalent-handlers-precision-nested-shadow"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-external-values",
+      "fixtureGroup": "equivalent-handlers-precision-external-values"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-import-esm",
+      "fixtureGroup": "equivalent-handlers-precision-import-esm"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-import-cjs",
+      "fixtureGroup": "equivalent-handlers-precision-import-cjs"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-erased-runtime",
+      "fixtureGroup": "equivalent-handlers-precision-erased-runtime"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-mixed-positive",
+      "fixtureGroup": "equivalent-handlers-precision-mixed-positive"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-callback-call-evidence",
+      "fixtureGroup": "equivalent-handlers-review-gap-callback-call-evidence"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-candidate-filter",
+      "fixtureGroup": "equivalent-handlers-review-gap-candidate-filter"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-candidate-small-budget",
+      "fixtureGroup": "equivalent-handlers-review-gap-candidate-small-budget"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-lexical-tdz",
+      "fixtureGroup": "equivalent-handlers-review-gap-lexical-tdz"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "regex-flag-identity-keeps-semantic-flags",
+      "fixtureGroup": "equivalent-handlers-regex-flag-identity-keeps-semantic-flags"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "module-constant-values-reach-the-fingerprint",
+      "fixtureGroup": "equivalent-handlers-module-constant-values-reach-the-fingerprint"
+    }
+  ],
+  "semanticCoverage": {
+    "adversarial-parser-and-handler-behavior": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Same-spelling callable identifiers resolve independently in separate files",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/adversarial"
+        },
+        {
+          "dimension": "Exception-pending versus literal-pending bodies are not meaningful duplicate handlers",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/adversarial"
+        },
+        {
+          "dimension": "Header-only examples retain concrete steps",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/adversarial"
+        },
+        {
+          "dimension": "Outline substitution happens once rather than recursively",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/adversarial"
+        }
+      ],
+      "exclusions": []
+    },
+    "parser-and-analysis-regressions": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Native registered custom parameter regexp",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/parser-regressions"
+        },
+        {
+          "dimension": "Classic feature custom duration versus literal page wait",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/parser-regressions"
+        },
+        {
+          "dimension": "Markdown unordered, ordered and bold step syntax",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/parser-regressions"
+        },
+        {
+          "dimension": "Markdown fenced prose does not create a step",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/parser-regressions"
+        },
+        {
+          "dimension": "GFM outline separator is not an example row",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/parser-regressions"
+        }
+      ],
+      "exclusions": []
+    },
+    "direct-and-fluent-action-equivalence": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Direct and fluent action calls identify the same receiver target",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/direct-fluent-action"
+        },
+        {
+          "dimension": "0.5 handler similarity boundary and one matcher-blocking candidate",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/direct-fluent-action"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JS async destructured page parameter",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby World page receiver supplies the same page; promise scheduling syntax is language-specific."
+        }
+      ]
+    },
+    "fuzzy-wording-with-varied-handler-shape": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Shared ordered action evidence with one additional action",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/fuzzy-varied-handler"
+        },
+        {
+          "dimension": "Function-like callback equivalents with World receiver",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/fuzzy-varied-handler"
+        },
+        {
+          "dimension": "Configured 0.5 similarity floor retains the final finding",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/fuzzy-varied-handler"
+        }
+      ],
+      "exclusions": []
+    },
+    "duplicate-matcher-precision-requires-kind-text-and-flags": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Exact matcher text/kind/flags positive control",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Expression versus regex kind exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Case-folding semantic flag exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Dot-across-newlines semantic flag exclusion (Ruby m)",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Plainly different matcher text exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Same accepted regex language despite JS execution metadata (Ruby identical literals)",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Native flag set order im versus mi",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Registration keyword does not affect matcher identity",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Cross-file matcher identity",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Line versus absolute-string anchors preserve JS multiline distinction",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        },
+        {
+          "dimension": "Native UTF-8 flag policy remains distinct",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/duplicate-matcher-precision"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript g and d literal flags",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby has no global-match or match-index literal flag. The paired identical Ruby regexp controls preserve the shared exact matcher result; exact JS flag removal remains source-language coverage."
+        },
+        {
+          "dimension": "JavaScript m spelling",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby ^/$ are always line anchors; Ruby \\A/\\z versus ^/$ express the accepted-language distinction. Ruby m denotes dot across newlines."
+        },
+        {
+          "dimension": "JavaScript u escape grammar",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby u selects UTF-8 encoding; the native encoding distinction is retained, while JavaScript-specific escape grammar has no direct spelling."
+        }
+      ]
+    },
+    "normalized-matcher-covers-four-axes-and-four-exclusions": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Whitespace runs",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Canonical Unicode composition",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Cucumber placeholder inner whitespace",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Regex capture-name normalization",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Matcher kind exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Effective flag exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Int versus float parameter exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Capture-count exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "NFKC full-width compatibility",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Escaped versus literal regex whitespace",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Anchor exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        },
+        {
+          "dimension": "Quantifier exclusion",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/normalized-matcher-axes"
+        }
+      ],
+      "exclusions": []
+    },
+    "matcher-overlap-is-synthesised-without-features": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Word and integer samples create overlap without feature use",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/matcher-overlap"
+        },
+        {
+          "dimension": "Expression sample accepted by regex creates overlap",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/matcher-overlap"
+        },
+        {
+          "dimension": "Exact matcher duplicates own their pair without redundant overlap",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/matcher-overlap"
+        },
+        {
+          "dimension": "Unsupported regex-only pair produces no reverse witness",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/matcher-overlap"
+        },
+        {
+          "dimension": "Unknown custom parameter produces no witness",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/matcher-overlap"
+        },
+        {
+          "dimension": "One concrete feature ambiguity owns its pair without overlap",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/matcher-overlap"
+        }
+      ],
+      "exclusions": []
+    },
+    "precision-local-values": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Handler-local bindings with the same name and different literal values remain conflicting",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-local-values"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript const and nested function syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby local assignments and an uninvoked lambda preserve literal provenance and nested callable shadowing; function-declaration hoisting itself is source-language syntax."
+        }
+      ]
+    },
+    "precision-inline-local": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Literal assertion expected value and proven handler-local alias retain near equivalence",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-inline-local"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript const and nested function syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby local assignments and an uninvoked lambda preserve literal provenance and nested callable shadowing; function-declaration hoisting itself is source-language syntax."
+        }
+      ]
+    },
+    "precision-renamed-local": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Alpha-renamed handler-local values retain exact handler reuse",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-renamed-local"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript const and nested function syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby local assignments and an uninvoked lambda preserve literal provenance and nested callable shadowing; function-declaration hoisting itself is source-language syntax."
+        }
+      ]
+    },
+    "precision-nested-shadow": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "An unused inner lambda parameter shadows only its own scope",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-nested-shadow"
+        },
+        {
+          "dimension": "Trusted outer assertions retain different expected values",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-nested-shadow"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript const and nested function syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby local assignments and an uninvoked lambda preserve literal provenance and nested callable shadowing; function-declaration hoisting itself is source-language syntax."
+        }
+      ]
+    },
+    "precision-external-values": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "File-scoped captured values with identical names remain bound to their own different values",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-external-values"
+        }
+      ],
+      "exclusions": []
+    },
+    "precision-import-esm": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Trusted and unlisted same-spelling factories stay distinct despite identical assertion-like calls",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-import-esm"
+        },
+        {
+          "dimension": "Direct export alias",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-import-esm"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript ESM syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby method-object export versus hash export extraction preserves the underlying assertion-factory origin; literal local require_relative resolves the synthetic provider."
+        }
+      ]
+    },
+    "precision-import-cjs": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Trusted and unlisted same-spelling factories stay distinct despite identical assertion-like calls",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-import-cjs"
+        },
+        {
+          "dimension": "Destructured/hash export alias",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-import-cjs"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript CJS destructuring syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby method-object export versus hash export extraction preserves the underlying assertion-factory origin; literal local require_relative resolves the synthetic provider."
+        }
+      ]
+    },
+    "precision-erased-runtime": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Non-executing metadata cannot introduce a runtime assertion binding",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-erased-runtime"
+        },
+        {
+          "dimension": "Runtime local value with the same spelling removes trusted factory provenance",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-erased-runtime"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "TypeScript erased namespace and emitted runtime namespace syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby RBS is metadata rather than an erased declaration within a .rb file; Ruby executable local binding supplies the runtime shadowing outcome, without claiming namespace emit equivalence."
+        }
+      ]
+    },
+    "precision-mixed-positive": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Different trusted provider export/alias forms retain exact handler reuse across files",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/precision-mixed-positive"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "ESM and CommonJS loaders",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby native local requires and two export alias forms cover the shared factory identity; module loader syntax itself is JS-specific."
+        }
+      ]
+    },
+    "review-gap-callback-call-evidence": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Different wrappers share the same meaningful deferred callback action sequence",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/callbacks"
+        },
+        {
+          "dimension": "Same wrapper with wholly different deferred actions is not enough",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/callbacks"
+        }
+      ],
+      "exclusions": []
+    },
+    "review-gap-candidate-filter": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Conflicting trusted assertions are filtered before consuming candidate budget",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Equivalent meaningful archive pair retains both exact and fuzzy findings",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Exactly one matcher-blocking candidate",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Default candidate budget positive control",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Positive archive handlers preserve distinct exact trees using block-local next versus implicit expression while both return the same assertion result",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates/steps.rb"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript statement-body versus expression-body arrow syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby uses explicit block-local next versus an implicit final expression to keep the positive handlers structurally distinct while preserving the same assertion and result; ordinary return from these top-level deferred blocks would change runtime control flow."
+        }
+      ]
+    },
+    "review-gap-candidate-small-budget": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Conflicting trusted assertions are filtered before consuming candidate budget",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Equivalent meaningful archive pair retains both exact and fuzzy findings",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Exactly one matcher-blocking candidate",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Single-comparison budget must produce the same final output",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates"
+        },
+        {
+          "dimension": "Positive archive handlers preserve distinct exact trees using block-local next versus implicit expression while both return the same assertion result",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/candidates/steps.rb"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript statement-body versus expression-body arrow syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby uses explicit block-local next versus an implicit final expression to keep the positive handlers structurally distinct while preserving the same assertion and result; ordinary return from these top-level deferred blocks would change runtime control flow."
+        }
+      ]
+    },
+    "review-gap-lexical-tdz": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "An opaque block parameter shadows the outer expected binding before its later writes",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/lexical-early-read/steps.rb"
+        },
+        {
+          "dimension": "Unknown incoming assertion expected values may not gain literal assertion trust",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/lexical-early-read/steps.rb"
+        },
+        {
+          "dimension": "Different later writes remain visible execution effects; they do not establish the incoming value",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/lexical-early-read/steps.rb"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript temporal-dead-zone ReferenceError",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby has no lexical declaration TDZ: an explicit block-local starts nil instead of throwing. The native shared control uses an opaque block parameter to preserve unknown provenance and shadowing before later writes. Neither nil nor the outer ready value is falsely called equivalent to ReferenceError; the TDZ exception and declaration-before-initialization timing are source-language exclusions."
+        }
+      ]
+    },
+    "regex-flag-identity-keeps-semantic-flags": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Encoding-affecting native regex flags remain distinct",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/regex-flag-identity"
+        },
+        {
+          "dimension": "Identical accepted-language regexp control remains exact duplicate",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/regex-flag-identity"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript v Unicode-set grammar",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby does not implement the ECMAScript v flag; native u/n encoding policy tests the shared requirement that semantic regex policy stays in identity."
+        },
+        {
+          "dimension": "JavaScript g regex-state metadata",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby has no g literal flag. The identical regexp positive preserves the accepted-language identity outcome without inventing a cosmetic Ruby flag."
+        }
+      ]
+    },
+    "module-constant-values-reach-the-fingerprint": {
+      "requiredStatus": "covered",
+      "dimensions": [
+        {
+          "dimension": "Same-valued numeric module constants normalize into handler fingerprint",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Conflicting numeric constants remain distinct",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Reassignable same-valued captured locals remain unproven, unlike immutable literal module constants",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Same-valued module constants in ordinary action calls",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Same-valued frozen string constants",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Handler-local declaration shadows module local",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Later module constants are visible when deferred handlers run",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Conflicting later constants remain distinct",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Nested helper-local values do not become module values",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Unresolved ordinary-action identifiers retain names but can share fuzzy evidence",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Enclosing lexical declarations take precedence over same-named module bindings",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        },
+        {
+          "dimension": "Enclosing captured parameters retain their passed values",
+          "disposition": "covered",
+          "evidence": "equivalent-handlers/module-constant-values"
+        }
+      ],
+      "exclusions": [
+        {
+          "dimension": "JavaScript const versus Ruby constant assignment syntax",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Ruby literal constants have no writes in the analyzed corpus; strings are frozen. The source mutable-local control is preserved without inventing differing later values: reassignable captured locals do not prove immutable deferred values. ECMAScript reassignment prohibition remains source-language syntax."
+        },
+        {
+          "dimension": "JS function declaration versus Ruby closure scope",
+          "disposition": "language-syntax-exclusion",
+          "rationale": "Literal lambda calls supply the same single execution, lexical captures and captured parameters; uninvoked helper locals remain unreachable from module scope."
+        }
+      ]
+    }
+  }
+}

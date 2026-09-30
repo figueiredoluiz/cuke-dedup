@@ -1,0 +1,9 @@
+{
+  "threshold": 100,
+  "rules": {
+    "unused-definition": "off"
+  },
+  "rubyLoadPaths": [
+    "support"
+  ]
+}

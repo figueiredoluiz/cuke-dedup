@@ -1,0 +1,5 @@
+{
+  "features": ["packages/**/*.feature"],
+  "threshold": 100,
+  "rules": {"ambiguous-step": "off"}
+}

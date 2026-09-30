@@ -1,0 +1,977 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "assertion-modules-declared-trust-every-import-form": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "assertion-modules-declared-trust-every-import-form/*.rb",
+        "--config",
+        "assertion-modules-declared-trust-every-import-form/.cuke-dedup.json"
+      ],
+      "definitions": 10,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the alpha meter shows a first value",
+            "the alpha meter shows a second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the beta dial holds a first entry",
+            "the beta dial holds a second entry"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the delta sensor logs a first sample",
+            "the delta sensor logs a second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the epsilon valve reports a first state",
+            "the epsilon valve reports a second state"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gamma probe records a first reading",
+            "the gamma probe records a second reading"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Named factory Method capture, namespace Hash access, provider constant alias, require namespace and require values_at capture preserve all five import-binding dimensions.",
+        "Excluded syntax only: ESM named/namespace declarations, TypeScript import-equals and CommonJS destructuring; Ruby require/require_relative and value bindings preserve their trust semantics.",
+        "The two groups use identical source/provider bytes and differ only in assertionModules opt-in."
+      ]
+    },
+    "assertion-modules-undeclared-stay-untrusted": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "assertion-modules-undeclared-stay-untrusted/*.rb",
+        "--config",
+        "assertion-modules-undeclared-stay-untrusted/.cuke-dedup.json"
+      ],
+      "definitions": 10,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the alpha meter shows a first value",
+            "the alpha meter shows a second value"
+          ],
+          "primaryPath": "assertion-modules-undeclared-stay-untrusted/named.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "assertion-modules-undeclared-stay-untrusted/named.rb:4"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the beta dial holds a first entry",
+            "the beta dial holds a second entry"
+          ],
+          "primaryPath": "assertion-modules-undeclared-stay-untrusted/namespace.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "assertion-modules-undeclared-stay-untrusted/namespace.rb:4"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the delta sensor logs a first sample",
+            "the delta sensor logs a second sample"
+          ],
+          "primaryPath": "assertion-modules-undeclared-stay-untrusted/require-namespace.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "assertion-modules-undeclared-stay-untrusted/require-namespace.rb:4"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the epsilon valve reports a first state",
+            "the epsilon valve reports a second state"
+          ],
+          "primaryPath": "assertion-modules-undeclared-stay-untrusted/require-destructure.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "assertion-modules-undeclared-stay-untrusted/require-destructure.rb:4"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gamma probe records a first reading",
+            "the gamma probe records a second reading"
+          ],
+          "primaryPath": "assertion-modules-undeclared-stay-untrusted/equals.rb",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "assertion-modules-undeclared-stay-untrusted/equals.rb:5"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "semanticCoverage": [
+        "Named factory Method capture, namespace Hash access, provider constant alias, require namespace and require values_at capture preserve all five import-binding dimensions.",
+        "Excluded syntax only: ESM named/namespace declarations, TypeScript import-equals and CommonJS destructuring; Ruby require/require_relative and value bindings preserve their trust semantics.",
+        "The two groups use identical source/provider bytes and differ only in assertionModules opt-in."
+      ]
+    },
+    "assertion-runner-provenance-trusts-known-factories": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "assertion-runner-provenance-trusts-known-factories/*.rb",
+        "--config",
+        "assertion-runner-provenance-trusts-known-factories/.cuke-dedup.json"
+      ],
+      "definitions": 10,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the unknown valve reads a first state",
+            "the unknown valve reads a second state"
+          ],
+          "primaryPath": "assertion-runner-provenance-trusts-known-factories/steps.rb",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "assertion-runner-provenance-trusts-known-factories/steps.rb:20"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the playwright gauge reads a first value",
+            "the playwright gauge reads a second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the vitest dial reads a first entry",
+            "the vitest dial reads a second entry"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the bun probe reads a first sample",
+            "the bun probe reads a second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the chai sensor reads a first reading",
+            "the chai sensor reads a second reading"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Four explicitly declared provider source identities retain trusted factories and one undeclared identity with identical source retains ordinary-call parameterization. Terminal and two-link fluent matcher shapes are both exercised.",
+        "Precisely excluded: built-in recognition of @playwright/test, vitest, bun:test and chai exports. The matcher strings preserve source ownership only; Ruby provider names make no claim to implement those frameworks."
+      ]
+    },
+    "assertion-subjects-and-chains-preserve-precision": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "assertion-subjects-and-chains-preserve-precision/*.rb",
+        "--config",
+        "assertion-subjects-and-chains-preserve-precision/.cuke-dedup.json"
+      ],
+      "definitions": 14,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the account badge is visible",
+            "the account badge is now visible"
+          ],
+          "primaryPath": "assertion-subjects-and-chains-preserve-precision/steps.rb",
+          "primaryLine": 8,
+          "relatedLocations": [
+            "assertion-subjects-and-chains-preserve-precision/steps.rb:11"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the settings panel shows the primary account field",
+            "the settings panel shows the secondary account field"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the navigation drawer state indicator is collapsed",
+            "the navigation drawer state indicator is expanded"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the account status indicator shows the first condition",
+            "the account status indicator shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the profile state indicator shows the first condition",
+            "the profile state indicator shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the local account status shows the first condition",
+            "the local account status shows the final condition"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the decorated status shows the first condition",
+            "the decorated status shows the final condition"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "All seven pairs retain distinct object fields, negation, equal assertion block/expression control, direct literal conflict, aliased factory conflict, local-value provenance and method-handler literal conflict.",
+        "Ruby bound Method handlers replace decorator handlers; decorator metadata and erased async/await syntax are inapplicable, while callable-body assertion semantics remain covered.",
+        "Source matcherBlocking=3 is a TypeScript candidate implementation census rather than an assertion outcome; Ruby final finding ownership and all absent pairs are authoritative."
+      ],
+      "sourceCandidateSources": {
+        "matcherBlocking": 3
+      }
+    },
+    "b1-computed-positions-match-dot-access": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "b1-computed-positions-match-dot-access/*.rb",
+        "--config",
+        "b1-computed-positions-match-dot-access/.cuke-dedup.json"
+      ],
+      "definitions": 6,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the factory gauge is settled",
+            "the archive factory reading has finished"
+          ],
+          "primaryPath": "b1-computed-positions-match-dot-access/steps.rb",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "b1-computed-positions-match-dot-access/steps.rb:8"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the terminal panel reads the first value",
+            "the terminal panel reads the final value"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the terminal panel reads the first value",
+            "the terminal panel reads the final value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the option panel reads the first value",
+            "the option panel reads the final value"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the option panel reads the first value",
+            "the option panel reads the final value"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Static public_send at terminal matcher, factory option and chain modifier positions preserves literal-key dispatch. Conflicting values stay apart and equal computed assertions retain exact reuse.",
+        "JavaScript bracket-call syntax itself is excluded; literal-string/symbol reflective dispatch is the Ruby semantic analogue."
+      ]
+    },
+    "open1-nested-alias-revokes-matcher-trust": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "open1-nested-alias-revokes-matcher-trust/*.rb",
+        "--config",
+        "open1-nested-alias-revokes-matcher-trust/.cuke-dedup.json"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the crate label is confirmed",
+            "the crate label is now confirmed"
+          ],
+          "primaryPath": "open1-nested-alias-revokes-matcher-trust/untouched.rb",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "open1-nested-alias-revokes-matcher-trust/untouched.rb:5"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the crate label is confirmed",
+            "the crate label is now confirmed"
+          ],
+          "primaryPath": "open1-nested-alias-revokes-matcher-trust/untouched.rb",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "open1-nested-alias-revokes-matcher-trust/untouched.rb:5"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Nested namespace/factory/modifier alias write invalidates the reached builder; separate untouched provider instance retains duplicate and near findings.",
+        "Nested JS destructuring becomes explicit nested Ruby reads; binding depth and write reachability are preserved."
+      ]
+    },
+    "open2-computed-modifier-preserves-semantics": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "open2-computed-modifier-preserves-semantics/*.rb",
+        "--config",
+        "open2-computed-modifier-preserves-semantics/.cuke-dedup.json"
+      ],
+      "definitions": 6,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the inventory badge is settled",
+            "the archive marker has finished loading"
+          ],
+          "primaryPath": "open2-computed-modifier-preserves-semantics/steps.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "open2-computed-modifier-preserves-semantics/steps.rb:6"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the computed panel shows the first state",
+            "the computed panel shows the final state"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the computed panel shows the first state",
+            "the computed panel shows the final state"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the gauge reading is checked",
+            "the gauge reading is now checked"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Computed modifier literal conflicts, equal-assertion exact positive and computed-negation versus unmodified effect conflict all remain independently asserted."
+      ]
+    },
+    "rest-alias-depth-decides-shared-mutation": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "rest-alias-depth-decides-shared-mutation/*.rb",
+        "--config",
+        "rest-alias-depth-decides-shared-mutation/.cuke-dedup.json"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the pallet label is confirmed",
+            "the pallet label is now confirmed"
+          ],
+          "primaryPath": "rest-alias-depth-decides-shared-mutation/shallow.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "rest-alias-depth-decides-shared-mutation/shallow.rb:6"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the pallet label is confirmed",
+            "the pallet label is now confirmed"
+          ],
+          "primaryPath": "rest-alias-depth-decides-shared-mutation/shallow.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "rest-alias-depth-decides-shared-mutation/shallow.rb:6"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the crate seal is verified",
+            "the crate seal is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the crate seal is verified",
+            "the crate seal is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Ruby Object#dup preserves the object-rest shallow-copy contract: replacing copy.not leaves original.not unchanged; writing copy.not.object_containing mutates the shared nested builder and revokes trust."
+      ]
+    },
+    "review-gap-computed-key-mutation": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-computed-key-mutation/*.rb",
+        "--config",
+        "review-gap-computed-key-mutation/.cuke-dedup.json"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Runtime Hash key aliases an unknown provider member; mutation may reach the factory and must revoke trust without inventing a trusted key."
+      ]
+    },
+    "review-gap-computed-key-trust": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-computed-key-trust/*.rb",
+        "--config",
+        "review-gap-computed-key-trust/.cuke-dedup.json"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ],
+          "primaryPath": "review-gap-computed-key-trust/steps.rb",
+          "primaryLine": 6,
+          "relatedLocations": [
+            "review-gap-computed-key-trust/steps.rb:7"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the unknown status is verified",
+            "the unknown status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the unknown status is verified",
+            "the unknown status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the unknown status is verified",
+            "the unknown status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Static literal expect key grants declared factory trust; object-valued runtime key grants none. Both positive and unknown nested-builder pairs preserve source outcomes.",
+        "Ruby literal-symbol key translates the static JavaScript literal-string key; dynamic key is the factory value itself, never a spelling shortcut."
+      ]
+    },
+    "review-gap-deferred-assertions": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-deferred-assertions/*.rb",
+        "--config",
+        "review-gap-deferred-assertions/.cuke-dedup.json"
+      ],
+      "definitions": 8,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ],
+          "primaryPath": "review-gap-deferred-assertions/steps.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "review-gap-deferred-assertions/steps.rb:4"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the switch position is checked",
+            "the switch position is now checked"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the warehouse is inspected",
+            "the warehouse is now inspected"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the warehouse is inspected",
+            "the warehouse is now inspected"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the warehouse is inspected",
+            "the warehouse is now inspected"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Hash/array nested callbacks, lambda/proc sibling callable forms, differing wrappers with equivalent deferred assertions, deferred expected-value conflict and polarity conflict all retain final outcomes.",
+        "Immediate invocation inside deferred callbacks keeps lambda versus proc execution semantics distinct, analogous to arrow versus ordinary-function calling conventions; those effects cannot be discarded just because a wrapper is shared.",
+        "JavaScript generators have no source case here and are not claimed covered."
+      ]
+    },
+    "review-gap-negation-mutation": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-negation-mutation/*.rb",
+        "--config",
+        "review-gap-negation-mutation/.cuke-dedup.json"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Static computed negated-factory alias reaches the same nested builder; its mutation revokes trusted assertion reuse."
+      ]
+    },
+    "review-gap-nested-matcher": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-nested-matcher/*.rb",
+        "--config",
+        "review-gap-nested-matcher/.cuke-dedup.json"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment readiness has been confirmed"
+          ],
+          "primaryPath": "review-gap-nested-matcher/steps.rb",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "review-gap-nested-matcher/steps.rb:4"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "semanticCoverage": [
+        "Trusted outer expectation and trusted nested object-containing builder preserve exact assertion reuse, including the builder argument and subject."
+      ]
+    },
+    "review-gap-namespace-alias": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-namespace-alias/*.rb",
+        "--config",
+        "review-gap-namespace-alias/.cuke-dedup.json"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Namespace Hash alias mutation replaces the reached factory and removes trust; separate file provider instance preserves the unmutated control. Source cross-file negative pair remains absent."
+      ]
+    },
+    "review-gap-wrapped-callee": {
+      "path": "equivalent-assertions",
+      "arguments": [
+        "--definitions",
+        "review-gap-wrapped-callee/*.rb",
+        "--config",
+        "review-gap-wrapped-callee/.cuke-dedup.json"
+      ],
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ],
+          "primaryPath": "review-gap-wrapped-callee/steps.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "review-gap-wrapped-callee/steps.rb:6"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": [
+        "Grouped callable wrappers preserve factory identity: conflicting values stay apart while grouped/direct equal assertions retain near similarity.",
+        "Precisely excluded syntax: TypeScript as-any and non-null assertions are erased and have no Ruby form; extra transparent parentheses preserve their runtime equivalence dimension."
+      ]
+    }
+  },
+  "mappings": [
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-modules-declared-trust-every-import-form",
+      "fixtureGroup": "assertion-modules-declared-trust-every-import-form",
+      "semanticCoverage": [
+        "Named factory Method capture, namespace Hash access, provider constant alias, require namespace and require values_at capture preserve all five import-binding dimensions.",
+        "Excluded syntax only: ESM named/namespace declarations, TypeScript import-equals and CommonJS destructuring; Ruby require/require_relative and value bindings preserve their trust semantics.",
+        "The two groups use identical source/provider bytes and differ only in assertionModules opt-in."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-modules-undeclared-stay-untrusted",
+      "fixtureGroup": "assertion-modules-undeclared-stay-untrusted",
+      "semanticCoverage": [
+        "Named factory Method capture, namespace Hash access, provider constant alias, require namespace and require values_at capture preserve all five import-binding dimensions.",
+        "Excluded syntax only: ESM named/namespace declarations, TypeScript import-equals and CommonJS destructuring; Ruby require/require_relative and value bindings preserve their trust semantics.",
+        "The two groups use identical source/provider bytes and differ only in assertionModules opt-in."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-runner-provenance-trusts-known-factories",
+      "fixtureGroup": "assertion-runner-provenance-trusts-known-factories",
+      "semanticCoverage": [
+        "Four explicitly declared provider source identities retain trusted factories and one undeclared identity with identical source retains ordinary-call parameterization. Terminal and two-link fluent matcher shapes are both exercised.",
+        "Precisely excluded: built-in recognition of @playwright/test, vitest, bun:test and chai exports. The matcher strings preserve source ownership only; Ruby provider names make no claim to implement those frameworks."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "assertion-subjects-and-chains-preserve-precision",
+      "fixtureGroup": "assertion-subjects-and-chains-preserve-precision",
+      "semanticCoverage": [
+        "All seven pairs retain distinct object fields, negation, equal assertion block/expression control, direct literal conflict, aliased factory conflict, local-value provenance and method-handler literal conflict.",
+        "Ruby bound Method handlers replace decorator handlers; decorator metadata and erased async/await syntax are inapplicable, while callable-body assertion semantics remain covered.",
+        "Source matcherBlocking=3 is a TypeScript candidate implementation census rather than an assertion outcome; Ruby final finding ownership and all absent pairs are authoritative."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "b1-computed-positions-match-dot-access",
+      "fixtureGroup": "b1-computed-positions-match-dot-access",
+      "semanticCoverage": [
+        "Static public_send at terminal matcher, factory option and chain modifier positions preserves literal-key dispatch. Conflicting values stay apart and equal computed assertions retain exact reuse.",
+        "JavaScript bracket-call syntax itself is excluded; literal-string/symbol reflective dispatch is the Ruby semantic analogue."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "open1-nested-alias-revokes-matcher-trust",
+      "fixtureGroup": "open1-nested-alias-revokes-matcher-trust",
+      "semanticCoverage": [
+        "Nested namespace/factory/modifier alias write invalidates the reached builder; separate untouched provider instance retains duplicate and near findings.",
+        "Nested JS destructuring becomes explicit nested Ruby reads; binding depth and write reachability are preserved."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "open2-computed-modifier-preserves-semantics",
+      "fixtureGroup": "open2-computed-modifier-preserves-semantics",
+      "semanticCoverage": [
+        "Computed modifier literal conflicts, equal-assertion exact positive and computed-negation versus unmodified effect conflict all remain independently asserted."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "rest-alias-depth-decides-shared-mutation",
+      "fixtureGroup": "rest-alias-depth-decides-shared-mutation",
+      "semanticCoverage": [
+        "Ruby Object#dup preserves the object-rest shallow-copy contract: replacing copy.not leaves original.not unchanged; writing copy.not.object_containing mutates the shared nested builder and revokes trust."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-computed-key-mutation",
+      "fixtureGroup": "review-gap-computed-key-mutation",
+      "semanticCoverage": [
+        "Runtime Hash key aliases an unknown provider member; mutation may reach the factory and must revoke trust without inventing a trusted key."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-computed-key-trust",
+      "fixtureGroup": "review-gap-computed-key-trust",
+      "semanticCoverage": [
+        "Static literal expect key grants declared factory trust; object-valued runtime key grants none. Both positive and unknown nested-builder pairs preserve source outcomes.",
+        "Ruby literal-symbol key translates the static JavaScript literal-string key; dynamic key is the factory value itself, never a spelling shortcut."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-deferred-assertions",
+      "fixtureGroup": "review-gap-deferred-assertions",
+      "semanticCoverage": [
+        "Hash/array nested callbacks, lambda/proc sibling callable forms, differing wrappers with equivalent deferred assertions, deferred expected-value conflict and polarity conflict all retain final outcomes.",
+        "Immediate invocation inside deferred callbacks keeps lambda versus proc execution semantics distinct, analogous to arrow versus ordinary-function calling conventions; those effects cannot be discarded just because a wrapper is shared.",
+        "JavaScript generators have no source case here and are not claimed covered."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-negation-mutation",
+      "fixtureGroup": "review-gap-negation-mutation",
+      "semanticCoverage": [
+        "Static computed negated-factory alias reaches the same nested builder; its mutation revokes trusted assertion reuse."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-nested-matcher",
+      "fixtureGroup": "review-gap-nested-matcher",
+      "semanticCoverage": [
+        "Trusted outer expectation and trusted nested object-containing builder preserve exact assertion reuse, including the builder argument and subject."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-namespace-alias",
+      "fixtureGroup": "review-gap-namespace-alias",
+      "semanticCoverage": [
+        "Namespace Hash alias mutation replaces the reached factory and removes trust; separate file provider instance preserves the unmutated control. Source cross-file negative pair remains absent."
+      ]
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-wrapped-callee",
+      "fixtureGroup": "review-gap-wrapped-callee",
+      "semanticCoverage": [
+        "Grouped callable wrappers preserve factory identity: conflicting values stay apart while grouped/direct equal assertions retain near similarity.",
+        "Precisely excluded syntax: TypeScript as-any and non-null assertions are erased and have no Ruby form; extra transparent parentheses preserve their runtime equivalence dimension."
+      ]
+    }
+  ],
+  "providerContract": "Configured assertionModules matches the literal resolved require/require_relative source specifier. Only the exported expect(actual) origin grants trust; namespace Factory objects explicitly capture method(:expect) and delegate call to it. Factory modifiers/asymmetric builders preserve the callable-with-properties source dimension through Ruby object members. Arbitrary helper returns, objects or methods named expect grant no trust. Ruby adapter support remains a desired unsatisfied outcome."
+}

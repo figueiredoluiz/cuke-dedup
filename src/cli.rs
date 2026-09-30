@@ -179,6 +179,8 @@ struct Diagnostics {
 }
 
 struct ExtractedCorpus {
+    parameter_types: Vec<source_adapter::SourceParameterType>,
+    indirect_usage: source_adapter::IndirectStepUsage,
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
     excluded_sources: Vec<(PathBuf, crate::source_filter::ExcludedSource)>,
@@ -367,6 +369,8 @@ fn extract_corpus(
     diagnostics: &mut Diagnostics,
 ) -> ExtractedCorpus {
     let mut corpus = ExtractedCorpus {
+        parameter_types: Vec::new(),
+        indirect_usage: source_adapter::IndirectStepUsage::default(),
         definitions: Vec::new(),
         feature_steps: Vec::new(),
         excluded_sources: Vec::new(),
@@ -387,16 +391,30 @@ fn extract_definitions(
     diagnostics: &mut Diagnostics,
     corpus: &mut ExtractedCorpus,
 ) {
+    let ruby_sources = files
+        .definitions
+        .iter()
+        .filter(|file| file.language == source_adapter::SourceLanguage::Ruby)
+        .count();
+    if ruby_sources > 0 && ruby_sources < files.definitions.len() {
+        corpus.incomplete = true;
+        diagnostics.errors.push("Ruby and JS/TS sources require separate analysis runs with explicit definition and feature roots".to_owned());
+        return;
+    }
     let mut extraction_session = source_adapter::SourceExtractionSession::with_options(
         &config.root,
         &config.registrations,
         &config.assertion_modules,
-    );
+    )
+    .with_dependencies(&files.dependencies);
     for file in &files.definitions {
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
         // before parsing rather than analyzed and discarded.
-        if let Some(excluded) = crate::source_filter::inspect(&file.path, &config.registrations) {
+        if let Some(excluded) = (file.language != source_adapter::SourceLanguage::Ruby)
+            .then(|| crate::source_filter::inspect(&file.path, &config.registrations))
+            .flatten()
+        {
             // Every one of these signals is a heuristic over file content, not a proof: a NUL
             // byte or an archive header can appear inside an authored comment or string, and
             // minified geometry cannot be told apart from one very long authored line. So the
@@ -412,6 +430,11 @@ fn extract_definitions(
             .with_context(|| format!("failed to analyze {}", file.path.display()))
         {
             Ok(extracted) => {
+                if file.language == source_adapter::SourceLanguage::Ruby {
+                    corpus.indirect_usage.extend(extracted.indirect_usage);
+                    corpus.parameter_types.extend(extracted.parameter_types);
+                    corpus.incomplete |= corpus.indirect_usage.unknown;
+                }
                 if !extracted.definitions.is_empty() {
                     corpus.definition_files_with_definitions += 1;
                 }
@@ -428,8 +451,30 @@ fn extract_definitions(
             // Every discovered source contributes to cross-file definition comparisons, even
             // when changed mode later filters findings. Skipping an unreadable source could turn
             // an incomplete run into a false pass.
-            Err(error) => diagnostics.errors.push(format!("{error:#}")),
+            Err(error) => {
+                if file.language == source_adapter::SourceLanguage::Ruby {
+                    corpus.indirect_usage.unknown = true;
+                    corpus.incomplete = true;
+                }
+                diagnostics.errors.push(format!("{error:#}"));
+            }
         }
+    }
+    if extraction_session
+        .state::<crate::ruby::RubySession>()
+        .is_ok_and(|state| state.invalidated())
+    {
+        corpus
+            .definitions
+            .retain(|definition| definition.framework != crate::model::Framework::CucumberRuby);
+        corpus.definition_files_with_definitions = corpus
+            .definitions
+            .iter()
+            .map(|definition| &definition.location.path)
+            .collect::<BTreeSet<_>>()
+            .len();
+        corpus.incomplete = true;
+        diagnostics.warnings.push("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite".to_owned());
     }
     corpus.definitions.sort_by(|left, right| {
         left.location
@@ -568,7 +613,10 @@ fn extract_feature_steps(
                 }
             }
             // Changed definitions still depend on the full feature corpus for usage and ambiguity.
-            Err(error) => diagnostics.errors.push(format!("{error:#}")),
+            Err(error) => {
+                corpus.incomplete = true;
+                diagnostics.errors.push(format!("{error:#}"));
+            }
         }
     }
     if !files.features.is_empty() && corpus.parsed_feature_files < files.features.len() {
@@ -601,6 +649,8 @@ fn analyze_corpus(
     diagnostics: &mut Diagnostics,
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
+        parameter_types,
+        indirect_usage,
         definitions,
         feature_steps,
         // Reported during extraction; analysis works only from what survived exclusion.
@@ -608,10 +658,17 @@ fn analyze_corpus(
         definition_files_with_definitions,
         parsed_feature_files,
         feature_files_without_steps,
-        incomplete: corpus_incomplete,
+        incomplete: mut corpus_incomplete,
     } = extracted;
+    let mut effective_config = config.clone();
+    let (patterns, type_diagnostics) =
+        crate::ruby::parameters::merge(parameter_types, &config.parameter_types);
+    effective_config.parameter_types = patterns;
+    corpus_incomplete |= !type_diagnostics.is_empty();
+    diagnostics.warnings.extend(type_diagnostics);
+    let config = &effective_config;
     let (analysis, census, unmatched_suppressions) =
-        analysis::analyze_for_cli(definitions, feature_steps, config)?;
+        analysis::analyze_for_cli(&indirect_usage, definitions, feature_steps, config)?;
     for index in unmatched_suppressions.indices {
         let suppression = &config.suppressions[index];
         diagnostics.warnings.push(format!(
@@ -1008,6 +1065,69 @@ mod tests {
         assert!(!incomplete);
         assert!(diagnostics.errors.is_empty());
         assert_eq!(diagnostics.warnings.len(), 1);
+    }
+
+    #[test]
+    fn typed_adapter_diagnostics_route_independently_of_language_and_wording() {
+        use crate::model::SourceLocation;
+        use crate::source_adapter::{
+            ExtractionDiagnostic, ExtractionDiagnosticKind as Kind, SourceFile, SourceLanguage,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let file = SourceFile {
+            path: directory.path().join("steps.ts"),
+            language: SourceLanguage::TypeScript,
+        };
+        let mut config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        for strict in [false, true] {
+            config.fail_on_unparseable = strict;
+            for (kind, message, incomplete, parse_error) in [
+                (Kind::Other, "adapter advisory", false, false),
+                (Kind::Incomplete, "external glue unavailable", true, false),
+                (Kind::Unparseable, "adapter syntax failure", true, true),
+                (
+                    Kind::Other,
+                    source_adapter::UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX,
+                    false,
+                    false,
+                ),
+                (
+                    Kind::Incomplete,
+                    source_adapter::UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX,
+                    true,
+                    false,
+                ),
+            ] {
+                for level in [
+                    ExtractionDiagnosticLevel::Warning,
+                    ExtractionDiagnosticLevel::Error,
+                ] {
+                    let mut diagnostics = Diagnostics {
+                        warnings: vec![],
+                        errors: vec![],
+                    };
+                    let mut actual_incomplete = false;
+                    collect_extraction_diagnostics(
+                        &config,
+                        &file,
+                        &None,
+                        vec![ExtractionDiagnostic::with_kind(
+                            kind,
+                            level,
+                            SourceLocation::new(&file.path, 1, 1, 1, 1),
+                            message,
+                        )],
+                        &mut diagnostics,
+                        &mut actual_incomplete,
+                    );
+                    assert_eq!(actual_incomplete, incomplete, "{kind:?} strict={strict}");
+                    let error =
+                        level == ExtractionDiagnosticLevel::Error || (strict && parse_error);
+                    assert_eq!(diagnostics.errors.len(), usize::from(error));
+                    assert_eq!(diagnostics.warnings.len(), usize::from(!error));
+                }
+            }
+        }
     }
 
     #[test]

@@ -7,21 +7,24 @@ const SHORT_MATCHER_MAX_CHARS: usize = 12;
 const SHORT_SIMILARITY_GATE: f64 = 0.92;
 const LONG_SIMILARITY_GATE: f64 = 0.90;
 
+fn matcher_comparison_text(definition: &StepDefinition) -> &str {
+    if definition.framework == crate::model::Framework::CucumberRuby {
+        &definition.matcher
+    } else {
+        &definition.normalized_matcher
+    }
+}
+
 pub(super) fn matcher_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
-    let max_length = left
-        .normalized_matcher
-        .chars()
-        .count()
-        .max(right.normalized_matcher.chars().count());
+    let left = matcher_comparison_text(left);
+    let right = matcher_comparison_text(right);
+    let max_length = left.chars().count().max(right.chars().count());
     if max_length == 0 {
         return 1.0;
     }
-    let distance = strsim::levenshtein(&left.normalized_matcher, &right.normalized_matcher);
+    let distance = strsim::levenshtein(left, right);
     let edit_similarity = 1.0 - distance as f64 / max_length as f64;
-    edit_similarity.max(strsim::jaro_winkler(
-        &left.normalized_matcher,
-        &right.normalized_matcher,
-    ))
+    edit_similarity.max(strsim::jaro_winkler(left, right))
 }
 
 pub(super) fn is_near_matcher(
@@ -32,11 +35,10 @@ pub(super) fn is_near_matcher(
     if !matchers_compatible(left, right) {
         return false;
     }
-    let length = left
-        .normalized_matcher
+    let length = matcher_comparison_text(left)
         .chars()
         .count()
-        .max(right.normalized_matcher.chars().count());
+        .max(matcher_comparison_text(right).chars().count());
     let similarity_gate = if length <= SHORT_MATCHER_MAX_CHARS {
         SHORT_SIMILARITY_GATE
     } else {
@@ -73,7 +75,12 @@ pub(super) fn is_parameterizable_matcher(
 /// two matchers as variants of one step.
 fn matchers_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
     left.matcher_kind == right.matcher_kind
-        && !has_polarity_conflict(&left.normalized_matcher, &right.normalized_matcher)
+        && (left.framework != crate::model::Framework::CucumberRuby
+            || left.matcher_flags == right.matcher_flags)
+        && !has_polarity_conflict(
+            matcher_comparison_text(left),
+            matcher_comparison_text(right),
+        )
 }
 
 /// The number of words that differ between two matchers after stripping their common leading and
@@ -167,6 +174,14 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
 }
 
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
+    if (left.framework == crate::model::Framework::CucumberRuby
+        || right.framework == crate::model::Framework::CucumberRuby)
+        && (method_semantics(left) == Some("ruby:lexical-file")
+            || method_semantics(right) == Some("ruby:lexical-file"))
+        && left.location.path != right.location.path
+    {
+        return false;
+    }
     use crate::model::Framework::{JestCucumber, VitestCucumber};
     if left.framework != right.framework
         && (matches!(left.framework, JestCucumber | VitestCucumber)

@@ -1,0 +1,1275 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "equivalent-provider-fixture-facade": {
+      "path": "equivalent-providers/fixture-facade",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the recently edited field shows its value",
+            "the added field shows the entered value"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "local fixture re-export",
+          "configured resolution root",
+          "injected handler argument",
+          "identical asynchronous assertion body"
+        ],
+        "rubyTranslation": "Literal local provider loading and an explicit Then method-object facade retain injected-world block identity; synchronous Ruby assertion calls preserve the final checked value.",
+        "excludedSyntax": [
+          "Playwright createBdd(test) factory and async/await syntax; shared callback and provider origin remain covered.",
+          "TypeScript ~/ path alias syntax; literal Ruby source resolution is covered."
+        ]
+      }
+    },
+    "equivalent-provider-adapter-shapes": {
+      "path": "equivalent-providers/adapter-shapes",
+      "definitionsPattern": "steps/*.rb",
+      "definitions": 8,
+      "featureSteps": 8,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "eight registered source suffixes",
+          "plain call",
+          "conditional execution",
+          "asynchronous call",
+          "typed parameter",
+          "rendered element",
+          "two effects",
+          "object argument"
+        ],
+        "rubyTranslation": "Eight distinct Ruby sources retain the eight execution shapes and all used definitions. Ruby parameters, hashes and element objects replace annotations, object literals and JSX.",
+        "excludedSyntax": [
+          "JavaScript/TypeScript suffix registry itself; Ruby registers .rb only.",
+          "async/await scheduling and type erasure; the invoked operation and parameter behavior are retained."
+        ]
+      }
+    },
+    "equivalent-provider-ambient-alias": {
+      "path": "equivalent-providers/ambient-alias",
+      "definitionsPattern": "entry.rb",
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the alpha gauge is settled",
+            "the alpha gauge is settled"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the beta dial is settled",
+            "the beta dial is settled"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "ordinary lowercase provider is untrusted",
+            "ordinary lowercase provider is untrusted"
+          ]
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "uppercase ambient registration",
+          "lowercase source known miss",
+          "runtime-supported registration alias",
+          "bare lowercase negative without imported alias"
+        ],
+        "rubyTranslation": "Uppercase Given stays ambient; a captured Given method object is explicitly bound to lowercase given before the positive pair. Distinct handler effects isolate matcher duplication.",
+        "excludedSyntax": [
+          "Cucumber-JS injected lowercase given has no ambient Ruby spelling; the equivalent proven alias is explicit."
+        ]
+      }
+    },
+    "equivalent-provider-relative-reexport": {
+      "path": "equivalent-providers/relative-reexport",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cross package registration",
+            "cross package registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": []
+      }
+    },
+    "equivalent-provider-barrel-reexport": {
+      "path": "equivalent-providers/barrel-reexport",
+      "definitionsPattern": "entry.rb",
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cjs barrel registration",
+            "cjs barrel registration"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "cjs barrel require registration",
+            "cjs barrel require registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root",
+          "two caller import paths",
+          "barrel re-export"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": [
+          "ESM import versus CommonJS require/export syntax; both Ruby load edges and consumer aliases remain covered."
+        ]
+      }
+    },
+    "equivalent-provider-legacy-provider": {
+      "path": "equivalent-providers/legacy-provider",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "legacy cucumber registration",
+            "legacy cucumber registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": [
+          "Legacy npm cucumber package identity; Ruby uses its own ambient Cucumber DSL and explicit captured provider exports."
+        ]
+      }
+    },
+    "equivalent-provider-wrapper": {
+      "path": "equivalent-providers/wrapper",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "wrapped registration",
+            "wrapped registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root",
+          "handler forwarded through wrapper",
+          "matcher argument forwarding"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": []
+      }
+    },
+    "equivalent-provider-package-load-root": {
+      "path": "equivalent-providers/package-load-root",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "package imports registration",
+            "package imports registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": [
+          "npm imports/exports/workspace manifests and tsconfig path syntax; configured Ruby load roots and provider entrypoint delegation remain covered."
+        ]
+      }
+    },
+    "equivalent-provider-alias-load-root": {
+      "path": "equivalent-providers/alias-load-root",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "aliased registration",
+            "aliased registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": [
+          "npm imports/exports/workspace manifests and tsconfig path syntax; configured Ruby load roots and provider entrypoint delegation remain covered."
+        ]
+      }
+    },
+    "equivalent-provider-workspace-load-root": {
+      "path": "equivalent-providers/workspace-load-root",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "workspace package registration",
+            "workspace package registration"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "trusted registration provenance",
+          "local alias at call site",
+          "literal provider source resolution",
+          "selected entry discovery root"
+        ],
+        "rubyTranslation": "Original local provider captures the real Given method; literal Ruby load edges, method-object aliases and explicit block forwarding carry registration provenance. Decoy sources outside the selected dependency graph must not contribute.",
+        "excludedSyntax": [
+          "npm imports/exports/workspace manifests and tsconfig path syntax; configured Ruby load roots and provider entrypoint delegation remain covered."
+        ]
+      }
+    },
+    "equivalent-provider-gherkin-origins": {
+      "path": "equivalent-providers/gherkin-origins",
+      "definitionsPattern": "steps.rb",
+      "definitions": 29,
+      "featureSteps": 17,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/localized.feature",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "steps.rb:42",
+            "steps.rb:43"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/markdown.feature.md",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.rb:38",
+            "steps.rb:39"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps.rb:7",
+            "steps.rb:8"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.rb:5",
+            "steps.rb:6"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 11,
+          "relatedLocations": [
+            "steps.rb:11",
+            "steps.rb:12"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 14,
+          "relatedLocations": [
+            "steps.rb:13",
+            "steps.rb:14"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 18,
+          "relatedLocations": [
+            "steps.rb:34",
+            "steps.rb:35"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 21,
+          "relatedLocations": [
+            "steps.rb:26",
+            "steps.rb:27"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 22,
+          "relatedLocations": [
+            "steps.rb:28",
+            "steps.rb:29"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 23,
+          "relatedLocations": [
+            "steps.rb:30",
+            "steps.rb:31"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 29,
+          "relatedLocations": [
+            "steps.rb:10",
+            "steps.rb:9"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 37,
+          "relatedLocations": [
+            "steps.rb:21",
+            "steps.rb:22"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps.rb:15",
+            "steps.rb:16"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 43,
+          "relatedLocations": [
+            "steps.rb:17",
+            "steps.rb:18"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/origins.feature",
+          "primaryLine": 26
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "feature Background",
+          "plain Scenario",
+          "And",
+          "asterisk",
+          "But",
+          "keyword-independent matching",
+          "Outline Examples",
+          "Rule Background",
+          "Rule Scenario",
+          "Scenario Template Scenarios",
+          "Markdown source line",
+          "Portuguese keyword",
+          "unique control"
+        ],
+        "rubyTranslation": "Original Ruby blocks replace JS callbacks while all first-party synthetic Gherkin constructs and their source-line ownership remain identical.",
+        "excludedSyntax": [
+          "CommonJS registration import syntax only."
+        ]
+      }
+    },
+    "equivalent-provider-registration-origins": {
+      "path": "equivalent-providers/registration-origins",
+      "definitionsPattern": "steps.rb",
+      "definitions": 30,
+      "featureSteps": 20,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 4,
+          "relatedLocations": [
+            "steps.rb:8",
+            "steps.rb:9"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 7,
+          "relatedLocations": [
+            "steps.rb:10",
+            "steps.rb:11"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 10,
+          "relatedLocations": [
+            "steps.rb:12",
+            "steps.rb:13"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 13,
+          "relatedLocations": [
+            "steps.rb:14",
+            "steps.rb:15"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 16,
+          "relatedLocations": [
+            "steps.rb:16",
+            "steps.rb:17"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 19,
+          "relatedLocations": [
+            "steps.rb:18",
+            "steps.rb:19"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 22,
+          "relatedLocations": [
+            "steps.rb:20",
+            "steps.rb:21"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 25,
+          "relatedLocations": [
+            "steps.rb:22",
+            "steps.rb:23"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 31,
+          "relatedLocations": [
+            "steps.rb:24",
+            "steps.rb:25"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 34,
+          "relatedLocations": [
+            "steps.rb:26",
+            "steps.rb:27"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 37,
+          "relatedLocations": [
+            "steps.rb:28",
+            "steps.rb:29"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 40,
+          "relatedLocations": [
+            "steps.rb:30",
+            "steps.rb:31"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 43,
+          "relatedLocations": [
+            "steps.rb:32",
+            "steps.rb:33"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 52,
+          "relatedLocations": [
+            "steps.rb:34",
+            "steps.rb:35"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 58,
+          "relatedLocations": [
+            "steps.rb:36",
+            "steps.rb:37"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 28
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 46
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 49
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 61
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/definition-origins.feature",
+          "primaryLine": 55
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "registration source identity",
+          "direct and renamed bindings",
+          "namespace aliases",
+          "lowercase imported alias",
+          "ambient global",
+          "handler lambda",
+          "instance method handler",
+          "loaded provider and barrel",
+          "shadowing and lookalikes",
+          "non-runtime and absent-export controls"
+        ],
+        "rubyTranslation": "Real Ruby captures of ambient Given, namespace delegates, handler lambdas and instance Method callbacks preserve each applicable ambiguity and definition location. Ordinary untrusted values remain negative controls.",
+        "excludedSyntax": [
+          "Playwright createBdd, decorators Given/Step and Cypress entrypoint APIs: only shared provider/block and callable-handler origin dimensions translate.",
+          "ESM/CJS/import-equals export syntax maps to explicit Ruby method-object and namespace aliases.",
+          "Type-only erased import and absent CommonJS default export have no Ruby runtime spelling; ordinary untrusted values are negative semantic controls, not fabricated erased Ruby bindings."
+        ],
+        "registrationShapeMap": [
+          {
+            "sourceShape": "CommonJS destructured Given",
+            "rubyShape": "register = RegistrationProvider::GIVEN; register.call",
+            "origin": "alpha"
+          },
+          {
+            "sourceShape": "legacy module namespace",
+            "rubyShape": "RegistrationProvider.register",
+            "origin": "beta"
+          },
+          {
+            "sourceShape": "defineStep export",
+            "rubyShape": "explicit namespace wrapper forwarding matcher and block",
+            "origin": "gamma"
+          },
+          {
+            "sourceShape": "renamed CommonJS import",
+            "rubyShape": "renamed = register; renamed.call",
+            "origin": "delta"
+          },
+          {
+            "sourceShape": "ESM named import",
+            "rubyShape": "ambient Given with proven Ruby runtime identity",
+            "origin": "epsilon"
+          },
+          {
+            "sourceShape": "ESM namespace import",
+            "rubyShape": "namespace_alias = RegistrationProvider; namespace_alias.register",
+            "origin": "zeta"
+          },
+          {
+            "sourceShape": "imported lowercase given",
+            "rubyShape": "given_alias = captured Given method; given_alias.call",
+            "origin": "eta"
+          },
+          {
+            "sourceShape": "uppercase ambient Given",
+            "rubyShape": "unshadowed Given",
+            "origin": "theta"
+          },
+          {
+            "sourceShape": "bare lowercase nonregistration",
+            "rubyShape": "ordinary local lambda, never imported from a trusted registration provider",
+            "origin": "iota"
+          },
+          {
+            "sourceShape": "Playwright createBdd",
+            "rubyShape": "shared callable/block dimension via captured registration method with lambda handler",
+            "origin": "kappa",
+            "excludedApi": "Playwright factory API"
+          },
+          {
+            "sourceShape": "Playwright Given decorator",
+            "rubyShape": "shared handler ownership via instance Method passed as Ruby block",
+            "origin": "lambda",
+            "excludedApi": "decorator API"
+          },
+          {
+            "sourceShape": "Playwright Step decorator",
+            "rubyShape": "shared method-handler ownership through a separate callback pair",
+            "origin": "mu",
+            "excludedApi": "decorator-only export API"
+          },
+          {
+            "sourceShape": "maintained Cypress entrypoint",
+            "rubyShape": "shared provider source identity through explicit loaded namespace",
+            "origin": "nu",
+            "excludedApi": "Cypress framework entrypoint"
+          },
+          {
+            "sourceShape": "legacy Cypress steps subpath",
+            "rubyShape": "shared delegation identity through a second original namespace consumer",
+            "origin": "xi",
+            "excludedApi": "Cypress framework subpath"
+          },
+          {
+            "sourceShape": "lookalike unsupported package",
+            "rubyShape": "ordinary lambda receiver with no Given provenance",
+            "origin": "omicron"
+          },
+          {
+            "sourceShape": "lexically shadowed Given",
+            "rubyShape": "shadowed callable local value with ordinary effect",
+            "origin": "pi"
+          },
+          {
+            "sourceShape": "renamed ESM import",
+            "rubyShape": "second explicit captured-method alias consumer",
+            "origin": "rho"
+          },
+          {
+            "sourceShape": "absent default export",
+            "rubyShape": "ordinary namespace Given method does not forward to DSL",
+            "origin": "sigma",
+            "excludedApi": "undefined CommonJS/ESM default-export behavior"
+          },
+          {
+            "sourceShape": "TypeScript import-equals",
+            "rubyShape": "captured Given method from loaded namespace",
+            "origin": "tau",
+            "excludedApi": "TypeScript import-equals syntax"
+          },
+          {
+            "sourceShape": "erased type-only import",
+            "rubyShape": "ordinary nonregistration value is a shared negative control only",
+            "origin": "upsilon",
+            "excludedApi": "runtime erasure of TypeScript declarations"
+          }
+        ]
+      }
+    },
+    "equivalent-provider-factory-alias": {
+      "path": "equivalent-providers/factory-alias",
+      "definitionsPattern": "entry.rb",
+      "definitions": 4,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the archive badge is visible",
+            "the archive badge is now visible"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "direct default factory identity",
+          "named-default alias identity",
+          "conflicting assertion values",
+          "identical assertion effects positive"
+        ],
+        "rubyTranslation": "Two local aliases capture the same configured Ruby assertion factory; matching visible checks preserve similarity while conflicting expected values prohibit all handler candidates.",
+        "excludedSyntax": [
+          "ESM default as named-export syntax; actual Ruby captured factory identity remains covered."
+        ]
+      }
+    },
+    "equivalent-provider-factory-mutation": {
+      "path": "equivalent-providers/factory-mutation",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "module namespace import",
+          "dynamic member selection",
+          "reachable alias mutation",
+          "fluent matcher-builder call",
+          "eager mutation before deferred assertions"
+        ],
+        "rubyTranslation": "Configured provider exposes a real factory object. A dynamic hash member may select that object, and mutation of its object_containing builder removes trust from the namespace path before handler execution.",
+        "excludedSyntax": [
+          "Computed CommonJS destructuring syntax only; dynamic Ruby hash selection and shared-object mutation retain its uncertainty."
+        ]
+      }
+    },
+    "equivalent-provider-local-callables": {
+      "path": "equivalent-providers/local-callables",
+      "definitionsPattern": "entry.rb",
+      "definitions": 24,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the alpha meter settles evenly",
+            "the alpha meter settles smoothly"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the alpha meter settles evenly",
+            "the alpha meter settles smoothly"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the spindle cycles a first turn",
+            "the spindle cycles a second turn"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the crane idles at a first angle",
+            "the crane idles at a second angle"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the delta sensor logs a replaced first sample",
+            "the delta sensor logs a replaced second sample"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gamma probe reads a shadowed first value",
+            "the gamma probe reads a shadowed second value"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the gantry shifts a first span",
+            "the gantry shifts a second span"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the ratchet holds a first tooth",
+            "the ratchet holds a second tooth"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the relay trips on a first path",
+            "the relay trips on a second path"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the winch spools past a first mark",
+            "the winch spools past a second mark"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the gamma probe reads a shadowed first value",
+            "the gamma probe reads a shadowed second value"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the delta sensor logs a replaced first sample",
+            "the delta sensor logs a replaced second sample"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the winch spools past a first mark",
+            "the winch spools past a second mark"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the ratchet holds a first tooth",
+            "the ratchet holds a second tooth"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the gantry shifts a first span",
+            "the gantry shifts a second span"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the beta dial resolves downward",
+            "the beta dial resolves upward"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the beta dial resolves downward",
+            "the beta dial resolves upward"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the hoist lifts along a first track",
+            "the hoist lifts along a second track"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the pulley turns to a first notch",
+            "the pulley turns to a second notch"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the crane idles at a first angle",
+            "the crane idles at a second angle"
+          ]
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "called identical declaration",
+          "called conflicting declaration",
+          "block-local shadow binding",
+          "replacement before call",
+          "same replacement different declaration",
+          "never-called declaration",
+          "parameterized callable",
+          "single-level recursive expansion",
+          "nested invisible declaration",
+          "runtime class/enum shadow binding",
+          "transparent callee wrapper"
+        ],
+        "rubyTranslation": "Lexically scoped Ruby lambdas and explicit block-local variables replace JavaScript local functions. Runtime shadowing is expressed through real local callable bindings; nested scope, reassignment, calls and deferred declaration effects are preserved. The source bounded-expansion candidate outcomes remain required independently of current Ruby support.",
+        "excludedSyntax": [
+          "JavaScript local function declaration and block-only class/enum binding syntax; Ruby def would not have equivalent lexical scope and is deliberately not used.",
+          "Transparent JS callee parentheses map to Ruby (act).call; type annotations are erased."
+        ]
+      }
+    },
+    "equivalent-provider-factory-immutable-control": {
+      "path": "equivalent-providers/factory-immutable-control",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "parameterization-candidate"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "review-gap-require-mutation",
+          "static versus dynamic export key",
+          "trust granting versus removal",
+          "eager mutation before deferred assertions"
+        ],
+        "rubyTranslation": "Same original configured factory and handler shapes as the dynamic case; immutable access must retain findings and static alias mutation must remove assertion trust.",
+        "excludedSyntax": [
+          "Computed CommonJS destructuring syntax; Ruby hash member selection is real shared-object aliasing."
+        ]
+      }
+    },
+    "equivalent-provider-factory-static-mutation-control": {
+      "path": "equivalent-providers/factory-static-mutation-control",
+      "definitionsPattern": "entry.rb",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ],
+      "semanticCoverage": {
+        "sourceDimensions": [
+          "review-gap-require-mutation",
+          "static versus dynamic export key",
+          "trust granting versus removal",
+          "eager mutation before deferred assertions"
+        ],
+        "rubyTranslation": "Same original configured factory and handler shapes as the dynamic case; immutable access must retain findings and static alias mutation must remove assertion trust.",
+        "excludedSyntax": [
+          "Computed CommonJS destructuring syntax; Ruby hash member selection is real shared-object aliasing."
+        ]
+      }
+    }
+  },
+  "mappings": [
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-bdd-local-fixture-duplicate-handler",
+      "fixtureGroup": "equivalent-provider-fixture-facade"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "all-registered-source-adapters",
+      "fixtureGroup": "equivalent-provider-adapter-shapes"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambient-global-registration-case-sensitivity",
+      "fixtureGroup": "equivalent-provider-ambient-alias"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "cross-package-relative-reexport",
+      "fixtureGroup": "equivalent-provider-relative-reexport"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "local-commonjs-barrel-reexport",
+      "fixtureGroup": "equivalent-provider-barrel-reexport"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "legacy-cucumber-registration-modules",
+      "fixtureGroup": "equivalent-provider-legacy-provider"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "local-registration-wrapper",
+      "fixtureGroup": "equivalent-provider-wrapper"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "package-imports-registration",
+      "fixtureGroup": "equivalent-provider-package-load-root"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "typescript-path-alias-registration",
+      "fixtureGroup": "equivalent-provider-alias-load-root"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "workspace-package-entrypoint-registration",
+      "fixtureGroup": "equivalent-provider-workspace-load-root"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambiguous-step-origins-cover-every-construct",
+      "fixtureGroup": "equivalent-provider-gherkin-origins"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "ambiguous-step-definition-origins-cover-every-registration-shape",
+      "fixtureGroup": "equivalent-provider-registration-origins"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-named-default",
+      "fixtureGroup": "equivalent-provider-factory-alias"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "review-gap-require-mutation",
+      "fixtureGroup": "equivalent-provider-factory-mutation"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "local-function-provenance-limits-expansion",
+      "fixtureGroup": "equivalent-provider-local-callables"
+    }
+  ]
+}

@@ -33,8 +33,8 @@ use self::registrations::{
 use self::suppression::inline_suppressions;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
-    adapter_for_language, grammar_for_language, AdapterSessionState, SourceAdapter,
-    SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
+    adapter_for_language, grammar_for_language, AdapterSessionState, ExtractionDiagnosticKind,
+    SourceAdapter, SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
     UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX, UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
     UNSUPPORTED_MATCHER_DIAGNOSTIC,
 };
@@ -255,10 +255,11 @@ fn extract_detailed_impl(
     if root.has_error() {
         let syntax_node = first_syntax_error(root).unwrap_or(root);
         // A parse failure still leaves error-recovered definitions worth analyzing, so it does not
-        // discard the file. It is a completeness signal (via its message prefix), which marks the
+        // discard the file. It is a typed completeness signal, which marks the
         // corpus incomplete; the CLI keeps the run non-fatal unless `--fail-on-unparseable` or
         // `--fail-on-incomplete` is set, so the level here stays a warning.
         diagnostics.push(ExtractionDiagnostic {
+            kind: ExtractionDiagnosticKind::Unparseable,
             level: ExtractionDiagnosticLevel::Warning,
             location: node_location(file, syntax_node, source_bytes),
             message: format!("{UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX}, so analysis is incomplete; fix the syntax, use a .tsx extension for JSX, or narrow definition discovery"),
@@ -273,6 +274,7 @@ fn extract_detailed_impl(
     );
     if let Some(location) = unresolved_registration_calls.first_location {
         diagnostics.push(ExtractionDiagnostic {
+            kind: ExtractionDiagnosticKind::Incomplete,
             level: ExtractionDiagnosticLevel::Warning,
             location,
             message: format!(
@@ -283,6 +285,7 @@ fn extract_detailed_impl(
     }
     if let Some(location) = unresolved_registration_calls.first_passed {
         diagnostics.push(ExtractionDiagnostic {
+            kind: ExtractionDiagnosticKind::Incomplete,
             level: ExtractionDiagnosticLevel::Warning,
             location,
             message: format!(
@@ -297,6 +300,7 @@ fn extract_detailed_impl(
             .map(|reason| format!(" ({reason})"))
             .unwrap_or_default();
         diagnostics.push(ExtractionDiagnostic {
+            kind: ExtractionDiagnosticKind::Incomplete,
             level: ExtractionDiagnosticLevel::Warning,
             location,
             message: format!(
@@ -316,6 +320,7 @@ fn extract_detailed_impl(
         let line = recorded.row + 1;
         let column = unicode_column(source_bytes, recorded.byte_offset, recorded.byte_column);
         diagnostics.push(ExtractionDiagnostic {
+            kind: ExtractionDiagnosticKind::Incomplete,
             level: ExtractionDiagnosticLevel::Warning,
             location: SourceLocation::new(&file.path, line, column, line, column),
             message: format!(
@@ -330,10 +335,7 @@ fn extract_detailed_impl(
             .cmp(&right.location.line)
             .then(left.location.column.cmp(&right.location.column))
     });
-    Ok(Extraction {
-        definitions,
-        diagnostics,
-    })
+    Ok(Extraction::new(definitions, diagnostics))
 }
 
 fn collect_calls<'tree>(
@@ -633,21 +635,13 @@ fn extract_call<'tree>(
         )
     });
     let Some(handler) = handler else {
-        diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(context.file, call, source),
-            message: "dynamic or unsupported step handler cannot be compared statically".to_owned(),
-        });
+        diagnostics.push(unsupported_handler_diagnostic(context, call));
         return None;
     };
     let bound_arguments = bind_arguments(handler, source);
     let resolved_handler = resolve_handler(handler, source, context.handler_bindings);
     if resolved_handler.is_none() && handler.kind() == "call_expression" {
-        diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(context.file, handler, source),
-            message: "dynamic or unsupported step handler cannot be compared statically".to_owned(),
-        });
+        diagnostics.push(unsupported_handler_diagnostic(context, handler));
     }
     let comparable = resolved_handler.is_some();
     let handler = resolved_handler.unwrap_or(handler);
@@ -686,19 +680,11 @@ fn extract_decorator<'tree>(
     let (matcher, matcher_kind, matcher_flags) =
         extract_matcher(matcher_node, context, diagnostics)?;
     let Some(method) = decorated_method(call) else {
-        diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(context.file, call, source),
-            message: "dynamic or unsupported step handler cannot be compared statically".to_owned(),
-        });
+        diagnostics.push(unsupported_handler_diagnostic(context, call));
         return None;
     };
     let Some(handler) = fingerprint_method_handler(method, source, context.assertions) else {
-        diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(context.file, method, source),
-            message: "dynamic or unsupported step handler cannot be compared statically".to_owned(),
-        });
+        diagnostics.push(unsupported_handler_diagnostic(context, method));
         return None;
     };
     Some(step_definition(
@@ -778,7 +764,8 @@ fn warn_unsupported_matcher(
     context: &AdapterContext<'_, '_>,
     diagnostics: &mut Vec<ExtractionDiagnostic>,
 ) {
-    diagnostics.push(ExtractionDiagnostic::new(
+    diagnostics.push(ExtractionDiagnostic::with_kind(
+        ExtractionDiagnosticKind::Incomplete,
         ExtractionDiagnosticLevel::Warning,
         node_location(context.file, node, context.source),
         UNSUPPORTED_MATCHER_DIAGNOSTIC,
@@ -795,6 +782,7 @@ fn extract_matcher(
         Some(value) => value,
         None if matcher_node.kind() == "string" => {
             diagnostics.push(ExtractionDiagnostic {
+                kind: ExtractionDiagnosticKind::Incomplete,
                 level: ExtractionDiagnosticLevel::Error,
                 location: node_location(context.file, matcher_node, source),
                 message: INVALID_MATCHER_DIAGNOSTIC.to_owned(),
@@ -809,6 +797,7 @@ fn extract_matcher(
     if matcher_kind == MatcherKind::RegularExpression {
         match rust_regex_support(&matcher, &matcher_flags) {
             RegexSupport::Unsupported => diagnostics.push(ExtractionDiagnostic {
+                kind: ExtractionDiagnosticKind::Other,
                 level: ExtractionDiagnosticLevel::Warning,
                 location: node_location(context.file, matcher_node, source),
                 message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
@@ -818,6 +807,18 @@ fn extract_matcher(
         }
     }
     Some((matcher, matcher_kind, matcher_flags))
+}
+
+fn unsupported_handler_diagnostic(
+    context: &AdapterContext<'_, '_>,
+    node: Node<'_>,
+) -> ExtractionDiagnostic {
+    ExtractionDiagnostic::with_kind(
+        ExtractionDiagnosticKind::Other,
+        ExtractionDiagnosticLevel::Warning,
+        node_location(context.file, node, context.source),
+        "dynamic or unsupported step handler cannot be compared statically",
+    )
 }
 
 fn node_location(file: &SourceFile, node: Node<'_>, source: &[u8]) -> SourceLocation {

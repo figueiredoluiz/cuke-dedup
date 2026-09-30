@@ -1,0 +1,307 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "provider-context-lifecycle-direct": {
+      "definitions": 4,
+      "featureSteps": 4,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 17,
+          "relatedLocations": [
+            "providers/steps.rb:18"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 17,
+          "relatedLocations": [
+            "providers/steps.rb:18"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "shipment is rejected",
+            "shipment is now rejected"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "path": "provider-context/lifecycle-direct",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-callback-nested-registration": {
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "providers/steps.rb:6"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 5,
+          "relatedLocations": [
+            "providers/steps.rb:6"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "a step registered during a callback",
+            "shipment is ready"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/steps.feature",
+          "primaryLine": 3
+        }
+      ],
+      "path": "provider-context/callback-nested-registration",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-unrelated-module-alias": {
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "path": "provider-context/unrelated-module-alias",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-uninstalled-module-given": {
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "path": "provider-context/uninstalled-module-given",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-world-module-given": {
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "path": "provider-context/world-module-given",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-object-kernel-mixins": {
+      "definitions": 0,
+      "featureSteps": 2,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "path": "provider-context/object-kernel-mixins",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-local-method-added": {
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "path": "provider-context/local-method-added",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-receiver-local-send": {
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "primaryPath": "providers/steps.rb",
+          "primaryLine": 1,
+          "relatedLocations": [
+            "providers/steps.rb:2"
+          ],
+          "matchers": [
+            "shipment is ready",
+            "shipment is now ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [],
+      "path": "provider-context/receiver-local-send",
+      "definitionsPattern": "entry.rb"
+    },
+    "provider-context-global-method-added": {
+      "definitions": 0,
+      "featureSteps": 2,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ],
+      "path": "provider-context/global-method-added",
+      "definitionsPattern": "entry.rb"
+    }
+  },
+  "mappings": []
+}

@@ -224,6 +224,7 @@ dependencies = [
  "tempfile",
  "tree-sitter",
  "tree-sitter-javascript",
+ "tree-sitter-ruby",
  "tree-sitter-typescript",
  "unicode-normalization",
  "yaml_serde",
@@ -768,6 +769,16 @@ name = "tree-sitter-language"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
+
+[[package]]
+name = "tree-sitter-ruby"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be0484ea4ef6bb9c575b4fdabde7e31340a8d2dbc7d52b321ac83da703249f95"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "tree-sitter-typescript"

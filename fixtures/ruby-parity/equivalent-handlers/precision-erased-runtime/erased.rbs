@@ -1,0 +1,4 @@
+# Non-executing type metadata must never create a new runtime expect value.
+module SyntheticAssertions
+  def self.custom: (untyped value) -> untyped
+end

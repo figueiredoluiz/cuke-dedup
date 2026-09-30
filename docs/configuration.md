@@ -239,3 +239,13 @@ running discovery.
 
 See [Discovery and frameworks](discovery-and-frameworks.md) for framework-derived defaults and
 incomplete-corpus behavior, and [Rules](rules.md) for severity configuration.
+
+## Ruby dependency sources
+
+`rubyLoadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
+
+```json
+{ "rubyLoadPaths": ["lib", "vendor/aruba/lib"] }
+```
+
+Resolved files can contribute definitions outside the entrypoint globs, but cannot escape the project or explicitly declared load-path roots. An unresolved dependency must not be interpreted as a clean complete corpus.

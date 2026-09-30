@@ -56,6 +56,8 @@ impl FromStr for ReporterKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawConfig {
     #[serde(default)]
+    ruby_load_paths: Option<Vec<PathBuf>>,
+    #[serde(default)]
     definitions: Option<Vec<String>>,
     #[serde(default)]
     features: Option<Vec<String>>,
@@ -166,6 +168,8 @@ pub(crate) struct CliConfigOverrides {
 #[serde(rename_all = "camelCase")]
 /// Fully resolved and validated analyzer configuration.
 pub struct Config {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ruby_load_paths: Vec<PathBuf>,
     /// Canonical repository root being analyzed.
     pub root: PathBuf,
     /// Globs selecting definition sources, or an empty list for automatic discovery.
@@ -225,6 +229,11 @@ pub struct Config {
 }
 
 impl Config {
+    /// Ordered, explicitly configured Ruby dependency source roots.
+    pub fn ruby_load_paths(&self) -> &[PathBuf] {
+        &self.ruby_load_paths
+    }
+
     /// Loads framework, package, and standalone configuration beneath `root`, then applies
     /// `overrides` in precedence order.
     pub fn load(root: &Path, overrides: ConfigOverrides) -> Result<Self> {
@@ -377,6 +386,7 @@ impl Config {
         .into_iter()
         .collect();
         Self {
+            ruby_load_paths: Vec::new(),
             root,
             definitions: Vec::new(),
             features: vec!["**/*.{feature,feature.md}".to_owned()],
@@ -408,6 +418,9 @@ impl Config {
     }
 
     fn apply_raw(&mut self, raw: RawConfig) -> Result<()> {
+        if let Some(paths) = raw.ruby_load_paths {
+            self.ruby_load_paths = paths;
+        }
         if let Some(value) = raw.definitions {
             self.definitions = value;
         }
