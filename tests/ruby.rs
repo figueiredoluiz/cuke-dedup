@@ -2594,3 +2594,120 @@ fn ruby_non_registration_constant_calls_scale_with_loaded_sources() {
     assert_discovery(&rows, 2, false, "non-call scaling");
     assert_handler_finding(&Value::Array(rows), true, "non-call scaling");
 }
+
+/// Unicode decoding affects matcher identity, while uncertain literals never gain findings.
+#[test]
+fn ruby_unicode_escape_matcher_outcomes() {
+    for (raw, literal, rule) in [
+        (r#""the \uff21 panel""#, "the A panel", "normalized-matcher"),
+        (
+            r#""the \u{ff21} panel""#,
+            "the A panel",
+            "normalized-matcher",
+        ),
+        (
+            r#""the \u{1f600 41} panel""#,
+            "the 😀A panel",
+            "duplicate-matcher",
+        ),
+        (r#""the \u0041 panel""#, "the A panel", "duplicate-matcher"),
+        (r#"'the \u0041 panel'"#, "the A panel", "none"),
+        (r#""the \\u0041 panel""#, "the A panel", "none"),
+    ] {
+        let source = format!("Given({raw}) {{ first() }}; Then('{literal}') {{ second() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), 2, false, &source);
+        for candidate in ["normalized-matcher", "duplicate-matcher"] {
+            assert_eq!(
+                rows.as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["rule"] == candidate),
+                rule == candidate,
+                "{source}"
+            );
+        }
+    }
+    for raw in [
+        r#""\uD800""#,
+        r#""\u{110000}""#,
+        r#""\u123""#,
+        r#""\u{41""#,
+        r#""\u{zz}""#,
+        r#""\u0041#{value}""#,
+    ] {
+        let (_, rows, _) = analyze(
+            &format!("Given({raw}) {{ first() }}; Then('A') {{ second() }}"),
+            &[],
+        );
+        assert_eq!(
+            rows.as_array().unwrap().last().unwrap()["corpus"]["incomplete"],
+            true
+        );
+        assert!(!rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["rule"] == "normalized-matcher" || r["rule"] == "duplicate-matcher"));
+    }
+}
+
+/// Case folding must change usage without erasing the matcher flag boundary.
+#[test]
+fn ruby_ignorecase_literal_usage_and_uncertainty() {
+    for (pattern, flags, step, complete, unused) in [
+        ("a panel", "i", "A PANEL", true, 1),
+        ("a panel", "i", "a panel", true, 0),
+        ("a panel", "i", "unrelated", true, 2),
+        ("^a panel$", "im", "A PANEL", true, 1),
+        ("k", "i", "K", true, 1),
+        ("s", "i", "ſ", true, 1),
+        ("ss", "i", "ß", false, 1),
+        ("fi", "i", "ﬁ", false, 1),
+        ("FF", "i", "ﬀ", false, 1),
+        ("fl", "i", "ﬂ", false, 1),
+        ("st", "i", "ﬅ", false, 1),
+        ("[s]s", "i", "ß", false, 1),
+        ("s{2}", "i", "ß", false, 1),
+        ("é", "i", "É", false, 1),
+    ] {
+        for literal in [
+            format!("/{pattern}/{flags}"),
+            format!("%r{{{pattern}}}{flags}"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(
+                dir.path().join("steps.rb"),
+                format!("Given({literal}) {{ first() }}\nThen(/{pattern}/) {{ second() }}"),
+            )
+            .unwrap();
+            fs::write(
+                dir.path().join("test.feature"),
+                format!("Feature: Case\n Scenario: Usage\n  Given {step}\n"),
+            )
+            .unwrap();
+            let rows =
+                records(run_project(dir.path(), "*.rb", &["--features", "*.feature"]).stdout);
+            assert_discovery(&rows, 2, !complete, &literal);
+            assert_eq!(
+                rows.iter()
+                    .any(|r| r["rule"] == "unused-definition" && r["primary"]["line"] == 1),
+                complete && unused == 2,
+                "{literal}"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["rule"] == "unused-definition")
+                    .count(),
+                unused,
+                "{literal}"
+            );
+            assert!(
+                !rows
+                    .iter()
+                    .any(|r| r["rule"] == "normalized-matcher" || r["rule"] == "duplicate-matcher"),
+                "{literal}"
+            );
+        }
+    }
+}
