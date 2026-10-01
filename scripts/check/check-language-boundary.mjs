@@ -4,7 +4,6 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const modules = ["analysis", "cli", "discovery", "config", "source_filter", "model"];
 const exclusions = {
   "src/lib.rs": "composition root", "src/main.rs": "composition root",
   "src/source_adapter.rs": "adapter routing/session composition",
@@ -179,27 +178,21 @@ export function compareInventory(actual, baseline) {
 
 async function scopedSources(root) {
   const sources = {};
-  async function visit(path, optional = false) {
-    let entries;
-    try {
-      if ((await lstat(path)).isSymbolicLink()) throw Error(`unsupported symbolic link in boundary scope: ${path}`);
-      entries = await readdir(path, { withFileTypes: true });
-    }
-    catch (error) { if (optional && error.code === "ENOENT") return; throw error; }
+  async function visit(path) {
+    if ((await lstat(path)).isSymbolicLink()) throw Error(`unsupported symbolic link in boundary scope: ${path}`);
+    const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (entry.name === "tests" || entry.name === "tests.rs") continue;
       const child = join(path, entry.name);
+      const name = relative(root, child).replaceAll("\\", "/");
+      if (Object.keys(exclusions).some((excluded) => excluded.endsWith("/")
+        ? `${name}/`.startsWith(excluded) : name === excluded)) continue;
       if (entry.isSymbolicLink()) throw Error(`unsupported symbolic link in boundary scope: ${child}`);
       if (entry.isDirectory()) await visit(child);
       else if (entry.isFile() && entry.name.endsWith(".rs")) sources[relative(root, child).replaceAll("\\", "/")] = await readFile(child, "utf8");
     }
   }
-  for (const module of modules) {
-    const path = `src/${module}.rs`;
-    if ((await lstat(join(root, path))).isSymbolicLink()) throw Error(`unsupported symbolic link in boundary scope: ${path}`);
-    sources[path] = await readFile(join(root, path), "utf8");
-    await visit(join(root, "src", module), true);
-  }
+  await visit(join(root, "src"));
   return sources;
 }
 function validateManifest(manifest) {

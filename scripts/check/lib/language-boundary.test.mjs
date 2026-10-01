@@ -190,6 +190,22 @@ test("CLI uses the selected root from another cwd and fails on missing inputs", 
     assert.equal(passing.status, 0, passing.stderr);
     assert.match(passing.stdout, /6 files match the reviewed inventory/);
 
+    for (const name of ["gherkin.rs", "modes.rs", "matcher.rs", "reporters.rs", "resource_limits.rs", "future/helpers.rs", "ruby_helpers.rs", "contests.rs"]) {
+      const file = join(root, "src", name);
+      await mkdir(join(file, ".."), { recursive: true });
+      await writeFile(file, "use crate::ruby;");
+      const omitted = run();
+      assert.equal(omitted.status, 1, `${name}: ${omitted.stdout}`);
+      assert.match(omitted.stderr, /new scoped file/);
+      await unlink(file);
+    }
+    for (const name of Object.keys(exclusions).filter((name) => name.endsWith(".rs"))) {
+      await writeFile(join(root, name), "use crate::ruby;");
+    }
+    await mkdir(join(root, "src/ruby"), { recursive: true });
+    await writeFile(join(root, "src/ruby/implementation.rs"), "use crate::ruby;");
+    assert.equal(run().status, 0, "documented adapter/composition paths remain excluded");
+
     const nested = join(root, "src/analysis/new.rs");
     await mkdir(join(root, "src/analysis"), { recursive: true });
     await writeFile(nested, "crate::ruby::extract();");
