@@ -34,6 +34,17 @@ test("raw identifiers in tracked path segments and aliases retain canonical edge
   }
 });
 
+test("raw keyword import components remain identifiers", () => {
+  for (const [source, expected] of [
+    ["use crate::r#as::extract;", {}],
+    ["use crate::ruby::r#as; r#as();", { "crate::ruby": 2 }],
+    ["use crate::ruby::r#as as r#type; r#type();", { "crate::ruby": 2 }],
+    ["use crate::ruby::{r#as as renamed, r#use}; renamed(); r#use();", { "crate::ruby": 4 }],
+    ["use crate::ruby::{self as r#as}; r#as::extract();", { "crate::ruby": 2 }],
+    ["use crate::ruby as r#as; r#as::extract();", { "crate::ruby": 2 }],
+  ]) assert.deepEqual(inventory("src/analysis.rs", source), expected, source);
+});
+
 test("relative paths cannot hide adapter or framework dependencies", () => {
   const cases = [
     ["super::ruby::extract();", { "crate::ruby": 1 }],

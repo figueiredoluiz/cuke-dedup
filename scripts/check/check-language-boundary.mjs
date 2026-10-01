@@ -62,7 +62,8 @@ function edge(path) {
   if (path[1] === "model" && path[2] === "Framework") return path.slice(0, 4).join("::");
   return null;
 }
-function imports(input) {
+function imports(input, rawIdentifiers, offset) {
+  const keyword = (index, word) => input[index] === word && !rawIdentifiers.has(offset + index);
   let position = 0;
   const leaves = [];
   function branch(prefix) {
@@ -70,8 +71,8 @@ function imports(input) {
     if (input[position] === "::") position++;
     while (identifier.test(input[position] ?? "") || input[position] === "*") {
       const part = input[position++];
-      if (part === "as") throw Error("invalid import alias");
-      if (part !== "self" || !path.length) path.push(part);
+      if (keyword(position - 1, "as")) throw Error("invalid import alias");
+      if (!keyword(position - 1, "self") || !path.length) path.push(part);
       if (input[position] !== "::") break;
       position++;
     }
@@ -86,7 +87,7 @@ function imports(input) {
       position++; return;
     }
     let alias = path.at(-1);
-    if (input[position] === "as") {
+    if (keyword(position, "as")) {
       position++; alias = input[position++];
       if (!identifier.test(alias ?? "")) throw Error("unsupported import alias");
     }
@@ -123,7 +124,7 @@ export function inventorySources(sources) {
         const end = input.indexOf(";", i);
         if (end < 0) throw Error("unterminated use declaration");
         // All import syntax is parsed: forward aliases must not hide unsupported targeted forms.
-        const parsed = imports(input.slice(i + 1, end));
+        const parsed = imports(input.slice(i + 1, end), input.rawIdentifiers, i + 1);
         for (const leaf of parsed) {
           leaves.push(leaf);
           const origins = aliases.get(leaf.alias) ?? [];
