@@ -4736,3 +4736,223 @@ fn registration_loader_import_forms_preserve_conflicting_assertions() {
         }
     }
 }
+
+/// Losing a matcher must affect strictness and reports without discarding independent findings.
+#[test]
+fn unsupported_matchers_mark_partial_extraction_incomplete() {
+    let uncertain_wrappers = [
+        "function step(p, h) { given(p, h); } given = other; step('other', () => work());",
+        "function step(p, h) { given(p, h); } step = other; step('other', () => work());",
+        "function step(p, h) { given(p, h); } function outer(p,h) { step(p,h); } given = other; outer('other', () => work());",
+        "function step(p, h) { given(p, h); } given ||= other; step('other', () => work());",
+        "function step(p, h) { given(p, h); } given++; step('other', () => work());",
+        "function step(p, h) { given(p, h); } ({given} = other); step('other', () => work());",
+        "function step(p, h) { given(p, h); } function change() { given = other; } step('other', () => work());",
+        "function step(given, h) { given(given, h); } step('other', () => work());",
+        "function step(p, h) { given(p, h); } for (given of others) {} step('other', () => work());",
+        "const alias = given; function step(p,h) { alias(p,h); } given = other; step('other', () => work());",
+        "function step(p,h) { given(p,h); } ({key: given = other} = source); step('other', () => work());",
+        "function step(p,h) { given(p,h); } [given] = source; step('other', () => work());",
+    ].map(|call| ("import { Given } from '@cucumber/cucumber'; let given = Given;", call, false, false));
+    for (prefix, call, complete, severity_error) in [
+        (
+            "import { Given } from '@cucumber/cucumber';",
+            "Given(pattern, () => work());",
+            false,
+            false,
+        ),
+        (
+            "import { Given as step } from '@cucumber/cucumber';",
+            "step(buildPattern(), function() { work(); });",
+            false,
+            false,
+        ),
+        (
+            "import * as bdd from '@cucumber/cucumber';",
+            "bdd.Given(`value ${runtime}`, function*() { yield work(); });",
+            false,
+            false,
+        ),
+        (
+            "import { Given as given } from '@cucumber/cucumber';",
+            "function step(p, h) { given(p, h); } step(pattern, () => work());",
+            false,
+            false,
+        ),
+        (
+            "const { Given: given } = require('@cucumber/cucumber');",
+            "function step(p, h) { given(p, h); } step('static', () => work());",
+            true,
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber'; let given = Given;",
+            "function step(p, h) { given(p, h); } function local(given) { given = other; } for (let given of others) {} given.metadata = other; step('static', () => work());",
+            true,
+            false,
+        ),
+        (
+            "const { Given: step } = require('@cucumber/cucumber');",
+            "step(42, () => work());",
+            false,
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';",
+            "Given();",
+            false,
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';",
+            r"Given('\u{110000}', () => work());",
+            false,
+            true,
+        ),
+        (
+            "import { Given as Step } from 'playwright-bdd/decorators';",
+            "class Steps { @Step(pattern) run() {} }",
+            false,
+            false,
+        ),
+        (
+            "import { Given as Step } from 'playwright-bdd/decorators';",
+            "class Steps { @Step() run() {} }",
+            false,
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';",
+            "Given('static', () => work());",
+            true,
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';",
+            "Given(/static/, () => work());",
+            true,
+            false,
+        ),
+        (
+            "import { Given } from '@cucumber/cucumber';",
+            "Given(`static`, () => work());",
+            true,
+            false,
+        ),
+        (
+            "",
+            "function Given() {}; Given(pattern, () => work());",
+            false,
+            false,
+        ),
+        ("", "unknown.Given(pattern, () => work());", false, false),
+        ("", "Given(pattern, () => work());", false, false),
+        ("", "helper(pattern, () => work());", true, false),
+    ].into_iter().chain(uncertain_wrappers) {
+        let directory = tempfile::tempdir().unwrap();
+        let source = format!("{prefix}\n{call}\nimport {{ When }} from '@cucumber/cucumber';\nWhen('known', () => open());\nWhen('known', () => close());\n");
+        write(directory.path(), "steps.ts", &source);
+        write(
+            directory.path(),
+            "suite.feature",
+            "Feature: Usage\n Scenario: Known\n  When known\n",
+        );
+        let read_report = |filename: &str| -> Value {
+            serde_json::from_reader(fs::File::open(directory.path().join("reports").join(filename)).unwrap()).unwrap()
+        };
+        for strict in [false, true] {
+            let mut cmd = Command::cargo_bin("cuke-dedup").unwrap();
+            cmd.current_dir(directory.path()).args([
+                ".",
+                "--definitions",
+                "*.ts",
+                "--features",
+                "*.feature",
+                "--reporters",
+                "json,sarif",
+                "--output",
+                "reports",
+                "--no-metrics",
+                "--fail-on-unparseable",
+            ]);
+            if strict {
+                cmd.arg("--fail-on-incomplete");
+            }
+            cmd.assert()
+                .code(if severity_error || (strict && !complete) {
+                    2
+                } else {
+                    1
+                });
+            let report = read_report("cuke-dedup.json");
+            assert_eq!(report["corpus"]["incomplete"], !complete, "{source}");
+            assert_eq!(
+                report["summary"]["definitionsAnalyzed"],
+                if call.contains("static") { 3 } else { 2 },
+                "{source}"
+            );
+            assert!(
+                report["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["rule"] == "duplicate-matcher"),
+                "{source}"
+            );
+            let sarif = read_report("cuke-dedup.sarif");
+            assert_eq!(
+                sarif["runs"][0]["invocations"][0]["executionSuccessful"], complete,
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline() {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "steps.ts", "import { Given } from '@cucumber/cucumber'; Given('known', () => work()); Given(buildPattern(), () => work());");
+    write(
+        directory.path(),
+        "suite.feature",
+        "Feature: Usage\n Scenario: Known\n  Given known\n",
+    );
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.ts"],"features":["*.feature"],"reporters":["json"],"output":"reports","noMetrics":true}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(0);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--fail-on-incomplete"])
+        .assert()
+        .code(2);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--baseline", "baseline.json", "--update-baseline"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "was not updated because analysis is incomplete",
+        ));
+    assert!(!directory.path().join("baseline.json").exists());
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.ts"],"features":["*.feature"],"reporters":["json"],"failOnIncomplete":true}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(2);
+}
