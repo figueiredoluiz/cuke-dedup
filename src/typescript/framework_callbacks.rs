@@ -350,7 +350,7 @@ impl<'tree> Bindings<'tree, '_> {
                 result = Some(value);
             }
         }
-        result
+        result.and_then(unwrap_registration_callee)
     }
 
     fn inert_call(&self, function: Node<'tree>) -> bool {
@@ -750,10 +750,13 @@ pub(super) fn discover<'tree>(
                 super::push_value_positions(node, source, &mut values);
                 values
             }
-            "assignment_expression" => node.child_by_field_name("right").into_iter().collect(),
-            "return_statement" | "template_substitution" => {
-                node.named_children(&mut node.walk()).collect()
+            "assignment_expression" | "augmented_assignment_expression" => {
+                node.child_by_field_name("right").into_iter().collect()
             }
+            "return_statement"
+            | "yield_expression"
+            | "throw_statement"
+            | "template_substitution" => node.named_children(&mut node.walk()).collect(),
             "export_statement" if super::ast::export_has_runtime_bindings(node) => {
                 node.named_children(&mut node.walk()).collect()
             }
