@@ -4975,6 +4975,8 @@ fn inert_local_members_do_not_make_registration_discovery_incomplete() {
         ("const foreign = load(); foreign.Given();", true),
         ("import * as foreign from 'unknown-library'; foreign.Given();", true),
         ("const foreign = { Given() { register(); } }; foreign.Given();", true),
+        ("const foreign = { Given: 42 }; foreign.Given();", true),
+        ("const foreign = { Given() {} }; foreign.Given.Given();", true),
         ("const foreign = { Given(value = register()) {} }; foreign.Given();", true),
         ("const foreign = { Given({value}) {} }; foreign.Given();", true),
         ("const foreign = { Given() {}, [key]: other }; foreign.Given();", true),
