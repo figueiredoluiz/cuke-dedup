@@ -312,6 +312,22 @@ jobs:
       # the overlap finding `ambiguous-step` owns.
       - name: Validate corpus with cross-window matcher compilation
         run: CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+      - name: Guard Ruby corpus regressions
+        env:
+          CUKE_DEDUP_RUBY_PARITY_REPORT: ${{ runner.temp }}/ruby-parity.json
+        run: node scripts/check/check-ruby-parity.mjs --regression target/release/cuke-dedup
+      - name: Guard paired language regressions
+        if: ${{ !cancelled() }}
+        run: node scripts/check/check-language-parity.mjs --regression target/release/cuke-dedup "${{ runner.temp }}/language-parity.json"
+      - name: Upload parity observations
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: language-parity
+          path: |
+            ${{ runner.temp }}/ruby-parity.json
+            ${{ runner.temp }}/language-parity.json
+          if-no-files-found: warn
       - name: Guard matcher-analysis memory
         run: node scripts/check/check-memory.mjs target/release/cuke-dedup
       - name: Install pinned analysis tools

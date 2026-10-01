@@ -5,16 +5,19 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { classify, deficits, outcome, validateManifest } from "./lib/language-parity.mjs";
+import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
 const args = process.argv.slice(2);
-assert.equal(args.length, 3, "Usage: node scripts/check/check-language-parity.mjs CURRENT_BINARY V010_BINARY REPORT_JSON");
-const [current, baseline, destination] = args.map((arg) => resolve(arg));
+const regression = args[0] === "--regression";
+assert.equal(args.length, 3, "Usage: node scripts/check/check-language-parity.mjs CURRENT_BINARY V010_BINARY REPORT_JSON | --regression CURRENT_BINARY REPORT_JSON");
+const [current, baseline, destination] = (regression ? [args[1], null, args[2]] : args)
+  .map((arg) => arg === null ? null : resolve(arg));
 const manifestBytes = await readFile("fixtures/language-parity/manifest.json");
 const manifest = JSON.parse(manifestBytes);
 validateManifest(manifest);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const lanes = {
-  releasedTypescript: { binary: baseline, language: "typescript", extension: "ts" },
+  ...(regression ? {} : { releasedTypescript: { binary: baseline, language: "typescript", extension: "ts" } }),
   currentTypescript: { binary: current, language: "typescript", extension: "ts" },
   ruby: { binary: current, language: "ruby", extension: "rb" },
 };
@@ -41,7 +44,7 @@ try {
       }
     }
     observation.classification = classify(observation.currentTypescript, observation.ruby);
-    observation.typescriptDrift = observation.releasedTypescript.error || observation.currentTypescript.error
+    observation.typescriptDrift = regression || observation.releasedTypescript.error || observation.currentTypescript.error
       ? null : JSON.stringify(observation.releasedTypescript.outcome) !== JSON.stringify(observation.currentTypescript.outcome);
     observations.push(observation);
     console.log(`${observation.classification}: ${item.id}${observation.typescriptDrift ? " (TypeScript drift)" : ""}`);
@@ -51,13 +54,26 @@ try {
 }
 const summary = {};
 for (const item of observations) summary[item.classification] = (summary[item.classification] ?? 0) + 1;
+const regressionObservations = regression ? observations.map((item) => ({
+    id: item.id,
+    outcome: { typescript: item.currentTypescript.outcome, ruby: item.ruby.outcome },
+    deficits: [...(item.currentTypescript.deficits ?? []).map((gap) => `TypeScript: ${gap}`),
+      ...(item.ruby.deficits ?? []).map((gap) => `Ruby: ${gap}`)],
+    difference: item.classification === "outcome-difference",
+    ...(item.currentTypescript.error === undefined && item.ruby.error === undefined ? {}
+      : { error: item.currentTypescript.error ?? item.ruby.error }),
+  })) : [];
+for (const [index, item] of regressionObservations.entries()) {
+  if (!Object.hasOwn(item, "error")) observations[index].digest = snapshot({ outcome: item.outcome, deficits: item.deficits });
+}
 const report = {
-  baselineRef: manifest.baselineRef,
+  mode: regression ? "regression" : "historical",
+  baselineRef: regression ? null : manifest.baselineRef,
   // The caller supplies a binary built from this pinned commit; hashes identify the actual artifacts.
-  expectedBaselineCommit: manifest.baselineCommit,
+  expectedBaselineCommit: regression ? null : manifest.baselineCommit,
   manifestSha256: sha256(manifestBytes),
   binaries: { current: { path: current, sha256: sha256(await readFile(current)) },
-    baseline: { path: baseline, sha256: sha256(await readFile(baseline)) } },
+    baseline: regression ? null : { path: baseline, sha256: sha256(await readFile(baseline)) } },
   scope: manifest.scope,
   summary,
   typescriptDrift: observations.filter((item) => item.typescriptDrift).map((item) => item.id),
@@ -66,5 +82,10 @@ const report = {
 await writeFile(destination, `${JSON.stringify(report, null, 2)}\n`);
 console.log(JSON.stringify({ cases: observations.length, ...summary, typescriptDrift: report.typescriptDrift.length }));
 // Successful measurement is not successful parity. Missing baselines and shared failures also fail.
-if (observations.some((item) => item.classification !== "equivalent" || item.typescriptDrift !== false
+if (regression) {
+  const failures = regressionFailures(regressionObservations, JSON.parse(await readFile("fixtures/language-parity/regressions.json", "utf8")));
+  for (const failure of failures) console.error(failure);
+  console.log(`Paired regression gate: ${failures.length} failures.`);
+  if (failures.length) process.exitCode = 1;
+} else if (observations.some((item) => item.classification !== "equivalent" || item.typescriptDrift !== false
   || item.releasedTypescript.deficits?.length)) process.exitCode = 1;

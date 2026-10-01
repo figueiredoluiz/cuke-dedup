@@ -5,23 +5,22 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { completionPassed, corpusCoverageDeficits, parityDeficits, validateOracle } from "./lib/ruby-parity.mjs";
+import { outcome } from "./lib/language-parity.mjs";
+import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
 const args = process.argv.slice(2);
+const regression = args.includes("--regression");
+assert.ok(args.filter((arg) => !arg.startsWith("--")).length <= 1, "expected at most one binary");
+assert.ok(args.filter((arg) => arg.startsWith("--")).every((arg) =>
+  ["--regression", "--inventory-only", "--corpus-coverage-only"].includes(arg)), "unknown option");
 const coverageOnly = args.includes("--corpus-coverage-only");
 const inventoryOnly = args.includes("--inventory-only") || coverageOnly;
+assert.ok(!regression || !inventoryOnly, "regression requires execution");
 const binary = resolve(args.find((arg) => !arg.startsWith("--")) ?? "target/debug/cuke-dedup");
 const root = resolve("fixtures/ruby-parity");
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const manifest = await readJson(join(root, "manifest.json"));
 assert.equal(manifest.schemaVersion, 1);
-
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
-  }
-  return value;
-}
 
 function within(parent, child) {
   const path = resolve(parent, child);
@@ -54,7 +53,7 @@ for (const item of mappings) {
   assert.ok(sources.has(key), `unknown source case: ${key}`);
   assert.ok(!mapped.has(key), `duplicate mapping: ${key}`);
   mapped.add(key);
-  const digest = createHash("sha256").update(JSON.stringify(canonical(sources.get(key)))).digest("hex");
+  const digest = snapshot(sources.get(key));
   assert.equal(item.sourceCaseSha256, digest, `${key}: source oracle changed; reassess Ruby mapping`);
   assert.ok(["covered", "partial", "missing-fixture", "language-inapplicable", "framework-inapplicable"].includes(item.requiredStatus));
   if (["language-inapplicable", "framework-inapplicable"].includes(item.requiredStatus)) {
@@ -130,15 +129,20 @@ try {
         ...(oracle.arguments ?? ["--definitions", oracle.definitionsPattern ?? "*.rb"]),
         "--reporters", "json", "--output", output, "--no-metrics", "--fail-on-incomplete"],
       { cwd: project, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
-      let deficits;
+      let deficits, measured, digest, failure;
       try {
         if (run.error) throw run.error;
+        assert.ok([0, 1, 2].includes(run.status), `analyzer did not complete: ${run.signal ?? run.status}`);
         const report = await readJson(join(output, "cuke-dedup.json"));
+        measured = { ...outcome(report, run.status), duplication: report.summary.duplication,
+          candidateSources: report.analysis.candidateSources };
         deficits = parityDeficits(oracle, report, run.status);
+        digest = snapshot({ outcome: measured, deficits });
       } catch (error) {
-        deficits = [`analysis did not produce a usable report: ${error.message}`];
+        failure = error.message;
+        deficits = [`analysis did not produce a usable report: ${failure}`];
       }
-      observations.push({ group: name, deficits });
+      observations.push({ group: name, outcome: measured, deficits, digest, ...(failure === undefined ? {} : { error: failure }) });
       console.log(`${deficits.length ? "GAP" : "PASS"} ${name}${deficits.length ? `: ${deficits.join("; ")}` : ""}`);
     }
   }
@@ -157,7 +161,14 @@ if (process.env.CUKE_DEDUP_RUBY_PARITY_REPORT) {
 }
 // Inventory validation is useful during implementation; it is explicitly NOT release acceptance.
 // The normal command fails until all desired outcomes and all missing-case dispositions close.
-if (coverageOnly) {
+if (regression) {
+  const failures = [...corpusCoverageDeficits(mappings, groups),
+    ...regressionFailures(observations.map(({ group, ...item }) => ({ id: group, ...item })),
+      await readJson(join(root, "regressions.json")))];
+  for (const failure of failures) console.error(failure);
+  console.log(`Ruby regression gate: ${failures.length} failures; completion remains a separate gate.`);
+  if (failures.length) process.exitCode = 1;
+} else if (coverageOnly) {
   const missing = corpusCoverageDeficits(mappings, groups);
   console.log(`Source-corpus coverage: ${mappings.length} cases; ${missing.length} missing counterpart dispositions. Unit census and implementation outcomes are separate gates.`);
   if (missing.length) {
