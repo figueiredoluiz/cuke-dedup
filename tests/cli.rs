@@ -4956,3 +4956,154 @@ fn dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn inert_local_members_do_not_make_registration_discovery_incomplete() {
+    let cases = [
+        ("const foreign = { Given(...args) {} }; foreign.Given('foreign', () => {});", false),
+        ("const foreign = { Given: () => {} }; foreign['Given']('foreign', () => {});", false),
+        ("const foreign = { ['Given']: function() {} }; foreign.Given();", false),
+        ("const foreign = { *Given() {} }; foreign.Given();", false),
+        ("const foreign = { Given() {} }; const alias = foreign; alias.Given();", false),
+        ("const foreign = { Given() {} }; const { Given: step } = foreign; step();", false),
+        ("const foreign = { Given() {} }; const step = foreign.Given; step();", false),
+        ("const foreign = { Given() {} }; function unrelated(foreign) { foreign = other; } foreign.Given();", false),
+        ("const foreign = { Given() {} }; type foreign = unknown; foreign.Given();", false),
+        ("const foreign = { Given() {} }; export type { foreign }; foreign.Given();", false),
+        ("const foreign = { Given() {} }; function inner(foreign) { foreign.Given(); }", true),
+        ("unknown.Given();", true),
+        ("const foreign = load(); foreign.Given();", true),
+        ("import * as foreign from 'unknown-library'; foreign.Given();", true),
+        ("const foreign = { Given() { register(); } }; foreign.Given();", true),
+        ("const foreign = { Given: 42 }; foreign.Given();", true),
+        ("const foreign = { Given() {} }; foreign.Given.Given();", true),
+        ("const foreign = { Given(value = register()) {} }; foreign.Given();", true),
+        ("const foreign = { Given({value}) {} }; foreign.Given();", true),
+        ("const foreign = { Given() {}, [key]: other }; foreign.Given();", true),
+        ("const foreign = { Given() {}, ...other }; foreign.Given();", true),
+        ("const foreign = { get Given() { return other; } }; foreign.Given();", true),
+        ("const foreign = { __proto__: other, Given() {} }; foreign.Given();", true),
+        ("const foreign = { Given() {}, Given: other }; foreign.Given();", true),
+        ("let foreign = { Given() {} }; foreign = other; foreign.Given();", true),
+        ("const foreign = { Given() {} }; foreign.Given = other; foreign.Given();", true),
+        ("const foreign = { Given() {} }; delete foreign.Given; foreign.Given();", true),
+        ("const foreign = { Given() {} }; delete foreign[key]; foreign.Given();", true),
+        ("const foreign = { Given() {} }; const alias = foreign; alias[key] = other; foreign.Given();", true),
+        ("const foreign = { Given() {} }; mutate(foreign); foreign.Given();", true),
+        ("const foreign = { Given() {} }; new Mutator(foreign); foreign.Given();", true),
+        ("const foreign = { Given() {} }; tag`${foreign}`; foreign.Given();", true),
+        ("const foreign = { Given() {}, change() { this.Given = Given; } }; foreign.change(); foreign.Given();", true),
+        ("const foreign = { Given() {} }; foreign.configure(); foreign.Given();", true),
+        ("const foreign = { Given() {} }; mutate({foreign}); foreign.Given();", true),
+        ("const foreign = { Given() {} }; const container = [foreign]; mutate(container); foreign.Given();", true),
+        ("const foreign = { Given() {} }; const container = {foreign}; mutate(container); foreign.Given();", true),
+        ("const foreign = { Given() {}, valueOf() { this.Given = Given; } }; +foreign; foreign.Given();", true),
+        ("const foreign = { Given() {} }; external.saved = foreign; foreign.Given();", true),
+        ("const foreign = { Given() {} }; external.saved ||= foreign; foreign.Given();", true),
+        ("const foreign = { Given() {} }; external.saved &&= foreign; foreign.Given();", true),
+        ("const foreign = { Given() {} }; const alias = foreign; external.saved ??= alias; foreign.Given();", true),
+        ("const foreign = { Given() {} }; external.saved ||= other; function unrelated(foreign) { external.saved ??= foreign; } foreign.Given();", false),
+        ("const foreign = { Given: (() => {}) }; foreign.Given();", false),
+        ("const foreign = { Given: (() => {}) as Function }; foreign.Given();", false),
+        ("const foreign = { Given: (() => {}) satisfies Function }; foreign.Given();", false),
+        ("const foreign = { Given: (function() {})! }; foreign.Given();", false),
+        ("const foreign = { Given: <Function>(function*() {}) }; foreign.Given();", false),
+        ("const foreign = { Given: (() => {}) as Function }; const { Given: step } = foreign; step();", false),
+        ("const foreign = { Given: (() => register()) as Function }; foreign.Given();", true),
+        ("const foreign = { Given: ((value = register()) => {}) as Function }; foreign.Given();", true),
+        ("const foreign = { Given: (unknown as Function) }; foreign.Given();", true),
+        ("const foreign = { Given: (() => {}) as Function }; foreign.Given = other; foreign.Given();", true),
+        ("const foreign = { Given() {} }; function expose() { return foreign; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; function* expose() { yield foreign; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; const alias = foreign; function* expose() { yield (alias as object); } foreign.Given();", true),
+        ("const foreign = { Given() {} }; async function* expose() { yield foreign; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; function* expose() { yield* [foreign]; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; function expose() { throw foreign; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; const alias = foreign; async function expose() { throw alias; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; try { throw foreign; } catch (exposed) { exposed.Given = Given; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; function* unrelated() { yield void foreign; throw 42; } foreign.Given();", false),
+        ("const foreign = { Given() {} }; function* unrelated(foreign) { yield foreign; throw foreign; } foreign.Given();", false),
+        ("const foreign = { Given() {} }; const expose = () => foreign; foreign.Given();", true),
+        ("export const foreign = { Given() {} }; foreign.Given();", true),
+        ("const foreign = { Given() {} }; export { foreign }; foreign.Given();", true),
+        ("const foreign = { Given() {} }; function change() { foreign.Given = Given; } foreign.Given();", true),
+        ("const foreign = { Given() {} }; foreign.Given(Given);", true),
+        ("const foreign = { Given }; foreign.Given('foreign', () => {});", true),
+        ("const foreign = require('@cucumber/cucumber'); foreign.Given(pattern, () => {});", true),
+    ];
+    for (source, incomplete, import) in cases.into_iter().flat_map(|(source, incomplete)| {
+        [
+            "import { Given } from '@cucumber/cucumber';",
+            "const { Given } = require('@cucumber/cucumber');",
+        ]
+        .map(move |import| (source, incomplete, import))
+    }) {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps.ts",
+            &format!(
+                "{import}\nGiven('known', () => open()); Given('known', () => close());\n{source}"
+            ),
+        );
+        write(
+            directory.path(),
+            "suite.feature",
+            "Feature: Usage\n Scenario: Known\n  Given known\n",
+        );
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(directory.path())
+            .args([
+                ".",
+                "--definitions",
+                "*.ts",
+                "--features",
+                "*.feature",
+                "--reporters",
+                "json",
+                "--output",
+                "out",
+                "--no-metrics",
+                "--fail-on-incomplete",
+            ])
+            .assert()
+            .code(if incomplete { 2 } else { 1 });
+        let report: Value = serde_json::from_reader(
+            fs::File::open(directory.path().join("out/cuke-dedup.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report["corpus"]["incomplete"], incomplete, "{source}");
+        assert_eq!(report["summary"]["definitionsAnalyzed"], 2, "{source}");
+        assert!(
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["rule"] == "duplicate-matcher"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn inert_receiver_only_project_passes_strict_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "const foreign = { Given(...args) {} }; foreign.Given('not a registration', () => {});",
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([
+            ".",
+            "--definitions",
+            "*.ts",
+            "--fail-on-incomplete",
+            "--no-metrics",
+        ])
+        .assert()
+        .success();
+}

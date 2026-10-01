@@ -35,6 +35,7 @@ pub(super) struct FrameworkCalls {
     registrations: BTreeMap<usize, Registration>,
     pub(super) handled: BTreeSet<usize>,
     pub(super) incomplete: BTreeSet<usize>,
+    pub(super) inert: BTreeSet<usize>,
 }
 
 impl FrameworkCalls {
@@ -254,6 +255,141 @@ impl<'tree> Bindings<'tree, '_> {
         }
     }
 
+    // Local values supply exclusion evidence only; they never confer framework trust.
+    fn local_value(&self, node: Node<'tree>, depth: usize) -> Option<Node<'tree>> {
+        if depth > 32 {
+            return None;
+        }
+        let node = unwrap_registration_callee(node)?;
+        if node.kind() == "object" {
+            return Some(node);
+        }
+        let callee = if node.kind() == "shorthand_property_identifier" {
+            RegistrationCallee::Identifier(node_text(node, self.source))
+        } else {
+            registration_callee(node, self.source)?
+        };
+        match callee {
+            RegistrationCallee::Identifier(name) => {
+                let key = self.key(node, name);
+                if self.writes.contains(&key) {
+                    return None;
+                }
+                let binding = self.bindings.get(&key)?.as_ref()?;
+                let Origin::Initializer(initializer) = binding.origin else {
+                    return None;
+                };
+                if !binding.certain
+                    || initializer.end_byte() > node.start_byte()
+                    || initializer
+                        .parent()
+                        .and_then(|n| n.parent())
+                        .and_then(|n| n.parent())
+                        .is_some_and(|n| n.kind() == "export_statement")
+                {
+                    return None;
+                }
+                let mut value = self.local_value(initializer, depth + 1)?;
+                for property in &binding.properties {
+                    value = self.local_member(value, property)?;
+                }
+                Some(value)
+            }
+            RegistrationCallee::Property { object, name } => {
+                self.local_member(self.local_value(object, depth + 1)?, &name)
+            }
+        }
+    }
+
+    fn local_reference(&self, node: Node<'tree>) -> bool {
+        (node.kind() == "shorthand_property_identifier"
+            || registration_callee(node, self.source).is_some())
+            && self.local_value(node, 0).is_some()
+    }
+
+    fn local_member(&self, object: Node<'tree>, name: &str) -> Option<Node<'tree>> {
+        if object.kind() != "object" {
+            return None;
+        }
+        let mut result = None;
+        let mut keys = BTreeSet::new();
+        for member in object
+            .named_children(&mut object.walk())
+            .filter(|n| n.kind() != "comment")
+        {
+            let (key, value) = match member.kind() {
+                "method_definition"
+                    if !member
+                        .children(&mut member.walk())
+                        .any(|n| matches!(n.kind(), "get" | "set")) =>
+                {
+                    (member.child_by_field_name("name")?, member)
+                }
+                "pair" => (
+                    member.child_by_field_name("key")?,
+                    member.child_by_field_name("value")?,
+                ),
+                _ => return None,
+            };
+            let key = if key.kind() == "computed_property_name" {
+                key.named_child(0)?
+            } else {
+                key
+            };
+            let key = if key.kind() == "property_identifier" {
+                node_text(key, self.source).to_owned()
+            } else {
+                super::matcher::static_string_key(key, self.source)?
+            };
+            if matches!(key.as_str(), "__proto__" | "toString" | "valueOf")
+                || !keys.insert(key.clone())
+            {
+                return None;
+            }
+            if key == name {
+                result = Some(value);
+            }
+        }
+        result.and_then(unwrap_registration_callee)
+    }
+
+    fn inert_call(&self, function: Node<'tree>) -> bool {
+        let Some(value) = self.local_value(function, 0) else {
+            return false;
+        };
+        if !matches!(
+            value.kind(),
+            "method_definition" | "arrow_function" | "function_expression" | "generator_function"
+        ) {
+            return false;
+        }
+        let Some(body) = value.child_by_field_name("body") else {
+            return false;
+        };
+        if body.kind() != "statement_block"
+            || body
+                .named_children(&mut body.walk())
+                .any(|n| n.kind() != "comment")
+        {
+            return false;
+        }
+        let mut parameters: Vec<_> = value
+            .child_by_field_name("parameters")
+            .into_iter()
+            .collect();
+        while let Some(parameter) = parameters.pop() {
+            if matches!(
+                parameter.kind(),
+                "assignment_pattern" | "object_pattern" | "array_pattern"
+            ) || parameter.child_by_field_name("value").is_some()
+            {
+                return false;
+            }
+            push_named_children_reverse(parameter, &mut parameters);
+        }
+        true
+    }
+
     fn value(&self, node: Node<'tree>, depth: usize, ignore_writes: bool) -> Option<Value> {
         if depth > 32 {
             return Some(Value::Unknown);
@@ -399,6 +535,21 @@ pub(super) fn discover<'tree>(
     resolver: &mut RegistrationResolver,
     registrations: &super::registrations::RegistrationNames,
 ) -> Result<FrameworkCalls> {
+    let callback_framework = registrations.has_callback_framework();
+    if !callback_framework {
+        let mut pending = vec![root];
+        let mut has_object = false;
+        while let Some(node) = pending.pop() {
+            if node.kind() == "object" {
+                has_object = true;
+                break;
+            }
+            push_named_children_reverse(node, &mut pending);
+        }
+        if !has_object {
+            return Ok(FrameworkCalls::default());
+        }
+    }
     let (scopes, _, parents) = collect_binding_scopes(root, source);
     let mut bindings = Bindings {
         root: root.id(),
@@ -567,6 +718,13 @@ pub(super) fn discover<'tree>(
                 node.child_by_field_name("left")
             }
             "update_expression" => node.child_by_field_name("argument"),
+            "unary_expression"
+                if node
+                    .child_by_field_name("operator")
+                    .is_some_and(|operator| node_text(operator, source) == "delete") =>
+            {
+                node.child_by_field_name("argument")
+            }
             "for_in_statement"
                 if super::assertions::loop_binding_keyword(
                     node,
@@ -585,11 +743,52 @@ pub(super) fn discover<'tree>(
     // Unknown code can mutate a framework object handed to it, including through a container.
     // Collect before invalidating so traversal order cannot change which aliases lose trust.
     let mut escaped = Vec::new();
+    for node in nodes.iter().copied() {
+        let mut values: Vec<_> = match node.kind() {
+            "object" | "array" => {
+                let mut values = Vec::new();
+                super::push_value_positions(node, source, &mut values);
+                values
+            }
+            "assignment_expression" | "augmented_assignment_expression" => {
+                node.child_by_field_name("right").into_iter().collect()
+            }
+            "return_statement"
+            | "yield_expression"
+            | "throw_statement"
+            | "template_substitution" => node.named_children(&mut node.walk()).collect(),
+            "export_statement" if super::ast::export_has_runtime_bindings(node) => {
+                node.named_children(&mut node.walk()).collect()
+            }
+            "arrow_function" => node.child_by_field_name("body").into_iter().collect(),
+            _ => Vec::new(),
+        };
+        while let Some(value) = values.pop() {
+            if bindings.local_reference(value) {
+                escaped.push(value);
+            } else if matches!(value.kind(), "export_clause" | "export_specifier") {
+                push_named_children_reverse(value, &mut values);
+            } else {
+                super::push_value_positions(value, source, &mut values);
+            }
+        }
+    }
     for call in nodes
         .iter()
         .copied()
-        .filter(|node| node.kind() == "call_expression")
+        .filter(|node| matches!(node.kind(), "call_expression" | "new_expression"))
     {
+        if let Some(function) = call.child_by_field_name("function") {
+            if !bindings.inert_call(function) {
+                if let Some(RegistrationCallee::Property { object, .. }) =
+                    registration_callee(function, source)
+                {
+                    if bindings.local_reference(object) {
+                        escaped.push(object);
+                    }
+                }
+            }
+        }
         let known = call
             .child_by_field_name("function")
             .and_then(|function| bindings.value(function, 0, false))
@@ -606,6 +805,8 @@ pub(super) fn discover<'tree>(
                 if !value.is_non_registration() {
                     escaped.push(argument);
                 }
+            } else if bindings.local_reference(argument) {
+                escaped.push(argument);
             } else if argument.kind() != "call_expression" {
                 super::push_value_positions(argument, source, &mut arguments);
             }
@@ -622,6 +823,12 @@ pub(super) fn discover<'tree>(
         let Some(function) = call.child_by_field_name("function") else {
             continue;
         };
+        if bindings.inert_call(function) {
+            result.inert.insert(function.start_byte());
+        }
+        if !callback_framework {
+            continue;
+        }
         let value = bindings.value(function, 0, false);
         let non_registration = value.as_ref().is_some_and(Value::is_non_registration);
         let fallback = matches!(&value, Some(Value::Fallback(_)));
