@@ -187,6 +187,8 @@ jobs:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
       - run: npm test
+      - run: npm run check:test
+      - run: npm run check:boundaries
       - run: npm run check:versions
       - run: npm run skills:check
       - run: npm run pack:check

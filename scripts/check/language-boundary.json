@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    "src/analysis.rs": {"crate::model::Framework::CucumberRuby":2},
+    "src/analysis/evidence.rs": {"crate::typescript":1},
+    "src/analysis/pairs.rs": {"crate::model::Framework::CucumberRuby":2,"crate::model::Framework::JestCucumber":4,"crate::typescript":1},
+    "src/analysis/similarity.rs": {"crate::model::Framework":1,"crate::model::Framework::CucumberRuby":3,"crate::model::Framework::JestCucumber":3,"crate::model::Framework::Unknown":1,"crate::model::Framework::VitestCucumber":3},
+    "src/analysis/suppression.rs": {},
+    "src/analysis/usage.rs": {"crate::model::Framework::CucumberRuby":2,"crate::model::Framework::JestCucumber":2,"crate::ruby":1,"crate::typescript":1},
+    "src/cli.rs": {"crate::model::Framework::CucumberRuby":1,"crate::ruby":2},
+    "src/config.rs": {},
+    "src/discovery.rs": {"crate::ruby":1},
+    "src/framework_config.rs": {},
+    "src/gherkin.rs": {},
+    "src/gherkin/table_escapes.rs": {},
+    "src/matcher.rs": {},
+    "src/model.rs": {"crate::model::Framework":2},
+    "src/model/sha256.rs": {},
+    "src/modes.rs": {},
+    "src/reporters.rs": {},
+    "src/reporters/context.rs": {},
+    "src/reporters/html.rs": {},
+    "src/reporters/json.rs": {},
+    "src/reporters/jsonl.rs": {},
+    "src/reporters/sarif.rs": {},
+    "src/reporters/shared.rs": {},
+    "src/reporters/terminal.rs": {},
+    "src/resource_limits.rs": {},
+    "src/source_filter.rs": {"crate::typescript":2}
+  },
+  "exclusions": {
+    "src/lib.rs": "composition root",
+    "src/main.rs": "composition root",
+    "src/source_adapter.rs": "adapter routing/session composition",
+    "src/source_adapter/": "adapter routing tests/support",
+    "src/typescript.rs": "language frontend",
+    "src/typescript/": "language frontend",
+    "src/ruby.rs": "language frontend",
+    "src/ruby/": "language frontend"
+  }
+}
