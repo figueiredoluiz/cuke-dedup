@@ -3185,18 +3185,26 @@ fn duplicate_matcher_components_are_invariant_to_definition_input_order() {
 
 #[test]
 fn shared_context_does_not_override_parameterization_evidence() {
-    for (left, right) in [
+    for (left, right, expected) in [
         (
             "I click the save button on the checkout summary page",
             "I click the cancel button on the checkout summary page",
+            true,
         ),
         (
             "I select the first row of the table",
             "I select the last row of the table",
+            true,
         ),
         (
             "the advanced reporting feature is enabled for this account",
             "the advanced reporting feature is disabled for this account",
+            false,
+        ),
+        (
+            "the advanced reporting feature uses dark theme for this account",
+            "the advanced reporting feature uses light theme for this account",
+            true,
         ),
     ] {
         let definitions = definitions(&format!(
@@ -3204,10 +3212,14 @@ fn shared_context_does_not_override_parameterization_evidence() {
         ));
         let (_directory, config) = config();
         let result = analyze(definitions, Vec::new(), &config).unwrap();
-        assert!(result
-            .findings
-            .iter()
-            .any(|finding| finding.rule == Rule::ParameterizationCandidate));
+        assert_eq!(
+            result
+                .findings
+                .iter()
+                .any(|finding| finding.rule == Rule::ParameterizationCandidate),
+            expected,
+            "{left} / {right}"
+        );
         assert!(!result
             .findings
             .iter()

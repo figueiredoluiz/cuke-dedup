@@ -2711,3 +2711,184 @@ fn ruby_ignorecase_literal_usage_and_uncertainty() {
         }
     }
 }
+
+/// Structural evidence abstracts only immediate literal arguments, preserving every other effect.
+#[test]
+fn ruby_parameterization_final_outcome_matrix() {
+    for (left, right, expected) in [
+        ("page.theme('dark')", "page.theme('light')", true),
+        ("page.theme \"dark\"", "page.theme \"light\"", true),
+        ("page.theme(1)", "page.theme(2)", true),
+        ("page.theme(1.5)", "page.theme(2.5)", true),
+        (
+            "page.theme('dark'); page.log(1)",
+            "page.theme('light'); page.log(1)",
+            true,
+        ),
+        ("page.theme('dark')", "page.reset('light')", false),
+        ("page.theme('dark')", "other.theme('light')", false),
+        ("page.theme('dark')", "page&.theme('light')", false),
+        ("page.theme('dark')", "page.theme('light', 1)", false),
+        ("page.theme('dark')", "page.theme(2)", false),
+        ("page.theme(1)", "page.theme(2.0)", false),
+        (
+            "page.theme('dark'); page.log(1)",
+            "page.log(1); page.theme('light')",
+            false,
+        ),
+        ("page.theme(true)", "page.theme(false)", false),
+        (
+            "|page| page.theme('dark')",
+            "|page| page.theme('light')",
+            false,
+        ),
+        (
+            "page.theme('dark'); page.log",
+            "page.theme('light'); page.log",
+            true,
+        ),
+        (
+            "page.theme('dark'); page.log()",
+            "page.theme('light'); page.log()",
+            true,
+        ),
+        ("page.theme(:dark)", "page.theme(:light)", false),
+        (
+            "page.theme('dark') { assert_equal(1, value) }",
+            "page.theme('light') { assert_equal(2, value) }",
+            false,
+        ),
+        (
+            "page.theme('dark') rescue fallback",
+            "page.theme('light') rescue fallback",
+            false,
+        ),
+        ("page.theme(value)", "page.theme(other)", false),
+        (
+            "page.theme('dark' + value)",
+            "page.theme('light' + value)",
+            false,
+        ),
+        (
+            "page.theme(\"dark#{value}\")",
+            "page.theme(\"light#{value}\")",
+            false,
+        ),
+        (
+            "page.theme('dark') if ready",
+            "page.theme('light') if ready",
+            false,
+        ),
+        (
+            "value = 'dark'; page.theme(value)",
+            "value = 'light'; page.theme(value)",
+            false,
+        ),
+        ("page.theme { 'dark' }", "page.theme { 'light' }", false),
+        (
+            "page.theme(-> { 'dark' })",
+            "page.theme(-> { 'light' })",
+            false,
+        ),
+        (
+            "page.theme(compute('dark'))",
+            "page.theme(compute('light'))",
+            false,
+        ),
+        ("theme('dark')", "theme('light')", false),
+        (
+            "expect(page.theme).to eq('dark')",
+            "expect(page.theme).to eq('light')",
+            false,
+        ),
+        (
+            "page.theme('dark'); assert_equal(1, value)",
+            "page.theme('light'); assert_equal(2, value)",
+            false,
+        ),
+        (
+            "page.theme('dark'); binding",
+            "page.theme('light'); binding",
+            false,
+        ),
+    ] {
+        for (open, close) in [("{", "}"), ("do", "end")] {
+            let source = format!("Given('switches to dark theme') {open} {left}; {close}\nGiven('switches to light theme') {open} {right}; {close}");
+            let (_, rows, _) = analyze(&source, &[]);
+            let rows = rows.as_array().unwrap();
+            assert_eq!(
+                rows.last().unwrap()["summary"]["definitionsAnalyzed"],
+                2,
+                "{source}"
+            );
+            assert_parameterization_outcome(rows, expected, &source);
+        }
+    }
+}
+
+/// The same matcher contract applies to both adapters, including the previously missed opposite.
+#[test]
+fn parameterization_matcher_boundaries_are_shared() {
+    for (left, right, expected) in [
+        ("switches to dark theme", "switches to light theme", true),
+        ("the panel is enabled", "the panel is disabled", false),
+        ("enable the panel", "disable the panel", false),
+        ("enables the panel", "disables the panel", false),
+        ("enabling the panel", "disabling the panel", false),
+        ("the panel is shown", "the panel is not shown", false),
+        (
+            "the AI chatbot toggle button should be visible",
+            "the AI chatbot window should be open",
+            false,
+        ),
+        ("opens a door", "calculates an invoice", false),
+    ] {
+        for (extension, source) in [
+            ("rb", format!("Given('{left}') {{ page.theme('dark') }}\nGiven('{right}') {{ page.theme('light') }}")),
+            ("ts", format!("import {{ Given }} from '@cucumber/cucumber';\nGiven('{left}', () => {{ page.theme('dark'); }});\nGiven('{right}', () => {{ page.theme('light'); }});")),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join(format!("steps.{extension}")), &source).unwrap();
+            let rows = records(run_project(dir.path(), &format!("*.{extension}"), &[]).stdout);
+            assert_discovery(&rows, 2, false, &source);
+            assert_parameterization_outcome(&rows, expected, &source);
+        }
+    }
+}
+
+#[test]
+fn ruby_parameterization_respects_capture_context_and_suppression() {
+    for (capture, extra, expected) in [
+        ("", vec![], true),
+        ("page = :captured", vec![], false),
+        ("", vec!["--rule", "parameterization-candidate=off"], false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        for (file, value) in [("a.rb", "dark"), ("b.rb", "light")] {
+            fs::write(
+                dir.path().join(file),
+                format!(
+                    "{capture}\nGiven('switches to {value} theme') {{ page.theme('{value}') }}"
+                ),
+            )
+            .unwrap();
+        }
+        let rows = records(run_project(dir.path(), "*.rb", &extra).stdout);
+        assert_discovery(&rows, 2, false, capture);
+        assert_parameterization_outcome(&rows, expected, &format!("{capture}: {extra:?}"));
+    }
+}
+
+fn assert_parameterization_outcome(rows: &[Value], expected: bool, context: &str) {
+    for (rule, required) in [
+        ("parameterization-candidate", expected),
+        ("duplicate-handler", false),
+        ("near-duplicate-step", false),
+    ] {
+        assert_eq!(
+            rows.iter().any(|r| r["rule"] == rule),
+            required,
+            "{context}: {rule}"
+        );
+    }
+}
