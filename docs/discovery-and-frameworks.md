@@ -246,6 +246,8 @@ The corpus is marked incomplete when, for example:
 - A converted Gherkin Markdown file parses but yields no concrete steps.
 - Candidate analysis reaches a configured or hard work limit.
 
+Calls to proven empty local object methods are excluded from registration uncertainty, including immutable aliases. Unknown or effectful methods, mutations, escaped objects, dynamic properties and prototype/coercion hooks remain conservative; a matching method name alone never establishes Cucumber provenance.
+
 Machine reports expose `corpus.incomplete` and `analysis.truncated`; SARIF marks the invocation
 unsuccessful. Baseline updates are refused. By default, valid findings are retained and exit status
 still follows their severity. `failOnIncomplete: true` or `--fail-on-incomplete` changes an

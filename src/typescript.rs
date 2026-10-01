@@ -224,17 +224,13 @@ fn extract_detailed_impl(
         &session.configured_registrations,
     )?;
     let framework = registrations.framework;
-    let framework_calls = if registrations.has_callback_framework() {
-        framework_callbacks::discover(
-            root,
-            source_bytes,
-            &file.path,
-            &mut session.resolver,
-            &registrations,
-        )?
-    } else {
-        framework_callbacks::FrameworkCalls::default()
-    };
+    let framework_calls = framework_callbacks::discover(
+        root,
+        source_bytes,
+        &file.path,
+        &mut session.resolver,
+        &registrations,
+    )?;
     let assertions = AssertionBindings::discover(
         root,
         source_bytes,
@@ -556,6 +552,13 @@ fn unresolved_registration_call<'a>(
         unresolved_registration_module(function, context.source, context.registrations)
     {
         return Some(UnresolvedRegistration::Module(module));
+    }
+    if context
+        .framework_calls
+        .inert
+        .contains(&function.start_byte())
+    {
+        return None;
     }
     let looks_like_registration = match registration_callee(function, context.source) {
         Some(RegistrationCallee::Identifier(name)) => matches!(
