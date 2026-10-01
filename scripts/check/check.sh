@@ -69,6 +69,7 @@ fi
 
 npm test
 npm run check:test
+npm run check:boundaries
 npm run skills:check
 npm run check:versions
 npm run docs:check
