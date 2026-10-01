@@ -1,4 +1,4 @@
-use crate::model::StepDefinition;
+use crate::model::{BehaviorEventRef, StepDefinition};
 
 // Short labels need a slightly stricter composite gate because one changed token occupies a
 // larger fraction of the matcher. The reported score is the stronger of normalized edit
@@ -198,21 +198,17 @@ pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefi
 }
 
 fn method_semantics(definition: &StepDefinition) -> Option<&str> {
-    definition
-        .handler
-        .behavior_signature
-        .first()
-        .and_then(|event| event.strip_prefix("method:"))
+    BehaviorEventRef::from_legacy(definition.handler.behavior_signature.first()?).method_semantics()
 }
 
 #[cfg(test)]
-fn executable_behavior_events(definition: &StepDefinition) -> Vec<&str> {
+fn executable_behavior_events(definition: &StepDefinition) -> Vec<BehaviorEventRef<'_>> {
     definition
         .handler
         .behavior_signature
         .iter()
-        .filter(|event| !event.starts_with("method:"))
-        .map(String::as_str)
+        .map(|event| BehaviorEventRef::from_legacy(event))
+        .filter(|event| !event.is_method())
         .collect()
 }
 

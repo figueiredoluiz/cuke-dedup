@@ -1,6 +1,9 @@
 //! Shared intermediate representation and diagnostics.
 
+mod behavior;
 mod sha256;
+
+pub(crate) use behavior::{BehaviorEvent, BehaviorEventRef, ControlFlowOperation};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};

@@ -3,6 +3,35 @@ use crate::model::Rule;
 use std::fs;
 use std::path::PathBuf;
 
+#[test]
+fn control_flow_behavior_events_map_typescript_node_kinds_only() {
+    use crate::model::{BehaviorEvent, ControlFlowOperation};
+
+    let cases = [
+        ("if_statement", ControlFlowOperation::If),
+        ("switch_statement", ControlFlowOperation::Switch),
+        ("for_statement", ControlFlowOperation::For),
+        ("for_in_statement", ControlFlowOperation::ForIn),
+        ("while_statement", ControlFlowOperation::While),
+        ("do_statement", ControlFlowOperation::Do),
+        ("return_statement", ControlFlowOperation::Return),
+        ("throw_statement", ControlFlowOperation::Throw),
+    ];
+
+    for (node_kind, operation) in cases {
+        let event = super::handler::control_flow_behavior_event(node_kind);
+        assert_eq!(event, BehaviorEvent::ControlFlow(operation));
+        assert_eq!(event.into_legacy(), node_kind);
+    }
+
+    let unknown = super::handler::control_flow_behavior_event("custom_statement");
+    assert_eq!(
+        unknown,
+        BehaviorEvent::Legacy("custom_statement".to_owned())
+    );
+    assert_eq!(unknown.into_legacy(), "custom_statement");
+}
+
 fn extract_ts(source: &str) -> Vec<crate::model::StepDefinition> {
     extract(source, &file(SourceLanguage::TypeScript)).unwrap()
 }

@@ -7,8 +7,8 @@ use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
 use crate::model::{
-    DefinitionCluster, Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation,
-    StepDefinition, Suppression,
+    BehaviorEventRef, DefinitionCluster, Finding, FindingEvidence, MatcherKind, Rule, Severity,
+    SourceLocation, StepDefinition, Suppression,
 };
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -518,7 +518,9 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 .handler
                 .behavior_signature
                 .iter()
-                .filter(|event| event.starts_with("deferred-assert:"))
+                .filter(|event| {
+                    BehaviorEventRef::from_legacy(event.as_str()).is_deferred_assertion()
+                })
                 .collect::<Vec<_>>(),
         ));
         classes.exact_matcher.push(intern_class(
@@ -589,8 +591,10 @@ fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
                 .handler
                 .behavior_signature
                 .iter()
-                .filter(|event| !event.starts_with("method:"))
-                .map(|event| intern_class(&mut events, event.as_str()))
+                .filter_map(|event| {
+                    let event = BehaviorEventRef::from_legacy(event);
+                    (!event.is_method()).then(|| intern_class(&mut events, event))
+                })
                 .collect()
         })
         .collect()
@@ -605,11 +609,15 @@ fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> 
                 .handler
                 .behavior_signature
                 .iter()
-                .filter_map(|event| {
+                .filter_map(|event| match BehaviorEventRef::from_legacy(event) {
                     // Deferred anchors retain their full value and execution-context identity.
-                    if event.starts_with("call:") || event.starts_with("deferred-assert:") {
+                    BehaviorEventRef::Call(_)
+                    | BehaviorEventRef::Assertion { deferred: true, .. } => {
                         Some(Cow::Borrowed(event.as_str()))
-                    } else if event.starts_with("assert:") {
+                    }
+                    BehaviorEventRef::Assertion {
+                        deferred: false, ..
+                    } => {
                         // Assertion values are semantic during final similarity verification, but
                         // candidate blocking only needs the assertion shape. Removing the final
                         // expected-arguments fingerprint lets potentially related assertions reach
@@ -617,9 +625,8 @@ fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> 
                         event
                             .rsplit_once(':')
                             .map(|(shape, _)| Cow::Owned(shape.to_owned()))
-                    } else {
-                        None
                     }
+                    _ => None,
                 })
                 .map(|event| intern_class(&mut events, event))
                 .collect::<Vec<_>>();
