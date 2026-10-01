@@ -29,6 +29,8 @@ pub(super) struct UnresolvedModuleReason {
 }
 
 pub(super) struct RegistrationNames {
+    /// Inner calls of resolved transparent wrappers; their outer calls own the definitions.
+    pub(super) forwarded_callees: BTreeSet<usize>,
     pub(super) module_paths: BTreeMap<String, std::path::PathBuf>,
     aliases: RegistrationExports,
     fallback_aliases: BTreeSet<String>,
@@ -173,6 +175,7 @@ struct RegistrationDiscovery<'tree> {
     create_bdd_factories: BTreeSet<String>,
     /// Locally declared functions that may forward to a registration, resolved after imports.
     wrapper_candidates: Vec<WrapperCandidate>,
+    wrapper_writes: BTreeSet<BindingKey>,
     scoped: ScopedRegistrations,
 }
 
@@ -181,8 +184,9 @@ struct RegistrationDiscovery<'tree> {
 /// The forward is validated once, when the declaration is visited, so resolution afterwards is a
 /// pure name lookup rather than a repeated syntax-tree walk.
 struct WrapperCandidate {
+    callee_start: usize,
+    target: BindingKey,
     name: String,
-    forwards_to: String,
 }
 
 pub(super) fn registration_name(
@@ -470,7 +474,20 @@ pub(super) fn detect_registrations(
             | "enum_declaration" => {
                 shadow_named_declaration(node, source, &mut discovered.shadowed_defaults)
             }
-            "assignment_expression" => collect_assignment(node, source, &mut discovered),
+            "assignment_expression"
+            | "augmented_assignment_expression"
+            | "update_expression"
+            | "for_in_statement" => {
+                if let Some(left) = node
+                    .child_by_field_name("left")
+                    .or_else(|| node.child_by_field_name("argument"))
+                {
+                    collect_wrapper_writes(left, source, &mut discovered);
+                }
+                if node.kind() == "assignment_expression" {
+                    collect_assignment(node, source, &mut discovered);
+                }
+            }
             _ => {}
         }
         push_named_children_reverse(node, &mut stack);
@@ -568,9 +585,10 @@ pub(super) fn detect_registrations(
                 .or_insert_with(|| registration.clone());
         }
     }
-    resolve_wrapper_candidates(&mut discovered);
+    let forwarded_callees = resolve_wrapper_candidates(&mut discovered, source);
 
     Ok(RegistrationNames {
+        forwarded_callees,
         module_paths,
         aliases: discovered.aliases,
         fallback_aliases: discovered.fallback_aliases,
@@ -624,15 +642,20 @@ fn collect_wrapper_candidate<'tree>(
         return;
     }
     let name = node_text(name, source).to_owned();
-    let Some(forwards_to) =
-        forwarded_callee(body, &name, &parameters, source).and_then(unwrap_registration_callee)
-    else {
+    let Some(callee) = forwarded_callee(body, &name, &parameters, source) else {
         return;
     };
-    let forwards_to = node_text(forwards_to, source).to_owned();
-    discovered
-        .wrapper_candidates
-        .push(WrapperCandidate { name, forwards_to });
+    let Some(forwards_to) = unwrap_registration_callee(callee) else {
+        return;
+    };
+    let target = discovered
+        .scoped
+        .key(forwards_to, node_text(forwards_to, source));
+    discovered.wrapper_candidates.push(WrapperCandidate {
+        name,
+        callee_start: callee.start_byte(),
+        target,
+    });
 }
 
 /// Returns the parameter identifiers in order, or `None` if any parameter is not a plain binding.
@@ -662,17 +685,47 @@ pub(super) fn plain_parameter_names(parameters: Node<'_>, source: &[u8]) -> Opti
 /// Wrappers form a forward graph, so resolving one can unlock the wrappers that call it. Walking
 /// that graph from the already-known registrations visits each wrapper at most once, instead of
 /// re-scanning every candidate until a fixpoint settles.
-fn resolve_wrapper_candidates(discovered: &mut RegistrationDiscovery<'_>) {
+fn resolve_wrapper_candidates(
+    discovered: &mut RegistrationDiscovery<'_>,
+    source: &[u8],
+) -> BTreeSet<usize> {
+    // Writes invalidate proof across the file, including deferred writes and alias dependencies.
+    let mut dependents: BTreeMap<BindingKey, Vec<BindingKey>> = BTreeMap::new();
+    for (local, target) in &discovered.scoped_assignments {
+        dependents
+            .entry(discovered.scoped.key(*target, node_text(*target, source)))
+            .or_default()
+            .push(discovered.scoped.key(*local, node_text(*local, source)));
+    }
+    for candidate in &discovered.wrapper_candidates {
+        dependents
+            .entry(candidate.target.clone())
+            .or_default()
+            .push((discovered.scoped.root, candidate.name.clone()));
+    }
+    let mut uncertain = discovered.wrapper_writes.clone();
+    let mut writes: Vec<_> = uncertain.iter().cloned().collect();
+    while let Some(binding) = writes.pop() {
+        for dependent in dependents.get(&binding).into_iter().flatten() {
+            if uncertain.insert(dependent.clone()) {
+                writes.push(dependent.clone());
+            }
+        }
+    }
+    let mut forwarded = BTreeSet::new();
     let mut callers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (index, candidate) in discovered.wrapper_candidates.iter().enumerate() {
         callers
-            .entry(candidate.forwards_to.as_str())
+            .entry(candidate.target.1.as_str())
             .or_default()
             .push(index);
     }
     let mut pending: Vec<usize> = (0..discovered.wrapper_candidates.len()).collect();
     while let Some(index) = pending.pop() {
         let candidate = &discovered.wrapper_candidates[index];
+        if uncertain.contains(&(discovered.scoped.root, candidate.name.clone())) {
+            continue;
+        }
         if discovered
             .scoped
             .aliases
@@ -680,14 +733,10 @@ fn resolve_wrapper_candidates(discovered: &mut RegistrationDiscovery<'_>) {
         {
             continue;
         }
-        let Some(registration) = discovered
-            .scoped
-            .aliases
-            .get(&(discovered.scoped.root, candidate.forwards_to.clone()))
-            .cloned()
-        else {
+        let Some(registration) = discovered.scoped.aliases.get(&candidate.target).cloned() else {
             continue;
         };
+        forwarded.insert(candidate.callee_start);
         let name = candidate.name.clone();
         discovered
             .aliases
@@ -701,6 +750,7 @@ fn resolve_wrapper_candidates(discovered: &mut RegistrationDiscovery<'_>) {
             pending.extend(unlocked.iter().copied());
         }
     }
+    forwarded
 }
 
 /// Returns the registration a wrapper forwards to, when the forward is positional and exact.
@@ -1229,6 +1279,36 @@ fn collect_named_binding_aliases(
             }
         }
         push_named_children_reverse(node, &mut stack);
+    }
+}
+
+// Only binding writes affect callable identity; property writes do not replace the callable.
+fn collect_wrapper_writes(
+    node: Node<'_>,
+    source: &[u8],
+    discovered: &mut RegistrationDiscovery<'_>,
+) {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            discovered
+                .wrapper_writes
+                .insert(discovered.scoped.key(node, node_text(node, source)));
+        }
+        "pair_pattern" | "assignment_pattern" | "object_assignment_pattern" => {
+            if let Some(value) = node
+                .child_by_field_name("value")
+                .or_else(|| node.child_by_field_name("left"))
+            {
+                collect_wrapper_writes(value, source, discovered);
+            }
+        }
+        "object_pattern" | "array_pattern" | "rest_pattern" | "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_wrapper_writes(child, source, discovered);
+            }
+        }
+        _ => {}
     }
 }
 

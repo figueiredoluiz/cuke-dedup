@@ -17,6 +17,12 @@ pub(crate) const UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX: &str =
 pub(crate) const UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX: &str =
     "source contains JavaScript/TypeScript syntax errors";
 
+/// A recognized registration cannot contribute a statically known matcher.
+pub(crate) const UNSUPPORTED_MATCHER_DIAGNOSTIC: &str =
+    "dynamic or unsupported step matcher cannot be analyzed statically";
+pub(crate) const INVALID_MATCHER_DIAGNOSTIC: &str =
+    "invalid JavaScript escape sequence in step matcher";
+
 /// Parser language selected for a definition source.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +94,10 @@ pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> b
     diagnostic
         .message
         .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)
+        || matches!(
+            diagnostic.message.as_str(),
+            UNSUPPORTED_MATCHER_DIAGNOSTIC | INVALID_MATCHER_DIAGNOSTIC
+        )
         || is_unparseable_diagnostic(diagnostic)
 }
 

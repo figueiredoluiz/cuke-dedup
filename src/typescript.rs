@@ -34,8 +34,9 @@ use self::suppression::inline_suppressions;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
     adapter_for_language, grammar_for_language, AdapterSessionState, SourceAdapter,
-    SourceExtractionSession, StatefulSourceAdapter, UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX,
-    UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
+    SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
+    UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX, UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
+    UNSUPPORTED_MATCHER_DIAGNOSTIC,
 };
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
@@ -588,6 +589,13 @@ fn extract_call<'tree>(
 ) -> Option<StepDefinition> {
     let source = context.source;
     let function = call.child_by_field_name("function")?;
+    if context
+        .registrations
+        .forwarded_callees
+        .contains(&function.start_byte())
+    {
+        return None;
+    }
     let (callee, registration, registration_framework) =
         context.framework_calls.registration(function).or_else(|| {
             registration_name(function, source, context.registrations)
@@ -596,12 +604,15 @@ fn extract_call<'tree>(
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
     let arguments: Vec<_> = arguments.named_children(&mut cursor).collect();
+    let Some(&matcher_node) = arguments.first() else {
+        warn_unsupported_matcher(call, context, diagnostics);
+        return None;
+    };
+    let (matcher, mut matcher_kind, matcher_flags) =
+        extract_matcher(matcher_node, context, diagnostics)?;
     if arguments.len() < 2 {
         return None;
     }
-    let matcher_node = arguments[0];
-    let (matcher, mut matcher_kind, matcher_flags) =
-        extract_matcher(matcher_node, context, diagnostics)?;
     if registration_framework == Framework::JestCucumber
         && matcher_kind == MatcherKind::CucumberExpression
     {
@@ -666,11 +677,7 @@ fn extract_decorator<'tree>(
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
     let Some(matcher_node) = arguments.named_children(&mut cursor).next() else {
-        diagnostics.push(ExtractionDiagnostic {
-            level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(context.file, call, source),
-            message: "dynamic or unsupported step matcher cannot be analyzed statically".to_owned(),
-        });
+        warn_unsupported_matcher(call, context, diagnostics);
         return None;
     };
     let (matcher, matcher_kind, matcher_flags) =
@@ -763,6 +770,18 @@ fn effective_registration_framework(binding: Framework, file: Framework) -> Fram
     }
 }
 
+fn warn_unsupported_matcher(
+    node: Node<'_>,
+    context: &AdapterContext<'_, '_>,
+    diagnostics: &mut Vec<ExtractionDiagnostic>,
+) {
+    diagnostics.push(ExtractionDiagnostic::new(
+        ExtractionDiagnosticLevel::Warning,
+        node_location(context.file, node, context.source),
+        UNSUPPORTED_MATCHER_DIAGNOSTIC,
+    ));
+}
+
 fn extract_matcher(
     matcher_node: Node<'_>,
     context: &AdapterContext<'_, '_>,
@@ -775,17 +794,12 @@ fn extract_matcher(
             diagnostics.push(ExtractionDiagnostic {
                 level: ExtractionDiagnosticLevel::Error,
                 location: node_location(context.file, matcher_node, source),
-                message: "invalid JavaScript escape sequence in step matcher".to_owned(),
+                message: INVALID_MATCHER_DIAGNOSTIC.to_owned(),
             });
             return None;
         }
         None => {
-            diagnostics.push(ExtractionDiagnostic {
-                level: ExtractionDiagnosticLevel::Warning,
-                location: node_location(context.file, matcher_node, source),
-                message: "dynamic or unsupported step matcher cannot be analyzed statically"
-                    .to_owned(),
-            });
+            warn_unsupported_matcher(matcher_node, context, diagnostics);
             return None;
         }
     };

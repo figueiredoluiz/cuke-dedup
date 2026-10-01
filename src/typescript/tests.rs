@@ -2739,10 +2739,13 @@ fn resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved() 
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.message.contains("step matcher")));
-    assert!(!extracted
+    assert!(extracted
         .diagnostics
         .iter()
         .any(crate::source_adapter::is_completeness_diagnostic));
+    assert!(!extracted.diagnostics.iter().any(|d| d
+        .message
+        .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)));
 }
 
 #[test]

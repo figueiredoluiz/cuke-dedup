@@ -988,14 +988,23 @@ mod tests {
         assert_eq!(diagnostics.errors.len(), 1);
         assert!(diagnostics.warnings.is_empty());
 
-        // Opposite-answer control: an unrelated warning is neither escalated by the flag nor
-        // treated as a completeness signal, so the flag targets only the unparseable case.
+        // An unresolved matcher is incomplete, but is not a syntax error. The syntax-only
+        // flag must leave this diagnostic at warning severity.
         let dynamic = ExtractionDiagnostic::new(
             ExtractionDiagnosticLevel::Warning,
             SourceLocation::new("steps.ts", 2, 1, 2, 1),
             "dynamic or unsupported step matcher cannot be analyzed statically",
         );
         let (diagnostics, incomplete) = route(&config, dynamic);
+        assert!(incomplete);
+        assert!(diagnostics.errors.is_empty());
+        assert_eq!(diagnostics.warnings.len(), 1);
+        let unrelated = ExtractionDiagnostic::new(
+            ExtractionDiagnosticLevel::Warning,
+            SourceLocation::new("steps.ts", 2, 1, 2, 1),
+            "unrelated extractor warning",
+        );
+        let (diagnostics, incomplete) = route(&config, unrelated);
         assert!(!incomplete);
         assert!(diagnostics.errors.is_empty());
         assert_eq!(diagnostics.warnings.len(), 1);
