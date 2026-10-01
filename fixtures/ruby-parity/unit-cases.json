@@ -160,7 +160,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "ec328a43abb8b7487e1c89c6b2a42d882e690b2eb53be29bfdb1cbf5e708e790",
+      "sourceSha256": "1db7e1248854fbe0fa6667ca13a4c3bb4c391b6da01e889c21c94988eaa0e355",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
@@ -186,7 +186,7 @@
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "7314efc92b28f4d46e92a31fb432c4e14b733ef1c34f785a029648155db19fea",
+      "sourceSha256": "6757ca2fef92bcf29fd10f5189a52c977aacff04867a38392858d358a31418bc",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
