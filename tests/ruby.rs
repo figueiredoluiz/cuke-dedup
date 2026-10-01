@@ -2892,3 +2892,109 @@ fn assert_parameterization_outcome(rows: &[Value], expected: bool, context: &str
         );
     }
 }
+
+/// Native capture semantics and encoding identity must survive matcher normalization.
+#[test]
+fn ruby_native_regex_normalization_outcomes() {
+    for (left, right, finding, incomplete) in [
+        (r"/(?<first>\d+)/", r"/(?<second>\d+)/", true, false),
+        (r"/(?'first'\d+)/", r"/(?<second>\d+)/", true, false),
+        (r"/(?<first>a)(b)/", r"/(a)(?:b)/", true, false),
+        (r"/(?<x>a)(b)(c)/", r"/(a)(?:b)(?:c)/", true, false),
+        (r"/(a)(?<x>b)(c)/", r"/(?:a)(b)(?:c)/", true, false),
+        (r"/é(a)(?<x>b)/", r"/é(?:a)(b)/", true, false),
+        (r"/a\ b/", r"/a b/", true, false),
+        (r"/(?<first>a)(b)/", r"/(a)(b)/", false, false),
+        (r"/(?<first>a)/", r"/(?<second>a)(c)/", false, false),
+        (r"/\Aa\z/", r"/a/", false, false),
+        (r"/a+/", r"/a/", false, false),
+        (r"/a/u", r"/a/n", false, false),
+        (r"/a/n", r"/a/", false, false),
+        (r"/[(?<a>)]/", r"/[(?<b>)]/", false, false),
+        (r"/[a[b](?<x>)]/", r"/[a[b](?<y>)]/", false, false),
+        (r"/a\\ b/", r"/a b/", false, false),
+        (r"/(?<x>a)\k<x>/", r"/(?<y>a)\k<y>/", false, true),
+        (r"/(?<x>a)(?<x>b)/", r"/(?<y>a)(?<z>b)/", false, true),
+    ] {
+        let source = format!("Given({left}) {{ first() }}; Then({right}) {{ second() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        let rows = rows.as_array().unwrap();
+        assert_discovery(rows, 2, incomplete, &source);
+        assert_eq!(
+            rows.iter().any(|r| r["rule"] == "normalized-matcher"),
+            finding,
+            "{source}"
+        );
+        assert!(
+            !rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn ruby_native_regex_usage_and_encoding_outcomes() {
+    for (literal, step, complete, used) in [
+        (r"/\Avalue \w+\z/u", "value abc", true, true),
+        (r"/\Avalue \w+\z/u", "value 日本", true, false),
+        (r"/\Avalue\z/n", "value", true, true),
+        (r"/\Avalue\z/n", "other", true, false),
+        (r"/\A.\z/n", "日", true, true),
+        (r"/k/in", "K", true, true),
+        (r"/日本/u", "日本", true, true),
+        (r"/日本/n", "日本", false, false),
+        (r"/value/e", "value", false, false),
+        (r"/value/un", "value", false, false),
+        (r"/\A(?<name>\d+)\z/", "123", true, true),
+        (r"/\A(?'name'\d+)\z/", "１２３", true, false),
+        (r"/\Aa\ b\z/", "a b", true, true),
+        (r"/\Aa\ b\z/", "ab", true, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("steps.rb"),
+            format!("Given({literal}) {{ first() }}\nThen({literal}) {{ second() }}"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("test.feature"),
+            format!("Feature: Native\n Scenario: Usage\n  Given {step}\n"),
+        )
+        .unwrap();
+        let rows = records(run_project(dir.path(), "*.rb", &["--features", "*.feature"]).stdout);
+        assert_discovery(&rows, 2, !complete, literal);
+        assert!(
+            rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
+            "{literal}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r["rule"] == "unused-definition")
+                .count(),
+            if complete && !used { 2 } else { 0 },
+            "{literal}"
+        );
+    }
+}
+
+#[test]
+fn ruby_native_regex_flag_order_is_not_identity() {
+    for (left, right) in [
+        ("/panel/im", "/panel/mi"),
+        ("/panel/iu", "/panel/uii"),
+        ("%r{panel}im", "/panel/mi"),
+    ] {
+        let source = format!("Given({left}) {{ first() }}; Then({right}) {{ second() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        let rows = rows.as_array().unwrap();
+        assert_discovery(rows, 2, false, &source);
+        assert!(
+            rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
+            "{source}"
+        );
+        assert!(
+            !rows.iter().any(|r| r["rule"] == "normalized-matcher"),
+            "{source}"
+        );
+    }
+}
