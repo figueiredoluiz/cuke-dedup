@@ -4,7 +4,10 @@ import { countMatches } from "./recall-oracle.mjs";
 // Compare observable semantics, not language-specific fingerprint IDs or source spelling.
 export function outcome(report, exit) {
   const location = ({ path, line }) => ({ path: path.replace(/steps\.(ts|rb)$/, "steps"), line });
-  const sorted = (items) => items.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const sorted = (items) => items.sort((a, b) => {
+    const left = JSON.stringify(a), right = JSON.stringify(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   return {
     definitions: report.summary.definitionsAnalyzed,
     featureSteps: report.summary.featureStepsAnalyzed,
