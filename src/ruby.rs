@@ -256,9 +256,10 @@ fn extract_with_proof(
             ));
             continue;
         };
-        if matcher_kind == MatcherKind::RegularExpression
-            && regex_expression(&matcher, &flags).is_none()
-        {
+        let translated_regex = (matcher_kind == MatcherKind::RegularExpression)
+            .then(|| regex_expression(&matcher, &flags))
+            .flatten();
+        if matcher_kind == MatcherKind::RegularExpression && translated_regex.is_none() {
             result.diagnostics.push(diagnostic(
                 file,
                 node,
@@ -280,7 +281,13 @@ fn extract_with_proof(
         let comparison = if matcher_kind == MatcherKind::CucumberExpression {
             crate::matcher::normalize_cucumber_expression(&matcher)
         } else {
-            matcher.clone()
+            // Translation preserves Ruby capture arity. Flags have their own comparison
+            // partition, so strip only the generated outer flag group from this key.
+            translated_regex
+                .map(|expression| {
+                    expression[expression.find(':').unwrap() + 1..expression.len() - 1].to_owned()
+                })
+                .unwrap_or_else(|| matcher.clone())
         };
         result.definitions.push(StepDefinition {
             normalized_matcher: comparison,
@@ -617,7 +624,14 @@ fn regex_literal(raw: &str) -> Option<(String, String)> {
         return None;
     };
     let end = raw.rfind(delimiter)?;
-    (end >= start).then(|| (raw[start..end].to_owned(), raw[end + 1..].to_owned()))
+    (end >= start).then(|| {
+        let flags = raw[end + 1..]
+            .chars()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        (raw[start..end].to_owned(), flags)
+    })
 }
 
 fn literal_string(raw: &str) -> Option<String> {
@@ -697,7 +711,10 @@ fn compatible_ignorecase_literal(pattern: &str) -> bool {
 /// Ruby line anchors are multiline by default; unsupported constructs never reach JS conversion.
 pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
     if pattern.len() > crate::resource_limits::MAX_REGEX_PATTERN_BYTES
-        || flags.chars().any(|flag| !matches!(flag, 'm' | 'i'))
+        || flags
+            .chars()
+            .any(|flag| !matches!(flag, 'm' | 'i' | 'u' | 'n'))
+        || (flags.contains('n') && (!pattern.is_ascii() || flags.contains('u')))
         || (flags.contains('i') && !compatible_ignorecase_literal(pattern))
         || pattern.contains("[[:")
         || pattern.contains("&&")
@@ -712,10 +729,13 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
         result.insert(2, 'i');
     }
     let mut chars = pattern.chars().peekable();
-    let mut in_class = false;
+    let mut class_depth = 0;
     let mut first_class_member = false;
     let mut class_negated = false;
+    let mut capture_names = std::collections::BTreeSet::new();
+    let mut ordinary_captures = Vec::new();
     while let Some(ch) = chars.next() {
+        let in_class = class_depth > 0;
         if ch == '{' && !in_class {
             if let Some(bound) = repetition_bound(&mut chars)? {
                 result.push('{');
@@ -730,27 +750,52 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
             result.push_str(r"\}");
             continue;
         }
-        if in_class {
+        if ch == '[' {
+            class_depth += 1;
+            first_class_member = true;
+            class_negated = false;
+        } else if in_class {
             if ch == ']' && !first_class_member {
-                in_class = false;
+                class_depth -= 1;
             } else if ch == '^' && first_class_member && !class_negated {
                 class_negated = true;
             } else {
                 first_class_member = false;
             }
-        } else if ch == '[' {
-            in_class = true;
-            first_class_member = true;
-            class_negated = false;
         }
 
-        if ch == '(' && chars.peek() == Some(&'?') {
-            chars.next();
-            if chars.next() != Some(':') {
-                return None;
+        if ch == '(' && !in_class {
+            if chars.peek() != Some(&'?') {
+                ordinary_captures.push(result.len() + 1);
+            } else {
+                chars.next();
+                match chars.next()? {
+                    ':' => result.push_str("(?:"),
+                    delimiter @ ('<' | '\'') => {
+                        let end = if delimiter == '<' { '>' } else { '\'' };
+                        let mut name = String::new();
+                        loop {
+                            let member = chars.next()?;
+                            if member == end {
+                                break;
+                            }
+                            if !(member.is_ascii_alphabetic()
+                                || member == '_'
+                                || (!name.is_empty() && member.is_ascii_digit()))
+                            {
+                                return None;
+                            }
+                            name.push(member);
+                        }
+                        if name.is_empty() || !capture_names.insert(name) {
+                            return None;
+                        }
+                        result.push('(');
+                    }
+                    _ => return None,
+                }
+                continue;
             }
-            result.push_str("(?:");
-            continue;
         }
         if ch != '\\' {
             result.push(ch);
@@ -769,9 +814,24 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
                 result.push('\\');
                 result.push(escaped);
             }
-            c if c.is_ascii_punctuation() => result.push_str(&regex::escape(&c.to_string())),
+            c if c.is_ascii_punctuation() || c == ' ' => {
+                result.push_str(&regex::escape(&c.to_string()));
+            }
             _ => return None,
         }
+    }
+    // Ruby suppresses ordinary captures whenever the expression has a named capture.
+    // Copy each segment once: inserting at every offset is quadratic for large patterns.
+    if !capture_names.is_empty() {
+        let mut rewritten = String::with_capacity(result.len() + ordinary_captures.len() * 2);
+        let mut start = 0;
+        for position in ordinary_captures {
+            rewritten.push_str(&result[start..position]);
+            rewritten.push_str("?:");
+            start = position;
+        }
+        rewritten.push_str(&result[start..]);
+        result = rewritten;
     }
     result.push(')');
     regex::Regex::new(&result).ok()?;
