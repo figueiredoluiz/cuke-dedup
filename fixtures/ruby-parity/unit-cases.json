@@ -291,7 +291,7 @@
           "requiredStatus": "partial",
           "fixtureGroup": "matcher-family",
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test\u2019s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
+          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test’s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
         },
         {
           "name": "exact_handlers_require_compatible_assertion_provenance_across_files",
@@ -1050,7 +1050,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "18beae6f958cb4eeac9093ad1f62cab299766ad3e0aa2b0d909e8735094ae7b3",
+      "sourceSha256": "02a5c9bcc1c6255eb3462112d8b2cf2881fac9282cb7f16328663721c69a7681",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -2871,7 +2871,7 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "2a603faf4ce257492974a0a58dd8d748b7122598ef9c491a91dd83e84f75a81f",
+      "sourceSha256": "c6c351a21abbaf4e3bdc4a338e4fa144ea21c2f042f30b8baf9ebe72f675ef11",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -3828,7 +3828,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "fc0aed0d7c21e9b899c5803b970f190360a89b17e43f7e50952cab3eac7739fa",
+      "sourceSha256": "aaaafba2268c46528f01e432a9f1edef32d81593b28e5e9f53d8ed53afabc7c4",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4613,6 +4613,34 @@
           "fixtureGroup": null,
           "behaviorClass": "language-specific-api",
           "rationale": "Direct Rust test `registration_loader_import_forms_preserve_conflicting_assertions` exercises TypeScript/JavaScript syntax, framework configuration, source filtering, or module/binding provenance. Ruby has no direct syntax/API equivalent; any shared outcome must be mapped to a separate Ruby-native control."
+        },
+        {
+          "name": "dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline",
+          "requiredStatus": "partial",
+          "fixtureGroup": "registration-uncertain-dynamic",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "A recognized registration with a dynamic matcher marks the corpus incomplete, fails strict mode and cannot produce a baseline. The Ruby group pins incompleteness and strict exit 2 for a dynamic matcher; baseline rejection is not exercised for Ruby."
+        },
+        {
+          "name": "unsupported_matchers_mark_partial_extraction_incomplete",
+          "requiredStatus": "partial",
+          "fixtureGroup": "registration-uncertain-dynamic",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Unsupported matchers mark partial extraction incomplete while neighboring definitions remain analyzed. The Ruby group pins incompleteness for a dynamic matcher; retained neighboring findings and the JS wrapper-mutation forms have no Ruby counterpart."
+        },
+        {
+          "name": "inert_local_members_do_not_make_registration_discovery_incomplete",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "language-specific-api",
+          "rationale": "Exercises JavaScript receiver escape analysis for local object members. The Ruby analogue (local receiver dispatch) is tracked by the failing provider-context-receiver-local-send group; no Ruby control pins this complete-analysis outcome."
+        },
+        {
+          "name": "inert_receiver_only_project_passes_strict_mode",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "language-specific-api",
+          "rationale": "A JavaScript project whose only receivers are proven inert passes strict mode. No Ruby control pins strict success for inert local receivers."
         }
       ]
     },
