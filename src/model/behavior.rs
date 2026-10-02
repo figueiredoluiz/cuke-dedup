@@ -51,6 +51,17 @@ impl ControlFlowOperation {
 }
 
 impl BehaviorEvent {
+    pub(crate) fn assertion(qualifier: &str, matcher: &str, subject: &str, expected: &str) -> Self {
+        Self::Assertion {
+            deferred: false,
+            payload: format!(
+                "{qualifier}#{matcher}:{}:{}",
+                super::stable_fingerprint(subject),
+                super::stable_fingerprint(expected)
+            ),
+        }
+    }
+
     pub(crate) fn unresolved_assertion(deferred: bool) -> Self {
         Self::Assertion {
             deferred,

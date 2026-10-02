@@ -144,6 +144,10 @@ through a resolved import (see `safety-and-limitations.md`).
 
 `assertionModules` names module specifiers whose `expect` export is a real assertion factory.
 
+For Ruby, this is explicit opt-in trust for a project-owned assertion factory. A selected source must load the configured specifier through a preceding top-level, resolved `require_relative`; leading `./` is ignored. The provider must declare one root module with exactly one direct `def self.expect` and closed literal constant references in the selected sources. Recognized aliases, reopening, escapes and reflection remove trust. This static proof cannot establish the effects of arbitrary runtime code. Closure covers selected source files only; it does not verify installed gems or unselected support files. Include relevant support sources and use a dedicated namespace.
+
+Supported terminal matchers are `to_be`, `to_equal`, `equal_to`, `to_have_class` and `to_be_visible`, with `not`/`to` modifiers. Expected values may be strings, symbols, unsigned integer/float literals, booleans, `nil`, or recursively supported arrays/hashes. Unary expressions (including negative numbers), ranges, rationals and character literals remain unresolved. Unresolved values remove handler comparison authority. If a matching Ruby load is present and optional provider preparation encounters a parse error or cycle, or its bounds prevent establishing relevance, analysis reports incompleteness and retains ordinary-call behavior without assertion trust. A bounded proof of no matching Ruby load leaves Ruby unaffected by modules configured for TypeScript. It never executes Ruby or dependency code.
+
 CukeDedup recognizes `@playwright/test`, `playwright/test`, `@jest/globals`, `expect`, `vitest`,
 `chai`, and `bun:test` without configuration, and it also trusts the ambient `expect` that Jest,
 Vitest, and Playwright inject. Chain recognition is shape-based, so Chai's `expect(x).to.equal(y)`

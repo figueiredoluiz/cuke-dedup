@@ -1078,7 +1078,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "3b791eca4b382b37ae439ab88b7e48b00b7493a964d242b51f3d160f1b0fa939",
+      "sourceSha256": "d87a4abef9927301f4262a1bc20148a25d200cc053c6e844958caecb5888008a",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1121,6 +1121,12 @@
           "fixtureGroup": null,
           "behaviorClass": "shared-engine-invariant",
           "rationale": "Direct CLI unit test `supports_implicit_and_explicit_check_forms` asserts implicit and explicit check command forms. The option/diagnostic behavior is shared after source selection; no Ruby fixture currently drives this exact command contract, so it remains unmapped."
+        },
+        {
+          "name": "finalization_failure_discards_provisional_definitions_and_reports_incompleteness",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Injected frontend finalization failure tests the shared CLI fallback. Source syntax cannot force this session-integrity error; the same routing applies to every language."
         }
       ]
     },
@@ -2101,7 +2107,7 @@
       ]
     },
     "src/source_adapter/tests.rs": {
-      "sourceSha256": "6b3873cd661a28b5e27c337e2056e5243dc2aa8cdadd6eba15508588a175e26c",
+      "sourceSha256": "f00cecce95555405d2667dad814f57747c05f73d35bcb96f21ebcc3fc3b90bd5",
       "tests": [
         {
           "name": "session_state_initializes_once_per_backend_and_per_run",
@@ -2200,6 +2206,24 @@
           "fixtureGroup": null,
           "behaviorClass": "shared-engine-invariant",
           "rationale": "Direct Rust test `legacy_diagnostics_preserve_message_classification_and_mutation` asserts adapter-session isolation and conversion into the shared intermediate representation. Ruby uses this shared code after extraction, but no existing Ruby fixture asserts this exact final outcome or boundary, so it remains unmapped."
+        },
+        {
+          "name": "finalization_scopes_preserve_independent_final_findings",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Direct Rust outcome matrix for shared finalization scope and session completion. Both frontends use this API; language-owned fixture outcomes are tracked separately by the paired and Ruby manifests."
+        },
+        {
+          "name": "registry_uncertainty_isolates_languages_but_groups_ecmascript_variants",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Direct Rust outcome matrix for shared finalization scope and session completion. Both frontends use this API; language-owned fixture outcomes are tracked separately by the paired and Ruby manifests."
+        },
+        {
+          "name": "public_session_finalization_applies_late_ruby_effects_in_either_order",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Direct Rust outcome matrix for shared finalization scope and session completion. Both frontends use this API; language-owned fixture outcomes are tracked separately by the paired and Ruby manifests."
         }
       ]
     },
@@ -4946,7 +4970,7 @@
       ]
     },
     "src/model/behavior.rs": {
-      "sourceSha256": "383b7916f67e5f7578c0e502dbf4fcd290dcbafe4181f67318878da6aee63121",
+      "sourceSha256": "2fafe30bbdb0f7992579916abe9374176a40c8ad266f5d7487a1fe95ed53bf6c",
       "tests": [
         {
           "name": "legacy_signatures_round_trip_known_and_unknown_events",

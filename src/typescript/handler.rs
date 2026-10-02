@@ -2,7 +2,9 @@ use super::assertions::AssertionBindings;
 use super::ast::push_named_children_reverse;
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee};
-use crate::model::{stable_fingerprint, BehaviorEvent, ControlFlowOperation, HandlerFingerprint};
+use crate::model::{
+    stable_fingerprint, BehaviorEvent, ControlFlowOperation, HandlerFingerprint, HandlerSemantics,
+};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
@@ -527,23 +529,17 @@ fn fingerprint_from_events(
     source_snippet: String,
     flags: FingerprintFlags,
 ) -> HandlerFingerprint {
-    HandlerFingerprint {
-        exact: stable_fingerprint(&exact),
-        normalized: stable_fingerprint(&normalized),
-        alpha_normalized: stable_fingerprint(&alpha),
-        structural: stable_fingerprint(&structural),
-        behavior_signature: encode_behavior_signature(signature),
+    HandlerSemantics {
+        exact,
+        normalized,
+        alpha,
+        structural,
+        events: signature,
         source_snippet: bounded_source_snippet(&source_snippet),
         comparable: flags.comparable,
         trivial: flags.trivial,
     }
-}
-
-fn encode_behavior_signature(signature: Vec<BehaviorEvent>) -> Vec<String> {
-    signature
-        .into_iter()
-        .map(BehaviorEvent::into_legacy)
-        .collect()
+    .finish(stable_fingerprint)
 }
 
 pub(super) fn control_flow_behavior_event(kind: &str) -> BehaviorEvent {
@@ -1843,15 +1839,12 @@ fn assertion_behavior_event(
     } else {
         format!("expect.{}", modifiers.join("."))
     };
-    Some(BehaviorEvent::Assertion {
-        deferred: false,
-        payload: format!(
-            "{qualifier}#{}:{}:{}",
-            encode_event_component(method),
-            stable_fingerprint(&subject),
-            stable_fingerprint(&expected)
-        ),
-    })
+    Some(BehaviorEvent::assertion(
+        &qualifier,
+        &encode_event_component(method),
+        &subject,
+        &expected,
+    ))
 }
 
 fn serialize_assertion_value(

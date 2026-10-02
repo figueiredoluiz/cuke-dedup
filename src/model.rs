@@ -1,6 +1,8 @@
 //! Shared intermediate representation and diagnostics.
 
 mod behavior;
+mod handler;
+pub(crate) use handler::HandlerSemantics;
 mod sha256;
 
 pub(crate) use behavior::{BehaviorEvent, BehaviorEventRef, ControlFlowOperation};

@@ -6,12 +6,14 @@ use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
     AdapterSessionState, Extraction, ExtractionDiagnostic, ExtractionDiagnosticKind as Kind,
     ExtractionDiagnosticLevel as Level, SourceAdapter, SourceExtractionSession, SourceFile,
-    SourceLanguage, StatefulSourceAdapter,
+    SourceFinalization, SourceLanguage, SourceUncertainty, StatefulSourceAdapter, UncertaintyCause,
+    UncertaintyScope,
 };
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 use tree_sitter::Node;
 
+mod assertions;
 mod bindings;
 pub(crate) mod dependencies;
 mod handler;
@@ -26,18 +28,17 @@ pub(crate) static RUBY_ADAPTER: RubyAdapter = RubyAdapter;
 pub(crate) struct RubySession {
     effects: ownership::RegistrationEffects,
     providers: providers::Providers,
+    assertions: assertions::AssertionProviders,
+    assertion_modules: Vec<String>,
 }
 impl AdapterSessionState for RubySession {
-    fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
+    fn initialize(_: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
         Self {
             effects: Default::default(),
             providers: Default::default(),
+            assertions: Default::default(),
+            assertion_modules: assertion_modules.to_vec(),
         }
-    }
-}
-impl RubySession {
-    pub(crate) fn invalidated(&self) -> bool {
-        self.effects.invalidated()
     }
 }
 impl StatefulSourceAdapter for RubyAdapter {
@@ -62,8 +63,34 @@ impl SourceAdapter for RubyAdapter {
         session: &mut SourceExtractionSession,
     ) -> Result<()> {
         let providers = providers::Providers::collect(files, &session.dependency_edges())?;
-        session.state::<RubySession>()?.providers = providers;
+        let edges = session.dependency_edges();
+        let state = session.state::<RubySession>()?;
+        state.assertions =
+            assertions::AssertionProviders::collect(files, &edges, &state.assertion_modules)?;
+        state.providers = providers;
         Ok(())
+    }
+    fn finalize_session(
+        &self,
+        session: &mut SourceExtractionSession,
+    ) -> Result<SourceFinalization> {
+        let mut result = SourceFinalization::default();
+        let state = session.state::<RubySession>()?;
+        if state.assertions.incomplete() {
+            result.uncertainties.push(SourceUncertainty::new(
+                UncertaintyScope::Registry(SourceLanguage::Ruby),
+                UncertaintyCause::Source,
+                "Ruby assertion-provider provenance is incomplete",
+            ));
+        }
+        if state.effects.invalidated() {
+            result.uncertainties.push(SourceUncertainty::new(
+                UncertaintyScope::Registry(SourceLanguage::Ruby),
+                UncertaintyCause::Registration,
+                "Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite",
+            ));
+        }
+        Ok(result)
     }
     fn extract_with_session(
         &self,
@@ -71,11 +98,16 @@ impl SourceAdapter for RubyAdapter {
         file: &SourceFile,
         session: &mut SourceExtractionSession,
     ) -> Result<Extraction> {
+        let assertions = session
+            .state::<RubySession>()?
+            .assertions
+            .get(&file.path, source);
         let proof = session
             .state::<RubySession>()?
             .providers
             .get(&file.path, source);
-        let (mut extraction, invalidated) = extract_with_proof(source, file, proof)?;
+        let (mut extraction, invalidated) =
+            extract_with_proof(source, file, proof, assertions.as_ref())?;
         extraction.diagnostics.retain(|diagnostic| {
             diagnostic.kind != Kind::Dependency
                 || !session.dependency_resolved(&diagnostic.location)
@@ -105,13 +137,14 @@ fn extract(
     source: &str,
     file: &SourceFile,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
-    extract_with_proof(source, file, None)
+    extract_with_proof(source, file, None, None)
 }
 
 fn extract_with_proof(
     source: &str,
     file: &SourceFile,
     proof: Option<&providers::Proof>,
+    assertions: Option<&assertions::AssertionBindings>,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
     if file.language != SourceLanguage::Ruby {
         bail!("Ruby adapter requires Ruby source");
@@ -270,7 +303,7 @@ fn extract_with_proof(
                 "Ruby regular expression is outside the supported static matching subset",
             ));
         }
-        let handler = handler::fingerprint(block, root, source);
+        let handler = handler::fingerprint(block, root, source, assertions);
         if !handler.comparable {
             result.diagnostics.push(diagnostic(
                 file,

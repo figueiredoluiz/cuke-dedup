@@ -198,12 +198,7 @@ impl Declarations {
             }
             candidate
         };
-        if path.0.first().is_some_and(|name| {
-            matches!(
-                name.as_str(),
-                "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class" | "Method"
-            )
-        }) {
+        if path.0.first().is_some_and(|name| protected_namespace(name)) {
             return None;
         }
         Some(path)
@@ -262,6 +257,14 @@ impl Declarations {
         }
         None
     }
+}
+
+// Existing runtime owners are globally exposed, even without a reference in selected source.
+pub(super) fn protected_namespace(name: &str) -> bool {
+    matches!(
+        name,
+        "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class" | "Method"
+    )
 }
 
 fn constant_path(mut node: Node<'_>, source: &str) -> Option<(bool, Vec<String>)> {

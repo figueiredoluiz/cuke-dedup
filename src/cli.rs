@@ -477,22 +477,8 @@ fn extract_definitions(
             }
         }
     }
-    if extraction_session
-        .state::<crate::ruby::RubySession>()
-        .is_ok_and(|state| state.invalidated())
-    {
-        corpus
-            .definitions
-            .retain(|definition| definition.framework != crate::model::Framework::CucumberRuby);
-        corpus.definition_files_with_definitions = corpus
-            .definitions
-            .iter()
-            .map(|definition| &definition.location.path)
-            .collect::<BTreeSet<_>>()
-            .len();
-        corpus.incomplete = true;
-        diagnostics.warnings.push("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite".to_owned());
-    }
+    let finalization = extraction_session.finalize(&files.definitions, &mut corpus.definitions);
+    collect_finalization(finalization, corpus, diagnostics);
     corpus.definitions.sort_by(|left, right| {
         left.location
             .path
@@ -515,6 +501,40 @@ fn extract_definitions(
             diagnostics.errors.push(message);
         } else if !files.definitions.is_empty() {
             diagnostics.warnings.push(message);
+        }
+    }
+}
+
+fn collect_finalization(
+    finalization: Result<source_adapter::SourceFinalization>,
+    corpus: &mut ExtractedCorpus,
+    diagnostics: &mut Diagnostics,
+) {
+    match finalization {
+        Ok(finalization) => {
+            if !finalization.uncertainties.is_empty() {
+                corpus.incomplete = true;
+                diagnostics.warnings.extend(
+                    finalization
+                        .uncertainties
+                        .into_iter()
+                        .map(|item| item.message),
+                );
+                corpus.definition_files_with_definitions = corpus
+                    .definitions
+                    .iter()
+                    .map(|definition| &definition.location.path)
+                    .collect::<BTreeSet<_>>()
+                    .len();
+            }
+        }
+        Err(error) => {
+            corpus.incomplete = true;
+            corpus.definitions.clear();
+            corpus.definition_files_with_definitions = 0;
+            diagnostics
+                .errors
+                .push(format!("failed to finalize source evidence: {error:#}"));
         }
     }
 }
@@ -978,6 +998,35 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finalization_failure_discards_provisional_definitions_and_reports_incompleteness() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+        std::fs::write(root.path().join("steps.ts"), "import { Given, Then } from '@cucumber/cucumber'; Given('same', () => work()); Then('same', () => work());").unwrap();
+        let files = discovery::discover(&config).unwrap();
+        let mut diagnostics = discovery_diagnostics(&config, &files, &None);
+        let mut corpus = extract_corpus(&config, &files, &None, &mut diagnostics);
+        assert_eq!(corpus.definitions.len(), 2);
+        let before = corpus.definitions.clone();
+        collect_finalization(Ok(Default::default()), &mut corpus, &mut diagnostics);
+        assert_eq!(corpus.definitions, before);
+        collect_finalization(
+            Err(anyhow::anyhow!("adapter unavailable")),
+            &mut corpus,
+            &mut diagnostics,
+        );
+        assert!(corpus.incomplete);
+        assert!(corpus.definitions.is_empty());
+        assert_eq!(corpus.definition_files_with_definitions, 0);
+        assert!(diagnostics
+            .errors
+            .iter()
+            .any(|e| e == "failed to finalize source evidence: adapter unavailable"));
+        let analyzed = analyze_corpus(&config, corpus, &mut diagnostics).unwrap();
+        assert!(analyzed.run_incomplete);
+        assert!(analyzed.result.findings.is_empty());
+    }
 
     #[test]
     fn terminal_color_requires_tty_and_allows_no_color_opt_out() {
