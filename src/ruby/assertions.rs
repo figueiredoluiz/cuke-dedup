@@ -2,8 +2,10 @@
 
 use super::{descendants, literal_string, location, text};
 use crate::model::BehaviorEvent;
-use crate::resource_limits::{MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES};
-use crate::source_adapter::{SourceDependency, SourceFile};
+
+#[cfg(test)]
+use crate::source_adapter::SourceFile;
+use crate::source_adapter::{SourceAdvisory, SourceDependency};
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -13,6 +15,7 @@ use tree_sitter::Node;
 pub(super) struct AssertionProviders {
     proofs: BTreeMap<PathBuf, (String, AssertionBindings)>,
     incomplete: bool,
+    advisories: Vec<SourceAdvisory>,
 }
 
 #[derive(Clone, Default)]
@@ -22,7 +25,7 @@ pub(super) struct AssertionBindings {
 }
 
 impl AssertionProviders {
-    fn unavailable() -> Self {
+    pub(super) fn unavailable() -> Self {
         Self {
             incomplete: true,
             ..Self::default()
@@ -31,23 +34,7 @@ impl AssertionProviders {
     pub fn incomplete(&self) -> bool {
         self.incomplete
     }
-    pub fn collect(
-        files: &[SourceFile],
-        edges: &[SourceDependency],
-        configured: &[String],
-    ) -> Result<Self> {
-        Self::collect_with_budget(
-            files,
-            edges,
-            configured,
-            (
-                MAX_REGISTRATION_MODULES,
-                MAX_REGISTRATION_MODULE_BYTES,
-                1_000_000,
-            ),
-        )
-    }
-
+    #[cfg(test)]
     fn collect_with_budget(
         files: &[SourceFile],
         edges: &[SourceDependency],
@@ -60,13 +47,25 @@ impl AssertionProviders {
         let Some(loaded) = super::providers::load_units(files, (budget.0, budget.1))? else {
             return Ok(Self::unavailable());
         };
+        Self::from_units(&loaded, edges, configured, budget.2)
+    }
+
+    pub(super) fn from_units(
+        loaded: &[super::providers::Unit],
+        edges: &[SourceDependency],
+        configured: &[String],
+        work_budget: usize,
+    ) -> Result<Self> {
+        if configured.is_empty() {
+            return Ok(Self::default());
+        }
         let canonical: Vec<_> = loaded
             .iter()
             .map(|unit| unit.canonical_path.clone())
             .collect();
         let units: Vec<_> = loaded
-            .into_iter()
-            .map(|unit| (unit.file, unit.source, unit.tree))
+            .iter()
+            .map(|unit| (&unit.file, unit.source.as_str(), &unit.tree))
             .collect();
         let nodes: Vec<_> = units
             .iter()
@@ -74,12 +73,12 @@ impl AssertionProviders {
             .collect();
         let total_nodes: usize = nodes.iter().map(Vec::len).sum();
         let mut work = total_nodes.saturating_mul(2);
-        if work > budget.2 {
+        if work > work_budget {
             return Ok(Self::unavailable());
         }
         // A configured JS/TS-only module cannot make an unrelated Ruby graph incomplete.
         work = work.saturating_add(total_nodes);
-        if work > budget.2 {
+        if work > work_budget {
             return Ok(Self::unavailable());
         }
         if !units.iter().zip(&nodes).any(|((_, source, tree), nodes)| {
@@ -121,7 +120,7 @@ impl AssertionProviders {
             let mut factories = BTreeSet::new();
             for edge in edges.iter().filter(|edge| edge.location.path == file.path) {
                 work = work.saturating_add(nodes[unit].len());
-                if work > budget.2 {
+                if work > work_budget {
                     return Ok(Self::unavailable());
                 }
                 let Some(load) = nodes[unit].iter().copied().find(|node| {
@@ -139,9 +138,10 @@ impl AssertionProviders {
                     continue;
                 };
                 work = work.saturating_add(nodes[provider].len().saturating_mul(2));
-                if work > budget.2 {
+                if work > work_budget {
                     return Ok(Self::unavailable());
                 }
+                let mut trusted = false;
                 let (_, provider_source, provider_tree) = &units[provider];
                 let provider_root = provider_tree.root_node();
                 for module in nodes[provider]
@@ -165,7 +165,7 @@ impl AssertionProviders {
                     work = work
                         .saturating_add(total_nodes.saturating_mul(2))
                         .saturating_add(nodes[unit].len());
-                    if work > budget.2 {
+                    if work > work_budget {
                         return Ok(Self::unavailable());
                     }
                     // Any escape, alias, replacement, or unknown member use removes trust globally.
@@ -180,6 +180,7 @@ impl AssertionProviders {
                     }) {
                         continue;
                     }
+                    trusted = true;
                     for node in &nodes[unit] {
                         if node.start_byte() > load.end_byte()
                             && node.kind() == "call"
@@ -196,13 +197,23 @@ impl AssertionProviders {
                         }
                     }
                 }
+                if !trusted {
+                    result.advisories.push(SourceAdvisory::new(
+                        edge.location.clone(),
+                        "configured Ruby assertion provider lacks a closed factory proof; unsupported declarations, namespace escapes or mutation remove assertion trust",
+                    ));
+                }
             }
             result.proofs.insert(
                 file.path.clone(),
-                (source.clone(), AssertionBindings { factories }),
+                (source.to_string(), AssertionBindings { factories }),
             );
         }
         Ok(result)
+    }
+
+    pub(super) fn advisories(&self) -> &[SourceAdvisory] {
+        &self.advisories
     }
 
     pub fn get(&self, file: &Path, source: &str) -> Option<AssertionBindings> {
@@ -508,13 +519,7 @@ mod tests {
     #[test]
     fn proof_budget_checkpoints_and_invalid_edges_never_grant_trust() {
         let root = tempfile::tempdir().unwrap();
-        let files: Vec<_> = ["steps.rb", "assertions.rb"]
-            .into_iter()
-            .map(|name| SourceFile {
-                path: root.path().join(name),
-                language: SourceLanguage::Ruby,
-            })
-            .collect();
+        let files = provider_files(root.path());
         let source = "require_relative 'assertions'\ndef helper; require_relative 'assertions'; end\nself.require_relative 'assertions'\nrequire_relative 'other'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }";
         std::fs::write(&files[0].path, source).unwrap();
         let provider = "module Assertions; def self.expect(actual); actual; end; end";
@@ -582,6 +587,147 @@ mod tests {
                 .unwrap()
                 .factories
                 .is_empty());
+        }
+    }
+
+    #[test]
+    fn shared_snapshot_retains_proofs_without_reloading_and_checks_current_source_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let files = provider_files(root.path());
+        let source = "require_relative 'assertions'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }; Given('ordinary one') { work() }; Then('ordinary two') { work() }";
+        std::fs::write(&files[0].path, source).unwrap();
+        std::fs::write(
+            &files[1].path,
+            "module Assertions; def self.expect(actual); actual; end; end",
+        )
+        .unwrap();
+        let units = super::super::providers::load_units(&files, (2, 4096))
+            .unwrap()
+            .unwrap();
+        let root_node = units[0].tree.root_node();
+        let load = root_node.named_child(0).unwrap();
+        let edges = [SourceDependency::new(
+            location(&files[0], load, source),
+            files[1].path.canonicalize().unwrap(),
+        )];
+        for file in &files {
+            std::fs::remove_file(&file.path).unwrap();
+        }
+        let mut session =
+            SourceExtractionSession::with_options(root.path(), &[], &["./assertions".into()])
+                .with_dependencies(&edges);
+        let state = session.state::<crate::ruby::RubySession>().unwrap();
+        state.providers = super::super::providers::Providers::from_units(&units, &edges).unwrap();
+        state.assertions =
+            AssertionProviders::from_units(&units, &edges, &["./assertions".into()], 2000).unwrap();
+        assert!(state.assertions.get(&files[0].path, source).is_some());
+        assert!(state
+            .assertions
+            .get(&files[0].path, &format!("{source}\nchanged()"))
+            .is_none());
+        let (definitions, finalized) = finish(source, &files, &mut session);
+        assert!(finalized.uncertainties.is_empty());
+        assert!(finalized.advisories.is_empty());
+        assert_eq!(definitions.len(), 4);
+        let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
+        assert_eq!(handler_findings(definitions, &config), 1);
+    }
+
+    #[test]
+    fn rejected_configured_trust_is_advisory_without_changing_final_outcomes() {
+        let root = tempfile::tempdir().unwrap();
+        let files = provider_files(root.path());
+        let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
+        for (provider, trusted) in [
+            (
+                "module Assertions; def self.expect(actual); actual; end; end",
+                true,
+            ),
+            ("module Assertions; end", false),
+            (
+                "module Assertions; def self.expect(actual); actual; end; end\nAlias = Assertions",
+                false,
+            ),
+        ] {
+            let source = "require_relative 'assertions'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }; Given('ordinary one') { work() }; Then('ordinary two') { work() }";
+            std::fs::write(&files[0].path, source).unwrap();
+            std::fs::write(&files[1].path, provider).unwrap();
+            let edges = [SourceDependency::new(
+                crate::model::SourceLocation::new(files[0].path.clone(), 1, 1, 1, 30),
+                files[1].path.canonicalize().unwrap(),
+            )];
+            let mut session =
+                SourceExtractionSession::with_options(root.path(), &[], &["./assertions".into()])
+                    .with_dependencies(&edges);
+            let adapter = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby);
+            adapter.prepare_session(&files, &mut session).unwrap();
+            let (definitions, finalized) = finish(source, &files, &mut session);
+            assert!(finalized.uncertainties.is_empty());
+            assert_eq!(finalized.advisories.len(), usize::from(!trusted));
+            if !trusted {
+                assert_eq!(finalized.advisories[0].location.path, files[0].path);
+            }
+            assert_eq!(
+                handler_findings(definitions, &config),
+                if trusted { 1 } else { 2 }
+            );
+        }
+    }
+    fn finish(
+        source: &str,
+        files: &[SourceFile],
+        session: &mut SourceExtractionSession,
+    ) -> (
+        Vec<crate::model::StepDefinition>,
+        crate::source_adapter::SourceFinalization,
+    ) {
+        let mut definitions = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby)
+            .extract_with_session(source, &files[0], session)
+            .unwrap()
+            .definitions;
+        let finalized = session.finalize(files, &mut definitions).unwrap();
+        (definitions, finalized)
+    }
+
+    fn provider_files(root: &Path) -> Vec<SourceFile> {
+        ["steps.rb", "assertions.rb"]
+            .map(|name| SourceFile {
+                path: root.join(name),
+                language: SourceLanguage::Ruby,
+            })
+            .into()
+    }
+
+    fn handler_findings(
+        definitions: Vec<crate::model::StepDefinition>,
+        config: &crate::config::Config,
+    ) -> usize {
+        crate::analysis::analyze_with_diagnostics(definitions, vec![], config)
+            .unwrap()
+            .result
+            .findings
+            .into_iter()
+            .filter(|finding| finding.rule == Rule::DuplicateHandler)
+            .count()
+    }
+
+    #[test]
+    fn unavailable_snapshot_preserves_ordinary_findings_and_configured_uncertainty() {
+        let root = tempfile::tempdir().unwrap();
+        let files = provider_files(root.path());
+        let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
+        let source = "Given('one') { work() }; Then('two') { work() }";
+        let adapter = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby);
+        for configured in [vec![], vec!["./assertions".into()]] {
+            let mut session = SourceExtractionSession::with_options(root.path(), &[], &configured);
+            adapter.prepare_session(&files, &mut session).unwrap();
+            let (definitions, finalized) = finish(source, &files, &mut session);
+            assert_eq!(
+                finalized.uncertainties.len(),
+                usize::from(!configured.is_empty())
+            );
+            assert!(finalized.advisories.is_empty());
+            assert_eq!(handler_findings(definitions, &config), 1);
         }
     }
 }

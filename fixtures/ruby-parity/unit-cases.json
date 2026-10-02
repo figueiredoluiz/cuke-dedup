@@ -1078,7 +1078,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "d87a4abef9927301f4262a1bc20148a25d200cc053c6e844958caecb5888008a",
+      "sourceSha256": "af1f76e59a87cbb2fb3062df04d26bb9256933ad18fee44f795bc7b98b3ee1da",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1311,7 +1311,7 @@
       ]
     },
     "src/discovery.rs": {
-      "sourceSha256": "8ec83d2c6dc7aefc9689df66c090b7bb5124c82ea75eda88df079a37753b6432",
+      "sourceSha256": "7c6cfc76298e70a03d89627d19cd1e9aac0669fe4d1409f7bdc21a1467e8b6af",
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -2067,7 +2067,7 @@
       ]
     },
     "src/resource_limits.rs": {
-      "sourceSha256": "2304ec0c4ebe0720c94253d1ebf575ec756043eb3503f69f1860c63705314633",
+      "sourceSha256": "27fa902c16e443438e3ff48e0255518d4830532ed0dda28dd764246f6fe77bbb",
       "tests": [
         {
           "name": "bounded_reader_accepts_exact_limit_and_rejects_next_byte",
@@ -2107,7 +2107,7 @@
       ]
     },
     "src/source_adapter/tests.rs": {
-      "sourceSha256": "f00cecce95555405d2667dad814f57747c05f73d35bcb96f21ebcc3fc3b90bd5",
+      "sourceSha256": "bacd6a777d58f2f77e76182ceaee23e0628c45c1825a557e31bc5b5a2476a359",
       "tests": [
         {
           "name": "session_state_initializes_once_per_backend_and_per_run",
@@ -2227,7 +2227,7 @@
         }
       ]
     },
-    "src/source_filter/tests.rs": {
+    "src/typescript/source_filter/tests.rs": {
       "sourceSha256": "2ec63dff2af41fa5380d53d4c7e8955b3d8d175d60721e5e627f8b51084c5359",
       "tests": [
         {
@@ -4883,7 +4883,7 @@
       ]
     },
     "tests/public_api.rs": {
-      "sourceSha256": "f07062a120f241b5a034abd7f901bbbfc988bf2836ff4fc5b5c9357339341005",
+      "sourceSha256": "f55680a12437b6b68344b30564806dc4a3ff9f5386f339fe3cc4051b044dc8b3",
       "tests": [
         {
           "name": "extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults",
@@ -4995,6 +4995,29 @@
           "behaviorClass": "shared-engine-invariant",
           "requiredStatus": "language-inapplicable",
           "rationale": "This direct Rust control validates lossless encoding and decoding of the internal typed behavior-event compatibility boundary. It has no language-owned syntax or finding to express; TypeScript/Ruby extracted output remains covered by the paired and Ruby outcome manifests."
+        }
+      ]
+    },
+    "tests/frontend_conformance.rs": {
+      "sourceSha256": "91bbf41f9783a5fa518d98177ba856d9f0efb38d23e03eae04f13218fdbb12ee",
+      "tests": [
+        {
+          "name": "ruby_selection_dependencies_and_mixed_domain_keep_cli_outcomes",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Direct cross-language CLI control already exercises automatic JS selection, explicit Ruby dependencies, unresolved loads and mixed-domain rejection; it needs no separate Ruby port."
+        },
+        {
+          "name": "source_exclusion_stays_with_javascript_adapter",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Direct registered-adapter control already contrasts JS exclusion with Ruby parser policy; it needs no separate Ruby port."
+        },
+        {
+          "name": "ruby_configuration_keeps_flat_compatibility_key",
+          "behaviorClass": "language-specific-api",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Ruby-specific public configuration compatibility is exercised directly here; the flat rubyLoadPaths key has no TypeScript counterpart."
         }
       ]
     }

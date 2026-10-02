@@ -29,7 +29,7 @@ pub struct DiscoveredFiles {
     pub dependencies: Vec<source_adapter::SourceDependency>,
     /// Gherkin feature files and their selected parser formats.
     pub features: Vec<FeatureFile>,
-    /// JavaScript or TypeScript definition sources.
+    /// Definition sources selected through their registered frontend.
     pub definitions: Vec<SourceFile>,
     /// Non-fatal filesystem traversal errors collected during discovery.
     pub errors: Vec<String>,
@@ -103,7 +103,9 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         }
 
         if let Some(language) = source_language(relative) {
-            if language == SourceLanguage::Ruby && definition_globs.is_none() {
+            if definition_globs.is_none()
+                && !source_adapter::adapter_for_language(language).discover_by_default()
+            {
                 continue;
             }
             if definition_globs
@@ -142,7 +144,7 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         })
         .map(|(_, pattern)| pattern.clone())
         .collect();
-    crate::ruby::dependencies::resolve(config, &excludes, &mut files);
+    source_adapter::discover_dependencies(config, &excludes, &mut files);
     Ok(files)
 }
 

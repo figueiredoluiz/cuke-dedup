@@ -11,6 +11,7 @@ mod matcher;
 mod module_resolver;
 mod project_resolution;
 mod registrations;
+mod source_filter;
 mod suppression;
 
 use self::assertions::AssertionBindings;
@@ -109,6 +110,14 @@ impl SourceAdapter for TreeSitterSourceAdapter {
 
     fn language(&self) -> SourceLanguage {
         self.language
+    }
+
+    fn inspect_source(
+        &self,
+        file: &SourceFile,
+        registrations: &[String],
+    ) -> Option<crate::source_adapter::SourceExclusion> {
+        source_filter::inspect(&file.path, registrations)
     }
 
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction> {

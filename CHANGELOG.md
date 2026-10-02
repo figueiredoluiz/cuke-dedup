@@ -7,12 +7,16 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Added
 
+- Optional frontend trust advisories for embedders and compatible discovery/metadata adapter hooks.
 - Frontends can finalize extraction with typed definition, file or registry uncertainty before shared analysis. Existing adapter implementations retain the default no-op finalization.
 - Explicitly configured Ruby assertion factories contribute value-sensitive handler evidence for supported literal matchers; unresolved values remain incomplete.
 - Experimental, opt-in static Cucumber-Ruby analysis and a Ruby/TypeScript parity corpus. Ruby discovery and rule parity remain in development; this integration checkpoint is not release-ready.
 
 ### Changed
 
+- Move discovery, filtering and parameter metadata policy into source adapters while preserving configuration and reports.
+- Share bounded Ruby provider preparation.
+- Separate language-neutral corpus outcome normalization from language-specific acceptance gates.
 - Explicit definition globs now select `.rb` files. A glob that selects both Ruby and JavaScript/TypeScript definitions is rejected; use separate runs and language-specific globs.
 - Gherkin tables with inconsistent row widths now produce a parse diagnostic and incomplete analysis, including in existing JavaScript/TypeScript projects. Table escapes retain their intended values.
 

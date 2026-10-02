@@ -38,6 +38,10 @@ const IMPORTED_STEP: &str =
 
 #[test]
 fn session_state_initializes_once_per_backend_and_per_run() {
+    let ruby = SourceAdapterRegistration::with_session(".rb", &crate::ruby::RUBY_ADAPTER);
+    assert_eq!(ruby.adapter.language(), SourceLanguage::Ruby);
+    assert!(ruby.discover_dependencies.is_some());
+
     struct Counter(usize);
     impl AdapterSessionState for Counter {
         fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {

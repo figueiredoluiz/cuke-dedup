@@ -180,10 +180,11 @@ struct Diagnostics {
 
 struct ExtractedCorpus {
     parameter_types: Vec<source_adapter::SourceParameterType>,
+    parameter_language: Option<source_adapter::SourceLanguage>,
     indirect_usage: source_adapter::IndirectStepUsage,
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
-    excluded_sources: Vec<(PathBuf, crate::source_filter::ExcludedSource)>,
+    excluded_sources: Vec<(PathBuf, source_adapter::SourceExclusion)>,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
     feature_files_without_steps: usize,
@@ -370,6 +371,7 @@ fn extract_corpus(
 ) -> ExtractedCorpus {
     let mut corpus = ExtractedCorpus {
         parameter_types: Vec::new(),
+        parameter_language: files.definitions.first().map(|file| file.language),
         indirect_usage: source_adapter::IndirectStepUsage::default(),
         definitions: Vec::new(),
         feature_steps: Vec::new(),
@@ -427,11 +429,8 @@ fn extract_definitions(
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
         // before parsing rather than analyzed and discarded.
-        // Ruby has separate parser and resource checks; the source-filter heuristics assume JS syntax.
-        if let Some(excluded) = (file.language != source_adapter::SourceLanguage::Ruby)
-            .then(|| crate::source_filter::inspect(&file.path, &config.registrations))
-            .flatten()
-        {
+        let adapter = source_adapter::adapter_for_language(file.language);
+        if let Some(excluded) = adapter.inspect_source(file, &config.registrations) {
             // Every one of these signals is a heuristic over file content, not a proof: a NUL
             // byte or an archive header can appear inside an authored comment or string, and
             // minified geometry cannot be told apart from one very long authored line. So the
@@ -441,17 +440,16 @@ fn extract_definitions(
             corpus.excluded_sources.push((file.path.clone(), excluded));
             continue;
         }
-        let adapter = source_adapter::adapter_for_language(file.language);
         match adapter
             .extract_file_with_session(file, &mut extraction_session)
             .with_context(|| format!("failed to analyze {}", file.path.display()))
         {
             Ok(extracted) => {
-                if file.language == source_adapter::SourceLanguage::Ruby {
+                if adapter.supports_indirect_usage() {
                     corpus.indirect_usage.extend(extracted.indirect_usage);
-                    corpus.parameter_types.extend(extracted.parameter_types);
                     corpus.incomplete |= corpus.indirect_usage.unknown;
                 }
+                corpus.parameter_types.extend(extracted.parameter_types);
                 if !extracted.definitions.is_empty() {
                     corpus.definition_files_with_definitions += 1;
                 }
@@ -469,7 +467,7 @@ fn extract_definitions(
             // when changed mode later filters findings. Skipping an unreadable source could turn
             // an incomplete run into a false pass.
             Err(error) => {
-                if file.language == source_adapter::SourceLanguage::Ruby {
+                if adapter.supports_indirect_usage() {
                     corpus.indirect_usage.unknown = true;
                     corpus.incomplete = true;
                 }
@@ -549,7 +547,7 @@ const MAX_LISTED_EXCLUDED_SOURCES: usize = 10;
 /// repository is ordinary and must not fail an otherwise clean run.
 fn report_excluded_sources(
     config: &Config,
-    excluded: &[(PathBuf, crate::source_filter::ExcludedSource)],
+    excluded: &[(PathBuf, source_adapter::SourceExclusion)],
     diagnostics: &mut Diagnostics,
 ) {
     if excluded.is_empty() {
@@ -687,6 +685,7 @@ fn analyze_corpus(
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
         parameter_types,
+        parameter_language,
         indirect_usage,
         definitions,
         feature_steps,
@@ -698,8 +697,11 @@ fn analyze_corpus(
         incomplete: mut corpus_incomplete,
     } = extracted;
     let mut effective_config = config.clone();
-    let (patterns, type_diagnostics) =
-        crate::ruby::parameters::merge(parameter_types, &config.parameter_types);
+    let (patterns, type_diagnostics) = match parameter_language {
+        Some(language) => source_adapter::adapter_for_language(language)
+            .resolve_parameter_types(parameter_types, &config.parameter_types),
+        None => (config.parameter_types.clone(), Vec::new()),
+    };
     effective_config.parameter_types = patterns;
     corpus_incomplete |= !type_diagnostics.is_empty();
     diagnostics.warnings.extend(type_diagnostics);

@@ -1,8 +1,12 @@
 //! Definition-source adapter contracts and extension-based routing.
 
+mod config;
 mod finalization;
+pub(crate) use config::FrontendConfig;
 pub(crate) mod semantics;
-pub use finalization::{SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope};
+pub use finalization::{
+    SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
+};
 
 use crate::model::{SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
@@ -48,6 +52,29 @@ pub(crate) fn grammar_for_language(language: SourceLanguage) -> tree_sitter::Lan
         SourceLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
         SourceLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         SourceLanguage::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+    }
+}
+
+/// Frontend-owned reason for excluding a discovered source before extraction.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceExclusion {
+    /// A compressed container prefix.
+    Compressed,
+    /// A binary-source prefix.
+    Binary,
+    /// Generated or minified source geometry.
+    Minified,
+}
+
+impl SourceExclusion {
+    /// Stable diagnostic label for this exclusion.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compressed => "compressed",
+            Self::Binary => "binary",
+            Self::Minified => "minified",
+        }
     }
 }
 
@@ -282,6 +309,12 @@ pub(crate) trait AdapterSessionState:
 /// Internal stateful registrations must explicitly select their backend state.
 pub(crate) trait StatefulSourceAdapter: SourceAdapter {
     type State: AdapterSessionState;
+    fn discover_dependencies(
+        _config: &crate::config::Config,
+        _excludes: &globset::GlobSet,
+        _files: &mut crate::discovery::DiscoveredFiles,
+    ) {
+    }
 }
 
 impl SourceExtractionSession {
@@ -314,9 +347,9 @@ impl SourceExtractionSession {
         for file in files {
             let adapter = adapter_for_language(file.language);
             if completed.insert(adapter.name()) {
-                result
-                    .uncertainties
-                    .extend(adapter.finalize_session(self)?.uncertainties);
+                let finalization = adapter.finalize_session(self)?;
+                result.uncertainties.extend(finalization.uncertainties);
+                result.advisories.extend(finalization.advisories);
             }
         }
         result.apply(definitions);
@@ -411,6 +444,41 @@ pub trait SourceAdapter: Sync {
     /// Extracts definitions from in-memory source using `file` for source locations.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction>;
 
+    /// Whether this frontend participates when no definition globs are configured.
+    fn discover_by_default(&self) -> bool {
+        true
+    }
+
+    /// Classifies a source using this frontend's bounded input-filter policy.
+    fn inspect_source(
+        &self,
+        _file: &SourceFile,
+        _registrations: &[String],
+    ) -> Option<SourceExclusion> {
+        None
+    }
+
+    /// Whether missing source metadata or reads leave indirect step usage unknown.
+    fn supports_indirect_usage(&self) -> bool {
+        false
+    }
+
+    /// Resolves source parameter declarations without granting unknown matcher authority.
+    fn resolve_parameter_types(
+        &self,
+        declarations: Vec<SourceParameterType>,
+        configured: &std::collections::BTreeMap<String, String>,
+    ) -> (std::collections::BTreeMap<String, String>, Vec<String>) {
+        if declarations.is_empty() {
+            (configured.clone(), Vec::new())
+        } else {
+            (
+                Default::default(),
+                vec!["frontend does not support source parameter declarations".into()],
+            )
+        }
+    }
+
     /// Prepares selected-source evidence before extraction, without executing source code.
     fn prepare_session(
         &self,
@@ -455,6 +523,9 @@ pub trait SourceAdapter: Sync {
     }
 }
 
+type DependencyDiscovery =
+    fn(&crate::config::Config, &globset::GlobSet, &mut crate::discovery::DiscoveredFiles);
+
 /// One suffix-to-adapter registration.
 #[non_exhaustive]
 #[derive(Clone, Copy)]
@@ -464,6 +535,7 @@ pub struct SourceAdapterRegistration {
     /// Adapter responsible for matching sources.
     pub adapter: &'static dyn SourceAdapter,
     initialize_session: Option<fn(&mut SourceExtractionSession)>,
+    discover_dependencies: Option<DependencyDiscovery>,
 }
 
 impl SourceAdapterRegistration {
@@ -473,6 +545,7 @@ impl SourceAdapterRegistration {
             suffix,
             adapter,
             initialize_session: None,
+            discover_dependencies: None,
         }
     }
 
@@ -484,6 +557,7 @@ impl SourceAdapterRegistration {
             suffix,
             adapter,
             initialize_session: Some(SourceExtractionSession::initialize::<A::State>),
+            discover_dependencies: Some(A::discover_dependencies),
         }
     }
 }
@@ -556,3 +630,26 @@ pub fn registered_suffixes() -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests;
+
+/// Runs each selected frontend's internal dependency policy once.
+pub(crate) fn discover_dependencies(
+    config: &crate::config::Config,
+    excludes: &globset::GlobSet,
+    files: &mut crate::discovery::DiscoveredFiles,
+) {
+    let mut completed = std::collections::BTreeSet::new();
+    let callbacks: Vec<_> = SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .filter(|entry| {
+            files
+                .definitions
+                .iter()
+                .any(|file| file.language == entry.adapter.language())
+        })
+        .filter(|entry| completed.insert(entry.adapter.name()))
+        .filter_map(|entry| entry.discover_dependencies)
+        .collect();
+    for callback in callbacks {
+        callback(config, excludes, files);
+    }
+}
