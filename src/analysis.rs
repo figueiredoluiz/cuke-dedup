@@ -115,15 +115,14 @@ fn analyze_internal(
 )> {
     config.validate_analysis_limits()?;
     let mut findings = Vec::new();
-    let ruby = definitions
-        .iter()
-        .any(|d| d.framework == crate::model::Framework::CucumberRuby);
-    if ruby
-        && definitions
+    if let Some(first) = definitions.first() {
+        let domain = first.analysis_profile().comparison_domain;
+        if definitions
             .iter()
-            .any(|d| d.framework != crate::model::Framework::CucumberRuby)
-    {
-        bail!("Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots");
+            .any(|d| d.analysis_profile().comparison_domain != domain)
+        {
+            bail!("Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots");
+        }
     }
     let suppressions = suppression::SuppressionIndex::new(config, &definitions);
     let pair_analysis =

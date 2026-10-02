@@ -368,15 +368,27 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
         ("red|green", Some("red")),
         ("(red|green)", Some("red")),
         ("(?:red|green)", Some("red")),
+        ("(?m:red|green)", Some("red")),
+        ("(?ms:red|green)", Some("red")),
         ("", None),
         ("red.*", None),
         ("(red", None),
     ] {
-        assert_eq!(
-            literal_alternative(pattern).as_deref(),
-            expected,
-            "{pattern}"
-        );
+        for framework in [
+            crate::model::Framework::CucumberJs,
+            crate::model::Framework::CucumberRuby,
+        ] {
+            definitions[0].framework = framework;
+            assert_eq!(
+                definitions[0]
+                    .analysis_profile()
+                    .dialect
+                    .parameter_sample(pattern)
+                    .as_deref(),
+                expected,
+                "{framework:?}/{pattern}"
+            );
+        }
     }
     assert_eq!(witness_literal(r"a\(b) c/d"), "a(b) c");
     assert_eq!(witness_literal("open(unclosed"), "open(unclosed");

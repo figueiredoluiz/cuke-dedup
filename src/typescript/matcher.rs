@@ -221,10 +221,7 @@ pub(super) fn normalize_matcher_with_flags(
 /// matchers differing only in those are the same matcher. `docs/rules.md` calls this the
 /// "effective" flag set and both the exact-duplicate class and normalization key on it.
 pub(crate) fn semantic_regex_flags(flags: &str) -> String {
-    ['i', 'm', 's', 'u', 'v']
-        .into_iter()
-        .filter(|flag| flags.contains(*flag))
-        .collect()
+    crate::source_adapter::semantics::legacy_identity_flags(flags)
 }
 
 pub(super) fn normalize_regular_expression(expression: &str) -> String {
