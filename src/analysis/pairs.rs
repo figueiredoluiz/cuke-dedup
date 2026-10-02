@@ -170,8 +170,8 @@ pub(super) fn analyze_definition_pairs(
         let right_index = candidate.right;
         let left = &definitions[left_index];
         let right = &definitions[right_index];
-        let positional = left.framework == crate::model::Framework::JestCucumber
-            || right.framework == crate::model::Framework::JestCucumber;
+        let positional =
+            !left.analysis_profile().global_matchers || !right.analysis_profile().global_matchers;
         let relationships = classes.relationships(left_index, right_index);
         let exact_matcher = relationships.exact_matcher;
         let normalized_matcher = relationships.normalized_matcher && !positional;
@@ -215,8 +215,7 @@ pub(super) fn analyze_definition_pairs(
             && !(positional && exact_matcher)
             && same_structure
             && meaningful_handlers;
-        let near_handler = (left.framework != crate::model::Framework::CucumberRuby
-            || same_handler)
+        let near_handler = (!left.analysis_profile().near_requires_same_handler || same_handler)
             && candidate.sources.can_feed_near_matcher()
             && !(positional && same_handler)
             && relationships.same_deferred_assertions
@@ -533,7 +532,10 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 // change what a matcher accepts. Keying on the raw string classified `/x/` against
                 // `/x/g` as merely normalization-equivalent, which contradicted the documented
                 // contract.
-                crate::typescript::semantic_regex_flags(&definition.matcher_flags),
+                definition
+                    .analysis_profile()
+                    .dialect
+                    .identity_flags(&definition.matcher_flags),
             ),
         ));
         classes.normalized_matcher.push(intern_class(
@@ -562,7 +564,7 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
     classes
 }
 
-/// Positional Jest steps never belong to one global matcher class. Keeping their partitions
+/// Positional steps never belong to one global matcher class. Keeping their partitions
 /// distinct also lets equal-text handlers reach all three handler candidate sources.
 type MatcherPartition<'a> = (MatcherKind, &'a str, Option<&'a str>, Option<usize>);
 
@@ -571,9 +573,11 @@ fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartit
         definition.matcher_kind,
         &definition.normalized_matcher,
         // Language-specific regex identity belongs in the key, never in comparison/report text.
-        (definition.framework == crate::model::Framework::CucumberRuby)
-            .then_some(definition.matcher_flags.as_str()),
-        (definition.framework == crate::model::Framework::JestCucumber).then_some(index),
+        definition
+            .analysis_profile()
+            .dialect
+            .normalized_flags(&definition.matcher_flags),
+        (!definition.analysis_profile().global_matchers).then_some(index),
     )
 }
 
@@ -677,7 +681,7 @@ pub(super) fn definition_pair_candidates(
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
-        if definition.framework != crate::model::Framework::JestCucumber {
+        if definition.analysis_profile().global_matchers {
             normalized_matchers
                 .entry(matcher_partition(definition, index))
                 .or_default()

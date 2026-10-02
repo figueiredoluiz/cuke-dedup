@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "files": {
-    "src/analysis.rs": {"crate::model::Framework::CucumberRuby":2},
+    "src/analysis.rs": {},
     "src/analysis/evidence.rs": {"crate::typescript":1},
-    "src/analysis/pairs.rs": {"crate::model::Framework::CucumberRuby":2,"crate::model::Framework::JestCucumber":4,"crate::typescript":1},
-    "src/analysis/similarity.rs": {"crate::model::Framework":1,"crate::model::Framework::CucumberRuby":3,"crate::model::Framework::JestCucumber":3,"crate::model::Framework::Unknown":1,"crate::model::Framework::VitestCucumber":3},
+    "src/analysis/pairs.rs": {},
+    "src/analysis/similarity.rs": {"crate::model::Framework":1,"crate::model::Framework::Unknown":1},
     "src/analysis/suppression.rs": {},
-    "src/analysis/usage.rs": {"crate::model::Framework::CucumberRuby":2,"crate::model::Framework::JestCucumber":2,"crate::ruby":1,"crate::typescript":1},
+    "src/analysis/usage.rs": {},
     "src/cli.rs": {"crate::model::Framework::CucumberRuby":1,"crate::ruby":2},
     "src/config.rs": {},
     "src/discovery.rs": {"crate::ruby":1},

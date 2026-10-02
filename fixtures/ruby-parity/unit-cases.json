@@ -160,7 +160,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "83d983c8ae44e0dd10b276b231ed370d93926a59ae66431d1c1c10ebff2510a2",
+      "sourceSha256": "1d13d34aa9119e684a064cc5b402c89d91ca943411461414a33703287a55cc40",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
@@ -186,7 +186,7 @@
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "c8ef286790f8eba5bbae996d72af40e67c07cd08c6128c7734527b44dd03f4c6",
+      "sourceSha256": "437896b7149bff26f7ac79e4540b450f7e4df2c515480d10fb28e3c226edbc42",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
@@ -291,7 +291,7 @@
           "requiredStatus": "partial",
           "fixtureGroup": "matcher-family",
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test’s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
+          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test\u2019s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
         },
         {
           "name": "exact_handlers_require_compatible_assertion_provenance_across_files",
@@ -922,11 +922,39 @@
           "fixtureGroup": null,
           "behaviorClass": "language-specific-api",
           "rationale": "Direct Rust test `quote_shaped_subscript_indexes_do_not_name_a_property` exercises TypeScript/JavaScript syntax, framework configuration, source filtering, or module/binding provenance. Ruby has no direct syntax/API equivalent; any shared outcome must be mapped to a separate Ruby-native control."
+        },
+        {
+          "name": "adapter_contracts_preserve_global_and_positional_outcomes",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Cross-adapter compatibility matrix constructs legacy public definitions and checks both Ruby and JS/TS final outcomes. This shared migration contract needs no separate Ruby source counterpart.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "adapter_contracts_preserve_handler_domains_and_capture_context",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Cross-adapter compatibility matrix constructs legacy public definitions and checks both Ruby and JS/TS final outcomes. This shared migration contract needs no separate Ruby source counterpart.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "adapter_contracts_preserve_regex_execution_and_identity",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Cross-adapter compatibility matrix constructs legacy public definitions and checks both Ruby and JS/TS final outcomes. This shared migration contract needs no separate Ruby source counterpart.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "adapter_contracts_preserve_near_handler_and_uncertain_regex_controls",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Cross-adapter compatibility matrix constructs legacy public definitions and checks both Ruby and JS/TS final outcomes. This shared migration contract needs no separate Ruby source counterpart.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "42ea7cba1bc6f3a9bc8287954421e0c88c2535b296226f2c33b72abe1cd1e3a6",
+      "sourceSha256": "95476467aba9f89d698515718db926142e05ca402e58ef90bc01f08b4c74eeb9",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1050,7 +1078,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "02a5c9bcc1c6255eb3462112d8b2cf2881fac9282cb7f16328663721c69a7681",
+      "sourceSha256": "3b791eca4b382b37ae439ab88b7e48b00b7493a964d242b51f3d160f1b0fa939",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -2429,7 +2457,7 @@
       ]
     },
     "src/typescript/matcher.rs": {
-      "sourceSha256": "772a46988e437c52e7742d9af1782ff7124028f20ee8dc077fb43ec0055af8a8",
+      "sourceSha256": "ee759e90430d3e58fda95f59d730c8665e19bdd0cd9e1ef74c174eafb159a20f",
       "tests": [
         {
           "name": "unicode_sets_flag_belongs_to_matcher_identity",

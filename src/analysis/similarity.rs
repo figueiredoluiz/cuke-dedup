@@ -1,4 +1,6 @@
-use crate::model::{BehaviorEventRef, StepDefinition};
+#[cfg(test)]
+use crate::model::BehaviorEventRef;
+use crate::model::StepDefinition;
 
 // Short labels need a slightly stricter composite gate because one changed token occupies a
 // larger fraction of the matcher. The reported score is the stronger of normalized edit
@@ -71,8 +73,10 @@ pub(super) fn is_parameterizable_matcher(
 /// two matchers as variants of one step.
 fn matchers_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
     left.matcher_kind == right.matcher_kind
-        && (left.framework != crate::model::Framework::CucumberRuby
-            || left.matcher_flags == right.matcher_flags)
+        && left
+            .analysis_profile()
+            .dialect
+            .similarity_flags_match(&left.matcher_flags, &right.matcher_flags)
         && !has_polarity_conflict(
             matcher_comparison_text(left),
             matcher_comparison_text(right),
@@ -176,29 +180,20 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
 }
 
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
-    if (left.framework == crate::model::Framework::CucumberRuby
-        || right.framework == crate::model::Framework::CucumberRuby)
-        && (method_semantics(left) == Some("ruby:lexical-file")
-            || method_semantics(right) == Some("ruby:lexical-file"))
+    use crate::source_adapter::semantics::CaptureContext;
+    if (left.capture_context() == CaptureContext::LexicalFile
+        || right.capture_context() == CaptureContext::LexicalFile)
         && left.location.path != right.location.path
     {
         return false;
     }
-    use crate::model::Framework::{JestCucumber, VitestCucumber};
-    if left.framework != right.framework
-        && (matches!(left.framework, JestCucumber | VitestCucumber)
-            || matches!(right.framework, JestCucumber | VitestCucumber))
-    {
+    if left.analysis_profile().handler_domain != right.analysis_profile().handler_domain {
         return false;
     }
-    match (method_semantics(left), method_semantics(right)) {
+    match (left.method_semantics(), right.method_semantics()) {
         (Some(left), Some(right)) => left == right,
         _ => true,
     }
-}
-
-fn method_semantics(definition: &StepDefinition) -> Option<&str> {
-    BehaviorEventRef::from_legacy(definition.handler.behavior_signature.first()?).method_semantics()
 }
 
 #[cfg(test)]

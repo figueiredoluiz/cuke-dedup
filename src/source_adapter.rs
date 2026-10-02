@@ -1,5 +1,7 @@
 //! Definition-source adapter contracts and extension-based routing.
 
+pub(crate) mod semantics;
+
 use crate::model::{SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
 use anyhow::{Context, Result};

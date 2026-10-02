@@ -656,42 +656,16 @@ fn witness_for(
             // A declared type contributes a sample only when its pattern is plainly enumerable.
             // An undeclared type is unknown outright, and a pattern with real regex syntax has no
             // sample that can be derived soundly, so both leave the matcher without a witness.
-            name => literal_alternative(parameter_types.get(name)?)?,
+            name => definition
+                .analysis_profile()
+                .dialect
+                .parameter_sample(parameter_types.get(name)?)?,
         };
         witness.push_str(&sample);
         offset = whole.end();
     }
     witness.push_str(&witness_literal(&definition.matcher[offset..]));
     Some(witness)
-}
-
-/// Returns one string a declared parameter-type pattern accepts, when that is unambiguous.
-///
-/// Only patterns built from literal alternatives — `red`, `red|green`, `(red|green)` — yield a
-/// sample. Anything using real regular-expression syntax could accept infinitely many strings
-/// with no canonical representative, and guessing one would produce false overlap reports.
-fn literal_alternative(pattern: &str) -> Option<String> {
-    let mut trimmed = pattern.trim();
-    // Scoped multiline wrappers preserve literal alternatives; the final witness is still
-    // checked against both compiled matchers before any overlap finding is emitted.
-    loop {
-        let inner = trimmed
-            .strip_prefix("(?:")
-            .or_else(|| trimmed.strip_prefix("(?m:"))
-            .or_else(|| trimmed.strip_prefix("(?ms:"))
-            .or_else(|| trimmed.strip_prefix('('));
-        let Some(inner) = inner else { break };
-        trimmed = inner.strip_suffix(')')?;
-    }
-    let first = trimmed.split('|').next()?;
-    if first.is_empty()
-        || first
-            .chars()
-            .any(|character| !character.is_alphanumeric() && !matches!(character, ' ' | '_' | '-'))
-    {
-        return None;
-    }
-    Some(first.to_owned())
 }
 
 /// Resolves Cucumber Expression literal syntax into one concrete rendering.
@@ -756,7 +730,7 @@ pub(super) fn apply_indirect_usage(
 ) {
     if !definitions
         .iter()
-        .any(|d| d.framework == crate::model::Framework::CucumberRuby)
+        .any(|d| d.analysis_profile().indirect_usage)
     {
         return;
     }
@@ -799,7 +773,7 @@ pub(super) fn analyze_unused(
         return;
     }
     for (index, definition) in definitions.iter().enumerate() {
-        if used.contains(&index) || definition.framework == crate::model::Framework::JestCucumber {
+        if used.contains(&index) || !definition.analysis_profile().global_matchers {
             continue;
         }
         findings.push(Finding {
@@ -833,8 +807,11 @@ fn compile_matcher(
     definition: &StepDefinition,
     parameter_types: &BTreeMap<String, String>,
 ) -> (CompiledMatcher, Option<String>) {
-    match (definition.framework, definition.matcher_kind) {
-        (crate::model::Framework::JestCucumber, _) | (_, MatcherKind::Literal) => (
+    match (
+        definition.analysis_profile().global_matchers,
+        definition.matcher_kind,
+    ) {
+        (false, _) | (_, MatcherKind::Literal) => (
             CompiledMatcher {
                 regex: None,
                 expression: None,
@@ -853,14 +830,10 @@ fn compile_matcher(
                     Some(regex_limit_message(definition)),
                 );
             }
-            let expression = if definition.framework == crate::model::Framework::CucumberRuby {
-                crate::ruby::regex_expression(&definition.matcher, &definition.matcher_flags)
-            } else {
-                crate::typescript::rust_regex_expression(
-                    &definition.matcher,
-                    &definition.matcher_flags,
-                )
-            };
+            let expression = definition
+                .analysis_profile()
+                .dialect
+                .expression(&definition.matcher, &definition.matcher_flags);
             let Some(expression) = expression else {
                 return (
                     CompiledMatcher {

@@ -10,6 +10,20 @@ use crate::model::{DuplicationThreshold, Rule};
 use crate::typescript;
 use std::path::{Path, PathBuf};
 
+fn contract_steps(text: &str) -> Vec<FeatureStep> {
+    vec![FeatureStep {
+        keyword: "Given".into(),
+        text: text.into(),
+        location: crate::model::SourceLocation::new("test.feature", 1, 1, 1, 20),
+    }]
+}
+
+fn contract_finding(defs: Vec<StepDefinition>, config: &Config, rule: Rule) -> bool {
+    let outcome = analyze_with_step_usage(defs, vec![], config, &Default::default()).unwrap();
+    assert!(outcome.incomplete.is_empty());
+    outcome.result.findings.iter().any(|f| f.rule == rule)
+}
+
 fn definitions(source: &str) -> Vec<StepDefinition> {
     typescript::extract(
         source,
@@ -25,6 +39,229 @@ fn config() -> (tempfile::TempDir, Config) {
     let directory = tempfile::tempdir().unwrap();
     let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
     (directory, config)
+}
+
+#[test]
+fn adapter_contracts_preserve_global_and_positional_outcomes() {
+    use crate::model::Framework::*;
+    let (_directory, config) = config();
+    for framework in [
+        CucumberJs,
+        PlaywrightBdd,
+        CypressCucumber,
+        JestCucumber,
+        VitestCucumber,
+        Unknown,
+        CucumberRuby,
+    ] {
+        for matching in [true, false] {
+            let mut defs = definitions("Given(/^a user exists$/, () => { load(); save(); }); Given(/^a user exists$/, () => { create(); save(); });");
+            for def in &mut defs {
+                def.framework = framework;
+            }
+            let steps = contract_steps(if matching {
+                "a user exists"
+            } else {
+                "a cart exists"
+            });
+            for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                let outcome =
+                    analyze_with_step_usage(pair, steps.clone(), &config, &Default::default())
+                        .unwrap();
+                assert!(outcome.incomplete.is_empty(), "{framework:?}");
+                let count = |rule| {
+                    outcome
+                        .result
+                        .findings
+                        .iter()
+                        .filter(|f| f.rule == rule)
+                        .count()
+                };
+                assert_eq!(
+                    count(Rule::DuplicateMatcher),
+                    usize::from(framework != JestCucumber),
+                    "{framework:?}"
+                );
+                assert_eq!(
+                    count(Rule::AmbiguousStep),
+                    usize::from(framework != JestCucumber && matching),
+                    "{framework:?}"
+                );
+                assert_eq!(
+                    count(Rule::UnusedDefinition),
+                    if framework != JestCucumber && !matching {
+                        2
+                    } else {
+                        0
+                    },
+                    "{framework:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn adapter_contracts_preserve_handler_domains_and_capture_context() {
+    use crate::model::Framework::*;
+    let (_directory, config) = config();
+    for (left, right, marker, different_file, expected) in [
+        (CucumberJs, PlaywrightBdd, "", true, true),
+        (Unknown, CypressCucumber, "", true, true),
+        (JestCucumber, JestCucumber, "", true, true),
+        (VitestCucumber, VitestCucumber, "", true, true),
+        (JestCucumber, CucumberJs, "", false, false),
+        (VitestCucumber, CucumberJs, "", false, false),
+        (JestCucumber, VitestCucumber, "", false, false),
+        (CucumberRuby, CucumberRuby, "", true, true),
+        (CucumberRuby, CucumberRuby, "ruby:lexical-file", false, true),
+        (CucumberRuby, CucumberRuby, "ruby:lexical-file", true, false),
+    ] {
+        let mut defs = definitions("Given('a user exists', () => { load(); save(); }); Given('the basket is empty', () => { load(); save(); });");
+        defs[0].framework = left;
+        defs[1].framework = right;
+        if different_file {
+            defs[1].location.path = "other.ts".into();
+        }
+        if !marker.is_empty() {
+            for def in &mut defs {
+                def.handler
+                    .behavior_signature
+                    .insert(0, format!("method:{marker}"));
+            }
+        }
+        let mut one_capture = defs.clone();
+        if !marker.is_empty() {
+            one_capture[1].handler.behavior_signature.remove(0);
+        }
+        for (defs, expected) in [
+            (defs, expected),
+            (one_capture, expected && marker.is_empty()),
+        ] {
+            for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                assert_eq!(
+                    contract_finding(pair, &config, Rule::DuplicateHandler),
+                    expected,
+                    "{left:?}/{right:?}/{marker}/{different_file}"
+                );
+            }
+        }
+    }
+    let mut mixed = definitions("Given('a user exists', () => { load(); save(); }); Given('a cart exists', () => { load(); save(); });");
+    mixed[0].framework = CucumberRuby;
+    assert!(analyze(mixed, vec![], &config)
+        .unwrap_err()
+        .to_string()
+        .contains("separate analysis runs"));
+}
+
+#[test]
+fn adapter_contracts_preserve_regex_execution_and_identity() {
+    use crate::model::Framework::*;
+    let (_directory, config) = config();
+    for (framework, pattern, flags, text, matched) in [
+        (CucumberJs, "^alice$", "", "before\nalice\nafter", false),
+        (CucumberJs, "^alice$", "m", "before\nalice\nafter", true),
+        (CucumberRuby, "^alice$", "", "before\nalice\nafter", true),
+        (CucumberJs, "^a.b$", "m", "a\nb", false),
+        (CucumberJs, "^a.b$", "s", "a\nb", true),
+        (CucumberRuby, "^a.b$", "m", "a\nb", true),
+        (CucumberRuby, "^alice$", "n", "alice", true),
+    ] {
+        let mut defs = definitions("Given(/^placeholder$/, () => { load(); save(); });");
+        defs[0].framework = framework;
+        defs[0].matcher = pattern.into();
+        defs[0].matcher_flags = flags.into();
+        let steps = contract_steps(text);
+        let outcome = analyze_with_step_usage(defs, steps, &config, &Default::default()).unwrap();
+        assert!(outcome.incomplete.is_empty());
+        assert_eq!(
+            outcome
+                .result
+                .findings
+                .iter()
+                .any(|f| f.rule == Rule::UnusedDefinition),
+            !matched,
+            "{framework:?}/{flags}/{text}"
+        );
+    }
+    for (framework, flags, normalized) in [
+        (CucumberJs, "gyd", true),
+        (CucumberJs, "i", false),
+        (CucumberRuby, "n", false),
+        (CucumberRuby, "u", false),
+    ] {
+        let mut defs = definitions("Given(/^alice$/, () => { load(); save(); }); Given(/^alice$/, () => { load(); save(); });");
+        for def in &mut defs {
+            def.framework = framework;
+        }
+        defs[1].matcher_flags = flags.into();
+        if framework != CucumberRuby && flags == "i" {
+            defs[1].normalized_matcher = "[regex-flags:i] ^alice$".into();
+        }
+        for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+            let outcome =
+                analyze_with_step_usage(pair, vec![], &config, &Default::default()).unwrap();
+            if normalized {
+                assert!(outcome
+                    .result
+                    .findings
+                    .iter()
+                    .any(|f| f.rule == Rule::DuplicateMatcher));
+            }
+            assert_eq!(
+                outcome
+                    .result
+                    .findings
+                    .iter()
+                    .any(|f| matches!(f.rule, Rule::DuplicateMatcher | Rule::NormalizedMatcher)),
+                normalized,
+                "{framework:?}/{flags}"
+            );
+        }
+    }
+}
+
+#[test]
+fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
+    use crate::model::Framework::*;
+    let (_directory, config) = config_with_near_floor(0.5);
+    for framework in [CucumberJs, CucumberRuby] {
+        for same in [true, false] {
+            for flags in ["", "n"] {
+                let extra = if same { "" } else { "save();" };
+                let mut defs = definitions(&format!("Given('I am on login page', () => {{ load(); }}); Given('I am on the login page', () => {{ load(); {extra} }});"));
+                for def in &mut defs {
+                    def.framework = framework;
+                }
+                defs[1].matcher_flags = flags.into();
+                assert!(definition_pair_candidates(&defs, &config).contains_pair(0, 1));
+                for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                    assert_eq!(
+                        contract_finding(pair, &config, Rule::NearDuplicateStep),
+                        framework == CucumberJs || (same && flags.is_empty()),
+                        "{framework:?}/{same}"
+                    );
+                }
+            }
+        }
+        for flags in [if framework == CucumberJs { "v" } else { "x" }] {
+            let mut defs = definitions(
+                "Given(/^alpha$/, () => { load(); }); Given(/^beta$/, () => { save(); });",
+            );
+            for def in &mut defs {
+                def.framework = framework;
+                def.matcher_flags = flags.into();
+            }
+            let steps = contract_steps("alpha");
+            let outcome =
+                analyze_with_step_usage(defs, steps, &config, &Default::default()).unwrap();
+            assert!(!outcome.result.findings.iter().any(|f| matches!(
+                f.rule,
+                Rule::AmbiguousStep | Rule::OverlappingMatcher | Rule::UnusedDefinition
+            )));
+        }
+    }
 }
 
 // A config whose `near-duplicate-step` handler-similarity floor is lowered, for tests that exercise

@@ -391,15 +391,17 @@ fn extract_definitions(
     diagnostics: &mut Diagnostics,
     corpus: &mut ExtractedCorpus,
 ) {
-    let ruby_sources = files
-        .definitions
-        .iter()
-        .filter(|file| file.language == source_adapter::SourceLanguage::Ruby)
-        .count();
-    if ruby_sources > 0 && ruby_sources < files.definitions.len() {
-        corpus.incomplete = true;
-        diagnostics.errors.push("Ruby and JS/TS sources require separate analysis runs with explicit definition and feature roots".to_owned());
-        return;
+    if let Some(first) = files.definitions.first() {
+        let domain = first.language.comparison_domain();
+        if files
+            .definitions
+            .iter()
+            .any(|file| file.language.comparison_domain() != domain)
+        {
+            corpus.incomplete = true;
+            diagnostics.errors.push("Ruby and JS/TS sources require separate analysis runs with explicit definition and feature roots".to_owned());
+            return;
+        }
     }
     let mut extraction_session = source_adapter::SourceExtractionSession::with_options(
         &config.root,

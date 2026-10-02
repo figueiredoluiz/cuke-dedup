@@ -1,5 +1,7 @@
 //! Conservative, opt-in extraction of direct Cucumber-Ruby registrations.
 
+pub(crate) mod semantics;
+
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::{
     AdapterSessionState, Extraction, ExtractionDiagnostic, ExtractionDiagnosticKind as Kind,
