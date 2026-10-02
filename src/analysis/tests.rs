@@ -1449,7 +1449,15 @@ fn nested_argument_callbacks_preserve_behavior_and_scope_boundaries() {
 #[test]
 fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
     let (_directory, config) = config();
-    for callback in ["async () =>", "async function ()", "function* ()"] {
+    let immediate =
+        definitions("When('immediate calls', () => { loadCart(); applyDiscount(); save(); });");
+    for callback in [
+        "() =>",
+        "function ()",
+        "async () =>",
+        "async function ()",
+        "function* ()",
+    ] {
         for (left_wrapper, right_wrapper, right_calls, expected) in [
             (
                 "withTransaction",
@@ -1467,9 +1475,27 @@ fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
             let defs = definitions(&format!(
                 "When('the admin applies the discount rule', () => {{ {left_wrapper}({callback} {{ loadCart(); applyDiscount(); save(); }}); }});\nWhen('the admin applies the shipping rule', () => {{ {right_wrapper}({callback} {{ {right_calls} }}); }});"
             ));
-            assert_eq!(defs[0].handler.behavior_signature.len(), 4);
+            assert_eq!(
+                defs[0].handler.behavior_signature,
+                [
+                    format!("call:{left_wrapper}"),
+                    "call:loadCart".to_owned(),
+                    "call:applyDiscount".to_owned(),
+                    "call:save".to_owned()
+                ],
+                "{callback}"
+            );
+            assert_eq!(
+                &defs[0].handler.behavior_signature[1..],
+                immediate[0].handler.behavior_signature
+            );
             assert_eq!(defs[1].handler.behavior_signature.len(), 4);
             for pair in [defs.clone(), defs.into_iter().rev().collect()] {
+                assert_eq!(
+                    definition_pair_candidates(&pair, &config).is_empty(),
+                    !expected,
+                    "{callback}"
+                );
                 let result = analyze(pair, Vec::new(), &config).unwrap();
                 assert_eq!(
                     result
@@ -1514,6 +1540,12 @@ fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
         .behavior_signature
         .iter()
         .any(|event| event.starts_with("deferred-assert:"))));
+    let direct = definitions("Then('direct assertion', ({state}) => expect(state).toBe('ready'));");
+    let deferred = conflicting[0].handler.behavior_signature.last().unwrap();
+    assert_eq!(
+        deferred.strip_prefix("deferred-"),
+        Some(direct[0].handler.behavior_signature[0].as_str())
+    );
     let unresolved = definitions(
         "Then('callback unresolved', ({state}) => register(() => expect(state).toBe(external)));",
     );
