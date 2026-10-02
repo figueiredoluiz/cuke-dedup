@@ -777,4 +777,31 @@ mod tests {
                 .is_empty());
         }
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn provider_path_disappearing_during_read_withdraws_optional_proofs() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        let file = SourceFile {
+            path: root.path().join("steps.rb"),
+            language: SourceLanguage::Ruby,
+        };
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&file.path)
+            .status()
+            .unwrap()
+            .success());
+        let path = file.path.clone();
+        // Opening pairs the writer and reader; unlink before sending bytes makes the later
+        // canonicalization failure deterministic, without sleeps or filesystem racing.
+        let writer = std::thread::spawn(move || {
+            let mut pipe = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            pipe.write_all(b"Given('one') { work() }").unwrap();
+        });
+        let actual = load_units(&[file], (1, 1024)).unwrap();
+        writer.join().unwrap();
+        assert!(actual.is_none());
+    }
 }

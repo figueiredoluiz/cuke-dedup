@@ -3347,3 +3347,18 @@ fn ruby_reflective_provider_access_removes_assertion_authority() {
         }
     }
 }
+
+#[test]
+fn ruby_unsupported_assertion_chains_preserve_ordinary_handler_findings() {
+    for chain in ["not(1).", "other.", &"not.".repeat(17)] {
+        let body = format!("Assertions.expect(page).{chain}to_be(UNKNOWN)");
+        let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
+        let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+        let rows = project_records(root.path());
+        assert_discovery(&rows, 2, false, &source);
+        assert!(
+            rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+            "{chain}"
+        );
+    }
+}

@@ -477,7 +477,40 @@ fn extract_definitions(
             }
         }
     }
-    match extraction_session.finalize(&files.definitions, &mut corpus.definitions) {
+    let finalization = extraction_session.finalize(&files.definitions, &mut corpus.definitions);
+    collect_finalization(finalization, corpus, diagnostics);
+    corpus.definitions.sort_by(|left, right| {
+        left.location
+            .path
+            .cmp(&right.location.path)
+            .then(left.location.line.cmp(&right.location.line))
+            .then(left.location.column.cmp(&right.location.column))
+    });
+    report_excluded_sources(config, &corpus.excluded_sources, diagnostics);
+    if corpus.definitions.is_empty() {
+        let message = if files.definitions.is_empty() {
+            "no step definitions were extracted because no definition source files were discovered"
+                .to_owned()
+        } else {
+            format!(
+                "definition extraction produced 0 definitions from {} discovered definition source file(s)",
+                files.definitions.len()
+            )
+        };
+        if config.require_definitions {
+            diagnostics.errors.push(message);
+        } else if !files.definitions.is_empty() {
+            diagnostics.warnings.push(message);
+        }
+    }
+}
+
+fn collect_finalization(
+    finalization: Result<source_adapter::SourceFinalization>,
+    corpus: &mut ExtractedCorpus,
+    diagnostics: &mut Diagnostics,
+) {
+    match finalization {
         Ok(finalization) => {
             if !finalization.uncertainties.is_empty() {
                 corpus.incomplete = true;
@@ -502,30 +535,6 @@ fn extract_definitions(
             diagnostics
                 .errors
                 .push(format!("failed to finalize source evidence: {error:#}"));
-        }
-    }
-    corpus.definitions.sort_by(|left, right| {
-        left.location
-            .path
-            .cmp(&right.location.path)
-            .then(left.location.line.cmp(&right.location.line))
-            .then(left.location.column.cmp(&right.location.column))
-    });
-    report_excluded_sources(config, &corpus.excluded_sources, diagnostics);
-    if corpus.definitions.is_empty() {
-        let message = if files.definitions.is_empty() {
-            "no step definitions were extracted because no definition source files were discovered"
-                .to_owned()
-        } else {
-            format!(
-                "definition extraction produced 0 definitions from {} discovered definition source file(s)",
-                files.definitions.len()
-            )
-        };
-        if config.require_definitions {
-            diagnostics.errors.push(message);
-        } else if !files.definitions.is_empty() {
-            diagnostics.warnings.push(message);
         }
     }
 }
@@ -989,6 +998,35 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finalization_failure_discards_provisional_definitions_and_reports_incompleteness() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+        std::fs::write(root.path().join("steps.ts"), "import { Given, Then } from '@cucumber/cucumber'; Given('same', () => work()); Then('same', () => work());").unwrap();
+        let files = discovery::discover(&config).unwrap();
+        let mut diagnostics = discovery_diagnostics(&config, &files, &None);
+        let mut corpus = extract_corpus(&config, &files, &None, &mut diagnostics);
+        assert_eq!(corpus.definitions.len(), 2);
+        let before = corpus.definitions.clone();
+        collect_finalization(Ok(Default::default()), &mut corpus, &mut diagnostics);
+        assert_eq!(corpus.definitions, before);
+        collect_finalization(
+            Err(anyhow::anyhow!("adapter unavailable")),
+            &mut corpus,
+            &mut diagnostics,
+        );
+        assert!(corpus.incomplete);
+        assert!(corpus.definitions.is_empty());
+        assert_eq!(corpus.definition_files_with_definitions, 0);
+        assert!(diagnostics
+            .errors
+            .iter()
+            .any(|e| e == "failed to finalize source evidence: adapter unavailable"));
+        let analyzed = analyze_corpus(&config, corpus, &mut diagnostics).unwrap();
+        assert!(analyzed.run_incomplete);
+        assert!(analyzed.result.findings.is_empty());
+    }
 
     #[test]
     fn terminal_color_requires_tty_and_allows_no_color_opt_out() {

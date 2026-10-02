@@ -504,4 +504,84 @@ mod tests {
                 .any(|finding| finding.rule == Rule::DuplicateHandler));
         }
     }
+
+    #[test]
+    fn proof_budget_checkpoints_and_invalid_edges_never_grant_trust() {
+        let root = tempfile::tempdir().unwrap();
+        let files: Vec<_> = ["steps.rb", "assertions.rb"]
+            .into_iter()
+            .map(|name| SourceFile {
+                path: root.path().join(name),
+                language: SourceLanguage::Ruby,
+            })
+            .collect();
+        let source = "require_relative 'assertions'\ndef helper; require_relative 'assertions'; end\nself.require_relative 'assertions'\nrequire_relative 'other'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }";
+        std::fs::write(&files[0].path, source).unwrap();
+        let provider = "module Assertions; def self.expect(actual); actual; end; end";
+        std::fs::write(&files[1].path, provider).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_ruby::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        let mut loads: Vec<_> = descendants(tree.root_node())
+            .into_iter()
+            .filter(|n| {
+                n.child_by_field_name("method")
+                    .is_some_and(|m| text(m, source) == "require_relative")
+            })
+            .collect();
+        loads.sort_by_key(|node| node.start_byte());
+        let edge = |node| {
+            SourceDependency::new(
+                location(&files[0], node, source),
+                files[1].path.canonicalize().unwrap(),
+            )
+        };
+        let configured = ["./assertions".into()];
+        let collect = |edges: &[SourceDependency], work| {
+            AssertionProviders::collect_with_budget(&files, edges, &configured, (2, 4096, work))
+                .unwrap()
+        };
+        let valid = edge(loads[0]);
+        for work in 0..=2000 {
+            let proofs = collect(std::slice::from_ref(&valid), work);
+            if proofs.incomplete() {
+                assert!(proofs.get(&files[0].path, source).is_none());
+            } else {
+                assert_eq!(
+                    proofs.get(&files[0].path, source).unwrap().factories.len(),
+                    1
+                );
+            }
+        }
+        assert!(!collect(std::slice::from_ref(&valid), 2000).incomplete());
+        let mut missing_location = valid.clone();
+        missing_location.location.line = 999;
+        let mut missing_target = valid.clone();
+        missing_target.target = root.path().join("unselected.rb");
+        for invalid in [
+            missing_location,
+            missing_target,
+            edge(loads[1]),
+            edge(loads[2]),
+            edge(loads[3]),
+        ] {
+            let proofs = collect(&[invalid], 2000);
+            assert!(!proofs.incomplete());
+            assert!(proofs
+                .get(&files[0].path, source)
+                .unwrap()
+                .factories
+                .is_empty());
+        }
+        for provider in ["module Assertions; end", "module Outer::Assertions; end"] {
+            std::fs::write(&files[1].path, provider).unwrap();
+            assert!(collect(std::slice::from_ref(&valid), 2000)
+                .get(&files[0].path, source)
+                .unwrap()
+                .factories
+                .is_empty());
+        }
+    }
 }

@@ -1078,7 +1078,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "c41a2fab7f037a8656b388878ba3deceab157a91d459fd6dfa1da37ce0caec3f",
+      "sourceSha256": "d87a4abef9927301f4262a1bc20148a25d200cc053c6e844958caecb5888008a",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1121,6 +1121,12 @@
           "fixtureGroup": null,
           "behaviorClass": "shared-engine-invariant",
           "rationale": "Direct CLI unit test `supports_implicit_and_explicit_check_forms` asserts implicit and explicit check command forms. The option/diagnostic behavior is shared after source selection; no Ruby fixture currently drives this exact command contract, so it remains unmapped."
+        },
+        {
+          "name": "finalization_failure_discards_provisional_definitions_and_reports_incompleteness",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "Injected frontend finalization failure tests the shared CLI fallback. Source syntax cannot force this session-integrity error; the same routing applies to every language."
         }
       ]
     },
