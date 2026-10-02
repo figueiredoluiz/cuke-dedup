@@ -2,14 +2,17 @@ use super::assertions::AssertionBindings;
 use super::ast::push_named_children_reverse;
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee};
-use crate::model::{stable_fingerprint, HandlerFingerprint};
+use crate::model::{stable_fingerprint, BehaviorEvent, ControlFlowOperation, HandlerFingerprint};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
-const UNRESOLVED_ASSERTION: &str = "assert:unresolved";
-const DEFERRED_UNRESOLVED_ASSERTION: &str = "deferred-assert:unresolved";
+
+struct FingerprintFlags {
+    comparable: bool,
+    trivial: bool,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct HandlerBinding<'tree> {
@@ -243,7 +246,7 @@ pub(super) fn fingerprint_method_handler(
     // Preserve invocation semantics for compatibility checks. Similarity removes this metadata
     // before measuring executed behavior so two one-assertion methods do not gain artificial
     // 50% overlap merely because both are methods.
-    let mut signature = vec![format!("method:{semantic_prefix}")];
+    let mut signature = vec![BehaviorEvent::Method(semantic_prefix.clone())];
     signature.extend(behavior_signature(
         parameters,
         source,
@@ -259,20 +262,22 @@ pub(super) fn fingerprint_method_handler(
         &local_constants,
     ));
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
-    let comparable = !signature.iter().any(|event| is_unresolved_assertion(event));
+    let comparable = !signature.iter().any(BehaviorEvent::is_unresolved_assertion);
 
-    Some(HandlerFingerprint {
-        exact: stable_fingerprint(&exact),
-        normalized: stable_fingerprint(&normalized),
-        alpha_normalized: stable_fingerprint(&alpha),
-        structural: stable_fingerprint(&structural),
-        behavior_signature: signature,
-        source_snippet: bounded_source_snippet(&source_snippet),
-        comparable,
-        // A default initializer executes before the body. Treating an empty method with one as a
-        // stub would hide real behavior and could recreate pending-handler finding storms.
-        trivial: !has_parameter_initializer(parameters) && is_trivial_handler(body, source),
-    })
+    Some(fingerprint_from_events(
+        exact,
+        normalized,
+        alpha,
+        structural,
+        signature,
+        source_snippet,
+        FingerprintFlags {
+            comparable,
+            // A default initializer executes before the body. Treating an empty method with one as a
+            // stub would hide real behavior and could recreate pending-handler finding storms.
+            trivial: !has_parameter_initializer(parameters) && is_trivial_handler(body, source),
+        },
+    ))
 }
 
 fn method_representation(
@@ -498,17 +503,62 @@ fn fingerprint_node(
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
-    let comparable = comparable && !signature.iter().any(|event| is_unresolved_assertion(event));
+    let comparable = comparable && !signature.iter().any(BehaviorEvent::is_unresolved_assertion);
+    fingerprint_from_events(
+        exact,
+        normalized,
+        alpha,
+        structural,
+        signature,
+        source_snippet,
+        FingerprintFlags {
+            comparable,
+            trivial: comparable && is_trivial_handler(handler, source),
+        },
+    )
+}
+
+fn fingerprint_from_events(
+    exact: String,
+    normalized: String,
+    alpha: String,
+    structural: String,
+    signature: Vec<BehaviorEvent>,
+    source_snippet: String,
+    flags: FingerprintFlags,
+) -> HandlerFingerprint {
     HandlerFingerprint {
         exact: stable_fingerprint(&exact),
         normalized: stable_fingerprint(&normalized),
         alpha_normalized: stable_fingerprint(&alpha),
         structural: stable_fingerprint(&structural),
-        behavior_signature: signature,
+        behavior_signature: encode_behavior_signature(signature),
         source_snippet: bounded_source_snippet(&source_snippet),
-        comparable,
-        trivial: comparable && is_trivial_handler(handler, source),
+        comparable: flags.comparable,
+        trivial: flags.trivial,
     }
+}
+
+fn encode_behavior_signature(signature: Vec<BehaviorEvent>) -> Vec<String> {
+    signature
+        .into_iter()
+        .map(BehaviorEvent::into_legacy)
+        .collect()
+}
+
+pub(super) fn control_flow_behavior_event(kind: &str) -> BehaviorEvent {
+    let operation = match kind {
+        "if_statement" => ControlFlowOperation::If,
+        "switch_statement" => ControlFlowOperation::Switch,
+        "for_statement" => ControlFlowOperation::For,
+        "for_in_statement" => ControlFlowOperation::ForIn,
+        "while_statement" => ControlFlowOperation::While,
+        "do_statement" => ControlFlowOperation::Do,
+        "return_statement" => ControlFlowOperation::Return,
+        "throw_statement" => ControlFlowOperation::Throw,
+        _ => return BehaviorEvent::Legacy(kind.to_owned()),
+    };
+    BehaviorEvent::ControlFlow(operation)
 }
 
 fn append_bound_context(target: &mut String, arguments: &str) {
@@ -1198,10 +1248,6 @@ fn is_function_like(node: Node<'_>) -> bool {
     )
 }
 
-fn is_unresolved_assertion(event: &str) -> bool {
-    matches!(event, UNRESOLVED_ASSERTION | DEFERRED_UNRESOLVED_ASSERTION)
-}
-
 fn has_function_parameters(node: Node<'_>) -> bool {
     node.child_by_field_name("parameters")
         .is_some_and(|parameters| parameters.named_child_count() > 0)
@@ -1510,7 +1556,7 @@ fn behavior_signature(
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
     local_constants: &LocalConstants,
-) -> Vec<String> {
+) -> Vec<BehaviorEvent> {
     let mut signature = Vec::new();
     collect_behavior(
         handler,
@@ -1529,7 +1575,7 @@ fn collect_behavior<'tree>(
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
     local_constants: &LocalConstants,
-    output: &mut Vec<String>,
+    output: &mut Vec<BehaviorEvent>,
 ) {
     let root_id = node.id();
     let local_functions = local_function_declarations(node, source);
@@ -1576,7 +1622,7 @@ fn collect_behavior<'tree>(
         if parameterized_callback {
             // Callback arguments are not evaluated, so any runtime parameter can change the
             // callback's behavior even when its body contains no recognized assertion.
-            output.push(DEFERRED_UNRESOLVED_ASSERTION.to_owned());
+            output.push(BehaviorEvent::unresolved_assertion(true));
         }
         let unresolved_callback_parameters =
             unresolved_callback_parameters || parameterized_callback;
@@ -1588,11 +1634,7 @@ fn collect_behavior<'tree>(
                     if unresolved_callback_parameters {
                         // The callback-level marker already makes this handler non-comparable.
                     } else if deferred {
-                        output.push(if event == UNRESOLVED_ASSERTION {
-                            DEFERRED_UNRESOLVED_ASSERTION.to_owned()
-                        } else {
-                            format!("deferred-{event}")
-                        });
+                        output.push(event.deferred());
                     } else {
                         output.push(event);
                     }
@@ -1609,11 +1651,7 @@ fn collect_behavior<'tree>(
                         // Arguments run now; the body stays suspended. Parameter initialization
                         // is unresolved, as for other parameterized inline functions.
                         if has_function_parameters(invoked) {
-                            output.push(if deferred {
-                                DEFERRED_UNRESOLVED_ASSERTION.to_owned()
-                            } else {
-                                UNRESOLVED_ASSERTION.to_owned()
-                            });
+                            output.push(BehaviorEvent::unresolved_assertion(deferred));
                         }
                         if let Some(evaluated) = node.child_by_field_name("arguments") {
                             push_children(
@@ -1629,11 +1667,7 @@ fn collect_behavior<'tree>(
                     if matches!(invoked.kind(), "arrow_function" | "function_expression") {
                         // Parameter substitution is not evaluated; do not invent equal values.
                         if has_function_parameters(invoked) {
-                            output.push(if deferred {
-                                DEFERRED_UNRESOLVED_ASSERTION.to_owned()
-                            } else {
-                                UNRESOLVED_ASSERTION.to_owned()
-                            });
+                            output.push(BehaviorEvent::unresolved_assertion(deferred));
                             if let Some(arguments) = node.child_by_field_name("arguments") {
                                 push_children(
                                     arguments,
@@ -1687,11 +1721,7 @@ fn collect_behavior<'tree>(
                     if let Some(target) = expansion {
                         if has_function_parameters(target) {
                             // Arguments are not substituted, so the body's values are unproven.
-                            output.push(if deferred {
-                                DEFERRED_UNRESOLVED_ASSERTION.to_owned()
-                            } else {
-                                UNRESOLVED_ASSERTION.to_owned()
-                            });
+                            output.push(BehaviorEvent::unresolved_assertion(deferred));
                         } else {
                             push_children(
                                 target,
@@ -1717,7 +1747,7 @@ fn collect_behavior<'tree>(
             }
             "if_statement" | "switch_statement" | "for_statement" | "for_in_statement"
             | "while_statement" | "do_statement" | "return_statement" | "throw_statement" => {
-                output.push(node.kind().to_owned())
+                output.push(control_flow_behavior_event(node.kind()));
             }
             _ => {}
         }
@@ -1744,7 +1774,7 @@ fn assertion_behavior_event(
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
     local_constants: &LocalConstants,
-) -> Option<String> {
+) -> Option<BehaviorEvent> {
     let (receiver, method) = assertion_property(call.child_by_field_name("function")?, source)?;
 
     let mut modifiers = Vec::new();
@@ -1783,7 +1813,7 @@ fn assertion_behavior_event(
                 .binding(node_text(value, source), value)
                 .is_some_and(|binding| binding.safe)
         {
-            return Some(UNRESOLVED_ASSERTION.to_owned());
+            return Some(BehaviorEvent::unresolved_assertion(false));
         }
         push_named_children_reverse(value, &mut pending);
     }
@@ -1813,12 +1843,15 @@ fn assertion_behavior_event(
     } else {
         format!("expect.{}", modifiers.join("."))
     };
-    Some(format!(
-        "assert:{qualifier}#{}:{}:{}",
-        encode_event_component(method),
-        stable_fingerprint(&subject),
-        stable_fingerprint(&expected)
-    ))
+    Some(BehaviorEvent::Assertion {
+        deferred: false,
+        payload: format!(
+            "{qualifier}#{}:{}:{}",
+            encode_event_component(method),
+            stable_fingerprint(&subject),
+            stable_fingerprint(&expected)
+        ),
+    })
 }
 
 fn serialize_assertion_value(
@@ -1945,26 +1978,28 @@ fn call_behavior_event(
     function: Node<'_>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
-) -> String {
+) -> BehaviorEvent {
     if function.kind() == "identifier" {
         let name = node_text(function, source);
-        return format!("call:{}", declared.get(name).map_or(name, String::as_str));
+        return BehaviorEvent::Call(declared.get(name).map_or(name, String::as_str).to_owned());
     }
     // Both spellings of one property name the same method, so `page['locator']()` records the
     // event `page.locator()` records. `assertion_property` resolves only a static string literal,
     // so a runtime key still falls through to the structural form below.
     if let Some((object, property)) = assertion_property(function, source) {
         if let Some(receiver) = static_call_receiver(object, source, declared) {
-            return format!(
-                "call:{receiver}#{}",
+            return BehaviorEvent::Call(format!(
+                "{receiver}#{}",
                 encode_event_component(property.clone())
-            );
+            ));
         }
     }
-    format!(
-        "call:{}",
-        serialize_ast(function, source, declared, AstMode::Structural)
-    )
+    BehaviorEvent::Call(serialize_ast(
+        function,
+        source,
+        declared,
+        AstMode::Structural,
+    ))
 }
 
 fn static_call_receiver(

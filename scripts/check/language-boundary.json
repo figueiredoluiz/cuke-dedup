@@ -15,6 +15,7 @@
     "src/gherkin/table_escapes.rs": {},
     "src/matcher.rs": {},
     "src/model.rs": {"crate::model::Framework":2},
+    "src/model/behavior.rs": {},
     "src/model/sha256.rs": {},
     "src/modes.rs": {},
     "src/reporters.rs": {},

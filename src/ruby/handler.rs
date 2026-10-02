@@ -1,6 +1,6 @@
 //! Exact Ruby handler trees with explicit lexical capture identity.
 use super::{descendants, text};
-use crate::model::HandlerFingerprint;
+use crate::model::{BehaviorEvent, HandlerFingerprint};
 use std::borrow::Cow;
 use tree_sitter::Node;
 
@@ -77,7 +77,7 @@ pub(super) fn fingerprint(block: Node<'_>, root: Node<'_>, source: &str) -> Hand
     let behavior_signature = if captures.is_empty() {
         vec![]
     } else {
-        vec!["method:ruby:lexical-file".to_owned()]
+        vec![BehaviorEvent::Method("ruby:lexical-file".to_owned())]
     };
     let alpha_normalized =
         serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
@@ -96,7 +96,10 @@ pub(super) fn fingerprint(block: Node<'_>, root: Node<'_>, source: &str) -> Hand
         normalized: exact.clone(),
         alpha_normalized,
         structural: structural.unwrap_or(exact),
-        behavior_signature,
+        behavior_signature: behavior_signature
+            .into_iter()
+            .map(BehaviorEvent::into_legacy)
+            .collect(),
         source_snippet: text(block, source).chars().take(2000).collect(),
         comparable,
         trivial,

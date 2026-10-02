@@ -160,7 +160,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "1db7e1248854fbe0fa6667ca13a4c3bb4c391b6da01e889c21c94988eaa0e355",
+      "sourceSha256": "83d983c8ae44e0dd10b276b231ed370d93926a59ae66431d1c1c10ebff2510a2",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
@@ -186,7 +186,7 @@
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "6757ca2fef92bcf29fd10f5189a52c977aacff04867a38392858d358a31418bc",
+      "sourceSha256": "c8ef286790f8eba5bbae996d72af40e67c07cd08c6128c7734527b44dd03f4c6",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
@@ -2871,7 +2871,7 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "c6c351a21abbaf4e3bdc4a338e4fa144ea21c2f042f30b8baf9ebe72f675ef11",
+      "sourceSha256": "c2434eb2d2c11b2ae88328852d2206a9c95fa4436b8c405cb76928103066ebd4",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -3824,6 +3824,12 @@
           "fixtureGroup": null,
           "behaviorClass": "language-specific-api",
           "rationale": "Direct Rust test `passing_a_registration_to_a_function_is_reported` exercises TypeScript/JavaScript syntax, framework configuration, source filtering, or module/binding provenance. Ruby has no direct syntax/API equivalent; any shared outcome must be mapped to a separate Ruby-native control."
+        },
+        {
+          "name": "control_flow_behavior_events_map_typescript_node_kinds_only",
+          "behaviorClass": "language-specific-api",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "This direct Rust test pins the TypeScript tree-sitter node-kind mapping to shared control-flow operations. Ruby has no corresponding TypeScript node kind; Ruby source-visible outcomes remain covered by the Ruby corpus."
         }
       ]
     },
@@ -4908,6 +4914,35 @@
           "fixtureGroup": null,
           "behaviorClass": "shared-engine-invariant",
           "rationale": "Direct Gherkin unit test `escaped_tables_preserve_findings_and_reject_malformed_neighbors_in_both_languages` exercises parser structure, source positions, dialect/table adaptation, or bounded probing shared by Ruby and JS/TS runs. No Ruby fixture reproduces this complete parser boundary, so it remains unmapped."
+        }
+      ]
+    },
+    "src/model/behavior.rs": {
+      "sourceSha256": "383b7916f67e5f7578c0e502dbf4fcd290dcbafe4181f67318878da6aee63121",
+      "tests": [
+        {
+          "name": "legacy_signatures_round_trip_known_and_unknown_events",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "This direct Rust control validates lossless encoding and decoding of the internal typed behavior-event compatibility boundary. It has no language-owned syntax or finding to express; TypeScript/Ruby extracted output remains covered by the paired and Ruby outcome manifests."
+        },
+        {
+          "name": "typed_classification_keeps_method_execution_and_assertion_anchors_distinct",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "This direct Rust control validates lossless encoding and decoding of the internal typed behavior-event compatibility boundary. It has no language-owned syntax or finding to express; TypeScript/Ruby extracted output remains covered by the paired and Ruby outcome manifests."
+        },
+        {
+          "name": "deferring_and_unresolved_markers_preserve_assertion_payloads",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "This direct Rust control validates lossless encoding and decoding of the internal typed behavior-event compatibility boundary. It has no language-owned syntax or finding to express; TypeScript/Ruby extracted output remains covered by the paired and Ruby outcome manifests."
+        },
+        {
+          "name": "handler_fingerprint_keeps_the_public_string_array_shape",
+          "behaviorClass": "shared-engine-invariant",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "This direct Rust control validates lossless encoding and decoding of the internal typed behavior-event compatibility boundary. It has no language-owned syntax or finding to express; TypeScript/Ruby extracted output remains covered by the paired and Ruby outcome manifests."
         }
       ]
     }
