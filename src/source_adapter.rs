@@ -1,6 +1,8 @@
 //! Definition-source adapter contracts and extension-based routing.
 
+mod finalization;
 pub(crate) mod semantics;
+pub use finalization::{SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope};
 
 use crate::model::{SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
@@ -298,6 +300,29 @@ impl SourceExtractionSession {
         self
     }
 
+    /// Finalizes all selected frontends after extraction and applies cross-file trust effects.
+    ///
+    /// Call this before analyzing accumulated definitions. A later source can invalidate an
+    /// earlier registration; individual extraction results are provisional until this operation.
+    pub fn finalize(
+        &mut self,
+        files: &[SourceFile],
+        definitions: &mut Vec<StepDefinition>,
+    ) -> Result<SourceFinalization> {
+        let mut result = SourceFinalization::default();
+        let mut completed = std::collections::BTreeSet::new();
+        for file in files {
+            let adapter = adapter_for_language(file.language);
+            if completed.insert(adapter.name()) {
+                result
+                    .uncertainties
+                    .extend(adapter.finalize_session(self)?.uncertainties);
+            }
+        }
+        result.apply(definitions);
+        Ok(result)
+    }
+
     pub(crate) fn dependency_resolved(&self, location: &SourceLocation) -> bool {
         self.dependencies
             .contains_key(&(location.path.clone(), location.line, location.column))
@@ -393,6 +418,14 @@ pub trait SourceAdapter: Sync {
         _session: &mut SourceExtractionSession,
     ) -> Result<()> {
         Ok(())
+    }
+
+    /// Reports frontend-owned trust effects after every selected source has been extracted.
+    fn finalize_session(
+        &self,
+        _session: &mut SourceExtractionSession,
+    ) -> Result<SourceFinalization> {
+        Ok(SourceFinalization::default())
     }
 
     /// Extracts definitions while sharing bounded state with other files in the same run.

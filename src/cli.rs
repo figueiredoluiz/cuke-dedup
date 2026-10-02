@@ -477,21 +477,32 @@ fn extract_definitions(
             }
         }
     }
-    if extraction_session
-        .state::<crate::ruby::RubySession>()
-        .is_ok_and(|state| state.invalidated())
-    {
-        corpus
-            .definitions
-            .retain(|definition| definition.framework != crate::model::Framework::CucumberRuby);
-        corpus.definition_files_with_definitions = corpus
-            .definitions
-            .iter()
-            .map(|definition| &definition.location.path)
-            .collect::<BTreeSet<_>>()
-            .len();
-        corpus.incomplete = true;
-        diagnostics.warnings.push("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite".to_owned());
+    match extraction_session.finalize(&files.definitions, &mut corpus.definitions) {
+        Ok(finalization) => {
+            if !finalization.uncertainties.is_empty() {
+                corpus.incomplete = true;
+                diagnostics.warnings.extend(
+                    finalization
+                        .uncertainties
+                        .into_iter()
+                        .map(|item| item.message),
+                );
+                corpus.definition_files_with_definitions = corpus
+                    .definitions
+                    .iter()
+                    .map(|definition| &definition.location.path)
+                    .collect::<BTreeSet<_>>()
+                    .len();
+            }
+        }
+        Err(error) => {
+            corpus.incomplete = true;
+            corpus.definitions.clear();
+            corpus.definition_files_with_definitions = 0;
+            diagnostics
+                .errors
+                .push(format!("failed to finalize source evidence: {error:#}"));
+        }
     }
     corpus.definitions.sort_by(|left, right| {
         left.location

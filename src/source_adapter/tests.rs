@@ -436,3 +436,125 @@ fn legacy_diagnostics_preserve_message_classification_and_mutation() {
         assert!(!is_unparseable_diagnostic(&diagnostic));
     }
 }
+
+#[test]
+fn finalization_scopes_preserve_independent_final_findings() {
+    use crate::model::Rule;
+    use UncertaintyCause::{Handler, Registration, Source};
+    let project = session_project();
+    let root = project.path();
+    let mut session = SourceExtractionSession::new(root);
+    let mut definitions = session_extract(
+        &mut session,
+        root,
+        "ts",
+        "Given('unrelated control', () => check()); Given('unrelated control', () => check());",
+    )
+    .definitions;
+    definitions.extend(session_extract(&mut session, root, "js",
+        "Given('opens red panel', () => work()); Given('opens red panel', () => work()); Given('opens blue panel', () => work());").definitions);
+    let config = crate::config::Config::load(root, Default::default()).unwrap();
+    let definition = UncertaintyScope::Definition(definitions[4].location.clone());
+    let file = UncertaintyScope::File(root.join("steps.js"));
+    let registry = UncertaintyScope::Registry(SourceLanguage::JavaScript);
+    for (scope, cause, retained, matchers, handlers) in [
+        (definition.clone(), Registration, 4, 2, 0),
+        (file.clone(), Registration, 2, 1, 0),
+        (definition, Handler, 5, 2, 0),
+        (file, Handler, 5, 2, 0),
+        (registry, Source, 5, 2, 2),
+    ] {
+        let mut actual = definitions.clone();
+        let mut finalization = SourceFinalization::default();
+        finalization
+            .uncertainties
+            .push(SourceUncertainty::new(scope, cause, "test evidence"));
+        finalization.apply(&mut actual);
+        assert_eq!(actual.len(), retained, "{finalization:?}");
+        let result = crate::analysis::analyze(actual, vec![], &config).unwrap();
+        for (rule, expected) in [
+            (Rule::DuplicateMatcher, matchers),
+            (Rule::DuplicateHandler, handlers),
+        ] {
+            let actual = result.findings.iter().filter(|f| f.rule == rule).count();
+            assert_eq!(actual, expected, "{finalization:?}");
+        }
+    }
+}
+
+#[test]
+fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
+    use crate::model::Rule;
+    let project = session_project();
+    let root = project.path();
+    let mut session = SourceExtractionSession::new(root);
+    let mut definitions = Vec::new();
+    for suffix in ["js", "ts", "tsx", "rb"] {
+        let source = if suffix == "rb" {
+            "Given('shared step') { work() }; Given('shared step') { work() }"
+        } else {
+            IMPORTED_STEP
+        };
+        definitions.extend(session_extract(&mut session, root, suffix, source).definitions);
+    }
+    let config = crate::config::Config::load(root, Default::default()).unwrap();
+    for (language, retained, matcher_findings) in [
+        (SourceLanguage::JavaScript, 2, 1),
+        (SourceLanguage::TypeScript, 2, 1),
+        (SourceLanguage::Tsx, 2, 1),
+        (SourceLanguage::Ruby, 3, 2),
+    ] {
+        let mut actual = definitions.clone();
+        let mut finalization = SourceFinalization::default();
+        finalization.uncertainties.push(SourceUncertainty::new(
+            UncertaintyScope::Registry(language),
+            UncertaintyCause::Registration,
+            "registry effect",
+        ));
+        finalization.apply(&mut actual);
+        assert_eq!(actual.len(), retained, "{language:?}");
+        let result = crate::analysis::analyze_with_diagnostics(actual, vec![], &config)
+            .unwrap()
+            .result;
+        let rule = Rule::DuplicateMatcher;
+        let actual = result.findings.iter().filter(|f| f.rule == rule).count();
+        assert_eq!(actual, matcher_findings, "{language:?}");
+    }
+}
+
+#[test]
+fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
+    for mutation_first in [false, true] {
+        let project = session_project();
+        let root = project.path();
+        let mut session = SourceExtractionSession::new(root);
+        let files: Vec<_> = ["registrations.rb", "mutation.rb"]
+            .into_iter()
+            .map(|name| SourceFile {
+                path: root.join(name),
+                language: SourceLanguage::Ruby,
+            })
+            .collect();
+        let sources = [
+            "Given('shared') { work() }; Then('shared') { work() }",
+            "def Given(text); :replaced; end",
+        ];
+        let mut definitions = session_extract(&mut session, root, "ts", IMPORTED_STEP).definitions;
+        for index in if mutation_first { [1, 0] } else { [0, 1] } {
+            let extracted = adapter_for_language(SourceLanguage::Ruby)
+                .extract_with_session(sources[index], &files[index], &mut session)
+                .unwrap();
+            definitions.extend(extracted.definitions);
+        }
+        if !mutation_first {
+            assert_eq!(definitions.len(), 3);
+        }
+        let first = session.finalize(&files, &mut definitions).unwrap();
+        assert!(!first.uncertainties.is_empty());
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].location.path, root.join("steps.ts"));
+        let once = definitions.clone();
+        assert_eq!(session.finalize(&files, &mut definitions).unwrap(), first);
+        assert_eq!(definitions, once);
+    }
+}

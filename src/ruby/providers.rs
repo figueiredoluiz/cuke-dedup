@@ -24,11 +24,11 @@ pub(super) struct Proof {
 #[derive(Default)]
 pub(super) struct Providers(BTreeMap<PathBuf, Proof>);
 
-struct Unit {
-    file: SourceFile,
-    canonical_path: PathBuf,
-    source: String,
-    tree: Tree,
+pub(super) struct Unit {
+    pub(super) file: SourceFile,
+    pub(super) canonical_path: PathBuf,
+    pub(super) source: String,
+    pub(super) tree: Tree,
 }
 
 struct Definition<'a> {
@@ -43,6 +43,44 @@ struct Graph<'a> {
     definitions: BTreeMap<String, Vec<Definition<'a>>>,
     namespaces: BTreeMap<String, usize>,
     protected_modules: BTreeSet<usize>,
+}
+
+// Both proof collectors use the same bounded read/parse/canonicalization boundary.
+pub(super) fn load_units(
+    files: &[SourceFile],
+    budget: (usize, usize),
+) -> Result<Option<Vec<Unit>>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
+    let mut units = Vec::new();
+    let mut bytes = 0;
+    for file in files.iter().filter(|f| f.language == SourceLanguage::Ruby) {
+        if units.len() >= budget.0 {
+            return Ok(None);
+        }
+        let Ok(source) = read_utf8(&file.path, "Ruby provider source", MAX_PROJECT_INPUT_BYTES)
+        else {
+            // Extraction reports per-file failures and preserves trustworthy neighbors.
+            return Ok(None);
+        };
+        bytes += source.len();
+        if bytes > budget.1 {
+            return Ok(None);
+        }
+        let tree = parser
+            .parse(&source, None)
+            .context("Ruby provider parser returned no tree")?;
+        let Ok(canonical_path) = file.path.canonicalize() else {
+            return Ok(None);
+        };
+        units.push(Unit {
+            file: file.clone(),
+            canonical_path,
+            source,
+            tree,
+        });
+    }
+    Ok(Some(units))
 }
 
 impl Providers {
@@ -60,36 +98,9 @@ impl Providers {
         edges: &[SourceDependency],
         (max_files, max_bytes): (usize, usize),
     ) -> Result<Self> {
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
-        let mut units = Vec::new();
-        let mut bytes = 0;
-        for file in files.iter().filter(|f| f.language == SourceLanguage::Ruby) {
-            if units.len() >= max_files {
-                return Ok(Self::default());
-            }
-            let Ok(source) = read_utf8(&file.path, "Ruby provider source", MAX_PROJECT_INPUT_BYTES)
-            else {
-                // Extraction reports per-file failures and preserves trustworthy neighbors.
-                return Ok(Self::default());
-            };
-            bytes += source.len();
-            if bytes > max_bytes {
-                return Ok(Self::default());
-            }
-            let tree = parser
-                .parse(&source, None)
-                .context("Ruby provider parser returned no tree")?;
-            let Ok(canonical_path) = file.path.canonicalize() else {
-                return Ok(Self::default());
-            };
-            units.push(Unit {
-                file: file.clone(),
-                canonical_path,
-                source,
-                tree,
-            });
-        }
+        let Some(units) = load_units(files, (max_files, max_bytes))? else {
+            return Ok(Self::default());
+        };
         let mut graph = Graph {
             units: &units,
             edges,
@@ -279,41 +290,51 @@ impl Providers {
     }
 }
 
+// Registration and assertion providers must agree on whether a resolved load graph closes.
+pub(super) fn source_graph_acyclic<'a>(
+    files: impl IntoIterator<Item = (&'a Path, &'a Path)>,
+    edges: &[SourceDependency],
+) -> bool {
+    let files: Vec<_> = files.into_iter().collect();
+    let mut incoming = vec![0; files.len()];
+    let mut outgoing = vec![Vec::new(); files.len()];
+    for edge in edges {
+        let from = files
+            .iter()
+            .position(|(source, _)| *source == edge.location.path);
+        let to = files.iter().position(|(_, target)| *target == edge.target);
+        if let (Some(from), Some(to)) = (from, to) {
+            outgoing[from].push(to);
+            incoming[to] += 1;
+        }
+    }
+    let mut ready: Vec<_> = incoming
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| (*n == 0).then_some(i))
+        .collect();
+    let mut count = 0;
+    while let Some(from) = ready.pop() {
+        count += 1;
+        for to in &outgoing[from] {
+            incoming[*to] -= 1;
+            if incoming[*to] == 0 {
+                ready.push(*to);
+            }
+        }
+    }
+    count == files.len()
+}
+
 impl Graph<'_> {
     /// Rejects load cycles as evidence that a provider finished initialization.
     fn acyclic(&self) -> bool {
-        let mut incoming = vec![0; self.units.len()];
-        let mut outgoing = vec![Vec::new(); self.units.len()];
-        for edge in self.edges {
-            let from = self
-                .units
+        source_graph_acyclic(
+            self.units
                 .iter()
-                .position(|u| u.file.path == edge.location.path);
-            let to = self
-                .units
-                .iter()
-                .position(|u| u.canonical_path == edge.target);
-            if let (Some(from), Some(to)) = (from, to) {
-                outgoing[from].push(to);
-                incoming[to] += 1;
-            }
-        }
-        let mut ready: Vec<_> = incoming
-            .iter()
-            .enumerate()
-            .filter_map(|(i, n)| (*n == 0).then_some(i))
-            .collect();
-        let mut count = 0;
-        while let Some(from) = ready.pop() {
-            count += 1;
-            for to in &outgoing[from] {
-                incoming[*to] -= 1;
-                if incoming[*to] == 0 {
-                    ready.push(*to);
-                }
-            }
-        }
-        count == self.units.len()
+                .map(|unit| (unit.file.path.as_path(), unit.canonical_path.as_path())),
+            self.edges,
+        )
     }
 
     /// Resolves the nearest declared lexical prefix without following unknown constant aliases.

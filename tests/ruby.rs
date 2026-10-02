@@ -2998,3 +2998,352 @@ fn ruby_native_regex_flag_order_is_not_identity() {
         );
     }
 }
+
+#[test]
+fn frontend_finalization_outcomes_preserve_cross_file_registry_authority() {
+    for effect in [
+        "def Given(*args); end",
+        "eval(code)",
+        "module Local; def Given(*args); end; end\nextend Local",
+    ] {
+        for reversed in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let names = if reversed {
+                ("z.rb", "a.rb")
+            } else {
+                ("a.rb", "z.rb")
+            };
+            fs::write(
+                root.path().join(names.0),
+                "Given('same') { verify() }; Then('same') { verify() }",
+            )
+            .unwrap();
+            fs::write(root.path().join(names.1), effect).unwrap();
+            let output = run_project(root.path(), "*.rb", &["--fail-on-incomplete"]);
+            let rows = records(output.stdout);
+            assert_discovery(&rows, 0, true, effect);
+            assert_eq!(output.status.code(), Some(2));
+            assert!(!rows.iter().any(|row| row["rule"] == "duplicate-matcher"));
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("steps.rb"),
+        "Given('same') { verify() }; Then('same') { verify() }",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("helper.rb"),
+        "module Local; def Given(*args); end; end",
+    )
+    .unwrap();
+    let rows = project_records(root.path());
+    assert_discovery(&rows, 2, false, "closed helper");
+    assert!(rows.iter().any(|row| row["rule"] == "duplicate-matcher"));
+}
+
+const ASSERTION_PROVIDER: &str = "module Assertions; def self.expect(actual); actual; end; end";
+
+fn assertion_project(provider: &str, source: &str, trusted: bool) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("assertions.rb"), provider).unwrap();
+    fs::write(
+        root.path().join("steps.rb"),
+        format!("require_relative 'assertions'\n{source}"),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join(".cuke-dedup.json"),
+        if trusted {
+            r#"{"assertionModules":["./assertions"]}"#
+        } else {
+            "{}"
+        },
+    )
+    .unwrap();
+    root
+}
+
+#[test]
+fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_calls() {
+    for trusted in [false, true] {
+        for (left, right, parameterized) in [
+            (
+                "Assertions.expect(page).to_be('dark')",
+                "Assertions.expect(page).to_be('light')",
+                false,
+            ),
+            (
+                "Assertions.expect(page).to_be('dark')",
+                "Assertions.expect(other).to_be('dark')",
+                false,
+            ),
+            (
+                "Assertions.expect(page).to_be('dark')",
+                "Assertions.expect(page).not.to_be('dark')",
+                false,
+            ),
+            (
+                "wrap { Assertions.expect(page).to_be('dark') }",
+                "wrap { Assertions.expect(page).to_be('light') }",
+                false,
+            ),
+            (
+                "wrap { Assertions.expect(page).to_be('dark') }",
+                "wrap { Assertions.expect(page).not.to_be('dark') }",
+                false,
+            ),
+            ("store.write('dark')", "store.write('light')", true),
+        ] {
+            let source = format!(
+                "Given('the theme is dark') {{ {left} }}; Then('the theme is light') {{ {right} }}"
+            );
+            let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
+            let rows = records(run_project(root.path(), "steps.rb", &[]).stdout);
+            assert_discovery(&rows, 2, false, &source);
+            assert_parameterization_outcome(
+                &rows,
+                parameterized,
+                &format!("trusted={trusted}: {source}"),
+            );
+        }
+        for body in [
+            "wrap { Assertions.expect(page).to_be('ready') }",
+            "Assertions.expect(page).to_be_visible",
+        ] {
+            let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
+            let rows = project_records(root.path());
+            assert_discovery(&rows, 2, false, body);
+            assert!(rows.iter().any(|row| row["rule"] == "duplicate-handler"));
+        }
+        for (expected, incomplete) in [("'ready'", false), ("UNKNOWN", trusted)] {
+            let source = format!("Given('one') {{ Assertions.expect(page).to_be({expected}) }}; Then('two') {{ Assertions.expect(page).to_be({expected}) }}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
+            let rows = project_records(root.path());
+            assert_discovery(&rows, 2, incomplete, &source);
+            assert_eq!(
+                rows.iter().any(|row| row["rule"] == "duplicate-handler"),
+                !incomplete,
+                "trusted={trusted}: {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ruby_assertion_provider_authority_matrix() {
+    for (provider, before, after, trusted) in [
+        (ASSERTION_PROVIDER, "", "", true),
+        (ASSERTION_PROVIDER, "Alias = Assertions", "", false),
+        (ASSERTION_PROVIDER, "", "Alias = Assertions", false),
+        (ASSERTION_PROVIDER, "module Assertions; end", "", false),
+        (ASSERTION_PROVIDER, "mod.define_singleton_method(:expect) { other }", "", false),
+        (ASSERTION_PROVIDER, "mod.alias_method(:expect, :other)", "", false),
+        (ASSERTION_PROVIDER, "mod.remove_method(:expect)", "", false),
+        ("module Assertions; def self.expect(actual); actual; end; alias_method :expect, :other; end", "", "", false),
+        ("module Assertions; if active; def self.expect(actual); actual; end; end; end", "", "", false),
+        ("module Assertions; class Nested; def self.expect(actual); actual; end; end; end", "", "", false),
+        ("module Assertions; def self.expect(actual); def self.expect(value); value; end; actual; end; end", "", "", false),
+        ("module Assertions; def self.expect(actual); self.define_singleton_method(:expect) { other }; actual; end; end", "", "", false),
+        ("module Assertions; def self.expect(actual); self.send(:alias_method, :expect, :other); actual; end; end", "", "", false),
+    ] {
+        let source = format!("{before}\nGiven('one') {{ Assertions.expect(page).to_be(UNKNOWN) }}; Then('two') {{ Assertions.expect(page).to_be(UNKNOWN) }}\n{after}");
+        let root = assertion_project(provider, &source, true);
+        let rows = project_records(root.path());
+        assert_discovery(&rows, 2, trusted || provider.contains("alias_method"), &format!("{provider}: {source}"));
+        assert_eq!(rows.iter().any(|row| row["rule"] == "duplicate-handler"), !trusted, "{provider}: {source}");
+    }
+    for body in [
+        "Assertions.expect.to_be('ready')",
+        "Assertions.expect(page, options).to_be('ready')",
+        "Assertions.expect(page).to_be()",
+        "Assertions.expect(page).to_be('ready', 'extra')",
+        "Assertions.expect(page).to_be_visible('extra')",
+        "wrap { |value| Assertions.expect(value).to_be('ready') }",
+        "Assertions.expect(page).to_be(*values)",
+        "Assertions.expect(page).to_be(@expected)",
+        "Assertions.expect(page).to_be($expected)",
+        "Assertions.expect(page).to_be(@@expected)",
+        "Assertions.expect(page).to_be(self)",
+        "Assertions.expect(page).to_be(1 + 2)",
+        "Assertions.expect(page).to_be([1, @expected])",
+    ] {
+        let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
+        let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+        let rows = project_records(root.path());
+        assert_discovery(&rows, 2, true, body);
+        assert!(
+            !rows.iter().any(|row| row["rule"] == "duplicate-handler"),
+            "{body}"
+        );
+    }
+    let source = "Given('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }\nrequire_relative 'assertions'";
+    let root = assertion_project(ASSERTION_PROVIDER, source, true);
+    fs::write(root.path().join("steps.rb"), source).unwrap();
+    let rows = project_records(root.path());
+    assert_discovery(&rows, 2, false, "load after registrations");
+    assert!(rows.iter().any(|row| row["rule"] == "duplicate-handler"));
+    for name in ["Object", "Kernel", "Module", "Cucumber"] {
+        let provider = ASSERTION_PROVIDER.replace("Assertions", name);
+        let source = format!("Given('one') {{ {name}.expect(page).to_be(UNKNOWN) }}; Then('two') {{ {name}.expect(page).to_be(UNKNOWN) }}");
+        let root = assertion_project(&provider, &source, true);
+        let rows = project_records(root.path());
+        assert_discovery(&rows, 2, false, name);
+        assert!(
+            rows.iter().any(|row| row["rule"] == "duplicate-handler"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn ruby_assertion_literal_and_comment_matrix() {
+    for matcher in ["to_be", "to_equal", "equal_to", "to_have_class"] {
+        for (expected, incomplete) in [
+            ("'ready'", false),
+            ("1", false),
+            ("1.5", false),
+            ("true", false),
+            ("false", false),
+            ("nil", false),
+            (":ready", false),
+            ("[1, 'ready']", false),
+            ("{ready: [1, true]}", false),
+            ("@expected", true),
+            ("$expected", true),
+            ("@@expected", true),
+            ("self", true),
+            ("[1, UNKNOWN]", true),
+            ("1 + 2", true),
+        ] {
+            let body = format!("Assertions.expect(page).{matcher}({expected})");
+            let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+            let rows = project_records(root.path());
+            assert_discovery(&rows, 2, incomplete, &body);
+            assert_eq!(
+                rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+                !incomplete,
+                "{body}"
+            );
+        }
+    }
+    let body = "Assertions.expect(
+# subject
+page).to_be(
+# expected
+'ready')";
+    let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
+    let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+    let rows = project_records(root.path());
+    assert_discovery(&rows, 2, false, body);
+    assert!(rows.iter().any(|r| r["rule"] == "duplicate-handler"));
+}
+
+#[test]
+fn ruby_unavailable_assertion_proof_preserves_independent_handlers() {
+    for support in [
+        "def broken(",
+        "require_relative 'loop'
+",
+        "",
+    ] {
+        let root = assertion_project(
+            ASSERTION_PROVIDER,
+            "Given('same') { work() }; Then('same') { work() }; Then('other') { work() }",
+            true,
+        );
+        fs::write(root.path().join("loop.rb"), support).unwrap();
+        let output = run_project(root.path(), "*.rb", &["--fail-on-incomplete"]);
+        let rows = records(output.stdout);
+        assert_discovery(&rows, 3, !support.is_empty(), support);
+        assert!(
+            rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
+            "{support}"
+        );
+        assert!(
+            rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+            "{support}"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(if support.is_empty() { 1 } else { 2 })
+        );
+    }
+}
+
+#[test]
+fn ruby_assertion_proof_relevance_matches_the_load_contract() {
+    for (load, configured, cycle, incomplete) in [
+        ("require_relative 'assertions'", "./assertions", false, true),
+        ("require './assertions'", "./assertions", false, false),
+        (
+            "require_relative 'assertions'",
+            "./ts-fixtures",
+            true,
+            false,
+        ),
+        ("require_relative 'assertions'", "./assertions", true, true),
+    ] {
+        let source = format!("{load}\nGiven('one') {{ Assertions.expect(page).to_be(UNKNOWN) }}; Then('two') {{ Assertions.expect(page).to_be(UNKNOWN) }}");
+        let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+        fs::write(root.path().join("steps.rb"), &source).unwrap();
+        fs::write(
+            root.path().join(".cuke-dedup.json"),
+            format!(r#"{{"assertionModules":["{configured}"]}}"#),
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("loop.rb"),
+            if cycle { "require_relative 'loop'" } else { "" },
+        )
+        .unwrap();
+        let output = run_project(root.path(), "*.rb", &["--fail-on-incomplete"]);
+        let rows = records(output.stdout);
+        assert_discovery(&rows, 2, incomplete, &source);
+        let trusted =
+            load.starts_with("require_relative") && configured == "./assertions" && !cycle;
+        assert_eq!(
+            rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+            !trusted,
+            "{source}: cycle={cycle}"
+        );
+        assert_eq!(output.status.code(), Some(if incomplete { 2 } else { 1 }));
+    }
+}
+
+#[test]
+fn ruby_reflective_provider_access_removes_assertion_authority() {
+    for (effect, deferred_incomplete) in [
+        ("Object.const_get(:Assertions)", false),
+        ("Object.const_get('Assertions')", false),
+        ("Object.const_get(name)", false),
+        ("Object.const_set(:Assertions, Other)", false),
+        ("Object.send(:remove_const, :Assertions)", true),
+        ("Object.public_send(:const_get, 'Assertions')", true),
+        ("Object.send(:send, :const_get, :Assertions)", true),
+    ] {
+        for deferred in [false, true] {
+            let mutation = if deferred {
+                format!("Given('mutation') {{ {effect} }}")
+            } else {
+                effect.into()
+            };
+            let source = format!("Given('one') {{ Assertions.expect(page).to_be(UNKNOWN) }}; Then('two') {{ Assertions.expect(page).to_be(UNKNOWN) }}\n{mutation}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+            let rows = project_records(root.path());
+            assert_discovery(
+                &rows,
+                if deferred { 3 } else { 0 },
+                !deferred || deferred_incomplete,
+                &source,
+            );
+            assert_eq!(
+                rows.iter().any(|r| r["rule"] == "duplicate-handler"),
+                deferred,
+                "{source}"
+            );
+        }
+    }
+}

@@ -7,6 +7,8 @@ All notable changes to CukeDedup are documented in this file. The project follow
 
 ### Added
 
+- Frontends can finalize extraction with typed definition, file or registry uncertainty before shared analysis. Existing adapter implementations retain the default no-op finalization.
+- Explicitly configured Ruby assertion factories contribute value-sensitive handler evidence for supported literal matchers; unresolved values remain incomplete.
 - Experimental, opt-in static Cucumber-Ruby analysis and a Ruby/TypeScript parity corpus. Ruby discovery and rule parity remain in development; this integration checkpoint is not release-ready.
 
 ### Changed
