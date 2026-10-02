@@ -1,26 +1,10 @@
 import assert from "node:assert/strict";
 import { countMatches } from "./recall-oracle.mjs";
+import { normalizeOutcome, validateOutcomeContract } from "./behavior-spec.mjs";
 
-// Compare observable semantics, not language-specific fingerprint IDs or source spelling.
+// Compatibility wrapper for paired TypeScript/Ruby conformance.
 export function outcome(report, exit) {
-  const location = ({ path, line }) => ({ path: path.replace(/steps\.(ts|rb)$/, "steps"), line });
-  const sorted = (items) => items.sort((a, b) => {
-    const left = JSON.stringify(a), right = JSON.stringify(b);
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
-  return {
-    definitions: report.summary.definitionsAnalyzed,
-    featureSteps: report.summary.featureStepsAnalyzed,
-    complete: !report.corpus.incomplete,
-    truncated: report.findingsTruncated,
-    exit,
-    findings: sorted(report.findings.filter((item) => item.suppression === null).map((item) => ({
-      rule: item.rule,
-      severity: item.severity,
-      primary: location(item.primary),
-      related: sorted(item.related.map(location)),
-    }))),
-  };
+  return normalizeOutcome(report, exit, { "steps.ts": "steps", "steps.rb": "steps" });
 }
 
 export function deficits(expected, report, exit) {
@@ -67,19 +51,6 @@ export function validateManifest(manifest) {
     for (const language of ["typescript", "ruby"]) assert.equal(typeof item.sources[language], "string");
     assert.equal(typeof item.feature, "string");
     assert.equal(typeof item.intent, "string");
-    assert.ok(Number.isSafeInteger(item.expected.definitions) && item.expected.definitions >= 0);
-    assert.ok(Number.isSafeInteger(item.expected.featureSteps) && item.expected.featureSteps >= 0);
-    assert.equal(typeof item.expected.complete, "boolean");
-    assert.ok(Array.isArray(item.expected.requiredFindings));
-    assert.ok(Array.isArray(item.expected.requiredAbsent));
-    for (const finding of [...item.expected.requiredFindings, ...item.expected.requiredAbsent]) {
-      assert.equal(typeof finding.rule, "string");
-      assert.ok(finding.rule.length > 0);
-      if (finding.count !== undefined) assert.ok(Number.isSafeInteger(finding.count) && finding.count > 0);
-    }
-    assert.ok([...item.expected.requiredFindings, ...item.expected.requiredAbsent].some((e) => e.rule === item.rule));
-    for (const finding of item.expected.requiredFindings) {
-      assert.ok(!item.expected.requiredAbsent.some((absent) => absent.rule === finding.rule));
-    }
+    validateOutcomeContract(item.expected, item.rule);
   }
 }

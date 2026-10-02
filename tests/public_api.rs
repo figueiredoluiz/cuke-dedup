@@ -10,7 +10,7 @@ use cuke_dedup::reporters::{
 };
 use cuke_dedup::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapter,
-    SourceAdapterRegistration, SOURCE_ADAPTER_REGISTRY,
+    SourceAdapterRegistration, SourceParameterType, SOURCE_ADAPTER_REGISTRY,
 };
 use cuke_dedup::typescript;
 use std::collections::BTreeMap;
@@ -51,6 +51,22 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
         language: SourceLanguage::JavaScript,
     };
     let adapter: &dyn SourceAdapter = &ExternalAdapter;
+    assert!(adapter.discover_by_default());
+    assert!(!adapter.supports_indirect_usage());
+    assert_eq!(adapter.inspect_source(&file, &[]), None);
+    let configured = BTreeMap::from([("custom".to_owned(), "[a-z]+".to_owned())]);
+    assert_eq!(
+        adapter.resolve_parameter_types(Vec::new(), &configured),
+        (configured.clone(), Vec::new())
+    );
+    let declaration = SourceParameterType::new(
+        Some("custom".to_owned()),
+        Some(".+".to_owned()),
+        SourceLocation::new(PathBuf::from("steps.js"), 1, 1, 1, 2),
+    );
+    let (patterns, diagnostics) = adapter.resolve_parameter_types(vec![declaration], &configured);
+    assert!(patterns.is_empty());
+    assert!(!diagnostics.is_empty());
     for mut session in [
         SourceExtractionSession::default(),
         SourceExtractionSession::new(project.path()),

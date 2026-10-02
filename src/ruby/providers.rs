@@ -1,9 +1,9 @@
 //! Closed constant registration exports over resolved, preceding source loads.
 use super::registration_aliases::{closed_call, identifier_references};
 use super::{descendants, registration, static_method_name, text};
-use crate::resource_limits::{
-    read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
-};
+use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
+#[cfg(test)]
+use crate::resource_limits::{MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES};
 use crate::source_adapter::{SourceDependency, SourceFile, SourceLanguage};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
@@ -85,6 +85,7 @@ pub(super) fn load_units(
 
 impl Providers {
     /// Builds bounded optional proofs; extraction remains authoritative when preparation is unavailable.
+    #[cfg(test)]
     pub fn collect(files: &[SourceFile], edges: &[SourceDependency]) -> Result<Self> {
         Self::collect_with_budget(
             files,
@@ -93,6 +94,7 @@ impl Providers {
         )
     }
 
+    #[cfg(test)]
     fn collect_with_budget(
         files: &[SourceFile],
         edges: &[SourceDependency],
@@ -101,8 +103,12 @@ impl Providers {
         let Some(units) = load_units(files, (max_files, max_bytes))? else {
             return Ok(Self::default());
         };
+        Self::from_units(&units, edges)
+    }
+
+    pub(super) fn from_units(units: &[Unit], edges: &[SourceDependency]) -> Result<Self> {
         let mut graph = Graph {
-            units: &units,
+            units,
             edges,
             definitions: BTreeMap::new(),
             namespaces: BTreeMap::new(),
@@ -278,7 +284,7 @@ impl Providers {
         graph.isolated_instances(&mut result);
         for unit in units {
             if let Some(proof) = result.0.get_mut(&unit.file.path) {
-                proof.source = unit.source;
+                proof.source = unit.source.clone();
             }
         }
         Ok(result)

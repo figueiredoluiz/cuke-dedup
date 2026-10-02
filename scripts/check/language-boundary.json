@@ -7,9 +7,9 @@
     "src/analysis/similarity.rs": {"crate::model::Framework":1,"crate::model::Framework::Unknown":1},
     "src/analysis/suppression.rs": {},
     "src/analysis/usage.rs": {},
-    "src/cli.rs": {"crate::ruby":1},
+    "src/cli.rs": {},
     "src/config.rs": {},
-    "src/discovery.rs": {"crate::ruby":1},
+    "src/discovery.rs": {},
     "src/framework_config.rs": {},
     "src/gherkin.rs": {},
     "src/gherkin/table_escapes.rs": {},
@@ -28,13 +28,14 @@
     "src/reporters/shared.rs": {},
     "src/reporters/terminal.rs": {},
     "src/resource_limits.rs": {},
-    "src/source_filter.rs": {"crate::typescript":2}
+    "src/source_adapter/config.rs": {"crate::ruby":1},
+    "src/source_adapter/finalization.rs": {},
+    "src/source_adapter/semantics.rs": {"crate::model::Framework":1,"crate::model::Framework::CucumberRuby":1,"crate::ruby":1,"crate::typescript":1}
   },
   "exclusions": {
     "src/lib.rs": "composition root",
     "src/main.rs": "composition root",
     "src/source_adapter.rs": "adapter routing/session composition",
-    "src/source_adapter/": "adapter routing tests/support",
     "src/typescript.rs": "language frontend",
     "src/typescript/": "language frontend",
     "src/ruby.rs": "language frontend",

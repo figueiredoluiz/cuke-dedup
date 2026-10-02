@@ -14,11 +14,13 @@ use std::path::Path;
 use tree_sitter::Node;
 
 mod assertions;
+use assertions::AssertionProviders;
 mod bindings;
-pub(crate) mod dependencies;
+pub(crate) mod config;
+mod dependencies;
 mod handler;
 mod ownership;
-pub(crate) mod parameters;
+mod parameters;
 mod providers;
 mod registration_aliases;
 mod registration_wrappers;
@@ -43,6 +45,13 @@ impl AdapterSessionState for RubySession {
 }
 impl StatefulSourceAdapter for RubyAdapter {
     type State = RubySession;
+    fn discover_dependencies(
+        config: &crate::config::Config,
+        excludes: &globset::GlobSet,
+        files: &mut crate::discovery::DiscoveredFiles,
+    ) {
+        dependencies::resolve(config, excludes, files);
+    }
 }
 
 impl SourceAdapter for RubyAdapter {
@@ -57,17 +66,45 @@ impl SourceAdapter for RubyAdapter {
         mark_unresolved_dependency_usage(&mut extraction);
         Ok(extraction)
     }
+    fn discover_by_default(&self) -> bool {
+        false
+    }
+    fn supports_indirect_usage(&self) -> bool {
+        true
+    }
+    fn resolve_parameter_types(
+        &self,
+        declarations: Vec<crate::source_adapter::SourceParameterType>,
+        configured: &std::collections::BTreeMap<String, String>,
+    ) -> (std::collections::BTreeMap<String, String>, Vec<String>) {
+        parameters::merge(declarations, configured)
+    }
     fn prepare_session(
         &self,
         files: &[SourceFile],
         session: &mut SourceExtractionSession,
     ) -> Result<()> {
-        let providers = providers::Providers::collect(files, &session.dependency_edges())?;
+        let source_budget = (
+            crate::resource_limits::MAX_REGISTRATION_MODULES,
+            crate::resource_limits::MAX_REGISTRATION_MODULE_BYTES,
+        );
+        let units = providers::load_units(files, source_budget)?;
         let edges = session.dependency_edges();
         let state = session.state::<RubySession>()?;
-        state.assertions =
-            assertions::AssertionProviders::collect(files, &edges, &state.assertion_modules)?;
-        state.providers = providers;
+        if let Some(units) = units {
+            state.providers = providers::Providers::from_units(&units, &edges)?;
+            let modules = &state.assertion_modules;
+            let work_budget = crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK;
+            state.assertions =
+                AssertionProviders::from_units(&units, &edges, modules, work_budget)?;
+        } else {
+            state.providers = Default::default();
+            state.assertions = if state.assertion_modules.is_empty() {
+                Default::default()
+            } else {
+                assertions::AssertionProviders::unavailable()
+            };
+        }
         Ok(())
     }
     fn finalize_session(
@@ -76,6 +113,9 @@ impl SourceAdapter for RubyAdapter {
     ) -> Result<SourceFinalization> {
         let mut result = SourceFinalization::default();
         let state = session.state::<RubySession>()?;
+        result
+            .advisories
+            .extend_from_slice(state.assertions.advisories());
         if state.assertions.incomplete() {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(SourceLanguage::Ruby),

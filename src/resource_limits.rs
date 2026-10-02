@@ -17,6 +17,7 @@ pub(crate) const REGEX_DFA_SIZE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_STATIC_OVERLAP_FINDINGS: usize = 10_000;
 pub(crate) const MAX_REGISTRATION_MODULES: usize = 1_024;
 pub(crate) const MAX_REGISTRATION_MODULE_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_ASSERTION_RESOLUTION_WORK: usize = 1_000_000;
 pub(crate) const MAX_REGISTRATION_RESOLUTION_STATES: usize = 16_384;
 pub(crate) const MAX_PROJECT_CONFIG_EXTENDS_DEPTH: usize = 16;
 pub(crate) const MAX_PROJECT_METADATA_FILES: usize = 1_024;

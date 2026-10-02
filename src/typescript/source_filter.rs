@@ -17,27 +17,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-/// Why a discovered source was excluded from analysis without being parsed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExcludedSource {
-    /// The file opens with the container magic of a compressed archive or stream.
-    Compressed,
-    /// The inspected prefix contains a NUL byte.
-    Binary,
-    /// Line geometry matches generated or minified output rather than authored code.
-    Minified,
-}
-
-impl ExcludedSource {
-    /// Returns the stable word used for this exclusion in diagnostics.
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Compressed => "compressed",
-            Self::Binary => "binary",
-            Self::Minified => "minified",
-        }
-    }
-}
+use crate::source_adapter::SourceExclusion as ExcludedSource;
 
 /// Leading bytes of compressed container formats that can arrive with a source extension.
 ///

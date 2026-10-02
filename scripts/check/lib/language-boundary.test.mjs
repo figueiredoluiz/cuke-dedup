@@ -176,7 +176,6 @@ test("CLI uses the selected root from another cwd and fails on missing inputs", 
   const exclusions = {
     "src/lib.rs": "composition root", "src/main.rs": "composition root",
     "src/source_adapter.rs": "adapter routing/session composition",
-    "src/source_adapter/": "adapter routing tests/support",
     "src/typescript.rs": "language frontend", "src/typescript/": "language frontend",
     "src/ruby.rs": "language frontend", "src/ruby/": "language frontend",
   };
@@ -201,7 +200,7 @@ test("CLI uses the selected root from another cwd and fails on missing inputs", 
     assert.equal(passing.status, 0, passing.stderr);
     assert.match(passing.stdout, /6 files match the reviewed inventory/);
 
-    for (const name of ["gherkin.rs", "modes.rs", "matcher.rs", "reporters.rs", "resource_limits.rs", "future/helpers.rs", "ruby_helpers.rs", "contests.rs"]) {
+    for (const name of ["gherkin.rs", "modes.rs", "matcher.rs", "reporters.rs", "resource_limits.rs", "future/helpers.rs", "ruby_helpers.rs", "contests.rs", "source_adapter/config.rs", "source_adapter/semantics.rs", "source_adapter/finalization.rs", "source_adapter/future.rs"]) {
       const file = join(root, "src", name);
       await mkdir(join(file, ".."), { recursive: true });
       await writeFile(file, "use crate::ruby;");

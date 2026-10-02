@@ -65,12 +65,35 @@ impl SourceUncertainty {
     }
 }
 
+/// Optional explanation of a frontend trust decision, without authority or completeness effects.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceAdvisory {
+    /// Source decision being explained.
+    pub location: SourceLocation,
+    /// Explanation for callers that opt into frontend diagnostics.
+    pub message: String,
+}
+
+impl SourceAdvisory {
+    /// Creates an advisory; use [`SourceUncertainty`] for unresolved analysis completeness.
+    pub fn new(location: SourceLocation, message: impl Into<String>) -> Self {
+        Self {
+            location,
+            message: message.into(),
+        }
+    }
+}
+
 /// Cross-source limitations collected after extraction, before shared analysis.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceFinalization {
     /// Limitations remain incomplete even when independent definitions can be retained.
     pub uncertainties: Vec<SourceUncertainty>,
+    /// Optional frontend advisories for embedders; applying finalization does not emit them.
+    /// Advisory diagnostics do not remove authority or affect completeness.
+    pub advisories: Vec<SourceAdvisory>,
 }
 
 impl SourceFinalization {

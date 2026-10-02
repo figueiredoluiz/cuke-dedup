@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { completionPassed, corpusCoverageDeficits, parityDeficits, validateOracle } from "./lib/ruby-parity.mjs";
-import { outcome } from "./lib/language-parity.mjs";
+import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
 const args = process.argv.slice(2);
@@ -134,7 +134,7 @@ try {
         if (run.error) throw run.error;
         assert.ok([0, 1, 2].includes(run.status), `analyzer did not complete: ${run.signal ?? run.status}`);
         const report = await readJson(join(output, "cuke-dedup.json"));
-        measured = { ...outcome(report, run.status), duplication: report.summary.duplication,
+        measured = { ...normalizeOutcome(report, run.status, { "steps.ts": "steps", "steps.rb": "steps" }), duplication: report.summary.duplication,
           candidateSources: report.analysis.candidateSources };
         deficits = parityDeficits(oracle, report, run.status);
         digest = snapshot({ outcome: measured, deficits });

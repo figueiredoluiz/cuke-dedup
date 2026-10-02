@@ -7,7 +7,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const exclusions = {
   "src/lib.rs": "composition root", "src/main.rs": "composition root",
   "src/source_adapter.rs": "adapter routing/session composition",
-  "src/source_adapter/": "adapter routing tests/support",
   "src/typescript.rs": "language frontend", "src/typescript/": "language frontend",
   "src/ruby.rs": "language frontend", "src/ruby/": "language frontend",
 };
