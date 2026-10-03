@@ -14,19 +14,25 @@ pub(super) fn fingerprint(
     let bindings = super::bindings::Bindings::collect(block, root, source);
     let comparable = !bindings.uncertain
         && !nodes.iter().any(|node| {
-            matches!(
-                node.kind(),
-                "method"
-                    | "singleton_method"
-                    | "class"
-                    | "module"
-                    | "singleton_class"
-                    | "heredoc_body"
-                    | "heredoc_beginning"
-                    | "optional_parameter"
-                    | "keyword_parameter"
-                    | "ERROR"
-            )
+            (block.kind() == "method"
+                && matches!(
+                    node.kind(),
+                    "self" | "instance_variable" | "class_variable" | "global_variable"
+                ))
+                || (node != &block
+                    && matches!(
+                        node.kind(),
+                        "method"
+                            | "singleton_method"
+                            | "class"
+                            | "module"
+                            | "singleton_class"
+                            | "heredoc_body"
+                            | "heredoc_beginning"
+                            | "optional_parameter"
+                            | "keyword_parameter"
+                            | "ERROR"
+                    ))
         });
     let (tokens, alpha) = syntax_tokens(block, source, &bindings);
     let structural = parameterized_calls(block, source, &bindings);
@@ -132,6 +138,13 @@ pub(super) fn syntax_tokens<'tree, 'source>(
     let mut alpha = Vec::new();
     let mut pending = vec![(root, false)];
     while let Some((node, closing)) = pending.pop() {
+        if root.kind() == "method"
+            && node.parent() == Some(root)
+            && (root.child_by_field_name("name") == Some(node)
+                || matches!(node.kind(), "def" | "end"))
+        {
+            continue;
+        }
         if node.kind() == "comment"
             || (node
                 .parent()

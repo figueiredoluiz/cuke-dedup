@@ -56,6 +56,16 @@ impl AssertionProviders {
         configured: &[String],
         work_budget: usize,
     ) -> Result<Self> {
+        Self::from_units_with_registrations(loaded, edges, configured, work_budget, None)
+    }
+
+    pub(super) fn from_units_with_registrations(
+        loaded: &[super::providers::Unit],
+        edges: &[SourceDependency],
+        configured: &[String],
+        work_budget: usize,
+        registrations: Option<&super::providers::Providers>,
+    ) -> Result<Self> {
         if configured.is_empty() {
             return Ok(Self::default());
         }
@@ -169,14 +179,18 @@ impl AssertionProviders {
                         return Ok(Self::unavailable());
                     }
                     // Any escape, alias, replacement, or unknown member use removes trust globally.
-                    if !units.iter().zip(&nodes).all(|((_, input, _), nodes)| {
-                        !nodes.iter().any(|node| reflective_call(*node, input))
-                            && nodes
-                                .iter()
-                                .filter(|node| {
-                                    node.kind() == "constant" && text(**node, input) == name
-                                })
-                                .all(|node| closed_reference(*node, input))
+                    if !units.iter().zip(&nodes).all(|((file, input, _), nodes)| {
+                        !nodes.iter().any(|node| {
+                            reflective_call(*node, input)
+                                && !registrations
+                                    .and_then(|p| p.get(&file.path, input))
+                                    .is_some_and(|p| {
+                                        p.handler_captures.contains(&node.start_byte())
+                                    })
+                        }) && nodes
+                            .iter()
+                            .filter(|node| node.kind() == "constant" && text(**node, input) == name)
+                            .all(|node| closed_reference(*node, input))
                     }) {
                         continue;
                     }

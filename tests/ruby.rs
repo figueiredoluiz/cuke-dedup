@@ -56,6 +56,21 @@ fn assert_handler_finding(rows: &Value, expected: bool, source: &str) {
     );
 }
 
+fn write_registration_provider_fixture(root: &std::path::Path) {
+    fs::write(root.join("provider.rb"), "REGISTER = method(:Given)").unwrap();
+    fs::write(
+        root.join("consumer.rb"),
+        "register = REGISTER; register.call('same') { work() }; register.call('same') { work() }",
+    )
+    .unwrap();
+}
+
+fn assert_resolved_handler_source(source: &str, count: usize) {
+    let (_, rows, _) = analyze(source, &[]);
+    assert_discovery(rows.as_array().unwrap(), count, count == 0, source);
+    assert_handler_finding(&rows, count > 0, source);
+}
+
 fn assert_discovery(rows: &[Value], definitions: usize, incomplete: bool, source: &str) {
     let summary = rows.last().unwrap();
     assert_eq!(
@@ -3453,4 +3468,692 @@ fn ruby_partial_assertion_events_do_not_invent_complete_handler_similarity() {
         .find(|row| row["rule"] == "parameterization-candidate")
         .expect("whole-handler structural finding is retained");
     assert_eq!(finding["evidence"]["handlerSimilarity"], 0.95);
+}
+
+#[test]
+fn ruby_local_namespace_ownership_keeps_registry_and_assertion_trust_separate() {
+    for (provider, consumer, interference, positive) in [
+        ("module Local; class Factory; def call(x); x; end; end; def self.api; Factory.new; end; end", "Local.api", "", true),
+        ("module Local; def self.expect(x); x; end; end", "factory = Local.method(:expect); factory.call(1)", "", true),
+        ("module Local; def self.expect(x); x; end; def self.api; method(:expect); end; end", "Local.api.call(1)", "", true),
+        ("module Local; class Factory; def call(x); x; end; end; def self.api; Factory.new; end; end", "Local.api", "module Local; class Factory; def self.new; Object; end; end; end", false),
+        ("module Local; class Factory; def call(x); x; end; end; def self.api; Factory.new; end; end", "expose(Local)", "", false),
+        ("module Local; def self.expect(x); x; end; end", "Local.method(target)", "", false),
+        ("module Local; def self.expect(x); x; end; end", "Local.method(:expect)", "Local = Object", false),
+        ("module Local; def self.expect(x); x; end; end", "Local.method(:expect)", "module Local; def self.method(x); Object; end; end", false),
+        ("module Local; def self.expect(x); Object.define_method(:Given) {}; end; end", "Local.expect(1)", "", false),
+        ("module Local; class Factory < unknown; def call(x); x; end; end; def self.api; Factory.new; end; end", "Local.api", "", false),
+    ] {
+        for (provider_name, steps_name) in [("a.rb", "z.rb"), ("z.rb", "a.rb")] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join(provider_name), provider).unwrap();
+            fs::write(dir.path().join("interference.rb"), interference).unwrap();
+            fs::write(dir.path().join(steps_name), format!("require_relative '{}'\n{consumer}\nGiven('same') {{ work() }}; Then('same') {{ work() }}; Given('different') {{ work() }}", provider_name.trim_end_matches(".rb"))).unwrap();
+            let output = run_project(dir.path(), "*.rb", &[]);
+            let rows = records(output.stdout);
+            assert_discovery(&rows, if positive { 3 } else { 0 }, !positive, &format!("{provider} / {consumer} / {interference}"));
+            assert_handler_finding(&Value::Array(rows.clone()), positive, consumer);
+            assert_eq!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"), positive);
+        }
+    }
+}
+
+#[test]
+fn ruby_registration_aliases_use_valid_main_method_captures() {
+    for (declaration, call, count) in [
+        ("alias setup Given", "setup", 0),
+        ("alias :setup :Given", "setup", 0),
+        ("setup = method(:Given)", "setup.call", 3),
+        ("SETUP = method(:Given)", "SETUP.call", 3),
+    ] {
+        let source = format!("{declaration}; {call}('same') {{ work() }}; {call}('same') {{ work() }}; {call}('other') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), count, count == 0, &source);
+        assert_handler_finding(&rows, count > 0, &source);
+    }
+}
+
+#[test]
+fn ruby_unresolved_mutable_capture_never_gains_handler_trust_from_discovery() {
+    for (capture, expected) in [
+        ("captured = :fixed", true),
+        ("captured = 42", true),
+        ("captured = factory()", false),
+        ("captured = api[runtime_key]", false),
+        ("captured = original; captured.helper = replacement", false),
+        ("captured = :fixed; captured = factory()", false),
+        ("captured = 'fixed'; captured.replace(other)", false),
+    ] {
+        let source = format!("{capture}\nGiven('same') {{ use(captured) }}; Then('same') {{ use(captured) }}; Given('other') {{ use(captured) }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_eq!(
+            rows.as_array().unwrap().last().unwrap()["summary"]["definitionsAnalyzed"],
+            3
+        );
+        assert!(rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["rule"] == "duplicate-matcher"));
+        assert_handler_finding(&rows, expected, capture);
+    }
+}
+
+#[test]
+fn ruby_export_alias_chains_and_namespace_forwarders_preserve_origin() {
+    for (uses, interference, positive) in [
+        ("register = Provider::GIVEN; renamed = register; namespace = Provider; ns_alias = namespace", "", true),
+        ("register = Provider::GIVEN; renamed = register; namespace = Provider; ns_alias = namespace", "renamed = other", false),
+        ("register = Provider::GIVEN; renamed = register; namespace = Provider; ns_alias = namespace", "expose(namespace)", false),
+        ("register = Provider::GIVEN; renamed = register; namespace = Provider; ns_alias = namespace", "module Provider; def self.register(x, &b); end; end", false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("provider.rb"), "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; def self.register(text, &handler); GIVEN.call(text, &handler); end; end").unwrap();
+        fs::write(dir.path().join("steps.rb"), format!("require_relative 'provider'\n{uses}\n{interference}\nrenamed.call('same') {{ work() }}; ns_alias.register('same') {{ work() }}; Provider.register('other') {{ work() }}")).unwrap();
+        let rows = project_records(dir.path());
+        assert_discovery(&rows, if positive { 3 } else { 0 }, !positive, uses);
+        assert_handler_finding(&Value::Array(rows.clone()), positive, uses);
+        assert_eq!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"), positive);
+    }
+}
+
+#[test]
+fn ruby_provider_sibling_load_context_requires_every_caller_to_initialize_origin() {
+    for (entry, other, positive) in [
+        (
+            "require_relative 'provider'; require_relative 'consumer'",
+            "",
+            true,
+        ),
+        (
+            "require_relative 'consumer'; require_relative 'provider'",
+            "",
+            false,
+        ),
+        (
+            "require_relative 'provider'; require_relative 'consumer'",
+            "require_relative 'consumer'",
+            false,
+        ),
+        (
+            "require_relative 'provider'; require_relative 'consumer'",
+            "require_relative 'provider'; require_relative 'consumer'",
+            true,
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        write_registration_provider_fixture(dir.path());
+        fs::write(dir.path().join("entry.rb"), entry).unwrap();
+        fs::write(dir.path().join("entry-other.rb"), other).unwrap();
+        let output = run_project(dir.path(), "entry*.rb", &[]);
+        let rows = records(output.stdout);
+        assert_discovery(
+            &rows,
+            if positive { 2 } else { 0 },
+            !positive,
+            &format!("{entry} / {other}"),
+        );
+        assert_eq!(
+            rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
+            positive
+        );
+    }
+}
+
+#[test]
+fn ruby_named_handler_discovery_preserves_callable_identity_and_capture_timing() {
+    for (declaration, handler, suffix, positive) in [
+        ("handler = -> { work() }", "handler", "", true),
+        ("handler = proc { work() }", "handler", "", true),
+        ("def handler; work(); end", "method(:handler)", "", true),
+        (
+            "def handler; work(); end",
+            "public_method(:handler)",
+            "",
+            false,
+        ),
+        (
+            "handler = -> { work() }",
+            "handler",
+            "handler = replacement",
+            false,
+        ),
+        (
+            "handler = -> { work() }",
+            "handler",
+            "expose(handler)",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "method(runtime_name)",
+            "",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "method(:handler)",
+            "def handler; other(); end",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "method(:handler)",
+            "undef handler",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "method(:handler)",
+            "alias handler other",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "method(:handler)",
+            "define_method('handler') { other() }",
+            false,
+        ),
+        (
+            "handler = -> { work() }",
+            "handler",
+            "class Proc; def to_proc; other(); end; end",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "method(:handler)",
+            "class Method; def to_proc; other(); end; end",
+            false,
+        ),
+        (
+            "def handler; work(); end",
+            "unknown.method(:handler)",
+            "",
+            false,
+        ),
+    ] {
+        let source = format!("{declaration}\nGiven('same', &{handler}); Then('same', &{handler}); Given('other', &{handler})\n{suffix}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(
+            rows.as_array().unwrap(),
+            if positive { 3 } else { 0 },
+            !positive,
+            &source,
+        );
+        assert_handler_finding(&rows, positive, &source);
+        assert_eq!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["rule"] == "duplicate-matcher"),
+            positive
+        );
+    }
+    let (_, scope_rows, _) = analyze("captured = factory(); def captured; :value; end; def left; use(captured); end; def right; use(captured); end; Given('first', &method(:left)); Then('second', &method(:right))", &[]);
+    assert_discovery(
+        scope_rows.as_array().unwrap(),
+        2,
+        false,
+        "method local scope",
+    );
+    assert_handler_finding(&scope_rows, true, "method local scope");
+    let (_, rows, _) = analyze("def left; work(:first); end; def right; work(:second); end; Given('same', &method(:left)); Then('same', &method(:right))", &[]);
+    assert_discovery(rows.as_array().unwrap(), 2, false, "conflicting methods");
+    assert_handler_finding(&rows, false, "conflicting methods");
+}
+
+#[test]
+fn ruby_bound_instance_handlers_are_discovered_without_erasing_receiver_state() {
+    for (class, constructor, definitions) in [
+        ("class Bound; def initialize(value); @value = value; end; def handle; use(@value); end; end", "Bound.new(:first)", 3),
+        ("class Bound; def handle; work(); end; end", "Bound.new", 3),
+        ("class Bound; def self.new; unknown; end; def handle; work(); end; end", "Bound.new", 0),
+        ("class Bound; def handle; work(); end; end; Bound.define_singleton_method(:new) { Object }", "Bound.new", 0),
+        ("class Bound < unknown; def handle; work(); end; end", "Bound.new", 0),
+        ("class Bound; def method(name); unknown; end; def handle; work(); end; end", "Bound.new", 0),
+    ] {
+        let source = format!("{class}\ninstance = {constructor}; Given('same', &instance.method(:handle)); Then('same', &instance.method(:handle)); Given('other', &instance.method(:handle))");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), definitions, true, &source);
+        assert_handler_finding(&rows, false, &source);
+        assert_eq!(rows.as_array().unwrap().iter().any(|r| r["rule"] == "duplicate-matcher"), definitions > 0);
+    }
+}
+
+#[test]
+fn ruby_closed_local_execution_discovers_steps_without_comparing_enclosing_captures() {
+    for (declaration, invocation, count) in [
+        ("factory = ->(value) { Given('same') { use(value) }; Then('same') { use(value) } }", "factory.call(1)", 2),
+        ("factory = lambda do |; value|; value = 1; Given('same') { use(value) }; Then('same') { use(value) }; end", "factory.call()", 2),
+        ("factory = proc { Given('same') { work() }; Then('same') { work() } }", "factory.call", 2),
+        ("factory = ->(value) { Given('same') { use(value) } }", "factory.call()", 0),
+        ("factory = ->(value) { Given('same') { use(value) } }", "factory.call(*values)", 0),
+        ("factory = -> { Given('same') { work() } }", "", 0),
+        ("factory = -> { Given('same') { work() } }", "factory.call; factory.call", 0),
+        ("factory = -> { Given('same') { work() } }", "expose(factory); factory.call", 0),
+        ("factory = -> { Given('same') { work() } }", "if ready; factory.call; end", 0),
+        ("factory = -> { Given('same') { work() } }", "factory = replacement; factory.call", 0),
+        ("factory = -> { effect(); Given('same') { work() } }", "factory.call", 0),
+    ] {
+        let source = format!("{declaration}\n{invocation}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), count, true, &source);
+        assert_handler_finding(&rows, false, &source);
+        assert_eq!(rows.as_array().unwrap().iter().any(|r| r["rule"] == "duplicate-matcher"), count > 1);
+    }
+}
+
+#[test]
+fn ruby_main_registration_capture_chains_do_not_trust_arbitrary_callables() {
+    for (origin, suffix, expected) in [
+        ("method(:Given)", "", true),
+        ("method(:Given)", "renamed = other", false),
+        ("method(:Given)", "expose(original)", false),
+        ("other.method(:Given)", "", false),
+        ("->(text, &block) { text }", "", false),
+    ] {
+        let source = format!("original = {origin}; renamed = original; {suffix}; renamed.call('same') {{ work() }}; renamed.call('same') {{ work() }}; renamed.call('other') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_eq!(
+            rows.as_array().unwrap().last().unwrap()["summary"]["definitionsAnalyzed"],
+            if expected { 3 } else { 0 }
+        );
+        assert_handler_finding(&rows, expected, &source);
+        assert_eq!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["rule"] == "duplicate-matcher"),
+            expected
+        );
+    }
+}
+
+#[test]
+fn ruby_review_entry_sources_cannot_inherit_sibling_initialization() {
+    let dir = tempfile::tempdir().unwrap();
+    write_registration_provider_fixture(dir.path());
+    fs::write(
+        dir.path().join("entry.rb"),
+        "require_relative 'provider'; require_relative 'consumer'",
+    )
+    .unwrap();
+    for (pattern, count) in [("entry*.rb", 2), ("*.rb", 0)] {
+        let rows = records(run_project(dir.path(), pattern, &[]).stdout);
+        assert_discovery(&rows, count, count == 0, pattern);
+        assert_eq!(
+            rows.iter().any(|r| r["rule"] == "duplicate-matcher"),
+            count > 0
+        );
+    }
+}
+
+#[test]
+fn ruby_review_forwarder_identity_rejects_all_replacement_routes() {
+    for (replacement, count) in [
+        ("", 3),
+        ("Provider.define_singleton_method(:register) { |*args| }", 0),
+        ("class << Provider; def register(*args); end; end", 0),
+        ("expose(Provider)", 0),
+        (
+            "Provider.singleton_class.alias_method(:register, :other)",
+            0,
+        ),
+    ] {
+        let source = format!("ROOT_GIVEN = method(:Given); module Provider; def self.register(text, &handler); ROOT_GIVEN.call(text, &handler); end; end; {replacement}; Provider.register('same') {{ work() }}; Provider.register('same') {{ work() }}; Provider.register('other') {{ work() }}");
+        assert_resolved_handler_source(&source, count);
+    }
+}
+
+#[test]
+fn ruby_review_closed_execution_rejects_symbol_handlers_and_extra_arguments() {
+    for (registration, count) in [
+        ("Given('same') { work() }; Then('same') { work() }", 2),
+        (
+            "Given('same', :helper) { work() }; Then('same', :helper) { work() }",
+            0,
+        ),
+        ("Given('same', {}) { work() }", 0),
+        ("Given('same', &unknown)", 0),
+    ] {
+        let source = format!("factory = -> {{ {registration} }}; factory.call");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), count, true, &source);
+        assert_handler_finding(&rows, false, &source);
+    }
+}
+
+#[test]
+fn ruby_review_top_level_blocks_cannot_hide_capture_mutation() {
+    for suffix in [
+        "tap { captured = factory() }",
+        "[1].each { captured = factory() }",
+    ] {
+        let source = format!("captured = :fixed; {suffix}; Given('first') {{ use(captured) }}; Then('second') {{ use(captured) }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), 2, true, &source);
+        assert_handler_finding(&rows, false, &source);
+    }
+}
+
+#[test]
+fn ruby_review_branching_load_context_is_bounded_and_preserves_small_graphs() {
+    for depth in [2, 26] {
+        let dir = tempfile::tempdir().unwrap();
+        write_registration_provider_fixture(dir.path());
+        fs::write(
+            dir.path().join("entry.rb"),
+            "require_relative 'provider'; require_relative 'a0'; require_relative 'b0'",
+        )
+        .unwrap();
+        for level in 0..depth {
+            let source = if level + 1 == depth {
+                "require_relative 'consumer'".to_owned()
+            } else {
+                format!(
+                    "require_relative 'a{}'; require_relative 'b{}'",
+                    level + 1,
+                    level + 1
+                )
+            };
+            for prefix in ["a", "b"] {
+                fs::write(dir.path().join(format!("{prefix}{level}.rb")), &source).unwrap();
+            }
+        }
+        let output = project_command(dir.path(), "entry.rb")
+            .timeout(std::time::Duration::from_secs(30))
+            .output()
+            .unwrap();
+        let rows = records(output.stdout);
+        assert_discovery(&rows, 2, false, &format!("depth {depth}"));
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r["rule"] == "duplicate-matcher")
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn ruby_review_callable_kinds_preserve_arity_and_return_semantics() {
+    for (left, right, equivalent) in [
+        ("lambda { work() }", "lambda { work() }", true),
+        ("lambda { work() }", "proc { work() }", false),
+        ("lambda { return work() }", "proc { return work() }", false),
+        (
+            "lambda { |value| work(value) }",
+            "proc { |value| work(value) }",
+            false,
+        ),
+        ("-> { work() }", "proc { work() }", false),
+    ] {
+        let source = format!(
+            "left = {left}; right = {right}; Given('first', &left); Then('second', &right)"
+        );
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), 2, false, &source);
+        assert_handler_finding(&rows, equivalent, &source);
+        if !equivalent {
+            assert!(
+                !rows.as_array().unwrap().iter().any(|r| matches!(
+                    r["rule"].as_str(),
+                    Some("near-duplicate-step" | "parameterization-candidate")
+                )),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ruby_review_unrelated_conversion_methods_do_not_invalidate_registry() {
+    for (class, count) in [
+        (
+            "class Ordinary; def to_proc; unknown; end; end; Ordinary.new",
+            2,
+        ),
+        ("class Proc; def to_proc; unknown; end; end", 0),
+        ("class Method; def to_proc; unknown; end; end", 0),
+    ] {
+        let source = format!("{class}; handler = proc {{ work() }}; Given('first', &handler); Then('second', &handler)");
+        assert_resolved_handler_source(&source, count);
+    }
+}
+
+#[test]
+fn ruby_review_root_method_identity_includes_singleton_and_object_overrides() {
+    for (replacement, count) in [
+        ("", 2),
+        ("def self.handler; other(); end", 0),
+        ("class << self; def handler; other(); end; end", 0),
+        ("class Object; def handler; other(); end; end", 0),
+    ] {
+        let source = format!("def handler; work(); end; {replacement}; Given('first', &method(:handler)); Then('second', &method(:handler))");
+        assert_resolved_handler_source(&source, count);
+    }
+}
+
+#[test]
+fn ruby_review_exposed_conversion_owners_preserve_unrelated_registrations() {
+    for (owner, receiver, count) in [
+        ("Ordinary", "", 2),
+        ("Ordinary", "self.", 2),
+        ("Proc", "", 0),
+        ("Method", "", 0),
+        ("Ordinary", "Proc.", 0),
+        ("Ordinary", "unknown.", 0),
+    ] {
+        let source = format!("class {owner}; self; def {receiver}to_proc; unknown; end; end; handler = proc {{ work() }}; Given('first', &handler); Then('second', &handler)");
+        assert_resolved_handler_source(&source, count);
+    }
+}
+
+#[test]
+fn ruby_review_large_provider_suites_preserve_registration_recall() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("provider.rb"),
+        "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end",
+    )
+    .unwrap();
+    fs::write(dir.path().join(".cuke-dedup.json"), r#"{"rules":{"duplicate-handler":"off","near-duplicate-step":"off","parameterization-candidate":"off","unused-definition":"off"}}"#).unwrap();
+    for index in 0..1000 {
+        fs::write(dir.path().join(format!("steps{index}.rb")), format!("require_relative 'provider'; register = Provider::GIVEN; register.call('step {index}') {{ work({index}) }}")).unwrap();
+    }
+    let rows = project_records(dir.path());
+    assert_discovery(&rows, 1000, false, "large provider suite");
+}
+
+#[test]
+fn ruby_named_handler_assertion_uncertainty_matches_inline_outcomes() {
+    for trusted in [false, true] {
+        for expected in ["'ready'", "UNKNOWN"] {
+            for form in ["inline", "proc", "lambda", "method"] {
+                let mut source = String::new();
+                for (index, matcher) in ["first", "second"].iter().enumerate() {
+                    let body = format!("Assertions.expect(page).to_be({expected})");
+                    source.push_str(&match form {
+                        "inline" => format!("Then('{matcher}') {{ {body} }}; "),
+                        "method" => format!("def handler{index}; {body}; end; Then('{matcher}', &method(:handler{index})); "),
+                        _ => format!("handler{index} = {form} {{ {body} }}; Then('{matcher}', &handler{index}); "),
+                    });
+                }
+                let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
+                let rows = project_records(root.path());
+                let uncertain = trusted && expected == "UNKNOWN";
+                assert_discovery(&rows, 2, uncertain, &format!("{trusted}/{form}/{expected}"));
+                assert_handler_finding(&Value::Array(rows), !uncertain, &source);
+            }
+        }
+    }
+}
+
+#[test]
+fn ruby_named_handler_large_suites_charge_local_work_and_cache_method_identity() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("provider.rb"),
+        "def shared_handler; work(); end",
+    )
+    .unwrap();
+    fs::write(root.path().join(".cuke-dedup.json"), r#"{"rules":{"duplicate-handler":"off","duplicate-matcher":"off","near-duplicate-step":"off","parameterization-candidate":"off","unused-definition":"off"}}"#).unwrap();
+    for index in 0..500 {
+        let padding = "0;".repeat(500);
+        fs::write(root.path().join(format!("steps{index}.rb")), format!("{padding}require_relative 'provider'; handler = proc {{ work() }}; Given('local {index} first', &handler); Then('local {index} second', &handler); Given('method {index} first', &method(:shared_handler)); Then('method {index} second', &method(:shared_handler))")).unwrap();
+    }
+    assert_discovery(
+        &project_records(root.path()),
+        2000,
+        false,
+        "local callable and shared Method scaling",
+    );
+}
+
+#[test]
+fn ruby_named_method_assertion_bindings_follow_the_body_source() {
+    for expected in ["'ready'", "UNKNOWN"] {
+        let root = assertion_project(ASSERTION_PROVIDER, "require_relative 'body'; Given('first', &method(:handler)); Then('second', &method(:handler))", true);
+        fs::write(root.path().join("body.rb"), format!("require_relative 'assertions'; def handler; Assertions.expect(page).to_be({expected}); end")).unwrap();
+        let rows = records(run_project(root.path(), "steps.rb", &[]).stdout);
+        assert_discovery(&rows, 2, expected == "UNKNOWN", expected);
+        assert_handler_finding(&Value::Array(rows), expected != "UNKNOWN", expected);
+    }
+}
+
+#[test]
+fn ruby_unresolved_loaders_cannot_grant_inherited_provider_initialization() {
+    for loader in [
+        "require_relative target",
+        "def loader; require_relative 'consumer'; end",
+        "if condition; require_relative 'consumer'; end",
+        "load 'consumer.rb'",
+        "autoload(:Consumer, 'consumer.rb')",
+    ] {
+        for direct in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            write_registration_provider_fixture(root.path());
+            if direct {
+                let path = root.path().join("consumer.rb");
+                fs::write(
+                    &path,
+                    format!(
+                        "require_relative 'provider'; {}",
+                        fs::read_to_string(&path).unwrap()
+                    ),
+                )
+                .unwrap();
+            }
+            fs::write(
+                root.path().join("entry.rb"),
+                format!("{loader}; require_relative 'provider'; require_relative 'consumer'"),
+            )
+            .unwrap();
+            let rows = records(run_project(root.path(), "entry.rb", &[]).stdout);
+            // Autoload independently invalidates the DSL; direct proof cannot override that uncertainty.
+            assert_discovery(
+                &rows,
+                if direct && !loader.starts_with("autoload") {
+                    2
+                } else {
+                    0
+                },
+                true,
+                loader,
+            );
+        }
+    }
+}
+
+#[test]
+fn ruby_assertion_reflection_exemptions_do_not_depend_on_unrelated_handlers() {
+    for capture in [
+        "",
+        "def helper; work(); end; Given('helper', &method(:helper));",
+    ] {
+        for expected in ["'ready'", "UNKNOWN"] {
+            let source = format!("class Local; def safe; end; end; local = Local.new; local.send(:safe); {capture} Given('first') {{ Assertions.expect(page).to_be({expected}) }}; Then('second') {{ Assertions.expect(page).to_be({expected}) }}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, true);
+            let rows = project_records(root.path());
+            assert_discovery(
+                &rows,
+                if capture.is_empty() { 2 } else { 3 },
+                false,
+                &source,
+            );
+            assert_handler_finding(&Value::Array(rows), true, &source);
+        }
+    }
+}
+
+#[test]
+fn ruby_repeated_large_named_bodies_report_bounded_proof_exhaustion() {
+    let root = tempfile::tempdir().unwrap();
+    let body = "work();".repeat(2000);
+    let registrations = (0..350)
+        .map(|i| format!("Given('named {i}', &method(:handler));"))
+        .collect::<String>();
+    fs::write(root.path().join("steps.rb"), format!("def handler; {body} end; {registrations} Given('control') {{ control() }}; Then('control') {{ control() }}")).unwrap();
+    fs::write(root.path().join(".cuke-dedup.json"), r#"{"rules":{"near-duplicate-step":"off","parameterization-candidate":"off","unused-definition":"off"}}"#).unwrap();
+    let rows = project_records(root.path());
+    assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], true);
+    assert!(
+        rows.last().unwrap()["summary"]["definitionsAnalyzed"]
+            .as_u64()
+            .unwrap()
+            >= 2
+    );
+    assert_handler_finding(
+        &Value::Array(rows),
+        true,
+        "direct controls survive named-body work exhaustion",
+    );
+}
+
+#[test]
+fn ruby_review_forwarder_helpers_preserve_independent_exports() {
+    for usage in ["P.helper", "expose(P)"] {
+        let source = format!("ROOT_GIVEN = method(:Given); module P; def self.register(text, &handler); ROOT_GIVEN.call(text, &handler); end; def self.helper; end; end; module Other; GIVEN = ::ROOT_GIVEN; end; {usage}; register = Other::GIVEN; register.call('first') {{ work() }}; register.call('second') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        let trusted = usage == "P.helper";
+        assert_discovery(
+            rows.as_array().unwrap(),
+            if trusted { 2 } else { 0 },
+            !trusted,
+            &source,
+        );
+        assert_handler_finding(&rows, trusted, &source);
+    }
+}
+
+#[test]
+fn ruby_review_capture_reads_keep_immutable_values_and_reject_mutation() {
+    for (value, usage, trusted) in [
+        ("1", "read(value)", true),
+        ("1", "Before { read(value) }", true),
+        ("1", "other = proc { read(value) }", true),
+        ("1", "later { value = 2 }", false),
+        ("'ready'", "Before { read(value) }", false),
+    ] {
+        let source = format!("value = {value}; {usage}; Given('first') {{ read(value) }}; Then('second') {{ read(value) }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), 2, !trusted, &source);
+        assert_handler_finding(&rows, trusted, &source);
+    }
+}
+
+#[test]
+fn ruby_review_block_argument_escapes_remove_named_handler_proof() {
+    for usage in ["", "expose(&handler)", "instance_exec(&handler)"] {
+        let source = format!("handler = proc {{ work() }}; {usage}; Given('named first', &handler); Then('named second', &handler); Given('control first') {{ control() }}; Then('control second') {{ control() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(
+            rows.as_array().unwrap(),
+            if usage.is_empty() { 4 } else { 2 },
+            !usage.is_empty(),
+            &source,
+        );
+        assert_handler_finding(&rows, true, &source);
+    }
 }

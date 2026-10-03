@@ -198,14 +198,26 @@ pub(crate) fn is_unparseable_diagnostic(diagnostic: &ExtractionDiagnostic) -> bo
 pub struct SourceDependency {
     /// Source location of the loading call.
     pub location: SourceLocation,
-    /// Canonical Ruby source included by that call.
+    /// Canonical source included by that call.
     pub target: PathBuf,
+    /// True only when discovery proves this target was not independently selected.
+    pub dependency_only: bool,
 }
 
 impl SourceDependency {
+    /// Supplies explicit dependency-only origin evidence; unknown origins must remain false.
+    pub fn with_dependency_only_target(mut self, dependency_only: bool) -> Self {
+        self.dependency_only = dependency_only;
+        self
+    }
+
     /// Records a loading call and its resolved source.
     pub fn new(location: SourceLocation, target: PathBuf) -> Self {
-        Self { location, target }
+        Self {
+            location,
+            target,
+            dependency_only: false,
+        }
     }
 }
 

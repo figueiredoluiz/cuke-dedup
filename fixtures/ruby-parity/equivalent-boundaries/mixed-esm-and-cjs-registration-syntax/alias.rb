@@ -1,2 +1,2 @@
-alias setup Given
-setup('a shared module registration') { prepare_workspace() }
+setup = method(:Given)
+setup.call('a shared module registration') { prepare_workspace() }

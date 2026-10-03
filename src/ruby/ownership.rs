@@ -73,7 +73,14 @@ impl RegistrationEffects {
             }
             // Passing the lexical owner to arbitrary code can install or alias its method table.
             // Keep this conservative even in deferred bodies until their effects are modeled.
-            if node.kind() == "self" {
+            if node.kind() == "self"
+                && !node.parent().is_some_and(|parent| {
+                    parent.kind() == "singleton_method"
+                        && parent.child_by_field_name("name") != Some(node)
+                        && parent.child_by_field_name("parameters") != Some(node)
+                        && parent.child_by_field_name("body") != Some(node)
+                })
+            {
                 if let Some(owner) = declarations.owner(node) {
                     effects.exposed_owners.insert(owner);
                 }
@@ -91,9 +98,18 @@ impl RegistrationEffects {
                     });
                     protected
                 }
-                "method" | "singleton_method" => node
-                    .child_by_field_name("name")
-                    .is_some_and(|name| protected_method(text(name, source))),
+                "method" | "singleton_method" => {
+                    node.child_by_field_name("name").is_some_and(|name| {
+                        let name = text(name, source);
+                        protected_method(name)
+                            && (name != "to_proc"
+                                || declarations.owner(node).is_none()
+                                || (node.kind() == "singleton_method"
+                                    && node
+                                        .child_by_field_name("object")
+                                        .is_none_or(|object| object.kind() != "self")))
+                    })
+                }
                 "call" => {
                     !aliases.capture(node)
                         && !proof.is_some_and(|p| p.isolated_calls.contains(&node.start_byte()))
@@ -109,7 +125,11 @@ impl RegistrationEffects {
             // cannot prove that an arbitrary receiver is isolated from the registrar.
             let explicit_receiver =
                 node.child_by_field_name("receiver").is_some() || node.kind() == "singleton_method";
-            if !explicit_receiver && node.kind() != "call" {
+            let lexical_singleton = node.kind() == "singleton_method"
+                && node
+                    .child_by_field_name("object")
+                    .is_some_and(|n| n.kind() == "self");
+            if (!explicit_receiver || lexical_singleton) && node.kind() != "call" {
                 if let Some(owner) = declarations.mutation_owner(node) {
                     effects.mutated_owners.insert(owner);
                     continue;
@@ -263,7 +283,7 @@ impl Declarations {
 pub(super) fn protected_namespace(name: &str) -> bool {
     matches!(
         name,
-        "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class" | "Method"
+        "Cucumber" | "Object" | "BasicObject" | "Kernel" | "Module" | "Class" | "Method" | "Proc"
     )
 }
 
