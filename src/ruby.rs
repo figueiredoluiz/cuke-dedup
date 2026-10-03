@@ -23,6 +23,7 @@ mod parameters;
 mod providers;
 mod registration_aliases;
 mod registration_wrappers;
+mod step_keywords;
 
 pub(crate) struct RubyAdapter;
 pub(crate) static RUBY_ADAPTER: RubyAdapter = RubyAdapter;
@@ -212,6 +213,7 @@ fn extract_with_proof(
     let root = tree.root_node();
     let proof = proof.filter(|_| !root.has_error());
     let nodes = descendants(root);
+    let lines: Vec<_> = source.lines().collect();
     let mut aliases = registration_aliases::RegistrationAliases::collect(root, source);
     if let Some(proof) = proof {
         aliases.extend_provider(root, proof);
@@ -233,18 +235,24 @@ fn extract_with_proof(
     result.parameter_types = parameters::collect(&nodes, source, file);
     let mut effects =
         ownership::RegistrationEffects::collect(root, source, &aliases, &wrappers, proof);
-    if result
+    if let Some(declaration) = result
         .parameter_types
         .iter()
-        .any(parameters::invalidates_registry)
+        .find(|declaration| parameters::invalidates_registry(declaration))
     {
-        effects.invalidate();
+        effects.invalidate(nodes.iter().copied().find(|node| {
+            node.kind() == "call" && location(file, *node, source) == declaration.location
+        }));
     }
     let replaced = effects.invalidated();
     if replaced {
+        let cause = effects
+            .invalidation_site()
+            .and_then(|(start, end)| root.descendant_for_byte_range(start, end))
+            .unwrap_or(root);
         result.diagnostics.push(diagnostic(
             file,
-            root,
+            cause,
             source,
             Kind::Incomplete,
             "Ruby registration ownership or executable source effects are unresolved",
@@ -396,7 +404,13 @@ fn extract_with_proof(
             framework: Framework::CucumberRuby,
             registration: name.to_owned(),
             location: location(file, node, source),
-            inline_suppressions: vec![],
+            inline_suppressions: crate::source_adapter::suppression::inline_suppressions(
+                node.start_position().row,
+                "#",
+                &lines,
+                file,
+                &mut result.diagnostics,
+            ),
         });
     }
     result
@@ -660,8 +674,10 @@ fn inside_deferred_body(
     false
 }
 
+/// Cucumber-Ruby aliases every dialect's step keywords onto `register_rb_step_definition`
+/// regardless of the feature-file language, so each one is a registrar in every step file.
 fn registration(name: &str) -> bool {
-    matches!(name, "Given" | "When" | "Then" | "And" | "But")
+    step_keywords::STEP_KEYWORDS.binary_search(&name).is_ok()
 }
 
 fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {

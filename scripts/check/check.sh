@@ -61,6 +61,7 @@ if [[ "$mode" == "full" ]]; then
   # pair cross-window and exercises the merge paths — notably that a proven ambiguity split across
   # windows still withholds the overlap finding that `ambiguous-step` owns.
   CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+  node scripts/check/check-ruby-step-keywords.mjs
   node scripts/check/check-ruby-parity.mjs --regression target/release/cuke-dedup
   parity_report="$(mktemp)"
   trap 'rm -f "$parity_report"' EXIT

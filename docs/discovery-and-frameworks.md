@@ -273,17 +273,27 @@ for resolution and input bounds.
 
 ## Cucumber-Ruby
 
-Experimental Ruby analysis requires explicit definition and feature roots for one Cucumber suite. Include support files that register steps:
+Ruby support is experimental and opt-in. It requires explicit definition and feature roots for one Cucumber suite. Include support files that register steps.
+
+Start with an exploratory run. It reports findings from the supported subset and lists what it could not resolve:
+
+```sh
+cuke-dedup path/to/project --definitions 'features/**/*.rb' --features 'features/**/*.feature'
+```
+
+For a CI gate, also require both corpora and fail on incompleteness. Unresolved requires, autoloads, dynamic `step` calls and DSL changes are common in Ruby suites, so this command fails until the suite stays inside the supported subset or the gaps are configured away, for example with `rubyLoadPaths`:
 
 ```sh
 cuke-dedup path/to/project --definitions 'features/**/*.rb' --features 'features/**/*.feature' --require-definitions --require-features --fail-on-incomplete
 ```
 
-The adapter never executes Ruby, Gemfiles, hooks or dependencies. Explicit selection establishes DSL context but cannot resolve every runtime override. Default discovery remains JS/TS-only. Analyze independent suites separately; mixed Ruby and JS/TS sources are rejected before comparison.
+The adapter never executes Ruby, Gemfiles, hooks or dependencies. Explicit selection establishes DSL context but cannot resolve every runtime override.
+
+Default discovery remains JS/TS-only. A definition pattern selects `.rb` files only when it depends on the suffix, as `features/**/*.rb` or `features/support/env.rb` do. Suffix-agnostic patterns such as `features/**` keep their JS/TS selection and report skipped Ruby files in a warning. Analyze independent suites separately: a selection that contains both Ruby and JS/TS sources is rejected before comparison.
 
 ### Registrations and providers
 
-Direct top-level `Given`, `When`, `Then`, `And`, and `But` accept static string/regex matchers and inline `do/end` or brace blocks, with parenthesized or command-call syntax. Strings are Cucumber Expressions; slash and `%r{...}` literals are Ruby regexes. Double-quoted `\uXXXX` and `\u{...}` scalar escapes decode before comparison; single-quoted escapes remain literal. Invalid Unicode scalars are unsupported.
+Direct top-level step keywords accept static string/regex matchers and inline `do/end` or brace blocks, with parenthesized or command-call syntax. Cucumber-Ruby defines the step keywords of every Gherkin dialect, whatever the feature language, so `Angenommen`, `Dado` and `假如` register like `Given`. Keywords containing spaces or punctuation, apart from a trailing `!` or `?` as in `Avast!`, can only be called through `send` and remain incomplete. Strings are Cucumber Expressions; slash and `%r{...}` literals are Ruby regexes. Double-quoted `\uXXXX` and `\u{...}` scalar escapes decode before comparison; single-quoted escapes remain literal. Invalid Unicode scalars are unsupported.
 
 Immutable registration captures support subsequent top-level `.call` uses and closed local alias chains. Top-level keyword aliases such as `alias setup Given` are unsupported: Cucumber installs the registrar on main’s singleton class. Reassignment, shadowing, escape, unknown dispatch and lookup/invocation overrides remain incomplete.
 
@@ -299,7 +309,9 @@ Rules cover duplicate matchers, exact supported handler reuse, and usage/ambigui
 
 Near-wording findings require exact-equal supported handlers and compatible captures; matcher metadata contributes no wording evidence. Parameterization accepts straight-line handlers consisting entirely of explicit simple-receiver calls with static string/numeric arguments and no block parameters. It preserves bindings, methods, order, arity, literal types and safe navigation. Nested/deferred calls, dynamic arguments, control flow and writes retain exact structural identity.
 
-Explicitly configured assertion factories can add value- and polarity-sensitive evidence under the [closed provider contract](configuration.md#trusted-assertion-modules). This limited support does not infer ambient or RSpec assertion trust, trust arbitrary helper returns, or enable general similarity between different handler trees. Provider names alone confer no authority. Assertion factory-call evidence preserves attached blocks and safe navigation. Ruby assertion events describe only part of a handler, so they do not support event-based similarity: normalized matcher findings score unchanged handlers at 1, supported parameterized shapes at 0.95, and other changed handlers at 0.
+Explicitly configured assertion factories can add value- and polarity-sensitive evidence under the [closed provider contract](configuration.md#trusted-assertion-modules). RSpec, Minitest and Capybara assertions get no assertion evidence; handlers using them are compared as ordinary calls. This limited support does not infer ambient or RSpec assertion trust, trust arbitrary helper returns, or enable general similarity between different handler trees. Provider names alone confer no authority. Assertion factory-call evidence preserves attached blocks and safe navigation. Ruby assertion events describe only part of a handler, so they do not support event-based similarity: normalized matcher findings score unchanged handlers at 1, supported parameterized shapes at 0.95, and other changed handlers at 0.
+
+Named Ruby handlers reuse assertion evidence from the exact source containing their bodies. Unresolved configured assertions remove comparison authority while preserving registrations.
 
 ### Matchers
 
@@ -320,9 +332,11 @@ Indeterminate execution cannot justify unused or overlap findings; identical lit
 
 ### Ownership, dependencies and usage
 
-Dynamic/nested registrations and local DSL replacement are untrusted; unsupported self-qualified calls report incomplete discovery. Isolated module method definitions and ordinary aliases preserve top-level trust. Qualified declaration prefixes need preceding local namespaces; missing/shadowed prefixes cannot establish ownership by spelling. Namespace aliases, owner escapes, dynamic installation and unresolved reflective receivers remain conservative. Registrar-affecting mutations invalidate registrations across the selected suite.
+Dynamic/nested registrations and local DSL replacement are untrusted; unsupported self-qualified calls report incomplete discovery. Isolated module method definitions and ordinary aliases preserve top-level trust. Qualified declaration prefixes need preceding local namespaces; missing/shadowed prefixes cannot establish ownership by spelling. Namespace aliases, owner escapes, dynamic installation and unresolved reflective receivers remain conservative. Registrar-affecting mutations invalidate registrations across the selected suite. Any reopening of `Cucumber::Glue`, its singleton methods or calls on it count as registrar-affecting whatever the method names, because that namespace implements registration. Ordinary helpers, including top-level methods and classes without a superclass, keep trust.
 
-Literal top-level `require_relative` and `require` against explicit `rubyLoadPaths` form a bounded source graph. Missing/unsupported loads remain incomplete; external providers such as `aruba/cucumber` need source roots and supported registration semantics. Eager autoload withholds suite trust; deferred autoload preserves initial registrations but marks analysis incomplete. Findings from supported local definitions remain possible; zero findings cannot certify the suite.
+`include`, `extend`, `prepend` and subclassing run hooks (`included`, `extended`, `prepended`, `inherited`) that can change any owner, and installed gems are never read. Outside step bodies these forms therefore keep the selected suite untrusted. Support modules that include gem modules such as `Capybara::DSL`, and page objects with a superclass, cause this today. The diagnostic names the call or superclass that caused it.
+
+Ruby definition globs define the analysis entry points. Caller inheritance uses only resolved static source loads; it does not infer runner configuration. Unknown loaders retain incompleteness. Literal top-level `require_relative` and `require` against explicit `rubyLoadPaths` form a bounded source graph. Missing/unsupported loads remain incomplete; external providers such as `aruba/cucumber` need source roots and supported registration semantics. Eager autoload withholds suite trust; deferred autoload preserves initial registrations but marks analysis incomplete. Findings from supported local definitions remain possible; zero findings cannot certify the suite.
 
 Literal `step` calls, including support-file and deferred calls, prevent matching unused findings without proving reachability. Dynamic calls, unresolved receivers, `steps`, delegation replacement, unresolved dependencies and unreadable selected sources disable Ruby unused findings and report incompleteness. Resolving a load removes only that loading uncertainty. Indirect calls neither increase feature counts nor establish ambiguity. Library consumers merge `Extraction.indirect_usage` and use `analysis::analyze_with_step_usage`; older entry points report incomplete usage without it.
 
@@ -333,17 +347,3 @@ Closed, unchanged, unescaped local instances may dispatch literal methods declar
 Direct top-level `ParameterType` supports literal names, string/regex/array patterns and deferred lambda/proc transformers. Direct inline transformer bodies are deferred; dynamic property access there preserves adjacent registrations but establishes neither transformer equivalence nor assertion trust. Unsupported forms and dynamic indirect usage remain incomplete.
 
 Source patterns supersede configured fallbacks. Duplicate names and unresolved declarations remove matching authority and mark incompleteness; unknown names and built-in redefinitions invalidate registration trust. Regex flags, nested arrays, immediate transformer invocation and preferential-regex registration are unsupported. Library consumers receive `Extraction.parameter_types` separately from handlers; the CLI merges the selected registry before expression matching.
-
-## Frontend conformance
-
-`SourceAdapter` owns default source selection, input filtering, indirect-usage policy and source parameter resolution. Its new hooks have defaults so existing implementations remain compatible. Dependency expansion uses private registry callbacks; it does not expose glob types or discovery mutation to public adapter implementations. Ruby requires explicit definition globs; ECMAScript discovery remains automatic. `rubyLoadPaths` keeps its flat JSON key, precedence and public getter while Ruby owns its storage; existing validation remains unchanged.
-
-Ruby preparation reads and parses one bounded source snapshot for both registration and assertion proofs. A later source-byte mismatch withdraws its optional proof. File-count, aggregate-byte, per-source and proof-work limits retain conservative fallback; these limits do not make arbitrary runtime behavior statically knowable. Proof-work exhaustion is shared across collectors and withdraws all optional registration and handler proofs. Direct registrations remain subject to normal ownership checks.
-
-After `SourceExtractionSession::finalize`, embedders may inspect `SourceFinalization.advisories` for resolved configured assertion providers available in the bounded snapshot but rejected by the closed-factory proof. Advisories explain trust decisions; they do not remove definitions or change completeness. The CLI preserves its existing diagnostics. Incomplete source evidence remains in `uncertainties`.
-
-Corpus conformance compares language-neutral counts, completeness, strict exits and finding ownership. Source names are mapped explicitly by each language lane. Desired outcomes, known implementation gaps and justified language differences remain separate; a green regression gate does not imply Ruby completion.
-
-Ruby definition globs define the analysis entry points. Caller inheritance uses only resolved static source loads; it does not infer runner configuration. Unknown loaders retain incompleteness.
-
-Named Ruby handlers reuse assertion evidence from the exact source containing their bodies. Unresolved configured assertions remove comparison authority while preserving registrations. Discovery alone does not establish assertion trust or complete Ruby rule parity.

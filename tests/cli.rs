@@ -5107,3 +5107,321 @@ fn inert_receiver_only_project_passes_strict_mode() {
         .assert()
         .success();
 }
+
+struct RubyReleaseRun {
+    code: Option<i32>,
+    definitions: u64,
+    incomplete: bool,
+    active: Vec<String>,
+    suppressed: Vec<String>,
+    stderr: String,
+}
+
+fn ruby_release_run(root: &Path, definitions: Option<&str>) -> RubyReleaseRun {
+    let selection = definitions.map(|pattern| ["--definitions", pattern]);
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(root)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(selection.iter().flatten())
+        .output()
+        .unwrap();
+    let rows: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let summary = rows.iter().find(|row| row["type"] == "summary").unwrap();
+    let rules = |active: bool| {
+        rows.iter()
+            .filter(|row| row["type"] == "finding" && row["active"] == active)
+            .map(|row| row["rule"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    RubyReleaseRun {
+        code: output.status.code(),
+        definitions: summary["summary"]["definitionsAnalyzed"].as_u64().unwrap(),
+        incomplete: summary["corpus"]["incomplete"].as_bool().unwrap(),
+        active: rules(true),
+        suppressed: rules(false),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+const RUBY_RELEASE_FEATURE: &str =
+    "Feature: release\n  Scenario: steps\n    Given same\n    Given other\n";
+const RUBY_RELEASE_STEPS: &str = "Given('same') { work(1) }\nGiven('other') { work(1) }\n";
+
+fn ruby_release_prelude_run(prelude: &str) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.rb",
+        &format!("{prelude}{RUBY_RELEASE_STEPS}"),
+    );
+    write(directory.path(), "a.feature", RUBY_RELEASE_FEATURE);
+    ruby_release_run(directory.path(), Some("*.rb"))
+}
+
+#[test]
+fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "features/support/steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('a user exists', () => createUser());\nGiven('a user exists', () => createUser());\n",
+    );
+    // A Ruby helper next to TypeScript steps was ignored before Ruby support existed.
+    write(
+        root,
+        "features/support/env.rb",
+        "Given('ruby step') { work(1) }\n",
+    );
+    write(
+        root,
+        "features/users.feature",
+        "Feature: users\n  Scenario: existing\n    Given a user exists\n",
+    );
+    for (pattern, definitions, skipped, mixed) in [
+        (Some("features/support/**"), 2, true, false),
+        (Some("features/**/*"), 2, true, false),
+        (None, 2, false, false),
+        (Some("features/**/*.rb"), 1, false, false),
+        (Some("features/**/env.rb,features/**/*.ts"), 0, false, true),
+    ] {
+        let run = ruby_release_run(root, pattern);
+        assert_eq!(run.definitions, definitions, "{pattern:?}");
+        assert_eq!(
+            run.stderr.contains("source file(s) were not analyzed"),
+            skipped,
+            "{pattern:?}: {}",
+            run.stderr
+        );
+        assert_eq!(
+            run.stderr.contains("separate analysis runs"),
+            mixed,
+            "{pattern:?}"
+        );
+        assert_eq!(run.code == Some(2), mixed, "{pattern:?}");
+        assert!(!run.stderr.contains("matched no files"), "{pattern:?}");
+    }
+
+    let ruby_only = tempfile::tempdir().unwrap();
+    write(ruby_only.path(), "features/steps.rb", RUBY_RELEASE_STEPS);
+    write(ruby_only.path(), "features/a.feature", RUBY_RELEASE_FEATURE);
+    for (pattern, definitions, skipped) in [
+        (Some("features/**/*"), 0, true),
+        (Some("features/**/*.rb"), 2, false),
+        (None, 0, true),
+    ] {
+        let run = ruby_release_run(ruby_only.path(), pattern);
+        assert_eq!(run.definitions, definitions, "{pattern:?}");
+        assert_eq!(
+            run.stderr
+                .contains("need a definition pattern that names their suffix (`.rb`)"),
+            skipped,
+            "{pattern:?}: {}",
+            run.stderr
+        );
+    }
+}
+
+#[test]
+fn regression_ruby_release_dialect_step_keywords_register_definitions() {
+    for (keywords, feature) in [
+        (
+            ["Angenommen", "Wenn"],
+            "# language: de\nFunktionalität: f\n  Szenario: s\n    Angenommen same\n    Wenn other\n",
+        ),
+        (
+            ["Dado", "Cuando"],
+            "# language: es\nCaracterística: f\n  Escenario: s\n    Dado same\n    Cuando other\n",
+        ),
+        (
+            ["wann", "dann"],
+            "# language: lu\nFunktionalitéit: f\n  Szenario: s\n    ugeholl same\n    wann other\n",
+        ),
+        (
+            ["Gangway!", "Blimey!"],
+            "# language: en-pirate\nAhoy matey!: f\n  Heave to: s\n    Gangway! same\n    Blimey! other\n",
+        ),
+        (
+            ["假如", "当"],
+            "# language: zh-CN\n功能: f\n  场景: s\n    假如same\n    当other\n",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps.rb",
+            &format!(
+                "{}('same') {{ work(1) }}\n{}('other') {{ work(1) }}\n",
+                keywords[0], keywords[1]
+            ),
+        );
+        write(directory.path(), "a.feature", feature);
+        let run = ruby_release_run(directory.path(), Some("*.rb"));
+        assert_eq!(run.definitions, 2, "{keywords:?}: {}", run.stderr);
+        assert!(!run.incomplete, "{keywords:?}");
+        assert_eq!(run.active, ["duplicate-handler"], "{keywords:?}");
+    }
+
+    // Not a step keyword in any dialect, so Cucumber-Ruby defines no such registrar.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.rb",
+        "Suppose('same') { work(1) }\nSuppose('other') { work(1) }\n",
+    );
+    write(directory.path(), "a.feature", RUBY_RELEASE_FEATURE);
+    assert_eq!(
+        ruby_release_run(directory.path(), Some("*.rb")).definitions,
+        0
+    );
+}
+
+#[test]
+fn regression_ruby_release_registrar_implementation_changes_revoke_trust() {
+    for (prelude, trusted) in [
+        // Cucumber::Glue implements registration; any change there can redirect it.
+        (
+            "module Cucumber\n  module Glue\n    module Dsl\n      def register_rb_step_definition(*args); end\n    end\n  end\nend\n",
+            false,
+        ),
+        ("class << Cucumber::Glue::Dsl\n  def rb_language; end\nend\n", false),
+        ("def (Cucumber::Glue::Dsl).rb_language; end\n", false),
+        (
+            "Cucumber::Glue::Dsl.define_singleton_method(:rb_language) { nil }\n",
+            false,
+        ),
+        (
+            "module Cucumber\n  Glue::Dsl.instance_variable_set(:@rb_language, nil)\nend\n",
+            false,
+        ),
+        (
+            "dsl = Cucumber::Glue::Dsl\ndsl.define_method(:register_rb_step_definition) { nil }\n",
+            false,
+        ),
+        ("class Object < BasicObject\n  def Given(*args); end\nend\n", false),
+        // Subclassing runs the superclass `inherited` hook, which unresolved code may define.
+        ("class Page < Base\n  def visit_home; end\nend\n", false),
+        // Controls: helpers that cannot shadow the DSL extended onto `main`.
+        ("def helper; end\n", true),
+        ("class Page\n  def visit_home; end\nend\n", true),
+        (
+            "module Pages\n  class Home\n    def open; end\n  end\nend\n",
+            true,
+        ),
+        (
+            "module Cucumber\n  module Formatter\n    class Mine\n      def emit; end\n    end\n  end\nend\n",
+            true,
+        ),
+        ("module Cucumber\n  module Glue\n  end\nend\n", true),
+        ("Cucumber.logger\n", true),
+        ("", true),
+    ] {
+        let run = ruby_release_prelude_run(prelude);
+        assert_eq!(run.definitions, if trusted { 2 } else { 0 }, "{prelude}");
+        assert_eq!(run.incomplete, !trusted, "{prelude}");
+        assert_eq!(run.active.is_empty(), !trusted, "{prelude}");
+    }
+}
+
+#[test]
+fn regression_ruby_release_ownership_diagnostic_points_at_its_cause() {
+    // `include` and subclassing run `included`/`inherited` hooks, which can modify any owner.
+    // An unresolved target keeps the suite untrusted; the diagnostic must name the cause.
+    for (prelude, line_column) in [
+        (
+            "module Helpers\n  include Capybara::DSL\nend\nWorld(Helpers)\n",
+            "steps.rb:2:3:",
+        ),
+        ("extend Navigation\n", "steps.rb:1:1:"),
+        ("class Page < Base\nend\n", "steps.rb:1:14:"),
+        // Each remaining invalidation path, with its cause off the first line so the old `1:1`
+        // fallback cannot pass: a built-in ParameterType redefinition, a repeated wrapper
+        // declaration, a wrapper mutation, dynamic method-table mutation, and a protected-name
+        // definition on an owner that is referenced elsewhere.
+        (
+            "x = 1\nParameterType(name: 'int', regexp: /\\d+/, transformer: ->(s) { s.to_i })\n",
+            "steps.rb:2:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\ndef w(t, &h)\n  Given(t, &h)\nend\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\nundef w\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\nsend(:alias_method, name, :w)\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\nmodule Helpers\n  def Given(*args); end\nend\nHelpers.foo\n",
+            "steps.rb:3:3:",
+        ),
+    ] {
+        let run = ruby_release_prelude_run(prelude);
+        assert_eq!(run.definitions, 0, "{prelude}");
+        assert!(run.incomplete);
+        assert!(
+            run.stderr.contains(&format!(
+                "{line_column} Ruby registration ownership or executable source effects are unresolved"
+            )),
+            "{prelude}: {}",
+            run.stderr
+        );
+    }
+}
+
+#[test]
+fn regression_ruby_release_inline_suppression_matches_typescript() {
+    for (file, comment, registrations) in [
+        (
+            "steps.ts",
+            "//",
+            "import { Given } from '@cucumber/cucumber';\nDIRECTIVE\nGiven('same', () => work(1));\nGiven('other', () => work(1));\n",
+        ),
+        (
+            "steps.rb",
+            "#",
+            "DIRECTIVE\nGiven('same') { work(1) }\nGiven('other') { work(1) }\n",
+        ),
+    ] {
+        for (directive, active, suppressed, code) in [
+            (
+                "cuke-dedup:ignore duplicate-handler -- legacy contract",
+                vec![],
+                vec!["duplicate-handler"],
+                Some(0),
+            ),
+            (
+                "cuke-dedup:ignore duplicate-matcher -- unrelated rule",
+                vec!["duplicate-handler"],
+                vec![],
+                Some(1),
+            ),
+            (
+                "cuke-dedup:ignore duplicate-handler",
+                vec!["duplicate-handler"],
+                vec![],
+                Some(2),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            write(
+                directory.path(),
+                file,
+                &registrations.replace("DIRECTIVE", &format!("{comment} {directive}")),
+            );
+            write(directory.path(), "a.feature", RUBY_RELEASE_FEATURE);
+            let pattern = format!("*{}", &file[5..]);
+            let run = ruby_release_run(directory.path(), Some(&pattern));
+            assert_eq!(run.active, active, "{file}: {directive}");
+            assert_eq!(run.suppressed, suppressed, "{file}: {directive}");
+            assert_eq!(run.code, code, "{file}: {directive}: {}", run.stderr);
+        }
+    }
+}

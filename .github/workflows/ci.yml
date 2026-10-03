@@ -190,6 +190,7 @@ jobs:
       - run: npm run check:test
       - run: npm run check:boundaries
       - run: npm run check:versions
+      - run: npm run docs:check
       - run: npm run skills:check
       - run: npm run pack:check
 
@@ -312,6 +313,8 @@ jobs:
       # the overlap finding `ambiguous-step` owns.
       - name: Validate corpus with cross-window matcher compilation
         run: CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
+      - name: Check Ruby step keywords against the Gherkin dialect data
+        run: node scripts/check/check-ruby-step-keywords.mjs
       - name: Guard Ruby corpus regressions
         env:
           CUKE_DEDUP_RUBY_PARITY_REPORT: ${{ runner.temp }}/ruby-parity.json
@@ -319,6 +322,14 @@ jobs:
       - name: Guard paired language regressions
         if: ${{ !cancelled() }}
         run: node scripts/check/check-language-parity.mjs --regression target/release/cuke-dedup "${{ runner.temp }}/language-parity.json"
+      # Completion progress toward the Ruby release acceptance set. Informational until that set is
+      # agreed; the regression gates above are the blocking guards.
+      - name: Report Ruby completion progress
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          CUKE_DEDUP_RUBY_PARITY_REPORT: ${{ runner.temp }}/ruby-completion.json
+        run: node scripts/check/check-ruby-parity.mjs target/release/cuke-dedup
       - name: Upload parity observations
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -326,6 +337,7 @@ jobs:
           name: language-parity
           path: |
             ${{ runner.temp }}/ruby-parity.json
+            ${{ runner.temp }}/ruby-completion.json
             ${{ runner.temp }}/language-parity.json
           if-no-files-found: warn
       - name: Guard matcher-analysis memory

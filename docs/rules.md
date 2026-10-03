@@ -101,6 +101,22 @@ feature corpus is absent or incomplete because the run cannot prove non-use. Rem
 definition, add the missing scenario, or suppress it when external or generated features provide
 the usage.
 
+## Language support
+
+Rules run on the shared representation, but each source language supplies different evidence.
+Cucumber-Ruby support is experimental; its details are in
+[Cucumber-Ruby](discovery-and-frameworks.md#cucumber-ruby).
+
+| Rule | JavaScript/TypeScript | Cucumber-Ruby |
+| --- | --- | --- |
+| `duplicate-matcher` | Supported. | Supported for static strings and `/.../` or `%r{...}` regex literals. |
+| `normalized-matcher`, `ambiguous-step`, `overlapping-matcher` | Supported. | Supported for Cucumber Expressions and the translated Ruby regex subset. Other regexes are indeterminate: the run is incomplete and they produce no overlap or unused findings. |
+| `duplicate-handler` | Supported, with assertion evidence from recognized assertion packages. | Exact supported handler structure. Assertion evidence comes only from an explicitly configured provider; RSpec, Minitest and Capybara assertions are compared as ordinary calls. Unresolved captures, constants or receiver identity make the handler non-comparable and the run incomplete. |
+| `near-duplicate-step` | Wording similarity plus handler-behavior overlap. | Wording similarity only between exactly equal supported handlers. |
+| `parameterization-candidate` | Handler structures that differ in literal values. | Straight-line handlers of explicit simple-receiver calls with static string or numeric arguments. |
+| `unused-definition` | Feature-file usage. | Feature-file usage and literal `step` calls; dynamic `step`/`steps` calls disable the rule. |
+| Inline suppressions | `// cuke-dedup:ignore RULE -- REASON` | `# cuke-dedup:ignore RULE -- REASON` |
+
 ## Exact groups and fuzzy pairs
 
 Exact matcher and handler groups with up to four definitions produce a linear spanning set of pair

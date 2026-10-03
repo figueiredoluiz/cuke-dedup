@@ -370,6 +370,8 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
         ("(?:red|green)", Some("red")),
         ("(?m:red|green)", Some("red")),
         ("(?ms:red|green)", Some("red")),
+        ("((red|green))", Some("red")),
+        ("(red)|(green)", None),
         ("", None),
         ("red.*", None),
         ("(red", None),

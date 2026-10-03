@@ -1202,7 +1202,7 @@ mod tests {
             .state::<super::super::RubySession>()
             .unwrap()
             .effects
-            .invalidate();
+            .invalidate(None);
         let finalized = super::super::RubyAdapter
             .finalize_session(&mut session)
             .unwrap();

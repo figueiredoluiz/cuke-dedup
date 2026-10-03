@@ -87,6 +87,10 @@ root-relative paths normalized with `/`.
 - Brace alternatives such as `{js,ts}` are supported.
 - Backslash escaping is supported.
 
+Opt-in languages, currently Ruby, are selected only by a `definitions` pattern that depends on
+their suffix, such as `features/**/*.rb`. A suffix-agnostic pattern such as `features/**` selects
+JS/TS sources and reports the Ruby files it skipped in a warning.
+
 These patterns differ from `.gitignore` and `.cuke-dedupignore`, which use directory-scoped
 gitignore semantics.
 
@@ -202,6 +206,13 @@ A source-local suppression can instead be placed immediately above a registratio
 ```ts
 // cuke-dedup:ignore duplicate-handler -- retained for an external compatibility contract
 Given("the legacy flow completes", legacyHandler);
+```
+
+Ruby uses the same directive in a `#` comment:
+
+```ruby
+# cuke-dedup:ignore duplicate-handler -- retained for an external compatibility contract
+Given('the legacy flow completes') { legacy_flow }
 ```
 
 Malformed directives and oversized reasons are operational errors. A directive applies only to

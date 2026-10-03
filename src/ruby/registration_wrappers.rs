@@ -3,6 +3,8 @@ use super::{descendants, protected_method, registration, static_method_name, tex
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
+type Site = (usize, usize);
+
 #[derive(Clone, Default)]
 pub(super) struct WrapperEffects {
     wrappers: BTreeSet<String>,
@@ -10,6 +12,16 @@ pub(super) struct WrapperEffects {
     unresolved: BTreeSet<String>,
     mutations: BTreeSet<String>,
     dynamic_mutation: bool,
+    // Source byte ranges of this source's evidence, per name. They are not merged across
+    // sources: only a single source's effects locate its diagnostic.
+    definition_sites: BTreeMap<String, Site>,
+    unresolved_sites: BTreeMap<String, Site>,
+    mutation_sites: BTreeMap<String, Site>,
+    dynamic_site: Option<Site>,
+}
+
+fn site(node: Node<'_>) -> Site {
+    (node.start_byte(), node.end_byte())
 }
 
 impl WrapperEffects {
@@ -26,12 +38,49 @@ impl WrapperEffects {
 
     /// Rejects wrapper trust when aggregated evidence cannot prove a single unchanged definition.
     pub(super) fn invalidated(&self) -> bool {
-        self.wrappers.iter().any(|name| {
+        self.invalidating_wrapper().is_some()
+    }
+
+    fn invalidating_wrapper(&self) -> Option<&String> {
+        self.wrappers.iter().find(|name| {
             self.dynamic_mutation
-                || self.definitions.get(name) != Some(&1)
-                || self.unresolved.contains(name)
-                || self.mutations.contains(name)
+                || self.definitions.get(*name) != Some(&1)
+                || self.unresolved.contains(*name)
+                || self.mutations.contains(*name)
         })
+    }
+
+    /// Locates this source's evidence for the first wrapper whose trust is withdrawn.
+    pub(super) fn invalidation_site(&self) -> Option<Site> {
+        let name = self.invalidating_wrapper()?;
+        self.dynamic_site
+            .or_else(|| self.mutation_sites.get(name).copied())
+            .or_else(|| self.unresolved_sites.get(name).copied())
+            .or_else(|| self.definition_sites.get(name).copied())
+    }
+
+    fn mutation(&mut self, name: Option<String>, node: Node<'_>) {
+        match name {
+            Some(name) => {
+                self.mutation_sites
+                    .entry(name.clone())
+                    .or_insert(site(node));
+                self.mutations.insert(name);
+            }
+            None => self.dynamic(node),
+        }
+    }
+
+    fn dynamic(&mut self, node: Node<'_>) {
+        self.dynamic_mutation = true;
+        self.dynamic_site.get_or_insert(site(node));
+    }
+
+    fn unresolved(&mut self, name: &str, node: Node<'_>) {
+        self.unresolved_sites
+            .entry(name.to_owned())
+            .or_insert(site(node));
+        self.unresolved.insert(name.to_owned());
     }
 }
 
@@ -55,11 +104,15 @@ impl RegistrationWrappers {
         for node in &nodes {
             if matches!(node.kind(), "method" | "singleton_method") {
                 if let Some(name) = node.child_by_field_name("name") {
-                    *result
+                    let name = text(name, source).to_owned();
+                    // The latest declaration is the one that makes a repeated name ambiguous.
+                    let latest = result
                         .effects
-                        .definitions
-                        .entry(text(name, source).to_owned())
-                        .or_default() += 1;
+                        .definition_sites
+                        .entry(name.clone())
+                        .or_insert(site(*node));
+                    *latest = (*latest).max(site(*node));
+                    *result.effects.definitions.entry(name).or_default() += 1;
                 }
             }
             if !root.has_error() && node.kind() == "method" && node.parent() == Some(root) {
@@ -83,11 +136,11 @@ impl RegistrationWrappers {
                     {
                         result.calls.insert(node.id(), registrar.clone());
                     } else {
-                        result.effects.unresolved.insert(name.to_owned());
+                        result.effects.unresolved(name, node);
                     }
                 } else {
                     // Another selected source may declare a wrapper with this name.
-                    result.effects.unresolved.insert(name.to_owned());
+                    result.effects.unresolved(name, node);
                 }
             } else if matches!(node.kind(), "alias" | "undef") {
                 for name in children(node) {
@@ -96,12 +149,7 @@ impl RegistrationWrappers {
                     } else {
                         static_method_name(name, source)
                     };
-                    match name {
-                        Some(name) => {
-                            result.effects.mutations.insert(name);
-                        }
-                        None => result.effects.dynamic_mutation = true,
-                    }
+                    result.effects.mutation(name, node);
                 }
             } else if node.kind() == "identifier"
                 && !node.parent().is_some_and(|parent| {
@@ -113,10 +161,7 @@ impl RegistrationWrappers {
             {
                 // Bare calls, local shadowing and references outside the resolved invocation
                 // set cannot establish which method will run.
-                result
-                    .effects
-                    .unresolved
-                    .insert(text(node, source).to_owned());
+                result.effects.unresolved(text(node, source), node);
             }
         }
         for node in nodes {
@@ -215,7 +260,7 @@ impl WrapperEffects {
                 .next()
                 .and_then(|arg| static_method_name(arg, source))
             else {
-                self.dynamic_mutation = true;
+                self.dynamic(node);
                 return;
             };
             name = target;
@@ -229,12 +274,7 @@ impl WrapperEffects {
             _ => return,
         };
         for argument in arguments.take(count) {
-            match static_method_name(argument, source) {
-                Some(name) => {
-                    self.mutations.insert(name);
-                }
-                None => self.dynamic_mutation = true,
-            }
+            self.mutation(static_method_name(argument, source), node);
         }
     }
 }

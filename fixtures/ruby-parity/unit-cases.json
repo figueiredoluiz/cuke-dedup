@@ -291,7 +291,7 @@
           "requiredStatus": "partial",
           "fixtureGroup": "matcher-family",
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test\u2019s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
+          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test’s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
         },
         {
           "name": "exact_handlers_require_compatible_assertion_provenance_across_files",
@@ -954,7 +954,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "95476467aba9f89d698515718db926142e05ca402e58ef90bc01f08b4c74eeb9",
+      "sourceSha256": "54e4bf0a740a26bec2d57046537a5de8df0de71aa06aeb5cb8db0e158bf65172",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1078,7 +1078,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "af1f76e59a87cbb2fb3062df04d26bb9256933ad18fee44f795bc7b98b3ee1da",
+      "sourceSha256": "da6bb6b810f05e891dc4b896c66077383ab7eb750f0d8218f609ab83d10ddd38",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1311,7 +1311,7 @@
       ]
     },
     "src/discovery.rs": {
-      "sourceSha256": "7c6cfc76298e70a03d89627d19cd1e9aac0669fe4d1409f7bdc21a1467e8b6af",
+      "sourceSha256": "55f2331ce5ba661c1509449fbbd53d12f9ef80423af8a7cf593702d98073de16",
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -3886,7 +3886,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "aaaafba2268c46528f01e432a9f1edef32d81593b28e5e9f53d8ed53afabc7c4",
+      "sourceSha256": "8c45021263c50c90f75b25878193f8985e4c87f61dab962f9c7a33811dc278ec",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4699,6 +4699,41 @@
           "fixtureGroup": null,
           "behaviorClass": "language-specific-api",
           "rationale": "A JavaScript project whose only receivers are proven inert passes strict mode. No Ruby control pins strict success for inert local receivers."
+        },
+        {
+          "name": "regression_ruby_release_broad_glob_keeps_typescript_selection",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "End-to-end release regression `regression_ruby_release_broad_glob_keeps_typescript_selection` runs Ruby sources through the built binary, with paired TypeScript controls where the contract is shared. It is executable Ruby evidence in its own right and has no parity-corpus group yet."
+        },
+        {
+          "name": "regression_ruby_release_dialect_step_keywords_register_definitions",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "End-to-end release regression `regression_ruby_release_dialect_step_keywords_register_definitions` runs Ruby sources through the built binary, with paired TypeScript controls where the contract is shared. It is executable Ruby evidence in its own right and has no parity-corpus group yet."
+        },
+        {
+          "name": "regression_ruby_release_registrar_implementation_changes_revoke_trust",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "End-to-end release regression `regression_ruby_release_registrar_implementation_changes_revoke_trust` runs Ruby sources through the built binary, with paired TypeScript controls where the contract is shared. It is executable Ruby evidence in its own right and has no parity-corpus group yet."
+        },
+        {
+          "name": "regression_ruby_release_ownership_diagnostic_points_at_its_cause",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "End-to-end release regression `regression_ruby_release_ownership_diagnostic_points_at_its_cause` runs Ruby sources through the built binary, with paired TypeScript controls where the contract is shared. It is executable Ruby evidence in its own right and has no parity-corpus group yet."
+        },
+        {
+          "name": "regression_ruby_release_inline_suppression_matches_typescript",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "End-to-end release regression `regression_ruby_release_inline_suppression_matches_typescript` runs Ruby sources through the built binary, with paired TypeScript controls where the contract is shared. It is executable Ruby evidence in its own right and has no parity-corpus group yet."
         }
       ]
     },
