@@ -23,8 +23,13 @@ pub(super) struct RegistrationEffects {
     unknown: bool,
     // First node in this source that made ownership unresolved; not merged across sources.
     cause: Option<(usize, usize)>,
-    mutated_owners: BTreeSet<OwnerPath>,
-    exposed_owners: BTreeSet<OwnerPath>,
+    // Owners map to the first node that mutated or exposed them; only keys merge across sources.
+    mutated_owners: BTreeMap<OwnerPath, (usize, usize)>,
+    exposed_owners: BTreeMap<OwnerPath, (usize, usize)>,
+}
+
+fn site(node: Node<'_>) -> (usize, usize) {
+    (node.start_byte(), node.end_byte())
 }
 
 impl RegistrationEffects {
@@ -68,7 +73,9 @@ impl RegistrationEffects {
             {
                 if let Some((absolute, parts)) = constant_path(node, source) {
                     if let Some(paths) = declarations.lookup_candidates(node, absolute, &parts) {
-                        effects.exposed_owners.extend(paths);
+                        for path in paths {
+                            effects.exposed_owners.entry(path).or_insert(site(node));
+                        }
                     } else {
                         // An unresolved lexical scope cannot provide a disjointness proof.
                         effects.mark_unknown(node);
@@ -88,7 +95,7 @@ impl RegistrationEffects {
                 })
             {
                 if let Some(owner) = declarations.owner(node) {
-                    effects.exposed_owners.insert(owner);
+                    effects.exposed_owners.entry(owner).or_insert(site(node));
                 }
             }
             let mutation = match node.kind() {
@@ -137,7 +144,7 @@ impl RegistrationEffects {
                     .is_some_and(|n| n.kind() == "self");
             if (!explicit_receiver || lexical_singleton) && node.kind() != "call" {
                 if let Some(owner) = declarations.mutation_owner(node) {
-                    effects.mutated_owners.insert(owner);
+                    effects.mutated_owners.entry(owner).or_insert(site(node));
                     continue;
                 }
             }
@@ -148,36 +155,47 @@ impl RegistrationEffects {
 
     fn mark_unknown(&mut self, node: Node<'_>) {
         self.unknown = true;
-        self.cause
-            .get_or_insert((node.start_byte(), node.end_byte()));
+        self.cause.get_or_insert(site(node));
     }
 
-    /// Byte range of the first source node that made this source's ownership unresolved.
-    pub(super) fn cause(&self) -> Option<(usize, usize)> {
+    /// Byte range of the node in this source whose evidence withdrew registration trust.
+    pub(super) fn invalidation_site(&self) -> Option<(usize, usize)> {
         self.cause
+            .or_else(|| self.wrappers.invalidation_site())
+            .or_else(|| self.exposed_mutation().map(|(_, site)| *site))
     }
 
-    pub(super) fn invalidate(&mut self) {
+    /// Withdraws trust, locating the cause when the caller has a source node.
+    pub(super) fn invalidate(&mut self, cause: Option<Node<'_>>) {
         self.unknown = true;
+        if let Some(node) = cause {
+            self.cause.get_or_insert(site(node));
+        }
     }
 
     /// Combines file effects so later sources can invalidate registrations extracted earlier.
     pub(super) fn extend(&mut self, other: Self) {
         self.wrappers.extend(other.wrappers);
         self.unknown |= other.unknown;
-        self.mutated_owners.extend(other.mutated_owners);
-        self.exposed_owners.extend(other.exposed_owners);
+        for (owner, site) in other.mutated_owners {
+            self.mutated_owners.entry(owner).or_insert(site);
+        }
+        for (owner, site) in other.exposed_owners {
+            self.exposed_owners.entry(owner).or_insert(site);
+        }
     }
 
     /// Reports whether wrapper uncertainty or exposed namespace mutations invalidate registration trust.
     pub(super) fn invalidated(&self) -> bool {
-        self.unknown
-            || self.wrappers.invalidated()
-            || self.mutated_owners.iter().any(|owner| {
-                self.exposed_owners
-                    .iter()
-                    .any(|exposed| owner.0.starts_with(&exposed.0))
-            })
+        self.unknown || self.wrappers.invalidated() || self.exposed_mutation().is_some()
+    }
+
+    fn exposed_mutation(&self) -> Option<(&OwnerPath, &(usize, usize))> {
+        self.mutated_owners.iter().find(|(owner, _)| {
+            self.exposed_owners
+                .keys()
+                .any(|exposed| owner.0.starts_with(&exposed.0))
+        })
     }
 }
 

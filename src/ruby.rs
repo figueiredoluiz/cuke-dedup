@@ -235,17 +235,19 @@ fn extract_with_proof(
     result.parameter_types = parameters::collect(&nodes, source, file);
     let mut effects =
         ownership::RegistrationEffects::collect(root, source, &aliases, &wrappers, proof);
-    if result
+    if let Some(declaration) = result
         .parameter_types
         .iter()
-        .any(parameters::invalidates_registry)
+        .find(|declaration| parameters::invalidates_registry(declaration))
     {
-        effects.invalidate();
+        effects.invalidate(nodes.iter().copied().find(|node| {
+            node.kind() == "call" && location(file, *node, source) == declaration.location
+        }));
     }
     let replaced = effects.invalidated();
     if replaced {
         let cause = effects
-            .cause()
+            .invalidation_site()
             .and_then(|(start, end)| root.descendant_for_byte_range(start, end))
             .unwrap_or(root);
         result.diagnostics.push(diagnostic(

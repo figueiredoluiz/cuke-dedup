@@ -5242,6 +5242,10 @@ fn regression_ruby_release_dialect_step_keywords_register_definitions() {
             "# language: lu\nFunktionalitéit: f\n  Szenario: s\n    ugeholl same\n    wann other\n",
         ),
         (
+            ["Gangway!", "Blimey!"],
+            "# language: en-pirate\nAhoy matey!: f\n  Heave to: s\n    Gangway! same\n    Blimey! other\n",
+        ),
+        (
             ["假如", "当"],
             "# language: zh-CN\n功能: f\n  场景: s\n    假如same\n    当other\n",
         ),
@@ -5334,6 +5338,30 @@ fn regression_ruby_release_ownership_diagnostic_points_at_its_cause() {
         ),
         ("extend Navigation\n", "steps.rb:1:1:"),
         ("class Page < Base\nend\n", "steps.rb:1:14:"),
+        // Each remaining invalidation path, with its cause off the first line so the old `1:1`
+        // fallback cannot pass: a built-in ParameterType redefinition, a repeated wrapper
+        // declaration, a wrapper mutation, dynamic method-table mutation, and a protected-name
+        // definition on an owner that is referenced elsewhere.
+        (
+            "x = 1\nParameterType(name: 'int', regexp: /\\d+/, transformer: ->(s) { s.to_i })\n",
+            "steps.rb:2:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\ndef w(t, &h)\n  Given(t, &h)\nend\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\nundef w\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\nsend(:alias_method, name, :w)\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\nmodule Helpers\n  def Given(*args); end\nend\nHelpers.foo\n",
+            "steps.rb:3:3:",
+        ),
     ] {
         let run = ruby_release_prelude_run(prelude);
         assert_eq!(run.definitions, 0, "{prelude}");

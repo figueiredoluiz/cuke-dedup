@@ -3886,7 +3886,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "7e7c9cba6cb5bc7c3c2a2f44bbae57e81e322c3494c3f7a473a92387432a9321",
+      "sourceSha256": "8c45021263c50c90f75b25878193f8985e4c87f61dab962f9c7a33811dc278ec",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",

@@ -12,8 +12,8 @@ const gherkin = metadata.packages.find((item) => item.name === "gherkin");
 if (!gherkin) throw new Error("gherkin package not found in cargo metadata");
 const dialects = JSON.parse(await readFile(join(dirname(gherkin.manifest_path), "src/languages.json"), "utf8"));
 
-// Keywords with spaces, apostrophes or symbols can only be invoked through `send`, which the
-// adapter already treats as dynamic dispatch.
+// Keywords with spaces, apostrophes or other symbols, apart from a trailing `!` or `?`, can only be
+// invoked through `send`, which the adapter already treats as dynamic dispatch.
 const callable = /^[\p{L}_][\p{L}\p{M}\p{N}_]*[!?]?$/u;
 const keywords = new Set();
 for (const dialect of Object.values(dialects)) {
