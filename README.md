@@ -9,7 +9,7 @@ either one.
 
 It supports:
 
-- JavaScript, JSX, TypeScript, and TSX step definitions; opt-in Cucumber-Ruby support.
+- JavaScript, JSX, TypeScript, and TSX step definitions; experimental, opt-in Cucumber-Ruby support.
 - Cucumber.js, Playwright-BDD, Cypress Cucumber, Jest-Cucumber, and Vitest Cucumber Plugin projects.
 - Classic `.feature` files and Gherkin Markdown `.feature.md` files.
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.

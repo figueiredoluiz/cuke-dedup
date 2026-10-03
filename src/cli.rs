@@ -338,6 +338,13 @@ fn discovery_diagnostics(
             .warnings
             .push(format!("definition pattern `{pattern}` matched no files"));
     }
+    if !files.skipped_definitions.is_empty()
+        && (!config.definitions.is_empty() || files.definitions.is_empty())
+    {
+        diagnostics
+            .warnings
+            .push(skipped_definitions_warning(&files.skipped_definitions));
+    }
     if files.definitions.is_empty() && config.definitions.is_empty() {
         diagnostics
             .warnings
@@ -361,6 +368,32 @@ fn discovery_diagnostics(
         );
     }
     diagnostics
+}
+
+fn skipped_definitions_warning(skipped: &[source_adapter::SourceFile]) -> String {
+    let registrations: Vec<_> = source_adapter::SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .filter(|entry| {
+            skipped
+                .iter()
+                .any(|file| entry.adapter.language() == file.language)
+        })
+        .collect();
+    let adapters: BTreeSet<_> = registrations
+        .iter()
+        .map(|entry| entry.adapter.name())
+        .collect();
+    let suffixes: Vec<_> = registrations
+        .iter()
+        .map(|entry| format!("`{}`", entry.suffix))
+        .collect();
+    format!(
+        "{} {} source file(s) were not analyzed: opt-in languages need a definition pattern that names their suffix ({}), such as `features/**/*{}`",
+        skipped.len(),
+        adapters.into_iter().collect::<Vec<_>>().join(", "),
+        suffixes.join(", "),
+        registrations.first().map_or("", |entry| entry.suffix),
+    )
 }
 
 fn extract_corpus(

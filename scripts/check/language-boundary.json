@@ -30,7 +30,8 @@
     "src/resource_limits.rs": {},
     "src/source_adapter/config.rs": {"crate::ruby":1},
     "src/source_adapter/finalization.rs": {},
-    "src/source_adapter/semantics.rs": {"crate::model::Framework":1,"crate::model::Framework::CucumberRuby":1,"crate::ruby":1,"crate::typescript":1}
+    "src/source_adapter/semantics.rs": {"crate::model::Framework":1,"crate::model::Framework::CucumberRuby":1,"crate::ruby":1,"crate::typescript":1},
+    "src/source_adapter/suppression.rs": {}
   },
   "exclusions": {
     "src/lib.rs": "composition root",

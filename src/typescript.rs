@@ -12,7 +12,6 @@ mod module_resolver;
 mod project_resolution;
 mod registrations;
 mod source_filter;
-mod suppression;
 
 use self::assertions::AssertionBindings;
 use self::handler::{
@@ -32,8 +31,8 @@ use self::registrations::{
     decorator_registration_name, detect_framework, detect_registrations, registration_callee,
     registration_name, unresolved_registration_module, RegistrationCallee, RegistrationNames,
 };
-use self::suppression::inline_suppressions;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
+use crate::source_adapter::suppression::inline_suppressions;
 use crate::source_adapter::{
     adapter_for_language, grammar_for_language, AdapterSessionState, ExtractionDiagnosticKind,
     SourceAdapter, SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
@@ -733,7 +732,8 @@ fn step_definition<'tree>(
         },
         location: node_location(context.file, call, context.source),
         inline_suppressions: inline_suppressions(
-            call,
+            call.start_position().row,
+            "//",
             context.source_lines,
             context.file,
             diagnostics,

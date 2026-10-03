@@ -4,6 +4,7 @@ mod config;
 mod finalization;
 pub(crate) use config::FrontendConfig;
 pub(crate) mod semantics;
+pub(crate) mod suppression;
 pub use finalization::{
     SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
 };

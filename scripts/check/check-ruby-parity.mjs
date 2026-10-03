@@ -71,8 +71,10 @@ for (const dimension of manifest.additionalRequiredDimensions ?? []) {
   for (const file of dimension.fixtureFiles ?? []) await stat(within(root, file));
 }
 blockers.push(...(manifest.outstandingCensus ?? []));
+// The unit census is completion bookkeeping pinned to every Rust test file. Regression mode guards
+// observable outcomes only, so unrelated test edits elsewhere in the repository cannot fail it.
 let unitContracts = 0;
-const units = await readJson(join(root, "unit-cases.json"));
+const units = regression ? { schemaVersion: 1, files: {} } : await readJson(join(root, "unit-cases.json"));
 assert.equal(units.schemaVersion, 1);
 async function testFiles(directory) {
   const files = [];
@@ -84,8 +86,10 @@ async function testFiles(directory) {
   }
   return files;
 }
-assert.deepEqual(Object.keys(units.files).sort(), [...await testFiles("src"), ...await testFiles("tests")].sort(),
-  "test files changed; extend the Ruby completion census");
+if (!regression) {
+  assert.deepEqual(Object.keys(units.files).sort(), [...await testFiles("src"), ...await testFiles("tests")].sort(),
+    "test files changed; extend the Ruby completion census");
+}
 for (const [file, inventory] of Object.entries(units.files)) {
   const content = (await readFile(file, "utf8")).replaceAll("\r\n", "\n");
   assert.equal(createHash("sha256").update(content).digest("hex"), inventory.sourceSha256,
@@ -150,7 +154,8 @@ try {
   await rm(scratch, { recursive: true, force: true });
 }
 const failed = observations.filter((item) => item.deficits.length > 0).length;
-console.log(`${mappings.length} corpus cases mapped; ${unitContracts} Rust test functions inventoried; `
+console.log(`${mappings.length} corpus cases mapped; `
+  + (regression ? "unit census not checked in regression mode; " : `${unitContracts} Rust test functions inventoried; `)
   + `${Object.keys(groups).length} executable Ruby groups; `
   + (inventoryOnly ? "not executed; " : `${observations.length - failed} passing, ${failed} failing; `)
   + `${blockers.length} pending mappings/design items (not distinct defects).`);

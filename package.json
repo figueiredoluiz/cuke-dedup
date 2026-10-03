@@ -28,7 +28,8 @@
     "memory:check": "node scripts/check/check-memory.mjs target/release/cuke-dedup",
     "duplication:check": "node scripts/check/check-duplication.mjs",
     "benchmark": "node scripts/benchmark/benchmark-analysis.mjs",
-    "corpus:ruby": "node scripts/check/check-ruby-parity.mjs"
+    "corpus:ruby": "node scripts/check/check-ruby-parity.mjs",
+    "check:ruby-keywords": "node scripts/check/check-ruby-step-keywords.mjs"
   },
   "engines": {
     "node": ">=20"

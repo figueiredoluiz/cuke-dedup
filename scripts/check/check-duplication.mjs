@@ -107,8 +107,8 @@ const SCOPES = [
     files: () => ALL_RUST_SOURCES.filter(
       (path) => path.startsWith("src/") && basename(path) !== "tests.rs",
     ),
-    maximumPercentage: 0.43,
-    maximumDuplicatedLines: 114,
+    maximumPercentage: 0.37,
+    maximumDuplicatedLines: 109,
     minimumFiles: 30,
     minimumLines: 15_000,
   },
@@ -122,7 +122,7 @@ const SCOPES = [
         || path.startsWith("tests/")
         || path.startsWith("fuzz/"),
     ),
-    maximumPercentage: 4.16,
+    maximumPercentage: 4.07,
     maximumDuplicatedLines: 1222,
     minimumFiles: 12,
     minimumLines: 15_000,

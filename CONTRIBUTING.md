@@ -64,6 +64,21 @@ The dependency policy is maintained in `deny.toml`: known security advisories, u
 - Use conventional commit subjects such as `fix:`, `feat:`, `test:`, `docs:`, and `chore:`.
 - Do not edit generated release assets or commit build output.
 
+## Language adapters
+
+`SourceAdapter` owns default source selection, input filtering, indirect-usage policy and source parameter resolution. Its later hooks have defaults so existing implementations remain compatible. Dependency expansion uses private registry callbacks; it does not expose glob types or discovery mutation to public adapter implementations. An adapter that is not discovered by default is selected only by definition patterns that depend on its suffix. `rubyLoadPaths` keeps its flat JSON key, precedence and public getter while Ruby owns its storage.
+
+Ruby preparation reads and parses one bounded source snapshot for both registration and assertion proofs. A later source-byte mismatch withdraws its optional proof. File-count, aggregate-byte, per-source and proof-work limits retain conservative fallback; they do not make arbitrary runtime behavior statically knowable. Each proof collector has its own work budget; exhausting any of them withdraws all optional registration and handler proofs. Direct registrations remain subject to normal ownership checks.
+
+After `SourceExtractionSession::finalize`, embedders may inspect `SourceFinalization.advisories` for resolved configured assertion providers that the closed-factory proof rejected. Advisories explain trust decisions; they do not remove definitions or change completeness. Incomplete source evidence remains in `uncertainties`.
+
+Ruby step keywords come from the Gherkin dialect data pinned by `Cargo.lock`. After a `gherkin` update, regenerate them with `node scripts/check/check-ruby-step-keywords.mjs --write`; the check fails while the table is stale.
+
+Corpus conformance compares language-neutral counts, completeness, strict exits and finding ownership. Each language lane maps source names explicitly. Desired outcomes, known implementation gaps and justified language differences remain separate:
+
+- `check-ruby-parity.mjs --regression` and `check-language-parity.mjs --regression` block CI when an observed outcome changes. Closing a known gap also changes an outcome, so update the recorded digest in the same change.
+- `check-ruby-parity.mjs` without `--regression` is the completion command. It also checks the unit-test census, which pins every Rust test file. CI reports it without blocking; a green regression gate does not imply Ruby completion.
+
 The Python packaging utility intentionally uses only the standard library to create deterministic `tar.gz` and ZIP archives. Node.js owns npm manifest/version validation, while Rust owns the analyzer and CLI.
 
 ## Coverage floor and uncovered lines

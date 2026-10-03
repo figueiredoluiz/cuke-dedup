@@ -21,6 +21,8 @@ use tree_sitter::Node;
 pub(super) struct RegistrationEffects {
     wrappers: super::registration_wrappers::WrapperEffects,
     unknown: bool,
+    // First node in this source that made ownership unresolved; not merged across sources.
+    cause: Option<(usize, usize)>,
     mutated_owners: BTreeSet<OwnerPath>,
     exposed_owners: BTreeSet<OwnerPath>,
 }
@@ -40,6 +42,10 @@ impl RegistrationEffects {
         };
         let declarations = Declarations::collect(root, source);
         for node in descendants(root) {
+            if changes_registrar_implementation(node, source) {
+                effects.mark_unknown(node);
+                continue;
+            }
             if matches!(node.kind(), "class" | "module")
                 && node
                     .child_by_field_name("name")
@@ -50,7 +56,7 @@ impl RegistrationEffects {
                     .is_some_and(Option::is_none)
             {
                 // Namespace lookup itself can execute a hook, even with an empty body.
-                effects.unknown = true;
+                effects.mark_unknown(node);
             }
             if matches!(node.kind(), "constant" | "scope_resolution")
                 && !node
@@ -65,10 +71,10 @@ impl RegistrationEffects {
                         effects.exposed_owners.extend(paths);
                     } else {
                         // An unresolved lexical scope cannot provide a disjointness proof.
-                        effects.unknown = true;
+                        effects.mark_unknown(node);
                     }
                 } else {
-                    effects.unknown = true;
+                    effects.mark_unknown(node);
                 }
             }
             // Passing the lexical owner to arbitrary code can install or alias its method table.
@@ -135,9 +141,20 @@ impl RegistrationEffects {
                     continue;
                 }
             }
-            effects.unknown = true;
+            effects.mark_unknown(node);
         }
         effects
+    }
+
+    fn mark_unknown(&mut self, node: Node<'_>) {
+        self.unknown = true;
+        self.cause
+            .get_or_insert((node.start_byte(), node.end_byte()));
+    }
+
+    /// Byte range of the first source node that made this source's ownership unresolved.
+    pub(super) fn cause(&self) -> Option<(usize, usize)> {
+        self.cause
     }
 
     pub(super) fn invalidate(&mut self) {
@@ -277,6 +294,58 @@ impl Declarations {
         }
         None
     }
+}
+
+/// Cucumber-Ruby implements registration in `Cucumber::Glue`. Reopening it or holding a reference
+/// to it can redirect registrations whatever method names are involved, so the protected-name rule
+/// used for other runtime owners is not sufficient there. Other owners, including `Object` for
+/// top-level helpers, cannot shadow the DSL that `main` extends.
+fn changes_registrar_implementation(node: Node<'_>, source: &str) -> bool {
+    match node.kind() {
+        "class" | "module" | "singleton_class" => {
+            node.child_by_field_name("body")
+                .is_some_and(|body| body.named_child_count() > 0)
+                && within_registrar_implementation(node, &[], source)
+        }
+        "constant" | "scope_resolution" => {
+            !node
+                .parent()
+                .is_some_and(|parent| parent.kind() == "scope_resolution")
+                && !declaration_name(node)
+                && constant_path(node, source)
+                    .is_some_and(|(_, parts)| within_registrar_implementation(node, &parts, source))
+        }
+        _ => false,
+    }
+}
+
+// Relative constant lookup can reach the top-level `Cucumber`, so any declaration spelled from
+// `Cucumber` is treated as a possible reopening rather than resolved lexically.
+fn within_registrar_implementation(node: Node<'_>, tail: &[String], source: &str) -> bool {
+    let mut chain = vec![tail.to_vec()];
+    let mut scope = Some(node);
+    while let Some(current) = scope {
+        let name = match current.kind() {
+            "class" | "module" => current.child_by_field_name("name"),
+            "singleton_class" => current.child_by_field_name("value"),
+            _ => None,
+        };
+        if let Some((_, parts)) = name.and_then(|name| constant_path(name, source)) {
+            chain.push(parts);
+        }
+        scope = current.parent();
+    }
+    chain.reverse();
+    chain
+        .iter()
+        .position(|parts| parts.first().is_some_and(|name| name == "Cucumber"))
+        .is_some_and(|start| {
+            chain[start..]
+                .iter()
+                .flatten()
+                .nth(1)
+                .is_some_and(|name| name == "Glue")
+        })
 }
 
 // Existing runtime owners are globally exposed, even without a reference in selected source.

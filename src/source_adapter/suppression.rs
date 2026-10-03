@@ -1,21 +1,24 @@
+//! Source-local `cuke-dedup:ignore` directives on the comment lines above a registration.
+
 use crate::model::{InlineSuppression, Rule, SourceLocation};
 use crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS;
 use crate::source_adapter::{ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile};
-use tree_sitter::Node;
 
-pub(super) fn inline_suppressions(
-    call: Node<'_>,
+/// Reads the contiguous directive comments directly above the zero-based `registration_row`.
+pub(crate) fn inline_suppressions(
+    registration_row: usize,
+    comment_prefix: &str,
     lines: &[&str],
     file: &SourceFile,
     diagnostics: &mut Vec<ExtractionDiagnostic>,
 ) -> Vec<InlineSuppression> {
-    let mut line_index = call.start_position().row.checked_sub(1);
+    let mut line_index = registration_row.checked_sub(1);
     let mut suppressions = Vec::new();
 
     while let Some(index) = line_index {
         let line = lines.get(index).copied().unwrap_or_default().trim();
         let Some(directive) = line
-            .strip_prefix("//")
+            .strip_prefix(comment_prefix)
             .map(str::trim)
             .and_then(|line| line.strip_prefix("cuke-dedup:ignore").map(str::trim))
         else {
@@ -25,7 +28,9 @@ pub(super) fn inline_suppressions(
             diagnostics.push(inline_suppression_diagnostic(
                 file,
                 index,
-                "inline suppression must use `// cuke-dedup:ignore RULE -- REASON`",
+                &format!(
+                    "inline suppression must use `{comment_prefix} cuke-dedup:ignore RULE -- REASON`"
+                ),
             ));
             line_index = index.checked_sub(1);
             continue;
