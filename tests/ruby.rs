@@ -3606,6 +3606,15 @@ fn ruby_named_handler_discovery_preserves_callable_identity_and_capture_timing()
         ("handler = -> { work() }", "handler", "", true),
         ("handler = proc { work() }", "handler", "", true),
         ("def handler; work(); end", "method(:handler)", "", true),
+        ("", "method(:handler)", "def handler; work(); end", false),
+        ("handler = proc { work() }", "unknown", "", false),
+        ("def handler; work(); end", "method", "", false),
+        (
+            "def handler; work(); end",
+            "method(:handler, :other)",
+            "",
+            false,
+        ),
         (
             "def handler; work(); end",
             "public_method(:handler)",
@@ -3708,6 +3717,10 @@ fn ruby_bound_instance_handlers_are_discovered_without_erasing_receiver_state() 
     for (class, constructor, definitions) in [
         ("class Bound; def initialize(value); @value = value; end; def handle; use(@value); end; end", "Bound.new(:first)", 3),
         ("class Bound; def handle; work(); end; end", "Bound.new", 3),
+        ("class Bound; def handle; work(); end; end; class Bound; end", "Bound.new", 0),
+        ("class Bound; alias other handle; def handle; work(); end; end", "Bound.new", 0),
+        ("class Bound; def unrelated; end; alias other unrelated; def handle; work(); end; end", "Bound.new", 0),
+        ("class Bound; def handle; work(); end; end; class Class; alias new allocate; end", "Bound.new", 0),
         ("class Bound; def self.new; unknown; end; def handle; work(); end; end", "Bound.new", 0),
         ("class Bound; def handle; work(); end; end; Bound.define_singleton_method(:new) { Object }", "Bound.new", 0),
         ("class Bound < unknown; def handle; work(); end; end", "Bound.new", 0),
@@ -3741,6 +3754,77 @@ fn ruby_closed_local_execution_discovers_steps_without_comparing_enclosing_captu
         assert_discovery(rows.as_array().unwrap(), count, true, &source);
         assert_handler_finding(&rows, false, &source);
         assert_eq!(rows.as_array().unwrap().iter().any(|r| r["rule"] == "duplicate-matcher"), count > 1);
+    }
+}
+
+#[test]
+fn ruby_coverage_closed_execution_literal_and_parameter_boundaries() {
+    for value in ["1.0", ":ready", "true", "false", "nil"] {
+        let source = format!("factory = -> {{ value = {value}; Given('same') {{ work() }}; Then('same') {{ work() }} }}; factory.call");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), 2, true, &source);
+        assert_handler_finding(&rows, false, &source);
+        assert!(rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["rule"] == "duplicate-matcher"));
+    }
+    for declaration in ["->(value=1)", "->(*values)", "->(**values)"] {
+        let source = format!("factory = {declaration} {{ Given('same') {{ work() }}; Then('same') {{ work() }} }}; factory.call");
+        assert_resolved_handler_source(&source, 0);
+    }
+    for declaration in ["proc", "lambda"] {
+        for first in ["Given('same', &unknown)", "Given('same')"] {
+            let source = format!(
+                "factory = {declaration} {{ {first}; Then('same') {{ work() }} }}; factory.call"
+            );
+            assert_resolved_handler_source(&source, 0);
+        }
+    }
+}
+
+#[test]
+fn ruby_coverage_deferred_capture_writes_and_nested_declarations_are_uncertain() {
+    for (prefix, body, trusted) in [
+        ("value = 1", "read(value)", true),
+        ("value = 1", "value += 1; read(value)", false),
+        ("", "def helper; end; work()", false),
+        ("", "class Other; end; work()", false),
+    ] {
+        let source = format!("{prefix}; Given('first') {{ {body} }}; Then('second') {{ {body} }}");
+        assert_handler_outcome(&source, 2, trusted);
+    }
+}
+
+#[test]
+fn ruby_coverage_instance_handler_aliases_require_closed_unique_receivers() {
+    for (prefix, handler, expected) in [
+        ("instance = Bound.new", "instance.method(:handle)", 2),
+        (
+            "instance = Bound.new; instance = Bound.new",
+            "instance.method(:handle)",
+            0,
+        ),
+        (
+            "instance = Bound.new; expose(instance)",
+            "instance.method(:handle)",
+            0,
+        ),
+        ("", "Bound.method(:handle)", 0),
+        ("instance = unknown", "instance.method(:handle)", 0),
+    ] {
+        let source = format!("class Bound; def handle; work(); end; end; {prefix}; Given('same', &{handler}); Then('same', &{handler})");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), expected, true, &source);
+        assert_handler_finding(&rows, false, &source);
+        assert_eq!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["rule"] == "duplicate-matcher"),
+            expected == 2
+        );
     }
 }
 
@@ -4131,6 +4215,7 @@ fn ruby_review_forwarder_helpers_preserve_independent_exports() {
 fn ruby_review_capture_reads_keep_immutable_values_and_reject_mutation() {
     for (value, usage, trusted) in [
         ("1", "read(value)", true),
+        ("1", "class Other; def work; end; end", true),
         ("1", "Before { read(value) }", true),
         ("1", "other = proc { read(value) }", true),
         ("1", "later { value = 2 }", false),
@@ -4154,6 +4239,125 @@ fn ruby_review_block_argument_escapes_remove_named_handler_proof() {
             !usage.is_empty(),
             &source,
         );
+        assert_handler_finding(&rows, true, &source);
+    }
+}
+
+#[test]
+fn ruby_coverage_forwarder_ownership_and_origin_boundaries() {
+    for (declaration, trusted) in [
+        ("module P; def self.register(text, &handler); ROOT.call(text, &handler); end; end", true),
+        ("def self.register(text, &handler); ROOT.call(text, &handler); end", false),
+        ("module P; def Other.register(text, &handler); ROOT.call(text, &handler); end; end", false),
+        ("module Outer; module P; def self.register(text, &handler); ROOT.call(text, &handler); end; end; end", false),
+        ("module P; class << self; end; def self.register(text, &handler); ROOT.call(text, &handler); end; end", false),
+        ("module P; def Given; end; def self.register(text, &handler); ROOT.call(text, &handler); end; end", false),
+        ("module P; def self.register(text, &handler); call(text, &handler); end; end", false),
+        ("module P; def self.register(text, &handler); unknown.call(text, &handler); end; end", false),
+        ("module P; def self.register(text, &handler); UNKNOWN.call(text, &handler); end; end", false),
+        ("module P; def self.register(text, &handler); ROOT.call(text, &handler); end; end; module P; end", false),
+    ] {
+        let source = format!("ROOT = method(:Given); {declaration}; P.register('first') {{ work() }}; P.register('second') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), if trusted { 2 } else { 0 }, false, &source);
+        assert_handler_finding(&rows, trusted, &source);
+    }
+}
+
+#[test]
+fn ruby_coverage_export_alias_uses_cannot_grant_unproved_registration_trust() {
+    for (usage, trusted) in [
+        ("", true),
+        ("register.other", false),
+        ("expose(register)", false),
+        ("later { register.call('nested') {} }", false),
+        ("renamed = register; renamed = unknown", false),
+    ] {
+        let source = format!("ROOT = method(:Given); module P; GIVEN = ::ROOT; end; register = P::GIVEN; {usage}; register.call('first') {{ work() }}; register.call('second') {{ work() }}");
+        assert_handler_outcome(&source, if trusted { 2 } else { 0 }, trusted);
+    }
+}
+
+#[test]
+fn ruby_coverage_owner_rejection_preserves_direct_controls_when_safe() {
+    for (prefix, count, incomplete) in [
+        (
+            "class Local; def safe; end; end; local = Local.new; local.safe",
+            2,
+            false,
+        ),
+        (
+            "class Local; def safe; end; end; local = ::Local.new; local.safe",
+            2,
+            false,
+        ),
+        (
+            "class Local < Parent; def safe; end; end; local = Local.new; local.safe",
+            0,
+            true,
+        ),
+        (
+            "class Local; def send(name); end; end; local = Local.new; local.send(:safe)",
+            2,
+            true,
+        ),
+        (
+            "class Object; def safe; end; end; local = Object.new; local.safe",
+            2,
+            false,
+        ),
+        (
+            "class Local; def safe; end; end; Local = unknown; local = Local.new; local.safe",
+            2,
+            false,
+        ),
+        (
+            "module Local; def self.safe; end; end; Local.method",
+            0,
+            true,
+        ),
+        (
+            "module Outer::Inner; def self.safe; end; end; Outer::Inner.safe",
+            0,
+            true,
+        ),
+    ] {
+        let source = format!("{prefix}; Given('first') {{ work() }}; Then('second') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), count, incomplete, &source);
+        assert_handler_finding(&rows, count == 2, &source);
+    }
+}
+
+#[test]
+fn ruby_coverage_cross_file_handlers_preserve_source_capture_uncertainty() {
+    for (body, comparable) in [("work()", true), ("use(__FILE__)", false)] {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("provider.rb"),
+            format!("def handler; {body}; end"),
+        )
+        .unwrap();
+        fs::write(root.path().join("steps.rb"), "require_relative 'provider'; Given('first', &method(:handler)); Then('second', &method(:handler))").unwrap();
+        let rows = project_records(root.path());
+        assert_discovery(&rows, 2, !comparable, body);
+        assert_handler_finding(&Value::Array(rows), comparable, body);
+    }
+}
+
+#[test]
+fn ruby_coverage_namespace_depth_does_not_remove_unrelated_direct_findings() {
+    for prefix in [
+        format!(
+            "{} VALUE = 1; {}",
+            "module Nested; ".repeat(66),
+            "end; ".repeat(66)
+        ),
+        "module Outer; end; module Outer::Inner; VALUE = 1; end".to_owned(),
+    ] {
+        let source = format!("{prefix}; Given('first') {{ work() }}; Then('second') {{ work() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        assert_discovery(rows.as_array().unwrap(), 2, false, &source);
         assert_handler_finding(&rows, true, &source);
     }
 }

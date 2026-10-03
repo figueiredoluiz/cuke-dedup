@@ -64,6 +64,8 @@ struct Graph<'a> {
     available_proofs: RefCell<BTreeSet<(Position, Position)>>,
     load_work: Cell<usize>,
     proof_exhausted: Cell<bool>,
+    #[cfg(test)]
+    proof_limit: usize,
     outgoing: BTreeMap<usize, Vec<(usize, Position)>>,
     incoming: BTreeMap<usize, Vec<(Position, bool)>>,
 }
@@ -493,6 +495,8 @@ impl<'a> Graph<'a> {
             available_proofs: RefCell::default(),
             load_work: Cell::new(0),
             proof_exhausted: Cell::new(false),
+            #[cfg(test)]
+            proof_limit: crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
             outgoing: BTreeMap::new(),
             incoming: BTreeMap::new(),
         }
@@ -633,7 +637,11 @@ impl<'a> Graph<'a> {
     }
 
     fn proof_budget_exhausted(&self, work: usize) -> bool {
-        if work > crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK {
+        #[cfg(test)]
+        let limit = self.proof_limit;
+        #[cfg(not(test))]
+        let limit = crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK;
+        if work > limit {
             self.proof_exhausted.set(true);
         }
         self.proof_exhausted.get()
@@ -829,6 +837,68 @@ fn transparent_body(call: Node<'_>, source: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_proof_collectors_fail_closed_at_each_work_boundary() {
+        let source = "def handler; work(); end; callable = proc { work() }; Given('one', &method(:handler)); Then('two', &callable); register = method(:Given); register.call('three') { work() }; module Local; def self.safe; end; end; Local.safe";
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_ruby::LANGUAGE.into())
+            .unwrap();
+        let units = [Unit {
+            file: SourceFile {
+                path: PathBuf::from("steps.rb"),
+                language: SourceLanguage::Ruby,
+            },
+            canonical_path: PathBuf::from("steps.rb"),
+            source: source.to_owned(),
+            tree: parser.parse(source, None).unwrap(),
+        }];
+        let nodes = descendants(units[0].tree.root_node());
+        let references = identifier_references(&nodes, source);
+        let assertions = super::super::assertions::AssertionProviders::default();
+        let mut exhausted = [false; 3];
+        let mut completed = [false; 3];
+        for limit in 0..nodes.len() * 4 {
+            for collector in 0..3 {
+                let mut graph = Graph::new(&units, &[]);
+                graph.proof_limit = limit;
+                let mut result = Providers::default();
+                match collector {
+                    0 => graph.named_handlers(&mut result, Some(&assertions)),
+                    1 => graph.isolated_namespaces(&mut result),
+                    _ => graph.local_export_aliases(
+                        0,
+                        &nodes,
+                        &references,
+                        &mut BTreeSet::new(),
+                        &mut result,
+                    ),
+                }
+                exhausted[collector] |= graph.budget_exhausted();
+                completed[collector] |= !graph.budget_exhausted();
+                if limit == 0 {
+                    assert!(
+                        result.0.is_empty(),
+                        "collector {collector} gained trust without work"
+                    );
+                }
+                if !graph.budget_exhausted() {
+                    let proof = &result.0[&units[0].file.path];
+                    assert_eq!(
+                        match collector {
+                            0 => proof.handlers.len(),
+                            1 => proof.isolated_constants.len(),
+                            _ => proof.calls.len(),
+                        },
+                        if collector == 0 { 2 } else { 1 }
+                    );
+                }
+            }
+        }
+        assert_eq!(exhausted, [true; 3]);
+        assert_eq!(completed, [true; 3]);
+    }
 
     #[test]
     fn load_proof_work_exhaustion_withdraws_optional_trust() {
