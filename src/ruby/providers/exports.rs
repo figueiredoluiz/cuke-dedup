@@ -33,11 +33,19 @@ impl Graph<'_> {
                     || !node
                         .child_by_field_name("method")
                         .is_some_and(|member| text(member, &input.source) == "call")
-                    || !transparent_body(node, &input.source)
                 {
                     continue;
                 }
-                let Some(method) = node.parent().and_then(|p| p.parent()) else {
+                let Some((method, name)) = node
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .filter(|_| transparent_body(node, &input.source))
+                    .and_then(|method| {
+                        method
+                            .child_by_field_name("name")
+                            .map(|name| (method, name))
+                    })
+                else {
                     continue;
                 };
                 if !method
@@ -84,9 +92,6 @@ impl Graph<'_> {
                 else {
                     continue;
                 };
-                let Some(name) = method.child_by_field_name("name") else {
-                    continue;
-                };
                 candidates
                     .entry((key, text(name, &input.source).to_owned()))
                     .or_default()
@@ -108,6 +113,9 @@ impl Graph<'_> {
         safe: &mut BTreeSet<(usize, usize)>,
         result: &mut Providers,
     ) {
+        if self.begin_proof_pass() {
+            return;
+        }
         let input = &self.units[unit];
         let root = input.tree.root_node();
         // Namespace=true; otherwise the value carries a proven registrar identity.
@@ -154,12 +162,10 @@ impl Graph<'_> {
             }
         }
         let mut calls = Vec::new();
-        let mut work = 0usize;
         let closed = bindings.iter().all(|(name, (assignment, _, origin))| {
             references.get(name).is_some_and(|refs| {
                 refs.iter().all(|reference| {
-                    work += 1;
-                    if self.proof_budget_exhausted(work) {
+                    if self.charge_proof_work(1) {
                         return false;
                     }
                     if assignment.child_by_field_name("left") == Some(*reference) {

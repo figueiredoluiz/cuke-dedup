@@ -4,22 +4,30 @@ use super::*;
 impl Graph<'_> {
     /// Proves closed constructor bindings without treating their methods as framework registrations.
     pub(super) fn isolated_instances(&self, result: &mut Providers) {
-        if self.custom_allocation {
+        if self.begin_proof_pass() || self.custom_allocation {
             return;
         }
         let mut classes = BTreeMap::<String, Vec<(usize, Node<'_>, BTreeSet<&str>)>>::new();
         for (unit, input) in self.units.iter().enumerate() {
-            for node in descendants(input.tree.root_node()) {
+            let nodes = descendants(input.tree.root_node());
+            if self.charge_proof_work(nodes.len()) {
+                return;
+            }
+            for node in nodes {
                 // Inventory every declaration before considering constructor eligibility.
                 if node.kind() == "class" {
                     if let Some(name) = node
                         .child_by_field_name("name")
                         .and_then(|n| constant(n, &input.source))
                     {
+                        let members = descendants(node);
+                        if self.charge_proof_work(members.len()) {
+                            return;
+                        }
                         classes.entry(name).or_default().push((
                             unit,
                             node,
-                            descendants(node)
+                            members
                                 .into_iter()
                                 .filter(|n| {
                                     n.kind() == "method"
@@ -36,6 +44,9 @@ impl Graph<'_> {
         for (unit, input) in self.units.iter().enumerate() {
             let root = input.tree.root_node();
             let nodes = descendants(root);
+            if self.charge_proof_work(nodes.len()) {
+                return;
+            }
             let references = identifier_references(&nodes, &input.source);
             for (assignment, binding, constructor) in root_assignments(&nodes, root) {
                 if binding.kind() != "identifier"
@@ -81,6 +92,10 @@ impl Graph<'_> {
                 ) {
                     continue;
                 }
+                let refs = &references[text(binding, &input.source)];
+                if self.charge_proof_work(methods.len().saturating_add(refs.len())) {
+                    return;
+                }
                 if methods.iter().any(|name| {
                     matches!(
                         *name,
@@ -90,40 +105,35 @@ impl Graph<'_> {
                     continue;
                 }
                 let mut calls = BTreeSet::new();
-                let closed = references[text(binding, &input.source)]
-                    .iter()
-                    .filter(|n| **n != binding)
-                    .all(|reference| {
-                        let Some(call) = reference.parent() else {
+                let closed = refs.iter().filter(|n| **n != binding).all(|reference| {
+                    let Some(call) = reference.parent().filter(|call| {
+                        call.kind() == "call"
+                            && call.start_byte() >= assignment.end_byte()
+                            && call.child_by_field_name("receiver") == Some(*reference)
+                    }) else {
+                        return false;
+                    };
+                    let Some(method) = call.child_by_field_name("method") else {
+                        return false;
+                    };
+                    let name = text(method, &input.source);
+                    if matches!(name, "send" | "public_send" | "__send__") {
+                        let Some(target) = call
+                            .child_by_field_name("arguments")
+                            .and_then(|a| a.named_child(0))
+                            .and_then(|n| static_method_name(n, &input.source))
+                        else {
                             return false;
                         };
-                        if call.kind() != "call"
-                            || call.start_byte() < assignment.end_byte()
-                            || call.child_by_field_name("receiver") != Some(*reference)
-                        {
+                        if !methods.contains(target.as_str()) || call.parent() != Some(root) {
                             return false;
                         }
-                        let Some(method) = call.child_by_field_name("method") else {
-                            return false;
-                        };
-                        let name = text(method, &input.source);
-                        if matches!(name, "send" | "public_send" | "__send__") {
-                            let Some(target) = call
-                                .child_by_field_name("arguments")
-                                .and_then(|a| a.named_child(0))
-                                .and_then(|n| static_method_name(n, &input.source))
-                            else {
-                                return false;
-                            };
-                            if !methods.contains(target.as_str()) || call.parent() != Some(root) {
-                                return false;
-                            }
-                            calls.insert(call.start_byte());
-                        } else if !methods.contains(name) {
-                            return false;
-                        }
-                        true
-                    });
+                        calls.insert(call.start_byte());
+                    } else if !methods.contains(name) {
+                        return false;
+                    }
+                    true
+                });
                 if closed {
                     let proof = result.0.entry(input.file.path.clone()).or_default();
                     proof.isolated_constants.insert(receiver.start_byte());
@@ -136,6 +146,9 @@ impl Graph<'_> {
     /// Distinguishes source-bound namespace calls from escaped owner values.
     /// These offsets remove registry hazards only; they never grant assertion trust.
     pub(super) fn isolated_namespaces(&self, result: &mut Providers) {
+        if self.begin_proof_pass() {
+            return;
+        }
         let mut owners = BTreeMap::<String, Vec<(usize, Node<'_>)>>::new();
         for (unit, input) in self.units.iter().enumerate() {
             for node in descendants(input.tree.root_node()) {
@@ -151,7 +164,6 @@ impl Graph<'_> {
         }
         let custom_allocation = self.custom_allocation;
         let mut summaries = BTreeMap::new();
-        let mut work = 0usize;
         for (key, declarations) in &owners {
             if declarations.len() != 1 {
                 continue;
@@ -159,8 +171,7 @@ impl Graph<'_> {
             let (unit, owner) = declarations[0];
             let source = &self.units[unit].source;
             let nodes = descendants(owner);
-            work = work.saturating_add(nodes.len());
-            if self.proof_budget_exhausted(work) {
+            if self.charge_proof_work(nodes.len()) {
                 return;
             }
             let mut prefix = String::new();

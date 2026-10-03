@@ -11,6 +11,9 @@ impl Graph<'_> {
         result: &mut Providers,
         assertions: Option<&super::super::assertions::AssertionProviders>,
     ) {
+        if self.begin_proof_pass() {
+            return;
+        }
         let nodes: Vec<_> = self
             .units
             .iter()
@@ -30,7 +33,6 @@ impl Graph<'_> {
                 }
             }
         }
-        let mut work = 0usize;
         let mut method_checks = BTreeMap::new();
         let total_nodes: usize = nodes.iter().map(Vec::len).sum();
         for (unit, input) in self.units.iter().enumerate() {
@@ -42,8 +44,7 @@ impl Graph<'_> {
                 root,
                 &input.source,
             );
-            work = work.saturating_add(nodes[unit].len());
-            if self.proof_budget_exhausted(work) {
+            if self.charge_proof_work(nodes[unit].len()) {
                 return;
             }
             let mut assignments = Assignments::new();
@@ -69,20 +70,17 @@ impl Graph<'_> {
                 ) {
                     continue;
                 }
-                let Some(argument) = call
+                let Some(mut value) = call
                     .child_by_field_name("arguments")
                     .and_then(|n| n.named_child(1))
                     .filter(|n| n.kind() == "block_argument")
+                    .and_then(|n| n.named_child(0))
                 else {
                     continue;
                 };
-                work = work.saturating_add(1);
-                if self.proof_budget_exhausted(work) {
+                if self.charge_proof_work(1) {
                     return;
                 }
-                let Some(mut value) = argument.named_child(0) else {
-                    continue;
-                };
                 if value.kind() == "identifier" {
                     let Some(matching) = assignments.get(text(value, &input.source)) else {
                         continue;
@@ -91,8 +89,7 @@ impl Graph<'_> {
                         continue;
                     }
                     let (assignment, left, rhs) = matching[0];
-                    work = work.saturating_add(references[text(left, &input.source)].len());
-                    if self.proof_budget_exhausted(work) {
+                    if self.charge_proof_work(references[text(left, &input.source)].len()) {
                         return;
                     }
                     if assignment.end_byte() > call.start_byte()
@@ -162,11 +159,10 @@ impl Graph<'_> {
                     let unchanged = *method_checks
                         .entry((name.clone(), root_capture))
                         .or_insert_with(|| {
-                            work = work.saturating_add(total_nodes);
-                            !self.proof_budget_exhausted(work)
+                            !self.charge_proof_work(total_nodes)
                                 && self.handler_method_unchanged(&name, root_capture, &nodes)
                         });
-                    if self.proof_budget_exhausted(work) {
+                    if self.budget_exhausted() {
                         return;
                     }
                     if !unchanged {
@@ -178,7 +174,6 @@ impl Graph<'_> {
                             receiver,
                             &name,
                             (&assignments, &references),
-                            &mut work,
                         )
                     } else {
                         methods
@@ -204,8 +199,7 @@ impl Graph<'_> {
                 let Some(assertions) = assertions else {
                     continue;
                 };
-                work = work.saturating_add(descendants(body).len());
-                if self.proof_budget_exhausted(work) {
+                if self.charge_proof_work(descendants(body).len()) {
                     return;
                 }
                 let assertion_bindings = assertions.get(
@@ -306,7 +300,6 @@ impl Graph<'_> {
         mut receiver: Node<'a>,
         target: &str,
         (assignments, references): (&Assignments<'a>, &References<'a>),
-        work: &mut usize,
     ) -> Option<(usize, Node<'a>)> {
         if self.custom_allocation {
             return None;
@@ -368,8 +361,7 @@ impl Graph<'_> {
             return None;
         }
         let nodes = descendants(class);
-        *work = work.saturating_add(nodes.len());
-        if self.proof_budget_exhausted(*work) {
+        if self.charge_proof_work(nodes.len()) {
             return None;
         }
         if nodes.iter().any(|n| {
@@ -411,4 +403,97 @@ fn registration_call(
                 .is_some_and(|name| registration(text(name, source))))
             || aliases.registration(call).is_some()
             || proof.is_some_and(|p| p.calls.contains_key(&call.start_byte())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bound_methods_require_unique_bindings_classes_and_unmodified_lookup() {
+        for (classes, binding, expected) in [
+            (
+                "class Bound; def handle; work(); end; end",
+                "instance.method(:handle); instance = Bound.new",
+                false,
+            ),
+            (
+                "class Bound; def handle; work(); end; end",
+                "instance = Cucumber.new",
+                false,
+            ),
+            (
+                "class Bound; def handle; work(); end; end",
+                "instance = Bound.new",
+                true,
+            ),
+            (
+                "class Bound; def handle; work(); end; end",
+                "instance = Bound.new; instance = Bound.new",
+                false,
+            ),
+            (
+                "class Bound; def handle; work(); end; end; class Bound; end",
+                "instance = Bound.new",
+                false,
+            ),
+            (
+                "class Bound; def handle; work(); end; alias other handle; end",
+                "instance = Bound.new",
+                false,
+            ),
+            (
+                "class Bound; def handle; work(); end; def method; end; end",
+                "instance = Bound.new",
+                false,
+            ),
+        ] {
+            let source = format!("{classes}; {binding}; instance.method(:handle)");
+            let units = [test_unit(&source)];
+            let root = units[0].tree.root_node();
+            assert!(!root.has_error());
+            let nodes = descendants(root);
+            let references = identifier_references(&nodes, &source);
+            let mut assignments = Assignments::new();
+            for (assignment, left, value) in root_assignments(&nodes, root) {
+                assignments
+                    .entry(text(left, &source))
+                    .or_default()
+                    .push((assignment, left, value));
+            }
+            let mut graph = Graph::new(&units, &[]);
+            graph.classes.insert(
+                "Bound".into(),
+                nodes
+                    .iter()
+                    .filter(|n| n.kind() == "class")
+                    .map(|n| (0, *n))
+                    .collect(),
+            );
+            let receiver = nodes
+                .iter()
+                .filter(|n| {
+                    n.kind() == "call"
+                        && n.parent() == Some(root)
+                        && n.child_by_field_name("method")
+                            .is_some_and(|m| text(m, &source) == "method")
+                })
+                .min_by_key(|n| n.start_byte())
+                .unwrap()
+                .child_by_field_name("receiver")
+                .unwrap();
+            for limited in [false, true] {
+                if limited {
+                    graph.proof_limit = 0;
+                }
+                let proof =
+                    graph.bound_instance_method(0, receiver, "handle", (&assignments, &references));
+                assert_eq!(
+                    proof.is_some(),
+                    expected && !limited,
+                    "{source}, limited {limited}"
+                );
+            }
+        }
+    }
 }

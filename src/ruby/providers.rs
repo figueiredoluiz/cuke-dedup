@@ -64,6 +64,7 @@ struct Graph<'a> {
     available_proofs: RefCell<BTreeSet<(Position, Position)>>,
     load_work: Cell<usize>,
     proof_exhausted: Cell<bool>,
+    proof_work: Cell<usize>,
     #[cfg(test)]
     proof_limit: usize,
     outgoing: BTreeMap<usize, Vec<(usize, Position)>>,
@@ -133,26 +134,34 @@ impl Providers {
 
     #[cfg(test)]
     pub(super) fn from_units(units: &[Unit], edges: &[SourceDependency]) -> Result<Self> {
-        Self::from_units_with_assertions(units, edges, &[]).map(|(providers, _)| providers)
+        Ok(Self::from_units_with_assertions(units, edges, &[]).0)
     }
 
     pub(super) fn from_units_with_assertions(
         units: &[Unit],
         edges: &[SourceDependency],
         configured: &[String],
-    ) -> Result<(Self, super::assertions::AssertionProviders)> {
-        let without_registration_proof = |providers| -> Result<_> {
-            Ok((
+    ) -> (Self, super::assertions::AssertionProviders) {
+        Self::collect_proofs(units, configured, Graph::new(units, edges))
+    }
+
+    fn collect_proofs<'a>(
+        units: &'a [Unit],
+        configured: &[String],
+        mut graph: Graph<'a>,
+    ) -> (Self, super::assertions::AssertionProviders) {
+        let edges = graph.edges;
+        let without_registration_proof = |providers| {
+            (
                 providers,
                 super::assertions::AssertionProviders::from_units(
                     units,
                     edges,
                     configured,
                     crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
-                )?,
-            ))
+                ),
+            )
         };
-        let mut graph = Graph::new(units, edges);
         for (unit, input) in units.iter().enumerate() {
             graph
                 .unit_ids
@@ -420,15 +429,17 @@ impl Providers {
             configured,
             crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
             Some(&result),
-        )?;
+        );
         graph.named_handlers(&mut result, Some(&assertions));
         for unit in units {
             if let Some(proof) = result.0.get_mut(&unit.file.path) {
                 proof.source = unit.source.clone();
             }
         }
-        result.1 = graph.budget_exhausted();
-        Ok((result, assertions))
+        if graph.budget_exhausted() {
+            return without_registration_proof(Self(BTreeMap::new(), true));
+        }
+        (result, assertions)
     }
 
     pub fn work_exhausted(&self) -> bool {
@@ -495,6 +506,7 @@ impl<'a> Graph<'a> {
             available_proofs: RefCell::default(),
             load_work: Cell::new(0),
             proof_exhausted: Cell::new(false),
+            proof_work: Cell::new(0),
             #[cfg(test)]
             proof_limit: crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
             outgoing: BTreeMap::new(),
@@ -634,6 +646,18 @@ impl<'a> Graph<'a> {
 
     fn budget_exhausted(&self) -> bool {
         self.proof_exhausted.get() || self.proof_budget_exhausted(self.load_work.get())
+    }
+
+    fn charge_proof_work(&self, additional: usize) -> bool {
+        self.proof_work
+            .set(self.proof_work.get().saturating_add(additional));
+        self.proof_budget_exhausted(self.proof_work.get())
+    }
+
+    // Each collector retains its established limit; exhaustion is shared and sticky.
+    fn begin_proof_pass(&self) -> bool {
+        self.proof_work.set(0);
+        self.budget_exhausted()
     }
 
     fn proof_budget_exhausted(&self, work: usize) -> bool {
@@ -835,45 +859,255 @@ fn transparent_body(call: Node<'_>, source: &str) -> bool {
 }
 
 #[cfg(test)]
+fn test_unit(source: &str) -> Unit {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_ruby::LANGUAGE.into())
+        .unwrap();
+    Unit {
+        file: SourceFile {
+            path: PathBuf::from("steps.rb"),
+            language: SourceLanguage::Ruby,
+        },
+        canonical_path: PathBuf::from("steps.rb"),
+        source: source.to_owned(),
+        tree: parser.parse(source, None).unwrap(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn optional_proof_collectors_fail_closed_at_each_work_boundary() {
-        let source = "def handler; work(); end; callable = proc { work() }; Given('one', &method(:handler)); Then('two', &callable); register = method(:Given); register.call('three') { work() }; module Local; def self.safe; end; end; Local.safe";
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_ruby::LANGUAGE.into())
+    fn isolated_owner_shapes_retain_only_closed_constructor_proofs() {
+        for (declaration, use_site, expected) in [
+            ("class Local; def run; end; end", "instance.run", true),
+            (
+                "class self::Local; def run; end; end",
+                "instance.run",
+                false,
+            ),
+            (
+                "class Local < Parent; def run; end; end",
+                "instance.run",
+                false,
+            ),
+            (
+                "module Outer; class Local; def run; end; end; end",
+                "instance.run",
+                false,
+            ),
+            ("class Local; def run; end; end", "instance.()", false),
+            ("class Local; def run; end; end", "escape(instance)", false),
+        ] {
+            let units = [test_unit(&format!(
+                "{declaration}; instance = Local.new; {use_site}"
+            ))];
+            assert!(!units[0].tree.root_node().has_error());
+            let mut result = Providers::default();
+            Graph::new(&units, &[]).isolated_instances(&mut result);
+            assert_eq!(
+                result
+                    .0
+                    .values()
+                    .any(|proof| !proof.isolated_constants.is_empty()),
+                expected,
+                "{declaration}; {use_site}"
+            );
+        }
+    }
+
+    #[test]
+    fn forwarders_reject_ambiguous_and_protected_namespace_inventories() {
+        let units = [test_unit("module Forward; def self.register(pattern, &handler); REGISTER.call(pattern, &handler); end; end")];
+        let owner = descendants(units[0].tree.root_node())
+            .into_iter()
+            .find(|n| n.kind() == "module")
             .unwrap();
-        let units = [Unit {
-            file: SourceFile {
-                path: PathBuf::from("steps.rb"),
-                language: SourceLanguage::Ruby,
-            },
-            canonical_path: PathBuf::from("steps.rb"),
-            source: source.to_owned(),
-            tree: parser.parse(source, None).unwrap(),
-        }];
+        for (count, protected) in [(2, false), (1, true)] {
+            let mut graph = Graph::new(&units, &[]);
+            graph.namespaces.insert("Forward".into(), count);
+            if protected {
+                graph.protected_modules.insert(owner.id());
+            }
+            graph.collect_forwarders();
+            assert!(graph.forwarders.is_empty());
+        }
+    }
+
+    #[test]
+    fn forwarders_reject_dynamic_namespace_names() {
+        let units = [test_unit("module self::Forward; def self.register(pattern, &handler); REGISTER.call(pattern, &handler); end; end")];
+        assert!(!units[0].tree.root_node().has_error());
+        let mut graph = Graph::new(&units, &[]);
+        graph.collect_forwarders();
+        assert!(graph.forwarders.is_empty());
+    }
+
+    #[test]
+    fn registration_alias_shorthand_dispatch_does_not_gain_export_trust() {
+        let source = "register = method(:Given); register.('pattern') { work() }";
+        let units = [test_unit(source)];
+        assert!(!units[0].tree.root_node().has_error());
+        let nodes = descendants(units[0].tree.root_node());
+        let references = identifier_references(&nodes, source);
+        let mut result = Providers::default();
+        Graph::new(&units, &[]).local_export_aliases(
+            0,
+            &nodes,
+            &references,
+            &mut BTreeSet::new(),
+            &mut result,
+        );
+        assert!(result.0.is_empty());
+    }
+
+    #[test]
+    fn exhausted_optional_budget_withdraws_proofs_and_retains_direct_findings() {
+        use crate::model::Rule;
+        use crate::source_adapter::{SourceAdapter, SourceExtractionSession};
+
+        let config_root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::load(
+            config_root.path(),
+            crate::config::ConfigOverrides::default(),
+        )
+        .unwrap();
+        for (source, optional) in [
+            ("def handler; perform(); end; Given('optional one', &method(:handler)); Then('optional two', &method(:handler))", true),
+            ("Given('direct') { work() }; Then('direct') { work() }", false),
+        ] {
+            let units = [test_unit(source)];
+            let size = descendants(units[0].tree.root_node()).len();
+            let mut exhausted = false;
+            let mut complete = false;
+            for limit in (0..=size * 20).step_by((size / 4).max(1)) {
+                let mut graph = Graph::new(&units, &[]);
+                graph.proof_limit = limit;
+                let (providers, assertions) = Providers::collect_proofs(&units, &[], graph);
+                let incomplete = providers.work_exhausted();
+                exhausted |= incomplete;
+                complete |= !incomplete;
+                if incomplete { assert!(providers.0.is_empty()); }
+                let mut session = SourceExtractionSession::default();
+                let state = session.state::<super::super::RubySession>().unwrap();
+                state.providers = providers;
+                state.assertions = assertions;
+                let extraction = super::super::RubyAdapter.extract_with_session(source, &units[0].file, &mut session).unwrap();
+                assert_eq!(extraction.definitions.len(), if optional && incomplete { 0 } else { 2 }, "limit {limit}: {source}");
+                let result = crate::analysis::analyze_with_step_usage(
+                    extraction.definitions, vec![], &config,
+                    &extraction.indirect_usage.unwrap_or_default(),
+                ).unwrap().result;
+                assert_eq!(result.findings.iter().any(|f| f.rule == Rule::DuplicateMatcher), !optional);
+                assert_eq!(result.findings.iter().any(|f| f.rule == Rule::DuplicateHandler), optional && !incomplete, "limit {limit}: {source}");
+                let finalized = super::super::RubyAdapter.finalize_session(&mut session).unwrap();
+                assert_eq!(finalized.uncertainties.iter().any(|u| u.message.contains("work limit")), incomplete);
+            }
+            assert!(exhausted && complete);
+        }
+    }
+
+    #[test]
+    fn closed_execution_stops_after_prior_or_partial_budget_exhaustion() {
+        let source = "first = -> { Given('first') { work() } }; first.call; second = -> { Then('second') { work() } }; second.call";
+        let units = [test_unit(source)];
+        let nodes = descendants(units[0].tree.root_node());
+        let first_body = nodes
+            .iter()
+            .find(|n| n.kind() == "lambda")
+            .unwrap()
+            .child_by_field_name("body")
+            .unwrap();
+        for prior in [false, true] {
+            let mut graph = Graph::new(&units, &[]);
+            graph.proof_limit = nodes.len() * 2
+                + 2
+                + descendants(first_body).len()
+                + descendants(first_body)
+                    .iter()
+                    .find(|n| matches!(n.kind(), "block" | "do_block"))
+                    .map(|n| descendants(*n).len())
+                    .unwrap();
+            graph.proof_exhausted.set(prior);
+            let mut result = Providers::default();
+            graph.closed_execution(&mut result);
+            assert!(graph.budget_exhausted());
+            assert_eq!(
+                result.0.values().map(|p| p.executed.len()).sum::<usize>(),
+                usize::from(!prior)
+            );
+        }
+        let graph = Graph::new(&units, &[]);
+        let mut result = Providers::default();
+        graph.closed_execution(&mut result);
+        assert!(!graph.budget_exhausted());
+        assert_eq!(
+            result.0.values().map(|p| p.executed.len()).sum::<usize>(),
+            2
+        );
+    }
+
+    #[test]
+    fn optional_passes_share_exhaustion_without_resetting_load_work() {
+        let source = "module Local; def self.safe; end; end; register = method(:Given); register.call('step') { work() }";
+        let units = [test_unit(source)];
+        let mut graph = Graph::new(&units, &[]);
+        graph.proof_limit = 2;
+        assert!(!graph.charge_proof_work(1));
+        graph.load_work.set(1);
+        assert!(!graph.budget_exhausted());
+        assert!(graph.charge_proof_work(2));
+        assert!(graph.begin_proof_pass());
+        assert_eq!(graph.proof_work.get(), 0);
+        assert_eq!(graph.load_work.get(), 1);
+        assert!(graph.budget_exhausted());
+        let nodes = descendants(units[0].tree.root_node());
+        let references = identifier_references(&nodes, source);
+        let mut result = Providers::default();
+        graph.isolated_instances(&mut result);
+        graph.isolated_namespaces(&mut result);
+        graph.local_export_aliases(0, &nodes, &references, &mut BTreeSet::new(), &mut result);
+        assert!(result.0.is_empty());
+    }
+
+    #[test]
+    fn isolated_constructor_requires_preceding_class_initialization() {
+        let units = [test_unit(
+            "instance = Local.new; class Local; def run; end; end; instance.run",
+        )];
+        let mut result = Providers::default();
+        Graph::new(&units, &[]).isolated_instances(&mut result);
+        assert!(result.0.is_empty());
+    }
+
+    #[test]
+    fn optional_proof_collectors_fail_closed_at_each_work_boundary() {
+        let source = "def handler; work(); end; callable = proc { work() }; Given('one', &method(:handler)); Then('two', &callable); register = method(:Given); register.call('three') { work() }; module Local; def self.safe; end; end; Local.safe; factory = -> { Given('four') { work() }; Then('five') { work() } }; factory.call; class LocalInstance; def safe; end; end; instance = LocalInstance.new; instance.safe";
+        let units = [test_unit(source)];
         let nodes = descendants(units[0].tree.root_node());
         let references = identifier_references(&nodes, source);
         let assertions = super::super::assertions::AssertionProviders::default();
-        let mut exhausted = [false; 3];
-        let mut completed = [false; 3];
+        let mut exhausted = [false; 5];
+        let mut completed = [false; 5];
         for limit in 0..nodes.len() * 4 {
-            for collector in 0..3 {
+            for collector in 0..5 {
                 let mut graph = Graph::new(&units, &[]);
                 graph.proof_limit = limit;
                 let mut result = Providers::default();
                 match collector {
                     0 => graph.named_handlers(&mut result, Some(&assertions)),
                     1 => graph.isolated_namespaces(&mut result),
-                    _ => graph.local_export_aliases(
+                    2 => graph.local_export_aliases(
                         0,
                         &nodes,
                         &references,
                         &mut BTreeSet::new(),
                         &mut result,
                     ),
+                    3 => graph.closed_execution(&mut result),
+                    _ => graph.isolated_instances(&mut result),
                 }
                 exhausted[collector] |= graph.budget_exhausted();
                 completed[collector] |= !graph.budget_exhausted();
@@ -889,15 +1123,17 @@ mod tests {
                         match collector {
                             0 => proof.handlers.len(),
                             1 => proof.isolated_constants.len(),
-                            _ => proof.calls.len(),
+                            2 => proof.calls.len(),
+                            3 => proof.executed.len(),
+                            _ => proof.isolated_constants.len(),
                         },
-                        if collector == 0 { 2 } else { 1 }
+                        if matches!(collector, 0 | 1 | 3) { 2 } else { 1 }
                     );
                 }
             }
         }
-        assert_eq!(exhausted, [true; 3]);
-        assert_eq!(completed, [true; 3]);
+        assert_eq!(exhausted, [true; 5]);
+        assert_eq!(completed, [true; 5]);
     }
 
     #[test]

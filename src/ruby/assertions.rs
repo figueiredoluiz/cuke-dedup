@@ -6,6 +6,7 @@ use crate::model::BehaviorEvent;
 #[cfg(test)]
 use crate::source_adapter::SourceFile;
 use crate::source_adapter::{SourceAdvisory, SourceDependency};
+#[cfg(test)]
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -47,7 +48,7 @@ impl AssertionProviders {
         let Some(loaded) = super::providers::load_units(files, (budget.0, budget.1))? else {
             return Ok(Self::unavailable());
         };
-        Self::from_units(&loaded, edges, configured, budget.2)
+        Ok(Self::from_units(&loaded, edges, configured, budget.2))
     }
 
     pub(super) fn from_units(
@@ -55,7 +56,7 @@ impl AssertionProviders {
         edges: &[SourceDependency],
         configured: &[String],
         work_budget: usize,
-    ) -> Result<Self> {
+    ) -> Self {
         Self::from_units_with_registrations(loaded, edges, configured, work_budget, None)
     }
 
@@ -65,9 +66,9 @@ impl AssertionProviders {
         configured: &[String],
         work_budget: usize,
         registrations: Option<&super::providers::Providers>,
-    ) -> Result<Self> {
+    ) -> Self {
         if configured.is_empty() {
-            return Ok(Self::default());
+            return Self::default();
         }
         let canonical: Vec<_> = loaded
             .iter()
@@ -84,12 +85,12 @@ impl AssertionProviders {
         let total_nodes: usize = nodes.iter().map(Vec::len).sum();
         let mut work = total_nodes.saturating_mul(2);
         if work > work_budget {
-            return Ok(Self::unavailable());
+            return Self::unavailable();
         }
         // A configured JS/TS-only module cannot make an unrelated Ruby graph incomplete.
         work = work.saturating_add(total_nodes);
         if work > work_budget {
-            return Ok(Self::unavailable());
+            return Self::unavailable();
         }
         if !units.iter().zip(&nodes).any(|((_, source, tree), nodes)| {
             nodes.iter().any(|node| {
@@ -97,13 +98,13 @@ impl AssertionProviders {
                     && configured_load(*node, source, configured)
             })
         }) {
-            return Ok(Self::default());
+            return Self::default();
         }
         if units
             .iter()
             .any(|(_, _, tree)| tree.root_node().has_error())
         {
-            return Ok(Self::unavailable());
+            return Self::unavailable();
         }
         let mut namespaces = BTreeMap::<String, usize>::new();
         for ((_, source, _), nodes) in units.iter().zip(&nodes) {
@@ -122,7 +123,7 @@ impl AssertionProviders {
                 .map(|((file, _, _), canonical)| (file.path.as_path(), canonical.as_path())),
             edges,
         ) {
-            return Ok(Self::unavailable());
+            return Self::unavailable();
         }
         let mut result = Self::default();
         for (unit, (file, source, tree)) in units.iter().enumerate() {
@@ -131,7 +132,7 @@ impl AssertionProviders {
             for edge in edges.iter().filter(|edge| edge.location.path == file.path) {
                 work = work.saturating_add(nodes[unit].len());
                 if work > work_budget {
-                    return Ok(Self::unavailable());
+                    return Self::unavailable();
                 }
                 let Some(load) = nodes[unit].iter().copied().find(|node| {
                     node.kind() == "call" && location(file, *node, source) == edge.location
@@ -149,7 +150,7 @@ impl AssertionProviders {
                 };
                 work = work.saturating_add(nodes[provider].len().saturating_mul(2));
                 if work > work_budget {
-                    return Ok(Self::unavailable());
+                    return Self::unavailable();
                 }
                 let mut trusted = false;
                 let (_, provider_source, provider_tree) = &units[provider];
@@ -176,7 +177,7 @@ impl AssertionProviders {
                         .saturating_add(total_nodes.saturating_mul(2))
                         .saturating_add(nodes[unit].len());
                     if work > work_budget {
-                        return Ok(Self::unavailable());
+                        return Self::unavailable();
                     }
                     // Any escape, alias, replacement, or unknown member use removes trust globally.
                     if !units.iter().zip(&nodes).all(|((file, input, _), nodes)| {
@@ -223,7 +224,7 @@ impl AssertionProviders {
                 (source.to_string(), AssertionBindings { factories }),
             );
         }
-        Ok(result)
+        result
     }
 
     pub(super) fn advisories(&self) -> &[SourceAdvisory] {
@@ -634,7 +635,7 @@ mod tests {
         let state = session.state::<crate::ruby::RubySession>().unwrap();
         state.providers = super::super::providers::Providers::from_units(&units, &edges).unwrap();
         state.assertions =
-            AssertionProviders::from_units(&units, &edges, &["./assertions".into()], 2000).unwrap();
+            AssertionProviders::from_units(&units, &edges, &["./assertions".into()], 2000);
         assert!(state.assertions.get(&files[0].path, source).is_some());
         assert!(state
             .assertions

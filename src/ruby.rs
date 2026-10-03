@@ -95,7 +95,7 @@ impl SourceAdapter for RubyAdapter {
                 &units,
                 &edges,
                 &state.assertion_modules,
-            )?;
+            );
             state.providers = providers;
             state.assertions = assertions;
         } else {

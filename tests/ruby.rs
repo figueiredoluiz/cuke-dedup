@@ -4182,16 +4182,11 @@ fn ruby_repeated_large_named_bodies_report_bounded_proof_exhaustion() {
     fs::write(root.path().join(".cuke-dedup.json"), r#"{"rules":{"near-duplicate-step":"off","parameterization-candidate":"off","unused-definition":"off"}}"#).unwrap();
     let rows = project_records(root.path());
     assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], true);
-    assert!(
-        rows.last().unwrap()["summary"]["definitionsAnalyzed"]
-            .as_u64()
-            .unwrap()
-            >= 2
-    );
+    assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 0);
     assert_handler_finding(
         &Value::Array(rows),
-        true,
-        "direct controls survive named-body work exhaustion",
+        false,
+        "exhausted named-body proofs cannot retain optional handler findings",
     );
 }
 
@@ -4359,5 +4354,13 @@ fn ruby_coverage_namespace_depth_does_not_remove_unrelated_direct_findings() {
         let (_, rows, _) = analyze(&source, &[]);
         assert_discovery(rows.as_array().unwrap(), 2, false, &source);
         assert_handler_finding(&rows, true, &source);
+    }
+}
+
+#[test]
+fn ruby_coverage_other_deferred_handlers_invalidate_captured_values() {
+    for write in ["value = 2", "value += 1"] {
+        let source = format!("value = 1; Given('writer') {{ {write} }}; Given('first') {{ read(value) }}; Then('second') {{ read(value) }}");
+        assert_handler_outcome(&source, 3, false);
     }
 }

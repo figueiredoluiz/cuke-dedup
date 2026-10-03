@@ -210,17 +210,17 @@ fn stable_captures(
                             .is_some_and(|name| super::registration(text(name, source)))
                 });
             if deferred {
-                for child in super::descendants(node) {
-                    if matches!(child.kind(), "assignment" | "operator_assignment") {
-                        if let Some(left) = child.child_by_field_name("left") {
-                            unsafe_names.extend(
-                                binding_nodes(left)
-                                    .iter()
-                                    .map(|n| text(*n, source).to_owned())
-                                    .filter(|name| captures.contains(name)),
-                            );
-                        }
-                    }
+                for left in super::descendants(node)
+                    .into_iter()
+                    .filter(|child| matches!(child.kind(), "assignment" | "operator_assignment"))
+                    .filter_map(|child| child.child_by_field_name("left"))
+                {
+                    unsafe_names.extend(
+                        binding_nodes(left)
+                            .iter()
+                            .map(|n| text(*n, source).to_owned())
+                            .filter(|name| captures.contains(name)),
+                    );
                 }
                 continue;
             }

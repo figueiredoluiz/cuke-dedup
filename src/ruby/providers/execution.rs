@@ -3,12 +3,18 @@ use super::*;
 
 impl Graph<'_> {
     pub(super) fn closed_execution(&self, result: &mut Providers) {
+        if self.begin_proof_pass() {
+            return;
+        }
         for input in self.units {
             let root = input.tree.root_node();
             if root.has_error() {
                 continue;
             }
             let nodes = descendants(root);
+            if self.charge_proof_work(nodes.len()) {
+                return;
+            }
             let references = identifier_references(&nodes, &input.source);
             for (assignment, left, value) in root_assignments(&nodes, root) {
                 if left.kind() != "identifier" {
@@ -42,9 +48,11 @@ impl Graph<'_> {
                 }) {
                     continue;
                 }
-                let Some(refs) = references.get(text(left, &input.source)) else {
-                    continue;
-                };
+                // Every identifier assignment is included in the reference inventory.
+                let refs = &references[text(left, &input.source)];
+                if self.charge_proof_work(refs.len()) {
+                    return;
+                }
                 let uses: Vec<_> = refs.iter().filter(|n| **n != left).collect();
                 if uses.len() != 1 {
                     continue;
@@ -87,6 +95,9 @@ impl Graph<'_> {
                     continue;
                 }
                 let body = block.child_by_field_name("body").unwrap_or(block);
+                if self.charge_proof_work(descendants(body).len()) {
+                    return;
+                }
                 let mut cursor = body.walk();
                 let statements: Vec<_> = body
                     .named_children(&mut cursor)
@@ -127,6 +138,10 @@ impl Graph<'_> {
                     let Some(block) = statement.child_by_field_name("block") else {
                         return false;
                     };
+                    if self.charge_proof_work(nodes.len().saturating_add(descendants(block).len()))
+                    {
+                        return false;
+                    }
                     let mut handler =
                         super::super::handler::fingerprint(block, root, &input.source, None);
                     handler.comparable = false;
