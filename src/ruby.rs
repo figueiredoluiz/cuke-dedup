@@ -14,7 +14,6 @@ use std::path::Path;
 use tree_sitter::Node;
 
 mod assertions;
-use assertions::AssertionProviders;
 mod bindings;
 pub(crate) mod config;
 mod dependencies;
@@ -92,11 +91,13 @@ impl SourceAdapter for RubyAdapter {
         let edges = session.dependency_edges();
         let state = session.state::<RubySession>()?;
         if let Some(units) = units {
-            state.providers = providers::Providers::from_units(&units, &edges)?;
-            let modules = &state.assertion_modules;
-            let work_budget = crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK;
-            state.assertions =
-                AssertionProviders::from_units(&units, &edges, modules, work_budget)?;
+            let (providers, assertions) = providers::Providers::from_units_with_assertions(
+                &units,
+                &edges,
+                &state.assertion_modules,
+            );
+            state.providers = providers;
+            state.assertions = assertions;
         } else {
             state.providers = Default::default();
             state.assertions = if state.assertion_modules.is_empty() {
@@ -123,7 +124,21 @@ impl SourceAdapter for RubyAdapter {
                 "Ruby assertion-provider provenance is incomplete",
             ));
         }
-        if state.effects.invalidated() {
+        if state.providers.work_exhausted() {
+            result.uncertainties.push(SourceUncertainty::new(
+                UncertaintyScope::Registry(SourceLanguage::Ruby),
+                if state.effects.invalidated() {
+                    UncertaintyCause::Registration
+                } else {
+                    UncertaintyCause::Source
+                },
+                if state.effects.invalidated() {
+                    "Ruby registration source proof exceeded its work limit; DSL redefinition or metaprogramming also prevents trusted registration extraction"
+                } else {
+                    "Ruby registration source proof exceeded its work limit"
+                },
+            ));
+        } else if state.effects.invalidated() {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(SourceLanguage::Ruby),
                 UncertaintyCause::Registration,
@@ -308,9 +323,10 @@ fn extract_with_proof(
             continue;
         }
         if replaced
-            || node
+            || (node
                 .parent()
                 .is_none_or(|parent| parent.kind() != "program")
+                && !proof.is_some_and(|p| p.executed.contains(&node.start_byte())))
         {
             result.diagnostics.push(diagnostic(
                 file,
@@ -321,13 +337,17 @@ fn extract_with_proof(
             ));
             continue;
         }
-        let Some((matcher, matcher_kind, flags, block)) = registration_parts(node, source) else {
+        let Some((matcher, matcher_kind, flags, block)) = registration_parts(
+            node,
+            source,
+            proof.is_some_and(|p| p.handlers.contains_key(&node.start_byte())),
+        ) else {
             result.diagnostics.push(diagnostic(
                 file,
                 node,
                 source,
                 Kind::Incomplete,
-                "Ruby registration requires a static matcher and inline block",
+                "Ruby registration requires a static matcher and a statically resolved handler",
             ));
             continue;
         };
@@ -343,14 +363,17 @@ fn extract_with_proof(
                 "Ruby regular expression is outside the supported static matching subset",
             ));
         }
-        let handler = handler::fingerprint(block, root, source, assertions);
+        let handler = proof
+            .and_then(|p| p.handlers.get(&node.start_byte()))
+            .cloned()
+            .unwrap_or_else(|| handler::fingerprint(block, root, source, assertions));
         if !handler.comparable {
             result.diagnostics.push(diagnostic(
                 file,
                 block,
                 source,
                 Kind::Incomplete,
-                "Ruby handler contains syntax outside exact-handler comparison support",
+                "Ruby handler comparison has unresolved syntax, captures or receiver identity",
             ));
         }
         let comparison = if matcher_kind == MatcherKind::CucumberExpression {
@@ -491,8 +514,20 @@ fn static_method_name(node: Node<'_>, source: &str) -> Option<String> {
     }
 }
 
+fn method_table_mutator(name: &str) -> bool {
+    matches!(
+        name,
+        "define_method"
+            | "define_singleton_method"
+            | "alias_method"
+            | "undef_method"
+            | "remove_method"
+    )
+}
+
 fn protected_method(name: &str) -> bool {
     registration(name)
+        || method_table_mutator(name)
         || matches!(
             name,
             "ParameterType"
@@ -502,15 +537,11 @@ fn protected_method(name: &str) -> bool {
                 | "method"
                 | "public_method"
                 | "call"
+                | "to_proc"
                 | "method_missing"
                 | "require"
                 | "require_relative"
                 | "autoload"
-                | "define_method"
-                | "define_singleton_method"
-                | "alias_method"
-                | "undef_method"
-                | "remove_method"
                 | "send"
                 | "public_send"
                 | "__send__"
@@ -543,14 +574,7 @@ fn may_replace_dsl(node: Node<'_>, source: &str) -> bool {
             static_method_name(arg, source).is_none_or(|target| protected_method(&target))
         });
     }
-    if matches!(
-        name.as_str(),
-        "define_method"
-            | "define_singleton_method"
-            | "alias_method"
-            | "undef_method"
-            | "remove_method"
-    ) {
+    if method_table_mutator(name.as_str()) {
         return args
             .next()
             .and_then(|arg| static_method_name(arg, source))
@@ -658,13 +682,23 @@ fn descendants(root: Node<'_>) -> Vec<Node<'_>> {
 fn registration_parts<'a>(
     node: Node<'a>,
     source: &str,
+    resolved_handler: bool,
 ) -> Option<(String, MatcherKind, String, Node<'a>)> {
     let args = node.child_by_field_name("arguments")?;
-    if args.named_child_count() != 1 {
+    if args.named_child_count() != 1
+        && !(resolved_handler
+            && args.named_child_count() == 2
+            && node.child_by_field_name("block").is_none()
+            && args
+                .named_child(1)
+                .is_some_and(|n| n.kind() == "block_argument"))
+    {
         return None;
     }
     let matcher = args.named_child(0)?;
-    let block = node.child_by_field_name("block")?;
+    let block = node
+        .child_by_field_name("block")
+        .or_else(|| resolved_handler.then(|| args.named_child(1)).flatten())?;
     if matcher.has_error() || block.has_error() {
         return None;
     }

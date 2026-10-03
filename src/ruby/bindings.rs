@@ -48,6 +48,10 @@ impl Bindings {
             let mut cursor = node.walk();
             pending.extend(node.named_children(&mut cursor));
         }
+        // Ruby def opens a new local scope; it does not close over the file's locals.
+        if block.kind() == "method" {
+            outer.clear();
+        }
         let mut scopes = vec![outer
             .into_iter()
             .map(|name| (name.clone(), format!("capture:{name}")))
@@ -55,7 +59,8 @@ impl Bindings {
         let mut next = 0;
         let mut pending = vec![(block, false)];
         while let Some((node, closing)) = pending.pop() {
-            let scope = matches!(node.kind(), "block" | "do_block" | "lambda");
+            let scope = matches!(node.kind(), "block" | "do_block" | "lambda")
+                || (node == block && node.kind() == "method");
             if closing {
                 if scope {
                     scopes.pop();
@@ -169,8 +174,104 @@ impl Bindings {
             children.sort_by_key(Node::start_byte);
             pending.extend(children.into_iter().rev().map(|n| (n, false)));
         }
+        result.uncertain |= !stable_captures(block, root, source, &result.captures);
         result
     }
+}
+
+/// Lexical identity alone cannot close mutable factories, property aliases or escaped values.
+fn stable_captures(
+    handler: Node<'_>,
+    root: Node<'_>,
+    source: &str,
+    captures: &BTreeSet<String>,
+) -> bool {
+    if captures.is_empty() {
+        return true;
+    }
+    let mut initialized = BTreeSet::new();
+    let mut immutable = BTreeSet::new();
+    let mut reads = BTreeSet::new();
+    let mut unsafe_names = BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if matches!(
+            node.kind(),
+            "method" | "singleton_method" | "class" | "module" | "singleton_class"
+        ) {
+            continue;
+        }
+        if matches!(node.kind(), "block" | "do_block" | "lambda") {
+            let deferred = node == handler
+                || node.parent().is_some_and(|parent| {
+                    parent.kind() == "call"
+                        && parent
+                            .child_by_field_name("method")
+                            .is_some_and(|name| super::registration(text(name, source)))
+                });
+            if deferred {
+                for left in super::descendants(node)
+                    .into_iter()
+                    .filter(|child| matches!(child.kind(), "assignment" | "operator_assignment"))
+                    .filter_map(|child| child.child_by_field_name("left"))
+                {
+                    unsafe_names.extend(
+                        binding_nodes(left)
+                            .iter()
+                            .map(|n| text(*n, source).to_owned())
+                            .filter(|name| captures.contains(name)),
+                    );
+                }
+                continue;
+            }
+        }
+        if node.kind() == "identifier" && captures.contains(text(node, source)) {
+            let name = text(node, source);
+            let assignment = node.parent().filter(|n| {
+                n.kind() == "assignment"
+                    && n.parent() == Some(root)
+                    && n.child_by_field_name("left") == Some(node)
+            });
+            let literal = assignment
+                .and_then(|n| n.child_by_field_name("right"))
+                .is_some_and(|n| {
+                    matches!(
+                        n.kind(),
+                        "integer" | "float" | "simple_symbol" | "true" | "false" | "nil"
+                    ) || (n.kind() == "string"
+                        && !super::descendants(n)
+                            .iter()
+                            .any(|part| part.kind() == "interpolation")
+                        && super::literal_string(text(n, source)).is_some())
+                });
+            if let Some(assignment) = assignment {
+                if assignment
+                    .child_by_field_name("right")
+                    .is_some_and(|n| n.kind() != "string")
+                {
+                    immutable.insert(name.to_owned());
+                }
+                if !literal || !initialized.insert(name.to_owned()) {
+                    unsafe_names.insert(name.to_owned());
+                }
+            } else if node.parent().is_some_and(|parent| {
+                matches!(parent.kind(), "assignment" | "operator_assignment")
+                    && parent.child_by_field_name("left") == Some(node)
+            }) {
+                unsafe_names.insert(name.to_owned());
+            } else {
+                reads.insert(name.to_owned());
+            }
+        }
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+    captures.iter().all(|name| {
+        name == "<source-file>"
+            || (initialized.contains(name)
+                && !unsafe_names.contains(name)
+                && (!reads.contains(name) || immutable.contains(name)))
+    })
 }
 
 /// Collects binding targets without renaming property receivers, keys, or method names.
@@ -185,6 +286,7 @@ fn binding_nodes(node: Node<'_>) -> Vec<Node<'_>> {
             | "rest_assignment"
             | "block_parameters"
             | "lambda_parameters"
+            | "method_parameters"
             | "destructured_parameter" => {
                 let mut cursor = node.walk();
                 pending.extend(node.named_children(&mut cursor));

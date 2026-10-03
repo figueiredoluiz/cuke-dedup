@@ -52,6 +52,7 @@ fn resolve_graph(
         .iter()
         .map(|f| f.path.canonicalize())
         .collect::<Result<_, _>>()?;
+    let entry_points = known.clone();
     let mut bytes = 0_usize;
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
@@ -145,10 +146,11 @@ fn resolve_graph(
                 files.definitions.push(source_file.clone());
                 queue.push_back(source_file);
             }
-            files.dependencies.push(SourceDependency::new(
-                location(&file, node, &source),
-                target,
-            ));
+            let dependency_only = !entry_points.contains(&target);
+            files.dependencies.push(
+                SourceDependency::new(location(&file, node, &source), target)
+                    .with_dependency_only_target(dependency_only),
+            );
         }
     }
     Ok(())

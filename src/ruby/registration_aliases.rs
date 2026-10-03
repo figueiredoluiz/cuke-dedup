@@ -104,7 +104,14 @@ pub(super) fn identifier_references<'a>(
     source: &'a str,
 ) -> BTreeMap<&'a str, Vec<Node<'a>>> {
     let mut references = BTreeMap::<_, Vec<_>>::new();
-    for node in nodes.iter().copied().filter(|n| n.kind() == "identifier") {
+    for node in nodes.iter().copied().filter(|n| {
+        n.kind() == "identifier"
+            && !n.parent().is_some_and(|p| {
+                (p.kind() == "call" && p.child_by_field_name("method") == Some(*n))
+                    || (matches!(p.kind(), "method" | "singleton_method")
+                        && p.child_by_field_name("name") == Some(*n))
+            })
+    }) {
         references.entry(text(node, source)).or_default().push(node);
     }
     references
