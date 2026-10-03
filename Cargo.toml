@@ -19,7 +19,6 @@ include = [
     "/README.md",
     "/docs/**",
     "/LICENSE",
-    "/CHANGELOG.md",
     "/SECURITY.md",
 ]
 

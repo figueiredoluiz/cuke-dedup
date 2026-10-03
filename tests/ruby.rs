@@ -3362,3 +3362,95 @@ fn ruby_unsupported_assertion_chains_preserve_ordinary_handler_findings() {
         );
     }
 }
+
+#[test]
+fn ruby_partial_assertion_events_do_not_invent_complete_handler_similarity() {
+    let assertion = "Assertions.expect(page).to_be('ready')";
+    for trusted in [false, true] {
+        for (left, right, score) in [
+            (assertion.to_owned(), assertion.to_owned(), 1.0),
+            (
+                format!("store.write('one'); {assertion}"),
+                format!("store.write('two'); {assertion}"),
+                0.0,
+            ),
+            (
+                format!("@state = 'one'; {assertion}"),
+                format!("@state = 'two'; {assertion}"),
+                0.0,
+            ),
+            (
+                format!("if ready; {assertion}; end"),
+                format!("unless ready; {assertion}; end"),
+                0.0,
+            ),
+            (
+                format!("wrap {{ {assertion} }}; store.write('one')"),
+                format!("wrap {{ {assertion} }}; store.write('two')"),
+                0.0,
+            ),
+            (
+                "Assertions.expect(page) { first() }.to_be('ready')".into(),
+                "Assertions.expect(page) { second() }.to_be('ready')".into(),
+                0.0,
+            ),
+            (
+                assertion.into(),
+                "Assertions&.expect(page).to_be('ready')".into(),
+                0.0,
+            ),
+            (
+                "Assertions.expect(page).not.to_be('ready')".into(),
+                "Assertions.expect(page)&.not.to_be('ready')".into(),
+                0.0,
+            ),
+            (
+                assertion.into(),
+                "Assertions.expect(page)&.to_be('ready')".into(),
+                0.0,
+            ),
+        ] {
+            let source = format!("Given('the badge is ready') {{ {left} }}; Then('the badge is  ready') {{ {right} }}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
+            let rows = project_records(root.path());
+            assert_discovery(&rows, 2, false, &source);
+            let finding = rows
+                .iter()
+                .find(|row| row["rule"] == "normalized-matcher")
+                .expect("matcher finding is retained");
+            assert_eq!(
+                finding["evidence"]["handlerSimilarity"], score,
+                "trusted={trusted}: {source}"
+            );
+            assert!(
+                !rows.iter().any(|row| row["rule"] == "duplicate-handler"
+                    || row["rule"] == "near-duplicate-step"
+                    || row["rule"] == "parameterization-candidate"),
+                "{source}"
+            );
+        }
+        for (body, incomplete) in [
+            (assertion, false),
+            ("Assertions.expect(page) { work() }.to_be('ready')", false),
+            ("Assertions&.expect(page).to_be('ready')", false),
+            ("Assertions.expect(page).to_be(UNKNOWN)", trusted),
+        ] {
+            let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
+            let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
+            let rows = project_records(root.path());
+            assert_discovery(&rows, 2, incomplete, &source);
+            assert_handler_finding(
+                &Value::Array(rows),
+                !incomplete,
+                &format!("trusted={trusted}: {source}"),
+            );
+        }
+    }
+    let root = assertion_project(ASSERTION_PROVIDER, "Given('the theme is dark') { store.write('dark') }; Then('the theme is light') { store.write('light') }", true);
+    let rows = project_records(root.path());
+    let finding = rows
+        .iter()
+        .find(|row| row["rule"] == "parameterization-candidate")
+        .expect("whole-handler structural finding is retained");
+    assert_eq!(finding["evidence"]["handlerSimilarity"], 0.95);
+}

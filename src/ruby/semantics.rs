@@ -25,6 +25,7 @@ pub(crate) fn profile() -> AnalysisProfile {
         handler_domain: HandlerDomain::Shared,
         global_matchers: true,
         near_requires_same_handler: true,
+        event_similarity: false,
         indirect_usage: true,
         dialect: &REGEX,
         capture_context: |definition| {

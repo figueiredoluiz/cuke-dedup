@@ -30,6 +30,7 @@ pub(crate) fn profile(framework: Framework) -> AnalysisProfile {
         },
         global_matchers: framework != Framework::JestCucumber,
         near_requires_same_handler: false,
+        event_similarity: true,
         indirect_usage: false,
         dialect: &REGEX,
         capture_context: |_| CaptureContext::Unrestricted,

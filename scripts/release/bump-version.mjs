@@ -1,7 +1,4 @@
-// Single entry point for a version bump. Rewrites every manifest, workflow input, documentation
-// pin, and changelog heading that must agree with the Cargo package version, then refreshes both
-// Cargo lockfiles. `scripts/check/check-release-version.mjs` verifies the same set of files, so a
-// bump performed here always satisfies the release gate.
+// Synchronize release version sites and Cargo lockfiles atomically.
 //
 // The bump is atomic. Every file is read and its replacement validated before anything is
 // written, and if a lockfile refresh fails afterwards the written files are restored, so a failed
@@ -15,7 +12,6 @@ import { ACTION_PIN, findActionPins } from "./version-sites.mjs";
 const run = promisify(execFile);
 
 const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
-const REPOSITORY = "https://github.com/figueiredoluiz/cuke-dedup";
 const CARGO_VERSION = /^\[package\]\n(?:.*\n)*?version = "([^"]+)"$/m;
 const LOCKFILES = ["Cargo.lock", "fuzz/Cargo.lock"];
 
@@ -151,33 +147,6 @@ for (const { path } of pins) {
   const { text, crlf } = await read(path);
   plan(path, text.replace(ACTION_PIN, `figueiredoluiz/cuke-dedup@v${version}`), crlf);
 }
-
-// Promote the accumulated Unreleased notes into a dated section and open a fresh Unreleased.
-const { text: changelog, crlf: changelogCrlf } = await read("CHANGELOG.md");
-const notes = changelog.match(/^## \[Unreleased\]\n([\s\S]*?)(?=^## \[)/m);
-if (!notes) {
-  throw new Error("CHANGELOG.md Unreleased section was not found");
-}
-if (notes[1].trim() === "") {
-  throw new Error("CHANGELOG.md Unreleased section is empty; describe the release first");
-}
-const released = process.env.RELEASE_DATE ?? new Date().toISOString().slice(0, 10);
-if (!/^\d{4}-\d{2}-\d{2}$/.test(released)) {
-  throw new Error(`RELEASE_DATE must be YYYY-MM-DD, got ${released}`);
-}
-// Anchored to the first version link definition so the new entry joins that block rather than
-// landing above an unrelated reference-style link elsewhere in the document.
-const links = /^\[\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\]: \S+$/m;
-if (!links.test(changelog)) {
-  throw new Error("CHANGELOG.md version link definitions were not found");
-}
-plan(
-  "CHANGELOG.md",
-  changelog
-    .replace(/^## \[Unreleased\]\n/m, `## [Unreleased]\n\n## [${version}] - ${released}\n`)
-    .replace(links, `[${version}]: ${REPOSITORY}/compare/v${previous}...v${version}\n$&`),
-  changelogCrlf,
-);
 
 // Cargo rewrites the lockfiles from the manifests, so they can only be refreshed once the new
 // versions are on disk. Snapshot them too: if either refresh fails, everything written above is

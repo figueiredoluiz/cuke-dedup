@@ -414,7 +414,7 @@ fn behavior_events_are_interned_before_pairwise_sequence_comparison() {
     assert!(events[1].iter().all(|event| *event == events[1][0]));
     assert_ne!(events[0][0], events[1][0]);
     assert_eq!(
-        handler_similarity_with_relationship(false, false, &events[0], &events[1]),
+        handler_similarity_with_relationship(false, false, true, &events[0], &events[1]),
         0.0
     );
 }
@@ -647,7 +647,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
         same_structure: false,
         same_deferred_assertions: true,
     };
-    let work = |relationships, stage| {
+    let work = |pair: &[StepDefinition; 2], relationships, stage| {
         let input = PairWorkInput {
             left: &pair[0],
             right: &pair[1],
@@ -660,16 +660,32 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
         pair_similarity_work(&input, stage)
     };
     assert_eq!(
-        work(unrelated, PairSimilarityWork::Matcher),
+        work(&pair, unrelated, PairSimilarityWork::Matcher),
         matrix_work(3, 5)
     );
     assert_eq!(
-        work(unrelated, PairSimilarityWork::Handler),
+        work(&pair, unrelated, PairSimilarityWork::Handler),
         matrix_work(2, 3)
     );
-    assert!(work(unrelated, PairSimilarityWork::Evidence) > 100_000);
+    assert!(work(&pair, unrelated, PairSimilarityWork::Evidence) > 100_000);
+    for (left_partial, right_partial) in [(true, false), (false, true), (true, true)] {
+        let mut partial = pair.clone();
+        for (definition, partial_stream) in partial.iter_mut().zip([left_partial, right_partial]) {
+            if partial_stream {
+                definition.framework = crate::model::Framework::CucumberRuby;
+            }
+        }
+        assert_eq!(work(&partial, unrelated, PairSimilarityWork::Handler), 0);
+        assert_eq!(
+            work(&partial, unrelated, PairSimilarityWork::Matcher),
+            matrix_work(3, 5)
+        );
+        assert!(work(&partial, unrelated, PairSimilarityWork::Evidence) > 100_000);
+    }
+
     assert_eq!(
         work(
+            &pair,
             PairRelationships {
                 normalized_matcher: true,
                 ..unrelated
@@ -680,6 +696,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
     );
     assert_eq!(
         work(
+            &pair,
             PairRelationships {
                 same_handler: true,
                 ..unrelated
@@ -690,6 +707,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
     );
     assert_eq!(
         work(
+            &pair,
             PairRelationships {
                 same_handler_structure: true,
                 ..unrelated
@@ -700,6 +718,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
     );
     assert_eq!(
         work(
+            &pair,
             PairRelationships {
                 same_handler_structure: true,
                 same_structure: true,

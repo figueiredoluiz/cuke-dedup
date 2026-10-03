@@ -1,7 +1,7 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::similarity::{
-    handler_runtime_compatible, handler_similarity_with_relationship, is_near_matcher,
-    is_parameterizable_matcher, matcher_similarity, round_score,
+    event_similarity_available, handler_runtime_compatible, handler_similarity_with_relationship,
+    is_near_matcher, is_parameterizable_matcher, matcher_similarity, round_score,
 };
 use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
@@ -265,6 +265,7 @@ pub(super) fn analyze_definition_pairs(
             handler_similarity_with_relationship(
                 same_handler,
                 relationships.same_structure,
+                event_similarity_available(left, right),
                 &behavior_events[left_index],
                 &behavior_events[right_index],
             )
@@ -450,7 +451,9 @@ fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> 
             matrix_work(input.left_matcher_length, input.right_matcher_length)
         }
         PairSimilarityWork::Handler
-            if !input.relationships.same_handler && !input.relationships.same_structure =>
+            if !input.relationships.same_handler
+                && !input.relationships.same_structure
+                && event_similarity_available(input.left, input.right) =>
         {
             matrix_work(
                 input.left.handler.behavior_signature.len(),

@@ -60,7 +60,7 @@ if (missing.length > 0) {
   console.error(
     `Documentation parity: ${missing.length} user-facing surface(s) are undocumented in docs/.\n` +
       missing.map((m) => `  - ${m}`).join("\n") +
-      `\n\nDocument each in docs/ (and CHANGELOG.md if new), or justify it in UNDOCUMENTED_ALLOWED.`,
+      `\n\nDocument each in docs/, or justify it in UNDOCUMENTED_ALLOWED.`,
   );
   process.exit(1);
 }
