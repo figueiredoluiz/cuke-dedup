@@ -144,14 +144,11 @@ through a resolved import (see `safety-and-limitations.md`).
 
 `assertionModules` names module specifiers whose `expect` export is a real assertion factory.
 
-For Ruby, this is explicit opt-in trust for a project-owned assertion factory. A selected source must load the configured specifier through a preceding top-level, resolved `require_relative`; leading `./` is ignored. The provider must declare one root module with exactly one direct `def self.expect` and closed literal constant references in the selected sources. Recognized aliases, reopening, escapes and reflection remove trust. This static proof cannot establish the effects of arbitrary runtime code. Closure covers selected source files only; it does not verify installed gems or unselected support files. Include relevant support sources and use a dedicated namespace.
+For Ruby, opt-in trust requires a preceding top-level resolved `require_relative` matching the configured specifier (leading `./` is ignored). The provider needs one root module, exactly one direct `def self.expect`, and closed literal constant references across selected sources. Aliases, reopening, escapes and reflection remove trust. This proof covers selected sources, not arbitrary runtime effects, installed gems or unselected support files. Include support sources and use a dedicated namespace.
 
-Supported terminal matchers are `to_be`, `to_equal`, `equal_to`, `to_have_class` and `to_be_visible`, with `not`/`to` modifiers. Expected values may be strings, symbols, unsigned integer/float literals, booleans, `nil`, or recursively supported arrays/hashes. Unary expressions (including negative numbers), ranges, rationals and character literals remain unresolved. Unresolved values remove handler comparison authority. If a matching Ruby load is present and optional provider preparation encounters a parse error or cycle, or file-count, aggregate-byte, per-source read or work limits prevent establishing relevance, analysis reports incompleteness and retains ordinary-call behavior without assertion trust. A bounded proof of no matching Ruby load leaves Ruby unaffected by modules configured for TypeScript. It never executes Ruby or dependency code.
+Supported terminals are `to_be`, `to_equal`, `equal_to`, `to_have_class` and `to_be_visible`, with `not`/`to` modifiers. Expected values support strings, symbols, unsigned integer/float literals, booleans, `nil` and recursive arrays/hashes. Unary expressions (including negatives), ranges, rationals and character literals remain unresolved and remove handler-comparison authority. Relevant provider parse errors, cycles or file/byte/read/work limits report incompleteness and retain ordinary-call behavior without assertion trust. A bounded proof of no matching Ruby load leaves Ruby unaffected by TypeScript-only configuration. No project code executes.
 
-CukeDedup recognizes `@playwright/test`, `playwright/test`, `@jest/globals`, `expect`, `vitest`,
-`chai`, and `bun:test` without configuration, and it also trusts the ambient `expect` that Jest,
-Vitest, and Playwright inject. Chain recognition is shape-based, so Chai's `expect(x).to.equal(y)`
-is understood exactly as Jest's `expect(x).toBe(y)` is; only the origin of the factory is listed.
+For JS/TS, CukeDedup recognizes `@playwright/test`, `playwright/test`, `@jest/globals`, `expect`, `vitest`, `chai`, and `bun:test` without configuration, and it also trusts the ambient `expect` that Jest, Vitest, and Playwright inject. Chain recognition is shape-based, so Chai's `expect(x).to.equal(y)` is understood exactly as Jest's `expect(x).toBe(y)` is; only the origin of the factory is listed.
 
 Declare a module when the factory reaches your steps another way:
 
@@ -168,14 +165,9 @@ A local module that re-exports `expect` is the common case:
 export { expect } from "@playwright/test";
 ```
 
-Without the declaration, `expect` is untrusted, because the analyzer does not follow a local
-re-export back to its origin. An untrusted factory is not an error: its expected values simply stop
-counting as behaviour, so two steps asserting genuinely different values can be offered as a
-`parameterization-candidate`. Declaring the module restores the distinction. Both `import` and
-`require` spellings honour the setting.
+Without configuration, JS/TS local re-exports remain untrusted: their expected values do not count as behavior, so conflicting assertions may produce a `parameterization-candidate`. Configuration restores that distinction for both `import` and `require`.
 
-Trust only modules that really do expose an assertion factory. Declaring an unrelated module makes
-its call arguments semantically load-bearing and can manufacture similarity evidence.
+Configure only actual assertion factories; trusting unrelated modules can manufacture similarity evidence.
 
 ## Custom parameter types
 

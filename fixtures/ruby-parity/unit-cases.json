@@ -36,7 +36,7 @@
       ]
     },
     "src/analysis/pairs/tests.rs": {
-      "sourceSha256": "cb64ad1e8b98166d8ae9555ccc902a872cdf0dadd7a244688e549a7bd8623d16",
+      "sourceSha256": "f8468890aa0aec69c8e25438769ee05357869af953ea439ff798f4ff4604e812",
       "tests": [
         {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
@@ -160,7 +160,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "1d13d34aa9119e684a064cc5b402c89d91ca943411461414a33703287a55cc40",
+      "sourceSha256": "81b39d1faf7ca2de29fd5884ce26882f619aa9ffd85201a1e9e9ab86965819b7",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",

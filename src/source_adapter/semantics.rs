@@ -69,7 +69,10 @@ pub(crate) struct AnalysisProfile {
     pub(crate) comparison_domain: ComparisonDomain,
     pub(crate) handler_domain: HandlerDomain,
     pub(crate) global_matchers: bool,
+    // Wording findings may require exact handler identity, even for structural matches.
     pub(crate) near_requires_same_handler: bool,
+    // Partial event streams cannot measure overlap between distinct handler trees.
+    pub(crate) event_similarity: bool,
     pub(crate) indirect_usage: bool,
     pub(crate) dialect: &'static dyn RegexDialect,
     pub(crate) capture_context: fn(&StepDefinition) -> CaptureContext,

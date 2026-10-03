@@ -209,8 +209,7 @@ or its maintainers.
 ## Releases
 
 Release archives include SHA-256 checksums, keyless Sigstore bundles, and GitHub build provenance.
-See [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases) and
-[CHANGELOG.md](CHANGELOG.md) for published versions and release notes.
+Published versions and release notes are maintained in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 
 ```sh
 gh attestation verify <archive> \

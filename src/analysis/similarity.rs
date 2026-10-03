@@ -174,9 +174,15 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
         left.handler.alpha_normalized == right.handler.alpha_normalized,
         left.handler.structural == right.handler.structural
             && left.handler.behavior_signature == right.handler.behavior_signature,
+        event_similarity_available(left, right),
         &left_events,
         &right_events,
     )
+}
+
+// Partial streams preserve identity checks but cannot measure whole-handler overlap.
+pub(super) fn event_similarity_available(left: &StepDefinition, right: &StepDefinition) -> bool {
+    left.analysis_profile().event_similarity && right.analysis_profile().event_similarity
 }
 
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
@@ -210,6 +216,7 @@ fn executable_behavior_events(definition: &StepDefinition) -> Vec<BehaviorEventR
 pub(super) fn handler_similarity_with_relationship<T: Eq>(
     same_alpha: bool,
     same_structural: bool,
+    event_similarity: bool,
     left_events: &[T],
     right_events: &[T],
 ) -> f64 {
@@ -218,6 +225,9 @@ pub(super) fn handler_similarity_with_relationship<T: Eq>(
     }
     if same_structural {
         return 0.95;
+    }
+    if !event_similarity {
+        return 0.0;
     }
     let max_len = left_events.len().max(right_events.len());
     if max_len == 0 {
@@ -294,17 +304,36 @@ mod tests {
         let empty = definition("", MatcherKind::CucumberExpression);
         assert_eq!(matcher_similarity(&empty, &empty), 1.0);
         assert_eq!(
-            handler_similarity_with_relationship::<u8>(true, false, &[], &[]),
+            handler_similarity_with_relationship::<u8>(true, false, true, &[], &[]),
             1.0
         );
         assert_eq!(
-            handler_similarity_with_relationship::<u8>(false, true, &[], &[]),
+            handler_similarity_with_relationship::<u8>(false, true, true, &[], &[]),
             0.95
         );
         assert_eq!(
-            handler_similarity_with_relationship::<u8>(false, false, &[], &[]),
+            handler_similarity_with_relationship::<u8>(false, false, true, &[], &[]),
             0.0
         );
+        for available in [false, true] {
+            for (alpha, structural, expected) in [
+                (true, false, 1.0),
+                (false, true, 0.95),
+                (false, false, if available { 0.5 } else { 0.0 }),
+            ] {
+                let right = if alpha { &[1, 2][..] } else { &[1, 3][..] };
+                assert_eq!(
+                    handler_similarity_with_relationship(
+                        alpha,
+                        structural,
+                        available,
+                        &[1, 2],
+                        right
+                    ),
+                    expected
+                );
+            }
+        }
         assert_eq!(ordered_common_subsequence_len(&[1, 2, 3], &[2, 3, 4]), 2);
         assert_eq!(round_score(0.123_6), 0.124);
     }

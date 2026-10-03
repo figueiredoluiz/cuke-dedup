@@ -441,7 +441,8 @@ impl AssertionBindings {
         Some(BehaviorEvent::assertion(
             &qualifier,
             method,
-            &serialize(subjects),
+            // A proved factory can still carry a block or conditional dispatch.
+            &serialize(receiver),
             &expected.map(serialize).unwrap_or_default(),
         ))
     }
@@ -649,7 +650,7 @@ mod tests {
                 false,
             ),
         ] {
-            let source = "require_relative 'assertions'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }; Given('ordinary one') { work() }; Then('ordinary two') { work() }";
+            let source = "require_relative 'assertions'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }; Given('ordinary one') { work() }; Then('ordinary two') { work() }; Given('block one') { Assertions.expect(page) { first() }.to_be(true) }; Then('block two') { Assertions.expect(page) { second() }.to_be(true) }; Given('dispatch one') { Assertions.expect(page).to_be(true) }; Then('dispatch two') { Assertions&.expect(page).to_be(true) }";
             std::fs::write(&files[0].path, source).unwrap();
             std::fs::write(&files[1].path, provider).unwrap();
             let edges = [SourceDependency::new(
@@ -664,6 +665,16 @@ mod tests {
             let (definitions, finalized) = finish(source, &files, &mut session);
             assert!(finalized.uncertainties.is_empty());
             assert_eq!(finalized.advisories.len(), usize::from(!trusted));
+            if trusted {
+                assert_ne!(
+                    definitions[4].handler.behavior_signature,
+                    definitions[5].handler.behavior_signature
+                );
+                assert_ne!(
+                    definitions[6].handler.behavior_signature,
+                    definitions[7].handler.behavior_signature
+                );
+            }
             if !trusted {
                 assert_eq!(finalized.advisories[0].location.path, files[0].path);
             }
