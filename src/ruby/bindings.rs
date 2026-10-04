@@ -14,6 +14,17 @@ pub(super) struct Bindings {
 impl Bindings {
     /// Tracks parser-order bindings while keeping unresolved reflection and implicit parameters uncertain.
     pub fn collect(block: Node<'_>, root: Node<'_>, source: &str) -> Self {
+        Self::collect_with_origins(block, root, source, &BTreeMap::new(), &BTreeSet::new())
+    }
+
+    /// Resolves handler bindings with source-proven captures and lexical shadowing.
+    pub(super) fn collect_with_origins(
+        block: Node<'_>,
+        root: Node<'_>,
+        source: &str,
+        captures: &BTreeMap<String, String>,
+        dispatch: &BTreeSet<(usize, usize)>,
+    ) -> Self {
         let mut result = Self::default();
         let mut outer = BTreeSet::new();
         let mut pending = vec![root];
@@ -131,6 +142,9 @@ impl Bindings {
                     }
                 }
                 if (method || result.calls.contains(&node.id()))
+                    && !node.parent().is_some_and(|call| {
+                        dispatch.contains(&(call.start_byte(), call.end_byte()))
+                    })
                     && matches!(
                         spelling,
                         "caller"
@@ -174,7 +188,13 @@ impl Bindings {
             children.sort_by_key(Node::start_byte);
             pending.extend(children.into_iter().rev().map(|n| (n, false)));
         }
-        result.uncertain |= !stable_captures(block, root, source, &result.captures);
+        let unresolved = result
+            .captures
+            .iter()
+            .filter(|name| !captures.contains_key(*name))
+            .cloned()
+            .collect();
+        result.uncertain |= !stable_captures(block, root, source, &unresolved);
         result
     }
 }

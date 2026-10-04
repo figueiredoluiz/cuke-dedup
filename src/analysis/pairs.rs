@@ -143,6 +143,7 @@ pub(super) struct PairAnalysis {
     pub(super) incomplete: Option<String>,
 }
 
+/// Verifies candidate pairs under both adapter policies and bounded comparison work.
 pub(super) fn analyze_definition_pairs(
     definitions: &[StepDefinition],
     config: &Config,
@@ -215,7 +216,9 @@ pub(super) fn analyze_definition_pairs(
             && !(positional && exact_matcher)
             && same_structure
             && meaningful_handlers;
-        let near_handler = (!left.analysis_profile().near_requires_same_handler || same_handler)
+        let near_requires_same_handler = left.analysis_profile().near_requires_same_handler
+            || right.analysis_profile().near_requires_same_handler;
+        let near_handler = (!near_requires_same_handler || same_handler)
             && candidate.sources.can_feed_near_matcher()
             && !(positional && same_handler)
             && relationships.same_deferred_assertions

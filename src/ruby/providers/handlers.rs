@@ -227,8 +227,38 @@ impl Graph<'_> {
                         representation.insert_str(0, "ruby:lambda;");
                     }
                 }
-                if value.child_by_field_name("receiver").is_some() {
-                    fingerprint.comparable = false;
+                if value.child_by_field_name("receiver").is_some() && fingerprint.comparable {
+                    let receiver = value.child_by_field_name("receiver").unwrap();
+                    let allocation = if receiver.kind() == "identifier" {
+                        assignments
+                            .get(text(receiver, &input.source))
+                            .and_then(|values| values.first())
+                            .map(|(_, _, value)| *value)
+                            .expect("bound receiver assignment was validated")
+                    } else {
+                        receiver
+                    };
+                    let context = format!(
+                        "ruby:receiver:{}:{};",
+                        allocation.start_byte(),
+                        allocation.end_byte()
+                    );
+                    for representation in [
+                        &mut fingerprint.exact,
+                        &mut fingerprint.normalized,
+                        &mut fingerprint.alpha_normalized,
+                        &mut fingerprint.structural,
+                    ] {
+                        representation.insert_str(0, &context);
+                    }
+                    fingerprint.behavior_signature.insert(
+                        0,
+                        format!(
+                            "method:ruby:lexical-file:{}:{}",
+                            allocation.start_byte(),
+                            allocation.end_byte()
+                        ),
+                    );
                 }
                 if body_unit != unit
                     && !super::super::bindings::Bindings::collect(
@@ -240,6 +270,22 @@ impl Graph<'_> {
                     .is_empty()
                 {
                     fingerprint.comparable = false;
+                }
+                if !fingerprint.comparable
+                    && assertion_bindings.as_ref().is_some_and(|assertions| {
+                        assertions.rejected_comparison(
+                            body,
+                            self.units[body_unit].tree.root_node(),
+                            &self.units[body_unit].source,
+                        )
+                    })
+                {
+                    result
+                        .0
+                        .entry(input.file.path.clone())
+                        .or_default()
+                        .comparison_rejections
+                        .insert(call.start_byte());
                 }
                 result
                     .0

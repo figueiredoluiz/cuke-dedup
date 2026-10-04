@@ -4,6 +4,7 @@ use crate::model::{BehaviorEvent, HandlerFingerprint, HandlerSemantics};
 use std::borrow::Cow;
 use tree_sitter::Node;
 
+/// Builds handler identity from bound syntax, captures, and assertion effects.
 pub(super) fn fingerprint(
     block: Node<'_>,
     root: Node<'_>,
@@ -11,14 +12,19 @@ pub(super) fn fingerprint(
     assertions: Option<&super::assertions::AssertionBindings>,
 ) -> HandlerFingerprint {
     let nodes = descendants(block);
-    let bindings = super::bindings::Bindings::collect(block, root, source);
+    let bindings = assertions.map_or_else(
+        || super::bindings::Bindings::collect(block, root, source),
+        |assertions| assertions.bindings(block, root, source),
+    );
     let comparable = !bindings.uncertain
+        && !assertions.is_some_and(|assertions| assertions.known_ineligible(block, root, source))
         && !nodes.iter().any(|node| {
             (block.kind() == "method"
                 && matches!(
                     node.kind(),
                     "self" | "instance_variable" | "class_variable" | "global_variable"
-                ))
+                )
+                && !assertions.is_some_and(|assertions| assertions.known_field(*node)))
                 || (node != &block
                     && matches!(
                         node.kind(),
@@ -35,7 +41,9 @@ pub(super) fn fingerprint(
                     ))
         });
     let (tokens, alpha) = syntax_tokens(block, source, &bindings);
-    let structural = parameterized_calls(block, source, &bindings);
+    let structural = parameterized_calls(block, source, &bindings).or_else(|| {
+        assertions.and_then(|assertions| assertions.ordinary_structural(block, source, &bindings))
+    });
     let captures = &bindings.captures;
     let mut behavior_signature = if captures.is_empty() {
         vec![]
@@ -43,7 +51,14 @@ pub(super) fn fingerprint(
         vec![BehaviorEvent::Method("ruby:lexical-file".to_owned())]
     };
     if let Some(assertions) = assertions {
-        behavior_signature.extend(assertions.events(block, source, &bindings));
+        let events = assertions.events(block, source, &bindings);
+        let assertion_evidence = events
+            .iter()
+            .any(|event| matches!(event, BehaviorEvent::Assertion { .. }));
+        behavior_signature.extend(events);
+        if assertion_evidence {
+            behavior_signature.push(BehaviorEvent::Method("ruby:complete-events".to_owned()));
+        }
     }
     let alpha_normalized =
         serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
@@ -71,7 +86,7 @@ pub(super) fn fingerprint(
 }
 
 /// Abstract only whole straight-line handlers; any unmodeled effect preserves exact identity.
-fn parameterized_calls(
+pub(super) fn parameterized_calls(
     block: Node<'_>,
     source: &str,
     bindings: &super::bindings::Bindings,

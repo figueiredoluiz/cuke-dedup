@@ -34,12 +34,29 @@ pub(crate) struct RubySession {
     assertion_modules: Vec<String>,
 }
 impl AdapterSessionState for RubySession {
-    fn initialize(_: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
+    /// Resolves configured Ruby provider paths without replacing their filename suffixes.
+    fn initialize(root: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
+        let mut configured = assertion_modules.to_vec();
+        if let Some(root) = root {
+            for module in assertion_modules {
+                let path = root.join(module);
+                let candidate = if path.extension().is_some_and(|extension| extension == "rb") {
+                    path
+                } else {
+                    let mut candidate = path.into_os_string();
+                    candidate.push(".rb");
+                    candidate.into()
+                };
+                if let Ok(path) = candidate.canonicalize() {
+                    configured.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
         Self {
             effects: Default::default(),
             providers: Default::default(),
             assertions: Default::default(),
-            assertion_modules: assertion_modules.to_vec(),
+            assertion_modules: configured,
         }
     }
 }
@@ -196,6 +213,7 @@ fn extract(
     extract_with_proof(source, file, None, None)
 }
 
+/// Extracts registrations using source-owned provider and assertion evidence.
 fn extract_with_proof(
     source: &str,
     file: &SourceFile,
@@ -375,7 +393,11 @@ fn extract_with_proof(
             .and_then(|p| p.handlers.get(&node.start_byte()))
             .cloned()
             .unwrap_or_else(|| handler::fingerprint(block, root, source, assertions));
-        if !handler.comparable {
+        if !handler.comparable
+            && !proof.is_some_and(|proof| proof.comparison_rejections.contains(&node.start_byte()))
+            && !assertions
+                .is_some_and(|assertions| assertions.rejected_comparison(block, root, source))
+        {
             result.diagnostics.push(diagnostic(
                 file,
                 block,
