@@ -96,7 +96,11 @@ impl AssertionProviders {
         let Some(mut origins) =
             origins::Origins::collect(loaded, edges, configured, registrations, work_budget)
         else {
-            return Self::unavailable();
+            return if configured.is_empty() {
+                Self::default()
+            } else {
+                Self::unavailable()
+            };
         };
         let publish_origins = |mut origins: BTreeMap<PathBuf, origins::Origins>| Self {
             proofs: loaded
@@ -182,7 +186,7 @@ impl AssertionProviders {
         for (unit, (file, source, tree)) in units.iter().enumerate() {
             let root = tree.root_node();
             let resolved = origins.remove(&file.path).unwrap_or_default();
-            let mut factories = resolved
+            let factories = resolved
                 .factories
                 .iter()
                 .filter(|(_, callable)| callable.trusted && !callable.denied)
@@ -264,21 +268,6 @@ impl AssertionProviders {
                         continue;
                     }
                     trusted = true;
-                    for node in &nodes[unit] {
-                        if node.start_byte() > load.end_byte()
-                            && node.kind() == "call"
-                            && node
-                                .child_by_field_name("receiver")
-                                .is_some_and(|receiver| {
-                                    receiver.kind() == "constant" && text(receiver, source) == name
-                                })
-                            && node
-                                .child_by_field_name("method")
-                                .is_some_and(|method| text(method, source) == "expect")
-                        {
-                            factories.insert((node.start_byte(), node.end_byte()));
-                        }
-                    }
                 }
                 if !trusted {
                     result.advisories.push(SourceAdvisory::new(
@@ -391,6 +380,13 @@ fn closed_reference(node: Node<'_>, source: &str) -> bool {
     node.parent().is_some_and(|parent| {
         (parent.kind() == "module" && parent.child_by_field_name("name") == Some(node))
             || (parent.kind() == "call"
+                && !std::iter::successors(Some(parent), |node| node.parent()).any(|node| {
+                    matches!(node.kind(), "assignment" | "operator_assignment")
+                        && node.child_by_field_name("left").is_some_and(|left| {
+                            left.start_byte() <= parent.start_byte()
+                                && left.end_byte() >= parent.end_byte()
+                        })
+                })
                 && parent.child_by_field_name("receiver") == Some(node)
                 && parent
                     .child_by_field_name("method")
@@ -787,30 +783,34 @@ impl AssertionBindings {
         }) {
             return Some(BehaviorEvent::unresolved_assertion(false));
         }
+        if self
+            .origins
+            .factories
+            .get(&(receiver.start_byte(), receiver.end_byte()))
+            .is_some_and(|callable| callable.negated)
+        {
+            modifiers.push("not".to_owned());
+        }
         let qualifier = std::iter::once("expect")
             .map(str::to_owned)
             .chain(modifiers.into_iter().rev())
             .collect::<Vec<_>>()
             .join(".");
         let serialize = |root: Node<'_>| serialize_tokens(root, source, bindings);
-        let mut subject = if let Some(callable) = self
+        let callable = self
             .origins
             .factories
-            .get(&(receiver.start_byte(), receiver.end_byte()))
-        {
-            let (_, arguments) = call_parts(receiver, source)?;
-            serde_json::to_string(&(
-                &callable.owner,
-                arguments.into_iter().map(serialize).collect::<Vec<_>>(),
-                receiver
-                    .child_by_field_name("operator")
-                    .map(|operator| text(operator, source)),
-                receiver.child_by_field_name("block").map(serialize),
-            ))
-            .expect("factory subjects serialize")
-        } else {
-            serialize(receiver)
-        };
+            .get(&(receiver.start_byte(), receiver.end_byte()))?;
+        let (_, arguments) = call_parts(receiver, source)?;
+        let mut subject = serde_json::to_string(&(
+            &callable.owner,
+            arguments.into_iter().map(serialize).collect::<Vec<_>>(),
+            receiver
+                .child_by_field_name("operator")
+                .map(|operator| text(operator, source)),
+            receiver.child_by_field_name("block").map(serialize),
+        ))
+        .expect("factory subjects serialize");
         if !conditional_dispatch.is_empty() {
             subject = format!("ruby:conditional:{conditional_dispatch:?}:{subject}");
         }
@@ -949,24 +949,42 @@ mod tests {
             .unwrap()
             .definitions;
         let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
+        let loaded = super::super::providers::load_units(std::slice::from_ref(&file), (1, 4096))
+            .unwrap()
+            .unwrap();
         let loop_edge = SourceDependency::new(
             definitions[0].location.clone(),
             file.path.canonicalize().unwrap(),
         );
+        let mut cases: Vec<_> = [vec![], vec!["./steps".to_owned()]]
+            .into_iter()
+            .map(|configured| {
+                (
+                    AssertionProviders::from_units(&loaded, &[], &configured, 0),
+                    !configured.is_empty(),
+                )
+            })
+            .collect();
         for (budget, edges) in [
             ((0, 1024, 1024), vec![]),
             ((1, 0, 1024), vec![]),
             ((1, 1024, 0), vec![]),
             ((1, 1024, 1024), vec![loop_edge]),
         ] {
-            let providers = AssertionProviders::collect_with_budget(
-                std::slice::from_ref(&file),
-                &edges,
-                &["./steps".into()],
-                budget,
-            )
-            .unwrap();
-            assert!(providers.incomplete());
+            cases.push((
+                AssertionProviders::collect_with_budget(
+                    std::slice::from_ref(&file),
+                    &edges,
+                    &["./steps".into()],
+                    budget,
+                )
+                .unwrap(),
+                true,
+            ));
+        }
+        for (providers, incomplete) in cases {
+            assert_eq!(providers.incomplete(), incomplete);
+            assert!(providers.get(&file.path, source).is_none());
             session
                 .state::<crate::ruby::RubySession>()
                 .unwrap()
@@ -975,18 +993,14 @@ mod tests {
             let finalized = session
                 .finalize(std::slice::from_ref(&file), &mut actual)
                 .unwrap();
-            assert_eq!(finalized.uncertainties.len(), 1);
+            assert_eq!(finalized.uncertainties.len(), usize::from(incomplete));
+            assert_eq!(actual.len(), 3);
             let result = crate::analysis::analyze_with_diagnostics(actual, vec![], &config)
                 .unwrap()
                 .result;
-            assert!(result
-                .findings
-                .iter()
-                .any(|finding| finding.rule == Rule::DuplicateMatcher));
-            assert!(result
-                .findings
-                .iter()
-                .any(|finding| finding.rule == Rule::DuplicateHandler));
+            for rule in [Rule::DuplicateMatcher, Rule::DuplicateHandler] {
+                assert!(result.findings.iter().any(|finding| finding.rule == rule));
+            }
         }
     }
 

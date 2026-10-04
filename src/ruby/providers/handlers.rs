@@ -234,34 +234,31 @@ impl Graph<'_> {
                             .get(text(receiver, &input.source))
                             .and_then(|values| values.first())
                             .map(|(_, _, value)| *value)
+                            .expect("bound receiver assignment was validated")
                     } else {
-                        Some(receiver)
+                        receiver
                     };
-                    if let Some(allocation) = allocation {
-                        let context = format!(
-                            "ruby:receiver:{}:{};",
+                    let context = format!(
+                        "ruby:receiver:{}:{};",
+                        allocation.start_byte(),
+                        allocation.end_byte()
+                    );
+                    for representation in [
+                        &mut fingerprint.exact,
+                        &mut fingerprint.normalized,
+                        &mut fingerprint.alpha_normalized,
+                        &mut fingerprint.structural,
+                    ] {
+                        representation.insert_str(0, &context);
+                    }
+                    fingerprint.behavior_signature.insert(
+                        0,
+                        format!(
+                            "method:ruby:lexical-file:{}:{}",
                             allocation.start_byte(),
                             allocation.end_byte()
-                        );
-                        for representation in [
-                            &mut fingerprint.exact,
-                            &mut fingerprint.normalized,
-                            &mut fingerprint.alpha_normalized,
-                            &mut fingerprint.structural,
-                        ] {
-                            representation.insert_str(0, &context);
-                        }
-                        fingerprint.behavior_signature.insert(
-                            0,
-                            format!(
-                                "method:ruby:lexical-file:{}:{}",
-                                allocation.start_byte(),
-                                allocation.end_byte()
-                            ),
-                        );
-                    } else {
-                        fingerprint.comparable = false;
-                    }
+                        ),
+                    );
                 }
                 if body_unit != unit
                     && !super::super::bindings::Bindings::collect(

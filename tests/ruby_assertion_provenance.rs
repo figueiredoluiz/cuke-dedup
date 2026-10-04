@@ -386,9 +386,15 @@ fn source_origin_lookup_and_escape_matrix() {
         ("check = SyntheticAssertions.api.fetch(:expect); check = replacement", false),
         ("namespace = SyntheticAssertions; namespace.reset; check = namespace.method(:expect)", false),
         ("namespace = SyntheticAssertions; unknown(namespace); check = namespace.method(:expect)", false),
+        ("namespace = SyntheticAssertions; second = namespace; unknown(second); check = namespace.method(:expect)", false),
+        ("check = SyntheticAssertions.api.fetch(:expect); nested = lambda { |check| check.call(state) }", true),
         ("namespace = SyntheticAssertions; def namespace.expect(value); value; end; check = namespace.method(:expect)", false),
         ("check = SyntheticAssertions.api.fetch(:expect); later { local = check }", false),
         ("check = SyntheticAssertions.api.fetch(:expect); later { check = other }", false),
+        ("namespace = SyntheticAssertions; check = namespace.method(:expect); unknown(check)", false),
+        ("check = SyntheticAssertions.api.fetch(:expect); expectation = check.call(actual); unknown(expectation)", false),
+        ("check = SyntheticAssertions.api.fetch(:expect); check.send(:send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :send, :call, actual)", false),
+        ("module ::Other; end; check = SyntheticAssertions.api.fetch(:expect)", true),
     ] {
         let rows = findings(PROVIDER, setup, "check.call(state).to_be_visible", "check.call(state).to_be_visible");
         assert_eq!(handler_findings(&rows), expected, "{setup}");
@@ -520,6 +526,16 @@ fn expected_values_preserve_bindings_and_uncertainty() {
             "expected = false; check.call(state).to_be(expected)",
             false,
         ),
+        (
+            "check.call(state).to_be(check)",
+            "check.call(state).to_be(check)",
+            false,
+        ),
+        (
+            "check.call(state).to_equal(check.not.object_containing(types: [false, nil]))",
+            "check.call(state).to_equal(check.not.object_containing(types: [false, nil]))",
+            true,
+        ),
     ] {
         let rows = findings(
             PROVIDER,
@@ -625,4 +641,142 @@ fn configured_project() -> tempfile::TempDir {
     )
     .unwrap();
     root
+}
+
+#[test]
+fn namespace_trust_requires_unmutated_expect_lookups() {
+    let provider = "module SyntheticAssertions; def self.expect(actual); actual; end; end";
+    for setup in [
+        "",
+        "SyntheticAssertions.expect = replacement",
+        "SyntheticAssertions.expect ||= replacement",
+        "SyntheticAssertions.method(:other)",
+        "SyntheticAssertions.public_method(:other)",
+        "namespace = SyntheticAssertions; namespace.public_method(:other)",
+        "SyntheticAssertions.method(runtime_key)",
+    ] {
+        let rows = findings(
+            provider,
+            setup,
+            "register(-> { SyntheticAssertions.expect(state).to_be('ready') })",
+            "other_wrapper([proc { SyntheticAssertions.expect(state).to_be('ready') }])",
+        );
+        assert_eq!(handler_findings(&rows), setup.is_empty(), "{setup}");
+    }
+}
+
+#[test]
+fn negated_factory_dispatch_retains_assertions_and_polarity() {
+    for (first, second, expected) in [
+        (
+            "check.not.call(state).to_be('ready')",
+            "check.not.call(state).to_be('idle')",
+            false,
+        ),
+        (
+            "check.not.call(state).to_be('ready')",
+            "check.call(state).to_be('ready')",
+            false,
+        ),
+        (
+            "register(-> { check.public_send(:not).call(state).to_be('ready') })",
+            "other_wrapper([proc { check.public_send(:not).call(state).to_be('ready') }])",
+            true,
+        ),
+        (
+            "check.not.call(state).to_be('ready')",
+            "check.call(state).not.to_be('ready')",
+            true,
+        ),
+        (
+            "check.not.soft(state).to_be('ready')",
+            "check.call(state).not.to_be('ready')",
+            true,
+        ),
+        (
+            "check.dup.not.call(state).to_be('ready')",
+            "check.call(state).not.to_be('ready')",
+            true,
+        ),
+    ] {
+        let rows = findings(
+            PROVIDER,
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            first,
+            second,
+        );
+        assert_eq!(handler_findings(&rows), expected, "{first} / {second}");
+    }
+}
+
+#[test]
+fn provider_adjacent_shapes_preserve_closed_controls() {
+    for (provider, setup) in [
+        (PROVIDER.to_owned(), "check = SyntheticAssertions.api[:expect][:other]"),
+        (PROVIDER.to_owned(), "check = SyntheticAssertions.api.fetch(:expect); alias_check = check; SyntheticAssertions::Other = replacement"),
+        (PROVIDER.replace("method(:expect)", "public_method(:expect)"), "check = SyntheticAssertions.api.fetch(:expect)"),
+        (PROVIDER.replace("def self.expect(actual)", "def self.expect(actual); work()\n"), "check = SyntheticAssertions.api.fetch(:expect)"),
+    ] {
+        let rows = findings(&provider, setup, "check.call(state).to_be('ready')", "check.call(state).to_be('idle')");
+        assert!(!handler_findings(&rows), "{setup}");
+    }
+    let rows = findings(
+        PROVIDER,
+        "check = SyntheticAssertions.api.fetch(:expect)",
+        "work; check.call(state).to_be_visible",
+        "work; check.call(state).to_be_visible",
+    );
+    assert!(handler_findings(&rows));
+    for matcher in [
+        "to_equal",
+        "equal_to",
+        "to_have_class",
+        "to_have_value",
+        "to_be_visible",
+    ] {
+        let expression = format!(
+            "expectation.{matcher}{}",
+            if matcher == "to_be_visible" {
+                ""
+            } else {
+                "(1)"
+            }
+        );
+        let rows = findings(
+            PROVIDER,
+            "check = SyntheticAssertions.api.fetch(:expect); expectation = check.call(state)",
+            &expression,
+            &expression,
+        );
+        assert!(
+            !handler_findings(&rows),
+            "cached expectation must remain uncertain: {matcher}"
+        );
+        let direct = expression.replace("expectation.", "check.call(state).");
+        let rows = findings(
+            PROVIDER,
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            &direct,
+            &direct,
+        );
+        assert!(handler_findings(&rows), "direct expectation: {matcher}");
+    }
+}
+
+#[test]
+fn inline_bound_receivers_keep_distinct_allocation_context() {
+    let root = configured_project();
+    fs::write(root.path().join("steps.rb"), "require_relative 'provider'; check = SyntheticAssertions.method(:expect); class Worker; def work; action(); end; end; Then('the parcel status is verified', &Worker.new.method(:work)); Then('the parcel status is now verified', &Worker.new.method(:work))").unwrap();
+    let rows = analyze(root.path(), "steps.rb");
+    assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
+    assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], false);
+    assert!(!handler_findings(&rows));
+}
+
+#[test]
+fn ordinary_calls_beside_assertion_origins_retain_parameterization() {
+    let root = configured_project();
+    fs::write(root.path().join("steps.rb"), "require_relative 'provider'; check = SyntheticAssertions.method(:expect); Given('the parcel status is verified') { Worker.action(1) }; Given('the parcel status is now verified') { Worker.action(2) }").unwrap();
+    let rows = analyze(root.path(), "steps.rb");
+    assert!(handler_findings(&rows));
 }

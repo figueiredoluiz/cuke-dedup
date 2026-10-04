@@ -5057,7 +5057,7 @@
       ]
     },
     "tests/ruby_assertion_provenance.rs": {
-      "sourceSha256": "4df5dfab2dcf9911d5534d60966b4ed9abbaf40bc20634757800a5d9e7b63050",
+      "sourceSha256": "be8bdbdfd49811ba2c68b092df8820ee9850000ecfa2b158c3a5a33ba4bfdaad",
       "tests": [
         {
           "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
@@ -5145,6 +5145,41 @@
         },
         {
           "name": "literal_dispatch_preserves_assertions_without_trusting_mutated_receivers",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Ruby-specific provenance regression matrix executed by cargo test; existing TypeScript completion dispositions remain unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "namespace_trust_requires_unmutated_expect_lookups",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Ruby-specific provenance regression matrix executed by cargo test; existing TypeScript completion dispositions remain unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "negated_factory_dispatch_retains_assertions_and_polarity",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Ruby-specific provenance regression matrix executed by cargo test; existing TypeScript completion dispositions remain unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "provider_adjacent_shapes_preserve_closed_controls",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Ruby-specific provenance regression matrix executed by cargo test; existing TypeScript completion dispositions remain unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "inline_bound_receivers_keep_distinct_allocation_context",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Ruby-specific provenance regression matrix executed by cargo test; existing TypeScript completion dispositions remain unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "ordinary_calls_beside_assertion_origins_retain_parameterization",
           "requiredStatus": "language-inapplicable",
           "fixtureGroup": null,
           "rationale": "Ruby-specific provenance regression matrix executed by cargo test; existing TypeScript completion dispositions remain unchanged.",

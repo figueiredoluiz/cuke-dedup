@@ -9,17 +9,18 @@ pub(super) struct Callable {
     pub trusted: bool,
     pub proxy: bool,
     pub denied: bool,
+    pub negated: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 enum Value {
     Namespace(String),
     Callable(Callable),
-    Export(Box<Value>),
-    Tuple(Box<Value>),
+    Export(Callable),
+    Tuple(Callable),
     Expectation(Callable),
     Unknown(Callable),
-    Copy(Box<Value>),
+    Copy(Callable),
     Negated(Callable),
 }
 
@@ -88,7 +89,7 @@ impl Origins {
             let nodes = descendants(input.tree.root_node());
             let mut aliases = BTreeMap::new();
             for node in &nodes {
-                if node.kind() == "assignment" {
+                if matches!(node.kind(), "assignment" | "operator_assignment") {
                     if let (Some(left), Some(right)) = (
                         node.child_by_field_name("left"),
                         node.child_by_field_name("right"),
@@ -142,12 +143,7 @@ impl Origins {
                             .then(|| text(receiver, &input.source).to_owned())
                             .or_else(|| aliases.get(text(receiver, &input.source)).cloned());
                         if let Some(owner) = owner {
-                            if call_parts(node, &input.source).is_none_or(|(method, _)| {
-                                !matches!(
-                                    method.as_str(),
-                                    "expect" | "api" | "method" | "public_method"
-                                )
-                            }) {
+                            if !namespace_call(node, &input.source) {
                                 invalid.insert(owner);
                             }
                         }
@@ -397,7 +393,7 @@ impl Origins {
                                             if left.parent().is_some_and(|parent| {
                                                 parent.kind() == "left_assignment_list"
                                             }) {
-                                                return *item.clone();
+                                                return Value::Callable(item.clone());
                                             }
                                             value
                                         } else {
@@ -441,10 +437,7 @@ impl Origins {
                                 let method =
                                     call_parts(*node, &input.source).map(|(method, _)| method);
                                 let permitted = match value {
-                                    Value::Namespace(_) => matches!(
-                                        method.as_deref(),
-                                        Some("expect" | "api" | "method" | "public_method")
-                                    ),
+                                    Value::Namespace(_) => namespace_call(*node, &input.source),
                                     Value::Expectation(_) => matches!(
                                         method.as_deref(),
                                         Some(
@@ -473,7 +466,7 @@ impl Origins {
                             }
                         }
                     }
-                    if node.kind() == "assignment" {
+                    if matches!(node.kind(), "assignment" | "operator_assignment") {
                         if let Some(left) = node.child_by_field_name("left") {
                             if left.kind() == "identifier"
                                 && node.parent() != Some(root)
@@ -555,12 +548,10 @@ impl Origins {
                 for (name, value) in &values {
                     if let Some(Value::Callable(callable)) = value {
                         origins.captures.insert(name.clone(), callable.clone());
-                    } else if let Some(Value::Export(value)) = value {
-                        if let Value::Callable(callable) = value.as_ref() {
-                            let mut exported = callable.clone();
-                            exported.owner = format!("export:{}", callable.owner);
-                            origins.captures.insert(name.clone(), exported);
-                        }
+                    } else if let Some(Value::Export(callable)) = value {
+                        let mut exported = callable.clone();
+                        exported.owner = format!("export:{}", callable.owner);
+                        origins.captures.insert(name.clone(), exported);
                     } else if let Some(Value::Namespace(owner)) = value {
                         origins.captures.insert(
                             name.clone(),
@@ -569,6 +560,7 @@ impl Origins {
                                 trusted: false,
                                 proxy: false,
                                 denied: false,
+                                negated: false,
                             },
                         );
                     } else if let Some(Value::Negated(callable) | Value::Unknown(callable)) = value
@@ -630,6 +622,7 @@ impl Origins {
                                     owner,
                                     proxy: false,
                                     denied: false,
+                                    negated: false,
                                 },
                             );
                         }
@@ -845,9 +838,9 @@ fn injected_origins(
         else {
             continue;
         };
-        let Some(argument) = args.named_child(0) else {
-            continue;
-        };
+        let argument = args
+            .named_child(0)
+            .expect("validated single allocation argument");
         let Some(Value::Callable(callable)) =
             resolve(argument, source, values, available, units, 0)
         else {
@@ -1033,8 +1026,10 @@ fn deny(value: &mut Value) {
         Value::Callable(callable)
         | Value::Expectation(callable)
         | Value::Negated(callable)
-        | Value::Unknown(callable) => callable.denied = true,
-        Value::Export(value) | Value::Copy(value) | Value::Tuple(value) => deny(value),
+        | Value::Unknown(callable)
+        | Value::Export(callable)
+        | Value::Copy(callable)
+        | Value::Tuple(callable) => callable.denied = true,
         Value::Namespace(_) => {}
     }
 }
@@ -1090,12 +1085,8 @@ fn descriptor<'a>(module: Node<'a>, source: &str) -> Option<Node<'a>> {
         {
             return None;
         }
-        if declaration
-            .child_by_field_name("name")
-            .is_some_and(|node| text(node, source) == "expect")
-            && expect.replace(declaration).is_some()
-        {
-            return None;
+        if declared_name == "expect" {
+            expect = Some(declaration);
         }
     }
     if descendants(module).iter().any(|node| {
@@ -1175,16 +1166,14 @@ fn resolve(
                 return None;
             }
             match resolve(object, source, values, available, units, depth + 1)? {
-                Value::Export(value) => {
+                Value::Export(mut callable) => {
                     if super::super::static_method_name(args[0], source).as_deref()
                         == Some("expect")
                     {
-                        Some(*value)
-                    } else if let Value::Callable(mut callable) = *value {
+                        Some(Value::Callable(callable))
+                    } else {
                         callable.denied = true;
                         Some(Value::Unknown(callable))
-                    } else {
-                        None
                     }
                 }
                 _ => None,
@@ -1202,27 +1191,35 @@ fn resolve(
                         owner,
                         proxy: false,
                         denied: false,
+                        negated: false,
                     }))
                 }
-                (Value::Callable(callable), "call") if arguments.len() == 1 => {
+                (Value::Callable(callable) | Value::Negated(callable), "call")
+                    if arguments.len() == 1 =>
+                {
                     Some(Value::Expectation(callable))
                 }
-                (Value::Callable(callable), "soft") if callable.proxy && arguments.len() == 1 => {
+                (Value::Callable(callable) | Value::Negated(callable), "soft")
+                    if callable.proxy && arguments.len() == 1 =>
+                {
                     Some(Value::Expectation(callable))
                 }
                 (Value::Expectation(callable), "not" | "to") if arguments.is_empty() => {
                     Some(Value::Expectation(callable))
                 }
-                (Value::Callable(callable), "not") if callable.proxy && arguments.is_empty() => {
+                (Value::Callable(mut callable), "not")
+                    if callable.proxy && arguments.is_empty() =>
+                {
+                    callable.negated = !callable.negated;
                     Some(Value::Negated(callable))
                 }
                 (Value::Callable(callable), "dup") if callable.proxy && arguments.is_empty() => {
-                    Some(Value::Copy(Box::new(Value::Callable(callable))))
+                    Some(Value::Copy(callable))
                 }
-                (Value::Copy(value), "not") if arguments.is_empty() => match *value {
-                    Value::Callable(callable) => Some(Value::Negated(callable)),
-                    _ => None,
-                },
+                (Value::Copy(mut callable), "not") if arguments.is_empty() => {
+                    callable.negated = !callable.negated;
+                    Some(Value::Negated(callable))
+                }
                 (Value::Namespace(owner), "method" | "public_method")
                     if expect_argument(args, source) =>
                 {
@@ -1231,6 +1228,7 @@ fn resolve(
                         owner,
                         proxy: false,
                         denied: false,
+                        negated: false,
                     }))
                 }
                 (Value::Namespace(owner), "api") if args.is_none() => {
@@ -1378,14 +1376,17 @@ fn resolve(
                     if !soft {
                         return None;
                     }
-                    Some(Value::Export(Box::new(Value::Callable(Callable {
+                    Some(Value::Export(Callable {
                         owner,
                         trusted,
                         proxy: true,
                         denied: false,
-                    }))))
+                        negated: false,
+                    }))
                 }
-                (Value::Export(value), "fetch") if expect_argument(args, source) => Some(*value),
+                (Value::Export(value), "fetch") if expect_argument(args, source) => {
+                    Some(Value::Callable(value))
+                }
                 (Value::Export(value), "values_at") if expect_argument(args, source) => {
                     Some(Value::Tuple(value))
                 }
@@ -1394,6 +1395,16 @@ fn resolve(
         }
         _ => None,
     }
+}
+
+fn namespace_call(node: Node<'_>, source: &str) -> bool {
+    call_parts(node, source).is_some_and(|(method, arguments)| {
+        matches!(method.as_str(), "expect" | "api")
+            || (matches!(method.as_str(), "method" | "public_method")
+                && arguments.len() == 1
+                && super::super::static_method_name(arguments[0], source).as_deref()
+                    == Some("expect"))
+    })
 }
 
 fn expect_argument(args: Option<Node<'_>>, source: &str) -> bool {
@@ -1467,6 +1478,51 @@ mod tests {
             }
         }
         assert!(exhausted && complete);
+        let absolute = units[0].canonical_path.to_string_lossy().into_owned();
+        let origins = Origins::collect(&units, &edges, &[absolute], None, usize::MAX).unwrap();
+        assert!(origins[&files[2].path]
+            .factories
+            .values()
+            .all(|factory| factory.trusted));
+        let mut missing_call = edges[1].clone();
+        missing_call.location.line = 999;
+        missing_call.target = units[0].canonical_path.clone();
+        let contexts = preceding_context(
+            1,
+            &units,
+            &[edges[1].clone(), missing_call],
+            &BTreeMap::new(),
+            0,
+            &mut 0,
+            usize::MAX,
+        )
+        .unwrap();
+        assert!(contexts.0.is_empty() && contexts.1.is_empty());
+        std::fs::write(&files[1].path, "later { require_relative 'provider' }").unwrap();
+        let nested = super::super::super::providers::load_units(&files, (3, 4096))
+            .unwrap()
+            .unwrap();
+        let call = descendants(nested[1].tree.root_node())
+            .into_iter()
+            .find(|node| {
+                node.child_by_field_name("method")
+                    .is_some_and(|method| text(method, &nested[1].source) == "require_relative")
+            })
+            .unwrap();
+        let nested_edge = SourceDependency::new(
+            location(&nested[1].file, call, &nested[1].source),
+            nested[0].canonical_path.clone(),
+        );
+        assert!(preceding_context(
+            0,
+            &nested,
+            &[nested_edge],
+            &BTreeMap::new(),
+            0,
+            &mut 0,
+            usize::MAX
+        )
+        .is_none());
         for (depth, budget) in [(32, usize::MAX), (0, 0), (0, 8)] {
             assert!(
                 preceding_context(1, &units, &edges, &BTreeMap::new(), depth, &mut 0, budget)
