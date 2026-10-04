@@ -1413,3 +1413,75 @@ fn root_assignment_call(node: Node<'_>, root: Node<'_>) -> bool {
             .parent()
             .is_some_and(|parent| parent.kind() == "assignment" && parent.parent() == Some(root))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source_adapter::{SourceFile, SourceLanguage};
+
+    #[test]
+    fn origin_work_limits_never_publish_partial_authority() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = [
+            ("provider.rb", "module Assertions; def self.expect(actual); actual; end; end"),
+            ("fixture.rb", "require_relative 'provider'; module Fixture; EXPECT = Assertions.method(:expect); end"),
+            ("steps.rb", "require_relative 'fixture'; check = Fixture::EXPECT; Given('same') { check.call(value).to_be(1) }"),
+        ];
+        let files: Vec<_> = sources
+            .iter()
+            .map(|(name, source)| {
+                let path = root.path().join(name);
+                std::fs::write(&path, source).unwrap();
+                SourceFile {
+                    path,
+                    language: SourceLanguage::Ruby,
+                }
+            })
+            .collect();
+        let units = super::super::super::providers::load_units(&files, (3, 4096))
+            .unwrap()
+            .unwrap();
+        let edges: Vec<_> = [1, 2]
+            .into_iter()
+            .map(|index| {
+                let unit = &units[index];
+                SourceDependency::new(
+                    location(
+                        &unit.file,
+                        unit.tree.root_node().named_child(0).unwrap(),
+                        &unit.source,
+                    ),
+                    units[index - 1].canonical_path.clone(),
+                )
+            })
+            .collect();
+        let mut exhausted = false;
+        let mut complete = false;
+        for budget in 0..4000 {
+            match Origins::collect(&units, &edges, &["provider".into()], None, budget) {
+                None => exhausted = true,
+                Some(origins) => {
+                    complete = true;
+                    assert_eq!(origins[&files[2].path].factories.len(), 1);
+                }
+            }
+        }
+        assert!(exhausted && complete);
+        for (depth, budget) in [(32, usize::MAX), (0, 0), (0, 8)] {
+            assert!(
+                preceding_context(1, &units, &edges, &BTreeMap::new(), depth, &mut 0, budget)
+                    .is_none()
+            );
+        }
+        let node = units[2].tree.root_node().named_child(1).unwrap();
+        assert!(resolve(
+            node,
+            &units[2].source,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &units,
+            32
+        )
+        .is_none());
+    }
+}

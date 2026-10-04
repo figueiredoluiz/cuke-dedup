@@ -103,8 +103,7 @@ fn matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison() 
             false,
         ),
     ] {
-        let root = project(PROVIDER);
-        fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["provider"],"threshold":100,"rules":{"unused-definition":"off"}}"#).unwrap();
+        let root = configured_project();
         fs::write(root.path().join("steps.rb"), format!(
             "require_relative 'provider'\n{setup}\n{mutation}\nGiven('the parcel seal is confirmed') {{ |state| api[:expect].call(state).to_equal(api[:expect].not.object_containing(tier: 'gold')) }}\nGiven('the parcel seal is now confirmed') {{ |state| api[:expect].call(state).to_equal(api[:expect].not.object_containing(tier: 'gold')) }}\n"
         )).unwrap();
@@ -292,8 +291,7 @@ fn bound_assertion_fields_preserve_receiver_context_and_opposing_values() {
         ("ready", "second = BoundChecks.new(check)", false),
         ("ready", "second = BoundChecks.new(unknown)", false),
     ] {
-        let root = project(PROVIDER);
-        fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["provider"],"threshold":100,"rules":{"unused-definition":"off"}}"#).unwrap();
+        let root = configured_project();
         let receiver = if allocations.is_empty() {
             "first"
         } else {
@@ -374,5 +372,257 @@ fn analyze(root: &std::path::Path, definitions: &str) -> Vec<Value> {
 fn project(provider: &str) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("provider.rb"), provider).unwrap();
+    root
+}
+
+#[test]
+fn source_origin_lookup_and_escape_matrix() {
+    for (setup, expected) in [
+        ("check, = SyntheticAssertions.api.values_at(:expect)", true),
+        ("namespace = SyntheticAssertions; check = namespace.method(:expect)", false),
+        ("check = (SyntheticAssertions.public_method(:expect))", true),
+        ("api = SyntheticAssertions.api; check = api[:expect, :other]", false),
+        ("api = SyntheticAssertions.api; check = api[:other]", false),
+        ("check = SyntheticAssertions.api.fetch(:expect); check = replacement", false),
+        ("namespace = SyntheticAssertions; namespace.reset; check = namespace.method(:expect)", false),
+        ("namespace = SyntheticAssertions; unknown(namespace); check = namespace.method(:expect)", false),
+        ("namespace = SyntheticAssertions; def namespace.expect(value); value; end; check = namespace.method(:expect)", false),
+        ("check = SyntheticAssertions.api.fetch(:expect); later { local = check }", false),
+        ("check = SyntheticAssertions.api.fetch(:expect); later { check = other }", false),
+    ] {
+        let rows = findings(PROVIDER, setup, "check.call(state).to_be_visible", "check.call(state).to_be_visible");
+        assert_eq!(handler_findings(&rows), expected, "{setup}");
+        if expected {
+            assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
+        }
+    }
+}
+
+#[test]
+fn malformed_export_shapes_never_grant_comparison() {
+    for (from, to) in [
+        (
+            "{ expect: Factory.new(method(:expect)) }",
+            "{ other: Factory.new(method(:expect)) }",
+        ),
+        (
+            "{ expect: Factory.new(method(:expect)) }",
+            "{ expect: Factory.new(method(:expect)), other: 1 }",
+        ),
+        (
+            "Factory.new(method(:expect))",
+            "Factory.build(method(:expect))",
+        ),
+        (
+            "Factory.new(method(:expect))",
+            "Factory.new(method(:other))",
+        ),
+        (
+            "Factory.new(method(:expect))",
+            "Factory.new(method(:expect)) { work() }",
+        ),
+        (
+            "@exported_expect.call(actual)",
+            "@exported_expect.call(actual); work()",
+        ),
+        ("@exported_expect.call(actual)", "other.call(actual)"),
+        (
+            "@exported_expect = exported_expect",
+            "@exported_expect = replacement",
+        ),
+        ("def call(actual)", "def call(actual, extra)"),
+        ("def call(actual)", "def call(*actual)"),
+        ("alias soft call", "alias different call"),
+        ("class Factory", "class Factory < Foreign"),
+        ("alias soft call", "alias soft call\n    alias soft call"),
+        ("alias soft call", "alias soft call\n    class Nested; end"),
+        (
+            "alias soft call",
+            "alias soft call\n    def initialize(value); @exported_expect = value; end",
+        ),
+        ("def self.api", "def self.api\n    work()"),
+        (
+            "def self.expect(actual)",
+            "def self.expect(actual); def nested; end;",
+        ),
+    ] {
+        let provider = PROVIDER.replace(from, to);
+        let rows = findings(
+            &provider,
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            "check.call(state).to_be_visible",
+            "check.call(state).to_be_visible",
+        );
+        assert!(!handler_findings(&rows), "{from} => {to}");
+    }
+}
+
+#[test]
+fn expected_values_preserve_bindings_and_uncertainty() {
+    for (first, second, expected) in [
+        (
+            "check.call(state).to_be(state.status)",
+            "check.call(state).to_be(state.status)",
+            true,
+        ),
+        (
+            "check.call(state).to_be(state)",
+            "check.call(state).to_be(state)",
+            true,
+        ),
+        (
+            "check.call(state).to_be(state.status())",
+            "check.call(state).to_be(state.status())",
+            true,
+        ),
+        (
+            "check.call(state).to_be(state.status(1))",
+            "check.call(state).to_be(state.status(2))",
+            false,
+        ),
+        (
+            "check.call(state).to_be(state.send(:status))",
+            "check.call(state).to_be(state.send(:status))",
+            false,
+        ),
+        (
+            "check.call(state).to_be(state.status { work() })",
+            "check.call(state).to_be(state.status { work() })",
+            false,
+        ),
+        (
+            "check.call(state).to_be(external)",
+            "check.call(state).to_be(external)",
+            false,
+        ),
+        (
+            "expected = 'ready'; expected = 'idle'; check.call(state).to_be(expected)",
+            "expected = 'ready'; expected = 'idle'; check.call(state).to_be(expected)",
+            false,
+        ),
+        (
+            "check.call(state).to_be(expected); expected = 'ready'",
+            "check.call(state).to_be(expected); expected = 'ready'",
+            false,
+        ),
+        (
+            "if allowed; expected = 'ready'; end; check.call(state).to_be(expected)",
+            "if allowed; expected = 'ready'; end; check.call(state).to_be(expected)",
+            false,
+        ),
+        (
+            "check.call(state).to_equal(check.not.object_containing(enabled: false))",
+            "check.call(state).to_equal(check.not.object_containing(enabled: false))",
+            true,
+        ),
+        (
+            "expected = nil; check.call(state).to_be(expected)",
+            "expected = false; check.call(state).to_be(expected)",
+            false,
+        ),
+    ] {
+        let rows = findings(
+            PROVIDER,
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            first,
+            second,
+        );
+        assert_eq!(handler_findings(&rows), expected, "{first} / {second}");
+    }
+}
+
+#[test]
+fn ambiguous_constructor_injection_withdraws_authority() {
+    let class = "class BoundChecks\n def initialize(check); @check = check; end\n def primary(state); @check.call(state).to_be_visible; end\n def secondary(state); @check.call(state).to_be_visible; end\nend";
+    for (from, to) in [
+        ("class BoundChecks", "class BoundChecks < Parent"),
+        ("def initialize(check)", "def initialize(check, extra)"),
+        ("def initialize(check)", "def initialize(*check)"),
+        ("@check = check", "@check = check; work()"),
+        ("@check = check", "work()"),
+        ("@check = check", "local = check"),
+        ("@check = check", "@check = replacement"),
+        ("@check.call(state)", "@other.call(state)"),
+        ("@check.call(state)", "@check.soft(state)"),
+        ("@check.call(state)", "@check.call(state) { work() }"),
+        ("def initialize(check); @check = check; end", ""),
+        (
+            "def initialize(check)",
+            "attr_reader :check; def initialize(check)",
+        ),
+    ] {
+        let root = configured_project();
+        fs::write(root.path().join("steps.rb"), format!("require_relative 'provider'\ncheck = SyntheticAssertions.api.fetch(:expect)\n{}\nfirst = BoundChecks.new(check)\nThen('the parcel status is verified', &first.method(:primary))\nThen('the parcel status is now verified', &first.method(:secondary))", class.replace(from, to))).unwrap();
+        let rows = analyze(root.path(), "steps.rb");
+        assert!(!handler_findings(&rows), "{from} => {to}");
+    }
+}
+
+#[test]
+fn incoming_load_contexts_require_common_preceding_exports() {
+    for (second_entry, expected) in [
+        ("require_relative 'fixture'; require_relative 'steps'", true),
+        (
+            "require_relative 'steps'; require_relative 'fixture'",
+            false,
+        ),
+        ("later { require_relative 'steps' }", true),
+    ] {
+        let root = project(PROVIDER);
+        fs::write(root.path().join("fixture.rb"), "require_relative 'provider'; module Fixture; EXPECT = SyntheticAssertions.method(:expect); OTHER = unknown; end").unwrap();
+        fs::write(
+            root.path().join("first.rb"),
+            "require_relative 'fixture'; require_relative 'steps'",
+        )
+        .unwrap();
+        fs::write(root.path().join("second.rb"), second_entry).unwrap();
+        fs::write(root.path().join("steps.rb"), "check = Fixture::EXPECT; Then('the parcel status is verified') { |state| check.call(state).to_be_visible }; Then('the parcel status is now verified') { |state| check.call(state).to_be_visible }").unwrap();
+        fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["./provider"],"threshold":100,"rules":{"unused-definition":"off"}}"#).unwrap();
+        let rows = analyze(root.path(), "first.rb,second.rb");
+        assert_eq!(handler_findings(&rows), expected, "{second_entry}");
+    }
+}
+
+#[test]
+fn literal_dispatch_preserves_assertions_without_trusting_mutated_receivers() {
+    for (setup, expression, expected) in [
+        (
+            "check = SyntheticAssertions.method(:expect)",
+            "check.call(state).public_send(:to_be, 'ready')",
+            true,
+        ),
+        (
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            "check.public_send(:not).call(state).to_be('ready')",
+            true,
+        ),
+        (
+            "check = SyntheticAssertions.api.fetch(:expect); unknown(check)",
+            "check.public_send(:soft, state).to_be('ready')",
+            false,
+        ),
+        (
+            "check = SyntheticAssertions.api.fetch(:expect); unknown(check)",
+            "if allowed; check.send(:call, state).to_be('ready'); end",
+            false,
+        ),
+        (
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            "check.soft(state).send(:not).send(:to).send(:to_be, 'ready')",
+            true,
+        ),
+    ] {
+        let rows = findings(PROVIDER, setup, expression, expression);
+        assert_eq!(handler_findings(&rows), expected, "{setup}; {expression}");
+    }
+}
+
+fn configured_project() -> tempfile::TempDir {
+    let root = project(PROVIDER);
+    fs::write(
+        root.path().join(".cuke-dedup.json"),
+        r#"{"assertionModules":["provider"],"threshold":100,"rules":{"unused-definition":"off"}}"#,
+    )
+    .unwrap();
     root
 }

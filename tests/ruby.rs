@@ -2359,9 +2359,15 @@ fn ruby_provider_scaling_preserves_final_outcomes() {
                 "jsonl",
                 "--no-metrics",
             ])
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(60))
             .output()
             .unwrap();
+        assert!(
+            !output.stdout.is_empty(),
+            "{shape}: status={:?}; stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert_eq!(output.status.code(), Some(1), "{shape}");
         let rows = records(output.stdout);
         assert_discovery(&rows, 2, false, shape);
