@@ -6,6 +6,7 @@ const PROVIDER: &str = include_str!(
     "../fixtures/ruby-parity/equivalent-handlers/precision-inline-local/providers/assertions.rb"
 );
 
+/// Checks configured assertion conflicts and unconfigured parameterization controls.
 #[test]
 fn closed_assertion_origins_preserve_opposing_and_equivalent_outcomes() {
     for (binding, configured, expected_parameterization) in [
@@ -68,6 +69,7 @@ fn closed_assertion_origins_preserve_opposing_and_equivalent_outcomes() {
     }
 }
 
+/// Checks shared alias mutation without suppressing valid immutable controls.
 #[test]
 fn matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison() {
     for (setup, mutation, expected) in [
@@ -136,6 +138,7 @@ fn matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison() 
     }
 }
 
+/// Runs a synthetic configured provider pair through the final analyzer.
 fn findings(provider: &str, setup: &str, first: &str, second: &str) -> Vec<Value> {
     let root = project(provider);
     fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#).unwrap();
@@ -143,6 +146,7 @@ fn findings(provider: &str, setup: &str, first: &str, second: &str) -> Vec<Value
     analyze(root.path(), "steps.rb")
 }
 
+/// Reports whether analyzer output contains a handler-comparison finding.
 fn handler_findings(rows: &[Value]) -> bool {
     rows.iter().any(|row| {
         matches!(
@@ -152,6 +156,7 @@ fn handler_findings(rows: &[Value]) -> bool {
     })
 }
 
+/// Checks assertion overlap against conflicting effects, values, and execution timing.
 #[test]
 fn assertion_overlap_preserves_values_effects_and_callable_execution() {
     for (first, second, expected) in [
@@ -221,6 +226,7 @@ fn assertion_overlap_preserves_values_effects_and_callable_execution() {
     }
 }
 
+/// Checks that malformed and shadowed factories never gain assertion trust.
 #[test]
 fn malformed_factory_origins_and_lexical_shadowing_gain_no_authority() {
     for provider in [
@@ -282,6 +288,7 @@ fn malformed_factory_origins_and_lexical_shadowing_gain_no_authority() {
     assert!(!handler_findings(&rows));
 }
 
+/// Checks injected assertion fields against allocation and value conflicts.
 #[test]
 fn bound_assertion_fields_preserve_receiver_context_and_opposing_values() {
     for (second, allocations, expected) in [
@@ -308,6 +315,7 @@ fn bound_assertion_fields_preserve_receiver_context_and_opposing_values() {
     }
 }
 
+/// Checks preceding source exports without leaking authority into unrelated files.
 #[test]
 fn preceding_fixture_exports_retain_assertions_without_global_scope_leakage() {
     for (entry, expected) in [
@@ -331,6 +339,7 @@ fn preceding_fixture_exports_retain_assertions_without_global_scope_leakage() {
     }
 }
 
+/// Checks independent discovery uncertainty beside rejected optional comparison.
 #[test]
 fn rejected_factory_comparison_does_not_hide_unsupported_handler_syntax() {
     let rows = findings(
@@ -344,6 +353,7 @@ fn rejected_factory_comparison_does_not_hide_unsupported_handler_syntax() {
     assert!(!handler_findings(&rows));
 }
 
+/// Runs Ruby analysis and parses its JSONL findings and final summary.
 fn analyze(root: &std::path::Path, definitions: &str) -> Vec<Value> {
     let output = Command::cargo_bin("cuke-dedup")
         .unwrap()
@@ -369,12 +379,14 @@ fn analyze(root: &std::path::Path, definitions: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Creates an original synthetic Ruby provider in a temporary analysis root.
 fn project(provider: &str) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("provider.rb"), provider).unwrap();
     root
 }
 
+/// Checks literal origin lookup, alias escapes, shadowing, and immutable controls.
 #[test]
 fn source_origin_lookup_and_escape_matrix() {
     for (setup, expected) in [
@@ -404,6 +416,7 @@ fn source_origin_lookup_and_escape_matrix() {
     }
 }
 
+/// Checks unsupported export members and wrappers cannot grant comparison authority.
 #[test]
 fn malformed_export_shapes_never_grant_comparison() {
     for (from, to) in [
@@ -463,6 +476,7 @@ fn malformed_export_shapes_never_grant_comparison() {
     }
 }
 
+/// Checks expected-value resolution without collapsing captures or unknown values.
 #[test]
 fn expected_values_preserve_bindings_and_uncertainty() {
     for (first, second, expected) in [
@@ -547,6 +561,7 @@ fn expected_values_preserve_bindings_and_uncertainty() {
     }
 }
 
+/// Checks that ambiguous classes and allocations cannot authorize injected assertions.
 #[test]
 fn ambiguous_constructor_injection_withdraws_authority() {
     let class = "class BoundChecks\n def initialize(check); @check = check; end\n def primary(state); @check.call(state).to_be_visible; end\n def secondary(state); @check.call(state).to_be_visible; end\nend";
@@ -574,6 +589,7 @@ fn ambiguous_constructor_injection_withdraws_authority() {
     }
 }
 
+/// Checks export intersections across multiple incoming source loads.
 #[test]
 fn incoming_load_contexts_require_common_preceding_exports() {
     for (second_entry, expected) in [
@@ -599,6 +615,7 @@ fn incoming_load_contexts_require_common_preceding_exports() {
     }
 }
 
+/// Checks supported literal dispatch alongside dynamic and mutated-receiver controls.
 #[test]
 fn literal_dispatch_preserves_assertions_without_trusting_mutated_receivers() {
     for (setup, expression, expected) in [
@@ -633,6 +650,7 @@ fn literal_dispatch_preserves_assertions_without_trusting_mutated_receivers() {
     }
 }
 
+/// Creates a synthetic project with explicit assertion-provider configuration.
 fn configured_project() -> tempfile::TempDir {
     let root = project(PROVIDER);
     fs::write(
@@ -643,6 +661,7 @@ fn configured_project() -> tempfile::TempDir {
     root
 }
 
+/// Checks namespace mutation, reflective selectors, and argument-shape trust boundaries.
 #[test]
 fn namespace_trust_requires_unmutated_expect_lookups() {
     let provider = "module SyntheticAssertions; def self.expect(actual); actual; end; end";
@@ -654,6 +673,15 @@ fn namespace_trust_requires_unmutated_expect_lookups() {
         "SyntheticAssertions.public_method(:other)",
         "namespace = SyntheticAssertions; namespace.public_method(:other)",
         "SyntheticAssertions.method(runtime_key)",
+        "SyntheticAssertions.api(untrusted)",
+        "SyntheticAssertions.expect(state, extra)",
+        "SyntheticAssertions.expect",
+        "SyntheticAssertions.method(:expect, extra)",
+        "SyntheticAssertions.public_method(:expect, extra)",
+        "SyntheticAssertions.expect(*values)",
+        "SyntheticAssertions.expect(**values)",
+        "SyntheticAssertions.api(*values)",
+        "SyntheticAssertions.method(*names)",
     ] {
         let rows = findings(
             provider,
@@ -665,6 +693,7 @@ fn namespace_trust_requires_unmutated_expect_lookups() {
     }
 }
 
+/// Checks equivalent negated factories and conflicting polarity or expected values.
 #[test]
 fn negated_factory_dispatch_retains_assertions_and_polarity() {
     for (first, second, expected) in [
@@ -709,6 +738,7 @@ fn negated_factory_dispatch_retains_assertions_and_polarity() {
     }
 }
 
+/// Checks uncertain provider shapes alongside direct immutable assertion controls.
 #[test]
 fn provider_adjacent_shapes_preserve_closed_controls() {
     for (provider, setup) in [
@@ -763,6 +793,7 @@ fn provider_adjacent_shapes_preserve_closed_controls() {
     }
 }
 
+/// Checks that separate inline allocations do not collapse into one bound handler.
 #[test]
 fn inline_bound_receivers_keep_distinct_allocation_context() {
     let root = configured_project();
@@ -773,10 +804,122 @@ fn inline_bound_receivers_keep_distinct_allocation_context() {
     assert!(!handler_findings(&rows));
 }
 
+/// Checks ordinary literal parameterization beside unrelated assertion origins.
 #[test]
 fn ordinary_calls_beside_assertion_origins_retain_parameterization() {
     let root = configured_project();
     fs::write(root.path().join("steps.rb"), "require_relative 'provider'; check = SyntheticAssertions.method(:expect); Given('the parcel status is verified') { Worker.action(1) }; Given('the parcel status is now verified') { Worker.action(2) }").unwrap();
     let rows = analyze(root.path(), "steps.rb");
     assert!(handler_findings(&rows));
+}
+
+/// Checks exact, dotted, missing, and non-Ruby-suffix configuration paths.
+#[test]
+fn configured_ruby_provider_paths_preserve_literal_specifiers() {
+    for (configured, file, load, expected) in [
+        ("./provider", "provider.rb", "provider", true),
+        ("./provider.rb", "provider.rb", "provider", true),
+        ("./fixtures.ts", "fixtures.rb", "fixtures", false),
+        ("./fixtures.ts", "fixtures.ts.rb", "fixtures.ts.rb", true),
+        (
+            "./expect.helpers",
+            "expect.helpers.rb",
+            "expect.helpers.rb",
+            true,
+        ),
+        ("./expect.helpers", "expect.rb", "expect", false),
+        ("./missing", "provider.rb", "provider", false),
+    ] {
+        let root = project(PROVIDER);
+        if file != "provider.rb" {
+            fs::rename(root.path().join("provider.rb"), root.path().join(file)).unwrap();
+        }
+        fs::write(root.path().join(".cuke-dedup.json"), serde_json::json!({"assertionModules":[configured], "threshold":100, "nearDuplicateHandlerSimilarity":0.5, "rules":{"unused-definition":"off"}}).to_string()).unwrap();
+        fs::write(root.path().join("steps.rb"), format!("require_relative '{load}'\ncheck = SyntheticAssertions.method(:expect)\nThen('the parcel status is verified') {{ |state| register(-> {{ check.call(state).to_be('ready') }}) }}\nThen('the parcel status is now verified') {{ |state| other_wrapper([proc {{ check.call(state).to_be('ready') }}]) }}\n")).unwrap();
+        let rows = analyze(root.path(), "steps.rb");
+        assert_eq!(handler_findings(&rows), expected, "{configured} / {file}");
+        assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
+    }
+}
+
+/// Checks ordinary parameterization without erasing interpolated argument effects.
+#[test]
+fn unconfigured_parameterization_keeps_interpolation_effects() {
+    for (first, second, expected) in [
+        ("1", "2", true),
+        ("1.5", "2.5", true),
+        ("'ready'", "'idle'", true),
+        (r##""#{one()}""##, r##""#{two()}""##, false),
+        (r##""#{one()}""##, r##""#{one()}""##, true),
+    ] {
+        let root = project(PROVIDER);
+        fs::write(
+            root.path().join(".cuke-dedup.json"),
+            r#"{"threshold":100,"rules":{"unused-definition":"off"}}"#,
+        )
+        .unwrap();
+        fs::write(root.path().join("steps.rb"), format!("require_relative 'provider'; check = SyntheticAssertions.method(:expect); Given('the parcel status is verified') {{ check.call(gauge()).to_be({first}) }}; Given('the parcel status is now verified') {{ check.call(gauge()).to_be({second}) }}")).unwrap();
+        let rows = analyze(root.path(), "steps.rb");
+        assert_eq!(handler_findings(&rows), expected, "{first} / {second}");
+    }
+}
+
+/// Checks namespace invalidation across source-owned constant aliases and unrelated modules.
+#[test]
+fn cross_file_constant_aliases_cannot_hide_namespace_mutation() {
+    for (aliases, mutation, expected) in [
+        ("", "", true),
+        (
+            "ProviderAlias = SyntheticAssertions",
+            "module Other; def self.expect(actual); replacement(); end; end",
+            false,
+        ),
+        (
+            "ProviderAlias = SyntheticAssertions",
+            "module ProviderAlias; def self.expect(actual); replacement(); end; end",
+            false,
+        ),
+        (
+            "ProviderAlias = SyntheticAssertions",
+            "ProviderAlias.reset",
+            false,
+        ),
+        (
+            "ProviderAlias = SyntheticAssertions",
+            "unknown(ProviderAlias)",
+            false,
+        ),
+        (
+            "ProviderAlias = SyntheticAssertions; OtherAlias = ProviderAlias",
+            "module OtherAlias; def self.expect(actual); replacement(); end; end",
+            false,
+        ),
+    ] {
+        let root = configured_project();
+        fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#).unwrap();
+        fs::write(
+            root.path().join("aliases.rb"),
+            format!("require_relative 'provider'; {aliases}"),
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("mutation.rb"),
+            format!("require_relative 'aliases'; {mutation}"),
+        )
+        .unwrap();
+        let loads = if aliases.is_empty() {
+            "require_relative 'provider'"
+        } else {
+            "require_relative 'mutation'; require_relative 'provider'"
+        };
+        fs::write(root.path().join("steps.rb"), format!("{loads}; check = SyntheticAssertions.api.fetch(:expect); Then('the parcel status is verified') {{ |state| register(-> {{ check.call(state).to_be('ready') }}) }}; Then('the parcel status is now verified') {{ |state| other_wrapper([proc {{ check.call(state).to_be('ready') }}]) }}")).unwrap();
+        let rows = analyze(root.path(), "steps.rb");
+        assert_eq!(handler_findings(&rows), expected, "{aliases} / {mutation}");
+        let summary = rows.last().unwrap();
+        assert_eq!(
+            summary["summary"]["definitionsAnalyzed"],
+            if expected { 2 } else { 0 }
+        );
+        assert_eq!(summary["corpus"]["incomplete"], !expected);
+    }
 }

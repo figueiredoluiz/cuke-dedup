@@ -19,6 +19,7 @@ impl RegexDialect for RubyRegex {
     }
 }
 
+/// Enables event overlap only for complete Ruby effect streams.
 pub(crate) fn profile(definition: &crate::model::StepDefinition) -> AnalysisProfile {
     let complete_events = definition
         .handler
@@ -51,6 +52,7 @@ mod tests {
     use crate::model::Rule;
     use crate::source_adapter::{SourceFile, SourceLanguage};
 
+    /// Checks exact-handler fallback for legacy streams without losing positive findings.
     #[test]
     fn legacy_partial_events_keep_exact_policy_and_positive_controls() {
         let root = tempfile::tempdir().unwrap();

@@ -34,12 +34,20 @@ pub(crate) struct RubySession {
     assertion_modules: Vec<String>,
 }
 impl AdapterSessionState for RubySession {
+    /// Resolves configured Ruby provider paths without replacing their filename suffixes.
     fn initialize(root: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
         let mut configured = assertion_modules.to_vec();
         if let Some(root) = root {
             for module in assertion_modules {
                 let path = root.join(module);
-                if let Ok(path) = path.with_extension("rb").canonicalize() {
+                let candidate = if path.extension().is_some_and(|extension| extension == "rb") {
+                    path
+                } else {
+                    let mut candidate = path.into_os_string();
+                    candidate.push(".rb");
+                    candidate.into()
+                };
+                if let Ok(path) = candidate.canonicalize() {
                     configured.push(path.to_string_lossy().into_owned());
                 }
             }
@@ -205,6 +213,7 @@ fn extract(
     extract_with_proof(source, file, None, None)
 }
 
+/// Extracts registrations using source-owned provider and assertion evidence.
 fn extract_with_proof(
     source: &str,
     file: &SourceFile,

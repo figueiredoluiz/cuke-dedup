@@ -30,9 +30,11 @@ pub(super) struct Origins {
     pub factories: BTreeMap<(usize, usize), Callable>,
     pub dispatch: BTreeSet<(usize, usize)>,
     pub matchers: BTreeSet<(usize, usize)>,
+    pub rejected: BTreeSet<(usize, usize)>,
 }
 
 impl Origins {
+    /// Resolves bounded source origins; never publishes partial authority after exhaustion.
     pub fn collect(
         units: &[super::super::providers::Unit],
         edges: &[SourceDependency],
@@ -79,6 +81,7 @@ impl Origins {
             return Some(BTreeMap::new());
         }
         let mut invalid = BTreeSet::new();
+        let mut invalid_arguments = BTreeSet::new();
         let mut largest_provider = 0usize;
         for declarations in declarations.values() {
             for (_, module) in declarations {
@@ -144,6 +147,11 @@ impl Origins {
                             .or_else(|| aliases.get(text(receiver, &input.source)).cloned());
                         if let Some(owner) = owner {
                             if !namespace_call(node, &input.source) {
+                                if call_parts(node, &input.source).is_some_and(|(method, _)| {
+                                    matches!(method.as_str(), "expect" | "api")
+                                }) {
+                                    invalid_arguments.insert(owner.clone());
+                                }
                                 invalid.insert(owner);
                             }
                         }
@@ -224,6 +232,7 @@ impl Origins {
             for &unit_id in &order {
                 let input = &units[unit_id];
                 let root = input.tree.root_node();
+                let nodes = descendants(root);
                 let mut available = BTreeMap::new();
                 let mut values = BTreeMap::new();
                 let mut initialized = BTreeMap::new();
@@ -275,6 +284,39 @@ impl Origins {
                                 }
                             }
                             for (name, declarations) in &declarations {
+                                if invalid_arguments.contains(name)
+                                    && declarations.len() == 1
+                                    && declarations[0].0 == provider
+                                    && descriptor(declarations[0].1, &units[provider].source)
+                                        .is_some()
+                                    && (configured_load(statement, &input.source, configured)
+                                        || configured.iter().any(|item| {
+                                            Path::new(item).is_absolute()
+                                                && Path::new(item) == edge.target
+                                        }))
+                                {
+                                    work = work.saturating_add(nodes.len());
+                                    if work > budget {
+                                        return None;
+                                    }
+                                    for call in &nodes {
+                                        if call.kind() == "call"
+                                            && call.start_byte() >= statement.end_byte()
+                                            && call.child_by_field_name("receiver").is_some_and(
+                                                |receiver| {
+                                                    receiver.kind() == "constant"
+                                                        && text(receiver, &input.source) == name
+                                                },
+                                            )
+                                            && call_parts(*call, &input.source)
+                                                .is_some_and(|(method, _)| method == "expect")
+                                        {
+                                            origins
+                                                .rejected
+                                                .insert((call.start_byte(), call.end_byte()));
+                                        }
+                                    }
+                                }
                                 if !invalid.contains(name)
                                     && declarations.len() == 1
                                     && declarations[0].0 == provider
@@ -410,7 +452,6 @@ impl Origins {
                         }
                     }
                 }
-                let nodes = descendants(root);
                 work = work.saturating_add(
                     nodes.len().saturating_mul(
                         nodes
@@ -731,6 +772,7 @@ impl Origins {
 
 type Summary<'a> = (Namespaces<'a>, BTreeMap<String, Value>);
 
+/// Intersects exports available before every incoming source load.
 fn preceding_context<'a>(
     target: usize,
     units: &'a [super::super::providers::Unit],
@@ -805,6 +847,7 @@ fn preceding_context<'a>(
     Some(common)
 }
 
+/// Proves callable fields from unique closed classes and constructor allocations.
 fn injected_origins(
     root: Node<'_>,
     source: &str,
@@ -995,6 +1038,7 @@ fn injected_origins(
     (arguments, factories)
 }
 
+/// Detects lexical boundaries and parameters that hide an outer origin.
 fn shadowed(node: Node<'_>, source: &str) -> bool {
     let name = text(node, source);
     let mut parent = node.parent();
@@ -1021,6 +1065,7 @@ fn shadowed(node: Node<'_>, source: &str) -> bool {
     false
 }
 
+/// Withdraws comparison authority from callable values and shared wrappers.
 fn deny(value: &mut Value) {
     match value {
         Value::Callable(callable)
@@ -1034,6 +1079,7 @@ fn deny(value: &mut Value) {
     }
 }
 
+/// Validates a uniquely named, closed assertion-provider declaration.
 fn descriptor<'a>(module: Node<'a>, source: &str) -> Option<Node<'a>> {
     let body = module.child_by_field_name("body")?;
     let mut cursor = body.walk();
@@ -1126,6 +1172,7 @@ fn descriptor<'a>(module: Node<'a>, source: &str) -> Option<Node<'a>> {
     expect
 }
 
+/// Resolves supported immutable value shapes without granting trust from spelling.
 fn resolve(
     node: Node<'_>,
     source: &str,
@@ -1397,16 +1444,30 @@ fn resolve(
     }
 }
 
+/// Accepts only supported namespace methods with concrete, valid argument shapes.
 fn namespace_call(node: Node<'_>, source: &str) -> bool {
-    call_parts(node, source).is_some_and(|(method, arguments)| {
-        matches!(method.as_str(), "expect" | "api")
-            || (matches!(method.as_str(), "method" | "public_method")
-                && arguments.len() == 1
+    call_parts(node, source).is_some_and(|(method, arguments)| match method.as_str() {
+        "expect" => {
+            arguments.len() == 1
+                && !matches!(
+                    arguments[0].kind(),
+                    "splat_argument"
+                        | "hash_splat_argument"
+                        | "block_argument"
+                        | "forward_argument"
+                )
+        }
+        "api" => arguments.is_empty(),
+        "method" | "public_method" => {
+            arguments.len() == 1
                 && super::super::static_method_name(arguments[0], source).as_deref()
-                    == Some("expect"))
+                    == Some("expect")
+        }
+        _ => false,
     })
 }
 
+/// Requires one literal expect selector for reflective factory lookup.
 fn expect_argument(args: Option<Node<'_>>, source: &str) -> bool {
     args.is_some_and(|args| {
         args.named_child_count() == 1
@@ -1418,6 +1479,7 @@ fn expect_argument(args: Option<Node<'_>>, source: &str) -> bool {
     })
 }
 
+/// Identifies calls used by top-level origin assignments.
 fn root_assignment_call(node: Node<'_>, root: Node<'_>) -> bool {
     node.kind() == "call"
         && node
@@ -1430,6 +1492,7 @@ mod tests {
     use super::*;
     use crate::source_adapter::{SourceFile, SourceLanguage};
 
+    /// Checks work exhaustion, dependency context, and configured-origin controls.
     #[test]
     fn origin_work_limits_never_publish_partial_authority() {
         let root = tempfile::tempdir().unwrap();

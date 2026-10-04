@@ -14,6 +14,7 @@ use tree_sitter::Node;
 
 mod origins;
 
+/// Unwraps bounded literal dispatch into its method and effective arguments.
 fn call_parts<'a>(node: Node<'a>, source: &str) -> Option<(String, Vec<Node<'a>>)> {
     let mut method = text(node.child_by_field_name("method")?, source).to_owned();
     let mut cursor = node.walk();
@@ -86,6 +87,7 @@ impl AssertionProviders {
         Self::from_units_with_registrations(loaded, edges, configured, work_budget, None)
     }
 
+    /// Builds assertion proofs from loaded sources and independent registration evidence.
     pub(super) fn from_units_with_registrations(
         loaded: &[super::providers::Unit],
         edges: &[SourceDependency],
@@ -294,6 +296,7 @@ impl AssertionProviders {
         &self.advisories
     }
 
+    /// Returns a proof only when its captured source still matches the current file.
     pub fn get(&self, file: &Path, source: &str) -> Option<AssertionBindings> {
         self.proofs
             .get(file)
@@ -302,12 +305,14 @@ impl AssertionProviders {
                     && (!bindings.factories.is_empty()
                         || !bindings.origins.factories.is_empty()
                         || !bindings.origins.captures.is_empty()
-                        || !bindings.origins.dispatch.is_empty())
+                        || !bindings.origins.dispatch.is_empty()
+                        || !bindings.origins.rejected.is_empty())
             })
             .map(|(_, bindings)| bindings.clone())
     }
 }
 
+/// Recognizes a literal source load explicitly listed in assertion configuration.
 fn configured_load(node: Node<'_>, source: &str, configured: &[String]) -> bool {
     node.kind() == "call"
         && node.child_by_field_name("receiver").is_none()
@@ -376,6 +381,7 @@ fn closed_factory(module: Node<'_>, source: &str) -> bool {
             .is_some_and(|name| text(name, source) == "expect")
 }
 
+/// Accepts factory references only at declarations and supported non-mutating calls.
 fn closed_reference(node: Node<'_>, source: &str) -> bool {
     node.parent().is_some_and(|parent| {
         (parent.kind() == "module" && parent.child_by_field_name("name") == Some(node))
@@ -395,6 +401,7 @@ fn closed_reference(node: Node<'_>, source: &str) -> bool {
 }
 
 impl AssertionBindings {
+    /// Identifies injected fields backed by closed callable origins.
     pub(super) fn known_field(&self, node: Node<'_>) -> bool {
         node.kind() == "instance_variable"
             && node.parent().is_some_and(|call| {
@@ -404,9 +411,11 @@ impl AssertionBindings {
                         .contains(&(call.start_byte(), call.end_byte()))
             })
     }
+    /// Yields dispatch sites whose source origins prove handler isolation.
     pub(super) fn isolated_dispatch(&self) -> impl Iterator<Item = usize> + '_ {
         self.origins.dispatch.iter().map(|(start, _)| *start)
     }
+    /// Detects handlers whose known assertion origins cannot support comparison.
     pub(super) fn rejected_comparison(
         &self,
         block: Node<'_>,
@@ -431,6 +440,7 @@ impl AssertionBindings {
                     )
             })
     }
+    /// Rejects optional comparison for known unsupported origins without hiding discovery errors.
     pub(super) fn known_ineligible(&self, block: Node<'_>, root: Node<'_>, source: &str) -> bool {
         let bindings = self.bindings(block, root, source);
         !bindings.uncertain
@@ -439,13 +449,17 @@ impl AssertionBindings {
                 .iter()
                 .any(BehaviorEvent::is_unresolved_assertion)
                 || descendants(block).iter().any(|node| {
-                    bindings.names.get(&node.id()).is_some_and(|name| {
-                        name.strip_prefix("capture:")
-                            .and_then(|name| self.origins.captures.get(name))
-                            .is_some_and(|callable| callable.denied)
-                    })
+                    self.origins
+                        .rejected
+                        .contains(&(node.start_byte(), node.end_byte()))
+                        || bindings.names.get(&node.id()).is_some_and(|name| {
+                            name.strip_prefix("capture:")
+                                .and_then(|name| self.origins.captures.get(name))
+                                .is_some_and(|callable| callable.denied)
+                        })
                 }))
     }
+    /// Binds handler names using only independently established callable origins.
     pub(super) fn bindings(
         &self,
         block: Node<'_>,
@@ -467,6 +481,7 @@ impl AssertionBindings {
         )
     }
 
+    /// Preserves literal parameterization for closed ordinary-call handlers.
     pub(super) fn ordinary_structural(
         &self,
         block: Node<'_>,
@@ -507,7 +522,11 @@ impl AssertionBindings {
                 .filter(|node| !node.is_extra())
             {
                 if !matches!(value.kind(), "integer" | "float" | "string")
-                    || (value.kind() == "string" && literal_string(text(value, source)).is_none())
+                    || (value.kind() == "string"
+                        && (descendants(value)
+                            .iter()
+                            .any(|part| part.kind() == "interpolation")
+                            || literal_string(text(value, source)).is_none()))
                 {
                     return None;
                 }
@@ -527,6 +546,7 @@ impl AssertionBindings {
             .then(|| serde_json::to_string(&shapes).expect("ordinary call shapes serialize"))
     }
 
+    /// Collects ordered assertions and complete ordinary effects; uncertainty withdraws comparison.
     pub fn events(
         &self,
         block: Node<'_>,
@@ -651,6 +671,7 @@ impl AssertionBindings {
         events
     }
 
+    /// Builds value-sensitive assertion evidence from a trusted factory and literal terminal.
     fn assertion(
         &self,
         node: Node<'_>,
@@ -824,6 +845,7 @@ impl AssertionBindings {
     }
 }
 
+/// Distinguishes executed closure bodies from deferred callables.
 fn immediately_invoked(scope: Node<'_>, source: &str) -> bool {
     let mut value = scope;
     if scope.kind() != "lambda" {
@@ -858,6 +880,7 @@ fn immediately_invoked(scope: Node<'_>, source: &str) -> bool {
     })
 }
 
+/// Detects unresolved captures inside assertion expected-value expressions.
 fn expected_access(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> bool {
     if node.kind() == "identifier" {
         return bindings.names.contains_key(&node.id());
@@ -876,11 +899,13 @@ fn expected_access(node: Node<'_>, source: &str, bindings: &super::bindings::Bin
             .is_some_and(|receiver| expected_access(receiver, source, bindings))
 }
 
+/// Serializes binding-aware syntax tokens for assertion identity.
 fn serialize_tokens(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> String {
     serde_json::to_string(&super::handler::syntax_tokens(node, source, bindings).1)
         .expect("assertion tokens serialize")
 }
 
+/// Resolves an expected local only after a unique preceding write in its scope.
 fn expected_value<'a>(
     value: Node<'a>,
     call: Node<'a>,
@@ -921,6 +946,7 @@ fn expected_value<'a>(
     .then_some(right)
 }
 
+/// Counts effective arguments while excluding comments and dispatch selectors.
 fn semantic_arity(node: Node<'_>) -> usize {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
@@ -934,6 +960,7 @@ mod tests {
     use crate::model::Rule;
     use crate::source_adapter::{SourceExtractionSession, SourceLanguage};
 
+    /// Checks that optional proof failures retain ordinary findings and correct completeness.
     #[test]
     fn proof_exhaustion_and_cycles_preserve_untrusted_baseline_findings() {
         let root = tempfile::tempdir().unwrap();
@@ -1004,6 +1031,7 @@ mod tests {
         }
     }
 
+    /// Checks source, work, and dependency boundaries before publishing assertion trust.
     #[test]
     fn proof_budget_checkpoints_and_invalid_edges_never_grant_trust() {
         let root = tempfile::tempdir().unwrap();
@@ -1117,6 +1145,7 @@ mod tests {
         assert_eq!(handler_findings(definitions, &config), 1);
     }
 
+    /// Checks rejected-provider advisories alongside preserved ordinary analysis outcomes.
     #[test]
     fn rejected_configured_trust_is_advisory_without_changing_final_outcomes() {
         let root = tempfile::tempdir().unwrap();

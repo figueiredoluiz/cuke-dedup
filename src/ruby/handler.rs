@@ -4,6 +4,7 @@ use crate::model::{BehaviorEvent, HandlerFingerprint, HandlerSemantics};
 use std::borrow::Cow;
 use tree_sitter::Node;
 
+/// Builds handler identity from bound syntax, captures, and assertion effects.
 pub(super) fn fingerprint(
     block: Node<'_>,
     root: Node<'_>,

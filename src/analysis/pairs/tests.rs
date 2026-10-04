@@ -932,6 +932,7 @@ fn saturated_matcher_fallback_keeps_interleaved_postings_independent() {
     );
 }
 
+/// Checks candidate deduplication and saturated-posting fallback work.
 #[test]
 fn repeated_posting_pairs_are_charged_once_and_fallback_requires_saturation() {
     let base = definition();
@@ -969,4 +970,71 @@ fn repeated_posting_pairs_are_charged_once_and_fallback_requires_saturation() {
     let mut builder = CandidateBuilder::new(usize::MAX);
     insert_blocking_candidates(&[left, right], &mut builder);
     assert!(builder.candidates.is_empty());
+}
+
+/// Checks symmetric near-match eligibility, work limits, and positive controls.
+#[test]
+fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), Default::default()).unwrap();
+    for (complete, same_handler, oversized) in [
+        (false, false, false),
+        (false, false, true),
+        (true, false, false),
+        (false, true, false),
+    ] {
+        let mut left = definition();
+        left.framework = crate::model::Framework::CucumberRuby;
+        left.handler
+            .behavior_signature
+            .push("method:ruby:complete-events".into());
+        let mut right = left.clone();
+        right.location.line += 1;
+        left.matcher = if oversized {
+            format!("{}b", "a".repeat(1100))
+        } else {
+            "the parcel status is verified".into()
+        };
+        right.matcher = if oversized {
+            format!("{}c", "a".repeat(1100))
+        } else {
+            "the parcel status is now verified".into()
+        };
+        left.normalized_matcher = left.matcher.clone();
+        right.normalized_matcher = right.matcher.clone();
+        if !complete {
+            right
+                .handler
+                .behavior_signature
+                .retain(|event| event != "method:ruby:complete-events");
+        }
+        if !complete && same_handler {
+            left.handler
+                .behavior_signature
+                .retain(|event| event != "method:ruby:complete-events");
+        }
+        if !same_handler {
+            right.handler.alpha_normalized = "different-alpha".into();
+            right.handler.structural = "different-structure".into();
+        }
+        for definitions in [[left.clone(), right.clone()], [right.clone(), left.clone()]] {
+            let suppressions = SuppressionIndex::new(&config, &definitions);
+            let mut findings = Vec::new();
+            let analysis =
+                analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+            assert!(
+                analysis.incomplete.is_none(),
+                "complete={complete}, same={same_handler}, oversized={oversized}"
+            );
+            assert!(!analysis.census.truncated);
+            assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
+            assert_eq!(
+                findings.iter().any(|finding| matches!(
+                    finding.rule,
+                    Rule::NearDuplicateStep | Rule::DuplicateHandler
+                )),
+                complete || same_handler
+            );
+        }
+    }
 }

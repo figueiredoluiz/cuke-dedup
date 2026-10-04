@@ -146,6 +146,7 @@ impl Providers {
         Self::collect_proofs(units, configured, Graph::new(units, edges))
     }
 
+    /// Collects bounded registration proofs using assertion origins only for independent isolation.
     fn collect_proofs<'a>(
         units: &'a [Unit],
         configured: &[String],

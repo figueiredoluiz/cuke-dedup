@@ -17,6 +17,7 @@ impl Bindings {
         Self::collect_with_origins(block, root, source, &BTreeMap::new(), &BTreeSet::new())
     }
 
+    /// Resolves handler bindings with source-proven captures and lexical shadowing.
     pub(super) fn collect_with_origins(
         block: Node<'_>,
         root: Node<'_>,

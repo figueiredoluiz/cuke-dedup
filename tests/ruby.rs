@@ -2300,6 +2300,7 @@ fn ruby_provider_budget_exhaustion_preserves_direct_findings() {
     }
 }
 
+/// Checks discovery and completeness across bounded large provider suites.
 #[test]
 fn ruby_provider_scaling_preserves_final_outcomes() {
     for shape in [
@@ -3085,6 +3086,7 @@ fn assertion_project(provider: &str, source: &str, trusted: bool) -> tempfile::T
     root
 }
 
+/// Checks configured assertion contradictions and unconfigured ordinary-call controls.
 #[test]
 fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_calls() {
     for trusted in [false, true] {
@@ -3155,6 +3157,7 @@ fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_call
     }
 }
 
+/// Checks provider trust across imports, mutations, and source ownership.
 #[test]
 fn ruby_assertion_provider_authority_matrix() {
     for (provider, before, after, trusted) in [
@@ -3221,6 +3224,7 @@ fn ruby_assertion_provider_authority_matrix() {
     }
 }
 
+/// Checks assertion values across literal syntax and ignored comments.
 #[test]
 fn ruby_assertion_literal_and_comment_matrix() {
     for matcher in ["to_be", "to_equal", "equal_to", "to_have_class"] {
@@ -3297,6 +3301,7 @@ fn ruby_unavailable_assertion_proof_preserves_independent_handlers() {
     }
 }
 
+/// Checks that only relevant preceding loads grant assertion authority.
 #[test]
 fn ruby_assertion_proof_relevance_matches_the_load_contract() {
     for (load, configured, cycle, incomplete) in [
@@ -3400,6 +3405,7 @@ fn ruby_unsupported_assertion_chains_preserve_ordinary_handler_findings() {
     }
 }
 
+/// Checks that ordinary effects cannot hide conflicting assertions.
 #[test]
 fn ruby_complete_assertion_events_retain_effect_conflicts() {
     let assertion = "Assertions.expect(page).to_be('ready')";
@@ -3739,6 +3745,7 @@ fn ruby_named_handler_discovery_preserves_callable_identity_and_capture_timing()
     assert_handler_finding(&rows, false, "conflicting methods");
 }
 
+/// Checks bound-handler discovery while preserving allocation and receiver identity.
 #[test]
 fn ruby_bound_instance_handlers_are_discovered_without_erasing_receiver_state() {
     for (class, constructor, definitions) in [
@@ -3825,6 +3832,7 @@ fn ruby_coverage_deferred_capture_writes_and_nested_declarations_are_uncertain()
     }
 }
 
+/// Checks bound aliases against ambiguous or mutable receiver origins.
 #[test]
 fn ruby_coverage_instance_handler_aliases_require_closed_unique_receivers() {
     for (prefix, handler, expected) in [
@@ -4078,6 +4086,7 @@ fn ruby_review_large_provider_suites_preserve_registration_recall() {
     assert_discovery(&rows, 1000, false, "large provider suite");
 }
 
+/// Checks matching uncertainty behavior for named and inline assertion handlers.
 #[test]
 fn ruby_named_handler_assertion_uncertainty_matches_inline_outcomes() {
     for trusted in [false, true] {
@@ -4123,6 +4132,7 @@ fn ruby_named_handler_large_suites_charge_local_work_and_cache_method_identity()
     );
 }
 
+/// Checks that named-method bindings use the defining source and scope.
 #[test]
 fn ruby_named_method_assertion_bindings_follow_the_body_source() {
     for expected in ["'ready'", "UNKNOWN"] {
@@ -4178,6 +4188,7 @@ fn ruby_unresolved_loaders_cannot_grant_inherited_provider_initialization() {
     }
 }
 
+/// Checks that unrelated handlers cannot authorize reflective assertion lookups.
 #[test]
 fn ruby_assertion_reflection_exemptions_do_not_depend_on_unrelated_handlers() {
     for capture in [

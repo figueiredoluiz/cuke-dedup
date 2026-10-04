@@ -81,6 +81,7 @@ pub(crate) struct AnalysisProfile {
 impl StepDefinition {
     // Routing is the only place that interprets framework identity for core analysis. Keeping
     // this derived preserves exhaustive public structs and legacy serialized definitions.
+    /// Routes each framework to its language-owned comparison policy.
     pub(crate) fn analysis_profile(&self) -> AnalysisProfile {
         match self.framework {
             Framework::CucumberRuby => crate::ruby::semantics::profile(self),
