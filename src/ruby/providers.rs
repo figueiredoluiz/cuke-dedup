@@ -22,6 +22,7 @@ pub(super) struct Proof {
     pub isolated_constants: BTreeSet<usize>,
     pub unresolved_calls: BTreeSet<usize>,
     pub handlers: BTreeMap<usize, crate::model::HandlerFingerprint>,
+    pub comparison_rejections: BTreeSet<usize>,
     pub executed: BTreeSet<usize>,
 }
 
@@ -430,6 +431,16 @@ impl Providers {
             crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
             Some(&result),
         );
+        for unit in units {
+            if let Some(assertions) = assertions.get(&unit.file.path, &unit.source) {
+                result
+                    .0
+                    .entry(unit.file.path.clone())
+                    .or_default()
+                    .isolated_calls
+                    .extend(assertions.isolated_dispatch());
+            }
+        }
         graph.named_handlers(&mut result, Some(&assertions));
         for unit in units {
             if let Some(proof) = result.0.get_mut(&unit.file.path) {

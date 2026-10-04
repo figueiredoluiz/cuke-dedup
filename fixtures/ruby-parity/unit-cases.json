@@ -291,7 +291,7 @@
           "requiredStatus": "partial",
           "fixtureGroup": "matcher-family",
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test’s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
+          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test\u2019s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
         },
         {
           "name": "exact_handlers_require_compatible_assertion_provenance_across_files",
@@ -5053,6 +5053,60 @@
           "behaviorClass": "language-specific-api",
           "requiredStatus": "language-inapplicable",
           "rationale": "Ruby-specific public configuration compatibility is exercised directly here; the flat rubyLoadPaths key has no TypeScript counterpart."
+        }
+      ]
+    },
+    "tests/ruby_assertion_provenance.rs": {
+      "sourceSha256": "aeb160945efb41dcc00116b8bcb1d1f495ec41d48a57ca47b51039fbb552f32c",
+      "tests": [
+        {
+          "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "assertion_overlap_preserves_values_effects_and_callable_execution",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "malformed_factory_origins_and_lexical_shadowing_gain_no_authority",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "bound_assertion_fields_preserve_receiver_context_and_opposing_values",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "preceding_fixture_exports_retain_assertions_without_global_scope_leakage",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "rejected_factory_comparison_does_not_hide_unsupported_handler_syntax",
+          "requiredStatus": "language-inapplicable",
+          "fixtureGroup": null,
+          "rationale": "Executable Ruby-only adapter regression matrix, run by cargo test; it introduces no TypeScript behavior requiring a Ruby translation. Existing completion dispositions are unchanged.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     }

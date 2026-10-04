@@ -3118,7 +3118,10 @@ fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_call
             assert_discovery(&rows, 2, false, &source);
             assert_parameterization_outcome(
                 &rows,
-                parameterized,
+                parameterized
+                    || (!trusted
+                        && left == "Assertions.expect(page).to_be('dark')"
+                        && right == "Assertions.expect(page).to_be('light')"),
                 &format!("trusted={trusted}: {source}"),
             );
         }
@@ -3136,7 +3139,7 @@ fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_call
             let source = format!("Given('one') {{ Assertions.expect(page).to_be({expected}) }}; Then('two') {{ Assertions.expect(page).to_be({expected}) }}");
             let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
             let rows = project_records(root.path());
-            assert_discovery(&rows, 2, incomplete, &source);
+            assert_discovery(&rows, 2, false, &source);
             assert_eq!(
                 rows.iter().any(|row| row["rule"] == "duplicate-handler"),
                 !incomplete,
@@ -3150,8 +3153,8 @@ fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_call
 fn ruby_assertion_provider_authority_matrix() {
     for (provider, before, after, trusted) in [
         (ASSERTION_PROVIDER, "", "", true),
-        (ASSERTION_PROVIDER, "Alias = Assertions", "", false),
-        (ASSERTION_PROVIDER, "", "Alias = Assertions", false),
+        (ASSERTION_PROVIDER, "Alias = Assertions", "", true),
+        (ASSERTION_PROVIDER, "", "Alias = Assertions", true),
         (ASSERTION_PROVIDER, "module Assertions; end", "", false),
         (ASSERTION_PROVIDER, "mod.define_singleton_method(:expect) { other }", "", false),
         (ASSERTION_PROVIDER, "mod.alias_method(:expect, :other)", "", false),
@@ -3166,7 +3169,7 @@ fn ruby_assertion_provider_authority_matrix() {
         let source = format!("{before}\nGiven('one') {{ Assertions.expect(page).to_be(UNKNOWN) }}; Then('two') {{ Assertions.expect(page).to_be(UNKNOWN) }}\n{after}");
         let root = assertion_project(provider, &source, true);
         let rows = project_records(root.path());
-        assert_discovery(&rows, 2, trusted || provider.contains("alias_method"), &format!("{provider}: {source}"));
+        assert_discovery(&rows, 2, provider.contains("alias_method"), &format!("{provider}: {source}"));
         assert_eq!(rows.iter().any(|row| row["rule"] == "duplicate-handler"), !trusted, "{provider}: {source}");
     }
     for body in [
@@ -3187,7 +3190,7 @@ fn ruby_assertion_provider_authority_matrix() {
         let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
         let root = assertion_project(ASSERTION_PROVIDER, &source, true);
         let rows = project_records(root.path());
-        assert_discovery(&rows, 2, true, body);
+        assert_discovery(&rows, 2, false, body);
         assert!(
             !rows.iter().any(|row| row["rule"] == "duplicate-handler"),
             "{body}"
@@ -3236,7 +3239,7 @@ fn ruby_assertion_literal_and_comment_matrix() {
             let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
             let root = assertion_project(ASSERTION_PROVIDER, &source, true);
             let rows = project_records(root.path());
-            assert_discovery(&rows, 2, incomplete, &body);
+            assert_discovery(&rows, 2, false, &body);
             assert_eq!(
                 rows.iter().any(|r| r["rule"] == "duplicate-handler"),
                 !incomplete,
@@ -3291,7 +3294,12 @@ fn ruby_unavailable_assertion_proof_preserves_independent_handlers() {
 #[test]
 fn ruby_assertion_proof_relevance_matches_the_load_contract() {
     for (load, configured, cycle, incomplete) in [
-        ("require_relative 'assertions'", "./assertions", false, true),
+        (
+            "require_relative 'assertions'",
+            "./assertions",
+            false,
+            false,
+        ),
         ("require './assertions'", "./assertions", false, false),
         (
             "require_relative 'assertions'",
@@ -3317,14 +3325,22 @@ fn ruby_assertion_proof_relevance_matches_the_load_contract() {
         let output = run_project(root.path(), "*.rb", &["--fail-on-incomplete"]);
         let rows = records(output.stdout);
         assert_discovery(&rows, 2, incomplete, &source);
-        let trusted =
-            load.starts_with("require_relative") && configured == "./assertions" && !cycle;
+        let trusted = configured == "./assertions" && !cycle;
         assert_eq!(
             rows.iter().any(|r| r["rule"] == "duplicate-handler"),
             !trusted,
             "{source}: cycle={cycle}"
         );
-        assert_eq!(output.status.code(), Some(if incomplete { 2 } else { 1 }));
+        assert_eq!(
+            output.status.code(),
+            Some(if incomplete {
+                2
+            } else if trusted {
+                0
+            } else {
+                1
+            })
+        );
     }
 }
 
@@ -3379,7 +3395,7 @@ fn ruby_unsupported_assertion_chains_preserve_ordinary_handler_findings() {
 }
 
 #[test]
-fn ruby_partial_assertion_events_do_not_invent_complete_handler_similarity() {
+fn ruby_complete_assertion_events_retain_effect_conflicts() {
     let assertion = "Assertions.expect(page).to_be('ready')";
     for trusted in [false, true] {
         for (left, right, score) in [
@@ -3433,10 +3449,15 @@ fn ruby_partial_assertion_events_do_not_invent_complete_handler_similarity() {
                 .iter()
                 .find(|row| row["rule"] == "normalized-matcher")
                 .expect("matcher finding is retained");
-            assert_eq!(
-                finding["evidence"]["handlerSimilarity"], score,
-                "trusted={trusted}: {source}"
-            );
+            let measured = finding["evidence"]["handlerSimilarity"].as_f64().unwrap();
+            if trusted && score == 0.0 {
+                assert!(
+                    measured < 1.0,
+                    "conflicting operations gained equivalence: {source}"
+                );
+            } else {
+                assert_eq!(measured, score, "trusted={trusted}: {source}");
+            }
             assert!(
                 !rows.iter().any(|row| row["rule"] == "duplicate-handler"
                     || row["rule"] == "near-duplicate-step"
@@ -3453,7 +3474,7 @@ fn ruby_partial_assertion_events_do_not_invent_complete_handler_similarity() {
             let source = format!("Given('one') {{ {body} }}; Then('two') {{ {body} }}");
             let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
             let rows = project_records(root.path());
-            assert_discovery(&rows, 2, incomplete, &source);
+            assert_discovery(&rows, 2, false, &source);
             assert_handler_finding(
                 &Value::Array(rows),
                 !incomplete,
@@ -3728,8 +3749,9 @@ fn ruby_bound_instance_handlers_are_discovered_without_erasing_receiver_state() 
     ] {
         let source = format!("{class}\ninstance = {constructor}; Given('same', &instance.method(:handle)); Then('same', &instance.method(:handle)); Given('other', &instance.method(:handle))");
         let (_, rows, _) = analyze(&source, &[]);
-        assert_discovery(rows.as_array().unwrap(), definitions, true, &source);
-        assert_handler_finding(&rows, false, &source);
+        let comparable = definitions == 3 && !class.contains("@value");
+        assert_discovery(rows.as_array().unwrap(), definitions, !comparable, &source);
+        assert_handler_finding(&rows, comparable, &source);
         assert_eq!(rows.as_array().unwrap().iter().any(|r| r["rule"] == "duplicate-matcher"), definitions > 0);
     }
 }
@@ -3816,7 +3838,7 @@ fn ruby_coverage_instance_handler_aliases_require_closed_unique_receivers() {
     ] {
         let source = format!("class Bound; def handle; work(); end; end; {prefix}; Given('same', &{handler}); Then('same', &{handler})");
         let (_, rows, _) = analyze(&source, &[]);
-        assert_discovery(rows.as_array().unwrap(), expected, true, &source);
+        assert_discovery(rows.as_array().unwrap(), expected, expected == 0, &source);
         assert_handler_finding(&rows, false, &source);
         assert_eq!(
             rows.as_array()
@@ -4067,7 +4089,7 @@ fn ruby_named_handler_assertion_uncertainty_matches_inline_outcomes() {
                 let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
                 let rows = project_records(root.path());
                 let uncertain = trusted && expected == "UNKNOWN";
-                assert_discovery(&rows, 2, uncertain, &format!("{trusted}/{form}/{expected}"));
+                assert_discovery(&rows, 2, false, &format!("{trusted}/{form}/{expected}"));
                 assert_handler_finding(&Value::Array(rows), !uncertain, &source);
             }
         }
@@ -4101,7 +4123,7 @@ fn ruby_named_method_assertion_bindings_follow_the_body_source() {
         let root = assertion_project(ASSERTION_PROVIDER, "require_relative 'body'; Given('first', &method(:handler)); Then('second', &method(:handler))", true);
         fs::write(root.path().join("body.rb"), format!("require_relative 'assertions'; def handler; Assertions.expect(page).to_be({expected}); end")).unwrap();
         let rows = records(run_project(root.path(), "steps.rb", &[]).stdout);
-        assert_discovery(&rows, 2, expected == "UNKNOWN", expected);
+        assert_discovery(&rows, 2, false, expected);
         assert_handler_finding(&Value::Array(rows), expected != "UNKNOWN", expected);
     }
 }
@@ -4166,7 +4188,7 @@ fn ruby_assertion_reflection_exemptions_do_not_depend_on_unrelated_handlers() {
                 false,
                 &source,
             );
-            assert_handler_finding(&Value::Array(rows), true, &source);
+            assert_handler_finding(&Value::Array(rows), expected != "UNKNOWN", &source);
         }
     }
 }

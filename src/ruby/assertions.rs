@@ -12,6 +12,31 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
+mod origins;
+
+fn call_parts<'a>(node: Node<'a>, source: &str) -> Option<(String, Vec<Node<'a>>)> {
+    let mut method = text(node.child_by_field_name("method")?, source).to_owned();
+    let mut cursor = node.walk();
+    let mut args: Vec<_> = node
+        .child_by_field_name("arguments")
+        .map(|arguments| {
+            arguments
+                .named_children(&mut cursor)
+                .filter(|node| !node.is_extra())
+                .collect()
+        })
+        .unwrap_or_default();
+    for _ in 0..16 {
+        if !matches!(method.as_str(), "send" | "public_send" | "__send__") {
+            return Some((method, args));
+        }
+        let first = args.first().copied()?;
+        method = super::static_method_name(first, source)?;
+        args.remove(0);
+    }
+    None
+}
+
 #[derive(Default)]
 pub(super) struct AssertionProviders {
     proofs: BTreeMap<PathBuf, (String, AssertionBindings)>,
@@ -23,6 +48,7 @@ pub(super) struct AssertionProviders {
 pub(super) struct AssertionBindings {
     // Source offsets bind trust to a preceding resolved load and a closed constant identity.
     factories: BTreeSet<(usize, usize)>,
+    origins: origins::Origins,
 }
 
 impl AssertionProviders {
@@ -67,8 +93,35 @@ impl AssertionProviders {
         work_budget: usize,
         registrations: Option<&super::providers::Providers>,
     ) -> Self {
+        let Some(mut origins) =
+            origins::Origins::collect(loaded, edges, configured, registrations, work_budget)
+        else {
+            return Self::unavailable();
+        };
+        let publish_origins = |mut origins: BTreeMap<PathBuf, origins::Origins>| Self {
+            proofs: loaded
+                .iter()
+                .map(|unit| {
+                    let origins = origins.remove(&unit.file.path).unwrap_or_default();
+                    let factories = origins
+                        .factories
+                        .iter()
+                        .filter(|(_, callable)| callable.trusted && !callable.denied)
+                        .map(|(position, _)| *position)
+                        .collect();
+                    (
+                        unit.file.path.clone(),
+                        (
+                            unit.source.clone(),
+                            AssertionBindings { factories, origins },
+                        ),
+                    )
+                })
+                .collect(),
+            ..Self::default()
+        };
         if configured.is_empty() {
-            return Self::default();
+            return publish_origins(origins);
         }
         let canonical: Vec<_> = loaded
             .iter()
@@ -98,7 +151,7 @@ impl AssertionProviders {
                     && configured_load(*node, source, configured)
             })
         }) {
-            return Self::default();
+            return publish_origins(origins);
         }
         if units
             .iter()
@@ -128,7 +181,13 @@ impl AssertionProviders {
         let mut result = Self::default();
         for (unit, (file, source, tree)) in units.iter().enumerate() {
             let root = tree.root_node();
-            let mut factories = BTreeSet::new();
+            let resolved = origins.remove(&file.path).unwrap_or_default();
+            let mut factories = resolved
+                .factories
+                .iter()
+                .filter(|(_, callable)| callable.trusted && !callable.denied)
+                .map(|(position, _)| *position)
+                .collect::<BTreeSet<_>>();
             for edge in edges.iter().filter(|edge| edge.location.path == file.path) {
                 work = work.saturating_add(nodes[unit].len());
                 if work > work_budget {
@@ -152,7 +211,16 @@ impl AssertionProviders {
                 if work > work_budget {
                     return Self::unavailable();
                 }
-                let mut trusted = false;
+                let mut trusted = resolved.factories.values().any(|callable| {
+                    callable.trusted
+                        && !callable.denied
+                        && nodes[provider].iter().any(|node| {
+                            node.kind() == "module"
+                                && node.child_by_field_name("name").is_some_and(|name| {
+                                    text(name, units[provider].1) == callable.owner
+                                })
+                        })
+                });
                 let (_, provider_source, provider_tree) = &units[provider];
                 let provider_root = provider_tree.root_node();
                 for module in nodes[provider]
@@ -221,7 +289,13 @@ impl AssertionProviders {
             }
             result.proofs.insert(
                 file.path.clone(),
-                (source.to_string(), AssertionBindings { factories }),
+                (
+                    source.to_string(),
+                    AssertionBindings {
+                        factories,
+                        origins: resolved,
+                    },
+                ),
             );
         }
         result
@@ -234,7 +308,13 @@ impl AssertionProviders {
     pub fn get(&self, file: &Path, source: &str) -> Option<AssertionBindings> {
         self.proofs
             .get(file)
-            .filter(|(input, _)| input == source)
+            .filter(|(input, bindings)| {
+                input == source
+                    && (!bindings.factories.is_empty()
+                        || !bindings.origins.factories.is_empty()
+                        || !bindings.origins.captures.is_empty()
+                        || !bindings.origins.dispatch.is_empty())
+            })
             .map(|(_, bindings)| bindings.clone())
     }
 }
@@ -244,7 +324,7 @@ fn configured_load(node: Node<'_>, source: &str, configured: &[String]) -> bool 
         && node.child_by_field_name("receiver").is_none()
         && node
             .child_by_field_name("method")
-            .is_some_and(|method| text(method, source) == "require_relative")
+            .is_some_and(|method| matches!(text(method, source), "require_relative" | "require"))
         && node
             .child_by_field_name("arguments")
             .filter(|args| semantic_arity(*args) == 1)
@@ -319,18 +399,160 @@ fn closed_reference(node: Node<'_>, source: &str) -> bool {
 }
 
 impl AssertionBindings {
+    pub(super) fn known_field(&self, node: Node<'_>) -> bool {
+        node.kind() == "instance_variable"
+            && node.parent().is_some_and(|call| {
+                call.child_by_field_name("receiver") == Some(node)
+                    && self
+                        .factories
+                        .contains(&(call.start_byte(), call.end_byte()))
+            })
+    }
+    pub(super) fn isolated_dispatch(&self) -> impl Iterator<Item = usize> + '_ {
+        self.origins.dispatch.iter().map(|(start, _)| *start)
+    }
+    pub(super) fn rejected_comparison(
+        &self,
+        block: Node<'_>,
+        root: Node<'_>,
+        source: &str,
+    ) -> bool {
+        self.known_ineligible(block, root, source)
+            && !descendants(block).iter().any(|node| {
+                node.id() != block.id()
+                    && matches!(
+                        node.kind(),
+                        "method"
+                            | "singleton_method"
+                            | "class"
+                            | "module"
+                            | "singleton_class"
+                            | "heredoc_body"
+                            | "heredoc_beginning"
+                            | "optional_parameter"
+                            | "keyword_parameter"
+                            | "ERROR"
+                    )
+            })
+    }
+    pub(super) fn known_ineligible(&self, block: Node<'_>, root: Node<'_>, source: &str) -> bool {
+        let bindings = self.bindings(block, root, source);
+        !bindings.uncertain
+            && (self
+                .events(block, source, &bindings)
+                .iter()
+                .any(BehaviorEvent::is_unresolved_assertion)
+                || descendants(block).iter().any(|node| {
+                    bindings.names.get(&node.id()).is_some_and(|name| {
+                        name.strip_prefix("capture:")
+                            .and_then(|name| self.origins.captures.get(name))
+                            .is_some_and(|callable| callable.denied)
+                    })
+                }))
+    }
+    pub(super) fn bindings(
+        &self,
+        block: Node<'_>,
+        root: Node<'_>,
+        source: &str,
+    ) -> super::bindings::Bindings {
+        let captures = self
+            .origins
+            .captures
+            .iter()
+            .map(|(name, callable)| (name.clone(), format!("ruby:callable:{}", callable.owner)))
+            .collect();
+        super::bindings::Bindings::collect_with_origins(
+            block,
+            root,
+            source,
+            &captures,
+            &self.origins.dispatch,
+        )
+    }
+
+    pub(super) fn ordinary_structural(
+        &self,
+        block: Node<'_>,
+        source: &str,
+        bindings: &super::bindings::Bindings,
+    ) -> Option<String> {
+        if block
+            .child_by_field_name("parameters")
+            .is_some_and(|parameters| parameters.named_child_count() != 0)
+        {
+            return None;
+        }
+        let body = block.child_by_field_name("body")?;
+        let mut cursor = body.walk();
+        let statements: Vec<_> = body
+            .named_children(&mut cursor)
+            .filter(|node| !node.is_extra())
+            .collect();
+        let mut shapes = Vec::new();
+        let mut literals = 0;
+        for statement in statements {
+            if statement.kind() != "call" || statement.child_by_field_name("block").is_some() {
+                return None;
+            }
+            let receiver = statement.child_by_field_name("receiver")?;
+            let callable = self
+                .origins
+                .factories
+                .get(&(receiver.start_byte(), receiver.end_byte()))?;
+            if callable.trusted || callable.denied {
+                return None;
+            }
+            let args = statement.child_by_field_name("arguments")?;
+            let mut cursor = args.walk();
+            let mut arguments = Vec::new();
+            for value in args
+                .named_children(&mut cursor)
+                .filter(|node| !node.is_extra())
+            {
+                if !matches!(value.kind(), "integer" | "float" | "string")
+                    || (value.kind() == "string" && literal_string(text(value, source)).is_none())
+                {
+                    return None;
+                }
+                arguments.push(value.kind());
+                literals += 1;
+            }
+            shapes.push((
+                super::handler::syntax_tokens(receiver, source, bindings).1,
+                text(statement.child_by_field_name("method")?, source),
+                statement
+                    .child_by_field_name("operator")
+                    .map(|operator| text(operator, source)),
+                arguments,
+            ));
+        }
+        (literals != 0)
+            .then(|| serde_json::to_string(&shapes).expect("ordinary call shapes serialize"))
+    }
+
     pub fn events(
         &self,
         block: Node<'_>,
         source: &str,
         bindings: &super::bindings::Bindings,
     ) -> Vec<BehaviorEvent> {
+        if let Some(shape) = self.ordinary_structural(block, source, bindings) {
+            return vec![BehaviorEvent::Call(format!("ruby:ordinary:{shape}"))];
+        }
         let mut events = Vec::new();
-        let mut pending = vec![(block, false)];
-        while let Some((node, deferred)) = pending.pop() {
+        let mut pending = vec![(block, false, false)];
+        while let Some((node, deferred, covered)) = pending.pop() {
+            if block.kind() == "method" && block.child_by_field_name("name") == Some(node) {
+                continue;
+            }
             let deferred = deferred
                 || (node.id() != block.id()
-                    && matches!(node.kind(), "block" | "do_block" | "lambda"));
+                    && matches!(node.kind(), "block" | "do_block" | "lambda")
+                    && !node
+                        .parent()
+                        .is_some_and(|parent| parent.kind() == "lambda")
+                    && !immediately_invoked(node, source));
             if let Some(event) = self.assertion(node, source, bindings) {
                 let parameterized = deferred && {
                     let mut parent = node.parent();
@@ -356,9 +578,79 @@ impl AssertionBindings {
                 });
                 continue;
             }
+            let opaque = matches!(
+                node.kind(),
+                "assignment"
+                    | "operator_assignment"
+                    | "if"
+                    | "unless"
+                    | "case"
+                    | "while"
+                    | "until"
+                    | "for"
+                    | "rescue"
+                    | "ensure"
+                    | "return"
+                    | "yield"
+                    | "binary"
+                    | "unary"
+            ) || (!node.is_extra()
+                && node.kind() != "call"
+                && node.parent().is_some_and(|parent| {
+                    matches!(parent.kind(), "block_body" | "body_statement")
+                }));
+            if opaque && !covered {
+                events.push(BehaviorEvent::Call(format!(
+                    "ruby:effect:{}",
+                    serialize_tokens(node, source, bindings)
+                )));
+            }
+            let mut operation = opaque;
+            if node.kind() == "call" {
+                operation = true;
+                if !covered {
+                    events.push(BehaviorEvent::Call(format!(
+                        "ruby:call:{}",
+                        serialize_tokens(node, source, bindings)
+                    )));
+                }
+            } else if !covered && node.kind() == "identifier" && bindings.calls.contains(&node.id())
+            {
+                events.push(BehaviorEvent::Call(format!(
+                    "ruby:bare:{}",
+                    text(node, source)
+                )));
+            }
             let mut cursor = node.walk();
             let children: Vec<_> = node.named_children(&mut cursor).collect();
-            pending.extend(children.into_iter().rev().map(|child| (child, deferred)));
+            pending.extend(
+                children
+                    .into_iter()
+                    .rev()
+                    .map(|child| (child, deferred, covered || operation)),
+            );
+        }
+        // Ordinary effects cannot outvote a contradictory or unresolved assertion.
+        let assertions: Vec<_> = events
+            .iter()
+            .filter_map(|event| {
+                if let BehaviorEvent::Assertion { deferred, payload } = event {
+                    Some((*deferred, payload.as_str()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if assertions.is_empty() {
+            if let Some(shape) = super::handler::parameterized_calls(block, source, bindings) {
+                return vec![BehaviorEvent::Call(format!("ruby:ordinary:{shape}"))];
+            }
+        }
+        let context = serde_json::to_string(&assertions).expect("assertion context serializes");
+        for event in &mut events {
+            if let BehaviorEvent::Call(payload) = event {
+                payload.push_str(&context);
+            }
         }
         events
     }
@@ -372,16 +664,23 @@ impl AssertionBindings {
         if node.kind() != "call" || node.child_by_field_name("block").is_some() {
             return None;
         }
-        let method = text(node.child_by_field_name("method")?, source);
+        let (method, expected) = call_parts(node, source)?;
         // Configured factory contract; ordinary same-named objects never enter this path.
         if !matches!(
-            method,
-            "to_be" | "to_equal" | "equal_to" | "to_have_class" | "to_be_visible"
+            method.as_str(),
+            "to_be" | "to_equal" | "equal_to" | "to_have_class" | "to_have_value" | "to_be_visible"
         ) {
             return None;
         }
         let mut receiver = node.child_by_field_name("receiver")?;
         let mut modifiers = Vec::new();
+        let mut conditional_dispatch = Vec::new();
+        if node
+            .child_by_field_name("operator")
+            .is_some_and(|operator| text(operator, source) == "&.")
+        {
+            conditional_dispatch.push(0);
+        }
         for _ in 0..16 {
             if self
                 .factories
@@ -389,17 +688,18 @@ impl AssertionBindings {
             {
                 break;
             }
-            if receiver.kind() != "call"
-                || receiver.child_by_field_name("block").is_some()
-                || receiver
-                    .child_by_field_name("arguments")
-                    .is_some_and(|args| args.named_child_count() != 0)
-            {
+            if receiver.kind() != "call" || receiver.child_by_field_name("block").is_some() {
                 return None;
             }
-            let modifier = text(receiver.child_by_field_name("method")?, source);
-            if !matches!(modifier, "not" | "to") {
+            let (modifier, args) = call_parts(receiver, source)?;
+            if !args.is_empty() || !matches!(modifier.as_str(), "not" | "to") {
                 return None;
+            }
+            if receiver
+                .child_by_field_name("operator")
+                .is_some_and(|operator| text(operator, source) == "&.")
+            {
+                conditional_dispatch.push(modifiers.len() + 1);
             }
             modifiers.push(modifier);
             receiver = receiver.child_by_field_name("receiver")?;
@@ -410,20 +710,60 @@ impl AssertionBindings {
         {
             return None;
         }
-        let Some(subjects) = receiver.child_by_field_name("arguments") else {
+        let Some((_, subjects)) = call_parts(receiver, source) else {
             return Some(BehaviorEvent::unresolved_assertion(false));
         };
-        if semantic_arity(subjects) != 1 {
+        if subjects.len() != 1 {
             return Some(BehaviorEvent::unresolved_assertion(false));
         }
-        let expected = node.child_by_field_name("arguments");
         let arity = if method == "to_be_visible" { 0 } else { 1 };
-        if expected.map_or(0, semantic_arity) != arity {
+        if expected.len() != arity {
             return Some(BehaviorEvent::unresolved_assertion(false));
         }
-        if expected.is_some_and(|args| {
-            descendants(args).iter().any(|value| {
+        let Some(expected) = expected
+            .into_iter()
+            .map(|value| expected_value(value, node, bindings))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Some(BehaviorEvent::unresolved_assertion(false));
+        };
+        if expected.iter().any(|args| {
+            if self
+                .origins
+                .matchers
+                .contains(&(args.start_byte(), args.end_byte()))
+            {
+                return args
+                    .child_by_field_name("arguments")
+                    .is_none_or(|arguments| {
+                        descendants(arguments).iter().any(|value| {
+                            !value.is_extra()
+                                && !matches!(
+                                    value.kind(),
+                                    "argument_list"
+                                        | "hash"
+                                        | "pair"
+                                        | "hash_key_symbol"
+                                        | "string"
+                                        | "string_content"
+                                        | "escape_sequence"
+                                        | "simple_symbol"
+                                        | "integer"
+                                        | "float"
+                                        | "true"
+                                        | "false"
+                                        | "nil"
+                                        | "array"
+                                )
+                        })
+                    });
+            }
+            if expected_access(*args, source, bindings) {
+                return false;
+            }
+            descendants(*args).iter().any(|value| {
                 !value.is_extra()
+                    && !(value.kind() == "identifier" && bindings.names.contains_key(&value.id()))
                     && !matches!(
                         value.kind(),
                         "argument_list"
@@ -440,27 +780,145 @@ impl AssertionBindings {
                             | "array"
                             | "hash"
                             | "pair"
+                            | "regex"
+                            | "regex_content"
                     )
             })
         }) {
             return Some(BehaviorEvent::unresolved_assertion(false));
         }
         let qualifier = std::iter::once("expect")
+            .map(str::to_owned)
             .chain(modifiers.into_iter().rev())
             .collect::<Vec<_>>()
             .join(".");
-        let serialize = |root: Node<'_>| {
-            serde_json::to_string(&super::handler::syntax_tokens(root, source, bindings).1)
-                .expect("assertion tokens serialize")
+        let serialize = |root: Node<'_>| serialize_tokens(root, source, bindings);
+        let mut subject = if let Some(callable) = self
+            .origins
+            .factories
+            .get(&(receiver.start_byte(), receiver.end_byte()))
+        {
+            let (_, arguments) = call_parts(receiver, source)?;
+            serde_json::to_string(&(
+                &callable.owner,
+                arguments.into_iter().map(serialize).collect::<Vec<_>>(),
+                receiver
+                    .child_by_field_name("operator")
+                    .map(|operator| text(operator, source)),
+                receiver.child_by_field_name("block").map(serialize),
+            ))
+            .expect("factory subjects serialize")
+        } else {
+            serialize(receiver)
         };
+        if !conditional_dispatch.is_empty() {
+            subject = format!("ruby:conditional:{conditional_dispatch:?}:{subject}");
+        }
         Some(BehaviorEvent::assertion(
             &qualifier,
-            method,
+            &method,
             // A proved factory can still carry a block or conditional dispatch.
-            &serialize(receiver),
-            &expected.map(serialize).unwrap_or_default(),
+            &subject,
+            &expected.first().copied().map(serialize).unwrap_or_default(),
         ))
     }
+}
+
+fn immediately_invoked(scope: Node<'_>, source: &str) -> bool {
+    let mut value = scope;
+    if scope.kind() != "lambda" {
+        let Some(constructor) = scope.parent().filter(|node| {
+            node.kind() == "call"
+                && node.child_by_field_name("block") == Some(scope)
+                && node.child_by_field_name("receiver").is_none()
+                && node
+                    .child_by_field_name("method")
+                    .is_some_and(|method| matches!(text(method, source), "proc" | "lambda"))
+        }) else {
+            return false;
+        };
+        value = constructor;
+    }
+    while let Some(parent) = value
+        .parent()
+        .filter(|node| node.kind() == "parenthesized_statements" && node.named_child_count() == 1)
+    {
+        value = parent;
+    }
+    value.parent().is_some_and(|call| {
+        call.kind() == "call"
+            && call.child_by_field_name("receiver") == Some(value)
+            && call
+                .child_by_field_name("method")
+                .is_some_and(|method| text(method, source) == "call")
+            && call.child_by_field_name("block").is_none()
+            && call
+                .child_by_field_name("arguments")
+                .is_none_or(|args| semantic_arity(args) == 0)
+    })
+}
+
+fn expected_access(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> bool {
+    if node.kind() == "identifier" {
+        return bindings.names.contains_key(&node.id());
+    }
+    node.kind() == "call"
+        && node.child_by_field_name("block").is_none()
+        && node
+            .child_by_field_name("arguments")
+            .is_none_or(|args| semantic_arity(args) == 0)
+        && node.child_by_field_name("method").is_some_and(|method| {
+            method.kind() == "identifier"
+                && !matches!(text(method, source), "send" | "public_send" | "__send__")
+        })
+        && node
+            .child_by_field_name("receiver")
+            .is_some_and(|receiver| expected_access(receiver, source, bindings))
+}
+
+fn serialize_tokens(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> String {
+    serde_json::to_string(&super::handler::syntax_tokens(node, source, bindings).1)
+        .expect("assertion tokens serialize")
+}
+
+fn expected_value<'a>(
+    value: Node<'a>,
+    call: Node<'a>,
+    bindings: &super::bindings::Bindings,
+) -> Option<Node<'a>> {
+    if value.kind() != "identifier" {
+        return Some(value);
+    }
+    let name = bindings.names.get(&value.id())?;
+    if !name.starts_with("local:") {
+        return None;
+    }
+    let scope = std::iter::successors(call.parent(), |node| node.parent())
+        .find(|node| matches!(node.kind(), "block" | "do_block" | "lambda" | "method"))?;
+    let writes: Vec<_> = descendants(scope)
+        .into_iter()
+        .filter(|node| {
+            matches!(node.kind(), "assignment" | "operator_assignment")
+                && node
+                    .child_by_field_name("left")
+                    .is_some_and(|left| bindings.names.get(&left.id()) == Some(name))
+        })
+        .collect();
+    if writes.is_empty() {
+        return Some(value);
+    }
+    if writes.len() != 1
+        || writes[0].start_byte() >= call.start_byte()
+        || writes[0].parent() != scope.child_by_field_name("body")
+    {
+        return None;
+    }
+    let right = writes[0].child_by_field_name("right")?;
+    matches!(
+        right.kind(),
+        "string" | "integer" | "float" | "simple_symbol" | "true" | "false" | "nil"
+    )
+    .then_some(right)
 }
 
 fn semantic_arity(node: Node<'_>) -> usize {
@@ -592,17 +1050,13 @@ mod tests {
             assert!(!proofs.incomplete());
             assert!(proofs
                 .get(&files[0].path, source)
-                .unwrap()
-                .factories
-                .is_empty());
+                .is_none_or(|bindings| bindings.factories.is_empty()));
         }
         for provider in ["module Assertions; end", "module Outer::Assertions; end"] {
             std::fs::write(&files[1].path, provider).unwrap();
             assert!(collect(std::slice::from_ref(&valid), 2000)
                 .get(&files[0].path, source)
-                .unwrap()
-                .factories
-                .is_empty());
+                .is_none_or(|bindings| bindings.factories.is_empty()));
         }
     }
 
@@ -662,7 +1116,7 @@ mod tests {
             ("module Assertions; end", false),
             (
                 "module Assertions; def self.expect(actual); actual; end; end\nAlias = Assertions",
-                false,
+                true,
             ),
         ] {
             let source = "require_relative 'assertions'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }; Given('ordinary one') { work() }; Then('ordinary two') { work() }; Given('block one') { Assertions.expect(page) { first() }.to_be(true) }; Then('block two') { Assertions.expect(page) { second() }.to_be(true) }; Given('dispatch one') { Assertions.expect(page).to_be(true) }; Then('dispatch two') { Assertions&.expect(page).to_be(true) }";

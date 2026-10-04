@@ -83,7 +83,7 @@ impl StepDefinition {
     // this derived preserves exhaustive public structs and legacy serialized definitions.
     pub(crate) fn analysis_profile(&self) -> AnalysisProfile {
         match self.framework {
-            Framework::CucumberRuby => crate::ruby::semantics::profile(),
+            Framework::CucumberRuby => crate::ruby::semantics::profile(self),
             framework => crate::typescript::semantics::profile(framework),
         }
     }

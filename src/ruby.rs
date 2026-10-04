@@ -34,12 +34,21 @@ pub(crate) struct RubySession {
     assertion_modules: Vec<String>,
 }
 impl AdapterSessionState for RubySession {
-    fn initialize(_: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
+    fn initialize(root: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
+        let mut configured = assertion_modules.to_vec();
+        if let Some(root) = root {
+            for module in assertion_modules {
+                let path = root.join(module);
+                if let Ok(path) = path.with_extension("rb").canonicalize() {
+                    configured.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
         Self {
             effects: Default::default(),
             providers: Default::default(),
             assertions: Default::default(),
-            assertion_modules: assertion_modules.to_vec(),
+            assertion_modules: configured,
         }
     }
 }
@@ -375,7 +384,11 @@ fn extract_with_proof(
             .and_then(|p| p.handlers.get(&node.start_byte()))
             .cloned()
             .unwrap_or_else(|| handler::fingerprint(block, root, source, assertions));
-        if !handler.comparable {
+        if !handler.comparable
+            && !proof.is_some_and(|proof| proof.comparison_rejections.contains(&node.start_byte()))
+            && !assertions
+                .is_some_and(|assertions| assertions.rejected_comparison(block, root, source))
+        {
             result.diagnostics.push(diagnostic(
                 file,
                 block,
