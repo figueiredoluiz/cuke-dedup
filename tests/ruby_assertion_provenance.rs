@@ -351,6 +351,51 @@ fn rejected_factory_comparison_does_not_hide_unsupported_handler_syntax() {
     assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
     assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], true);
     assert!(!handler_findings(&rows));
+    for (effect, incomplete) in [
+        ("", false),
+        ("work(self)", true),
+        ("work(@field)", true),
+        ("work(@@field)", true),
+        ("work($field)", true),
+    ] {
+        let root = configured_project();
+        fs::write(root.path().join("steps.rb"), format!(
+            "require_relative 'provider'\ndef primary(state)\n SyntheticAssertions.expect(state, extra).to_be_visible\n {effect}\nend\ndef secondary(state)\n SyntheticAssertions.expect(state, extra).to_be_visible\n {effect}\nend\nThen('the parcel status is verified', &method(:primary))\nThen('the parcel status is now verified', &method(:secondary))"
+        )).unwrap();
+        let rows = analyze(root.path(), "steps.rb");
+        assert_eq!(
+            rows.last().unwrap()["summary"]["definitionsAnalyzed"],
+            2,
+            "{effect}"
+        );
+        assert_eq!(
+            rows.last().unwrap()["corpus"]["incomplete"],
+            incomplete,
+            "{effect}"
+        );
+        assert!(!handler_findings(&rows), "{effect}");
+    }
+    for body in [
+        "@check.call(state).to_be_visible(extra)",
+        "@check.call(state).to_be_visible",
+    ] {
+        let root = configured_project();
+        fs::write(root.path().join("steps.rb"), format!(
+            "require_relative 'provider'\nclass BoundChecks\n def initialize(check); @check = check; end\n def primary(state); {body}; end\n def secondary(state); {body}; end\nend\ncheck = SyntheticAssertions.api.fetch(:expect)\nfirst = BoundChecks.new(check)\nThen('the parcel status is verified', &first.method(:primary))\nThen('the parcel status is now verified', &first.method(:secondary))"
+        )).unwrap();
+        let rows = analyze(root.path(), "steps.rb");
+        assert_eq!(
+            rows.last().unwrap()["summary"]["definitionsAnalyzed"],
+            2,
+            "{body}"
+        );
+        assert_eq!(
+            rows.last().unwrap()["corpus"]["incomplete"],
+            false,
+            "{body}"
+        );
+        assert_eq!(handler_findings(&rows), !body.contains("extra"), "{body}");
+    }
 }
 
 /// Runs Ruby analysis and parses its JSONL findings and final summary.

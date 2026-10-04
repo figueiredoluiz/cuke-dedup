@@ -5064,7 +5064,7 @@
       ]
     },
     "tests/ruby_assertion_provenance.rs": {
-      "sourceSha256": "e77b1d3eaf5c3f4a34695a911a55e8b97a03d85bb52d480a7f5572d89e2ab474",
+      "sourceSha256": "725502870aa102b25bae96c5990b92da6c4fe7b3e6316ea14f059098675004ab",
       "tests": [
         {
           "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
