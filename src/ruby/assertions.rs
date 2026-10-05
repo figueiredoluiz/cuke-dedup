@@ -553,6 +553,7 @@ impl AssertionBindings {
     }
 
     /// Collects ordered assertions and complete ordinary effects; uncertainty withdraws comparison.
+    /// A declared callable runs only where a proven invocation expands it, one level deep.
     pub fn events(
         &self,
         block: Node<'_>,
@@ -563,9 +564,57 @@ impl AssertionBindings {
             return vec![BehaviorEvent::Call(format!("ruby:ordinary:{shape}"))];
         }
         let mut events = Vec::new();
-        let mut pending = vec![(block, false, false)];
-        while let Some((node, deferred, covered)) = pending.pop() {
+        let declared: BTreeMap<_, _> = descendants(block)
+            .into_iter()
+            .filter(|node| bindings.elided.contains(&node.id()))
+            .map(|node| (node.id(), node))
+            .collect();
+        let mut pending = vec![(block, false, false, false)];
+        while let Some((node, deferred, covered, expanded)) = pending.pop() {
             if block.kind() == "method" && block.child_by_field_name("name") == Some(node) {
+                continue;
+            }
+            // A declared callable body is behaviour only where its invocation is proven.
+            if declared.contains_key(&node.id()) {
+                continue;
+            }
+            if let Some(body) = bindings
+                .expansions
+                .get(&node.id())
+                .filter(|_| !expanded)
+                .and_then(|callable| declared.get(callable).copied())
+                .and_then(super::bindings::callable_body)
+            {
+                // The declaration executes here; record its body, not a wrapper-call event.
+                // One level only: an invocation inside the expanded body is an ordinary call.
+                let mut cursor = body.walk();
+                let statements: Vec<_> = body.named_children(&mut cursor).collect();
+                pending.extend(
+                    statements
+                        .into_iter()
+                        .rev()
+                        .map(|statement| (statement, deferred, false, true)),
+                );
+                continue;
+            }
+            if bindings.unresolved_invocations.contains(&node.id()) {
+                // Arguments are not substituted, so the declared body's values are unproven.
+                events.push(BehaviorEvent::unresolved_assertion(deferred));
+                // A parameterized invocation always carries arguments; they execute now.
+                let values: Vec<_> = node
+                    .child_by_field_name("arguments")
+                    .into_iter()
+                    .flat_map(|arguments| {
+                        let mut cursor = arguments.walk();
+                        arguments.named_children(&mut cursor).collect::<Vec<_>>()
+                    })
+                    .collect();
+                pending.extend(
+                    values
+                        .into_iter()
+                        .rev()
+                        .map(|value| (value, deferred, false, expanded)),
+                );
                 continue;
             }
             let deferred = deferred
@@ -649,7 +698,7 @@ impl AssertionBindings {
                 children
                     .into_iter()
                     .rev()
-                    .map(|child| (child, deferred, covered || operation)),
+                    .map(|child| (child, deferred, covered || operation, expanded)),
             );
         }
         // Ordinary effects cannot outvote a contradictory or unresolved assertion.
@@ -677,7 +726,8 @@ impl AssertionBindings {
         events
     }
 
-    /// Builds value-sensitive assertion evidence from a trusted factory and literal terminal.
+    /// Builds value-sensitive assertion evidence from a trusted factory and a literal, resolved
+    /// local or resolved constant terminal.
     fn assertion(
         &self,
         node: Node<'_>,
@@ -786,7 +836,8 @@ impl AssertionBindings {
             }
             descendants(*args).iter().any(|value| {
                 !value.is_extra()
-                    && !(value.kind() == "identifier" && bindings.names.contains_key(&value.id()))
+                    && !(matches!(value.kind(), "identifier" | "constant")
+                        && bindings.names.contains_key(&value.id()))
                     && !matches!(
                         value.kind(),
                         "argument_list"
@@ -905,9 +956,9 @@ fn expected_access(node: Node<'_>, source: &str, bindings: &super::bindings::Bin
             .is_some_and(|receiver| expected_access(receiver, source, bindings))
 }
 
-/// Serializes binding-aware syntax tokens for assertion identity.
+/// Serializes binding-aware tokens for assertion identity; declared callable bodies are placeholders.
 fn serialize_tokens(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> String {
-    serde_json::to_string(&super::handler::syntax_tokens(node, source, bindings).1)
+    serde_json::to_string(&super::handler::event_tokens(node, source, bindings))
         .expect("assertion tokens serialize")
 }
 

@@ -5425,3 +5425,112 @@ fn regression_ruby_release_inline_suppression_matches_typescript() {
         }
     }
 }
+
+const RUBY_HANDLER_VALUES_PROVIDER: &str = include_str!(
+    "../fixtures/ruby-parity/equivalent-handlers/precision-inline-local/providers/assertions.rb"
+);
+
+/// Runs Ruby files beside a configured synthetic assertion provider.
+fn ruby_handler_values_run(files: &[(&str, &str)]) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "provider.rb",
+        RUBY_HANDLER_VALUES_PROVIDER,
+    );
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#,
+    );
+    for (name, body) in files {
+        write(
+            directory.path(),
+            name,
+            &format!("require_relative 'provider'\n{body}\n"),
+        );
+    }
+    ruby_release_run(directory.path(), Some("*.rb"))
+}
+
+/// A block-local write beside a file-level capture must not make the sibling reader incomplete.
+#[test]
+fn regression_ruby_handler_values_block_local_write_keeps_capture_complete() {
+    // A `|; name|` block-local shadows the file-level capture; writing it inside the handler
+    // used to count as a capture write and made the sibling handler incomplete.
+    let pair = "Given('the omega brake holds a local stop') { |; shared| shared = 2; SyntheticAssertions.expect(brake()).to_be(shared) }\nGiven('the omega brake holds a module stop') { SyntheticAssertions.expect(brake()).to_be(shared) }";
+    let run = ruby_handler_values_run(&[("steps.rb", &format!("shared = 1\n{pair}"))]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, Vec::<String>::new());
+    // Without the block-local the write reaches the capture and both readers are uncertain.
+    let plain = pair.replace("|; shared| ", "");
+    let run = ruby_handler_values_run(&[("steps.rb", &format!("shared = 1\n{plain}"))]);
+    assert!(run.incomplete);
+    for location in ["steps.rb:3:45", "steps.rb:4:46"] {
+        assert!(run.stderr.contains(location), "{location}: {}", run.stderr);
+    }
+}
+
+/// Equal top-level constants collapse handlers; conflicting ones, declared after the handlers, keep them apart.
+#[test]
+fn regression_ruby_handler_values_top_level_constants_reach_the_fingerprint() {
+    let steps = "ALPHA_LIMIT = 1\nALPHA_BOUND = 1\nGiven('the alpha meter reaches its limit') { SyntheticAssertions.expect(meter()).to_be(ALPHA_LIMIT) }\nGiven('the alpha meter reaches its bound') { SyntheticAssertions.expect(meter()).to_be(ALPHA_BOUND) }\nGiven('the beta dial holds its first stop') { SyntheticAssertions.expect(dial()).to_be(BETA_FIRST) }\nGiven('the beta dial holds its second stop') { SyntheticAssertions.expect(dial()).to_be(BETA_SECOND) }\nBETA_FIRST = 1\nBETA_SECOND = 2";
+    let run = ruby_handler_values_run(&[("steps.rb", steps)]);
+    assert_eq!(run.definitions, 4);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["duplicate-handler", "near-duplicate-step"]);
+    let run = ruby_handler_values_run(&[(
+        "steps.rb",
+        &steps.replace("ALPHA_BOUND = 1", "ALPHA_BOUND = 2"),
+    )]);
+    assert_eq!(run.active, Vec::<String>::new());
+    assert!(!run.incomplete);
+}
+
+/// Called identical lambdas duplicate, called conflicting ones stay apart, uncalled ones only parameterize.
+#[test]
+fn regression_ruby_handler_values_declared_lambda_runs_only_where_invoked() {
+    let handler = |matcher: &str, subject: &str, value: u8, invocation: &str| {
+        format!("Given('{matcher}') do\n  check = -> {{ SyntheticAssertions.expect({subject}()).to_be({value}) }}\n  {invocation}\nend")
+    };
+    let steps = [
+        handler("the alpha meter settles evenly", "meter", 1, "check.call"),
+        handler("the alpha meter settles smoothly", "meter", 1, "check.call"),
+        handler("the beta dial resolves upward", "dial", 1, "check.call"),
+        handler("the beta dial resolves downward", "dial", 2, "check.call"),
+        handler("the crane idles at a first angle", "crane", 1, ""),
+        handler("the crane idles at a second angle", "crane", 2, ""),
+    ]
+    .join("\n");
+    let run = ruby_handler_values_run(&[("steps.rb", &steps)]);
+    assert_eq!(run.definitions, 6);
+    assert!(!run.incomplete, "{}", run.stderr);
+    let mut active = run.active.clone();
+    active.sort();
+    assert_eq!(
+        active,
+        vec![
+            "duplicate-handler",
+            "near-duplicate-step",
+            "parameterization-candidate"
+        ]
+    );
+}
+
+/// Resolved provider aliases compare across files; a same-named runtime lambda stays complete and untrusted.
+#[test]
+fn regression_ruby_handler_values_resolved_alias_captures_compare_across_files() {
+    let direct = "expect = SyntheticAssertions.method(:expect)\nThen('the parcel is ready') { |state| expect.call(state).to_be('ready') }";
+    let hash = "expect = SyntheticAssertions.api.fetch(:expect)\nThen('shipment readiness has been confirmed') { |state| expect.call(state).to_be('ready') }";
+    let run = ruby_handler_values_run(&[("direct.rb", direct), ("hash.rb", hash)]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["duplicate-handler"]);
+    // A same-named runtime lambda is a complete, untrusted file-local value.
+    let runtime = "expect = ->(value) { value }\nThen('the parcel status is now verified') { |state| expect.call(state).to_be('ready') }";
+    let run = ruby_handler_values_run(&[("direct.rb", direct), ("runtime.rb", runtime)]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, Vec::<String>::new());
+}

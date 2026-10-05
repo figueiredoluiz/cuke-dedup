@@ -2,6 +2,7 @@
 use super::{descendants, text};
 use crate::model::{BehaviorEvent, HandlerFingerprint, HandlerSemantics};
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use tree_sitter::Node;
 
 /// Builds handler identity from bound syntax, captures, and assertion effects.
@@ -41,14 +42,26 @@ pub(super) fn fingerprint(
                     ))
         });
     let (tokens, alpha) = syntax_tokens(block, source, &bindings);
-    let structural = parameterized_calls(block, source, &bindings).or_else(|| {
-        assertions.and_then(|assertions| assertions.ordinary_structural(block, source, &bindings))
-    });
     let captures = &bindings.captures;
-    let mut behavior_signature = if captures.is_empty() {
-        vec![]
+    let exact = if captures.is_empty() {
+        serde_json::to_string(&tokens)
     } else {
+        serde_json::to_string(&(tokens, captures))
+    }
+    .expect("string tokens serialize");
+    // Literal abstraction needs the complete operation stream that configured assertion
+    // evidence computes; ordinary handlers without it keep exact identity.
+    let structural = parameterized_calls(block, source, &bindings)
+        .or_else(|| {
+            assertions
+                .and_then(|assertions| assertions.ordinary_structural(block, source, &bindings))
+        })
+        .or_else(|| assertions.map(|_| structural_tokens(&alpha, captures)))
+        .unwrap_or_else(|| exact.clone());
+    let mut behavior_signature = if bindings.lexical {
         vec![BehaviorEvent::Method("ruby:lexical-file".to_owned())]
+    } else {
+        vec![]
     };
     if let Some(assertions) = assertions {
         let events = assertions.events(block, source, &bindings);
@@ -60,23 +73,17 @@ pub(super) fn fingerprint(
             behavior_signature.push(BehaviorEvent::Method("ruby:complete-events".to_owned()));
         }
     }
-    let alpha_normalized =
-        serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
-    let exact = if captures.is_empty() {
-        serde_json::to_string(&tokens)
-    } else {
-        serde_json::to_string(&(tokens, captures))
-    }
-    .expect("string tokens serialize");
     let trivial = bindings.calls.is_empty()
         && !nodes
             .iter()
             .any(|node| matches!(node.kind(), "call" | "assignment" | "operator_assignment"));
+    let alpha_normalized =
+        serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
     HandlerSemantics {
         exact: exact.clone(),
         normalized: exact.clone(),
         alpha: alpha_normalized,
-        structural: structural.unwrap_or(exact),
+        structural,
         events: behavior_signature,
         source_snippet: text(block, source).chars().take(2000).collect(),
         comparable,
@@ -141,18 +148,59 @@ pub(super) fn parameterized_calls(
     })
 }
 
+/// Abstracts literal values out of alpha tokens; behaviour events keep the values.
+fn structural_tokens(alpha: &SyntaxTokens<'_, '_>, captures: &BTreeSet<String>) -> String {
+    let abstracted: Vec<(&str, &str)> = alpha
+        .iter()
+        .map(|(kind, value)| match *kind {
+            "integer" | "float" | "string_content" | "escape_sequence" => (*kind, "<literal>"),
+            _ => value
+                .strip_prefix("const:")
+                .and_then(|rest| rest.split_once(':'))
+                .map_or((*kind, value.as_ref()), |(kind, _)| ("constant", kind)),
+        })
+        .collect();
+    serde_json::to_string(&("ruby:structural", abstracted, captures))
+        .expect("structural tokens serialize")
+}
+
 // Preserve topology as well as leaves; Ruby whitespace can alter call nesting.
 type SyntaxTokens<'tree, 'source> = Vec<(&'tree str, Cow<'source, str>)>;
+/// Exact and alpha-renamed token streams of a subtree, with declared callable bodies kept.
 pub(super) fn syntax_tokens<'tree, 'source>(
     root: Node<'tree>,
     source: &'source str,
     bindings: &super::bindings::Bindings,
+) -> (SyntaxTokens<'tree, 'source>, SyntaxTokens<'tree, 'source>) {
+    tokens_with_elision(root, source, bindings, false)
+}
+
+/// Alpha tokens for behaviour events: declared callable bodies are syntax, not behaviour.
+pub(super) fn event_tokens<'tree, 'source>(
+    root: Node<'tree>,
+    source: &'source str,
+    bindings: &super::bindings::Bindings,
+) -> SyntaxTokens<'tree, 'source> {
+    tokens_with_elision(root, source, bindings, true).1
+}
+
+/// Token streams of a subtree; with `elide`, declared callable bodies collapse to one placeholder leaf.
+fn tokens_with_elision<'tree, 'source>(
+    root: Node<'tree>,
+    source: &'source str,
+    bindings: &super::bindings::Bindings,
+    elide: bool,
 ) -> (SyntaxTokens<'tree, 'source>, SyntaxTokens<'tree, 'source>) {
     // Preserve tree structure: Ruby whitespace can change call nesting without changing leaves.
     let mut tokens = Vec::new();
     let mut alpha = Vec::new();
     let mut pending = vec![(root, false)];
     while let Some((node, closing)) = pending.pop() {
+        if elide && node != root && bindings.elided.contains(&node.id()) {
+            tokens.push((node.kind(), Cow::Borrowed("<declared>")));
+            alpha.push((node.kind(), Cow::Borrowed("<declared>")));
+            continue;
+        }
         if root.kind() == "method"
             && node.parent() == Some(root)
             && (root.child_by_field_name("name") == Some(node)

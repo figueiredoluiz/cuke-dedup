@@ -3893,7 +3893,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "8c45021263c50c90f75b25878193f8985e4c87f61dab962f9c7a33811dc278ec",
+      "sourceSha256": "1c51e3919c4146355e8568e68592815b289f6e348ba91e42c7761e80da7012bb",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4741,6 +4741,34 @@
           "fixtureGroup": null,
           "behaviorClass": "ruby-behavior",
           "rationale": "End-to-end release regression `regression_ruby_release_inline_suppression_matches_typescript` runs Ruby sources through the built binary, with paired TypeScript controls where the contract is shared. It is executable Ruby evidence in its own right and has no parity-corpus group yet."
+        },
+        {
+          "name": "regression_ruby_handler_values_block_local_write_keeps_capture_complete",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_handler_values_block_local_write_keeps_capture_complete` asserts handler-value provenance outcomes that the `equivalent-handlers-module-constant-values-reach-the-fingerprint` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_handler_values_top_level_constants_reach_the_fingerprint",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_handler_values_top_level_constants_reach_the_fingerprint` asserts handler-value provenance outcomes that the `equivalent-handlers-module-constant-values-reach-the-fingerprint` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_handler_values_declared_lambda_runs_only_where_invoked",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_handler_values_declared_lambda_runs_only_where_invoked` asserts handler-value provenance outcomes that the `equivalent-provider-local-callables` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_handler_values_resolved_alias_captures_compare_across_files",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_handler_values_resolved_alias_captures_compare_across_files` asserts handler-value provenance outcomes that the `equivalent-handlers-precision-mixed-positive` corpus group also exercises end to end; classification against the census is pending."
         }
       ]
     },
@@ -5064,7 +5092,7 @@
       ]
     },
     "tests/ruby_assertion_provenance.rs": {
-      "sourceSha256": "725502870aa102b25bae96c5990b92da6c4fe7b3e6316ea14f059098675004ab",
+      "sourceSha256": "643537cd6a68ca7f48ebe5dbbfd0c86aa44e290b17f30869220b6c509e18d9e4",
       "tests": [
         {
           "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
@@ -5212,6 +5240,41 @@
           "fixtureGroup": null,
           "behaviorClass": "language-specific-api",
           "rationale": "Ruby-only final-output matrix for assertion origins and conservative syntax/provenance handling; ordinary positive controls prevent blanket comparison suppression."
+        },
+        {
+          "name": "declared_local_callables_execute_only_at_proven_invocations",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `declared_local_callables_execute_only_at_proven_invocations` asserts handler-value provenance outcomes that the `equivalent-provider-local-callables` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "top_level_constants_resolve_to_immutable_literal_values",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `top_level_constants_resolve_to_immutable_literal_values` asserts handler-value provenance outcomes that the `equivalent-handlers-module-constant-values-reach-the-fingerprint` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "enclosing_scope_bindings_shadow_file_locals_with_scope_identity",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `enclosing_scope_bindings_shadow_file_locals_with_scope_identity` asserts handler-value provenance outcomes that the `equivalent-handlers-module-constant-values-reach-the-fingerprint` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "lambda_captures_and_resolved_aliases_keep_file_identity_rules",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `lambda_captures_and_resolved_aliases_keep_file_identity_rules` asserts handler-value provenance outcomes that the `equivalent-handlers-precision-mixed-positive` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "unbinding_syntax_before_handlers_keeps_comparison",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `unbinding_syntax_before_handlers_keeps_comparison` pins review-derived binding rules (unbinding syntax before handlers); classification against the census is pending."
         }
       ]
     }
