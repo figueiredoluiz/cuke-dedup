@@ -299,7 +299,11 @@ fn extract_with_proof(
         let name = alias
             .or_else(|| wrappers.registration(node))
             .unwrap_or(name);
-        if matches!(name, "require" | "require_relative" | "load" | "autoload") {
+        // A loader call without operands loads nothing (Ruby raises ArgumentError), so it can
+        // neither resolve nor leave a dependency unresolved.
+        if matches!(name, "require" | "require_relative" | "load" | "autoload")
+            && has_operands(node)
+        {
             result.diagnostics.push(diagnostic(
                 file,
                 node,
@@ -442,6 +446,17 @@ fn extract_with_proof(
         .diagnostics
         .sort_by_key(|item| (item.location.line, item.location.column));
     Ok((result, effects))
+}
+
+/// Whether a call passes any argument, ignoring comments inside the parentheses.
+fn has_operands(call: Node<'_>) -> bool {
+    call.child_by_field_name("arguments")
+        .is_some_and(|arguments| {
+            // A block argument passes no operand either: `load(&blk)` still raises.
+            bindings::semantic_children(arguments)
+                .iter()
+                .any(|argument| argument.kind() != "block_argument")
+        })
 }
 
 fn is_self_receiver(mut node: Node<'_>) -> bool {

@@ -219,6 +219,13 @@ pub(super) fn analyze_definition_pairs(
         let near_requires_same_handler = left.analysis_profile().near_requires_same_handler
             || right.analysis_profile().near_requires_same_handler;
         let near_handler = (!near_requires_same_handler || same_handler)
+            && !value_only_difference(
+                left,
+                right,
+                same_handler,
+                &behavior_events[left_index],
+                &behavior_events[right_index],
+            )
             && candidate.sources.can_feed_near_matcher()
             && !(positional && same_handler)
             && relationships.same_deferred_assertions
@@ -1103,6 +1110,20 @@ fn encode_matcher_characters(characters: &[char]) -> u64 {
         })
 }
 
+/// Identical event streams behind different handlers differ only in values the events omit.
+fn value_only_difference(
+    left: &StepDefinition,
+    right: &StepDefinition,
+    same_handler: bool,
+    left_events: &[usize],
+    right_events: &[usize],
+) -> bool {
+    (left.analysis_profile().near_requires_distinct_events
+        || right.analysis_profile().near_requires_distinct_events)
+        && !same_handler
+        && left_events == right_events
+}
+
 fn meaningful_handler(definition: &StepDefinition) -> bool {
     definition.handler.comparable && !definition.handler.trivial
 }
@@ -1168,6 +1189,7 @@ fn sorted_events_overlap(left: &[usize], right: &[usize]) -> bool {
     false
 }
 
+/// Proposes one matcher-blocking pair after the cheap rejections, charging proposal and event work.
 #[allow(clippy::too_many_arguments)]
 fn consider_matcher_blocking_pair(
     definitions: &[StepDefinition],
@@ -1201,8 +1223,17 @@ fn consider_matcher_blocking_pair(
     }
     // A shared wrapper call cannot outweigh differing deferred assertions. Interned sequences
     // preserve values, polarity and order, and reject these pairs before charging event work.
+    // An identical stream with a different handler can never become a near finding either, so
+    // it must not take a candidate slot from a pair that can.
     if !relationships.same_deferred_assertions
         || !handler_runtime_compatible(&definitions[left], &definitions[right])
+        || value_only_difference(
+            &definitions[left],
+            &definitions[right],
+            relationships.same_handler,
+            &behavior_events[left],
+            &behavior_events[right],
+        )
     {
         return true;
     }

@@ -20,6 +20,7 @@ impl RegexDialect for JavaScriptRegex {
     }
 }
 
+/// Comparison policy of a JavaScript or TypeScript framework.
 pub(crate) fn profile(framework: Framework) -> AnalysisProfile {
     AnalysisProfile {
         comparison_domain: ComparisonDomain::EcmaScript,
@@ -31,6 +32,7 @@ pub(crate) fn profile(framework: Framework) -> AnalysisProfile {
         global_matchers: framework != Framework::JestCucumber,
         near_requires_same_handler: false,
         event_similarity: true,
+        near_requires_distinct_events: false,
         indirect_usage: false,
         dialect: &REGEX,
         capture_context: |_| CaptureContext::Unrestricted,

@@ -112,8 +112,8 @@ Cucumber-Ruby support is experimental; its details are in
 | `duplicate-matcher` | Supported. | Supported for static strings and `/.../` or `%r{...}` regex literals. |
 | `normalized-matcher`, `ambiguous-step`, `overlapping-matcher` | Supported. | Supported for Cucumber Expressions and the translated Ruby regex subset. Other regexes are indeterminate: the run is incomplete and they produce no overlap or unused findings. |
 | `duplicate-handler` | Supported, with assertion evidence from recognized assertion packages. | Exact supported handler structure. Assertion evidence comes only from an explicitly configured provider; RSpec, Minitest and Capybara assertions are compared as ordinary calls. Unresolved captures, constants or receiver identity make the handler non-comparable and the run incomplete. |
-| `near-duplicate-step` | Wording similarity plus handler-behavior overlap. | Wording similarity only between exactly equal supported handlers. |
-| `parameterization-candidate` | Handler structures that differ in literal values. | Straight-line handlers of explicit simple-receiver calls with static string or numeric arguments. |
+| `near-duplicate-step` | Wording similarity plus handler-behavior overlap. | Wording similarity plus handler-behavior overlap: action streams for ordinary handlers whose every construct is modeled, configured assertion streams otherwise. Handlers with an unmodeled construct or an untrusted receiverless `expect` chain must be exactly equal. |
+| `parameterization-candidate` | Handler structures that differ in literal values. | Straight-line handlers of explicit simple-receiver calls with static string or numeric arguments; with a configured assertion provider, any supported handler abstracts its literal values. |
 | `unused-definition` | Feature-file usage. | Feature-file usage and literal `step` calls; dynamic `step`/`steps` calls disable the rule. |
 | Inline suppressions | `// cuke-dedup:ignore RULE -- REASON` | `# cuke-dedup:ignore RULE -- REASON` |
 

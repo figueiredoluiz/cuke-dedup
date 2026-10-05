@@ -564,11 +564,7 @@ impl AssertionBindings {
             return vec![BehaviorEvent::Call(format!("ruby:ordinary:{shape}"))];
         }
         let mut events = Vec::new();
-        let declared: BTreeMap<_, _> = descendants(block)
-            .into_iter()
-            .filter(|node| bindings.elided.contains(&node.id()))
-            .map(|node| (node.id(), node))
-            .collect();
+        let declared = super::bindings::declared_callables(block, bindings);
         let mut pending = vec![(block, false, false, false)];
         while let Some((node, deferred, covered, expanded)) = pending.pop() {
             if block.kind() == "method" && block.child_by_field_name("name") == Some(node) {
@@ -578,17 +574,11 @@ impl AssertionBindings {
             if declared.contains_key(&node.id()) {
                 continue;
             }
-            if let Some(body) = bindings
-                .expansions
-                .get(&node.id())
-                .filter(|_| !expanded)
-                .and_then(|callable| declared.get(callable).copied())
-                .and_then(super::bindings::callable_body)
+            if let Some(statements) =
+                super::bindings::expansion_statements(bindings, &declared, node, expanded)
             {
                 // The declaration executes here; record its body, not a wrapper-call event.
                 // One level only: an invocation inside the expanded body is an ordinary call.
-                let mut cursor = body.walk();
-                let statements: Vec<_> = body.named_children(&mut cursor).collect();
                 pending.extend(
                     statements
                         .into_iter()
@@ -601,14 +591,10 @@ impl AssertionBindings {
                 // Arguments are not substituted, so the declared body's values are unproven.
                 events.push(BehaviorEvent::unresolved_assertion(deferred));
                 // A parameterized invocation always carries arguments; they execute now.
-                let values: Vec<_> = node
+                let values = node
                     .child_by_field_name("arguments")
-                    .into_iter()
-                    .flat_map(|arguments| {
-                        let mut cursor = arguments.walk();
-                        arguments.named_children(&mut cursor).collect::<Vec<_>>()
-                    })
-                    .collect();
+                    .map(super::bindings::named_children)
+                    .unwrap_or_default();
                 pending.extend(
                     values
                         .into_iter()
@@ -692,10 +678,8 @@ impl AssertionBindings {
                     text(node, source)
                 )));
             }
-            let mut cursor = node.walk();
-            let children: Vec<_> = node.named_children(&mut cursor).collect();
             pending.extend(
-                children
+                super::bindings::named_children(node)
                     .into_iter()
                     .rev()
                     .map(|child| (child, deferred, covered || operation, expanded)),
@@ -1005,10 +989,7 @@ fn expected_value<'a>(
 
 /// Counts effective arguments while excluding comments and dispatch selectors.
 fn semantic_arity(node: Node<'_>) -> usize {
-    let mut cursor = node.walk();
-    node.named_children(&mut cursor)
-        .filter(|child| !child.is_extra())
-        .count()
+    super::bindings::semantic_children(node).len()
 }
 
 #[cfg(test)]

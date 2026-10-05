@@ -851,7 +851,7 @@
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
-      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required."
+      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one, skip the overlap pass and report the truncation diagnostics; the corpus itself stays complete."
     },
     "equivalent-handlers-review-gap-candidate-small-budget": {
       "sourceCase": "review-gap-candidate-small-budget",
@@ -865,7 +865,7 @@
       "definitions": 4,
       "featureSteps": 0,
       "complete": true,
-      "expectedExit": 0,
+      "expectedExit": 2,
       "requiredFindings": [
         {
           "rule": "near-duplicate-step",
@@ -908,7 +908,7 @@
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
-      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required."
+      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one, skip the overlap pass and report the truncation diagnostics; the corpus itself stays complete."
     },
     "equivalent-handlers-review-gap-lexical-tdz": {
       "sourceCase": "review-gap-lexical-tdz",

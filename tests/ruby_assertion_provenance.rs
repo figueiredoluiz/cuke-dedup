@@ -2,6 +2,8 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 
+mod common;
+
 const PROVIDER: &str = include_str!(
     "../fixtures/ruby-parity/equivalent-handlers/precision-inline-local/providers/assertions.rb"
 );
@@ -862,9 +864,14 @@ fn ordinary_calls_beside_assertion_origins_retain_parameterization() {
 }
 
 /// Checks exact, dotted, missing, and non-Ruby-suffix configuration paths.
+///
+/// Equal deferred values are near under both regimes (trusted deferred assertions match,
+/// untrusted callback bodies overlap). Conflicting values discriminate: a trusted provider keeps
+/// them in its deferred assertions and reports nothing; an untrusted one drops arguments and
+/// still reports the near finding.
 #[test]
 fn configured_ruby_provider_paths_preserve_literal_specifiers() {
-    for (configured, file, load, expected) in [
+    for (configured, file, load, trusted) in [
         ("./provider", "provider.rb", "provider", true),
         ("./provider.rb", "provider.rb", "provider", true),
         ("./fixtures.ts", "fixtures.rb", "fixtures", false),
@@ -883,10 +890,21 @@ fn configured_ruby_provider_paths_preserve_literal_specifiers() {
             fs::rename(root.path().join("provider.rb"), root.path().join(file)).unwrap();
         }
         fs::write(root.path().join(".cuke-dedup.json"), serde_json::json!({"assertionModules":[configured], "threshold":100, "nearDuplicateHandlerSimilarity":0.5, "rules":{"unused-definition":"off"}}).to_string()).unwrap();
-        fs::write(root.path().join("steps.rb"), format!("require_relative '{load}'\ncheck = SyntheticAssertions.method(:expect)\nThen('the parcel status is verified') {{ |state| register(-> {{ check.call(state).to_be('ready') }}) }}\nThen('the parcel status is now verified') {{ |state| other_wrapper([proc {{ check.call(state).to_be('ready') }}]) }}\n")).unwrap();
-        let rows = analyze(root.path(), "steps.rb");
-        assert_eq!(handler_findings(&rows), expected, "{configured} / {file}");
-        assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
+        for (second_value, findings) in [("'ready'", true), ("'idle'", !trusted)] {
+            fs::write(root.path().join("steps.rb"), format!("require_relative '{load}'\ncheck = SyntheticAssertions.method(:expect)\nThen('the parcel status is verified') {{ |state| register(-> {{ check.call(state).to_be('ready') }}) }}\nThen('the parcel status is now verified') {{ |state| other_wrapper([proc {{ check.call(state).to_be({second_value}) }}]) }}\n")).unwrap();
+            let rows = analyze(root.path(), "steps.rb");
+            assert_eq!(
+                handler_findings(&rows),
+                findings,
+                "{configured} / {file} / {second_value}"
+            );
+            assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
+            assert_eq!(
+                rows.last().unwrap()["corpus"]["incomplete"],
+                false,
+                "{configured} / {file}"
+            );
+        }
     }
 }
 
@@ -981,20 +999,7 @@ fn handler_rules(files: &[(&str, &str)]) -> (Vec<String>, bool) {
     }
     let rows = analyze(root.path(), "*.rb");
     let summary = rows.last().unwrap();
-    let mut rules: Vec<String> = rows
-        .iter()
-        .filter(|row| row["type"] == "finding" && row["active"] == true)
-        .filter_map(|row| row["rule"].as_str())
-        .filter(|rule| {
-            matches!(
-                *rule,
-                "duplicate-handler" | "near-duplicate-step" | "parameterization-candidate"
-            )
-        })
-        .map(str::to_owned)
-        .collect();
-    rules.sort();
-    rules.dedup();
+    let rules = common::active_handler_rules(&rows);
     (rules, summary["corpus"]["incomplete"].as_bool().unwrap())
 }
 
@@ -1501,4 +1506,76 @@ fn unbinding_syntax_before_handlers_keeps_comparison() {
             false
         )
     );
+}
+
+/// Configured assertion evidence keeps the complete-syntax stream; a mixed pair never compares.
+#[test]
+fn configured_assertion_streams_do_not_mix_with_action_streams() {
+    for (label, first, second, expected) in [
+        (
+            "configured polarity",
+            "SyntheticAssertions.expect(state).to_be(1)",
+            "SyntheticAssertions.expect(state).not.to_be(1)",
+            vec![],
+        ),
+        (
+            "configured values",
+            "SyntheticAssertions.expect(state).to_be(1)",
+            "SyntheticAssertions.expect(state).to_be(2)",
+            vec![],
+        ),
+        (
+            "assertion versus action",
+            "SyntheticAssertions.expect(state).to_be(1)",
+            "work(state)",
+            vec![],
+        ),
+        (
+            "action pair beside configured trust",
+            "page.goto('/login')",
+            "page.goto('/login'); page.wait_for_load_state()",
+            vec!["near-duplicate-step"],
+        ),
+        // A receiverless `expect` beside a configured factory is checked against the factory
+        // positions and, being an ordinary helper, keeps the exact policy.
+        (
+            "ordinary helper named expect beside a configured factory",
+            "SyntheticAssertions.expect(state).to_be(1)",
+            "expect(state).run()",
+            vec![],
+        ),
+        // The exact policy wins over configured evidence in the same handler: an untrusted
+        // polarity flip beside a trusted assertion is neither near nor a candidate, while the
+        // identical pair still duplicates.
+        (
+            "trusted assertion beside untrusted polarity",
+            "SyntheticAssertions.expect(state).to_be(1); expect(x).to eq(1)",
+            "SyntheticAssertions.expect(state).to_be(1); expect(x).not_to eq(1)",
+            vec![],
+        ),
+        (
+            "trusted assertion beside identical untrusted chain",
+            "SyntheticAssertions.expect(state).to_be(1); expect(x).to eq(1)",
+            "SyntheticAssertions.expect(state).to_be(1); expect(x).to eq(1)",
+            vec!["duplicate-handler", "near-duplicate-step"],
+        ),
+        // Shared action anchors do not bridge the two regimes.
+        (
+            "assertion versus action with shared anchors",
+            "page.goto('/x'); SyntheticAssertions.expect(state).to_be(1)",
+            "page.goto('/x'); page.wait()",
+            vec![],
+        ),
+        (
+            "two ordinary expect helpers beside trust",
+            "expect(state).run(); SyntheticAssertions.expect(state).to_be(1)",
+            "expect(state).run(); flush(); SyntheticAssertions.expect(state).to_be(1)",
+            vec![],
+        ),
+    ] {
+        let steps = format!("{LOAD}{}", step_pair(first, second));
+        let (rules, incomplete) = handler_rules(&[("steps.rb", &steps)]);
+        assert_eq!(rules, expected, "{label}");
+        assert!(!incomplete, "{label}");
+    }
 }

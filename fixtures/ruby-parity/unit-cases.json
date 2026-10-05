@@ -3893,7 +3893,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "1c51e3919c4146355e8568e68592815b289f6e348ba91e42c7761e80da7012bb",
+      "sourceSha256": "6aeab87a5ffd74db150f016133eabd213382d95d416080e9b05d94ed5dd2febf",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4769,6 +4769,34 @@
           "fixtureGroup": null,
           "behaviorClass": "ruby-behavior",
           "rationale": "Direct Ruby adapter test `regression_ruby_handler_values_resolved_alias_captures_compare_across_files` asserts handler-value provenance outcomes that the `equivalent-handlers-precision-mixed-positive` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_action_evidence_direct_and_fluent_actions_are_near",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_action_evidence_direct_and_fluent_actions_are_near` pins action-stream and candidate outcomes that the K5.3 corpus groups exercise end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_action_evidence_callbacks_and_bare_load_calls",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_action_evidence_callbacks_and_bare_load_calls` pins action-stream and candidate outcomes that the K5.3 corpus groups exercise end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_action_evidence_identical_streams_are_not_near",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_action_evidence_identical_streams_are_not_near` pins action-stream and candidate outcomes that the K5.3 corpus groups exercise end to end; classification against the census is pending."
+        },
+        {
+          "name": "regression_ruby_action_evidence_untrusted_expectations_keep_exact_policy",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `regression_ruby_action_evidence_untrusted_expectations_keep_exact_policy` pins action-stream and candidate outcomes that the K5.3 corpus groups exercise end to end; classification against the census is pending."
         }
       ]
     },
@@ -5092,7 +5120,7 @@
       ]
     },
     "tests/ruby_assertion_provenance.rs": {
-      "sourceSha256": "643537cd6a68ca7f48ebe5dbbfd0c86aa44e290b17f30869220b6c509e18d9e4",
+      "sourceSha256": "10c67676563dc59667ec755f039b72003d50a7440f1e7573fb89b319c337073f",
       "tests": [
         {
           "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
@@ -5275,6 +5303,13 @@
           "fixtureGroup": null,
           "behaviorClass": "ruby-behavior",
           "rationale": "Direct Ruby adapter test `unbinding_syntax_before_handlers_keeps_comparison` pins review-derived binding rules (unbinding syntax before handlers); classification against the census is pending."
+        },
+        {
+          "name": "configured_assertion_streams_do_not_mix_with_action_streams",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `configured_assertion_streams_do_not_mix_with_action_streams` pins action-stream and candidate outcomes that the K5.3 corpus groups exercise end to end; classification against the census is pending."
         }
       ]
     }
