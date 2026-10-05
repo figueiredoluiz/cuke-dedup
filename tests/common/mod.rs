@@ -1,5 +1,4 @@
 //! Helpers shared by the Ruby integration suites.
-#![allow(dead_code)]
 use serde_json::Value;
 
 /// Sorted, deduplicated handler-comparison rules among the active findings.

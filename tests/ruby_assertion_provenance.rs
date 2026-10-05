@@ -871,7 +871,7 @@ fn ordinary_calls_beside_assertion_origins_retain_parameterization() {
 /// still reports the near finding.
 #[test]
 fn configured_ruby_provider_paths_preserve_literal_specifiers() {
-    for (configured, file, load, expected) in [
+    for (configured, file, load, trusted) in [
         ("./provider", "provider.rb", "provider", true),
         ("./provider.rb", "provider.rb", "provider", true),
         ("./fixtures.ts", "fixtures.rb", "fixtures", false),
@@ -890,7 +890,7 @@ fn configured_ruby_provider_paths_preserve_literal_specifiers() {
             fs::rename(root.path().join("provider.rb"), root.path().join(file)).unwrap();
         }
         fs::write(root.path().join(".cuke-dedup.json"), serde_json::json!({"assertionModules":[configured], "threshold":100, "nearDuplicateHandlerSimilarity":0.5, "rules":{"unused-definition":"off"}}).to_string()).unwrap();
-        for (second_value, findings) in [("'ready'", true), ("'idle'", !expected)] {
+        for (second_value, findings) in [("'ready'", true), ("'idle'", !trusted)] {
             fs::write(root.path().join("steps.rb"), format!("require_relative '{load}'\ncheck = SyntheticAssertions.method(:expect)\nThen('the parcel status is verified') {{ |state| register(-> {{ check.call(state).to_be('ready') }}) }}\nThen('the parcel status is now verified') {{ |state| other_wrapper([proc {{ check.call(state).to_be({second_value}) }}]) }}\n")).unwrap();
             let rows = analyze(root.path(), "steps.rb");
             assert_eq!(

@@ -3131,7 +3131,10 @@ fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_call
             // and polarity still separate the handlers.
             assert_parameterization_outcome(
                 &rows,
-                parameterized || (!trusted && left.replace("'dark'", "'light'") == right),
+                parameterized
+                    || (!trusted
+                        && left.contains("'dark'")
+                        && left.replace("'dark'", "'light'") == right),
                 &format!("trusted={trusted}: {source}"),
             );
         }
