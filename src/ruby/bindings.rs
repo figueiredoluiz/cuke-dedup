@@ -106,6 +106,12 @@ pub(super) fn callable_body(callable: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
+/// The block, lambda or method that directly owns a node.
+fn nearest_scope(node: Node<'_>) -> Option<Node<'_>> {
+    std::iter::successors(node.parent(), |node| node.parent())
+        .find(|node| scope_node(*node) || WALLS.contains(&node.kind()))
+}
+
 /// A `.call(...)` or `.()` dispatch on the binding, through transparent parentheses.
 fn invocation<'a>(read: Node<'a>, source: &str) -> Option<(Node<'a>, usize)> {
     let mut value = read;
@@ -168,17 +174,21 @@ fn file_constants(root: Node<'_>, source: &str) -> BTreeMap<String, String> {
         if !matches!(node.kind(), "assignment" | "operator_assignment") {
             continue;
         }
-        let Some(left) = node.child_by_field_name("left") else {
-            continue;
-        };
-        let targets = if left.kind() == "constant" {
-            vec![left]
-        } else {
-            descendants(left)
-                .into_iter()
-                .filter(|part| part.kind() == "constant")
-                .collect()
-        };
+        // Every assignment has a target; a bare constant is the write itself, anything else
+        // (qualified or destructured) poisons each constant it names.
+        let targets = node
+            .child_by_field_name("left")
+            .into_iter()
+            .flat_map(|left| {
+                if left.kind() == "constant" {
+                    vec![left]
+                } else {
+                    descendants(left)
+                        .into_iter()
+                        .filter(|part| part.kind() == "constant")
+                        .collect()
+                }
+            });
         for target in targets {
             writes
                 .entry(text(target, source).to_owned())
@@ -237,6 +247,58 @@ fn constant_read(node: Node<'_>) -> bool {
     })
 }
 
+/// Syntax that binds locals without an assignment and is not modelled: `for` and pattern
+/// variables, `rescue => e`, and a regex literal with a named group on the left of `=~`.
+/// A bare `rescue`, a regex on the right, an interpolated regex or a regex held in a variable
+/// binds nothing (ruby 4.0: `"a" =~ /(?<y>a)/; y` is a NameError).
+fn binds_locals(node: Node<'_>, source: &str) -> bool {
+    match node.kind() {
+        "for" | "in_clause" | "match_pattern" | "test_pattern" => true,
+        "rescue" => node.child_by_field_name("variable").is_some(),
+        "binary" => {
+            node.child_by_field_name("operator")
+                .is_some_and(|n| text(n, source) == "=~")
+                && node.child_by_field_name("left").is_some_and(|left| {
+                    left.kind() == "regex"
+                        && !descendants(left)
+                            .iter()
+                            .any(|part| part.kind() == "interpolation")
+                        && named_group(text(left, source))
+                })
+        }
+        _ => false,
+    }
+}
+
+/// `(?<name>...)` or `(?'name'...)` as live regex syntax; escaped text, character classes,
+/// and lookbehind `(?<=`/`(?<!` bind nothing.
+fn named_group(pattern: &str) -> bool {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut index = 0;
+    let mut in_class = false;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => index += 1,
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '(' if !in_class && chars.get(index + 1) == Some(&'?') => {
+                let opener = chars.get(index + 2);
+                if opener == Some(&'\'')
+                    || (opener == Some(&'<')
+                        && chars
+                            .get(index + 3)
+                            .is_some_and(|c| c.is_ascii_alphabetic() || *c == '_'))
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
 /// Locals assigned in `scope` before `before`, outside nested scopes; flags unresolved syntax.
 fn locals_before(
     scope: Node<'_>,
@@ -253,26 +315,15 @@ fn locals_before(
         if node != scope && (scope_node(node) || WALLS.contains(&node.kind())) {
             continue;
         }
+        *uncertain |= binds_locals(node, source);
         match node.kind() {
-            "for" | "rescue" | "in_clause" | "match_pattern" | "test_pattern" => {
-                *uncertain = true;
-            }
-            "binary"
-                if node
-                    .child_by_field_name("operator")
-                    .is_some_and(|n| text(n, source) == "=~") =>
-            {
-                *uncertain = true;
-            }
-            "assignment" | "operator_assignment" => {
-                if let Some(left) = node.child_by_field_name("left") {
-                    names.extend(
-                        binding_nodes(left)
-                            .iter()
-                            .map(|n| text(*n, source).to_owned()),
-                    );
-                }
-            }
+            "assignment" | "operator_assignment" => names.extend(
+                node.child_by_field_name("left")
+                    .map(binding_nodes)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|n| text(*n, source).to_owned()),
+            ),
             _ => {}
         }
         let mut cursor = node.walk();
@@ -298,24 +349,23 @@ impl Bindings {
         let mut result = Self::default();
         // Ruby def opens a new local scope; it does not close over the file's locals.
         let closure = block.kind() != "method";
-        let mut outer = locals_before(root, block, source, &mut result.uncertain);
-        if !closure {
-            outer.clear();
-        }
-        let mut enclosing = Vec::new();
-        let mut ancestor = block.parent();
-        while let (Some(node), true) = (ancestor, closure) {
-            if scope_node(node)
-                && !node
-                    .parent()
-                    .is_some_and(|parent| parent.kind() == "lambda")
-            {
-                enclosing.push(node);
-            } else if WALLS.contains(&node.kind()) {
-                break;
-            }
-            ancestor = node.parent();
-        }
+        let outer = if closure {
+            locals_before(root, block, source, &mut result.uncertain)
+        } else {
+            BTreeSet::new()
+        };
+        // Enclosing block and lambda scopes up to the nearest scope wall; a lambda's own body
+        // block is folded into the lambda.
+        let enclosing: Vec<_> = std::iter::successors(block.parent(), |node| node.parent())
+            .take(if closure { usize::MAX } else { 0 })
+            .take_while(|node| !WALLS.contains(&node.kind()))
+            .filter(|node| {
+                scope_node(*node)
+                    && !node
+                        .parent()
+                        .is_some_and(|parent| parent.kind() == "lambda")
+            })
+            .collect();
         // Fingerprinted blocks are top-level or inside executed lambdas, so constant lookup
         // never crosses a class or module body; `def` handlers keep names.
         let constants = if closure {
@@ -377,14 +427,7 @@ impl Bindings {
                     }
                 }
             }
-            if matches!(
-                node.kind(),
-                "for" | "in_clause" | "match_pattern" | "test_pattern"
-            ) || (node.kind() == "rescue" && node.child_by_field_name("variable").is_some())
-                || (node.kind() == "binary"
-                    && node
-                        .child_by_field_name("operator")
-                        .is_some_and(|n| text(n, source) == "=~"))
+            if binds_locals(node, source)
                 || (node.kind() == "pair" && node.child_by_field_name("value").is_none())
             {
                 result.uncertain = true;
@@ -430,7 +473,14 @@ impl Bindings {
                         result.names.insert(node.id(), key.clone());
                         if let Some(name) = key.strip_prefix("capture:") {
                             result.captures.insert(name.to_owned());
-                            result.lexical |= !captures.contains_key(name);
+                            // A resolved alias keeps its spelling and adds its owner, so two
+                            // files binding one name to different providers stay distinct.
+                            match captures.get(name) {
+                                Some(owner) => {
+                                    result.captures.insert(owner.clone());
+                                }
+                                None => result.lexical = true,
+                            }
                         } else if key.starts_with("scope:") {
                             result.captures.insert(key.clone());
                             result.lexical = true;
@@ -487,7 +537,11 @@ impl Bindings {
         let unresolved = result
             .captures
             .iter()
-            .filter(|name| !name.starts_with("scope:") && !captures.contains_key(*name))
+            .filter(|name| {
+                !name.starts_with("scope:")
+                    && !name.starts_with("ruby:callable:")
+                    && !captures.contains_key(*name)
+            })
             .cloned()
             .collect();
         result.uncertain |= !stable_captures(block, root, source, &unresolved, &BTreeSet::new());
@@ -513,7 +567,6 @@ impl Bindings {
         writes: &BTreeMap<String, Vec<Node<'_>>>,
         reads: &BTreeMap<String, Vec<Node<'_>>>,
     ) {
-        let body = scope_body(block);
         for (key, writes) in writes {
             if !key.starts_with("local:") {
                 continue;
@@ -565,10 +618,13 @@ impl Bindings {
                     .extend(invocations.iter().map(|(call, _)| call.id()));
                 continue;
             }
+            // One declaration owned by the handler scope runs at every later invocation, in
+            // any expression position; inside a nested block the expansion is deferred.
+            // Declarations inside nested scopes and reassigned declarations stay syntax.
             if let ([write], [callable]) = (writes.as_slice(), callables.as_slice()) {
-                if write.parent() == body {
+                if nearest_scope(*write) == Some(block) {
                     for (call, _) in invocations {
-                        if call.parent() == body && call.start_byte() >= write.end_byte() {
+                        if call.start_byte() >= write.end_byte() {
                             self.expansions.insert(call.id(), callable.id());
                         }
                     }

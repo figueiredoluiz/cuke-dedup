@@ -5,6 +5,9 @@ use std::fs;
 const PROVIDER: &str = include_str!(
     "../fixtures/ruby-parity/equivalent-handlers/precision-inline-local/providers/assertions.rb"
 );
+const UNRELATED: &str = include_str!(
+    "../fixtures/ruby-parity/equivalent-handlers/precision-import-esm/providers/unrelated.rb"
+);
 
 /// Checks configured assertion conflicts and unconfigured parameterization controls.
 #[test]
@@ -1022,7 +1025,13 @@ fn declared_local_callables_execute_only_at_proven_invocations() {
         ("reassigned before call", body("check = -> { ", 9, "check = -> { SyntheticAssertions.expect(state).to_be(1) }; check.call"), body("check = -> { ", 9, "check = -> { SyntheticAssertions.expect(state).to_be(2) }; check.call"), vec!["parameterization-candidate"]),
         ("block-local shadow", body("check = -> { ", 9, "1.times do |iteration; check| check = -> { SyntheticAssertions.expect(state).to_be(1) }; check.call end"), body("check = -> { ", 9, "1.times do |iteration; check| check = -> { SyntheticAssertions.expect(state).to_be(2) }; check.call end"), vec!["parameterization-candidate"]),
         ("nested declaration", body("outer = -> { act = -> { ", 1, "}; act.call"), body("outer = -> { act = -> { ", 2, "}; act.call"), vec!["parameterization-candidate"]),
-        ("invoked only inside a block", body("act = -> { ", 1, "1.times { act.call }"), body("act = -> { ", 2, "1.times { act.call }"), vec!["parameterization-candidate"]),
+        // A handler-level declaration runs wherever it is invoked later: in an expression, or
+        // deferred inside a nested block, keeping its values either way.
+        ("assigned invocation", body("act = -> { ", 1, "result = act.call"), body("act = -> { ", 2, "result = act.call"), vec![]),
+        ("assigned invocation identical", body("act = -> { ", 1, "result = act.call"), body("act = -> { ", 1, "result = act.call"), vec!["duplicate-handler", "near-duplicate-step"]),
+        ("argument invocation", body("act = -> { ", 1, "work(act.call)"), body("act = -> { ", 2, "work(act.call)"), vec![]),
+        ("invoked only inside a block", body("act = -> { ", 1, "1.times { act.call }"), body("act = -> { ", 2, "1.times { act.call }"), vec![]),
+        ("invoked only inside a block identical", body("act = -> { ", 1, "1.times { act.call }"), body("act = -> { ", 1, "1.times { act.call }"), vec!["duplicate-handler", "near-duplicate-step"]),
         // Single-level expansion: recursion inside the body is an ordinary call.
         ("recursive identical", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 1, "act.call"), vec!["duplicate-handler", "near-duplicate-step"]),
         ("recursive conflicting", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 2, "act.call"), vec![]),
@@ -1196,6 +1205,13 @@ fn top_level_constants_resolve_to_immutable_literal_values() {
         // Reflective constant mutation is already unresolved registration provenance.
         assert_eq!(incomplete, prelude.contains("const_set"), "{label}");
     }
+    // A constant written inside a handler is a target, not a read, and its nested write
+    // poisons the file-level value.
+    let written = format!(
+        "ONE = 1\nTWO = 1\n{LOAD}{}",
+        step_pair(&format!("ONE = 2; {CHECK}(ONE)"), &format!("{CHECK}(TWO)"))
+    );
+    assert_eq!(handler_rules(&[("steps.rb", &written)]), (vec![], false));
     // The same values collapse ordinary actions, where no assertion evidence decides.
     let actions = |values: &str| {
         format!("{LOAD}{values}\nGiven('the top slot is pressed first') {{ click_button(ONE) }}\nGiven('the top slot is pressed second') {{ click_button(TWO) }}")
@@ -1385,5 +1401,103 @@ fn lambda_captures_and_resolved_aliases_keep_file_identity_rules() {
     assert_eq!(
         handler_rules(&[("a.rb", &first), ("b.rb", &runtime)]),
         (vec![], false)
+    );
+    // Without a terminal matcher only syntax is recorded, so the resolved owner must keep two
+    // same-named aliases of different providers apart across files.
+    let synthetic = format!("{LOAD}expect = SyntheticAssertions.method(:expect)\nThen('the parcel is ready') {{ |state| expect.call(state) }}");
+    let unrelated = "require_relative 'unrelated'\nexpect = UnrelatedAssertions.method(:expect)\nThen('shipment readiness has been confirmed') { |state| expect.call(state) }";
+    let same = format!("{LOAD}expect = SyntheticAssertions.method(:expect)\nThen('shipment readiness has been confirmed') {{ |state| expect.call(state) }}");
+    assert_eq!(
+        handler_rules(&[
+            ("a.rb", &synthetic),
+            ("b.rb", unrelated),
+            ("unrelated.rb", UNRELATED)
+        ]),
+        (vec![], false)
+    );
+    assert_eq!(
+        handler_rules(&[("a.rb", &synthetic), ("b.rb", &same)]),
+        (vec!["duplicate-handler".to_owned()], false)
+    );
+}
+
+/// Syntax that binds no local never marks later handlers uncertain; binding syntax still does.
+#[test]
+fn unbinding_syntax_before_handlers_keeps_comparison() {
+    let pair = "Then('the parcel status is verified') { |state| work(1) }\nThen('the parcel status is now verified') { |state| work(1) }";
+    for (label, prelude, incomplete) in [
+        (
+            "bare rescue",
+            "begin\n  risky\nrescue\n  recover\nend",
+            false,
+        ),
+        (
+            "rescue with a variable",
+            "begin\n  risky\nrescue => error\n  recover(error)\nend",
+            true,
+        ),
+        ("string on the left of =~", "ENV['X'] =~ /y/", false),
+        (
+            "named group on the right of =~",
+            "ENV['X'] =~ /(?<found>y)/",
+            false,
+        ),
+        (
+            "named group regex literal on the left",
+            "/(?<found>y)/ =~ ENV['X']",
+            true,
+        ),
+        (
+            "quoted named group on the left",
+            "/(?'found'y)/ =~ ENV['X']",
+            true,
+        ),
+        ("lookbehind on the left", "/(?<=a)y/ =~ ENV['X']", false),
+        (
+            "escaped group text on the left",
+            "/\\(?<found>y/ =~ ENV['X']",
+            false,
+        ),
+        (
+            "character class on the left",
+            "/[(?<found>]y/ =~ ENV['X']",
+            false,
+        ),
+        (
+            "named group after a class on the left",
+            "/[(]x(?<found>y)/ =~ ENV['X']",
+            true,
+        ),
+        (
+            "interpolated named group on the left",
+            "value = 'y'\n/(?<found>#{value})/ =~ ENV['X']",
+            false,
+        ),
+        (
+            "regex held in a variable",
+            "pattern = /(?<found>y)/\npattern =~ ENV['X']",
+            false,
+        ),
+        ("for loop", "for item in [1]\n  use(item)\nend", true),
+    ] {
+        let (rules, observed) = handler_rules(&[("steps.rb", &format!("{LOAD}{prelude}\n{pair}"))]);
+        assert_eq!(observed, incomplete, "{label}");
+        assert_eq!(
+            rules.contains(&"duplicate-handler".to_owned()),
+            !incomplete,
+            "{label}"
+        );
+    }
+    // A `def` handler does not close over file locals, so file-level binding syntax is irrelevant.
+    let methods = format!("{LOAD}begin\n  risky\nrescue => error\n  recover(error)\nend\ndef first\n  work(1)\nend\ndef second\n  work(1)\nend\nThen('the parcel status is verified', &method(:first))\nThen('the parcel status is now verified', &method(:second))");
+    assert_eq!(
+        handler_rules(&[("steps.rb", &methods)]),
+        (
+            vec![
+                "duplicate-handler".to_owned(),
+                "near-duplicate-step".to_owned()
+            ],
+            false
+        )
     );
 }

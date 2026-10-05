@@ -568,8 +568,8 @@ impl AssertionBindings {
             .filter(|node| bindings.elided.contains(&node.id()))
             .map(|node| (node.id(), node))
             .collect();
-        let mut pending = vec![(block, false, false)];
-        while let Some((node, deferred, covered)) = pending.pop() {
+        let mut pending = vec![(block, false, false, false)];
+        while let Some((node, deferred, covered, expanded)) = pending.pop() {
             if block.kind() == "method" && block.child_by_field_name("name") == Some(node) {
                 continue;
             }
@@ -580,33 +580,40 @@ impl AssertionBindings {
             if let Some(body) = bindings
                 .expansions
                 .get(&node.id())
+                .filter(|_| !expanded)
                 .and_then(|callable| declared.get(callable).copied())
                 .and_then(super::bindings::callable_body)
             {
                 // The declaration executes here; record its body, not a wrapper-call event.
+                // One level only: an invocation inside the expanded body is an ordinary call.
                 let mut cursor = body.walk();
                 let statements: Vec<_> = body.named_children(&mut cursor).collect();
                 pending.extend(
                     statements
                         .into_iter()
                         .rev()
-                        .map(|statement| (statement, deferred, false)),
+                        .map(|statement| (statement, deferred, false, true)),
                 );
                 continue;
             }
             if bindings.unresolved_invocations.contains(&node.id()) {
                 // Arguments are not substituted, so the declared body's values are unproven.
                 events.push(BehaviorEvent::unresolved_assertion(deferred));
-                if let Some(arguments) = node.child_by_field_name("arguments") {
-                    let mut cursor = arguments.walk();
-                    let values: Vec<_> = arguments.named_children(&mut cursor).collect();
-                    pending.extend(
-                        values
-                            .into_iter()
-                            .rev()
-                            .map(|value| (value, deferred, false)),
-                    );
-                }
+                // A parameterized invocation always carries arguments; they execute now.
+                let values: Vec<_> = node
+                    .child_by_field_name("arguments")
+                    .into_iter()
+                    .flat_map(|arguments| {
+                        let mut cursor = arguments.walk();
+                        arguments.named_children(&mut cursor).collect::<Vec<_>>()
+                    })
+                    .collect();
+                pending.extend(
+                    values
+                        .into_iter()
+                        .rev()
+                        .map(|value| (value, deferred, false, expanded)),
+                );
                 continue;
             }
             let deferred = deferred
@@ -690,7 +697,7 @@ impl AssertionBindings {
                 children
                     .into_iter()
                     .rev()
-                    .map(|child| (child, deferred, covered || operation)),
+                    .map(|child| (child, deferred, covered || operation, expanded)),
             );
         }
         // Ordinary effects cannot outvote a contradictory or unresolved assertion.

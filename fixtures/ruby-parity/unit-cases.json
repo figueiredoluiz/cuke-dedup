@@ -5092,7 +5092,7 @@
       ]
     },
     "tests/ruby_assertion_provenance.rs": {
-      "sourceSha256": "664911022dc7a72e7b2d26eeb334ae8ff74f941bd7b8ca7620c53b99fd389b2f",
+      "sourceSha256": "66d6aaad1423f685e49c6db32e0d8f2d995bf22156076dccd667be1a3d63f466",
       "tests": [
         {
           "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
@@ -5268,6 +5268,13 @@
           "fixtureGroup": null,
           "behaviorClass": "ruby-behavior",
           "rationale": "Direct Ruby adapter test `lambda_captures_and_resolved_aliases_keep_file_identity_rules` asserts handler-value provenance outcomes that the `equivalent-handlers-precision-mixed-positive` corpus group also exercises end to end; classification against the census is pending."
+        },
+        {
+          "name": "unbinding_syntax_before_handlers_keeps_comparison",
+          "requiredStatus": "unmapped",
+          "fixtureGroup": null,
+          "behaviorClass": "ruby-behavior",
+          "rationale": "Direct Ruby adapter test `unbinding_syntax_before_handlers_keeps_comparison` pins review-derived binding rules (unbinding syntax before handlers); classification against the census is pending."
         }
       ]
     }
