@@ -44,10 +44,10 @@ fn scope_body(scope: Node<'_>) -> Option<Node<'_>> {
 
 /// Names a scope binds through its parameters, including `|; locals|`.
 fn parameter_names(scope: Node<'_>, source: &str) -> BTreeSet<String> {
-    let Some(parameters) = scope.child_by_field_name("parameters") else {
-        return BTreeSet::new();
-    };
-    binding_nodes(parameters)
+    scope
+        .child_by_field_name("parameters")
+        .map(binding_nodes)
+        .unwrap_or_default()
         .iter()
         .map(|name| text(*name, source).to_owned())
         .collect()
@@ -273,7 +273,7 @@ fn binds_locals(node: Node<'_>, source: &str) -> bool {
                         && named_group(text(left, source))
                 })
         }
-        _ => false,
+        _ => false, // fail-closed: assignments are tracked separately; no other syntax binds a local
     }
 }
 
@@ -299,7 +299,7 @@ fn named_group(pattern: &str) -> bool {
                     return true;
                 }
             }
-            _ => {}
+            _ => {} // fail-closed: only an unescaped `(?` outside a class can open a named group
         }
         index += 1;
     }
@@ -331,7 +331,7 @@ fn locals_before(
                     .iter()
                     .map(|n| text(*n, source).to_owned()),
             ),
-            _ => {}
+            _ => {} // fail-closed: binding syntax without an assignment is reported by binds_locals
         }
         let mut cursor = node.walk();
         pending.extend(node.named_children(&mut cursor));
