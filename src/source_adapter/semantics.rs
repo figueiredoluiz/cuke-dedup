@@ -73,6 +73,9 @@ pub(crate) struct AnalysisProfile {
     pub(crate) near_requires_same_handler: bool,
     // Partial event streams cannot measure overlap between distinct handler trees.
     pub(crate) event_similarity: bool,
+    // Identical event streams with different handlers differ only in values the events omit;
+    // such pairs are parameterization material, never wording findings.
+    pub(crate) near_requires_distinct_events: bool,
     pub(crate) indirect_usage: bool,
     pub(crate) dialect: &'static dyn RegexDialect,
     pub(crate) capture_context: fn(&StepDefinition) -> CaptureContext,

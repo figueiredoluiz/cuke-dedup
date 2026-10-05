@@ -72,7 +72,7 @@ fn string_literal(node: Node<'_>, source: &str) -> Option<String> {
 }
 
 /// A `->`, `lambda` or `proc` literal; the returned node owns the whole callable syntax.
-fn callable_literal<'a>(node: Node<'a>, source: &str) -> Option<Node<'a>> {
+pub(super) fn callable_literal<'a>(node: Node<'a>, source: &str) -> Option<Node<'a>> {
     if node.kind() == "lambda" {
         return Some(node);
     }
@@ -87,7 +87,7 @@ fn callable_literal<'a>(node: Node<'a>, source: &str) -> Option<Node<'a>> {
 }
 
 /// Whether a lambda literal declares parameters; their values are never substituted.
-fn callable_parameterized(callable: Node<'_>) -> bool {
+pub(super) fn callable_parameterized(callable: Node<'_>) -> bool {
     let owner = if callable.kind() == "lambda" {
         Some(callable)
     } else {
@@ -98,6 +98,59 @@ fn callable_parameterized(callable: Node<'_>) -> bool {
             .child_by_field_name("parameters")
             .is_some_and(|parameters| parameters.named_child_count() != 0)
     })
+}
+
+/// Named children in source order.
+pub(super) fn named_children(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).collect()
+}
+
+/// Named children that carry syntax; comments are extras and never count.
+pub(super) fn semantic_children(node: Node<'_>) -> Vec<Node<'_>> {
+    named_children(node)
+        .into_iter()
+        .filter(|child| !child.is_extra())
+        .collect()
+}
+
+/// Unwraps transparent parentheses around a single expression.
+pub(super) fn unparenthesized(mut node: Node<'_>) -> Node<'_> {
+    while node.kind() == "parenthesized_statements" {
+        match semantic_children(node).as_slice() {
+            [inner] => node = *inner,
+            _ => break,
+        }
+    }
+    node
+}
+
+/// Declared callable literals by node id; their bodies are syntax until an invocation expands them.
+pub(super) fn declared_callables<'a>(
+    block: Node<'a>,
+    bindings: &Bindings,
+) -> BTreeMap<usize, Node<'a>> {
+    descendants(block)
+        .into_iter()
+        .filter(|node| bindings.elided.contains(&node.id()))
+        .map(|node| (node.id(), node))
+        .collect()
+}
+
+/// Statements of the declaration a proven invocation runs, one level deep.
+pub(super) fn expansion_statements<'a>(
+    bindings: &Bindings,
+    declared: &BTreeMap<usize, Node<'a>>,
+    call: Node<'a>,
+    expanded: bool,
+) -> Option<Vec<Node<'a>>> {
+    bindings
+        .expansions
+        .get(&call.id())
+        .filter(|_| !expanded)
+        .and_then(|callable| declared.get(callable).copied())
+        .and_then(callable_body)
+        .map(named_children)
 }
 
 /// The statements a declared callable runs when invoked.
@@ -120,10 +173,9 @@ fn nearest_scope(node: Node<'_>) -> Option<Node<'_>> {
 /// A `.call(...)` or `.()` dispatch on the binding, through transparent parentheses.
 fn invocation<'a>(read: Node<'a>, source: &str) -> Option<(Node<'a>, usize)> {
     let mut value = read;
-    while let Some(parent) = value
-        .parent()
-        .filter(|node| node.kind() == "parenthesized_statements" && node.named_child_count() == 1)
-    {
+    while let Some(parent) = value.parent().filter(|node| {
+        node.kind() == "parenthesized_statements" && semantic_children(*node).len() == 1
+    }) {
         value = parent;
     }
     let call = value.parent().filter(|call| {

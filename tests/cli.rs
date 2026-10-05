@@ -5117,13 +5117,21 @@ struct RubyReleaseRun {
     stderr: String,
 }
 
+/// Runs a Ruby project with an optional definition pattern.
 fn ruby_release_run(root: &Path, definitions: Option<&str>) -> RubyReleaseRun {
-    let selection = definitions.map(|pattern| ["--definitions", pattern]);
+    let selection: Vec<&str> = definitions
+        .map(|pattern| vec!["--definitions", pattern])
+        .unwrap_or_default();
+    ruby_run(root, &selection)
+}
+
+/// Runs the binary on a Ruby project with JSONL output and the given extra arguments.
+fn ruby_run(root: &Path, extra: &[&str]) -> RubyReleaseRun {
     let output = Command::cargo_bin("cuke-dedup")
         .unwrap()
         .arg(root)
         .args(["--reporters", "jsonl", "--no-metrics"])
-        .args(selection.iter().flatten())
+        .args(extra)
         .output()
         .unwrap();
     let rows: Vec<Value> = String::from_utf8_lossy(&output.stdout)
@@ -5533,4 +5541,87 @@ fn regression_ruby_handler_values_resolved_alias_captures_compare_across_files()
     assert_eq!(run.definitions, 2);
     assert!(!run.incomplete, "{}", run.stderr);
     assert_eq!(run.active, Vec::<String>::new());
+}
+
+/// Runs Ruby files with the near threshold the parity fixtures use and no assertion trust.
+fn ruby_action_run(files: &[(&str, &str)], extra: &[&str]) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#,
+    );
+    for (name, body) in files {
+        write(directory.path(), name, body);
+    }
+    let mut args = vec!["--definitions", "*.rb"];
+    args.extend_from_slice(extra);
+    ruby_run(directory.path(), &args)
+}
+
+/// Direct and fluent actions share their root and method, so near wording is reported.
+#[test]
+fn regression_ruby_action_evidence_direct_and_fluent_actions_are_near() {
+    let run = ruby_action_run(&[("steps.rb", "When('I click the save button') { page.click('#save') }\nWhen('I click save button') { page.locator('#save').click() }\n")], &[]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    let run = ruby_action_run(&[("steps.rb", "When('I click the save button') { page.click('#save') }\nWhen('I click save button') { page.fill('#save') }\n")], &[]);
+    assert_eq!(run.active, Vec::<String>::new());
+}
+
+/// A zero-operand `load()` is an ordinary call; identical callback bodies under different
+/// wrappers are near, different bodies under one wrapper are not.
+#[test]
+fn regression_ruby_action_evidence_callbacks_and_bare_load_calls() {
+    let steps = "When('the admin applies the discount rule') { with_transaction { load_cart(); apply_discount(); save() } }\nWhen('the admin applies the shipping rule') { with_transaction { load_order(); apply_shipping(); commit() } }\nThen('the invoice grid is refreshed') { alpha { load(); render(); assert_rows() } }\nThen('the invoice list is refreshed') { beta { load(); render(); assert_rows() } }\n";
+    let run = ruby_action_run(&[("steps.rb", steps)], &[]);
+    assert_eq!(run.definitions, 4);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    let run = ruby_action_run(
+        &[("steps.rb", &steps.replace("load();", "load('rows.rb');"))],
+        &[],
+    );
+    assert!(run.incomplete);
+    assert!(run.stderr.contains("steps.rb:3:49"), "{}", run.stderr);
+}
+
+/// Identical event streams behind differing values are never near and never take a candidate
+/// slot from a pair that is.
+#[test]
+fn regression_ruby_action_evidence_identical_streams_are_not_near() {
+    let steps = "Given('shipment is ready') { write_status(:ready) }\nThen('shipment is now ready') { write_status(:ready) }\nGiven('shipment is rejected') { write_status(:rejected) }\nThen('shipment is now rejected') { write_status(:accepted) }\nGiven('the archive badge is visible') { page.goto('/login') }\nGiven('the archive badge is now visible') { page.goto('/login'); page.wait_for_load_state() }\n";
+    let run = ruby_action_run(&[("steps.rb", steps)], &[]);
+    let mut active = run.active.clone();
+    active.sort();
+    assert_eq!(
+        active,
+        vec![
+            "duplicate-handler",
+            "near-duplicate-step",
+            "near-duplicate-step"
+        ]
+    );
+    // With one comparison, the decoy pairs (identical streams, differing symbols) must not take
+    // the slot: the only near finding is the archive pair.
+    let decoys = "Given('shipment is rejected') { write_status(:rejected) }\nThen('shipment is now rejected') { write_status(:accepted) }\nGiven('the archive badge is visible') { page.goto('/login') }\nGiven('the archive badge is now visible') { page.goto('/login'); page.wait_for_load_state() }\n";
+    let run = ruby_action_run(
+        &[("steps.rb", decoys)],
+        &["--max-candidate-comparisons", "1"],
+    );
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+}
+
+/// Untrusted RSpec expectations keep the exact-handler policy: duplicates stay, polarity and
+/// value differences never become near or parameterization findings.
+#[test]
+fn regression_ruby_action_evidence_untrusted_expectations_keep_exact_policy() {
+    let steps = "Given('the exact assertion') { expect(exact_parcel).to eq('ready') }\nThen('another exact assertion') { expect(exact_parcel).to eq('ready') }\nGiven('the parcel is verified') { expect(parcel).to eq('ready') }\nThen('the parcel is now verified') { expect(parcel).not_to eq('ready') }\nGiven('the parcel is ready') { expect(shipment).to eq('ready') }\nGiven('the parcel is idle') { expect(shipment).to eq('idle') }\n";
+    let run = ruby_action_run(&[("steps.rb", steps)], &[]);
+    assert_eq!(run.definitions, 6);
+    assert!(!run.incomplete, "{}", run.stderr);
+    // The identical pair's wording is far apart, so only the duplicate is reported.
+    assert_eq!(run.active, vec!["duplicate-handler"]);
 }

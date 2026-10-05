@@ -2,6 +2,8 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 
+mod common;
+
 fn project_command(root: &std::path::Path, patterns: &str) -> Command {
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command.arg(root).args([
@@ -3124,12 +3126,12 @@ fn ruby_configured_assertion_evidence_preserves_value_polarity_and_ordinary_call
             let root = assertion_project(ASSERTION_PROVIDER, &source, trusted);
             let rows = records(run_project(root.path(), "steps.rb", &[]).stdout);
             assert_discovery(&rows, 2, false, &source);
+            // Without trust the provider is an ordinary callable: a pair that differs only in a
+            // literal, inline or inside a callback, is parameterization material; subjects
+            // and polarity still separate the handlers.
             assert_parameterization_outcome(
                 &rows,
-                parameterized
-                    || (!trusted
-                        && left == "Assertions.expect(page).to_be('dark')"
-                        && right == "Assertions.expect(page).to_be('light')"),
+                parameterized || (!trusted && left.replace("'dark'", "'light'") == right),
                 &format!("trusted={trusted}: {source}"),
             );
         }
@@ -3427,6 +3429,13 @@ fn ruby_complete_assertion_events_retain_effect_conflicts() {
                 format!("unless ready; {assertion}; end"),
                 0.0,
             ),
+            // Under configured evidence `rescue` is a token-bound effect, not a fail-closed
+            // construct: differing rescue bodies never reach equivalence in either regime.
+            (
+                format!("begin; store.save; rescue; recover(); end; {assertion}"),
+                format!("begin; store.save; rescue; audit(); end; {assertion}"),
+                0.0,
+            ),
             (
                 format!("wrap {{ {assertion} }}; store.write('one')"),
                 format!("wrap {{ {assertion} }}; store.write('two')"),
@@ -3461,11 +3470,13 @@ fn ruby_complete_assertion_events_retain_effect_conflicts() {
                 .iter()
                 .find(|row| row["rule"] == "normalized-matcher")
                 .expect("matcher finding is retained");
+            // Trusted handlers carry the complete-syntax stream, untrusted ones the action
+            // stream; under either, conflicting operations must stay below full equivalence.
             let measured = finding["evidence"]["handlerSimilarity"].as_f64().unwrap();
-            if trusted && score == 0.0 {
+            if score == 0.0 {
                 assert!(
                     measured < 1.0,
-                    "conflicting operations gained equivalence: {source}"
+                    "conflicting operations gained equivalence: trusted={trusted}: {source}"
                 );
             } else {
                 assert_eq!(measured, score, "trusted={trusted}: {source}");
@@ -4401,5 +4412,472 @@ fn ruby_coverage_other_deferred_handlers_invalidate_captured_values() {
     for write in ["value = 2", "value += 1"] {
         let source = format!("value = 1; Given('writer') {{ {write} }}; Given('first') {{ read(value) }}; Then('second') {{ read(value) }}");
         assert_handler_outcome(&source, 3, false);
+    }
+}
+
+// ===========================================================================================
+// Ordinary action streams (K5.3): TypeScript-style call events for handlers without configured
+// assertion evidence, the identical-stream near veto, untrusted `expect` policy, loader arity.
+// ===========================================================================================
+
+/// Runs a Ruby project with the near threshold the parity fixtures use and reports the handler
+/// rules, corpus completeness and exit code.
+fn action_rows(source: &str, extra: &[&str]) -> (Vec<String>, bool, i32) {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join(".cuke-dedup.json"),
+        r#"{"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#,
+    )
+    .unwrap();
+    fs::write(dir.path().join("steps.rb"), source).unwrap();
+    let output = run_project(dir.path(), "*.rb", extra);
+    let rows = records(output.stdout);
+    let summary = rows.last().unwrap();
+    let rules = common::active_handler_rules(&rows);
+    (
+        rules,
+        summary["corpus"]["incomplete"].as_bool().unwrap(),
+        output.status.code().unwrap(),
+    )
+}
+
+/// Two near-worded registrations with the given handler bodies.
+fn action_pair(first: &str, second: &str) -> String {
+    format!("Given('the parcel status is verified') {{ {first} }}\nGiven('the parcel status is now verified') {{ {second} }}\n")
+}
+
+/// Asserts the handler rules of one near-worded pair and that the corpus stays complete.
+fn check_action_pair(label: &str, first: &str, second: &str, expected: &[&str]) {
+    let (rules, incomplete, _) = action_rows(&action_pair(first, second), &[]);
+    assert_eq!(rules, expected, "{label}");
+    assert!(!incomplete, "{label}");
+}
+
+const DUP: &[&str] = &["duplicate-handler", "near-duplicate-step"];
+const NEAR: &[&str] = &["near-duplicate-step"];
+const PARAM: &[&str] = &["parameterization-candidate"];
+const NONE: &[&str] = &[];
+
+/// Action events name the receiver-chain root and method; wording findings need ordered event
+/// overlap and at least one differing event.
+#[test]
+fn action_streams_compare_ordinary_handlers_like_the_typescript_frontend() {
+    for (label, first, second, expected) in [
+        // A1: a fluent chain collapses to its root, so the direct and fluent click overlap 50%.
+        (
+            "direct and fluent action",
+            "page.click('#save')",
+            "page.locator('#save').click()",
+            NEAR,
+        ),
+        (
+            "different actions",
+            "page.click('#save')",
+            "page.fill('#save')",
+            NONE,
+        ),
+        // A2: an extra call keeps the pair near until overlap drops below the threshold.
+        (
+            "extra wait",
+            "page.goto('/login')",
+            "page.goto('/login'); page.wait_for_load_state()",
+            NEAR,
+        ),
+        (
+            "three extra calls",
+            "page.goto('/login')",
+            "page.goto('/login'); warm(); sync(); flush()",
+            NONE,
+        ),
+        // A3: identical callback bodies under different wrappers; different bodies under one.
+        (
+            "callback bodies match",
+            "alpha { load(); render(); assert_rows() }",
+            "beta { load(); render(); assert_rows() }",
+            NEAR,
+        ),
+        (
+            "callback bodies differ",
+            "with_transaction { load_cart(); apply_discount(); save() }",
+            "with_transaction { load_order(); apply_shipping(); commit() }",
+            NONE,
+        ),
+        // A4: a bare helper read is a call, so differing helpers are one differing event.
+        (
+            "bare helper arguments",
+            "click_button(deep_one)",
+            "click_button(deep_two)",
+            NEAR,
+        ),
+        (
+            "identical bare helpers",
+            "click_button(deep_one)",
+            "click_button(deep_one)",
+            DUP,
+        ),
+        // A6: a receiverless root call keeps its name as the base.
+        (
+            "different root calls",
+            "helper('x').run",
+            "other('x').run",
+            NONE,
+        ),
+        // The root call records no event of its own, so both spellings are one sequence.
+        (
+            "receiverless root call with parentheses",
+            "helper.run",
+            "helper().run; audit()",
+            NEAR,
+        ),
+        (
+            "same root call plus flush",
+            "helper(x).run",
+            "helper(x).run; helper(x).flush",
+            NEAR,
+        ),
+        // A7: ordered overlap below, at and above one half.
+        (
+            "one of three",
+            "warm(); sync(); flush()",
+            "warm(); purge(); seal()",
+            NONE,
+        ),
+        ("one of two", "warm(); sync()", "warm(); flush()", NEAR),
+        (
+            "two of three",
+            "warm(); sync(); flush()",
+            "warm(); sync(); purge()",
+            NEAR,
+        ),
+        // A8: order and repetition count through the ordered subsequence.
+        ("reordered", "warm(); sync()", "sync(); warm()", NEAR),
+        ("repeated", "warm(); warm()", "warm()", NEAR),
+        // A9: control flow alone has no call anchor and identical streams are not near.
+        (
+            "control flow only",
+            "if @flag\n  @x = 1\nend",
+            "if @flag\n  @x = 2\nend",
+            NONE,
+        ),
+        // B1/B2/B4: identical streams behind different syntax are never near.
+        (
+            "symbol values",
+            "write_status(:ready)",
+            "write_status(:rejected)",
+            NONE,
+        ),
+        (
+            "identical symbol values",
+            "write_status(:ready)",
+            "write_status(:ready)",
+            DUP,
+        ),
+        (
+            "local literal values",
+            "value = 'ready'; store(value)",
+            "value = 'idle'; store(value)",
+            NONE,
+        ),
+        (
+            "next keyword only",
+            "next page.click()",
+            "page.click()",
+            NONE,
+        ),
+        // B3: straight-line literal differences stay parameterization material.
+        (
+            "straight-line literals",
+            "thing.run('a')",
+            "thing.run('b')",
+            PARAM,
+        ),
+        // B5: a conflicting value beside an extra call overlaps 75%, as in TypeScript.
+        (
+            "conflict beside an extra call",
+            "prepare(); write(:ready); save()",
+            "prepare(); write(:rejected); save(); audit()",
+            NEAR,
+        ),
+        // Parentheses are transparent for receivers and roots; comments inside them do not count.
+        (
+            "parenthesized receivers",
+            "(page).click('#save')",
+            "(page).fill('#save')",
+            NONE,
+        ),
+        (
+            "commented parenthesized root",
+            "(page).click()",
+            "(page # root\n).click()",
+            DUP,
+        ),
+        // A statement list in parentheses is not transparent: its tokens are the chain base.
+        (
+            "multi-statement parenthesized receiver",
+            "(warm; page).click",
+            "(warm; page).click; audit()",
+            NEAR,
+        ),
+        (
+            "differing multi-statement parenthesized receiver",
+            "(warm; page).click",
+            "(cool; page).click; audit()",
+            NONE,
+        ),
+        // Modeled control-flow containers and modifier forms.
+        (
+            "case statement",
+            "case mode\nwhen 1 then warm()\nend",
+            "case mode\nwhen 1 then warm()\nend\nsync()",
+            NEAR,
+        ),
+        (
+            "if modifier",
+            "warm() if ready",
+            "warm() if ready; sync()",
+            NEAR,
+        ),
+        (
+            "while with do",
+            "while busy do warm() end",
+            "while busy do warm() end; sync()",
+            NEAR,
+        ),
+        // A callable literal is a callback only when handed to a call.
+        (
+            "unpassed lambda container",
+            "[-> { warm(); sync() }]; first()",
+            "[-> { warm(); sync() }]; second()",
+            NONE,
+        ),
+        // Different wrappers: NEAR holds only while the shared callback bodies are recorded.
+        (
+            "callback inside an argument array",
+            "run([-> { warm(); sync() }])",
+            "other([-> { warm(); sync() }]); flush()",
+            NEAR,
+        ),
+        (
+            "callback inside an argument hash",
+            "run(cb: proc { warm(); sync() })",
+            "other(cb: proc { warm(); sync() }); flush()",
+            NEAR,
+        ),
+        // Order and repetition count: sorted or deduplicated streams would make these near.
+        (
+            "reversed three",
+            "warm(); sync(); flush()",
+            "flush(); sync(); warm()",
+            NONE,
+        ),
+        (
+            "repetition weighted",
+            "warm(); warm(); warm()",
+            "warm()",
+            NONE,
+        ),
+        (
+            "differing control flow only",
+            "if @a\n  @x = 1\nend",
+            "while @b\n  @x = 1\nend",
+            NONE,
+        ),
+        // C1/C3: untrusted expect chains keep the exact-handler policy.
+        (
+            "bare expect polarity",
+            "expect.to eq(1)",
+            "expect.not_to eq(1)",
+            NONE,
+        ),
+        (
+            "parenthesized expect polarity",
+            "(expect(x)).to eq(1)",
+            "(expect(x)).not_to eq(1)",
+            NONE,
+        ),
+        (
+            "untrusted polarity",
+            "expect(x).to eq(1)",
+            "expect(x).not_to eq(1)",
+            NONE,
+        ),
+        (
+            "identical untrusted expectation",
+            "expect(x).to eq(1)",
+            "expect(x).to eq(1)",
+            DUP,
+        ),
+        (
+            "untrusted values",
+            "expect(parcel).to eq('ready')",
+            "expect(parcel).to eq('idle')",
+            NONE,
+        ),
+        (
+            "ordinary helper named expect",
+            "expect(x).run()",
+            "expect(x).run(); flush()",
+            NONE,
+        ),
+        (
+            "block expectation",
+            "expect { risky() }.to raise_error",
+            "expect { risky() }.not_to raise_error",
+            NONE,
+        ),
+        // U1: unmodeled constructs beside shared actions keep the exact policy.
+        (
+            "parameterized block",
+            "items.each { |i| store(i) }",
+            "items.each { |i| store(i) }; audit()",
+            NONE,
+        ),
+        (
+            "identical parameterized block",
+            "items.each { |i| store(i) }",
+            "items.each { |i| store(i) }",
+            DUP,
+        ),
+        // Call-form callables carry their parameters on the block, not on the call.
+        (
+            "parameterized lambda callback",
+            "run(lambda { |i| store(i) })",
+            "run(lambda { |i| store(i) }); audit()",
+            NONE,
+        ),
+        (
+            "parameterized proc callback",
+            "run(proc do |i| store(i) end)",
+            "run(proc do |i| store(i) end); audit()",
+            NONE,
+        ),
+        (
+            "parameterized stabby callback",
+            "run(->(i) { store(i) })",
+            "run(->(i) { store(i) }); audit()",
+            NONE,
+        ),
+        (
+            "element reference",
+            "store(rows[0])",
+            "store(rows[0]); audit()",
+            NONE,
+        ),
+        ("operator", "store(a + b)", "store(a + b); audit()", NONE),
+        ("super", "super; store()", "super; store(); audit()", NONE),
+        ("yield", "yield; store()", "yield; store(); audit()", NONE),
+        (
+            "interpolation",
+            "store(\"#{x}\")",
+            "store(\"#{x}\"); audit()",
+            NONE,
+        ),
+        ("splat", "store(*args)", "store(*args); audit()", NONE),
+        (
+            "rescue",
+            "begin; store(); rescue; recover(); end",
+            "begin; store(); rescue; recover(); end; audit()",
+            NONE,
+        ),
+    ] {
+        check_action_pair(label, first, second, expected);
+    }
+}
+
+/// `def` handlers and declared lambdas feed the action stream without naming themselves.
+#[test]
+fn action_streams_cover_method_handlers_and_declared_callables() {
+    let methods = "def first\n  first_page = page\n  first_page.goto('/dashboard')\nend\ndef second\n  second_page = page\n  second_page.goto('/dashboard')\nend\nGiven('the parcel status is verified', &method(:first))\nGiven('the parcel status is now verified', &method(:second))\n";
+    assert_eq!(action_rows(methods, &[]).0, DUP);
+    for (label, first, second, expected) in [
+        (
+            "expanded declaration",
+            "act = -> { page.goto('/a') }; act.call",
+            "act = -> { page.goto('/a') }; act.call; page.wait()",
+            NEAR,
+        ),
+        (
+            "declaration never invoked",
+            "act = -> { page.goto('/a') }",
+            "act = -> { page.goto('/b') }",
+            NONE,
+        ),
+        (
+            "parameterized invocation",
+            "act = ->(v) { page.goto(v) }; act.call('/a')",
+            "act = ->(v) { page.goto(v) }; act.call('/a'); page.wait()",
+            NONE,
+        ),
+        (
+            "immediately invoked lambda",
+            "(-> { page.goto('/a') }).call",
+            "(-> { page.goto('/a') }).call; page.wait()",
+            NEAR,
+        ),
+        // Executed bodies carry their calls: a different executed call separates the pair, and an
+        // unexecuted declaration shared by both contributes nothing.
+        (
+            "expanded conflicting bodies",
+            "act = -> { page.goto('/a') }; act.call",
+            "act = -> { page.fill('/a') }; act.call",
+            NONE,
+        ),
+        (
+            "shared unexecuted declaration",
+            "act = -> { warm(); sync() }; first()",
+            "act = -> { warm(); sync() }; second()",
+            NONE,
+        ),
+    ] {
+        check_action_pair(label, first, second, expected);
+    }
+}
+
+/// Constant roots keep the resolved value identity, so equal constants stay one handler.
+#[test]
+fn action_streams_keep_constant_root_values() {
+    let source = "LEFT = 1\nRIGHT = 1\nOTHER = 2\nGiven('the parcel status is verified') { LEFT.touch() }\nGiven('the parcel status is now verified') { RIGHT.touch() }\nGiven('the archive badge is visible') { OTHER.touch() }\n";
+    assert_eq!(action_rows(source, &[]).0, DUP);
+}
+
+/// An identical-stream pair never takes a candidate slot from a pair that can become near.
+#[test]
+fn identical_stream_decoys_do_not_consume_the_candidate_budget() {
+    let source = "Given('the parcel status is verified') { write_status(:ready) }\nGiven('the parcel status is now verified') { write_status(:rejected) }\nGiven('the archive badge is visible') { page.goto('/login') }\nGiven('the archive badge is now visible') { page.goto('/login'); page.wait_for_load_state() }\n";
+    let (rules, incomplete, code) = action_rows(source, &["--max-candidate-comparisons", "1"]);
+    assert_eq!(rules, NEAR);
+    assert!(!incomplete);
+    assert_eq!(code, 0);
+    let (rules, _, _) = action_rows(source, &[]);
+    assert_eq!(rules, NEAR);
+}
+
+/// Loader calls without operands load nothing; any operand keeps the dependency diagnostic.
+#[test]
+fn loader_calls_without_operands_are_ordinary_calls() {
+    for (label, body, incomplete) in [
+        ("load without operands", "alpha { load(); render() }", false),
+        ("require without operands", "require(); render()", false),
+        (
+            "require_relative without operands",
+            "require_relative()",
+            false,
+        ),
+        ("autoload without operands", "autoload()", false),
+        ("comment-only operands", "load(# none\n)", false),
+        ("block form", "load() { render() }", false),
+        ("block argument only", "load(&blk)", false),
+        ("string operand", "load('support/env.rb')", true),
+        ("variable operand", "load(path)", true),
+        ("splat operand", "load(*paths)", true),
+        (
+            "qualified receiver with operand",
+            "Kernel.load('support/env.rb')",
+            true,
+        ),
+    ] {
+        let source = format!("Given('the parcel status is verified') {{ {body} }}\n");
+        let (_, observed, _) = action_rows(&source, &[]);
+        assert_eq!(observed, incomplete, "{label}");
     }
 }

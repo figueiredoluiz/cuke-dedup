@@ -255,6 +255,7 @@ impl Providers {
                             "require" | "require_relative" | "load" | "autoload"
                         )
                     })
+                    && super::has_operands(*node)
                     && (!graph.loads.contains(&graph.position(unit, *node, false))
                         || !graph.outgoing.get(&unit).is_some_and(|edges| {
                             edges.iter().any(|(_, position)| {

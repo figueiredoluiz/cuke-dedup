@@ -21,17 +21,22 @@ impl RegexDialect for RubyRegex {
 
 /// Enables event overlap only for complete Ruby effect streams.
 pub(crate) fn profile(definition: &crate::model::StepDefinition) -> AnalysisProfile {
-    let complete_events = definition
-        .handler
-        .behavior_signature
-        .iter()
-        .any(|event| event == "method:ruby:complete-events");
+    let marker = |name: &str| {
+        definition
+            .handler
+            .behavior_signature
+            .iter()
+            .any(|event| event == name)
+    };
+    let complete_events = marker("method:ruby:complete-events");
+    let action_events = marker("method:ruby:action-events");
     AnalysisProfile {
         comparison_domain: ComparisonDomain::Ruby,
         handler_domain: HandlerDomain::Shared,
         global_matchers: true,
-        near_requires_same_handler: !complete_events,
-        event_similarity: complete_events,
+        near_requires_same_handler: !complete_events && !action_events,
+        event_similarity: complete_events || action_events,
+        near_requires_distinct_events: action_events,
         indirect_usage: true,
         dialect: &REGEX,
         capture_context: |definition| {
