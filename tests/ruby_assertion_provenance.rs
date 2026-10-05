@@ -968,3 +968,422 @@ fn cross_file_constant_aliases_cannot_hide_namespace_mutation() {
         assert_eq!(summary["corpus"]["incomplete"], !expected);
     }
 }
+
+/// Runs a configured-provider project and reports active handler rules plus completeness.
+fn handler_rules(files: &[(&str, &str)]) -> (Vec<String>, bool) {
+    let root = project(PROVIDER);
+    fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#).unwrap();
+    for (name, body) in files {
+        fs::write(root.path().join(name), format!("{body}\n")).unwrap();
+    }
+    let rows = analyze(root.path(), "*.rb");
+    let summary = rows.last().unwrap();
+    let mut rules: Vec<String> = rows
+        .iter()
+        .filter(|row| row["type"] == "finding" && row["active"] == true)
+        .filter_map(|row| row["rule"].as_str())
+        .filter(|rule| {
+            matches!(
+                *rule,
+                "duplicate-handler" | "near-duplicate-step" | "parameterization-candidate"
+            )
+        })
+        .map(str::to_owned)
+        .collect();
+    rules.sort();
+    rules.dedup();
+    (rules, summary["corpus"]["incomplete"].as_bool().unwrap())
+}
+
+const LOAD: &str = "require_relative 'provider'\n";
+
+fn step_pair(first: &str, second: &str) -> String {
+    format!("Then('the parcel status is verified') {{ |state| {first} }}\nThen('the parcel status is now verified') {{ |state| {second} }}")
+}
+
+/// Declared handler lambdas execute only where a single declaration is invoked directly.
+#[test]
+fn declared_local_callables_execute_only_at_proven_invocations() {
+    const CHECK: &str = "SyntheticAssertions.expect(state).to_be";
+    let body = |declaration: &str, value: u8, invocation: &str| {
+        format!("{declaration}{CHECK}({value}) }}; {invocation}")
+    };
+    for (label, first, second, expected) in [
+        // Identical called declarations are one handler; conflicting values keep them apart
+        // without parameterization, because the executed assertions differ.
+        ("called identical", body("check = -> { ", 1, "check.call"), body("check = -> { ", 1, "check.call"), vec!["duplicate-handler", "near-duplicate-step"]),
+        ("called conflicting", body("check = -> { ", 1, "check.call"), body("check = -> { ", 2, "check.call"), vec![]),
+        ("dot-parentheses invocation", body("check = -> { ", 1, "check.()"), body("check = -> { ", 2, "check.()"), vec![]),
+        ("parenthesized callee", body("act = -> { ", 1, "(act).call"), body("act = -> { ", 2, "(act).call"), vec![]),
+        ("lambda keyword", body("act = lambda { ", 1, "act.call"), body("act = lambda { ", 2, "act.call"), vec![]),
+        ("proc keyword", body("act = proc { ", 1, "act.call"), body("act = proc { ", 2, "act.call"), vec![]),
+        // Never executed, reassigned, shadowed, nested or deferred declarations are syntax only.
+        ("never called", body("act = -> { ", 1, ""), body("act = -> { ", 2, ""), vec!["parameterization-candidate"]),
+        ("reassigned before call", body("check = -> { ", 9, "check = -> { SyntheticAssertions.expect(state).to_be(1) }; check.call"), body("check = -> { ", 9, "check = -> { SyntheticAssertions.expect(state).to_be(2) }; check.call"), vec!["parameterization-candidate"]),
+        ("block-local shadow", body("check = -> { ", 9, "1.times do |iteration; check| check = -> { SyntheticAssertions.expect(state).to_be(1) }; check.call end"), body("check = -> { ", 9, "1.times do |iteration; check| check = -> { SyntheticAssertions.expect(state).to_be(2) }; check.call end"), vec!["parameterization-candidate"]),
+        ("nested declaration", body("outer = -> { act = -> { ", 1, "}; act.call"), body("outer = -> { act = -> { ", 2, "}; act.call"), vec!["parameterization-candidate"]),
+        ("invoked only inside a block", body("act = -> { ", 1, "1.times { act.call }"), body("act = -> { ", 2, "1.times { act.call }"), vec!["parameterization-candidate"]),
+        // Single-level expansion: recursion inside the body is an ordinary call.
+        ("recursive identical", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 1, "act.call"), vec!["duplicate-handler", "near-duplicate-step"]),
+        ("recursive conflicting", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 2, "act.call"), vec![]),
+        // A parameterized declaration invoked with arguments is unproven: no comparison.
+        ("parameterized invocation", "act = ->(value) { SyntheticAssertions.expect(state).to_be(value) }; act.call(1)".to_owned(), "act = ->(value) { SyntheticAssertions.expect(state).to_be(value) }; act.call(2)".to_owned(), vec![]),
+        // Unmodeled uses keep the deferred value-bearing identity: conflicting values stay
+        // distinct and equal values still match.
+        ("escaping argument", body("act = -> { ", 1, "run(act)"), body("act = -> { ", 2, "run(act)"), vec![]),
+        ("escaping argument identical", body("act = -> { ", 1, "run(act)"), body("act = -> { ", 1, "run(act)"), vec!["duplicate-handler", "near-duplicate-step"]),
+        ("element reference invocation", body("act = -> { ", 1, "act[]"), body("act = -> { ", 2, "act[]"), vec![]),
+        ("argument to parameterless lambda", body("act = -> { ", 1, "act.call(1)"), body("act = -> { ", 2, "act.call(1)"), vec![]),
+        ("operator assignment", body("act ||= -> { ", 1, "act.call"), body("act ||= -> { ", 2, "act.call"), vec![]),
+        ("mixed write kinds", body("act = -> { ", 1, "act = other; act.call"), body("act = -> { ", 2, "act = other; act.call"), vec![]),
+        ("destructured write", body("act = -> { ", 1, "act, extra = act, 1; act.call"), body("act = -> { ", 2, "act, extra = act, 1; act.call"), vec![]),
+        ("mixed arity declarations", body("act = -> { ", 1, "act = ->(value) { value }; act.call"), body("act = -> { ", 2, "act = ->(value) { value }; act.call"), vec![]),
+    ] {
+        let steps = format!("{LOAD}{}", step_pair(&first, &second));
+        let (rules, incomplete) = handler_rules(&[("steps.rb", &steps)]);
+        assert_eq!(rules, expected, "{label}");
+        assert!(!incomplete, "{label}");
+    }
+}
+
+/// Top-level constants assigned once with an immutable literal reach the fingerprint.
+#[test]
+fn top_level_constants_resolve_to_immutable_literal_values() {
+    const CHECK: &str = "SyntheticAssertions.expect(state).to_be";
+    for (label, prelude, first, second, epilogue, expected) in [
+        ("equal integers", "ONE = 1\nTWO = 1", "ONE", "TWO", "", true),
+        (
+            "conflicting integers",
+            "ONE = 1\nTWO = 2",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "declared after the handlers",
+            "",
+            "ONE",
+            "TWO",
+            "ONE = 1\nTWO = 1",
+            true,
+        ),
+        (
+            "conflicting after the handlers",
+            "",
+            "ONE",
+            "TWO",
+            "ONE = 1\nTWO = 2",
+            false,
+        ),
+        (
+            "frozen strings",
+            "ONE = 'ready'.freeze\nTWO = \"ready\".freeze",
+            "ONE",
+            "TWO",
+            "",
+            true,
+        ),
+        (
+            "unfrozen strings",
+            "ONE = 'ready'\nTWO = 'ready'",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "frozen string literal comment",
+            "# frozen_string_literal: true\nONE = 'ready'\nTWO = 'ready'",
+            "ONE",
+            "TWO",
+            "",
+            true,
+        ),
+        (
+            "frozen string literal comment after code",
+            "ONE = 'ready'\n# frozen_string_literal: true\nTWO = 'ready'",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "symbols",
+            "ONE = :ready\nTWO = :ready",
+            "ONE",
+            "TWO",
+            "",
+            true,
+        ),
+        (
+            "second write poisons the name",
+            "ONE = 1\nONE = 1\nTWO = 1",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "qualified write poisons the name",
+            "ONE = 1\nOther::ONE = 2\nTWO = 1",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "nested write poisons the name",
+            "ONE = 1\nTWO = 1\nlater = -> { ONE = 2 }",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "operator write poisons the name",
+            "ONE = 1\nTWO = 1\nONE ||= 3",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "destructured write poisons the name",
+            "ONE = 1\nTWO = 1\nONE, EXTRA = 1, 2",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "reflective constant mutation",
+            "ONE = 1\nTWO = 1\nObject.const_set(:ONE, 2)",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "non-literal value",
+            "ONE = compute\nTWO = compute",
+            "ONE",
+            "TWO",
+            "",
+            false,
+        ),
+        (
+            "qualified read keeps the name",
+            "ONE = 1\nTWO = 1",
+            "Other::ONE",
+            "Other::TWO",
+            "",
+            false,
+        ),
+        ("unknown constants keep names", "", "ONE", "TWO", "", false),
+    ] {
+        // The magic comment only counts in the leading comment block, so it precedes the load.
+        let steps = format!(
+            "{prelude}\n{LOAD}{}\n{epilogue}",
+            step_pair(&format!("{CHECK}({first})"), &format!("{CHECK}({second})"))
+        );
+        let (rules, incomplete) = handler_rules(&[("steps.rb", &steps)]);
+        assert_eq!(
+            rules.contains(&"duplicate-handler".to_owned()),
+            expected,
+            "{label}: {rules:?}"
+        );
+        // Reflective constant mutation is already unresolved registration provenance.
+        assert_eq!(incomplete, prelude.contains("const_set"), "{label}");
+    }
+    // The same values collapse ordinary actions, where no assertion evidence decides.
+    let actions = |values: &str| {
+        format!("{LOAD}{values}\nGiven('the top slot is pressed first') {{ click_button(ONE) }}\nGiven('the top slot is pressed second') {{ click_button(TWO) }}")
+    };
+    assert_eq!(
+        handler_rules(&[("steps.rb", &actions("ONE = 1\nTWO = 1"))]),
+        (
+            vec![
+                "duplicate-handler".to_owned(),
+                "near-duplicate-step".to_owned()
+            ],
+            false
+        )
+    );
+    assert_eq!(
+        handler_rules(&[("steps.rb", &actions("ONE = 1\nTWO = 2"))]),
+        (vec![], false)
+    );
+}
+
+/// Enclosing lambda scopes bind parameters and single-literal locals before file locals.
+///
+/// Registrations inside executed lambdas stay non-comparable, and the execution proof only
+/// accepts literal assignments beside registrations, so the enclosing binding is observed through
+/// completeness: a stable binding lets the unresolved expected value reject comparison quietly,
+/// an unstable one reports incompleteness.
+#[test]
+fn enclosing_scope_bindings_shadow_file_locals_with_scope_identity() {
+    let register = "Then('the parcel status is verified') { |state| SyntheticAssertions.expect(state).to_be(limit) }";
+    for (label, source, incomplete) in [
+        ("block-local written once", format!("limit = 1\nbuild = lambda do |; limit|\n  limit = 7\n  {register}\nend\nbuild.call"), false),
+        ("parameter", format!("limit = 1\nbuild = lambda do |limit|\n  {register}\nend\nbuild.call(7)"), false),
+        ("block-local never written", format!("build = lambda do |; limit|\n  {register}\nend\nbuild.call"), false),
+        ("arrow lambda local", format!("build = -> {{\n  limit = 7\n  {register}\n}}\nbuild.call"), false),
+        ("second write in scope", format!("build = lambda do |; limit|\n  limit = 7\n  limit = 8\n  {register}\nend\nbuild.call"), true),
+        ("parameter written later", format!("build = lambda do |limit|\n  limit = 8\n  limit = 9\n  {register}\nend\nbuild.call(7)"), true),
+        ("write inside the handler", "build = lambda do |; limit|\n  limit = 7\n  Then('the parcel status is verified') { |state| limit = 9; SyntheticAssertions.expect(state).to_be(limit) }\nend\nbuild.call".to_owned(), true),
+        ("file local written in the lambda", format!("limit = 1\nbuild = lambda do\n  limit = 7\n  {register}\nend\nbuild.call"), true),
+    ] {
+        let (rules, observed) = handler_rules(&[("steps.rb", &format!("{LOAD}{source}"))]);
+        assert_eq!(rules, Vec::<String>::new(), "{label}");
+        assert_eq!(observed, incomplete, "{label}");
+    }
+    // Writes reach a file-level capture unless a nearer scope rebinds the name.
+    let pair = "Then('the parcel status is verified') { |state| work(shared) }\nThen('the parcel status is now verified') { |state| work(shared) }";
+    for (label, prelude, incomplete) in [
+        (
+            "block-local write in a handler",
+            "shared = 1\nThen('other') { |state; shared| shared = 2; work(shared) }",
+            false,
+        ),
+        (
+            "parameter write in a handler",
+            "shared = 1\nThen('other') { |shared| shared = 2; work(shared) }",
+            false,
+        ),
+        (
+            "plain write in a handler",
+            "shared = 1\nThen('other') { |state| shared = 2; work(shared) }",
+            true,
+        ),
+        (
+            "rebinding block write",
+            "shared = 1\n[1].each { |shared| shared = 2 }",
+            false,
+        ),
+        (
+            "plain block write",
+            "shared = 1\n[1].each { shared = 2 }",
+            true,
+        ),
+        (
+            "rebinding block with a nested plain write",
+            "shared = 1\n[1].each { |shared| [2].each { shared = 3 } }",
+            false,
+        ),
+        (
+            "nested handler rebinding",
+            "shared = 1\nThen('other') { |state| [1].each { |shared| shared = 2 } }",
+            false,
+        ),
+        (
+            "nested handler plain write",
+            "shared = 1\nThen('other') { |state| [1].each { shared = 2 } }",
+            true,
+        ),
+        (
+            "string read outside handlers",
+            "shared = 'one'\nother(shared)",
+            true,
+        ),
+        (
+            "integer read outside handlers",
+            "shared = 1\nother(shared)",
+            false,
+        ),
+    ] {
+        let (rules, observed) = handler_rules(&[("steps.rb", &format!("{LOAD}{prelude}\n{pair}"))]);
+        assert_eq!(
+            rules,
+            if incomplete {
+                vec![]
+            } else {
+                vec!["duplicate-handler", "near-duplicate-step"]
+            },
+            "{label}"
+        );
+        assert_eq!(observed, incomplete, "{label}");
+    }
+    // `def` opens a new local scope, so its write never reaches the capture; the defining
+    // handler itself stays non-comparable and incomplete as before.
+    let walled = format!(
+        "{LOAD}shared = 1\nThen('other') {{ |state| def helper; shared = 2; end }}\n{pair}"
+    );
+    assert_eq!(
+        handler_rules(&[("steps.rb", &walled)]),
+        (
+            vec![
+                "duplicate-handler".to_owned(),
+                "near-duplicate-step".to_owned()
+            ],
+            true
+        )
+    );
+}
+
+/// Lambda captures are stable without trust; resolved provider aliases compare across files.
+#[test]
+fn lambda_captures_and_resolved_aliases_keep_file_identity_rules() {
+    let pair = step_pair(
+        "expect.call(state).to_be('ready')",
+        "expect.call(state).to_be('ready')",
+    );
+    for (label, prelude, expected) in [
+        (
+            "file-level lambda capture",
+            "expect = ->(value) { value }",
+            vec!["duplicate-handler", "near-duplicate-step"],
+        ),
+        (
+            "file-level lambda keyword capture",
+            "expect = lambda { |value| value }",
+            vec!["duplicate-handler", "near-duplicate-step"],
+        ),
+        (
+            "file-level proc capture",
+            "expect = proc { |value| value }",
+            vec!["duplicate-handler", "near-duplicate-step"],
+        ),
+    ] {
+        let (rules, incomplete) =
+            handler_rules(&[("steps.rb", &format!("{LOAD}{prelude}\n{pair}"))]);
+        assert_eq!(rules, expected, "{label}");
+        assert!(!incomplete, "{label}");
+    }
+    let conflicting = step_pair(
+        "expect.call(state).to_be('ready')",
+        "expect.call(state).to_be('idle')",
+    );
+    assert_eq!(
+        handler_rules(&[(
+            "steps.rb",
+            &format!("{LOAD}expect = ->(value) {{ value }}\n{conflicting}")
+        )]),
+        (vec![], false)
+    );
+    let reassigned =
+        format!("{LOAD}expect = ->(value) {{ value }}\nexpect = ->(value) {{ value }}\n{pair}");
+    assert!(handler_rules(&[("steps.rb", &reassigned)]).1);
+
+    let first = format!("{LOAD}expect = SyntheticAssertions.method(:expect)\nThen('the parcel is ready') {{ |state| expect.call(state).to_be('ready') }}");
+    let second = format!("{LOAD}expect = SyntheticAssertions.api.fetch(:expect)\nThen('shipment readiness has been confirmed') {{ |state| expect.call(state).to_be('ready') }}");
+    assert_eq!(
+        handler_rules(&[("a.rb", &first), ("b.rb", &second)]),
+        (vec!["duplicate-handler".to_owned()], false)
+    );
+    let lexical_a =
+        format!("{LOAD}limit = 1\nThen('the parcel is ready') {{ |state| work(limit) }}");
+    let lexical_b = format!(
+        "{LOAD}limit = 1\nThen('shipment readiness has been confirmed') {{ |state| work(limit) }}"
+    );
+    assert_eq!(
+        handler_rules(&[("a.rb", &lexical_a), ("b.rb", &lexical_b)]),
+        (vec![], false)
+    );
+    let runtime = format!("{LOAD}expect = ->(value) {{ value }}\nThen('the parcel status is now verified') {{ |state| expect.call(state).to_be('ready') }}");
+    assert_eq!(
+        handler_rules(&[("a.rb", &first), ("b.rb", &runtime)]),
+        (vec![], false)
+    );
+}

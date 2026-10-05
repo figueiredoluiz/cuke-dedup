@@ -563,9 +563,50 @@ impl AssertionBindings {
             return vec![BehaviorEvent::Call(format!("ruby:ordinary:{shape}"))];
         }
         let mut events = Vec::new();
+        let declared: BTreeMap<_, _> = descendants(block)
+            .into_iter()
+            .filter(|node| bindings.elided.contains(&node.id()))
+            .map(|node| (node.id(), node))
+            .collect();
         let mut pending = vec![(block, false, false)];
         while let Some((node, deferred, covered)) = pending.pop() {
             if block.kind() == "method" && block.child_by_field_name("name") == Some(node) {
+                continue;
+            }
+            // A declared callable body is behaviour only where its invocation is proven.
+            if declared.contains_key(&node.id()) {
+                continue;
+            }
+            if let Some(body) = bindings
+                .expansions
+                .get(&node.id())
+                .and_then(|callable| declared.get(callable).copied())
+                .and_then(super::bindings::callable_body)
+            {
+                // The declaration executes here; record its body, not a wrapper-call event.
+                let mut cursor = body.walk();
+                let statements: Vec<_> = body.named_children(&mut cursor).collect();
+                pending.extend(
+                    statements
+                        .into_iter()
+                        .rev()
+                        .map(|statement| (statement, deferred, false)),
+                );
+                continue;
+            }
+            if bindings.unresolved_invocations.contains(&node.id()) {
+                // Arguments are not substituted, so the declared body's values are unproven.
+                events.push(BehaviorEvent::unresolved_assertion(deferred));
+                if let Some(arguments) = node.child_by_field_name("arguments") {
+                    let mut cursor = arguments.walk();
+                    let values: Vec<_> = arguments.named_children(&mut cursor).collect();
+                    pending.extend(
+                        values
+                            .into_iter()
+                            .rev()
+                            .map(|value| (value, deferred, false)),
+                    );
+                }
                 continue;
             }
             let deferred = deferred
@@ -786,7 +827,8 @@ impl AssertionBindings {
             }
             descendants(*args).iter().any(|value| {
                 !value.is_extra()
-                    && !(value.kind() == "identifier" && bindings.names.contains_key(&value.id()))
+                    && !(matches!(value.kind(), "identifier" | "constant")
+                        && bindings.names.contains_key(&value.id()))
                     && !matches!(
                         value.kind(),
                         "argument_list"
@@ -907,7 +949,7 @@ fn expected_access(node: Node<'_>, source: &str, bindings: &super::bindings::Bin
 
 /// Serializes binding-aware syntax tokens for assertion identity.
 fn serialize_tokens(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> String {
-    serde_json::to_string(&super::handler::syntax_tokens(node, source, bindings).1)
+    serde_json::to_string(&super::handler::event_tokens(node, source, bindings))
         .expect("assertion tokens serialize")
 }
 
