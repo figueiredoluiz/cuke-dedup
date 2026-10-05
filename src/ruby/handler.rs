@@ -148,7 +148,9 @@ pub(super) fn parameterized_calls(
     })
 }
 
-/// Abstracts literal values out of alpha tokens; behaviour events keep the values.
+/// Serializes alpha tokens with numeric and string content abstracted and resolved constants
+/// reduced to their literal kind. Preserves captures and other values, including bare symbols
+/// and booleans; behavior events retain their values separately.
 fn structural_tokens(alpha: &SyntaxTokens<'_, '_>, captures: &BTreeSet<String>) -> String {
     let abstracted: Vec<(&str, &str)> = alpha
         .iter()
@@ -166,6 +168,8 @@ fn structural_tokens(alpha: &SyntaxTokens<'_, '_>, captures: &BTreeSet<String>) 
 
 // Preserve topology as well as leaves; Ruby whitespace can alter call nesting.
 type SyntaxTokens<'tree, 'source> = Vec<(&'tree str, Cow<'source, str>)>;
+/// Returns syntax and binding-normalized tokens, preserving tree shape and callable bodies.
+/// Omits comments, block delimiters, and the root method's name and delimiters.
 pub(super) fn syntax_tokens<'tree, 'source>(
     root: Node<'tree>,
     source: &'source str,
@@ -183,6 +187,9 @@ pub(super) fn event_tokens<'tree, 'source>(
     tokens_with_elision(root, source, bindings, true).1
 }
 
+/// Returns syntax and binding-normalized tokens with equivalent block forms normalized.
+/// When `elide` is set, declared callable descendants become placeholders; the root is retained.
+/// `__LINE__` uses its one-based source line in both streams.
 fn tokens_with_elision<'tree, 'source>(
     root: Node<'tree>,
     source: &'source str,

@@ -553,6 +553,9 @@ impl AssertionBindings {
     }
 
     /// Collects ordered assertions and complete ordinary effects; uncertainty withdraws comparison.
+    /// Expands proven declared-callable invocations one level, preserving deferred status inside
+    /// nested blocks. Parameterized invocations yield unresolved assertions while their arguments
+    /// are still analyzed; declarations alone contribute no body events.
     pub fn events(
         &self,
         block: Node<'_>,
@@ -725,7 +728,9 @@ impl AssertionBindings {
         events
     }
 
-    /// Builds value-sensitive assertion evidence from a trusted factory and literal terminal.
+    /// Builds value-sensitive assertion evidence from a trusted factory and supported terminal.
+    /// Expected values may include resolved locals and constants. Unsupported call shapes return
+    /// `None`; recognized assertions with unproven arguments produce an unresolved assertion.
     fn assertion(
         &self,
         node: Node<'_>,
@@ -955,6 +960,7 @@ fn expected_access(node: Node<'_>, source: &str, bindings: &super::bindings::Bin
 }
 
 /// Serializes binding-aware syntax tokens for assertion identity.
+/// Declared callable descendants become placeholders, keeping their bodies out of event payloads.
 fn serialize_tokens(node: Node<'_>, source: &str, bindings: &super::bindings::Bindings) -> String {
     serde_json::to_string(&super::handler::event_tokens(node, source, bindings))
         .expect("assertion tokens serialize")
