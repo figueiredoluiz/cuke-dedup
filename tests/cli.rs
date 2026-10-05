@@ -5453,6 +5453,7 @@ fn ruby_handler_values_run(files: &[(&str, &str)]) -> RubyReleaseRun {
     ruby_release_run(directory.path(), Some("*.rb"))
 }
 
+/// A block-local write beside a file-level capture must not make the sibling reader incomplete.
 #[test]
 fn regression_ruby_handler_values_block_local_write_keeps_capture_complete() {
     // A `|; name|` block-local shadows the file-level capture; writing it inside the handler
@@ -5471,6 +5472,7 @@ fn regression_ruby_handler_values_block_local_write_keeps_capture_complete() {
     }
 }
 
+/// Equal top-level constants collapse handlers; conflicting ones, declared after the handlers, keep them apart.
 #[test]
 fn regression_ruby_handler_values_top_level_constants_reach_the_fingerprint() {
     let steps = "ALPHA_LIMIT = 1\nALPHA_BOUND = 1\nGiven('the alpha meter reaches its limit') { SyntheticAssertions.expect(meter()).to_be(ALPHA_LIMIT) }\nGiven('the alpha meter reaches its bound') { SyntheticAssertions.expect(meter()).to_be(ALPHA_BOUND) }\nGiven('the beta dial holds its first stop') { SyntheticAssertions.expect(dial()).to_be(BETA_FIRST) }\nGiven('the beta dial holds its second stop') { SyntheticAssertions.expect(dial()).to_be(BETA_SECOND) }\nBETA_FIRST = 1\nBETA_SECOND = 2";
@@ -5486,6 +5488,7 @@ fn regression_ruby_handler_values_top_level_constants_reach_the_fingerprint() {
     assert!(!run.incomplete);
 }
 
+/// Called identical lambdas duplicate, called conflicting ones stay apart, uncalled ones only parameterize.
 #[test]
 fn regression_ruby_handler_values_declared_lambda_runs_only_where_invoked() {
     let handler = |matcher: &str, subject: &str, value: u8, invocation: &str| {
@@ -5515,6 +5518,7 @@ fn regression_ruby_handler_values_declared_lambda_runs_only_where_invoked() {
     );
 }
 
+/// Resolved provider aliases compare across files; a same-named runtime lambda stays complete and untrusted.
 #[test]
 fn regression_ruby_handler_values_resolved_alias_captures_compare_across_files() {
     let direct = "expect = SyntheticAssertions.method(:expect)\nThen('the parcel is ready') { |state| expect.call(state).to_be('ready') }";

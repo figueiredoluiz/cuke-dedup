@@ -1000,6 +1000,7 @@ fn handler_rules(files: &[(&str, &str)]) -> (Vec<String>, bool) {
 
 const LOAD: &str = "require_relative 'provider'\n";
 
+/// Two differently worded registrations with the given handler bodies and a `state` parameter.
 fn step_pair(first: &str, second: &str) -> String {
     format!("Then('the parcel status is verified') {{ |state| {first} }}\nThen('the parcel status is now verified') {{ |state| {second} }}")
 }

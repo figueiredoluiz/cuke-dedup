@@ -27,7 +27,7 @@ const WALLS: [&str; 5] = [
     "singleton_class",
 ];
 
-/// Identifies block and lambda scopes that can close over outer locals.
+/// Blocks and lambdas open a scope that still closes over the enclosing locals.
 fn scope_node(node: Node<'_>) -> bool {
     matches!(node.kind(), "block" | "do_block" | "lambda")
 }
@@ -42,7 +42,7 @@ fn scope_body(scope: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
-/// Collects supported parameter and block-local names that shadow outer bindings.
+/// Names a scope binds through its parameters, including `|; locals|`.
 fn parameter_names(scope: Node<'_>, source: &str) -> BTreeSet<String> {
     let Some(parameters) = scope.child_by_field_name("parameters") else {
         return BTreeSet::new();
@@ -53,7 +53,7 @@ fn parameter_names(scope: Node<'_>, source: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Recognizes integer, float, simple symbol, boolean, and nil literals as immutable values.
+/// Immutable literals whose token text is the value.
 fn scalar_literal(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
@@ -61,7 +61,7 @@ fn scalar_literal(node: Node<'_>) -> bool {
     )
 }
 
-/// Decodes a supported quoted string, returning `None` for interpolation or unsupported escapes.
+/// Decoded text of a string literal without interpolation.
 fn string_literal(node: Node<'_>, source: &str) -> Option<String> {
     (node.kind() == "string"
         && !descendants(node)
@@ -86,7 +86,7 @@ fn callable_literal<'a>(node: Node<'a>, source: &str) -> Option<Node<'a>> {
     .then_some(node)
 }
 
-/// Checks for a nonempty parameter list, including block-local declarations.
+/// Whether a lambda literal declares parameters; their values are never substituted.
 fn callable_parameterized(callable: Node<'_>) -> bool {
     let owner = if callable.kind() == "lambda" {
         Some(callable)
@@ -111,14 +111,13 @@ pub(super) fn callable_body(callable: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
-/// Finds the nearest enclosing block, lambda, method, class, or module scope.
+/// The block, lambda or method that directly owns a node.
 fn nearest_scope(node: Node<'_>) -> Option<Node<'_>> {
     std::iter::successors(node.parent(), |node| node.parent())
         .find(|node| scope_node(*node) || WALLS.contains(&node.kind()))
 }
 
 /// A `.call(...)` or `.()` dispatch on the binding, through transparent parentheses.
-/// Returns the call and its syntactic argument count; calls with blocks and other uses return `None`.
 fn invocation<'a>(read: Node<'a>, source: &str) -> Option<(Node<'a>, usize)> {
     let mut value = read;
     while let Some(parent) = value
@@ -147,7 +146,7 @@ fn invocation<'a>(read: Node<'a>, source: &str) -> Option<(Node<'a>, usize)> {
     Some((call, arity))
 }
 
-/// Checks only the program's leading comments for `frozen_string_literal: true`.
+/// Whether the leading comment block enables `frozen_string_literal`.
 fn frozen_string_literals(root: Node<'_>, source: &str) -> bool {
     let mut cursor = root.walk();
     let leading: Vec<_> = root
@@ -162,9 +161,6 @@ fn frozen_string_literals(root: Node<'_>, source: &str) -> bool {
 }
 
 /// Values of constants assigned exactly once at program level with an immutable literal.
-/// Assignments may follow their reads. Qualified, nested, repeated, operator, and destructured
-/// writes exclude affected names; calls to `const_set`, `remove_const`, or `const_missing`
-/// disable resolution for the whole file.
 fn file_constants(root: Node<'_>, source: &str) -> BTreeMap<String, String> {
     let nodes = descendants(root);
     if nodes.iter().any(|node| {
@@ -226,8 +222,7 @@ fn file_constants(root: Node<'_>, source: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// Encodes supported immutable literals as `const:<kind>:<value>`, or returns `None`.
-/// `frozen` permits plain string literals; otherwise strings require an explicit `.freeze`.
+/// Fingerprint value of an immutable constant initializer; strings need `.freeze` or the pragma.
 fn constant_value(right: Node<'_>, source: &str, frozen: bool) -> Option<String> {
     if scalar_literal(right) {
         return Some(format!("const:{}:{}", right.kind(), text(right, source)));
@@ -351,10 +346,6 @@ impl Bindings {
     }
 
     /// Resolves handler bindings with source-proven captures and lexical shadowing.
-    ///
-    /// `captures` maps file-local aliases to proven callable owners; `dispatch` contains call
-    /// byte ranges whose reflection is already resolved. Unstable captures and unsupported binding
-    /// syntax set `uncertain`; lexical captures require file-local identity even when stable.
     pub(super) fn collect_with_origins(
         block: Node<'_>,
         root: Node<'_>,
@@ -576,9 +567,6 @@ impl Bindings {
     }
 
     /// Classifies handler locals holding lambda literals; unmodeled uses keep deferred identity.
-    /// Records eligible declarations for event elision. A single parameterless declaration in
-    /// the handler scope can expand at later zero-argument calls, including calls in expressions
-    /// or nested blocks. Parameterized invocations are recorded as unresolved instead.
     fn declare_callables(
         &mut self,
         block: Node<'_>,

@@ -3893,7 +3893,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "a9f1d98fde5112f1181aa2f4d02af0bd320c22fbc20df757ea8f9da7ec69ea29",
+      "sourceSha256": "1c51e3919c4146355e8568e68592815b289f6e348ba91e42c7761e80da7012bb",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5092,7 +5092,7 @@
       ]
     },
     "tests/ruby_assertion_provenance.rs": {
-      "sourceSha256": "66d6aaad1423f685e49c6db32e0d8f2d995bf22156076dccd667be1a3d63f466",
+      "sourceSha256": "643537cd6a68ca7f48ebe5dbbfd0c86aa44e290b17f30869220b6c509e18d9e4",
       "tests": [
         {
           "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes",
