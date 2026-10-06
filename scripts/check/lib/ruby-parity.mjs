@@ -87,3 +87,114 @@ export function validateOracle(oracle) {
     }
   }
 }
+
+/**
+ * Unit census vocabulary. A class decides which statuses may close an entry; every closing
+ * status names its evidence (a resolvable oracle clause, an adapter-independent stage, or an
+ * executable Ruby test) so a disposition can be objected to one entry at a time.
+ */
+export const UNIT_CLASSES = ["ruby-behavior", "shared-engine-invariant", "language-specific-api"];
+export const UNIT_STATUSES = ["unmapped", "covered", "partial", "language-inapplicable", "engine-invariant", "rust-evidence"];
+export const ENGINE_STAGES = ["sha256", "bounded-io", "regex-compiler", "gherkin-parser", "cli-parsing",
+  "config-decoding", "model-codec", "lcs-math", "matcher-text", "api-shape", "session-plumbing", "vcs-decoding"];
+const ALLOWED_STATUSES = {
+  "ruby-behavior": ["unmapped", "covered", "partial", "rust-evidence"],
+  "shared-engine-invariant": ["unmapped", "covered", "partial", "engine-invariant", "rust-evidence"],
+  "language-specific-api": ["unmapped", "covered", "partial", "language-inapplicable"],
+};
+
+/**
+ * Resolves `requiredFindings[i]`, `requiredAbsent[i]`, `expectedCandidateSources.<rule>` or a
+ * scalar oracle field against the named group's oracle.
+ */
+export function oracleClauseResolves(oracle, clause) {
+  if (typeof clause !== "string" || !oracle) return false;
+  let match = /^(requiredFindings|requiredAbsent)\[(\d+)\]$/.exec(clause);
+  if (match) return Array.isArray(oracle[match[1]]) && Number(match[2]) < oracle[match[1]].length;
+  match = /^expectedCandidateSources\.([a-z-]+)$/.exec(clause);
+  if (match) return Object.hasOwn(oracle.expectedCandidateSources ?? {}, match[1]);
+  return ["complete", "expectedExit", "definitions", "featureSteps", "duplication"].includes(clause)
+    && Object.hasOwn(oracle, clause);
+}
+
+/**
+ * Validates one census entry structurally and returns its blocker text, or null when the entry
+ * closes. `census` maps "file::name" to entries so evidence references can be checked.
+ */
+export function validateUnitEntry(file, item, groups, census) {
+  const label = `${file}:${item.name}`;
+  assert.ok(UNIT_CLASSES.includes(item.behaviorClass), `${label}: missing behavioral classification`);
+  assert.ok(UNIT_STATUSES.includes(item.requiredStatus), `${label}: unknown requiredStatus`);
+  assert.ok(ALLOWED_STATUSES[item.behaviorClass].includes(item.requiredStatus),
+    `${label}: ${item.requiredStatus} is not allowed for ${item.behaviorClass}`);
+  const rationale = item.rationale?.trim();
+  switch (item.requiredStatus) {
+    case "covered":
+      assert.ok(groups[item.fixtureGroup], `${label}: missing group`);
+      assert.ok(oracleClauseResolves(groups[item.fixtureGroup], item.oracleClause),
+        `${label}: oracleClause must resolve in ${item.fixtureGroup}`);
+      assert.ok(rationale, `${label}: covered needs a rationale naming the observed claim`);
+      return null;
+    case "language-inapplicable":
+      assert.ok(rationale, `${label}: inapplicable requires a rationale`);
+      return null;
+    case "engine-invariant":
+      assert.ok(ENGINE_STAGES.includes(item.stage), `${label}: unknown engine stage`);
+      assert.ok(rationale, `${label}: engine-invariant requires a rationale`);
+      return null;
+    case "rust-evidence": {
+      const evidence = item.evidenceTest;
+      assert.ok(evidence && typeof evidence.file === "string" && typeof evidence.name === "string",
+        `${label}: evidenceTest needs file and name`);
+      assert.ok(["binary", "in-process"].includes(item.evidenceKind), `${label}: evidenceKind must be binary or in-process`);
+      const target = census.get(`${evidence.file}::${evidence.name}`);
+      assert.ok(target, `${label}: evidence test ${evidence.file}:${evidence.name} is not in the census`);
+      const self = evidence.file === file && evidence.name === item.name;
+      assert.ok(!self || item.behaviorClass === "ruby-behavior", `${label}: only ruby-behavior tests are their own evidence`);
+      const targetIsItsOwnEvidence = target.requiredStatus !== "rust-evidence"
+        || (target.evidenceTest?.file === evidence.file && target.evidenceTest?.name === evidence.name);
+      assert.ok(self || targetIsItsOwnEvidence, `${label}: evidence chains are rejected`);
+      assert.ok(self || target.behaviorClass === "ruby-behavior", `${label}: evidence must be a Ruby test`);
+      assert.ok(rationale, `${label}: rust-evidence requires a rationale`);
+      return null;
+    }
+    default:
+      return `${label}: ${item.requiredStatus}`;
+  }
+}
+
+/**
+ * Distinct Rust tests that completion must execute: one entry per (file, name).
+ */
+export function evidenceTargets(units) {
+  const targets = new Map();
+  for (const [file, inventory] of Object.entries(units.files)) {
+    for (const item of inventory.tests) {
+      if (item.requiredStatus !== "rust-evidence") continue;
+      const key = `${item.evidenceTest.file}::${item.evidenceTest.name}`;
+      targets.set(key, { file: item.evidenceTest.file, name: item.evidenceTest.name, referencedBy: `${file}:${item.name}` });
+    }
+  }
+  return [...targets.values()];
+}
+
+/**
+ * `cargo test` output for one exact test: exactly one test must run and pass; an ignored or
+ * filtered-out test is not evidence.
+ */
+export function evidenceRunPassed(stdout) {
+  return /test result: ok\. 1 passed; 0 failed; 0 ignored/.test(stdout);
+}
+
+/**
+ * `cargo test` arguments that address exactly one test: integration tests by suite and name,
+ * library tests by their module path (`src/config/tests.rs` -> `config::tests::<name>`).
+ */
+export function cargoTestArgs(target) {
+  if (target.file.startsWith("tests/")) {
+    return ["test", "-q", "--test", target.file.replace(/^tests\//, "").replace(/\.rs$/, ""), target.name, "--", "--exact"];
+  }
+  const modulePath = target.file.replace(/^src\//, "").replace(/\.rs$/, "").replace(/\//g, "::");
+  const module = modulePath.endsWith("::tests") ? modulePath : `${modulePath}::tests`;
+  return ["test", "-q", "--lib", `${module}::${target.name}`, "--", "--exact"];
+}

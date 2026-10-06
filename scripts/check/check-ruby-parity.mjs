@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { completionPassed, corpusCoverageDeficits, parityDeficits, validateOracle } from "./lib/ruby-parity.mjs";
+import { cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceRunPassed, evidenceTargets, parityDeficits, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -90,6 +90,10 @@ if (!regression) {
   assert.deepEqual(Object.keys(units.files).sort(), [...await testFiles("src"), ...await testFiles("tests")].sort(),
     "test files changed; extend the Ruby completion census");
 }
+const census = new Map();
+for (const [file, inventory] of Object.entries(units.files)) {
+  for (const item of inventory.tests) census.set(`${file}::${item.name}`, item);
+}
 for (const [file, inventory] of Object.entries(units.files)) {
   const content = (await readFile(file, "utf8")).replaceAll("\r\n", "\n");
   assert.equal(createHash("sha256").update(content).digest("hex"), inventory.sourceSha256,
@@ -99,12 +103,18 @@ for (const [file, inventory] of Object.entries(units.files)) {
     `${file}: unit-test census is incomplete or duplicated`);
   for (const item of inventory.tests) {
     unitContracts++;
-    assert.ok(["ruby-behavior", "shared-engine-invariant", "language-specific-api"].includes(item.behaviorClass),
-      `${file}:${item.name}: missing behavioral classification`);
-    assert.ok(["unmapped", "covered", "partial", "language-inapplicable"].includes(item.requiredStatus));
-    if (item.requiredStatus === "covered") assert.ok(groups[item.fixtureGroup], `${file}:${item.name}: missing group`);
-    else if (item.requiredStatus === "language-inapplicable") assert.ok(item.rationale?.trim());
-    else blockers.push(`${file}:${item.name}: ${item.requiredStatus}`);
+    const blocker = validateUnitEntry(file, item, groups, census);
+    if (blocker) blockers.push(blocker);
+  }
+}
+// Rust evidence is executed, not merely named: an ignored, filtered-out or failing test blocks.
+if (!regression) {
+  for (const target of evidenceTargets(units)) {
+    const args = cargoTestArgs(target);
+    const run = spawnSync("cargo", args, { cwd: resolve("."), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (run.status !== 0 || !evidenceRunPassed(run.stdout)) {
+      blockers.push(`${target.referencedBy}: rust-evidence ${target.file}:${target.name} did not run and pass`);
+    }
   }
 }
 for (const [name, group] of Object.entries(groups)) {
