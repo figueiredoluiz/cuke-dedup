@@ -656,7 +656,25 @@ impl AssertionBindings {
                 && node.parent().is_some_and(|parent| {
                     matches!(parent.kind(), "block_body" | "body_statement")
                 }));
-            if opaque && !covered {
+            // A declared callable's declaration is syntax, like a function declaration in the
+            // JavaScript frontend, and a local that only stores a proven invocation's result is
+            // the expansion it wraps (`const result = act()`): neither is an effect of its own.
+            // Writes to any other destination, and operator writes, stay effects.
+            let declaration = node.kind() == "assignment"
+                && node.child_by_field_name("right").is_some_and(|value| {
+                    declared.contains_key(&value.id())
+                        || (node
+                            .child_by_field_name("left")
+                            .is_some_and(|target| target.kind() == "identifier")
+                            && super::bindings::expansion_statements(
+                                bindings,
+                                &declared,
+                                super::bindings::unparenthesized(value),
+                                expanded,
+                            )
+                            .is_some())
+                });
+            if opaque && !covered && !declaration {
                 events.push(BehaviorEvent::Call(format!(
                     "ruby:effect:{}",
                     serialize_tokens(node, source, bindings)
@@ -699,12 +717,6 @@ impl AssertionBindings {
         if assertions.is_empty() {
             if let Some(shape) = super::handler::parameterized_calls(block, source, bindings) {
                 return vec![BehaviorEvent::Call(format!("ruby:ordinary:{shape}"))];
-            }
-        }
-        let context = serde_json::to_string(&assertions).expect("assertion context serializes");
-        for event in &mut events {
-            if let BehaviorEvent::Call(payload) = event {
-                payload.push_str(&context);
             }
         }
         events

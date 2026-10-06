@@ -5526,6 +5526,45 @@ fn regression_ruby_handler_values_declared_lambda_runs_only_where_invoked() {
     );
 }
 
+/// Conflicting trusted assertions are one differing event: near needs shared ordinary behaviour,
+/// a called declaration alone shares nothing, and a stored invocation result is not an event.
+#[test]
+fn regression_ruby_assertion_near_conflicting_values_are_one_differing_event() {
+    let handler = |matcher: &str, body: &str| format!("Given('{matcher}') do\n  {body}\nend");
+    let steps = [
+        handler(
+            "the alpha probe reads a first value",
+            "SyntheticAssertions.expect(alpha()).to_be(1); settle()",
+        ),
+        handler(
+            "the alpha probe reads a second value",
+            "SyntheticAssertions.expect(alpha()).to_be(2); settle()",
+        ),
+        handler(
+            "the beta gauge reads a first value",
+            "check = -> { SyntheticAssertions.expect(beta()).to_be(1) }; check.call",
+        ),
+        handler(
+            "the beta gauge reads a second value",
+            "check = -> { SyntheticAssertions.expect(beta()).to_be(2) }; check.call",
+        ),
+        handler(
+            "the gamma store reads a first value",
+            "act = -> { SyntheticAssertions.expect(gamma()).to_be(1) }; result = act.call",
+        ),
+        handler(
+            "the gamma store reads a second value",
+            "act = -> { SyntheticAssertions.expect(gamma()).to_be(2) }; result = act.call",
+        ),
+    ]
+    .join("\n");
+    let run = ruby_handler_values_run(&[("steps.rb", &steps)]);
+    assert_eq!(run.definitions, 6);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+}
+
 /// Resolved provider aliases compare across files; a same-named runtime lambda stays complete and untrusted.
 #[test]
 fn regression_ruby_handler_values_resolved_alias_captures_compare_across_files() {
