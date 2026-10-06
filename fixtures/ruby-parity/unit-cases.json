@@ -530,8 +530,8 @@
           "name": "large_equivalence_classes_report_one_stable_cluster",
           "requiredStatus": "covered",
           "fixtureGroup": "exact-group-cluster-boundary-splits-at-five-members",
-          "oracleClause": "expectedExit",
-          "rationale": "Covered by `exact-group-cluster-boundary-splits-at-five-members` expectedExit: A five-member Ruby group reports one bounded cluster finding.",
+          "oracleClause": "requiredFindings[0]",
+          "rationale": "Covered by `exact-group-cluster-boundary-splits-at-five-members` requiredFindings[0]: The five-member Ruby group's required findings pin the single bounded cluster beside the four-member spanning set.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1128,10 +1128,9 @@
         },
         {
           "name": "matcher_compilation_reports_limits_but_not_unsupported_syntax",
-          "requiredStatus": "covered",
-          "fixtureGroup": "parameter-types-collision",
-          "oracleClause": "complete",
-          "rationale": "Covered by `parameter-types-collision` complete: Colliding parameter types mark the Ruby corpus incomplete without a limit error.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby matcher over the compile limit beside an unsupported-syntax matcher, pinning that only the limit is reported as a limit. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1653,10 +1652,9 @@
         },
         {
           "name": "table_escape_adaptation_is_bounded_and_does_not_change_docstrings",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gherkin-table-cell-escapes",
-          "oracleClause": "complete",
-          "rationale": "Covered by `gherkin-table-cell-escapes` complete: Escape adaptation keeps the corpus complete.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby feature with escaped table cells beside a doc string whose oracle pins the doc-string step text. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1773,18 +1771,16 @@
         },
         {
           "name": "gherkin_markdown_accepts_all_common_list_markers_and_bold_keywords",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gherkin-markdown-default-discovery",
-          "oracleClause": "featureSteps",
-          "rationale": "Covered by `gherkin-markdown-default-discovery` featureSteps: Markdown list steps are counted.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby Markdown feature using `*`, `-`, `+` list markers and bold keywords whose step count is pinned. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_preserves_a_final_step_without_a_trailing_newline",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gherkin-markdown-default-discovery",
-          "oracleClause": "featureSteps",
-          "rationale": "Covered by `gherkin-markdown-default-discovery` featureSteps: The final Markdown step is counted.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby Markdown feature ending without a newline whose step count is pinned. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1966,10 +1962,9 @@
         },
         {
           "name": "empty_analysis_has_zero_percent_duplication",
-          "requiredStatus": "covered",
-          "fixtureGroup": "explicit-exclusion-patterns",
-          "oracleClause": "expectedExit",
-          "rationale": "Covered by `explicit-exclusion-patterns` expectedExit: A Ruby corpus with no duplication findings passes the strict threshold (exit 0).",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby group with zero definitions whose oracle pins `duplication.percentage` at 0 and `passed`. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4145,10 +4140,9 @@
         },
         {
           "name": "threshold_does_not_tolerate_non_duplication_errors",
-          "requiredStatus": "covered",
-          "fixtureGroup": "threshold-over-limit",
-          "oracleClause": "expectedExit",
-          "rationale": "Covered by `threshold-over-limit` expectedExit: A Ruby corpus over the duplication threshold exits 1.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby corpus under the duplication threshold that still exits 1 on an ambiguous-step error, pinned by a group oracle. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4550,18 +4544,16 @@
         },
         {
           "name": "missing_feature_corpus_is_safe_by_default_and_can_be_required",
-          "requiredStatus": "covered",
-          "fixtureGroup": "registration-identical",
-          "oracleClause": "featureSteps",
-          "rationale": "Covered by `registration-identical` featureSteps: A Ruby corpus without features analyzes and reports without failing.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby corpus without features run twice, default and `--require-features`, with both exits pinned. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "partial_feature_parse_failure_is_summarized_when_features_are_required",
-          "requiredStatus": "covered",
-          "fixtureGroup": "malformed-table-neighbor",
-          "oracleClause": "complete",
-          "rationale": "Covered by `malformed-table-neighbor` complete: A malformed Ruby feature neighbour marks the corpus incomplete.",
+          "requiredStatus": "partial",
+          "fixtureGroup": null,
+          "rationale": "Needs Ruby evidence: a Ruby corpus with one malformed feature under `--require-features`, pinning the summary and exit. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
