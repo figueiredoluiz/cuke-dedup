@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
+import { completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -90,12 +90,24 @@ if (!regression) {
   assert.deepEqual(Object.keys(units.files).sort(), [...await testFiles("src"), ...await testFiles("tests")].sort(),
     "test files changed; extend the Ruby completion census");
 }
+// Each census file is read once: for its hash, its test inventory and the Ruby-mention check.
+// Ruby-only suites are not inventoried but may be cited as evidence.
+const contents = new Map();
+for (const file of Object.keys(units.files)) contents.set(file, (await readFile(file, "utf8")).replaceAll("\r\n", "\n"));
 const census = new Map();
 for (const [file, inventory] of Object.entries(units.files)) {
-  for (const item of inventory.tests) census.set(`${file}::${item.name}`, item);
+  for (const item of inventory.tests) {
+    census.set(`${file}::${item.name}`, { ...item, mentionsRuby: testBodyMentionsRuby(contents.get(file), item.name, file) });
+  }
+}
+if (!regression) {
+  const rubySuites = ["tests/ruby.rs", ...await testFiles("src/ruby")];
+  for (const file of rubySuites) {
+    for (const [key, entry] of rubySuiteEvidence(file, (await readFile(file, "utf8")).replaceAll("\r\n", "\n"))) census.set(key, entry);
+  }
 }
 for (const [file, inventory] of Object.entries(units.files)) {
-  const content = (await readFile(file, "utf8")).replaceAll("\r\n", "\n");
+  const content = contents.get(file);
   assert.equal(createHash("sha256").update(content).digest("hex"), inventory.sourceSha256,
     `${file}: source tests changed; reassess unit-test mappings`);
   const names = [...content.matchAll(/#\[test\]\s*fn (\w+)/g)].map((match) => match[1]);
@@ -109,12 +121,16 @@ for (const [file, inventory] of Object.entries(units.files)) {
 }
 // Rust evidence is executed, not merely named: an ignored, filtered-out or failing test blocks.
 // Only completion mode executes; inventory and coverage validation never run the analyzer.
+// Evidence runs in the profile of the analyzed binary so the report describes one build.
+const evidenceProfile = /[\\/]release[\\/]/.test(binary) ? "release" : "debug";
 if (executesEvidence({ regression, inventoryOnly })) {
-  for (const target of evidenceTargets(units)) {
-    const args = cargoTestArgs(target);
-    const run = spawnSync("cargo", args, { cwd: resolve("."), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    if (run.status !== 0 || !evidenceRunPassed(run.stdout)) {
-      blockers.push(`${target.referencedBy}: rust-evidence ${target.file}:${target.name} did not run and pass`);
+  for (const batch of evidenceBatches(evidenceTargets(units), { release: evidenceProfile === "release" })) {
+    const run = spawnSync("cargo", batch.args, { cwd: resolve("."), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 600_000 });
+    if (run.status === 0 && evidenceRunPassed(run.stdout, batch.targets.length)) continue;
+    const result = /test result:.*/.exec(run.stdout ?? "")?.[0] ?? "";
+    const cause = [result, run.error?.message ?? "", ...(run.stderr ?? "").trim().split("\n").slice(-3)].filter(Boolean).join(" | ");
+    for (const target of batch.targets) {
+      blockers.push(`${target.referencedBy.join(", ")}: rust-evidence ${target.file}:${target.name} did not run and pass (${cause})`);
     }
   }
 }
@@ -173,7 +189,7 @@ console.log(`${mappings.length} corpus cases mapped; `
 if (process.env.CUKE_DEDUP_RUBY_PARITY_REPORT) {
   const binarySha256 = inventoryOnly ? null : createHash("sha256").update(await readFile(binary)).digest("hex");
   await writeFile(process.env.CUKE_DEDUP_RUBY_PARITY_REPORT,
-    `${JSON.stringify({ binarySha256, mappings: mappings.length, unitContracts, observations, blockers }, null, 2)}\n`);
+    `${JSON.stringify({ binarySha256, evidenceProfile, mappings: mappings.length, unitContracts, observations, blockers }, null, 2)}\n`);
 }
 // Inventory validation is useful during implementation; it is explicitly NOT release acceptance.
 // The normal command fails until all desired outcomes and all missing-case dispositions close.

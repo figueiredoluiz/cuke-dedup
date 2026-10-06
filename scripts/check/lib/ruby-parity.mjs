@@ -90,13 +90,13 @@ export function validateOracle(oracle) {
 
 /**
  * Unit census vocabulary. A class decides which statuses may close an entry; every closing
- * status names its evidence (a resolvable oracle clause, an adapter-independent stage, or an
- * executable Ruby test) so a disposition can be objected to one entry at a time.
+ * status names its evidence (an oracle clause with its observed value, an adapter-independent
+ * stage, or an executed Ruby test) so a disposition can be objected to one entry at a time.
  */
 export const UNIT_CLASSES = ["ruby-behavior", "shared-engine-invariant", "language-specific-api"];
 export const UNIT_STATUSES = ["unmapped", "covered", "partial", "language-inapplicable", "engine-invariant", "rust-evidence"];
 export const ENGINE_STAGES = ["sha256", "bounded-io", "regex-compiler", "gherkin-parser", "cli-parsing",
-  "config-decoding", "model-codec", "lcs-math", "matcher-text", "api-shape", "session-plumbing", "vcs-decoding"];
+  "config-decoding", "model-codec", "lcs-math", "matcher-text", "api-shape", "session-plumbing"];
 const ALLOWED_STATUSES = {
   "ruby-behavior": ["unmapped", "covered", "partial", "rust-evidence"],
   "shared-engine-invariant": ["unmapped", "covered", "partial", "engine-invariant", "rust-evidence"],
@@ -104,8 +104,12 @@ const ALLOWED_STATUSES = {
 };
 
 /**
- * Resolves `requiredFindings[i]`, `requiredAbsent[i]`, `expectedCandidateSources.<rule>` or a
- * scalar oracle field against the named group's oracle.
+ * Resolves a clause against a group oracle. Array clauses name a member
+ * (`requiredFindings[i]`, `requiredAbsent[i]`), candidate clauses a counted source
+ * (`expectedCandidateSources.<rule>`), `duplication` a non-empty duplication object, and scalar
+ * clauses must state the observed value (`complete=false`, `expectedExit=2`, `definitions=4`,
+ * `featureSteps=5`) so the mapping breaks when the oracle changes; a bare scalar field resolves
+ * against every oracle and ties the test to nothing.
  */
 export function oracleClauseResolves(oracle, clause) {
   if (typeof clause !== "string" || !oracle) return false;
@@ -116,12 +120,63 @@ export function oracleClauseResolves(oracle, clause) {
   if (clause === "duplication") {
     return typeof oracle.duplication === "object" && oracle.duplication !== null && Object.keys(oracle.duplication).length > 0;
   }
-  return ["complete", "expectedExit", "definitions", "featureSteps"].includes(clause) && Object.hasOwn(oracle, clause);
+  match = /^(complete|expectedExit|definitions|featureSteps)=(true|false|\d+)$/.exec(clause);
+  if (match && Object.hasOwn(oracle, match[1])) {
+    const expected = match[2] === "true" ? true : match[2] === "false" ? false : Number(match[2]);
+    return oracle[match[1]] === expected;
+  }
+  return false;
+}
+
+/**
+ * Whether a test exercises Ruby input: its body names a `.rb` path, the Ruby source language,
+ * the Cucumber-Ruby framework, a Ruby-named helper or `cucumber.yml`, or it lives in a Ruby-only
+ * suite (a file whose name contains `ruby`). Used to verify that a test offered as Ruby evidence
+ * touches Ruby at all.
+ */
+export function testBodyMentionsRuby(content, name, file = "") {
+  if (/ruby/i.test(file)) return true;
+  const body = functionBody(content, name);
+  return body !== null && /\.rb\b|SourceLanguage::Ruby|CucumberRuby|\bruby_|cucumber\.ya?ml/.test(body);
+}
+
+/**
+ * The text of `fn name(...) { ... }` up to its matching closing brace, or null when the function
+ * is absent. Brace counting ignores string contents well enough for test bodies; the slice never
+ * runs into the following helper or its doc comment.
+ */
+export function functionBody(content, name) {
+  const start = content.indexOf(`fn ${name}(`);
+  if (start < 0) return null;
+  const open = content.indexOf("{", start);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < content.length; i++) {
+    if (content[i] === "{") depth++;
+    else if (content[i] === "}" && --depth === 0) return content.slice(start, i + 1);
+  }
+  return content.slice(start);
+}
+
+/**
+ * Evidence entries for a Ruby-only suite (`tests/ruby.rs`, `src/ruby/**`) that the census does
+ * not inventory: every test there exercises Ruby by construction and may be cited as evidence.
+ */
+export function rubySuiteEvidence(file, content) {
+  const entries = new Map();
+  for (const match of content.matchAll(/#\[test\]\s*fn (\w+)/g)) {
+    entries.set(`${file}::${match[1]}`, {
+      name: match[1], behaviorClass: "ruby-behavior", requiredStatus: "rust-evidence",
+      evidenceTest: { file, name: match[1] }, mentionsRuby: true, external: true,
+    });
+  }
+  return entries;
 }
 
 /**
  * Validates one census entry structurally and returns its blocker text, or null when the entry
- * closes. `census` maps "file::name" to entries so evidence references can be checked.
+ * closes. `census` maps "file::name" to entries; an entry carries `mentionsRuby` when its test
+ * body references Ruby, which every evidence target must.
  */
 export function validateUnitEntry(file, item, groups, census) {
   const label = `${file}:${item.name}`;
@@ -148,7 +203,7 @@ export function validateUnitEntry(file, item, groups, census) {
       const evidence = item.evidenceTest;
       assert.ok(evidence && typeof evidence.file === "string" && typeof evidence.name === "string",
         `${label}: evidenceTest needs file and name`);
-      assert.ok(["binary", "in-process"].includes(item.evidenceKind), `${label}: evidenceKind must be binary or in-process`);
+      assert.ok(cargoTestArgs(evidence), `${label}: evidence test ${evidence.file} cannot be addressed by cargo`);
       const target = census.get(`${evidence.file}::${evidence.name}`);
       assert.ok(target, `${label}: evidence test ${evidence.file}:${evidence.name} is not in the census`);
       const self = evidence.file === file && evidence.name === item.name;
@@ -157,16 +212,21 @@ export function validateUnitEntry(file, item, groups, census) {
         || (target.evidenceTest?.file === evidence.file && target.evidenceTest?.name === evidence.name);
       assert.ok(self || targetIsItsOwnEvidence, `${label}: evidence chains are rejected`);
       assert.ok(self || target.behaviorClass === "ruby-behavior", `${label}: evidence must be a Ruby test`);
+      assert.ok(target.mentionsRuby === true, `${label}: evidence test ${evidence.name} does not exercise Ruby input`);
       assert.ok(rationale, `${label}: rust-evidence requires a rationale`);
       return null;
     }
+    case "partial":
+      assert.ok(rationale, `${label}: partial must name the missing Ruby evidence`);
+      return `${label}: partial`;
     default:
       return `${label}: ${item.requiredStatus}`;
   }
 }
 
 /**
- * Distinct Rust tests that completion must execute: one entry per (file, name).
+ * Distinct Rust tests that completion must execute, grouped by the cargo target that runs them;
+ * every census entry depending on a test is listed so a failure names all of them.
  */
 export function evidenceTargets(units) {
   const targets = new Map();
@@ -174,31 +234,58 @@ export function evidenceTargets(units) {
     for (const item of inventory.tests) {
       if (item.requiredStatus !== "rust-evidence") continue;
       const key = `${item.evidenceTest.file}::${item.evidenceTest.name}`;
-      targets.set(key, { file: item.evidenceTest.file, name: item.evidenceTest.name, referencedBy: `${file}:${item.name}` });
+      const target = targets.get(key) ?? { file: item.evidenceTest.file, name: item.evidenceTest.name, referencedBy: [] };
+      target.referencedBy.push(`${file}:${item.name}`);
+      targets.set(key, target);
     }
   }
   return [...targets.values()];
 }
 
 /**
- * `cargo test` output for one exact test: exactly one test must run and pass; an ignored or
- * filtered-out test is not evidence.
+ * Cargo arguments addressing one test exactly, in the profile of the analyzed binary.
+ * Integration suites are `tests/<suite>.rs`; library tests are addressed by module path
+ * (`src/config/tests.rs` -> `config::tests::<name>`, `src/analysis/mod.rs` ->
+ * `analysis::tests::<name>`, `src/lib.rs` -> `tests::<name>`). Returns null for files cargo
+ * cannot address this way (`src/main.rs`, files under `tests/<dir>/`).
  */
-export function evidenceRunPassed(stdout) {
-  return /test result: ok\. 1 passed; 0 failed; 0 ignored/.test(stdout);
+export function cargoTestArgs(target, { release = false } = {}) {
+  const { file, name } = target;
+  const profile = release ? ["--release"] : [];
+  if (/^tests\/[^/]+\.rs$/.test(file)) {
+    return ["test", "-q", ...profile, "--test", file.slice("tests/".length, -".rs".length), "--", "--exact", name];
+  }
+  if (!file.startsWith("src/") || file === "src/main.rs") return null;
+  const segments = file.slice("src/".length, -".rs".length).split("/");
+  if (segments.at(-1) === "mod" || segments.at(-1) === "lib") segments.pop();
+  if (segments.at(-1) !== "tests") segments.push("tests");
+  return ["test", "-q", ...profile, "--lib", "--", "--exact", `${segments.join("::")}::${name}`];
 }
 
 /**
- * `cargo test` arguments that address exactly one test: integration tests by suite and name,
- * library tests by their module path (`src/config/tests.rs` -> `config::tests::<name>`).
+ * Groups evidence targets by the cargo binary that runs them and keeps each target's own
+ * fully qualified test name, so one spawn per binary runs every requested test exactly.
  */
-export function cargoTestArgs(target) {
-  if (target.file.startsWith("tests/")) {
-    return ["test", "-q", "--test", target.file.replace(/^tests\//, "").replace(/\.rs$/, ""), target.name, "--", "--exact"];
+export function evidenceBatches(targets, options = {}) {
+  const batches = new Map();
+  for (const target of targets) {
+    const args = cargoTestArgs(target, options);
+    const key = args.slice(0, -1).join(" ");
+    const batch = batches.get(key) ?? { prefix: args.slice(0, -1), names: [], targets: [] };
+    batch.names.push(args.at(-1));
+    batch.targets.push(target);
+    batches.set(key, batch);
   }
-  const modulePath = target.file.replace(/^src\//, "").replace(/\.rs$/, "").replace(/\//g, "::");
-  const module = modulePath.endsWith("::tests") ? modulePath : `${modulePath}::tests`;
-  return ["test", "-q", "--lib", `${module}::${target.name}`, "--", "--exact"];
+  return [...batches.values()].map(({ prefix, names, targets: members }) => ({ targets: members, args: [...prefix, ...names] }));
+}
+
+/**
+ * `cargo test` output for one batch: exactly the requested tests must run and pass; an ignored,
+ * filtered-out or failing test is not evidence.
+ */
+export function evidenceRunPassed(stdout, expected = 1) {
+  const match = /test result: ok\. (\d+) passed; 0 failed; 0 ignored/.exec(stdout);
+  return match !== null && Number(match[1]) === expected;
 }
 
 /**
