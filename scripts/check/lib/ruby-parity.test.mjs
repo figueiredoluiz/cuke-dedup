@@ -95,6 +95,9 @@ test("oracle clauses resolve only against real oracle members", () => {
   assert.ok(oracleClauseResolves(budgeted, "expectedCandidateSources.identicalHandler"));
   assert.ok(!oracleClauseResolves(budgeted, "expectedCandidateSources.structuralHandler"));
   assert.ok(!oracleClauseResolves(oracle, "path"));
+  assert.ok(!oracleClauseResolves(oracle, "duplication"));
+  assert.ok(!oracleClauseResolves({ ...oracle, duplication: {} }, "duplication"));
+  assert.ok(oracleClauseResolves({ ...oracle, duplication: { percentage: 0.0, passed: true } }, "duplication"));
   assert.ok(!oracleClauseResolves(undefined, "complete"));
 });
 

@@ -113,8 +113,10 @@ export function oracleClauseResolves(oracle, clause) {
   if (match) return Array.isArray(oracle[match[1]]) && Number(match[2]) < oracle[match[1]].length;
   match = /^expectedCandidateSources\.([A-Za-z-]+)$/.exec(clause);
   if (match) return Object.hasOwn(oracle.expectedCandidateSources ?? {}, match[1]);
-  return ["complete", "expectedExit", "definitions", "featureSteps", "duplication"].includes(clause)
-    && Object.hasOwn(oracle, clause);
+  if (clause === "duplication") {
+    return typeof oracle.duplication === "object" && oracle.duplication !== null && Object.keys(oracle.duplication).length > 0;
+  }
+  return ["complete", "expectedExit", "definitions", "featureSteps"].includes(clause) && Object.hasOwn(oracle, clause);
 }
 
 /**

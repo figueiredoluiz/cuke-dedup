@@ -674,10 +674,9 @@
         },
         {
           "name": "duplicate_matcher_components_are_invariant_to_definition_input_order",
-          "requiredStatus": "engine-invariant",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "stage": "model-codec",
-          "rationale": "Adapter-independent stage `model-codec`: Duplicate-matcher component framing is order-invariant; pure codec.",
+          "rationale": "Needs Ruby evidence: duplicate-matcher findings and membership invariant to Ruby definition input order, observed by analyzing permuted Ruby definitions. Owned by the completion follow-up.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -2278,15 +2277,10 @@
         },
         {
           "name": "session_mixed_languages_share_cache_and_preserve_findings_in_either_order",
-          "requiredStatus": "rust-evidence",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "evidenceTest": {
-            "file": "src/source_adapter/tests.rs",
-            "name": "session_mixed_languages_share_cache_and_preserve_findings_in_either_order"
-          },
-          "evidenceKind": "in-process",
-          "rationale": "`session_mixed_languages_share_cache_and_preserve_findings_in_either_order` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
-          "behaviorClass": "ruby-behavior"
+          "rationale": "Needs Ruby evidence: the same session cache and finding-preservation contract with Ruby sources extracted beside ECMAScript ones in both orders; the test uses js/ts/tsx only. Owned by the completion follow-up.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "session_keeps_failed_root_resolution_snapshot_and_default_fallback",
@@ -2321,7 +2315,7 @@
             "name": "registry_routes_supported_suffixes"
           },
           "evidenceKind": "in-process",
-          "rationale": "`registry_routes_supported_suffixes` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
+          "rationale": "`registry_routes_supported_suffixes` names the Ruby language and `.rb` suffix in the adapter table it checks in-process.",
           "behaviorClass": "ruby-behavior"
         },
         {
@@ -2365,27 +2359,17 @@
         },
         {
           "name": "language_lookup_and_suffix_routing_agree_on_one_adapter_table",
-          "requiredStatus": "rust-evidence",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "evidenceTest": {
-            "file": "src/source_adapter/tests.rs",
-            "name": "language_lookup_and_suffix_routing_agree_on_one_adapter_table"
-          },
-          "evidenceKind": "in-process",
-          "rationale": "`language_lookup_and_suffix_routing_agree_on_one_adapter_table` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
-          "behaviorClass": "ruby-behavior"
+          "rationale": "Needs Ruby evidence: Ruby language lookup and `.rb` suffix routing agreeing on one adapter entry; the test does not name Ruby. Owned by the completion follow-up.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "language_routed_and_suffix_routed_extraction_share_session_state",
-          "requiredStatus": "rust-evidence",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "evidenceTest": {
-            "file": "src/source_adapter/tests.rs",
-            "name": "language_routed_and_suffix_routed_extraction_share_session_state"
-          },
-          "evidenceKind": "in-process",
-          "rationale": "`language_routed_and_suffix_routed_extraction_share_session_state` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
-          "behaviorClass": "ruby-behavior"
+          "rationale": "Needs Ruby evidence: language-routed and suffix-routed Ruby extraction sharing one session state; the test routes js/ts/tsx only. Owned by the completion follow-up.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "legacy_diagnostics_preserve_message_classification_and_mutation",
@@ -2397,15 +2381,10 @@
         },
         {
           "name": "finalization_scopes_preserve_independent_final_findings",
-          "requiredStatus": "rust-evidence",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "evidenceTest": {
-            "file": "src/source_adapter/tests.rs",
-            "name": "finalization_scopes_preserve_independent_final_findings"
-          },
-          "evidenceKind": "in-process",
-          "rationale": "`finalization_scopes_preserve_independent_final_findings` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
-          "behaviorClass": "ruby-behavior"
+          "rationale": "Needs Ruby evidence: Ruby definition, file and registry uncertainty scopes retaining independent final findings; the test finalizes JavaScript definitions only. Owned by the completion follow-up.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "registry_uncertainty_isolates_languages_but_groups_ecmascript_variants",
@@ -2416,7 +2395,7 @@
             "name": "registry_uncertainty_isolates_languages_but_groups_ecmascript_variants"
           },
           "evidenceKind": "in-process",
-          "rationale": "`registry_uncertainty_isolates_languages_but_groups_ecmascript_variants` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
+          "rationale": "`registry_uncertainty_isolates_languages_but_groups_ecmascript_variants` extracts `.rb` sources through the shared extraction session beside ECMAScript ones (registry uncertainty isolation, late Ruby finalization effects) in-process.",
           "behaviorClass": "ruby-behavior"
         },
         {
@@ -2428,7 +2407,7 @@
             "name": "public_session_finalization_applies_late_ruby_effects_in_either_order"
           },
           "evidenceKind": "in-process",
-          "rationale": "`public_session_finalization_applies_late_ruby_effects_in_either_order` exercises the Ruby adapter through the shared extraction session or registry (suffix routing, mixed-language sessions, late Ruby finalization effects) in-process.",
+          "rationale": "`public_session_finalization_applies_late_ruby_effects_in_either_order` extracts `.rb` sources through the shared extraction session beside ECMAScript ones (registry uncertainty isolation, late Ruby finalization effects) in-process.",
           "behaviorClass": "ruby-behavior"
         }
       ]
@@ -3364,17 +3343,17 @@
         },
         {
           "name": "extracts_rule_scoped_inline_suppressions_and_rejects_malformed_directives",
-          "requiredStatus": "language-inapplicable",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "rationale": "JS/TS-only: JS/TS registration and handler binding forms (loaders, aliases, shadowing, generators, stubs) (`extracts rule scoped inline suppressions and rejects malformed directives`).",
-          "behaviorClass": "language-specific-api"
+          "rationale": "Needs Ruby evidence: Ruby `# cuke-dedup:ignore` directives through the shared parser: rule-scoped directives, adjacent directives, unknown rules and empty reasons, pinned on Ruby sources. Owned by the completion follow-up.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "rejects_oversized_inline_suppression_reasons",
-          "requiredStatus": "language-inapplicable",
+          "requiredStatus": "partial",
           "fixtureGroup": null,
-          "rationale": "JS/TS-only: JavaScript/TypeScript extraction behaviour (`rejects oversized inline suppression reasons`).",
-          "behaviorClass": "language-specific-api"
+          "rationale": "Needs Ruby evidence: a Ruby inline suppression reason over the 512-character limit rejected through the shared parser. Owned by the completion follow-up.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "structural_fingerprint_masks_string_literal_contents",
