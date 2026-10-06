@@ -111,7 +111,7 @@ export function oracleClauseResolves(oracle, clause) {
   if (typeof clause !== "string" || !oracle) return false;
   let match = /^(requiredFindings|requiredAbsent)\[(\d+)\]$/.exec(clause);
   if (match) return Array.isArray(oracle[match[1]]) && Number(match[2]) < oracle[match[1]].length;
-  match = /^expectedCandidateSources\.([a-z-]+)$/.exec(clause);
+  match = /^expectedCandidateSources\.([A-Za-z-]+)$/.exec(clause);
   if (match) return Object.hasOwn(oracle.expectedCandidateSources ?? {}, match[1]);
   return ["complete", "expectedExit", "definitions", "featureSteps", "duplication"].includes(clause)
     && Object.hasOwn(oracle, clause);
@@ -197,4 +197,12 @@ export function cargoTestArgs(target) {
   const modulePath = target.file.replace(/^src\//, "").replace(/\.rs$/, "").replace(/\//g, "::");
   const module = modulePath.endsWith("::tests") ? modulePath : `${modulePath}::tests`;
   return ["test", "-q", "--lib", `${module}::${target.name}`, "--", "--exact"];
+}
+
+/**
+ * Rust evidence runs only in completion mode: regression mode guards observed outcomes, and the
+ * inventory and corpus-coverage modes validate bookkeeping without executing anything.
+ */
+export function executesEvidence({ regression, inventoryOnly }) {
+  return !regression && !inventoryOnly;
 }

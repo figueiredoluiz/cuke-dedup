@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceRunPassed, evidenceTargets, parityDeficits, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
+import { cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -108,7 +108,8 @@ for (const [file, inventory] of Object.entries(units.files)) {
   }
 }
 // Rust evidence is executed, not merely named: an ignored, filtered-out or failing test blocks.
-if (!regression) {
+// Only completion mode executes; inventory and coverage validation never run the analyzer.
+if (executesEvidence({ regression, inventoryOnly })) {
   for (const target of evidenceTargets(units)) {
     const args = cargoTestArgs(target);
     const run = spawnSync("cargo", args, { cwd: resolve("."), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceRunPassed, evidenceTargets, oracleClauseResolves, parityDeficits, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
+import { cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceRunPassed, evidenceTargets, executesEvidence, oracleClauseResolves, parityDeficits, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
 
 const oracle = {
   path: "example", definitions: 2, featureSteps: 0, complete: true, expectedExit: 0,
@@ -90,6 +90,10 @@ test("oracle clauses resolve only against real oracle members", () => {
   assert.ok(!oracleClauseResolves(oracle, "requiredFindings[1]"));
   assert.ok(!oracleClauseResolves(groups.empty, "requiredFindings[0]"));
   assert.ok(!oracleClauseResolves(oracle, "expectedCandidateSources.identicalHandler"));
+  const budgeted = { ...oracle, expectedCandidateSources: { matcherBlocking: 2, identicalHandler: 1 } };
+  assert.ok(oracleClauseResolves(budgeted, "expectedCandidateSources.matcherBlocking"));
+  assert.ok(oracleClauseResolves(budgeted, "expectedCandidateSources.identicalHandler"));
+  assert.ok(!oracleClauseResolves(budgeted, "expectedCandidateSources.structuralHandler"));
   assert.ok(!oracleClauseResolves(oracle, "path"));
   assert.ok(!oracleClauseResolves(undefined, "complete"));
 });
@@ -139,4 +143,10 @@ test("evidence tests are addressed exactly, by suite or by module path", () => {
   assert.deepEqual(cargoTestArgs({ file: "src/config/tests.rs", name: "paths" }), ["test", "-q", "--lib", "config::tests::paths", "--", "--exact"]);
   assert.deepEqual(cargoTestArgs({ file: "src/cli.rs", name: "parses" }), ["test", "-q", "--lib", "cli::tests::parses", "--", "--exact"]);
   assert.deepEqual(cargoTestArgs({ file: "src/model/behavior.rs", name: "codec" }), ["test", "-q", "--lib", "model::behavior::tests::codec", "--", "--exact"]);
+});
+
+test("only completion mode executes Rust evidence", () => {
+  assert.equal(executesEvidence({ regression: false, inventoryOnly: false }), true);
+  assert.equal(executesEvidence({ regression: true, inventoryOnly: false }), false);
+  assert.equal(executesEvidence({ regression: false, inventoryOnly: true }), false);
 });
