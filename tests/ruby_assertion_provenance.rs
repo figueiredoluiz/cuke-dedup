@@ -992,8 +992,13 @@ fn cross_file_constant_aliases_cannot_hide_namespace_mutation() {
 
 /// Runs a configured-provider project and reports active handler rules plus completeness.
 fn handler_rules(files: &[(&str, &str)]) -> (Vec<String>, bool) {
+    handler_rules_at_floor(files, "0.5")
+}
+
+/// Like `handler_rules`, with an explicit `nearDuplicateHandlerSimilarity` floor.
+fn handler_rules_at_floor(files: &[(&str, &str)], floor: &str) -> (Vec<String>, bool) {
     let root = project(PROVIDER);
-    fs::write(root.path().join(".cuke-dedup.json"), r#"{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#).unwrap();
+    fs::write(root.path().join(".cuke-dedup.json"), format!(r#"{{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":{floor},"rules":{{"unused-definition":"off"}}}}"#)).unwrap();
     for (name, body) in files {
         fs::write(root.path().join(name), format!("{body}\n")).unwrap();
     }
@@ -1035,12 +1040,16 @@ fn declared_local_callables_execute_only_at_proven_invocations() {
         // deferred inside a nested block, keeping its values either way.
         ("assigned invocation", body("act = -> { ", 1, "result = act.call"), body("act = -> { ", 2, "result = act.call"), vec![]),
         ("assigned invocation identical", body("act = -> { ", 1, "result = act.call"), body("act = -> { ", 1, "result = act.call"), vec!["duplicate-handler", "near-duplicate-step"]),
-        ("argument invocation", body("act = -> { ", 1, "work(act.call)"), body("act = -> { ", 2, "work(act.call)"), vec![]),
+        // The wrapper call is one shared event beside the differing assertion: near at the 0.5 floor,
+        // as the TypeScript frontend reports `work(act())`.
+        ("argument invocation", body("act = -> { ", 1, "work(act.call)"), body("act = -> { ", 2, "work(act.call)"), vec!["near-duplicate-step"]),
         ("invoked only inside a block", body("act = -> { ", 1, "1.times { act.call }"), body("act = -> { ", 2, "1.times { act.call }"), vec![]),
         ("invoked only inside a block identical", body("act = -> { ", 1, "1.times { act.call }"), body("act = -> { ", 1, "1.times { act.call }"), vec!["duplicate-handler", "near-duplicate-step"]),
         // Single-level expansion: recursion inside the body is an ordinary call.
         ("recursive identical", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 1, "act.call"), vec!["duplicate-handler", "near-duplicate-step"]),
-        ("recursive conflicting", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 2, "act.call"), vec![]),
+        // The conflicting assertion is one differing event beside the shared recursive call, so
+        // the pair is near at the 0.5 floor exactly as the TypeScript frontend reports it.
+        ("recursive conflicting", body("act = -> { act.call; ", 1, "act.call"), body("act = -> { act.call; ", 2, "act.call"), vec!["near-duplicate-step"]),
         // A parameterized declaration invoked with arguments is unproven: no comparison.
         ("parameterized invocation", "act = ->(value) { SyntheticAssertions.expect(state).to_be(value) }; act.call(1)".to_owned(), "act = ->(value) { SyntheticAssertions.expect(state).to_be(value) }; act.call(2)".to_owned(), vec![]),
         // Unmodeled uses keep the deferred value-bearing identity: conflicting values stay
@@ -1575,6 +1584,175 @@ fn configured_assertion_streams_do_not_mix_with_action_streams() {
     ] {
         let steps = format!("{LOAD}{}", step_pair(first, second));
         let (rules, incomplete) = handler_rules(&[("steps.rb", &steps)]);
+        assert_eq!(rules, expected, "{label}");
+        assert!(!incomplete, "{label}");
+    }
+}
+
+/// Conflicting trusted assertions are one differing event, as in the TypeScript frontend: near
+/// needs shared ordinary behaviour at the floor, equivalence stays impossible, declarations and
+/// plain local writes of proven invocations are not events of their own.
+#[test]
+fn conflicting_assertions_compare_like_the_typescript_frontend() {
+    const NEAR: &[&str] = &["near-duplicate-step"];
+    const NONE: &[&str] = &[];
+    let check = |value: &str| format!("SyntheticAssertions.expect(state).to_be({value})");
+    let not_one = "SyntheticAssertions.expect(state).not.to_be(1)";
+    let pairs: Vec<(&str, String, String, &[&str])> = vec![
+        (
+            "shared call",
+            format!("{}; settle()", check("1")),
+            format!("{}; settle()", check("2")),
+            NEAR,
+        ),
+        ("assertion only", check("1"), check("2"), NONE),
+        (
+            "polarity beside a shared call",
+            format!("{}; settle()", check("1")),
+            format!("{not_one}; settle()"),
+            NEAR,
+        ),
+        (
+            "recursive declaration",
+            format!("act = -> {{ {}; act.call }}; act.call", check("1")),
+            format!("act = -> {{ {}; act.call }}; act.call", check("2")),
+            NEAR,
+        ),
+        // The declaration and a plain local write of the result are not events: nothing is shared.
+        (
+            "called declaration",
+            format!("check = -> {{ {} }}; check.call", check("1")),
+            format!("check = -> {{ {} }}; check.call", check("2")),
+            NONE,
+        ),
+        (
+            "stored invocation result",
+            format!("act = -> {{ {} }}; result = act.call", check("1")),
+            format!("act = -> {{ {} }}; result = act.call", check("2")),
+            NONE,
+        ),
+        (
+            "parenthesized stored result",
+            format!("act = -> {{ {} }}; result = (act.call)", check("1")),
+            format!("act = -> {{ {} }}; result = (act.call)", check("2")),
+            NONE,
+        ),
+        // An operator write may skip the call, so it stays an effect: one shared event beside the
+        // differing assertion. The JavaScript frontend has no assignment events and reports none.
+        (
+            "operator-assigned invocation result",
+            format!("act = -> {{ {} }}; result ||= act.call", check("1")),
+            format!("act = -> {{ {} }}; result ||= act.call", check("2")),
+            NEAR,
+        ),
+        // A write to any other destination keeps its effect: dropping it would make these
+        // identical streams a parameterization candidate instead of a near pair.
+        (
+            "indexed destination keeps its write",
+            format!("act = -> {{ {} }}; box[0] = act.call; settle()", check("1")),
+            format!("act = -> {{ {} }}; box[1] = act.call; settle()", check("1")),
+            NEAR,
+        ),
+        (
+            "wrapped invocation",
+            format!("act = -> {{ {} }}; work(act.call)", check("1")),
+            format!("act = -> {{ {} }}; work(act.call)", check("2")),
+            NEAR,
+        ),
+        // Deferred conflicting assertions stay gated regardless of shared behaviour.
+        (
+            "deferred beside a shared call",
+            format!("register(-> {{ {} }}); settle()", check("1")),
+            format!("register(-> {{ {} }}); settle()", check("2")),
+            NONE,
+        ),
+        (
+            "deferred polarity beside a shared call",
+            format!("register(-> {{ {} }}); settle()", check("1")),
+            format!("register(-> {{ {not_one} }}); settle()"),
+            NONE,
+        ),
+        (
+            "deferred count beside a shared call",
+            format!("register(-> {{ {} }}); settle()", check("1")),
+            format!(
+                "register(-> {{ {}; {} }}); settle()",
+                check("1"),
+                check("1")
+            ),
+            NONE,
+        ),
+        (
+            "equal deferred beside conflicting eager",
+            format!(
+                "register(-> {{ {} }}); {}; settle()",
+                check("1"),
+                check("1")
+            ),
+            format!(
+                "register(-> {{ {} }}); {}; settle()",
+                check("1"),
+                check("2")
+            ),
+            NEAR,
+        ),
+        // A parameterized callback withdraws comparison only when it contains an assertion (the
+        // JavaScript frontend withdraws for any parameterized callback and reports none here).
+        (
+            "parameterized callback beside a conflict",
+            format!(
+                "register(->(value) {{ use(value) }}); {}; settle()",
+                check("1")
+            ),
+            format!(
+                "register(->(value) {{ use(value) }}); {}; settle()",
+                check("2")
+            ),
+            NEAR,
+        ),
+        (
+            "parameterless callback beside a conflict",
+            format!("register(-> {{ use(1) }}); {}; settle()", check("1")),
+            format!("register(-> {{ use(1) }}); {}; settle()", check("2")),
+            NEAR,
+        ),
+        // An outer operation is one complete-syntax effect, so a conflicting assertion nested in
+        // control flow or in an inline-invoked literal also differentiates its wrapper. The
+        // JavaScript frontend reports near (0.667 and 0.5) here; Ruby reports less.
+        (
+            "assertion nested in control flow",
+            format!("if ready; {}; end; settle()", check("1")),
+            format!("if ready; {}; end; settle()", check("2")),
+            NONE,
+        ),
+        (
+            "inline-invoked literal",
+            format!("(-> {{ {} }}).call; settle()", check("1")),
+            format!("(-> {{ {} }}).call; settle()", check("2")),
+            NONE,
+        ),
+        (
+            "three shared calls",
+            format!("{}; warm(); sync(); flush()", check("1")),
+            format!("{}; warm(); sync(); flush()", check("2")),
+            NEAR,
+        ),
+    ];
+    for (label, first, second, expected) in &pairs {
+        let steps = format!("{LOAD}{}", step_pair(first, second));
+        let (rules, incomplete) = handler_rules(&[("steps.rb", &steps)]);
+        assert_eq!(rules, *expected, "{label}");
+        assert!(!incomplete, "{label}");
+    }
+    // At the default floor one shared call out of two events (0.5) is not near; three of four
+    // (0.75) is, matching the TypeScript frontend.
+    let trio = pairs.last().unwrap();
+    for (label, first, second, expected) in [
+        ("shared call at 0.70", &pairs[0].1, &pairs[0].2, NONE),
+        ("three shared calls at 0.70", &trio.1, &trio.2, NEAR),
+    ] {
+        let steps = format!("{LOAD}{}", step_pair(first, second));
+        let (rules, incomplete) = handler_rules_at_floor(&[("steps.rb", &steps)], "0.70");
         assert_eq!(rules, expected, "{label}");
         assert!(!incomplete, "{label}");
     }

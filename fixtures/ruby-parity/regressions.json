@@ -99,7 +99,7 @@
     "equivalent-provider-registration-origins": {"status":"pass","digest":"0a55792970f067670d0e53b64715d31f77fd51cae4990324f6ffe2571e24e37d"},
     "equivalent-provider-factory-alias": {"status":"pass","digest":"a1689d9b6351a7572c35409c7f2c0a7cfa1fa80bc001abd570566ba3de02a6a2"},
     "equivalent-provider-factory-mutation": {"status":"pass","digest":"f564d1a55bca25a077ba96ca1a3584e551cb161eea6c145878e4bffba2961e49"},
-    "equivalent-provider-local-callables": {"status":"known-gap","digest":"1e98cec7c3580a9f06742294980b0e5565b500bab54ab337805f97eee379d0f0","reason":"Spindle near finding needs ordinary-call overlap across different assertion streams; events bind the complete assertion stream."},
+    "equivalent-provider-local-callables": {"status":"pass","digest":"4685d9a430ae4d4504606df431cba2e23701437a1e4addb0e43256622309c401"},
     "equivalent-provider-factory-immutable-control": {"status":"pass","digest":"334755ba50cd4365fbf26a9aed5ab28393d51445f9b1844cc36763db5a2a304c"},
     "equivalent-provider-factory-static-mutation-control": {"status":"pass","digest":"f564d1a55bca25a077ba96ca1a3584e551cb161eea6c145878e4bffba2961e49"},
     "equivalent-handlers-adversarial-parser-and-handler-behavior": {"status":"pass","digest":"82124a946dc48c72882170e5f425f73a6433d14f9e6b8c89152766328134cd24"},
