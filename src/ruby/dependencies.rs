@@ -181,10 +181,9 @@ fn resolve_graph(
             } else {
                 load_paths.clone()
             };
-            let candidate = bases
-                .iter()
-                .find_map(|base| ruby_file(&base.join(&request)));
-            let Some(target) = candidate else { continue };
+            let Some(target) = request_target(&bases, &request) else {
+                continue;
+            };
             if !target.starts_with(&root) && !load_paths.iter().any(|path| target.starts_with(path))
             {
                 continue;
@@ -221,11 +220,44 @@ fn resolve_graph(
     Ok(())
 }
 
+/// Suffixes Ruby treats as native libraries: `.so`, `.o` and `.dll` map to the platform's library
+/// suffix, and `.bundle` is that suffix on macOS.
+const NATIVE_SUFFIXES: [&str; 4] = ["so", "o", "dll", "bundle"];
+
+/// The Ruby source that `request` loads from the first of `bases` holding it, as Ruby resolves
+/// `require`/`require_relative`. A `.rb` request loads as written and every other request with
+/// `.rb` appended, dotted names included (`checkout.v2` loads `checkout.v2.rb`, `trailing.`
+/// loads `trailing..rb`); the extension test is case-sensitive. A native-suffix request falls back
+/// to `<request>.rb` only when no base holds a native library for it.
+pub(super) fn request_target(bases: &[PathBuf], request: &str) -> Option<PathBuf> {
+    let native = Path::new(request)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| NATIVE_SUFFIXES.contains(&extension));
+    // fail-closed: Ruby searches every base for a native library before any `.rb` fallback, and
+    // which suffix it accepts depends on the platform, so any native candidate leaves the load
+    // unresolved rather than guessing.
+    if native
+        && bases.iter().any(|base| {
+            NATIVE_SUFFIXES
+                .iter()
+                .any(|suffix| base.join(request).with_extension(suffix).is_file())
+        })
+    {
+        return None;
+    }
+    bases.iter().find_map(|base| ruby_file(&base.join(request)))
+}
+
+/// `path` as a Ruby source: kept when it ends in `.rb`, otherwise with `.rb` appended; canonical
+/// when that file exists.
 fn ruby_file(path: &Path) -> Option<PathBuf> {
-    let path = match path.extension() {
-        Some(extension) if extension == "rb" => path.to_owned(),
-        None => PathBuf::from(format!("{}.rb", path.display())),
-        _ => return None,
+    let path = if path.extension().is_some_and(|extension| extension == "rb") {
+        path.to_owned()
+    } else {
+        let mut candidate = path.as_os_str().to_owned();
+        candidate.push(".rb");
+        PathBuf::from(candidate)
     };
     path.is_file().then(|| path.canonicalize().ok()).flatten()
 }
@@ -329,6 +361,113 @@ mod tests {
                 vec![(2, "the source graph exceeds the 0-file limit".to_owned())]
             )
         );
+    }
+
+    /// Requests resolve like Ruby: `.rb` as written, every other name with `.rb` appended, and a
+    /// native-suffix name only when no native library shadows it.
+    #[test]
+    fn requests_resolve_to_the_file_ruby_loads() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        for name in [
+            "checkout.v2.rb",
+            "config.local.rb",
+            "trailing..rb",
+            "helper.rb",
+            "plain.rb",
+            "free.so.rb",
+            "free.o.rb",
+            "free.dll.rb",
+            "free.bundle.rb",
+            "upper.rb",
+            "shadow_so.so.rb",
+            "shadow_o.o.rb",
+            "shadow_dll.dll.rb",
+            "shadow_bundle.bundle.rb",
+        ] {
+            std::fs::write(root.join(name), "VALUE = 1\n").unwrap();
+        }
+        // An extensionless file is not a Ruby source; Ruby needs `bare.rb`. Each `shadow_*` load
+        // has a native candidate under a different suffix, so every suffix is both a request and a
+        // candidate in some row.
+        for name in [
+            "bare",
+            "shadow_so.bundle",
+            "shadow_o.so",
+            "shadow_dll.o",
+            "shadow_bundle.dll",
+        ] {
+            std::fs::write(root.join(name), "not a library\n").unwrap();
+        }
+        let requests = [
+            "checkout.v2",
+            "config.local",
+            "trailing.",
+            "helper.rb",
+            "plain",
+            "free.so",
+            "free.o",
+            "free.dll",
+            "free.bundle",
+            "upper.RB",
+            "bare",
+            "shadow_so.so",
+            "shadow_o.o",
+            "shadow_dll.dll",
+            "shadow_bundle.bundle",
+        ];
+        let entry: Vec<_> = requests
+            .iter()
+            .map(|request| format!("require_relative '{request}'"))
+            .collect();
+        std::fs::write(root.join("entry.rb"), entry.join("\n")).unwrap();
+        let files = resolve_with(&root, &["entry.rb"], (32, usize::MAX));
+        assert_eq!(outcome(&files), ((1..=9).collect::<Vec<_>>(), vec![]));
+        let targets: Vec<_> = files
+            .dependencies
+            .iter()
+            .map(|edge| {
+                edge.target
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(
+            targets,
+            [
+                "checkout.v2.rb",
+                "config.local.rb",
+                "trailing..rb",
+                "helper.rb",
+                "plain.rb",
+                "free.so.rb",
+                "free.o.rb",
+                "free.dll.rb",
+                "free.bundle.rb",
+            ]
+        );
+    }
+
+    /// A native library in any searched base shadows a `.rb` fallback in a later one, as Ruby
+    /// searches every load path for a native library first.
+    #[test]
+    fn a_native_candidate_in_any_base_shadows_the_ruby_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let (first, second) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(second.join("x.so.rb"), "X = 1\n").unwrap();
+        let bases = [first.clone(), second.clone()];
+        assert_eq!(request_target(&bases, "x.so"), Some(second.join("x.so.rb")));
+        std::fs::write(first.join("x.bundle"), "not a library\n").unwrap();
+        assert_eq!(request_target(&bases, "x.so"), None);
+        // A non-native request ignores native files entirely.
+        std::fs::write(second.join("y.v2.rb"), "Y = 1\n").unwrap();
+        std::fs::write(first.join("y.bundle"), "not a library\n").unwrap();
+        assert_eq!(request_target(&bases, "y.v2"), Some(second.join("y.v2.rb")));
     }
 
     /// An unreadable selected file skips only its own loads; the graph keeps resolving.

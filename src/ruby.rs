@@ -36,20 +36,13 @@ pub(crate) struct RubySession {
     proof_sources_exceeded: bool,
 }
 impl AdapterSessionState for RubySession {
-    /// Resolves configured Ruby provider paths without replacing their filename suffixes.
+    /// Resolves configured Ruby provider paths with the same rule discovery applies to loads.
     fn initialize(root: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
         let mut configured = assertion_modules.to_vec();
         if let Some(root) = root {
+            // A configured module names a load request, resolved exactly as discovery resolves one.
             for module in assertion_modules {
-                let path = root.join(module);
-                let candidate = if path.extension().is_some_and(|extension| extension == "rb") {
-                    path
-                } else {
-                    let mut candidate = path.into_os_string();
-                    candidate.push(".rb");
-                    candidate.into()
-                };
-                if let Ok(path) = candidate.canonicalize() {
+                if let Some(path) = dependencies::request_target(&[root.to_owned()], module) {
                     configured.push(path.to_string_lossy().into_owned());
                 }
             }
