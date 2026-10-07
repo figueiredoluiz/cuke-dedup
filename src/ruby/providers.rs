@@ -72,33 +72,57 @@ struct Graph<'a> {
     incoming: BTreeMap<usize, Vec<(Position, bool)>>,
 }
 
-// Both proof collectors use the same bounded read/parse/canonicalization boundary.
+/// Proof sources for a selection, or why proofs are unavailable.
+pub(super) enum ProofSources {
+    /// Every selected Ruby file was read and parsed within the budget.
+    Loaded(Vec<Unit>),
+    /// The selection exceeds the `(files, bytes)` proof budget.
+    OverBudget,
+    /// A selected file could not be read or canonicalized; extraction reports it.
+    Unreadable,
+}
+
+/// Test entry point over [`load_proof_sources`] that keeps only the loaded units.
+#[cfg(test)]
 pub(super) fn load_units(
     files: &[SourceFile],
     budget: (usize, usize),
 ) -> Result<Option<Vec<Unit>>> {
+    Ok(match load_proof_sources(files, budget)? {
+        ProofSources::Loaded(units) => Some(units),
+        ProofSources::OverBudget | ProofSources::Unreadable => None,
+    })
+}
+
+/// Loads proof sources in selection order through the bounded read/parse/canonicalization
+/// boundary both proof collectors share; the first condition met decides the outcome, so a
+/// read failure before the budget runs out is never reported as the budget.
+pub(super) fn load_proof_sources(
+    files: &[SourceFile],
+    budget: (usize, usize),
+) -> Result<ProofSources> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
     let mut units = Vec::new();
     let mut bytes = 0;
     for file in files.iter().filter(|f| f.language == SourceLanguage::Ruby) {
         if units.len() >= budget.0 {
-            return Ok(None);
+            return Ok(ProofSources::OverBudget);
         }
         let Ok(source) = read_utf8(&file.path, "Ruby provider source", MAX_PROJECT_INPUT_BYTES)
         else {
             // Extraction reports per-file failures and preserves trustworthy neighbors.
-            return Ok(None);
+            return Ok(ProofSources::Unreadable);
         };
         bytes += source.len();
         if bytes > budget.1 {
-            return Ok(None);
+            return Ok(ProofSources::OverBudget);
         }
         let tree = parser
             .parse(&source, None)
             .context("Ruby provider parser returned no tree")?;
         let Ok(canonical_path) = file.path.canonicalize() else {
-            return Ok(None);
+            return Ok(ProofSources::Unreadable);
         };
         units.push(Unit {
             file: file.clone(),
@@ -107,7 +131,7 @@ pub(super) fn load_units(
             tree,
         });
     }
-    Ok(Some(units))
+    Ok(ProofSources::Loaded(units))
 }
 
 impl Providers {

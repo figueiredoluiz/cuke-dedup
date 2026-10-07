@@ -998,7 +998,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "da6bb6b810f05e891dc4b896c66077383ab7eb750f0d8218f609ab83d10ddd38",
+      "sourceSha256": "79adeeb8f0398b86183c6d3bce24adf7e4b20741becb8b71159573a1928cc8cb",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1228,7 +1228,7 @@
       ]
     },
     "src/discovery.rs": {
-      "sourceSha256": "55f2331ce5ba661c1509449fbbd53d12f9ef80423af8a7cf593702d98073de16",
+      "sourceSha256": "44c4e71e5c00f2c0b42a9aa5dea7e08bfd1eeb3a68248e8b71714eba855db43e",
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -3519,7 +3519,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "e0284f6b4457330c999c7fe9c532b2a6ef3bceb78e083d405b153b96cc0363f3",
+      "sourceSha256": "38e90b2247f43f98e392c63fa3ed121838fdd53452c7c23ad6ce1d9b4f43759d",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4369,6 +4369,46 @@
             "name": "regression_ruby_assertion_near_conflicting_values_are_one_differing_event"
           },
           "rationale": "End-to-end release regression `regression_ruby_assertion_near_conflicting_values_are_one_differing_event` runs Ruby sources through the built binary with paired TypeScript controls where the contract is shared.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_dependency_limits_do_not_charge_selected_entry_points",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_dependency_limits_do_not_charge_selected_entry_points"
+          },
+          "rationale": "`regression_ruby_dependency_limits_do_not_charge_selected_entry_points` runs Ruby sources through the built binary and pins the Ruby dependency and provider-proof limit outcomes end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_dependency_module_limit_marks_loads_incomplete",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_dependency_module_limit_marks_loads_incomplete"
+          },
+          "rationale": "`regression_ruby_dependency_module_limit_marks_loads_incomplete` runs Ruby sources through the built binary and pins the Ruby dependency and provider-proof limit outcomes end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_provider_proof_limit_names_its_cause",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_provider_proof_limit_names_its_cause"
+          },
+          "rationale": "`regression_ruby_provider_proof_limit_names_its_cause` runs Ruby sources through the built binary and pins the Ruby dependency and provider-proof limit outcomes end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit"
+          },
+          "rationale": "`regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit` runs Ruby sources through the built binary and pins the Ruby dependency and provider-proof limit outcomes end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]

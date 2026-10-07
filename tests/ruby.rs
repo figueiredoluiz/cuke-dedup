@@ -2276,6 +2276,7 @@ fn ruby_provider_shared_dependency_paths_are_bounded() {
     assert!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"));
 }
 
+/// Selections over the provider-proof budget keep direct findings and stay complete.
 #[test]
 fn ruby_provider_budget_exhaustion_preserves_direct_findings() {
     for (files, bytes) in [(1025, 0), (9, 7_500_000)] {
@@ -2297,8 +2298,13 @@ fn ruby_provider_budget_exhaustion_preserves_direct_findings() {
             "count={files}, bytes={bytes}"
         );
         assert!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"));
-        assert!(String::from_utf8_lossy(&output.stderr).contains("source graph exceeds"));
-        assert_eq!(output.status.code(), Some(2));
+        // Selected files never charge the load graph, so there is no graph error, and the
+        // unavailable provider proofs cost nothing because every registration is direct. Under
+        // `--fail-on-incomplete` the exit is 1 from the duplicate-matcher error, not 2.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("source graph exceeds"), "{stderr}");
+        assert!(!stderr.contains("proof limit"), "{stderr}");
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
     }
 }
 

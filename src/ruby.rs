@@ -32,6 +32,8 @@ pub(crate) struct RubySession {
     providers: providers::Providers,
     assertions: assertions::AssertionProviders,
     assertion_modules: Vec<String>,
+    /// Set when provider proofs are unavailable because the selection exceeds the proof budget.
+    proof_sources_exceeded: bool,
 }
 impl AdapterSessionState for RubySession {
     /// Resolves configured Ruby provider paths without replacing their filename suffixes.
@@ -57,6 +59,7 @@ impl AdapterSessionState for RubySession {
             providers: Default::default(),
             assertions: Default::default(),
             assertion_modules: configured,
+            proof_sources_exceeded: false,
         }
     }
 }
@@ -96,6 +99,7 @@ impl SourceAdapter for RubyAdapter {
     ) -> (std::collections::BTreeMap<String, String>, Vec<String>) {
         parameters::merge(declarations, configured)
     }
+    /// Loads provider and assertion proofs, recording when the selection exceeds their budget.
     fn prepare_session(
         &self,
         files: &[SourceFile],
@@ -105,9 +109,14 @@ impl SourceAdapter for RubyAdapter {
             crate::resource_limits::MAX_REGISTRATION_MODULES,
             crate::resource_limits::MAX_REGISTRATION_MODULE_BYTES,
         );
-        let units = providers::load_units(files, source_budget)?;
+        let (units, exceeded) = match providers::load_proof_sources(files, source_budget)? {
+            providers::ProofSources::Loaded(units) => (Some(units), false),
+            providers::ProofSources::OverBudget => (None, true),
+            providers::ProofSources::Unreadable => (None, false),
+        };
         let edges = session.dependency_edges();
         let state = session.state::<RubySession>()?;
+        state.proof_sources_exceeded = exceeded;
         if let Some(units) = units {
             let (providers, assertions) = providers::Providers::from_units_with_assertions(
                 &units,
@@ -126,6 +135,7 @@ impl SourceAdapter for RubyAdapter {
         }
         Ok(())
     }
+    /// Reports suite-wide Ruby uncertainties, naming the proof limit when it caused them.
     fn finalize_session(
         &self,
         session: &mut SourceExtractionSession,
@@ -135,11 +145,15 @@ impl SourceAdapter for RubyAdapter {
         result
             .advisories
             .extend_from_slice(state.assertions.advisories());
+        let limit = state
+            .proof_sources_exceeded
+            .then(proof_limit_reason)
+            .unwrap_or_default();
         if state.assertions.incomplete() {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(SourceLanguage::Ruby),
                 UncertaintyCause::Source,
-                "Ruby assertion-provider provenance is incomplete",
+                format!("Ruby assertion-provider provenance is incomplete{limit}"),
             ));
         }
         if state.providers.work_exhausted() {
@@ -160,11 +174,12 @@ impl SourceAdapter for RubyAdapter {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(SourceLanguage::Ruby),
                 UncertaintyCause::Registration,
-                "Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite",
+                format!("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite{limit}"),
             ));
         }
         Ok(result)
     }
+    /// Extracts one file, keeping dependency diagnostics for unfollowed loads and their reasons.
     fn extract_with_session(
         &self,
         source: &str,
@@ -185,10 +200,27 @@ impl SourceAdapter for RubyAdapter {
             diagnostic.kind != Kind::Dependency
                 || !session.dependency_resolved(&diagnostic.location)
         });
+        for diagnostic in &mut extraction.diagnostics {
+            if let Some(reason) = (diagnostic.kind == Kind::Dependency)
+                .then(|| session.dependency_gap(&diagnostic.location))
+                .flatten()
+            {
+                diagnostic.message = format!("Ruby source dependency was not followed: {reason}");
+            }
+        }
         mark_unresolved_dependency_usage(&mut extraction);
         session.state::<RubySession>()?.effects.extend(invalidated);
         Ok(extraction)
     }
+}
+
+/// The clause naming the provider-proof budget, appended to a suite-wide uncertainty.
+fn proof_limit_reason() -> String {
+    format!(
+        ": provider proofs are unavailable because the selected Ruby files exceed the {}-file / {} proof limit",
+        dependencies::grouped(crate::resource_limits::MAX_REGISTRATION_MODULES),
+        dependencies::byte_limit(crate::resource_limits::MAX_REGISTRATION_MODULE_BYTES)
+    )
 }
 
 fn mark_unresolved_dependency_usage(extraction: &mut Extraction) {

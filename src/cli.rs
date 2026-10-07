@@ -419,6 +419,7 @@ fn extract_corpus(
     corpus
 }
 
+/// Extracts definitions through one shared session that carries discovered edges and gaps.
 fn extract_definitions(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -443,7 +444,8 @@ fn extract_definitions(
         &config.registrations,
         &config.assertion_modules,
     )
-    .with_dependencies(&files.dependencies);
+    .with_dependencies(&files.dependencies)
+    .with_dependency_gaps(&files.dependency_gaps);
     let mut prepared = BTreeSet::new();
     for file in &files.definitions {
         let adapter = source_adapter::adapter_for_language(file.language);

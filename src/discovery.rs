@@ -27,6 +27,8 @@ pub struct FeatureFile {
 pub struct DiscoveredFiles {
     /// Resolved source-loading edges used by definition extraction.
     pub dependencies: Vec<source_adapter::SourceDependency>,
+    /// Source-loading calls that dependency discovery refused to follow, with the reason.
+    pub dependency_gaps: Vec<source_adapter::DependencyGap>,
     /// Gherkin feature files and their selected parser formats.
     pub features: Vec<FeatureFile>,
     /// Definition sources selected through their registered frontend.
