@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TEST_FN_PATTERN, cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, functionBody, isRubySuite, oracleClauseResolves, parityDeficits, evidenceFailures, residueResolves, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
+import { TEST_FN_PATTERN, cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, functionBody, isRubySuite, oracleClauseResolves, parityDeficits, evidenceFailures, residueResolves, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, testSummary, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
 
 const oracle = {
   path: "example", definitions: 2, featureSteps: 0, complete: true, expectedExit: 0,
@@ -203,10 +203,6 @@ test("evidence is addressed exactly per binary and every dependent entry is name
   assert.deepEqual(batches[0].args, ["test", "--test", "cli", "--", "--exact", "ruby_end_to_end", "other"]);
   assert.deepEqual(batches[1].args, ["test", "--lib", "--", "--exact", "config::tests::yaml", "source_adapter::tests::late"]);
   assert.deepEqual(batches[1].targets.map((target) => target.name), ["yaml", "late"]);
-  assert.ok(evidenceRunPassed("running 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 126 filtered out", 2));
-  assert.ok(!evidenceRunPassed("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 127 filtered out", 2));
-  assert.ok(!evidenceRunPassed("test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured", 1));
-  assert.ok(!evidenceRunPassed("test result: FAILED. 1 passed; 1 failed", 2));
 });
 
 test("only an otherwise unblocked completion run executes Rust evidence, unless forced", () => {
@@ -280,6 +276,20 @@ test("an incomplete cargo run establishes no evidence; a completed one blames on
   assert.deepEqual(blamed({ status: 101, stdout: lines }), all);
   assert.deepEqual(blamed({ status: 101, stdout: `${lines}test result: FAILED. 3 passed; 1 failed; 0 ignored` }), all);
   assert.deepEqual(blamed({ status: 0, stdout: "test good ... ok\ntest bad ... ok\ntest missing ... ok\ntest result: ok. 3 passed; 0 failed; 0 ignored" }), []);
+  // The success path is checked per target: a filtered-out or ignored test, or an unrelated passing summary, is not evidence.
+  assert.deepEqual(blamed({ status: 0, stdout: "test good ... ok\ntest bad ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 127 filtered out" }), [["missing", "did not run"]]);
+  assert.deepEqual(blamed({ status: 0, stdout: "test good ... ok\ntest bad ... ok\ntest missing ... ignored\ntest result: ok. 2 passed; 0 failed; 1 ignored" }), [["missing", "ignored"]]);
+  assert.deepEqual(blamed({ status: 0, stdout: "test other ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored" }),
+    [["good", "did not run"], ["bad", "did not run"], ["missing", "did not run"]]);
+  assert.deepEqual(blamed({ status: 0, stdout: "test good ... ok\ntest result: ok. 3 passed; 0 failed; 0 ignored" }), all);
+  // Totals that agree but a split that does not (two `ok` lines against 1 passed, 1 failed) is an incomplete run.
+  assert.deepEqual(blamed({ status: 101, stdout: "test good ... ok\ntest bad ... ok\ntest result: FAILED. 1 passed; 1 failed; 0 ignored" }), all);
+  assert.deepEqual(blamed({ status: 0, stdout: "test good ... ok\ntest bad ... ok\ntest missing ... ignored\ntest result: ok. 3 passed; 0 failed; 0 ignored" }), all);
+  // An exit status that disagrees with the summary is an incomplete run.
+  const passing = "test good ... ok\ntest bad ... ok\ntest missing ... ok\n";
+  assert.deepEqual(blamed({ status: 101, stdout: `${passing}test result: ok. 3 passed; 0 failed; 0 ignored` }), all);
+  assert.deepEqual(blamed({ status: 0, stdout: `${lines}test result: FAILED. 1 passed; 1 failed; 0 ignored` }), all);
+  assert.deepEqual(blamed({ status: 101, stdout: `${passing}test result: FAILED. 3 passed; 0 failed; 0 ignored` }), all);
 });
 
 test("nested block comments and unnamed exclusions are rejected where they would mislead", () => {
@@ -293,4 +303,25 @@ test("nested block comments and unnamed exclusions are rejected where they would
   assert.throws(() => validateUnitEntry("f.rs", excluded("JS/TS-only: . Semantic residue: none."), withGroups, census), /naming the JS\/TS-only API/);
   assert.throws(() => validateUnitEntry("f.rs", excluded("Shared behavior. Semantic residue: none."), withGroups, census), /naming the JS\/TS-only API/);
   assert.equal(validateUnitEntry("f.rs", excluded("JS/TS-only: `tsconfig.json` paths. Semantic residue: none."), withGroups, census), null);
+});
+
+test("libtest variants and captured output neither hide nor forge evidence", () => {
+  const targets = ["good", "panics", "bad"].map((name) => ({ file: "tests/cli.rs", name, referencedBy: [`f.rs:${name}`] }));
+  const batch = { targets, args: ["test", "--test", "cli", "--", "--exact", "good", "panics", "bad"] };
+  /** The outcome blamed for each target in the batch. */
+  const blamed = (run) => evidenceFailures(run, batch).map(({ target, outcome }) => [target.name, outcome]);
+  // A `#[should_panic]` test prints `- should panic`; it counts as the plain line it is.
+  const passing = "running 3 tests\ntest good ... ok\ntest panics - should panic ... ok\ntest bad ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out\n";
+  assert.deepEqual(blamed({ status: 0, stdout: passing }), []);
+  assert.deepEqual([...testOutcomes("test slow ... ignored, needs network\n")], [["slow", "ignored"]]);
+  // Captured output of a failing test can print result-shaped lines and a fake summary before the real one.
+  const forged = [
+    "running 3 tests", "test good ... ok", "test panics - should panic ... ok", "test bad ... FAILED", "",
+    "failures:", "", "---- bad stdout ----", "test bad ... ok", "test extra ... ok", "test result: ok. 9 passed; 0 failed; 0 ignored", "",
+    "failures:", "    bad", "", "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out", "",
+  ].join("\n");
+  assert.deepEqual(blamed({ status: 101, stdout: forged }), [["bad", "FAILED"]]);
+  assert.equal(testSummary(forged), "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out");
+  assert.equal(testSummary("no summary"), null);
+  assert.equal(testSummary(undefined), null);
 });
