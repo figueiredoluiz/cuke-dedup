@@ -5720,19 +5720,29 @@ fn regression_ruby_dependency_module_limit_marks_loads_incomplete() {
     assert_eq!(strict.code, Some(2), "{}", strict.stderr);
 }
 
-/// Writes a provider registration (`method(:Given)` re-exported through a module) beside
-/// `fillers` plain step files, all selected.
-fn ruby_provider_project(fillers: usize) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().unwrap();
-    write(
-        directory.path(),
-        "features/support/provider.rb",
+/// Cross-file provider registrations that need provider proofs: `(provider.rb, a.rb body)`.
+const RUBY_PROVIDER_SHAPES: [(&str, &str); 2] = [
+    // `method(:Given)` re-exported through a module constant.
+    (
         "ROOT_GIVEN = method(:Given)\nmodule Provider\n  GIVEN = ::ROOT_GIVEN\nend\n",
-    );
+        "register = Provider::GIVEN\nregister.call('provided step') { work(1) }\nregister.call('provided step') { work(1) }\n",
+    ),
+    // A top-level constant alias called directly.
+    (
+        "MY_GIVEN = method(:Given)\n",
+        "MY_GIVEN.call('provided step') { work(1) }\nMY_GIVEN.call('provided step') { work(1) }\n",
+    ),
+];
+
+/// Writes provider `shape` from [`RUBY_PROVIDER_SHAPES`] beside `fillers` plain step files, all
+/// selected.
+fn ruby_provider_project(fillers: usize, (provider, steps): (&str, &str)) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "features/support/provider.rb", provider);
     write(
         directory.path(),
         "features/step_definitions/a.rb",
-        "require_relative '../support/provider'\nregister = Provider::GIVEN\nregister.call('provided step') { work(1) }\nregister.call('provided step') { work(1) }\n",
+        &format!("require_relative '../support/provider'\n{steps}"),
     );
     for index in 1..=fillers {
         write(
@@ -5754,31 +5764,36 @@ fn ruby_provider_project(fillers: usize) -> tempfile::TempDir {
 #[test]
 fn regression_ruby_provider_proof_limit_names_its_cause() {
     let selection = ["--definitions", "features/step_definitions/*.rb"];
-    // Control: a small suite proves the provider and reports its duplicate registrations.
-    let small = ruby_provider_project(1);
-    let run = ruby_run(small.path(), &selection);
-    assert!(!run.incomplete, "{}", run.stderr);
-    assert!(
-        run.active.contains(&"duplicate-matcher".to_owned()),
-        "{:?}",
-        run.active
-    );
-    assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+    // Every cross-file provider registration rests on a capture such as `method(:Given)`. Without
+    // proofs that capture is unresolved, so registry trust is withdrawn and the run is incomplete:
+    // provider-backed registrations are never dropped silently.
+    for shape in RUBY_PROVIDER_SHAPES {
+        // Control: a small suite proves the provider and reports its duplicate registrations.
+        let small = ruby_provider_project(1, shape);
+        let run = ruby_run(small.path(), &selection);
+        assert!(!run.incomplete, "{}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{:?}",
+            run.active
+        );
+        assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
 
-    // 1,100 selected files exceed the 1,024-file proof budget: the provider stays unproven, so
-    // registry trust is withdrawn (fail closed) and the warning states why.
-    let large = ruby_provider_project(1_099);
-    let run = ruby_run(large.path(), &selection);
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    assert!(run.incomplete, "{}", run.stderr);
-    assert_eq!(run.definitions, 0);
-    assert!(
-        run.stderr.contains(
-            "metaprogramming prevents trusted registration extraction across the selected suite: provider proofs are unavailable because the selected and loaded Ruby files exceed the 1,024-file / 64 MiB proof limit"
-        ),
-        "{}",
-        run.stderr
-    );
+        // 1,100 selected files exceed the 1,024-file proof budget: the provider stays unproven,
+        // registry trust is withdrawn (fail closed) and the warning states why.
+        let large = ruby_provider_project(1_099, shape);
+        let run = ruby_run(large.path(), &selection);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(run.incomplete, "{}", run.stderr);
+        assert_eq!(run.definitions, 0);
+        assert!(
+            run.stderr.contains(
+                "metaprogramming prevents trusted registration extraction across the selected suite: provider proofs are unavailable because the selected and loaded Ruby files exceed the 1,024-file / 64 MiB proof limit"
+            ),
+            "{}",
+            run.stderr
+        );
+    }
 }
 
 /// Provider proofs missing for a reason other than the budget (an unreadable selected file) do
@@ -5787,7 +5802,7 @@ fn regression_ruby_provider_proof_limit_names_its_cause() {
 #[test]
 fn regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit() {
     use std::os::unix::fs::PermissionsExt;
-    let project = ruby_provider_project(2);
+    let project = ruby_provider_project(2, RUBY_PROVIDER_SHAPES[0]);
     let locked = project.path().join("features/step_definitions/f2.rb");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     // Root ignores file modes; there is no unreadable file to observe.
