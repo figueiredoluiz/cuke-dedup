@@ -5774,7 +5774,7 @@ fn regression_ruby_provider_proof_limit_names_its_cause() {
     assert_eq!(run.definitions, 0);
     assert!(
         run.stderr.contains(
-            "metaprogramming prevents trusted registration extraction across the selected suite: provider proofs are unavailable because the selected Ruby files exceed the 1,024-file / 64 MiB proof limit"
+            "metaprogramming prevents trusted registration extraction across the selected suite: provider proofs are unavailable because the selected and loaded Ruby files exceed the 1,024-file / 64 MiB proof limit"
         ),
         "{}",
         run.stderr

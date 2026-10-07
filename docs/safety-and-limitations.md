@@ -61,7 +61,7 @@ exceed it is not followed, and later new loads are refused too: analysis is mark
 each refused load, the message names the limit, and Ruby unused-definition findings are withheld.
 A selected Ruby file that cannot be read loses only its own loads; extraction reports the file.
 
-Ruby provider and assertion proofs read the whole selection. Above their limit the proofs are
+Ruby provider and assertion proofs read every selected and loaded Ruby file. Above their limit the proofs are
 unavailable: registrations that depend on them are untrusted across the suite and the warning names
 the proof limit. Suites that use only direct step registrations are unaffected.
 

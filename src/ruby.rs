@@ -217,7 +217,7 @@ impl SourceAdapter for RubyAdapter {
 /// The clause naming the provider-proof budget, appended to a suite-wide uncertainty.
 fn proof_limit_reason() -> String {
     format!(
-        ": provider proofs are unavailable because the selected Ruby files exceed the {}-file / {} proof limit",
+        ": provider proofs are unavailable because the selected and loaded Ruby files exceed the {}-file / {} proof limit",
         dependencies::grouped(crate::resource_limits::MAX_REGISTRATION_MODULES),
         dependencies::byte_limit(crate::resource_limits::MAX_REGISTRATION_MODULE_BYTES)
     )
