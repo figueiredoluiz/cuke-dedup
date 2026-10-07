@@ -998,7 +998,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "79adeeb8f0398b86183c6d3bce24adf7e4b20741becb8b71159573a1928cc8cb",
+      "sourceSha256": "37617a7326daac72583f329ef2a2353cda1e954eecc2e67e1d968c6d5d09723b",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -3519,7 +3519,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "e1515fce2161a7454981156eaef386fffac9ad7d0bf08b2ee7514702b3854cb0",
+      "sourceSha256": "69ec908f1dd095befe5f7e26063fd5e9598390a110fea91838e8ca6346136462",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4409,6 +4409,16 @@
             "name": "regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit"
           },
           "rationale": "`regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit` runs Ruby sources through the built binary and pins the Ruby dependency and provider-proof limit outcomes end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization"
+          },
+          "rationale": "`regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization` runs Ruby sources through the built binary in baseline mode and pins the tolerated, rejected and unmatched-empty baseline outcomes end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]

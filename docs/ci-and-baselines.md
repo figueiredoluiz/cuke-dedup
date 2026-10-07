@@ -129,9 +129,13 @@ The base is scanned in a temporary independent Git checkout using the **current 
 CukeDedup configuration**, including rule overrides, patterns and suppressions. Historical
 project module metadata and ignore files remain historical inputs. The same repository-relative
 analysis directory must exist in both trees. Missing refs/directories, unsupported submodules,
-base extraction errors, unresolved registrations, zero extraction from discovered sources,
-definitions without a feature corpus, and truncated base comparisons fail with exit code `2`;
-none become an empty accepted baseline. A genuinely empty historical suite is allowed.
+base extraction errors, definitions without a feature corpus, and a base that kept no definitions
+while the current tree has some fail with exit code `2`; none become an empty accepted baseline.
+When neither tree has definitions (a genuinely empty historical suite, or a Ruby registry withdrawn
+by an unresolved `include` in both) there is nothing to compare. Any other incomplete base
+(unresolved registrations, truncated comparisons, definitions partly withdrawn) is used for the
+findings it extracted and reported with a warning, since a finding it missed may appear as new;
+`--fail-on-incomplete` rejects it with exit code `2`.
 Hooks and configured checkout filters are disabled, so Git LFS content is not hydrated.
 The full repository snapshot is limited to 512 MiB of tracked content and 100,000 files;
 larger repositories can use a committed baseline instead. Git submodules anywhere in that

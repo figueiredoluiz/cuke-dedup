@@ -115,9 +115,11 @@ excluded rather than ending the run.
 a generated bundle, contains an unparseable file, or hits a work limit, the comparison still
 proceeds against the findings it did extract and a warning notes that a finding the baseline could
 not extract may surface as new. Pass `--fail-on-incomplete` to reject an incomplete baseline
-instead. A baseline that produced a hard error, that discovered definition files yet extracted no
-definitions at all, or that has definitions but no discovered feature files, cannot be subtracted
-and always fails regardless of the flag.
+instead. A baseline that produced a hard error, that has definitions but no discovered feature
+files, or that kept no definitions while the current tree has some (so no finding could be matched),
+cannot be subtracted and always fails regardless of the flag. When neither tree has definitions,
+for example a Ruby registry withdrawn by an unresolved `include` in both, there is nothing to
+compare and the run follows the plain-run incompleteness policy.
 
 The `minified` signal is line geometry, which separates generated output from authored code in
 both minified styles — collapsed onto one line, and wrapped at a fixed width. Geometry alone
