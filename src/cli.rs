@@ -805,6 +805,7 @@ fn apply_finding_modes(
     }
 }
 
+/// Subtracts the findings of a baseline (a Git revision or a baseline file) from the current run.
 fn apply_baseline_mode(
     config: &Config,
     options: &CheckOptions,
@@ -826,12 +827,30 @@ fn apply_baseline_mode(
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
         let extracted = extract_corpus(&base_config, &files, &None, &mut base_diagnostics);
         let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics)?;
-        // A baseline that produced a hard error, or that discovered definition files yet extracted
-        // no definitions, or that has no features to anchor usage, cannot be subtracted at all —
-        // those always bail. Soft incompleteness only bails under `--fail-on-incomplete`, which
-        // routes through `base_diagnostics.errors` above.
+        // A baseline that produced a hard error, or that has definitions but no features to anchor
+        // usage, cannot be subtracted at all — those always bail. A baseline that kept no
+        // definitions while the current tree has some cannot match any finding, so every current
+        // finding would appear new; that bails too, whatever emptied it. When both are empty there
+        // is nothing to compare and nothing can appear new, so the run follows the plain-run
+        // policy. Soft incompleteness only bails under `--fail-on-incomplete`, which routes through
+        // `base_diagnostics.errors` above.
+        if !files.definitions.is_empty()
+            && base.result.definitions.is_empty()
+            && !result.definitions.is_empty()
+        {
+            bail!(
+                "baseline revision `{revision}` is incomplete: it kept no step definitions while the current tree has {}, so no finding could be matched against it: {}",
+                result.definitions.len(),
+                base_diagnostics
+                    .errors
+                    .iter()
+                    .chain(&base_diagnostics.warnings)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
         if !base_diagnostics.errors.is_empty()
-            || (!files.definitions.is_empty() && base.result.definitions.is_empty())
             || (files.features.is_empty() && !base.result.definitions.is_empty())
         {
             bail!(

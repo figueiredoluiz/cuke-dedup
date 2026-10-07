@@ -5824,6 +5824,95 @@ fn regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_li
     assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
 }
 
+/// Commits a Ruby suite with support file `base_env` at HEAD~1, then switches it to `head_env`
+/// and appends a step at HEAD, and runs `--baseline-from-ref HEAD~1` with `extra` arguments;
+/// returns the exit code and stderr.
+fn ruby_baseline_run(
+    (base_env, head_env): (Option<&str>, Option<&str>),
+    steps: &str,
+    extra: &[&str],
+) -> (Option<i32>, String) {
+    let directory = tempfile::tempdir().unwrap();
+    let env = directory.path().join("features/support/env.rb");
+    if let Some(contents) = base_env {
+        write(directory.path(), "features/support/env.rb", contents);
+    }
+    write(directory.path(), "features/step_definitions/a.rb", steps);
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given same\n",
+    );
+    init_repository(directory.path());
+    match head_env {
+        Some(contents) => write(directory.path(), "features/support/env.rb", contents),
+        None => {
+            let _ = fs::remove_file(&env);
+        }
+    }
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        &format!("{steps}Given('other') {{ visit('/c') }}\n"),
+    );
+    for args in [vec!["add", "-A"], vec!["commit", "-qm", "head"]] {
+        assert!(fixture_git()
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--definitions", "features/**/*.rb", "--no-metrics"])
+        .args(["--baseline-from-ref", "HEAD~1"])
+        .args(extra)
+        .output()
+        .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// A baseline is rejected for being empty only when the current tree has definitions to match;
+/// when both trees are empty (a Ruby registry withdrawn by an unresolved include in both) the run
+/// follows the plain-run incompleteness policy.
+#[test]
+fn regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization() {
+    let invalidated = Some("include Capybara::DSL\n");
+    let steps = "Given('same') { visit('/a') }\nGiven('same') { visit('/b') }\n";
+    let soft = "baseline revision `HEAD~1` is incomplete, so a finding it did not extract may appear as new";
+    let rejected = "baseline revision `HEAD~1` is incomplete:";
+    let unmatched =
+        "baseline revision `HEAD~1` is incomplete: it kept no step definitions while the current tree has";
+    // Both revisions invalidate the registry, so both are empty and nothing can appear new:
+    // tolerated and reported by default. Before the fix the baseline was rejected with exit 2.
+    let (code, stderr) = ruby_baseline_run((invalidated, invalidated), steps, &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stderr.contains(soft), "{stderr}");
+    assert!(
+        !stderr.contains(rejected) && !stderr.contains(unmatched),
+        "{stderr}"
+    );
+    // `--fail-on-incomplete` still rejects the incomplete baseline.
+    let (code, stderr) =
+        ruby_baseline_run((invalidated, invalidated), steps, &["--fail-on-incomplete"]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains(rejected), "{stderr}");
+    // The base is invalidated but HEAD is fixed: an empty base would report every current finding
+    // as new, so it is rejected and the message says why.
+    let (code, stderr) = ruby_baseline_run((invalidated, None), steps, &[]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains(&format!("{unmatched} 3")), "{stderr}");
+    // Control: a base that kept nothing for no reported reason is rejected the same way.
+    let (code, stderr) = ruby_baseline_run((None, None), "HELPER = 1\n", &[]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains(&format!("{unmatched} 1")), "{stderr}");
+}
+
 /// A zero-operand `load()` is an ordinary call; identical callback bodies under different
 /// wrappers are near, different bodies under one wrapper are not.
 #[test]
