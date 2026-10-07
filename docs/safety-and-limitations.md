@@ -49,10 +49,21 @@ when CI must reject degraded analysis.
 | Workspace discovery entries | 100,000 |
 | Content-classification prefix per discovered source | 64 KiB |
 | Imported registration modules | 1,024 modules / 64 MiB total |
+| Ruby files reached only through `require`/`require_relative` | 1,024 files / 64 MiB total |
+| Ruby provider and assertion proofs (selected plus loaded Ruby files) | 1,024 files / 64 MiB total |
 | Memoized module path/depth states | 16,384 |
 
 Resolution confines imports and package targets to canonical analysis or package roots and shares
 cached work between importing files.
+
+Selected Ruby definition files are not charged against the Ruby load limit. A load that would
+exceed it is not followed, and later new loads are refused too: analysis is marked incomplete at
+each refused load, the message names the limit, and Ruby unused-definition findings are withheld.
+A selected Ruby file that cannot be read loses only its own loads; extraction reports the file.
+
+Ruby provider and assertion proofs read every selected and loaded Ruby file. Above their limit the proofs are
+unavailable: registrations that depend on them are untrusted across the suite and the warning names
+the proof limit. Suites that use only direct step registrations are unaffected.
 
 ## Matcher and Gherkin limits
 

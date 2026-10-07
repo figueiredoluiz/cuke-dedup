@@ -6,11 +6,12 @@ use crate::discovery::DiscoveredFiles;
 use crate::resource_limits::{
     read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
 };
-use crate::source_adapter::{SourceDependency, SourceFile, SourceLanguage};
+use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile, SourceLanguage};
 use globset::GlobSet;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+/// Resolves the Ruby source graph from the selected files into discovery's edges and gaps.
 pub(crate) fn resolve(config: &Config, excludes: &GlobSet, files: &mut DiscoveredFiles) {
     if !files
         .definitions
@@ -19,7 +20,8 @@ pub(crate) fn resolve(config: &Config, excludes: &GlobSet, files: &mut Discovere
     {
         return;
     }
-    if let Err(error) = resolve_graph(config, excludes, files) {
+    let budget = (MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES);
+    if let Err(error) = resolve_graph(config, excludes, files, budget) {
         files.errors.push(format!(
             "Ruby dependency discovery is incomplete: {error:#}"
         ));
@@ -27,10 +29,74 @@ pub(crate) fn resolve(config: &Config, excludes: &GlobSet, files: &mut Discovere
     files.definitions.sort_by(|a, b| a.path.cmp(&b.path));
 }
 
+/// Dependency-only modules admitted so far and their bytes, plus the sticky refusal reason.
+#[derive(Default)]
+struct Expansion {
+    modules: usize,
+    bytes: usize,
+    refused: Option<String>,
+}
+
+impl Expansion {
+    /// Charges a new dependency-only target against `(modules, bytes)`. Selected entry points are
+    /// never charged. Once a limit refuses a target every later new target is refused with the
+    /// same reason, so a smaller file cannot slip in after the graph was cut.
+    fn admit(&mut self, target: &Path, (max_modules, max_bytes): (usize, usize)) -> Option<String> {
+        if self.refused.is_none() {
+            // A target whose metadata vanishes after `is_file` is charged nothing here; reading it
+            // fails next and extraction reports the file, so no false limit is blamed.
+            let size = std::fs::metadata(target)
+                .map_or(0, |meta| usize::try_from(meta.len()).unwrap_or(usize::MAX));
+            let bytes = self.bytes.saturating_add(size);
+            if self.modules >= max_modules {
+                self.refused = Some(format!(
+                    "the source graph exceeds the {}-file limit",
+                    grouped(max_modules)
+                ));
+            } else if bytes > max_bytes {
+                self.refused = Some(format!(
+                    "the source graph exceeds the {} limit",
+                    byte_limit(max_bytes)
+                ));
+            } else {
+                self.modules += 1;
+                self.bytes = bytes;
+            }
+        }
+        self.refused.clone()
+    }
+}
+
+/// `1024` as `1,024`, matching how the limits are documented.
+pub(super) fn grouped(value: usize) -> String {
+    let digits = value.to_string();
+    let mut text = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
+}
+
+/// A byte limit in whole MiB when it is one (`64 MiB`), otherwise in bytes (`15-byte`).
+pub(super) fn byte_limit(bytes: usize) -> String {
+    const MIB: usize = 1 << 20;
+    if bytes >= MIB && bytes.is_multiple_of(MIB) {
+        format!("{} MiB", grouped(bytes / MIB))
+    } else {
+        format!("{}-byte", grouped(bytes))
+    }
+}
+
+/// Walks the Ruby source graph from the selected files, recording each followed top-level load
+/// as an edge and each load refused by the expansion `budget` as a gap.
 fn resolve_graph(
     config: &Config,
     excludes: &GlobSet,
     files: &mut DiscoveredFiles,
+    budget: (usize, usize),
 ) -> anyhow::Result<()> {
     let root = config.root.canonicalize()?;
     let load_paths = config
@@ -48,29 +114,24 @@ fn resolve_graph(
         .filter(|f| f.language == SourceLanguage::Ruby)
         .cloned()
         .collect();
-    let mut known: BTreeSet<_> = queue
+    // An entry point that cannot be canonicalized loses only its own edges; extraction reports it.
+    let entry_points: BTreeSet<_> = queue
         .iter()
-        .map(|f| f.path.canonicalize())
-        .collect::<Result<_, _>>()?;
-    let entry_points = known.clone();
-    let mut bytes = 0_usize;
+        .filter_map(|f| f.path.canonicalize().ok())
+        .collect();
+    let mut known = entry_points.clone();
+    let mut expansion = Expansion::default();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
     while let Some(file) = queue.pop_front() {
-        anyhow::ensure!(
-            known.len() <= MAX_REGISTRATION_MODULES,
-            "source graph exceeds the module limit"
-        );
-        let source = read_utf8(
+        // Extraction reports an unreadable source itself; only this file's loads stay unresolved.
+        let Ok(source) = read_utf8(
             &file.path,
             "Ruby dependency source",
             MAX_PROJECT_INPUT_BYTES,
-        )?;
-        bytes = bytes.saturating_add(source.len());
-        anyhow::ensure!(
-            bytes <= MAX_REGISTRATION_MODULE_BYTES,
-            "source graph exceeds the byte limit"
-        );
+        ) else {
+            continue;
+        };
         let tree = parser
             .parse(&source, None)
             .ok_or_else(|| anyhow::anyhow!("Ruby parser produced no dependency tree"))?;
@@ -78,11 +139,12 @@ fn resolve_graph(
         if program.has_error() {
             continue;
         }
-        for node in descendants(program) {
-            if node.kind() != "call"
-                || node.parent() != Some(program)
-                || node.child_by_field_name("receiver").is_some()
-            {
+        // Top-level statements come in source order, so the first loads are admitted and a gap
+        // lands on the load that crossed the limit.
+        let mut cursor = program.walk();
+        let statements: Vec<_> = program.named_children(&mut cursor).collect();
+        for node in statements {
+            if node.kind() != "call" || node.child_by_field_name("receiver").is_some() {
                 continue;
             }
             let Some(method) = node.child_by_field_name("method").map(|n| text(n, &source)) else {
@@ -134,11 +196,14 @@ fn resolve_graph(
             }) {
                 continue;
             }
-            if known.insert(target.clone()) {
-                anyhow::ensure!(
-                    known.len() <= MAX_REGISTRATION_MODULES,
-                    "source graph exceeds the module limit"
-                );
+            if !known.contains(&target) {
+                if let Some(reason) = expansion.admit(&target, budget) {
+                    files
+                        .dependency_gaps
+                        .push(DependencyGap::new(location(&file, node, &source), reason));
+                    continue;
+                }
+                known.insert(target.clone());
                 let source_file = SourceFile {
                     path: target.clone(),
                     language: SourceLanguage::Ruby,
@@ -163,4 +228,155 @@ fn ruby_file(path: &Path) -> Option<PathBuf> {
         _ => return None,
     };
     path.is_file().then(|| path.canonicalize().ok()).flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Resolves the given selected files under `root` against an injected `(modules, bytes)` budget.
+    fn resolve_with(root: &Path, selected: &[&str], budget: (usize, usize)) -> DiscoveredFiles {
+        let config = Config::load(root, Default::default()).unwrap();
+        let mut files = DiscoveredFiles {
+            definitions: selected
+                .iter()
+                .map(|name| SourceFile {
+                    path: root.join(name),
+                    language: SourceLanguage::Ruby,
+                })
+                .collect(),
+            ..DiscoveredFiles::default()
+        };
+        resolve_graph(&config, &GlobSet::empty(), &mut files, budget).unwrap();
+        files
+    }
+
+    /// Lines of the loads that resolved to an edge, and of the loads refused with each reason.
+    fn outcome(files: &DiscoveredFiles) -> (Vec<usize>, Vec<(usize, String)>) {
+        let edges = files
+            .dependencies
+            .iter()
+            .map(|edge| edge.location.line)
+            .collect();
+        let gaps = files
+            .dependency_gaps
+            .iter()
+            .map(|gap| (gap.location.line, gap.reason.clone()))
+            .collect();
+        (edges, gaps)
+    }
+
+    /// A load past the byte or module budget is refused, and every later new load is refused too.
+    #[test]
+    fn expansion_budget_refuses_past_its_limits_and_stays_exhausted() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.rb"), "A = 1 # ten\n").unwrap();
+        std::fs::write(root.join("b.rb"), "B = 1 # ten\n").unwrap();
+        std::fs::write(root.join("c.rb"), "C\n").unwrap();
+        std::fs::write(
+            root.join("entry.rb"),
+            "require_relative 'a'\nrequire_relative 'b'\nrequire_relative 'c'\nrequire_relative 'a'\n",
+        )
+        .unwrap();
+        let bytes = "the source graph exceeds the 15-byte limit".to_owned();
+        // `b` would take the graph past 15 bytes. The refusal is sticky: the 2-byte `c` that
+        // would still fit is refused too, while the second load of the admitted `a` keeps its edge.
+        let files = resolve_with(&root, &["entry.rb"], (8, 15));
+        assert_eq!(
+            outcome(&files),
+            (vec![1, 4], vec![(2, bytes.clone()), (3, bytes)])
+        );
+        assert_eq!(files.definitions.len(), 2);
+        assert!(files.errors.is_empty());
+
+        let modules = "the source graph exceeds the 1-file limit".to_owned();
+        let files = resolve_with(&root, &["entry.rb"], (1, usize::MAX));
+        assert_eq!(
+            outcome(&files),
+            (vec![1, 4], vec![(2, modules.clone()), (3, modules)])
+        );
+    }
+
+    /// Selected files are not charged; only dependency-only expansion spends the budget.
+    #[test]
+    fn selected_entry_points_never_charge_the_expansion_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("first.rb"),
+            "require_relative 'second'\nrequire_relative 'helper'\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("second.rb"), "SECOND = 1\n").unwrap();
+        std::fs::write(root.join("helper.rb"), "HELPER = 1\n").unwrap();
+        // Discriminating shape: two selected files and a one-module budget. The load between
+        // selected files is not expansion, and the dependency-only `helper` fits only because the
+        // two entry points are not charged; charging them would refuse it.
+        let files = resolve_with(&root, &["first.rb", "second.rb"], (1, usize::MAX));
+        assert_eq!(outcome(&files), (vec![1, 2], vec![]));
+        let only = |edge: &SourceDependency| edge.dependency_only;
+        assert_eq!(
+            files.dependencies.iter().map(only).collect::<Vec<_>>(),
+            [false, true]
+        );
+        // Opposite answer: an empty budget refuses the helper but still resolves the selected load.
+        let files = resolve_with(&root, &["first.rb", "second.rb"], (0, 0));
+        assert_eq!(
+            outcome(&files),
+            (
+                vec![1],
+                vec![(2, "the source graph exceeds the 0-file limit".to_owned())]
+            )
+        );
+    }
+
+    /// An unreadable selected file skips only its own loads; the graph keeps resolving.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_selected_file_loses_only_its_own_loads() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        std::fs::write(root.join("helper.rb"), "HELPER = 1\n").unwrap();
+        std::fs::write(root.join("locked.rb"), "require_relative 'helper'\n").unwrap();
+        std::fs::write(root.join("open.rb"), "\nrequire_relative 'helper'\n").unwrap();
+        std::fs::set_permissions(
+            root.join("locked.rb"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        // Root ignores file modes, so `locked.rb` stays readable and its line-1 load resolves too.
+        let readable = std::fs::read(root.join("locked.rb")).is_ok();
+        let expected_edges: Vec<usize> = [1, 2]
+            .into_iter()
+            .filter(|line| readable || *line == 2)
+            .collect();
+        let files = resolve_with(&root, &["locked.rb", "open.rb"], (8, usize::MAX));
+        std::fs::set_permissions(
+            root.join("locked.rb"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        // Discovery records no error; `open.rb` still resolves its load on line 2.
+        assert!(files.errors.is_empty(), "{:?}", files.errors);
+        assert_eq!(outcome(&files), (expected_edges, vec![]));
+    }
+}
+
+#[cfg(test)]
+mod wording {
+    use super::{byte_limit, grouped};
+
+    /// Limit numbers read like the documented table.
+    #[test]
+    fn limits_are_worded_like_the_documentation() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_024), "1,024");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(byte_limit(64 << 20), "64 MiB");
+        assert_eq!(byte_limit(15), "15-byte");
+        assert_eq!(byte_limit((1 << 20) + 1), "1,048,577-byte");
+    }
 }

@@ -5609,6 +5609,221 @@ fn regression_ruby_action_evidence_direct_and_fluent_actions_are_near() {
     assert_eq!(run.active, Vec::<String>::new());
 }
 
+/// Writes an entry file that loads `helpers` dependency-only files, one indented
+/// `require_relative` per line (so a diagnostic column is 3, not 1), then an unused step.
+fn ruby_dependency_project(helpers: usize) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    let mut entry = String::new();
+    for index in 1..=helpers {
+        entry.push_str(&format!("  require_relative '../../lib/h{index}'\n"));
+        write(
+            directory.path(),
+            &format!("lib/h{index}.rb"),
+            &format!("H{index} = 1\n"),
+        );
+    }
+    entry.push_str("Given('unused step') { work(1) }\n");
+    write(
+        directory.path(),
+        "features/step_definitions/entry.rb",
+        &entry,
+    );
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given another step\n",
+    );
+    directory
+}
+
+/// More selected Ruby files than the graph limit, with no loads, is a complete run.
+#[test]
+fn regression_ruby_dependency_limits_do_not_charge_selected_entry_points() {
+    // More selected Ruby files than the 1,024-module graph limit, and no requires: nothing is
+    // expanded, so the run is complete. Before the fix the selection itself overflowed the limit
+    // and discovery failed the run with exit 2.
+    let directory = tempfile::tempdir().unwrap();
+    for index in 1..=1_100 {
+        write(
+            directory.path(),
+            &format!("features/step_definitions/s{index}.rb"),
+            &format!("Given('step {index}') {{ work({index}) }}\n"),
+        );
+    }
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given step 1\n",
+    );
+    let run = ruby_run(directory.path(), &["--definitions", "features/**/*.rb"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.definitions, 1_100);
+    assert!(
+        !run.stderr.contains("dependency discovery"),
+        "{}",
+        run.stderr
+    );
+    // No provider is involved, so exceeding the provider-proof budget costs nothing here.
+    assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+}
+
+/// A load past the Ruby load file limit is not followed and makes the run incomplete.
+#[test]
+fn regression_ruby_dependency_module_limit_marks_loads_incomplete() {
+    let selection = ["--definitions", "features/step_definitions/*.rb"];
+    // Control: 1,024 dependency-only helpers fit the graph, so the run is complete and the unused
+    // step is reported.
+    let fits = ruby_dependency_project(1_024);
+    let run = ruby_run(fits.path(), &selection);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert!(
+        run.active.contains(&"unused-definition".to_owned()),
+        "{:?}",
+        run.active
+    );
+    assert!(!run.stderr.contains("not followed"), "{}", run.stderr);
+
+    // The 1,025th helper exceeds the limit: its load is not followed, the diagnostic names the
+    // limit at that load (line 1,025, not line 1), the run is incomplete rather than failed, and
+    // unused-definition findings are withheld because a step may live behind the unfollowed load.
+    let over = ruby_dependency_project(1_025);
+    let run = ruby_run(over.path(), &selection);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(run.incomplete, "{}", run.stderr);
+    assert!(
+        run.stderr.contains(
+            "entry.rb:1025:3: Ruby source dependency was not followed: the source graph exceeds the 1,024-file limit"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("dependency discovery"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        !run.active.contains(&"unused-definition".to_owned()),
+        "{:?}",
+        run.active
+    );
+    let strict = ruby_run(
+        over.path(),
+        &[
+            "--definitions",
+            "features/step_definitions/*.rb",
+            "--fail-on-incomplete",
+        ],
+    );
+    assert_eq!(strict.code, Some(2), "{}", strict.stderr);
+}
+
+/// Cross-file provider registrations that need provider proofs: `(provider.rb, a.rb body)`.
+const RUBY_PROVIDER_SHAPES: [(&str, &str); 2] = [
+    // `method(:Given)` re-exported through a module constant.
+    (
+        "ROOT_GIVEN = method(:Given)\nmodule Provider\n  GIVEN = ::ROOT_GIVEN\nend\n",
+        "register = Provider::GIVEN\nregister.call('provided step') { work(1) }\nregister.call('provided step') { work(1) }\n",
+    ),
+    // A top-level constant alias called directly.
+    (
+        "MY_GIVEN = method(:Given)\n",
+        "MY_GIVEN.call('provided step') { work(1) }\nMY_GIVEN.call('provided step') { work(1) }\n",
+    ),
+];
+
+/// Writes provider `shape` from [`RUBY_PROVIDER_SHAPES`] beside `fillers` plain step files, all
+/// selected.
+fn ruby_provider_project(fillers: usize, (provider, steps): (&str, &str)) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "features/support/provider.rb", provider);
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        &format!("require_relative '../support/provider'\n{steps}"),
+    );
+    for index in 1..=fillers {
+        write(
+            directory.path(),
+            &format!("features/step_definitions/f{index}.rb"),
+            &format!("Given('filler {index}') {{ work({index}) }}\n"),
+        );
+    }
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given provided step\n",
+    );
+    directory
+}
+
+/// Provider proofs over a selection larger than their budget are unavailable; the suite-wide
+/// uncertainty names that budget instead of blaming metaprogramming alone.
+#[test]
+fn regression_ruby_provider_proof_limit_names_its_cause() {
+    let selection = ["--definitions", "features/step_definitions/*.rb"];
+    // Every cross-file provider registration rests on a capture such as `method(:Given)`. Without
+    // proofs that capture is unresolved, so registry trust is withdrawn and the run is incomplete:
+    // provider-backed registrations are never dropped silently.
+    for shape in RUBY_PROVIDER_SHAPES {
+        // Control: a small suite proves the provider and reports its duplicate registrations.
+        let small = ruby_provider_project(1, shape);
+        let run = ruby_run(small.path(), &selection);
+        assert!(!run.incomplete, "{}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{:?}",
+            run.active
+        );
+        assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+
+        // 1,100 selected files exceed the 1,024-file proof budget: the provider stays unproven,
+        // registry trust is withdrawn (fail closed) and the warning states why.
+        let large = ruby_provider_project(1_099, shape);
+        let run = ruby_run(large.path(), &selection);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(run.incomplete, "{}", run.stderr);
+        assert_eq!(run.definitions, 0);
+        assert!(
+            run.stderr.contains(
+                "metaprogramming prevents trusted registration extraction across the selected suite: provider proofs are unavailable because the selected and loaded Ruby files exceed the 1,024-file / 64 MiB proof limit"
+            ),
+            "{}",
+            run.stderr
+        );
+    }
+}
+
+/// Provider proofs missing for a reason other than the budget (an unreadable selected file) do
+/// not blame the proof limit.
+#[cfg(unix)]
+#[test]
+fn regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit() {
+    use std::os::unix::fs::PermissionsExt;
+    let project = ruby_provider_project(2, RUBY_PROVIDER_SHAPES[0]);
+    let locked = project.path().join("features/step_definitions/f2.rb");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root ignores file modes; there is no unreadable file to observe.
+    if fs::read(&locked).is_ok() {
+        return;
+    }
+    let run = ruby_run(
+        project.path(),
+        &["--definitions", "features/step_definitions/*.rb"],
+    );
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+        run.stderr.contains(
+            "metaprogramming prevents trusted registration extraction across the selected suite"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+}
+
 /// A zero-operand `load()` is an ordinary call; identical callback bodies under different
 /// wrappers are near, different bodies under one wrapper are not.
 #[test]

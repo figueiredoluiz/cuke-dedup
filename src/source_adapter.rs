@@ -222,6 +222,29 @@ impl SourceDependency {
     }
 }
 
+/// A source-loading call that discovery deliberately did not follow, with the reason.
+///
+/// Extraction keeps the call's dependency diagnostic, so analysis stays incomplete; the reason
+/// replaces the generic "unresolved" wording at that location.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyGap {
+    /// Source location of the loading call.
+    pub location: SourceLocation,
+    /// Why the target was not admitted, such as an exceeded resource limit.
+    pub reason: String,
+}
+
+impl DependencyGap {
+    /// Records a loading call that discovery refused to follow.
+    pub fn new(location: SourceLocation, reason: impl Into<String>) -> Self {
+        Self {
+            location,
+            reason: reason.into(),
+        }
+    }
+}
+
 /// Potential Ruby step invocations, separate from concrete Gherkin execution evidence.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -301,6 +324,7 @@ impl Extraction {
 #[derive(Default)]
 pub struct SourceExtractionSession {
     dependencies: std::collections::BTreeMap<(PathBuf, usize, usize), SourceDependency>,
+    dependency_gaps: std::collections::BTreeMap<(PathBuf, usize, usize), String>,
     root: Option<PathBuf>,
     registrations: Vec<String>,
     assertion_modules: Vec<String>,
@@ -367,6 +391,28 @@ impl SourceExtractionSession {
         }
         result.apply(definitions);
         Ok(result)
+    }
+
+    /// Supplies loading calls that discovery refused to follow, so their diagnostics name the cause.
+    pub fn with_dependency_gaps(mut self, gaps: &[DependencyGap]) -> Self {
+        self.dependency_gaps.extend(gaps.iter().map(|gap| {
+            (
+                (
+                    gap.location.path.clone(),
+                    gap.location.line,
+                    gap.location.column,
+                ),
+                gap.reason.clone(),
+            )
+        }));
+        self
+    }
+
+    /// The reason discovery refused to follow the loading call at `location`, if it did.
+    pub(crate) fn dependency_gap(&self, location: &SourceLocation) -> Option<&str> {
+        self.dependency_gaps
+            .get(&(location.path.clone(), location.line, location.column))
+            .map(String::as_str)
     }
 
     pub(crate) fn dependency_resolved(&self, location: &SourceLocation) -> bool {
