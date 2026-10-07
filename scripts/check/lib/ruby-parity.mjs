@@ -104,12 +104,11 @@ const ALLOWED_STATUSES = {
 };
 
 /**
- * Resolves a clause against a group oracle. Array clauses name a member
- * (`requiredFindings[i]`, `requiredAbsent[i]`), candidate clauses a counted source
- * (`expectedCandidateSources.<rule>`), `duplication` a non-empty duplication object, and scalar
- * clauses must state the observed value (`complete=false`, `expectedExit=2`, `definitions=4`,
- * `featureSteps=5`) so the mapping breaks when the oracle changes; a bare scalar field resolves
- * against every oracle and ties the test to nothing.
+ * Resolves a clause against a group oracle. A clause names a finding the group requires or
+ * forbids (`requiredFindings[i]`, `requiredAbsent[i]`), a counted candidate source
+ * (`expectedCandidateSources.<rule>`), or a non-empty `duplication` object. Scalar oracle fields
+ * (`complete`, `expectedExit`, counts) are not clauses: every oracle has them and many share the
+ * same values, so they cannot tie a test to one observation.
  */
 export function oracleClauseResolves(oracle, clause) {
   if (typeof clause !== "string" || !oracle) return false;
@@ -120,42 +119,93 @@ export function oracleClauseResolves(oracle, clause) {
   if (clause === "duplication") {
     return typeof oracle.duplication === "object" && oracle.duplication !== null && Object.keys(oracle.duplication).length > 0;
   }
-  match = /^(complete|expectedExit|definitions|featureSteps)=(true|false|\d+)$/.exec(clause);
-  if (match && Object.hasOwn(oracle, match[1])) {
-    const expected = match[2] === "true" ? true : match[2] === "false" ? false : Number(match[2]);
-    return oracle[match[1]] === expected;
-  }
   return false;
 }
 
 /**
- * Whether a test exercises Ruby input: its body names a `.rb` path, the Ruby source language,
- * the Cucumber-Ruby framework, a Ruby-named helper or `cucumber.yml`, or it lives in a Ruby-only
- * suite (a file whose name contains `ruby`). Used to verify that a test offered as Ruby evidence
- * touches Ruby at all.
+ * Integration suites whose every test exercises Ruby by construction. The census does not
+ * inventory them; completion reads them for citable evidence instead.
+ */
+export const RUBY_SUITES = ["tests/ruby.rs", "tests/ruby_assertion_provenance.rs"];
+
+/** Whether a file is one of the Ruby-only suites or belongs to the Ruby frontend. */
+export function isRubySuite(file) {
+  return RUBY_SUITES.includes(file) || file === "src/ruby.rs" || file.startsWith("src/ruby/");
+}
+
+/**
+ * A test function and its name: `#[test]`, any further attributes (`#[should_panic]`,
+ * `#[ignore]`, `#[cfg(...)]`), then `fn name`. Used by the inventory and the Ruby-suite scan so
+ * both see the same functions.
+ */
+export const TEST_FN_PATTERN = /#\[test\](?:\s*#\[[^\]]*\])*\s*fn (\w+)/g;
+
+/**
+ * Whether a test exercises Ruby input: the statements of its body (its own name excluded) name a
+ * `.rb` path, the Ruby source language, the Cucumber-Ruby framework, a Ruby-named helper or
+ * `cucumber.yml`, or the test lives in a Ruby-only suite (`isRubySuite`). The scan reads the
+ * body text as written, string literals included, because Ruby input usually enters a test as a
+ * `"steps.rb"` literal; it is a heuristic that rules tests out, not a proof.
  */
 export function testBodyMentionsRuby(content, name, file = "") {
-  if (/ruby/i.test(file)) return true;
+  if (isRubySuite(file)) return true;
   const body = functionBody(content, name);
-  return body !== null && /\.rb\b|SourceLanguage::Ruby|CucumberRuby|\bruby_|cucumber\.ya?ml/.test(body);
+  if (body === null) return false;
+  const statements = body.slice(body.indexOf("{"));
+  return /\.rb\b|SourceLanguage::Ruby|CucumberRuby|\bruby_|cucumber\.ya?ml/.test(statements);
 }
 
 /**
  * The text of `fn name(...) { ... }` up to its matching closing brace, or null when the function
- * is absent. Brace counting ignores string contents well enough for test bodies; the slice never
- * runs into the following helper or its doc comment.
+ * is absent or unterminated. Braces inside string literals (`"…"` and `b"…"` with escapes, raw
+ * `r"…"`/`br#"…"#`), char literals (`'{'`, `'\''`), line comments and block comments do not
+ * count, so a test that writes malformed source does not overrun its body.
  */
 export function functionBody(content, name) {
-  const start = content.indexOf(`fn ${name}(`);
+  const start = content.search(new RegExp(`\\bfn ${name}\\b`));
   if (start < 0) return null;
   const open = content.indexOf("{", start);
   if (open < 0) return null;
   let depth = 0;
   for (let i = open; i < content.length; i++) {
-    if (content[i] === "{") depth++;
-    else if (content[i] === "}" && --depth === 0) return content.slice(start, i + 1);
+    const char = content[i];
+    const next = content[i + 1];
+    if (char === "/" && next === "/") {
+      i = content.indexOf("\n", i);
+      if (i < 0) break;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      const end = content.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+      continue;
+    }
+    // Rust allows up to 255 hashes around a raw string; the slice is long enough for any.
+    const raw = /^b?r(#*)"/.exec(content.slice(i, i + 260));
+    if (raw && !/\w/.test(content[i - 1] ?? "")) {
+      const close = `"${raw[1]}`;
+      const end = content.indexOf(close, i + raw[0].length);
+      if (end < 0) break;
+      i = end + close.length - 1;
+      continue;
+    }
+    if (char === '"') {
+      i++;
+      while (i < content.length && content[i] !== '"') i += content[i] === "\\" ? 2 : 1;
+      continue;
+    }
+    // A char literal is a quote, one (possibly escaped) character, and a quote; a lifetime
+    // (`'a`) has no closing quote and is left alone.
+    const literal = /^'(\\.|[^'\\])'/.exec(content.slice(i, i + 4));
+    if (char === "'" && literal) {
+      i += literal[0].length - 1;
+      continue;
+    }
+    if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) return content.slice(start, i + 1);
   }
-  return content.slice(start);
+  return null;
 }
 
 /**
@@ -164,7 +214,7 @@ export function functionBody(content, name) {
  */
 export function rubySuiteEvidence(file, content) {
   const entries = new Map();
-  for (const match of content.matchAll(/#\[test\]\s*fn (\w+)/g)) {
+  for (const match of content.matchAll(TEST_FN_PATTERN)) {
     entries.set(`${file}::${match[1]}`, {
       name: match[1], behaviorClass: "ruby-behavior", requiredStatus: "rust-evidence",
       evidenceTest: { file, name: match[1] }, mentionsRuby: true, external: true,
@@ -185,6 +235,11 @@ export function validateUnitEntry(file, item, groups, census) {
   assert.ok(ALLOWED_STATUSES[item.behaviorClass].includes(item.requiredStatus),
     `${label}: ${item.requiredStatus} is not allowed for ${item.behaviorClass}`);
   const rationale = item.rationale?.trim();
+  const allowed = { covered: ["fixtureGroup", "oracleClause"], "engine-invariant": ["stage"], "rust-evidence": ["evidenceTest"] }[item.requiredStatus] ?? [];
+  for (const field of ["fixtureGroup", "oracleClause", "stage", "evidenceTest"]) {
+    assert.ok(allowed.includes(field) || item[field] === undefined,
+      `${label}: ${field} does not belong to a ${item.requiredStatus} entry`);
+  }
   switch (item.requiredStatus) {
     case "covered":
       assert.ok(groups[item.fixtureGroup], `${label}: missing group`);
@@ -194,6 +249,8 @@ export function validateUnitEntry(file, item, groups, census) {
       return null;
     case "language-inapplicable":
       assert.ok(rationale, `${label}: inapplicable requires a rationale`);
+      assert.ok(residueResolves(rationale, groups, census),
+        `${label}: a language-inapplicable rationale must end with "Semantic residue:" naming none, or a Ruby group, suite or census entry that carries the shared behavior`);
       return null;
     case "engine-invariant":
       assert.ok(ENGINE_STAGES.includes(item.stage), `${label}: unknown engine stage`);
@@ -208,9 +265,13 @@ export function validateUnitEntry(file, item, groups, census) {
       assert.ok(target, `${label}: evidence test ${evidence.file}:${evidence.name} is not in the census`);
       const self = evidence.file === file && evidence.name === item.name;
       assert.ok(!self || item.behaviorClass === "ruby-behavior", `${label}: only ruby-behavior tests are their own evidence`);
-      const targetIsItsOwnEvidence = target.requiredStatus !== "rust-evidence"
-        || (target.evidenceTest?.file === evidence.file && target.evidenceTest?.name === evidence.name);
-      assert.ok(self || targetIsItsOwnEvidence, `${label}: evidence chains are rejected`);
+      // A cited test must itself be settled Ruby evidence: its own evidence, or a covered Ruby
+      // test. A chain to a different test, or a target the census still lists as partial or
+      // unmapped, settles nothing.
+      const selfEvidenced = target.requiredStatus === "rust-evidence"
+        && target.evidenceTest?.file === evidence.file && target.evidenceTest?.name === evidence.name;
+      assert.ok(self || selfEvidenced || target.requiredStatus === "covered",
+        `${label}: evidence test ${evidence.name} is ${target.requiredStatus}, not settled Ruby evidence`);
       assert.ok(self || target.behaviorClass === "ruby-behavior", `${label}: evidence must be a Ruby test`);
       assert.ok(target.mentionsRuby === true, `${label}: evidence test ${evidence.name} does not exercise Ruby input`);
       assert.ok(rationale, `${label}: rust-evidence requires a rationale`);
@@ -222,6 +283,26 @@ export function validateUnitEntry(file, item, groups, census) {
     default:
       return `${label}: ${item.requiredStatus}`;
   }
+}
+
+/**
+ * Whether an exclusion rationale states where its Ruby residue lives. The clause after
+ * `Semantic residue:` is either `none` (the behavior has no Ruby counterpart) or names at least
+ * one executable Ruby group (or a prefix naming a group family), a Ruby-only suite, or a census entry that is not itself excluded;
+ * a rationale that names only the JS/TS API is a blanket exclusion and is rejected.
+ */
+export function residueResolves(rationale, groups, census) {
+  const clause = /Semantic residue:\s*(.*)$/s.exec(rationale ?? "")?.[1];
+  if (!clause) return false;
+  if (/^none\b/i.test(clause)) return true;
+  const names = new Set();
+  for (const entry of census.values()) if (entry.requiredStatus !== "language-inapplicable") names.add(entry.name);
+  const tokens = (clause.match(/[A-Za-z0-9_][A-Za-z0-9_./*-]*/g) ?? []).map((token) => token.replace(/[.,;]+$/, ""));
+  const groupNames = Object.keys(groups);
+  // A group family is named by its prefix (`load-*`, `handler-context`), which must match a group.
+  /** Whether a hyphenated or starred token is the prefix of at least one executable group name. */
+  const family = (token) => /-|\*$/.test(token) && token.replace(/-?\*$/, "") !== "" && groupNames.some((group) => group.startsWith(`${token.replace(/-?\*$/, "")}-`));
+  return tokens.some((token) => Object.hasOwn(groups, token) || family(token) || isRubySuite(token) || names.has(token));
 }
 
 /**
@@ -242,34 +323,35 @@ export function evidenceTargets(units) {
   return [...targets.values()];
 }
 
+/** Where evidence test binaries build, so the analyzed binary under `target/` is never rewritten. */
+export const EVIDENCE_TARGET_DIR = "target/evidence";
+
 /**
- * Cargo arguments addressing one test exactly, in the profile of the analyzed binary.
- * Integration suites are `tests/<suite>.rs`; library tests are addressed by module path
- * (`src/config/tests.rs` -> `config::tests::<name>`, `src/analysis/mod.rs` ->
- * `analysis::tests::<name>`, `src/lib.rs` -> `tests::<name>`). Returns null for files cargo
- * cannot address this way (`src/main.rs`, files under `tests/<dir>/`).
+ * Cargo arguments addressing one test exactly. Integration suites are `tests/<suite>.rs`;
+ * library tests are addressed by module path (`src/config/tests.rs` -> `config::tests::<name>`,
+ * `src/analysis/mod.rs` -> `analysis::tests::<name>`, `src/lib.rs` -> `tests::<name>`). Returns
+ * null for files cargo cannot address this way (`src/main.rs`, files under `tests/<dir>/`).
  */
-export function cargoTestArgs(target, { release = false } = {}) {
+export function cargoTestArgs(target) {
   const { file, name } = target;
-  const profile = release ? ["--release"] : [];
   if (/^tests\/[^/]+\.rs$/.test(file)) {
-    return ["test", "-q", ...profile, "--test", file.slice("tests/".length, -".rs".length), "--", "--exact", name];
+    return ["test", "--test", file.slice("tests/".length, -".rs".length), "--", "--exact", name];
   }
   if (!file.startsWith("src/") || file === "src/main.rs") return null;
   const segments = file.slice("src/".length, -".rs".length).split("/");
   if (segments.at(-1) === "mod" || segments.at(-1) === "lib") segments.pop();
   if (segments.at(-1) !== "tests") segments.push("tests");
-  return ["test", "-q", ...profile, "--lib", "--", "--exact", `${segments.join("::")}::${name}`];
+  return ["test", "--lib", "--", "--exact", `${segments.join("::")}::${name}`];
 }
 
 /**
  * Groups evidence targets by the cargo binary that runs them and keeps each target's own
  * fully qualified test name, so one spawn per binary runs every requested test exactly.
  */
-export function evidenceBatches(targets, options = {}) {
+export function evidenceBatches(targets) {
   const batches = new Map();
   for (const target of targets) {
-    const args = cargoTestArgs(target, options);
+    const args = cargoTestArgs(target);
     const key = args.slice(0, -1).join(" ");
     const batch = batches.get(key) ?? { prefix: args.slice(0, -1), names: [], targets: [] };
     batch.names.push(args.at(-1));
@@ -277,6 +359,17 @@ export function evidenceBatches(targets, options = {}) {
     batches.set(key, batch);
   }
   return [...batches.values()].map(({ prefix, names, targets: members }) => ({ targets: members, args: [...prefix, ...names] }));
+}
+
+/**
+ * Per-test outcomes from libtest's `test <name> ... ok|FAILED|ignored` lines, keyed by the
+ * printed name, which is the `--exact` filter of each target. Lets a failed batch blame only
+ * the tests that failed or never ran.
+ */
+export function testOutcomes(stdout) {
+  const outcomes = new Map();
+  for (const match of (stdout ?? "").matchAll(/^test (\S+) \.\.\. (\w+)/gm)) outcomes.set(match[1], match[2]);
+  return outcomes;
 }
 
 /**
@@ -289,9 +382,11 @@ export function evidenceRunPassed(stdout, expected = 1) {
 }
 
 /**
- * Rust evidence runs only in completion mode: regression mode guards observed outcomes, and the
- * inventory and corpus-coverage modes validate bookkeeping without executing anything.
+ * Rust evidence runs only in completion mode, and only once every other blocker and group
+ * deficit is gone (or when asked with `--evidence`): regression mode guards observed outcomes,
+ * the inventory and corpus-coverage modes validate bookkeeping without executing anything, and a
+ * run that is already blocked gains nothing from compiling the test harness.
  */
-export function executesEvidence({ regression, inventoryOnly }) {
-  return !regression && !inventoryOnly;
+export function executesEvidence({ regression, inventoryOnly, blocked = false, forced = false }) {
+  return !regression && !inventoryOnly && (forced || !blocked);
 }

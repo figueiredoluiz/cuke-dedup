@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
+import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -12,10 +13,12 @@ const args = process.argv.slice(2);
 const regression = args.includes("--regression");
 assert.ok(args.filter((arg) => !arg.startsWith("--")).length <= 1, "expected at most one binary");
 assert.ok(args.filter((arg) => arg.startsWith("--")).every((arg) =>
-  ["--regression", "--inventory-only", "--corpus-coverage-only"].includes(arg)), "unknown option");
+  ["--regression", "--inventory-only", "--corpus-coverage-only", "--evidence"].includes(arg)), "unknown option");
+const forceEvidence = args.includes("--evidence");
 const coverageOnly = args.includes("--corpus-coverage-only");
 const inventoryOnly = args.includes("--inventory-only") || coverageOnly;
 assert.ok(!regression || !inventoryOnly, "regression requires execution");
+assert.ok(!forceEvidence || (!regression && !inventoryOnly), "--evidence requires completion mode");
 const binary = resolve(args.find((arg) => !arg.startsWith("--")) ?? "target/debug/cuke-dedup");
 const root = resolve("fixtures/ruby-parity");
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -76,11 +79,12 @@ blockers.push(...(manifest.outstandingCensus ?? []));
 let unitContracts = 0;
 const units = regression ? { schemaVersion: 1, files: {} } : await readJson(join(root, "unit-cases.json"));
 assert.equal(units.schemaVersion, 1);
+/** Rust files under a directory that hold tests, skipping the Ruby-only suites the census does not inventory. */
 async function testFiles(directory) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = `${directory}/${entry.name}`;
-    if (path === "src/ruby" || path === "tests/ruby.rs") continue;
+    if (path === "src/ruby" || RUBY_SUITES.includes(path)) continue;
     if (entry.isDirectory()) files.push(...await testFiles(path));
     else if (path.endsWith(".rs") && /#\[test\]/.test(await readFile(path, "utf8"))) files.push(path);
   }
@@ -101,8 +105,8 @@ for (const [file, inventory] of Object.entries(units.files)) {
   }
 }
 if (!regression) {
-  const rubySuites = ["tests/ruby.rs", ...await testFiles("src/ruby")];
-  for (const file of rubySuites) {
+  for (const file of RUBY_SUITES) assert.ok(existsSync(file), `${file}: Ruby-only suite is missing; update RUBY_SUITES`);
+  for (const file of [...RUBY_SUITES, ...await testFiles("src/ruby")]) {
     for (const [key, entry] of rubySuiteEvidence(file, (await readFile(file, "utf8")).replaceAll("\r\n", "\n"))) census.set(key, entry);
   }
 }
@@ -110,28 +114,13 @@ for (const [file, inventory] of Object.entries(units.files)) {
   const content = contents.get(file);
   assert.equal(createHash("sha256").update(content).digest("hex"), inventory.sourceSha256,
     `${file}: source tests changed; reassess unit-test mappings`);
-  const names = [...content.matchAll(/#\[test\]\s*fn (\w+)/g)].map((match) => match[1]);
+  const names = [...content.matchAll(TEST_FN_PATTERN)].map((match) => match[1]);
   assert.deepEqual(inventory.tests.map((item) => item.name).sort(), names.sort(),
     `${file}: unit-test census is incomplete or duplicated`);
   for (const item of inventory.tests) {
     unitContracts++;
     const blocker = validateUnitEntry(file, item, groups, census);
     if (blocker) blockers.push(blocker);
-  }
-}
-// Rust evidence is executed, not merely named: an ignored, filtered-out or failing test blocks.
-// Only completion mode executes; inventory and coverage validation never run the analyzer.
-// Evidence runs in the profile of the analyzed binary so the report describes one build.
-const evidenceProfile = /[\\/]release[\\/]/.test(binary) ? "release" : "debug";
-if (executesEvidence({ regression, inventoryOnly })) {
-  for (const batch of evidenceBatches(evidenceTargets(units), { release: evidenceProfile === "release" })) {
-    const run = spawnSync("cargo", batch.args, { cwd: resolve("."), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 600_000 });
-    if (run.status === 0 && evidenceRunPassed(run.stdout, batch.targets.length)) continue;
-    const result = /test result:.*/.exec(run.stdout ?? "")?.[0] ?? "";
-    const cause = [result, run.error?.message ?? "", ...(run.stderr ?? "").trim().split("\n").slice(-3)].filter(Boolean).join(" | ");
-    for (const target of batch.targets) {
-      blockers.push(`${target.referencedBy.join(", ")}: rust-evidence ${target.file}:${target.name} did not run and pass (${cause})`);
-    }
   }
 }
 for (const [name, group] of Object.entries(groups)) {
@@ -181,6 +170,28 @@ try {
   await rm(scratch, { recursive: true, force: true });
 }
 const failed = observations.filter((item) => item.deficits.length > 0).length;
+// Rust evidence is executed, not merely named: an ignored, filtered-out or failing test blocks.
+// Only completion mode executes; inventory and coverage validation never run the analyzer.
+// Evidence runs last, after every oracle and fixture is validated, and builds into its own
+// target directory so the analyzed binary is never rewritten by cargo's test profile.
+let evidenceExecuted = false;
+if (executesEvidence({ regression, inventoryOnly, blocked: blockers.length > 0 || failed > 0, forced: forceEvidence })) {
+  evidenceExecuted = true;
+  const env = { ...process.env, CARGO_TARGET_DIR: EVIDENCE_TARGET_DIR };
+  for (const batch of evidenceBatches(evidenceTargets(units))) {
+    const run = spawnSync("cargo", batch.args, { cwd: resolve("."), env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 1_800_000 });
+    if (run.status === 0 && evidenceRunPassed(run.stdout, batch.targets.length)) continue;
+    const result = /test result:.*/.exec(run.stdout ?? "")?.[0] ?? "";
+    const cause = [result, run.error?.message ?? "", ...(run.stderr ?? "").trim().split("\n").slice(-3)].filter(Boolean).join(" | ");
+    // Blame only the tests that failed or never ran; a passing test in a failed batch is evidence.
+    const outcomes = testOutcomes(run.stdout);
+    for (const [index, target] of batch.targets.entries()) {
+      const outcome = outcomes.get(batch.args.at(index - batch.targets.length)) ?? "did not run";
+      if (outcome === "ok") continue;
+      blockers.push(`${target.referencedBy.join(", ")}: rust-evidence ${target.file}:${target.name} ${outcome === "FAILED" ? "failed" : outcome} (${cause})`);
+    }
+  }
+}
 console.log(`${mappings.length} corpus cases mapped; `
   + (regression ? "unit census not checked in regression mode; " : `${unitContracts} Rust test functions inventoried; `)
   + `${Object.keys(groups).length} executable Ruby groups; `
@@ -189,7 +200,7 @@ console.log(`${mappings.length} corpus cases mapped; `
 if (process.env.CUKE_DEDUP_RUBY_PARITY_REPORT) {
   const binarySha256 = inventoryOnly ? null : createHash("sha256").update(await readFile(binary)).digest("hex");
   await writeFile(process.env.CUKE_DEDUP_RUBY_PARITY_REPORT,
-    `${JSON.stringify({ binarySha256, evidenceProfile, mappings: mappings.length, unitContracts, observations, blockers }, null, 2)}\n`);
+    `${JSON.stringify({ binarySha256, evidenceExecuted, evidenceTargetDir: EVIDENCE_TARGET_DIR, mappings: mappings.length, unitContracts, observations, blockers }, null, 2)}\n`);
 }
 // Inventory validation is useful during implementation; it is explicitly NOT release acceptance.
 // The normal command fails until all desired outcomes and all missing-case dispositions close.
