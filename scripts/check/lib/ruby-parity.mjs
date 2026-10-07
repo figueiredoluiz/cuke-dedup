@@ -370,40 +370,50 @@ export function evidenceBatches(targets) {
 
 /**
  * Per-test outcomes from libtest's `test <name> ... ok|FAILED|ignored` lines, keyed by the
- * printed name, which is the `--exact` filter of each target. Lets a failed batch blame only
- * the tests that failed or never ran.
+ * printed name, which is the `--exact` filter of each target. The `- should panic` suffix and
+ * `ignored, <reason>` are libtest variants of the same line. Only the run section is read: the
+ * `failures:` section that follows echoes captured test output, which may itself contain lines
+ * shaped like results.
  */
 export function testOutcomes(stdout) {
   const outcomes = new Map();
-  for (const match of (stdout ?? "").matchAll(/^test (\S+) \.\.\. (\w+)/gm)) outcomes.set(match[1], match[2]);
+  const run = (stdout ?? "").split(/^failures:$/m)[0];
+  for (const match of run.matchAll(/^test (\S+)(?: - should panic)? \.\.\. (\w+)/gm)) outcomes.set(match[1], match[2]);
   return outcomes;
 }
 
 /**
- * The evidence targets of a batch that are not established, with their outcome. A completed run
- * (libtest printed a `test result` summary whose counts match its per-test lines, and cargo
- * exited without a spawn error or signal) blames only the tests that failed, were ignored or
- * never ran. An incomplete run (timeout, crash, missing or inconsistent summary) establishes
- * nothing, so every target is blamed even when its own line printed `ok`.
+ * libtest's summary line for a run: the last `test result:` line, which follows any captured
+ * output in the `failures:` section. Null when the run printed none.
+ */
+export function testSummary(stdout) {
+  return [...(stdout ?? "").matchAll(/^test result: .*$/gm)].at(-1)?.[0] ?? null;
+}
+
+/**
+ * The evidence targets of a batch that are not established, with their outcome; the only
+ * decision point for evidence, on the success path as well as the failure path. A run is
+ * complete when cargo exited without a spawn error or signal, libtest printed a `test result`
+ * summary whose passed, failed and ignored counts each match its per-test lines, and the exit
+ * status agrees with that summary:
+ * status 0 with `ok` and no failures, or a nonzero status with `FAILED` and at least one failure.
+ * A complete run blames each requested test that did not print `ok`, so an unrelated passing
+ * summary establishes nothing. An incomplete run blames every target, even ones that printed `ok`.
  */
 export function evidenceFailures(run, batch) {
   const outcomes = testOutcomes(run.stdout);
-  const summary = /^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/m.exec(run.stdout ?? "");
-  const completed = !run.error && !run.signal && summary !== null
-    && Number(summary[1]) + Number(summary[2]) + Number(summary[3]) === outcomes.size;
+  const summary = /^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/.exec(testSummary(run.stdout) ?? "");
+  const failures = Number(summary?.[3]);
+  const statusAgrees = run.status === 0 ? summary?.[1] === "ok" && failures === 0 : summary?.[1] === "FAILED" && failures > 0;
+  /** How many per-test lines printed the given outcome. */
+  const printed = (outcome) => [...outcomes.values()].filter((value) => value === outcome).length;
+  const completed = !run.error && !run.signal && summary !== null && statusAgrees
+    && Number(summary[2]) === printed("ok") && failures === printed("FAILED") && Number(summary[4]) === printed("ignored")
+    && outcomes.size === printed("ok") + printed("FAILED") + printed("ignored");
   const names = batch.args.slice(-batch.targets.length);
   return batch.targets
     .map((target, index) => ({ target, outcome: completed ? outcomes.get(names[index]) ?? "did not run" : "incomplete run" }))
     .filter(({ outcome }) => outcome !== "ok");
-}
-
-/**
- * `cargo test` output for one batch: exactly the requested tests must run and pass; an ignored,
- * filtered-out or failing test is not evidence.
- */
-export function evidenceRunPassed(stdout, expected = 1) {
-  const match = /test result: ok\. (\d+) passed; 0 failed; 0 ignored/.exec(stdout);
-  return match !== null && Number(match[1]) === expected;
 }
 
 /**

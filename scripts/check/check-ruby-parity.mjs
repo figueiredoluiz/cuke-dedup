@@ -5,7 +5,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
+import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, testSummary, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -180,10 +180,10 @@ if (executesEvidence({ regression, inventoryOnly, blocked: blockers.length > 0 |
   const env = { ...process.env, CARGO_TARGET_DIR: EVIDENCE_TARGET_DIR };
   for (const batch of evidenceBatches(evidenceTargets(units))) {
     const run = spawnSync("cargo", batch.args, { cwd: resolve("."), env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 1_800_000 });
-    if (run.status === 0 && evidenceRunPassed(run.stdout, batch.targets.length)) continue;
-    const result = /test result:.*/.exec(run.stdout ?? "")?.[0] ?? "";
-    const cause = [result, run.error?.message ?? "", ...(run.stderr ?? "").trim().split("\n").slice(-3)].filter(Boolean).join(" | ");
-    for (const { target, outcome } of evidenceFailures(run, batch)) {
+    const failures = evidenceFailures(run, batch);
+    if (failures.length === 0) continue;
+    const cause = [testSummary(run.stdout), run.error?.message, ...(run.stderr ?? "").trim().split("\n").slice(-3)].filter(Boolean).join(" | ");
+    for (const { target, outcome } of failures) {
       blockers.push(`${target.referencedBy.join(", ")}: rust-evidence ${target.file}:${target.name} ${outcome === "FAILED" ? "failed" : outcome} (${cause})`);
     }
   }
