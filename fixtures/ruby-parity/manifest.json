@@ -1573,11 +1573,12 @@
     },
     {
       "id": "ruby-provider-registration-context",
-      "requiredStatus": "partial",
+      "requiredStatus": "covered",
+      "fixtureGroup": "provider-context-receiver-local-send",
       "fixtureFiles": [
         "provider-context-cases.json"
       ],
-      "rationale": "Provider-context groups are executed by the checker. Local receiver construction and dispatch effects remain an unsatisfied outcome; unknown provenance never grants registration trust."
+      "rationale": "A local receiver constructed in the entry file and dispatched through `send(:Given, ...)` registers with complete analysis and the required duplicate and near findings; unknown provenance still grants no registration trust (the other provider-context groups)."
     }
   ],
   "groupManifests": [
