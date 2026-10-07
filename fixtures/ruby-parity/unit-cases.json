@@ -155,11 +155,9 @@
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
-          "requiredStatus": "covered",
-          "fixtureGroup": "polarity",
-          "oracleClause": "requiredAbsent[0]",
-          "rationale": "Covered by `polarity` requiredAbsent[0]: The Ruby polarity group forbids a near finding for the opposite-polarity pair while requiring it for the agreeing pair. Positive control: polarity requiredFindings[0].",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: a Ruby oracle pinning that a mixed-syntax matcher pair (Cucumber expression against regex) is not near; `polarity` pins only the opposite-polarity half. Owned by the completion follow-up."
         },
         {
           "name": "similarity_helpers_cover_empty_exact_structural_and_lcs_paths",
@@ -318,11 +316,9 @@
         },
         {
           "name": "nested_argument_callbacks_preserve_behavior_and_scope_boundaries",
-          "requiredStatus": "covered",
-          "fixtureGroup": "equivalent-handlers-review-gap-callback-call-evidence",
-          "oracleClause": "requiredFindings[0]",
-          "rationale": "Covered by `equivalent-handlers-review-gap-callback-call-evidence` requiredFindings[0]: Ruby callbacks in argument position carry behaviour.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: a Ruby control for the scope boundary of nested argument callbacks; the group pins only that callbacks carry behaviour. Owned by the completion follow-up."
         },
         {
           "name": "callback_calls_retain_discriminating_behavior_without_assertion_promotion",
@@ -698,19 +694,15 @@
         },
         {
           "name": "concrete_feature_step_detects_ambiguity_and_usage",
-          "requiredStatus": "covered",
-          "fixtureGroup": "ambiguous-step-identity-pins-the-finding-key",
-          "oracleClause": "requiredFindings[0]",
-          "rationale": "Covered by `ambiguous-step-identity-pins-the-finding-key` requiredFindings[0]: Concrete Ruby feature steps detect ambiguity and usage.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: a Ruby oracle pinning both the ambiguity finding and usage of the same concrete step; the group pins only the ambiguity finding. Owned by the completion follow-up."
         },
         {
           "name": "scenario_outline_rows_and_case_insensitive_regexes_count_as_usage",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gherkin-outline-examples-rows",
-          "oracleClause": "requiredAbsent[0]",
-          "rationale": "Covered by `gherkin-outline-examples-rows` requiredAbsent[0]: Outline rows mark Ruby definitions used.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: a Ruby control for case-insensitive regex usage; the group pins only outline-row usage. Owned by the completion follow-up."
         },
         {
           "name": "supports_optional_and_alternative_cucumber_expression_syntax",
@@ -794,11 +786,9 @@
         },
         {
           "name": "modifier_chains_are_ordered_and_semantic",
-          "requiredStatus": "covered",
-          "fixtureGroup": "assertion-subjects-and-chains-preserve-precision",
-          "oracleClause": "requiredAbsent[0]",
-          "rationale": "Covered by `assertion-subjects-and-chains-preserve-precision` requiredAbsent[0]: Ruby assertion chains with different modifiers do not compare as near.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: a Ruby control that modifier order is significant; the group pins only that different modifiers are not near. Owned by the completion follow-up."
         },
         {
           "name": "computed_modifier_access_matches_dot_access_semantics",
@@ -983,19 +973,15 @@
         },
         {
           "name": "witness_generation_covers_builtins_declared_literals_and_unknowns",
-          "requiredStatus": "covered",
-          "fixtureGroup": "parameter-types-regex",
-          "oracleClause": "requiredFindings[1]",
-          "rationale": "Covered by `parameter-types-regex` requiredFindings[1]: Declared Ruby parameter types generate witnesses that prove ambiguity.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby controls for built-in parameter types and unknown types; the group pins only declared types. Owned by the completion follow-up."
         },
         {
           "name": "fallback_expression_handles_optional_alternative_and_declared_parameters",
-          "requiredStatus": "covered",
-          "fixtureGroup": "parameter-types-array",
-          "oracleClause": "requiredFindings[1]",
-          "rationale": "Covered by `parameter-types-array` requiredFindings[1]: Array-declared parameter types resolve in the fallback expression.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby controls for optional and alternative fallback syntax; the group pins only array-declared types. Owned by the completion follow-up."
         },
         {
           "name": "matcher_compilation_reports_limits_but_not_unsupported_syntax",
@@ -1165,11 +1151,9 @@
         },
         {
           "name": "exclude_layers_replace_custom_patterns_but_preserve_default_policy",
-          "requiredStatus": "covered",
-          "fixtureGroup": "comma-separated-exclusion-patterns",
-          "oracleClause": "requiredAbsent[1]",
-          "rationale": "Covered by `comma-separated-exclusion-patterns` requiredAbsent[1]: Comma-separated exclusion layers remove the excluded Ruby sources.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: a Ruby control that a later layer replaces custom patterns while default exclusions remain; the group pins only removal by comma-separated patterns. Owned by the completion follow-up."
         },
         {
           "name": "default_excludes_and_hidden_directories_have_explicit_escape_hatches",
@@ -1248,19 +1232,15 @@
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gitignore-exclusion",
-          "oracleClause": "requiredAbsent[1]",
-          "rationale": "Covered by `gitignore-exclusion` requiredAbsent[1]: Gitignored Ruby sources are not discovered.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby evidence that sources and features are discovered; the group pins only the gitignore exclusion. Owned by the completion follow-up."
         },
         {
           "name": "cuke_dedup_ignore_supports_scoped_gitignore_rules_and_negation",
-          "requiredStatus": "covered",
-          "fixtureGroup": "cuke-dedup-ignore-file",
-          "oracleClause": "requiredAbsent[1]",
-          "rationale": "Covered by `cuke-dedup-ignore-file` requiredAbsent[1]: `.cuke-dedup-ignore` rules exclude Ruby sources.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby controls for scoped rules and negation in `.cuke-dedup-ignore`; the group pins only plain exclusion. Owned by the completion follow-up."
         },
         {
           "name": "discovers_classic_and_markdown_features_with_parser_metadata",
@@ -1300,9 +1280,9 @@
         },
         {
           "name": "built_in_excludes_prune_sources_unless_explicitly_disabled",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS build-output default excludes (node_modules, dist). Semantic residue: the Ruby escape hatch is covered by hidden-and-default-exclusion-overrides.",
-          "behaviorClass": "language-specific-api"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: default-exclude pruning is a shared-engine invariant; `hidden-and-default-exclusion-overrides` covers the escape hatch, but no Ruby finding pins pruning while default excludes are enabled. Owned by the completion follow-up."
         },
         {
           "name": "hidden_sources_require_the_include_hidden_option",
@@ -1460,11 +1440,9 @@
         },
         {
           "name": "malformed_tables_under_rules_and_backgrounds_are_not_truncated",
-          "requiredStatus": "covered",
-          "fixtureGroup": "malformed-table-neighbor",
-          "oracleClause": "requiredFindings[1]",
-          "rationale": "Covered by `malformed-table-neighbor` requiredFindings[1]: A malformed table keeps the valid neighbouring steps and their findings.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby controls placing the malformed table under a Rule and a Background; the group pins only the neighbouring-step findings. Owned by the completion follow-up."
         },
         {
           "name": "extracts_steps_from_full_document_structure",
@@ -1522,11 +1500,9 @@
         },
         {
           "name": "gherkin_markdown_supports_doc_strings_and_an_implicit_feature_heading",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gherkin-markdown-default-discovery",
-          "oracleClause": "requiredAbsent[0]",
-          "rationale": "Covered by `gherkin-markdown-default-discovery` requiredAbsent[0]: A Markdown feature marks its definition used.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby controls for Markdown doc strings and an implicit feature heading; the group pins only that a Markdown feature marks a definition used. Owned by the completion follow-up."
         },
         {
           "name": "gherkin_markdown_ignores_colon_prose_headings",
@@ -1551,11 +1527,9 @@
         },
         {
           "name": "gherkin_markdown_separates_steps_from_prose_lists_and_fenced_examples",
-          "requiredStatus": "covered",
-          "fixtureGroup": "gherkin-classic-and-markdown-files",
-          "oracleClause": "requiredFindings[0]",
-          "rationale": "Covered by `gherkin-classic-and-markdown-files` requiredFindings[0]: Prose does not create steps, so unrelated definitions stay unused.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: Ruby controls for prose lists and fenced examples; the group pins only that prose creates no steps. Owned by the completion follow-up."
         },
         {
           "name": "gherkin_markdown_accepts_all_common_list_markers_and_bold_keywords",
@@ -4634,11 +4608,9 @@
       "tests": [
         {
           "name": "escaped_tables_preserve_findings_and_reject_malformed_neighbors_in_both_languages",
-          "requiredStatus": "covered",
-          "fixtureGroup": "malformed-table-neighbor",
-          "oracleClause": "requiredFindings[0]",
-          "rationale": "Covered by `malformed-table-neighbor` requiredFindings[0]: The Ruby malformed-table group keeps the duplicate and ambiguity findings of the valid neighbour while the corpus stays incomplete.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "partial",
+          "behaviorClass": "shared-engine-invariant",
+          "rationale": "Needs Ruby evidence: one Ruby group pinning escaped-table findings and a malformed neighbour together; `gherkin-table-cell-escapes` and `malformed-table-neighbor` each pin one claim. Owned by the completion follow-up."
         }
       ]
     },

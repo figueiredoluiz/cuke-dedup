@@ -346,7 +346,8 @@ export function cargoTestArgs(target) {
 
 /**
  * Groups evidence targets by the cargo binary that runs them and keeps each target's own
- * fully qualified test name, so one spawn per binary runs every requested test exactly.
+ * fully qualified test name, so one spawn per binary runs every requested test exactly. libtest
+ * accepts several filters after one `--exact` (`cargo test --lib -- --exact a b` ran both: `2 passed`).
  */
 export function evidenceBatches(targets) {
   const batches = new Map();
