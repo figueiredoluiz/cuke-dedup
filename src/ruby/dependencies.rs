@@ -120,6 +120,14 @@ fn resolve_graph(
         .filter_map(|f| f.path.canonicalize().ok())
         .collect();
     let mut known = entry_points.clone();
+    // Skipped Ruby files by canonical path. A load this graph admits analyzes the file, so it is no
+    // longer skipped; targets are canonical, discovered paths derive from the normalized root.
+    let mut skipped: std::collections::BTreeMap<_, _> = files
+        .skipped_definitions
+        .iter()
+        .filter(|file| file.language == SourceLanguage::Ruby)
+        .filter_map(|file| Some((file.path.canonicalize().ok()?, file.path.clone())))
+        .collect();
     let mut expansion = Expansion::default();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
@@ -203,6 +211,11 @@ fn resolve_graph(
                     continue;
                 }
                 known.insert(target.clone());
+                if let Some(discovered) = skipped.remove(&target) {
+                    files
+                        .skipped_definitions
+                        .retain(|file| file.path != discovered);
+                }
                 let source_file = SourceFile {
                     path: target.clone(),
                     language: SourceLanguage::Ruby,
@@ -468,6 +481,63 @@ mod tests {
         std::fs::write(second.join("y.v2.rb"), "Y = 1\n").unwrap();
         std::fs::write(first.join("y.bundle"), "not a library\n").unwrap();
         assert_eq!(request_target(&bases, "y.v2"), Some(second.join("y.v2.rb")));
+    }
+
+    /// A skipped Ruby file leaves the skipped list exactly when the graph admits a load of it:
+    /// directly, through `rubyLoadPaths`, or transitively. A load refused by the budget, nested
+    /// inside a method, or absent leaves the file skipped.
+    #[test]
+    fn admitted_loads_remove_files_from_the_skipped_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(
+            root.join(".cuke-dedup.json"),
+            r#"{"rubyLoadPaths":["lib"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("entry.rb"),
+            "require_relative 'a'\nrequire 'k'\ndef m\n  require_relative 'd'\nend\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("a.rb"),
+            "require_relative 'c'\nrequire_relative 'g'\n",
+        )
+        .unwrap();
+        for name in ["c.rb", "g.rb", "d.rb", "h.rb", "lib/k.rb"] {
+            std::fs::write(root.join(name), "VALUE = 1\n").unwrap();
+        }
+        let config = Config::load(&root, Default::default()).unwrap();
+        let ruby = |name: &str| SourceFile {
+            path: root.join(name),
+            language: SourceLanguage::Ruby,
+        };
+        let mut files = DiscoveredFiles {
+            definitions: vec![ruby("entry.rb")],
+            skipped_definitions: ["a.rb", "c.rb", "g.rb", "d.rb", "h.rb", "lib/k.rb"]
+                .map(ruby)
+                .to_vec(),
+            ..DiscoveredFiles::default()
+        };
+        // Three dependency-only files fit: `a`, `k` (through the load path) and `c` (loaded by
+        // `a`); `g` is the fourth and is refused.
+        resolve_graph(&config, &GlobSet::empty(), &mut files, (3, usize::MAX)).unwrap();
+        let skipped: Vec<_> = files
+            .skipped_definitions
+            .iter()
+            .map(|file| {
+                file.path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(skipped, ["g.rb", "d.rb", "h.rb"]);
+        assert_eq!(files.dependency_gaps.len(), 1);
+        assert_eq!(files.definitions.len(), 4);
     }
 
     /// An unreadable selected file skips only its own loads; the graph keeps resolving.

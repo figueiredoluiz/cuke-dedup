@@ -5979,6 +5979,59 @@ fn regression_ruby_dotted_require_paths_load_the_ruby_file() {
     assert_eq!(run.definitions, 2, "{}", run.stderr);
 }
 
+/// A Ruby file skipped by a suffix-agnostic pattern but loaded through `require_relative` is
+/// analyzed, so the skipped-files warning does not count it.
+#[test]
+fn regression_ruby_loaded_files_are_not_reported_as_skipped() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        "require_relative '../support/helpers'\nGiven('one') { help }\n",
+    );
+    write(
+        directory.path(),
+        "features/support/helpers.rb",
+        "Given('two') { help }\n",
+    );
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given one\n    Given two\n",
+    );
+    let selection = [
+        "--definitions",
+        "features/step_definitions/*.rb",
+        "--definitions",
+        "features/support/**",
+    ];
+    // The only file the suffix-agnostic pattern skipped is loaded and analyzed: both steps count
+    // and no warning claims it was not analyzed. Before the fix the warning reported 1 file.
+    let run = ruby_run(directory.path(), &selection);
+    assert_eq!(run.definitions, 2, "{}", run.stderr);
+    assert!(!run.stderr.contains("not analyzed"), "{}", run.stderr);
+    // Through a symlinked root, discovery records paths under the link while dependency
+    // resolution records canonical targets; the comparison must still match them.
+    #[cfg(unix)]
+    {
+        let links = tempfile::tempdir().unwrap();
+        let root = links.path().join("suite");
+        std::os::unix::fs::symlink(directory.path(), &root).unwrap();
+        let run = ruby_run(&root, &selection);
+        assert_eq!(run.definitions, 2, "{}", run.stderr);
+        assert!(!run.stderr.contains("not analyzed"), "{}", run.stderr);
+    }
+    // Control: a skipped file nothing loads is still reported, and only that one.
+    write(directory.path(), "features/support/unused.rb", "X = 1\n");
+    let run = ruby_run(directory.path(), &selection);
+    assert!(
+        run.stderr
+            .contains("warning: 1 cucumber-ruby source file(s) were not analyzed"),
+        "{}",
+        run.stderr
+    );
+}
+
 /// A zero-operand `load()` is an ordinary call; identical callback bodies under different
 /// wrappers are near, different bodies under one wrapper are not.
 #[test]

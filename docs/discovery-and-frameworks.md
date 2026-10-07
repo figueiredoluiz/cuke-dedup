@@ -291,7 +291,7 @@ cuke-dedup path/to/project --definitions 'features/**/*.rb' --features 'features
 
 The adapter never executes Ruby, Gemfiles, hooks or dependencies. Explicit selection establishes DSL context but cannot resolve every runtime override.
 
-Default discovery remains JS/TS-only. A definition pattern selects `.rb` files only when it depends on the suffix, as `features/**/*.rb` or `features/support/env.rb` do. Suffix-agnostic patterns such as `features/**` keep their JS/TS selection and report skipped Ruby files in a warning. Analyze independent suites separately: a selection that contains both Ruby and JS/TS sources is rejected before comparison.
+Default discovery remains JS/TS-only. A definition pattern selects `.rb` files only when it depends on the suffix, as `features/**/*.rb` or `features/support/env.rb` do. Suffix-agnostic patterns such as `features/**` keep their JS/TS selection and report skipped Ruby files in a warning, except files the source graph below follows a load to, which are analyzed. Analyze independent suites separately: a selection that contains both Ruby and JS/TS sources is rejected before comparison.
 
 ### Registrations and providers
 

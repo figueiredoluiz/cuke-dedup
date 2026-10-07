@@ -34,7 +34,8 @@ pub struct DiscoveredFiles {
     /// Definition sources selected through their registered frontend.
     pub definitions: Vec<SourceFile>,
     /// Sources of opt-in languages that were not selected because automatic discovery or only
-    /// suffix-agnostic definition patterns matched them.
+    /// suffix-agnostic definition patterns matched them, less those that dependency resolution
+    /// then followed a load to and analyzed.
     pub skipped_definitions: Vec<SourceFile>,
     /// Non-fatal filesystem traversal errors collected during discovery.
     pub errors: Vec<String>,

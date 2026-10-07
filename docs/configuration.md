@@ -89,7 +89,9 @@ root-relative paths normalized with `/`.
 
 Opt-in languages, currently Ruby, are selected only by a `definitions` pattern that depends on
 their suffix, such as `features/**/*.rb`. A suffix-agnostic pattern such as `features/**` selects
-JS/TS sources and reports the Ruby files it skipped in a warning.
+JS/TS sources and reports the Ruby files it skipped in a warning. A skipped Ruby file that
+dependency resolution follows a load to (a literal top-level `require` or `require_relative`,
+direct or through other loaded files, within the load budget) is analyzed and not reported.
 
 These patterns differ from `.gitignore` and `.cuke-dedupignore`, which use directory-scoped
 gitignore semantics.
