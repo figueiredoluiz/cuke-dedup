@@ -5913,6 +5913,72 @@ fn regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization() {
     assert!(stderr.contains(&format!("{unmatched} 1")), "{stderr}");
 }
 
+/// A dotted require such as `pages.v2` loads `pages.v2.rb`, as Ruby does, so the loaded file's
+/// steps join the analysis; a native-suffix request stays unresolved only when a native
+/// library could shadow it.
+#[test]
+fn regression_ruby_dotted_require_paths_load_the_ruby_file() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "features/support/pages.v2.rb",
+        "Given('same step') { visit('/a') }\n",
+    );
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        "\nrequire_relative '../support/pages.v2'\nGiven('same step') { visit('/b') }\n",
+    );
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given same step\n",
+    );
+    let selection = ["--definitions", "features/step_definitions/*.rb"];
+    // Before the fix the load stayed unresolved: the run was incomplete and `pages.v2.rb`, which
+    // only the require reaches, contributed no definition, so the duplicate went unseen.
+    let run = ruby_run(directory.path(), &selection);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.definitions, 2, "{}", run.stderr);
+    assert!(
+        run.active.contains(&"duplicate-matcher".to_owned()),
+        "{:?}",
+        run.active
+    );
+
+    // Control: written as `pages.so`, the load falls back to `pages.so.rb` like Ruby, but a native
+    // candidate (`pages.bundle`) would win on some platform, so the load stays unresolved and the
+    // diagnostic points at it (line 2, column 1).
+    write(
+        directory.path(),
+        "features/support/pages.so.rb",
+        "Given('same step') { visit('/a') }\n",
+    );
+    write(
+        directory.path(),
+        "features/support/pages.bundle",
+        "not a library\n",
+    );
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        "\nrequire_relative '../support/pages.so'\nGiven('same step') { visit('/b') }\n",
+    );
+    let run = ruby_run(directory.path(), &selection);
+    assert!(run.incomplete, "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("a.rb:2:1: Ruby source dependency is unresolved"),
+        "{}",
+        run.stderr
+    );
+    // Without the native candidate the same load resolves to `pages.so.rb`.
+    fs::remove_file(directory.path().join("features/support/pages.bundle")).unwrap();
+    let run = ruby_run(directory.path(), &selection);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.definitions, 2, "{}", run.stderr);
+}
+
 /// A zero-operand `load()` is an ordinary call; identical callback bodies under different
 /// wrappers are near, different bodies under one wrapper are not.
 #[test]

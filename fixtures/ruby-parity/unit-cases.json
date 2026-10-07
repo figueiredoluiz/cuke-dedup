@@ -3519,7 +3519,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "69ec908f1dd095befe5f7e26063fd5e9598390a110fea91838e8ca6346136462",
+      "sourceSha256": "8924afdb92cb8ecfc4d60bd6bc1c5e6aae6d9ea948ba3372782a527627a586ef",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4419,6 +4419,16 @@
             "name": "regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization"
           },
           "rationale": "`regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization` runs Ruby sources through the built binary in baseline mode and pins the tolerated, rejected and unmatched-empty baseline outcomes end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_dotted_require_paths_load_the_ruby_file",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_dotted_require_paths_load_the_ruby_file"
+          },
+          "rationale": "`regression_ruby_dotted_require_paths_load_the_ruby_file` runs Ruby sources through the built binary and pins dotted and native-suffix require resolution end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]
