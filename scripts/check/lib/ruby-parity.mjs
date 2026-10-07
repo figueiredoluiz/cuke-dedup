@@ -176,9 +176,13 @@ export function functionBody(content, name) {
       continue;
     }
     if (char === "/" && next === "*") {
-      const end = content.indexOf("*/", i + 2);
-      if (end < 0) break;
-      i = end + 1;
+      // Rust block comments nest: `/* a /* b */ } */` closes only at the second terminator.
+      let nesting = 1;
+      for (i += 2; i < content.length && nesting > 0; i++) {
+        if (content.startsWith("/*", i)) { nesting++; i++; } else if (content.startsWith("*/", i)) { nesting--; i++; }
+      }
+      if (nesting > 0) break;
+      i--;
       continue;
     }
     // Rust allows up to 255 hashes around a raw string; the slice is long enough for any.
@@ -249,6 +253,8 @@ export function validateUnitEntry(file, item, groups, census) {
       return null;
     case "language-inapplicable":
       assert.ok(rationale, `${label}: inapplicable requires a rationale`);
+      assert.ok(/^JS\/TS-only: [^.\s][^]*?\.(\s|$)/.test(rationale),
+        `${label}: a language-inapplicable rationale must start with "JS/TS-only: <API>." naming the JS/TS-only API`);
       assert.ok(residueResolves(rationale, groups, census),
         `${label}: a language-inapplicable rationale must end with "Semantic residue:" naming none, or a Ruby group, suite or census entry that carries the shared behavior`);
       return null;
@@ -371,6 +377,24 @@ export function testOutcomes(stdout) {
   const outcomes = new Map();
   for (const match of (stdout ?? "").matchAll(/^test (\S+) \.\.\. (\w+)/gm)) outcomes.set(match[1], match[2]);
   return outcomes;
+}
+
+/**
+ * The evidence targets of a batch that are not established, with their outcome. A completed run
+ * (libtest printed a `test result` summary whose counts match its per-test lines, and cargo
+ * exited without a spawn error or signal) blames only the tests that failed, were ignored or
+ * never ran. An incomplete run (timeout, crash, missing or inconsistent summary) establishes
+ * nothing, so every target is blamed even when its own line printed `ok`.
+ */
+export function evidenceFailures(run, batch) {
+  const outcomes = testOutcomes(run.stdout);
+  const summary = /^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/m.exec(run.stdout ?? "");
+  const completed = !run.error && !run.signal && summary !== null
+    && Number(summary[1]) + Number(summary[2]) + Number(summary[3]) === outcomes.size;
+  const names = batch.args.slice(-batch.targets.length);
+  return batch.targets
+    .map((target, index) => ({ target, outcome: completed ? outcomes.get(names[index]) ?? "did not run" : "incomplete run" }))
+    .filter(({ outcome }) => outcome !== "ok");
 }
 
 /**

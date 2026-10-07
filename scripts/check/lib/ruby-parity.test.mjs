@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TEST_FN_PATTERN, cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, functionBody, isRubySuite, oracleClauseResolves, parityDeficits, residueResolves, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
+import { TEST_FN_PATTERN, cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, functionBody, isRubySuite, oracleClauseResolves, parityDeficits, evidenceFailures, residueResolves, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
 
 const oracle = {
   path: "example", definitions: 2, featureSteps: 0, complete: true, expectedExit: 0,
@@ -248,6 +248,7 @@ test("a language-inapplicable rationale must state where its Ruby residue lives"
   const withGroups = { ...groups, polarity: oracle };
   assert.equal(validateUnitEntry("f.rs", excluded("JS/TS-only: x. Semantic residue: pinned by the `polarity` group."), withGroups, census), null);
   assert.throws(() => validateUnitEntry("f.rs", excluded("JS/TS-only: JavaScript/TypeScript extraction behaviour."), withGroups, census), /Semantic residue/);
+  assert.throws(() => validateUnitEntry("f.rs", excluded("JS/TS-only: `tsconfig.json` paths. Semantic residue: handled elsewhere."), withGroups, census), /Semantic residue/);
 });
 
 test("test discovery sees attributes between the marker and the function, per-test outcomes blame only failures", () => {
@@ -262,4 +263,34 @@ test("test discovery sees attributes between the marker and the function, per-te
   const wide = `fn wide() {\n  let s = r${hashes}"} \"# not a close"${hashes};\n  write("steps.rb", s);\n}\nfn next() {}\n`;
   assert.equal(functionBody(wide, "wide").endsWith("write(\"steps.rb\", s);\n}"), true);
   assert.ok(testBodyMentionsRuby(wide, "wide"));
+});
+
+test("an incomplete cargo run establishes no evidence; a completed one blames only its failures", () => {
+  const targets = ["good", "bad", "missing"].map((name) => ({ file: "tests/cli.rs", name, referencedBy: [`f.rs:${name}`] }));
+  const batch = { targets, args: ["test", "--test", "cli", "--", "--exact", "good", "bad", "missing"] };
+  /** The outcome blamed for each target in the batch. */
+  const blamed = (run) => evidenceFailures(run, batch).map(({ target, outcome }) => [target.name, outcome]);
+  const lines = "test good ... ok\ntest bad ... FAILED\n";
+  assert.deepEqual(blamed({ status: 101, stdout: `${lines}test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured` }),
+    [["bad", "FAILED"], ["missing", "did not run"]]);
+  // A timeout, a signal, a missing summary or a summary that disagrees with the lines blames every target.
+  const all = [["good", "incomplete run"], ["bad", "incomplete run"], ["missing", "incomplete run"]];
+  assert.deepEqual(blamed({ status: null, stdout: lines, error: new Error("spawnSync cargo ETIMEDOUT") }), all);
+  assert.deepEqual(blamed({ status: null, signal: "SIGKILL", stdout: `${lines}test result: FAILED. 1 passed; 1 failed; 0 ignored` }), all);
+  assert.deepEqual(blamed({ status: 101, stdout: lines }), all);
+  assert.deepEqual(blamed({ status: 101, stdout: `${lines}test result: FAILED. 3 passed; 1 failed; 0 ignored` }), all);
+  assert.deepEqual(blamed({ status: 0, stdout: "test good ... ok\ntest bad ... ok\ntest missing ... ok\ntest result: ok. 3 passed; 0 failed; 0 ignored" }), []);
+});
+
+test("nested block comments and unnamed exclusions are rejected where they would mislead", () => {
+  const nested = "fn nested() {\n  /* outer /* inner */ } still a comment */\n  write(\"steps.rb\", s);\n}\nfn after() {}\n";
+  assert.equal(functionBody(nested, "nested").endsWith("write(\"steps.rb\", s);\n}"), true);
+  assert.ok(testBodyMentionsRuby(nested, "nested"));
+  assert.equal(functionBody("fn open() {\n  /* /* */ never closed\n}", "open"), null);
+  const withGroups = { ...groups, polarity: oracle };
+  // The rationale must name the JS/TS-only API before the residue clause.
+  assert.throws(() => validateUnitEntry("f.rs", excluded("Semantic residue: none."), withGroups, census), /naming the JS\/TS-only API/);
+  assert.throws(() => validateUnitEntry("f.rs", excluded("JS/TS-only: . Semantic residue: none."), withGroups, census), /naming the JS\/TS-only API/);
+  assert.throws(() => validateUnitEntry("f.rs", excluded("Shared behavior. Semantic residue: none."), withGroups, census), /naming the JS\/TS-only API/);
+  assert.equal(validateUnitEntry("f.rs", excluded("JS/TS-only: `tsconfig.json` paths. Semantic residue: none."), withGroups, census), null);
 });

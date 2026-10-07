@@ -5,7 +5,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
+import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceRunPassed, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -183,11 +183,7 @@ if (executesEvidence({ regression, inventoryOnly, blocked: blockers.length > 0 |
     if (run.status === 0 && evidenceRunPassed(run.stdout, batch.targets.length)) continue;
     const result = /test result:.*/.exec(run.stdout ?? "")?.[0] ?? "";
     const cause = [result, run.error?.message ?? "", ...(run.stderr ?? "").trim().split("\n").slice(-3)].filter(Boolean).join(" | ");
-    // Blame only the tests that failed or never ran; a passing test in a failed batch is evidence.
-    const outcomes = testOutcomes(run.stdout);
-    for (const [index, target] of batch.targets.entries()) {
-      const outcome = outcomes.get(batch.args.at(index - batch.targets.length)) ?? "did not run";
-      if (outcome === "ok") continue;
+    for (const { target, outcome } of evidenceFailures(run, batch)) {
       blockers.push(`${target.referencedBy.join(", ")}: rust-evidence ${target.file}:${target.name} ${outcome === "FAILED" ? "failed" : outcome} (${cause})`);
     }
   }
