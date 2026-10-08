@@ -178,6 +178,13 @@ const CORE_CONSTANTS: [&str; 155] = [
 /// Scenario hooks: their blocks run only during scenarios, like step handlers.
 const SCENARIO_HOOKS: [&str; 5] = ["After", "AfterStep", "Around", "Before", "BeforeStep"];
 
+/// Whether `name` is a scenario hook, whose block runs only during scenarios. Hooks that can run
+/// around loading or configuration (`BeforeAll`, `AfterAll`, `AfterConfiguration`,
+/// `InstallPlugin`) are not.
+pub(super) fn scenario_hook(name: &str) -> bool {
+    SCENARIO_HOOKS.contains(&name)
+}
+
 /// Whether every load-phase statement of `program` is an allowed shape. A file with syntax errors
 /// is never closed.
 pub(super) fn closed(program: Node<'_>, source: &str) -> bool {
@@ -305,7 +312,7 @@ fn call_allowed(call: Node<'_>, source: &str) -> bool {
             && arguments.len() == 1
             && literal(arguments[0]);
     }
-    (registration(name) || name == "ParameterType" || SCENARIO_HOOKS.contains(&name))
+    (registration(name) || name == "ParameterType" || scenario_hook(name))
         && arguments.iter().all(|argument| match argument.kind() {
             "pair" => pair_allowed(*argument, source),
             "hash" => {

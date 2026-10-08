@@ -644,8 +644,9 @@ fn method_table_mutator(name: &str) -> bool {
     )
 }
 
+/// Method names whose redefinition or table mutation can redirect registration or deferral.
 fn protected_method(name: &str) -> bool {
-    registration(name)
+    deferring_dsl_method(name)
         || method_table_mutator(name)
         || matches!(
             name,
@@ -718,6 +719,8 @@ fn may_replace_dsl(node: Node<'_>, source: &str) -> bool {
         )
 }
 
+/// Whether `node` sits in a block that runs only during scenarios: a step handler, a scenario hook
+/// block, or a `ParameterType` transformer.
 fn inside_deferred_body(
     node: Node<'_>,
     source: &str,
@@ -733,11 +736,12 @@ fn inside_deferred_body(
         let Some(call) = block.parent() else { continue };
         if call.kind() == "call" && call.child_by_field_name("block") == Some(block) {
             let method = call.child_by_field_name("method").map(|n| text(n, source));
+            // Step handlers and scenario hook blocks run only during scenarios.
             if call.parent().is_some_and(|p| p.kind() == "program")
                 && (aliases.registration(call).is_some()
                     || wrappers.registration(call).is_some()
                     || (call.child_by_field_name("receiver").is_none()
-                        && method.is_some_and(registration)))
+                        && method.is_some_and(deferring_dsl_method)))
             {
                 return true;
             }
@@ -781,6 +785,13 @@ fn inside_deferred_body(
 
 /// Cucumber-Ruby aliases every dialect's step keywords onto `register_rb_step_definition`
 /// regardless of the feature-file language, so each one is a registrar in every step file.
+/// DSL methods whose block runs only during scenarios: step keywords and scenario hooks. The same
+/// names are protected against redefinition, so a block is deferred only while its method is the
+/// runner's own.
+fn deferring_dsl_method(name: &str) -> bool {
+    registration(name) || load_phase::scenario_hook(name)
+}
+
 fn registration(name: &str) -> bool {
     step_keywords::STEP_KEYWORDS.binary_search(&name).is_ok()
 }
