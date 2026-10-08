@@ -177,9 +177,13 @@ pub(crate) fn merge(
     let mut patterns = configured.clone();
     let mut seen = std::collections::BTreeSet::new();
     let mut diagnostics = Vec::new();
+    // fail-closed: a declaration that invalidates the registry (a name that is not static, empty,
+    // or a reserved built-in) may define any parameter type, so no pattern from this merge is
+    // trusted, whichever file or position it comes from. Extraction reports the located cause and
+    // invalidates the registry, so no diagnostic is repeated here.
+    let untrusted = declarations.iter().any(invalidates_registry);
     for declaration in declarations {
         let Some(name) = declaration.name else {
-            patterns.clear();
             continue;
         };
         match (seen.insert(name.clone()), declaration.expression) {
@@ -192,5 +196,61 @@ pub(crate) fn merge(
             }
         }
     }
+    if untrusted {
+        patterns.clear();
+    }
     (patterns, diagnostics)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge;
+    use crate::model::SourceLocation;
+    use crate::source_adapter::SourceParameterType;
+    use std::collections::BTreeMap;
+
+    /// A declaration in `file` with an optional static name and pattern.
+    fn declaration(file: &str, name: Option<&str>, pattern: Option<&str>) -> SourceParameterType {
+        let location = SourceLocation::new(file, 1, 1, 1, 2);
+        SourceParameterType::new(
+            name.map(str::to_owned),
+            pattern.map(str::to_owned),
+            location,
+        )
+    }
+
+    /// A declaration that invalidates the registry withdraws every pattern, configured ones
+    /// included, whether its file comes before or after the static declaration.
+    #[test]
+    fn a_registry_invalidating_declaration_withdraws_every_pattern_in_any_order() {
+        let configured = BTreeMap::from([("size".to_owned(), "small|large".to_owned())]);
+        let color = || declaration("b_color.rb", Some("color"), Some("red|blue"));
+        for invalidating in [
+            declaration("a_dynamic.rb", None, None),
+            declaration("a_empty.rb", Some(""), Some("x")),
+            declaration("a_builtin.rb", Some("bigdecimal"), Some("\\d+")),
+        ] {
+            for declarations in [
+                vec![invalidating.clone(), color()],
+                vec![color(), invalidating.clone()],
+            ] {
+                let (patterns, diagnostics) = merge(declarations, &configured);
+                assert!(patterns.is_empty(), "{invalidating:?}: {patterns:?}");
+                assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            }
+        }
+        // Control: static declarations alone keep every pattern and report nothing.
+        let (patterns, diagnostics) = merge(
+            vec![
+                color(),
+                declaration("c_shape.rb", Some("shape"), Some("round")),
+            ],
+            &configured,
+        );
+        assert_eq!(
+            patterns.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["color", "shape", "size"]
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
 }
