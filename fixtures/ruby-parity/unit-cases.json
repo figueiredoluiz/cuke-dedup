@@ -3519,7 +3519,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "d6a50104e21b15654879b5c6efb40c6da565dedb22d65ab3a7601ea4548b58a5",
+      "sourceSha256": "ccd15c6dfa59bd1406aea81ee13e523f3992fe2ec6e4560da98ac1e1f611bf05",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4449,6 +4449,16 @@
             "name": "regression_ruby_contained_dispatch_needs_a_closed_load_phase"
           },
           "rationale": "`regression_ruby_contained_dispatch_needs_a_closed_load_phase` runs Ruby sources through the built binary and pins the closed-load-phase containment of dynamic dispatch, kept and invalidated, end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers"
+          },
+          "rationale": "`regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers` runs Ruby sources through the built binary and pins scenario-hook block deferral and the hooks that stay conservative end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]

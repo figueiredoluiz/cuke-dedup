@@ -6274,6 +6274,82 @@ fn regression_ruby_contained_dispatch_needs_a_closed_load_phase() {
     );
 }
 
+/// A dynamic call inside a scenario hook block runs only during scenarios, like one inside a step
+/// handler, so it keeps registrations; hooks that can run around loading, or hook calls that are
+/// not top-level and receiverless, keep the suite-wide withdrawal.
+#[test]
+fn regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers() {
+    let run_with = |hooks: &str| {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps/entry.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\n",
+        );
+        write(directory.path(), "steps/hooks.rb", hooks);
+        write(
+            directory.path(),
+            "features/a.feature",
+            "Feature: f\n  Scenario: s\n    Given same step\n",
+        );
+        ruby_run(directory.path(), &["--definitions", "steps/*.rb"])
+    };
+    for hook in [
+        "Before do\n  helper.send(kind)\nend\n",
+        "Before('@tag') do |scenario|\n  helper.send(kind)\nend\n",
+        "After { helper.public_send(kind) }\n",
+        "Around do |scenario, block|\n  helper.send(kind)\n  block.call\nend\n",
+        "AfterStep { |result| eval(code) }\n",
+        "BeforeStep do\n  helper.__send__(kind)\nend\n",
+    ] {
+        let run = run_with(hook);
+        assert_eq!(run.definitions, 2, "{hook}: {}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{hook}: {:?}",
+            run.active
+        );
+    }
+    // Each withdrawal is located at the dynamic call itself, never at line 1, column 1.
+    for (hook, location) in [
+        ("BeforeAll do\n  helper.send(kind)\nend\n", "hooks.rb:2:3"),
+        ("AfterAll { helper.send(kind) }\n", "hooks.rb:1:12"),
+        (
+            "AfterConfiguration do |config|\n  helper.send(kind)\nend\n",
+            "hooks.rb:2:3",
+        ),
+        (
+            "InstallPlugin do |config, registry|\n  helper.send(kind)\nend\n",
+            "hooks.rb:2:3",
+        ),
+        ("self.Before do\n  helper.send(kind)\nend\n", "hooks.rb:2:3"),
+        (
+            "if ENV['CI']\n  Before do\n    helper.send(kind)\n  end\nend\n",
+            "hooks.rb:3:5",
+        ),
+        // A redefined hook may run its block at load (`def self.Before` on main precedes the
+        // extended DSL), so redefining one withdraws trust like redefining a step keyword.
+        (
+            "def self.Before(*)\n  yield\nend\nBefore do\n  helper.send(kind)\nend\n",
+            "hooks.rb:1:1",
+        ),
+        (
+            "define_singleton_method(:After) { |*a, &b| b.call }\nAfter { helper.send(kind) }\n",
+            "hooks.rb:1:1",
+        ),
+    ] {
+        let run = run_with(hook);
+        assert_eq!(run.definitions, 0, "{hook}: {}", run.stderr);
+        assert!(
+            run.stderr.contains(&format!(
+                "{location}: Ruby registration ownership or executable source effects are unresolved"
+            )),
+            "{hook}: {}",
+            run.stderr
+        );
+    }
+}
+
 /// A zero-operand `load()` is an ordinary call; identical callback bodies under different
 /// wrappers are near, different bodies under one wrapper are not.
 #[test]
