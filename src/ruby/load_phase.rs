@@ -235,8 +235,7 @@ fn statements_allowed(scope: Node<'_>, source: &str, in_declaration: bool) -> bo
             "class" | "module" => declaration_allowed(statement, source, in_declaration),
             "method" => in_declaration,
             "call" => !in_declaration && call_allowed(statement, source),
-            // fail-closed: any other load-phase statement may execute arbitrary code.
-            _ => false,
+            _ => false, // fail-closed: any other load-phase statement may run arbitrary code.
         })
 }
 
