@@ -128,6 +128,7 @@ fn resolve_graph(
         .filter(|file| file.language == SourceLanguage::Ruby)
         .filter_map(|file| Some((file.path.canonicalize().ok()?, file.path.clone())))
         .collect();
+    let mut promoted = BTreeSet::new();
     let mut expansion = Expansion::default();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
@@ -212,9 +213,7 @@ fn resolve_graph(
                 }
                 known.insert(target.clone());
                 if let Some(discovered) = skipped.remove(&target) {
-                    files
-                        .skipped_definitions
-                        .retain(|file| file.path != discovered);
+                    promoted.insert(discovered);
                 }
                 let source_file = SourceFile {
                     path: target.clone(),
@@ -230,6 +229,11 @@ fn resolve_graph(
             );
         }
     }
+    // One pass after the walk: removing each promoted file as it is admitted would rescan the
+    // unbounded skipped list once per admitted file.
+    files
+        .skipped_definitions
+        .retain(|file| !promoted.contains(&file.path));
     Ok(())
 }
 
