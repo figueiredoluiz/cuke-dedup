@@ -1,6 +1,9 @@
 use assert_cmd::Command;
+use predicates::prelude::*;
 use serde_json::Value;
 use std::fs;
+use std::path::Path;
+use std::process::Command as ProcessCommand;
 
 mod common;
 
@@ -4889,4 +4892,2060 @@ fn loader_calls_without_operands_are_ordinary_calls() {
         let (_, observed, _) = action_rows(&source, &[]);
         assert_eq!(observed, incomplete, "{label}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shared-engine workflows (baselines, changed mode, exit policy, reporters) over Ruby sources.
+// ---------------------------------------------------------------------------------------------
+
+/// Two definitions with one matcher and different bodies: one `duplicate-matcher` finding.
+const RUBY_DUPLICATE_PAIR: &str =
+    "Given('same step') { first() }\nGiven('same step') { second() }\n";
+
+/// Git with the hook-exported repository environment removed, so fixture commands stay sandboxed.
+fn ruby_fixture_git() -> ProcessCommand {
+    let mut command = ProcessCommand::new("git");
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+        "GIT_CEILING_DIRECTORIES",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
+/// Runs a fixture Git command in `root` and returns its stdout, failing on a non-zero exit.
+fn ruby_git(root: &Path, args: &[&str]) -> String {
+    let output = ruby_fixture_git()
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Initializes a Git repository at `root` with a stable identity and a single initial commit.
+fn ruby_init_repository(root: &Path) {
+    ruby_init_repository_adding(root, ".");
+}
+
+/// Initializes a Git repository at `root` whose initial commit holds only `pathspec`.
+fn ruby_init_repository_adding(root: &Path, pathspec: &str) {
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "test@example.com"],
+        &["config", "user.name", "Test"],
+        &["add", pathspec],
+        &["commit", "-qm", "initial"],
+    ] {
+        ruby_git(root, args);
+    }
+}
+
+/// Commits the index in `root` as `message` under a one-off committer identity.
+fn ruby_commit(root: &Path, message: &str) {
+    let identity = [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+    ];
+    ruby_git(root, &[&identity[..], &["commit", "-qm", message]].concat());
+}
+
+/// Writes `contents` at `relative` under `root`, creating parent directories.
+fn ruby_write(root: &Path, relative: &str, contents: &str) {
+    let path = root.join(relative);
+    path.parent().map(fs::create_dir_all).unwrap().unwrap();
+    fs::write(path, contents).unwrap();
+}
+
+/// Writes a `bytes`-long file of authored comment lines, valid as Ruby and as Gherkin.
+fn ruby_write_sized(root: &Path, relative: &str, bytes: usize) {
+    let line = "# filler line of authored text\n";
+    let mut contents = line.repeat(bytes / line.len());
+    contents.push_str(&"#".repeat(bytes - contents.len()));
+    ruby_write(root, relative, &contents);
+}
+
+/// The binary run from `root` on `.` with the Ruby opt-in definitions `pattern`.
+fn ruby_cli(root: &Path, pattern: &str) -> Command {
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(root)
+        .args([".", "--definitions", pattern]);
+    command
+}
+
+/// Runs `ruby_cli` with JSONL output and returns the exit code and the parsed records.
+fn ruby_jsonl(root: &Path, pattern: &str, extra: &[&str]) -> (i32, Vec<Value>) {
+    let output = ruby_cli(root, pattern)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    (output.status.code().unwrap(), records(output.stdout))
+}
+
+/// Counts finding records by `active` state: `(active, suppressed)`.
+fn ruby_finding_states(rows: &[Value]) -> (usize, usize) {
+    let findings = rows.iter().filter(|row| row["type"] == "finding");
+    let active = findings.clone().filter(|row| row["active"] == true).count();
+    (active, findings.count() - active)
+}
+
+/// Reads a JSON report file.
+fn ruby_report(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Sums a baseline's per-fingerprint counts; `None` when any count is not an integer.
+fn ruby_baseline_total(baseline: &Value) -> Option<u64> {
+    let counts = baseline["fingerprints"].as_object().unwrap().values();
+    counts.map(Value::as_u64).sum()
+}
+
+/// Counts a JSON report's findings by suppression: `(unsuppressed, suppressed)`.
+fn ruby_suppression_states(report: &Value) -> (usize, usize) {
+    let findings = report["findings"].as_array().unwrap();
+    let suppressed = findings
+        .iter()
+        .filter(|finding| !finding["suppression"].is_null())
+        .count();
+    (findings.len() - suppressed, suppressed)
+}
+
+/// Asserts that each JSON pointer in `expected` resolves in `value` to the paired value.
+fn ruby_assert_pointers(value: &Value, expected: &[(&str, Value)]) {
+    for (pointer, want) in expected {
+        assert_eq!(value.pointer(pointer), Some(want), "{pointer}");
+    }
+}
+
+/// `ruby_cli` over `*.rb` in `root`, compared against the baseline at `revision`.
+fn ruby_from_ref(root: &Path, revision: &str) -> Command {
+    let mut command = ruby_cli(root, "*.rb");
+    command.args(["--baseline-from-ref", revision]);
+    command
+}
+
+/// A semantic baseline written from Ruby findings survives a move and a reversed pair order,
+/// and suppresses only as many same-fingerprint findings as it counts.
+#[test]
+fn ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", RUBY_DUPLICATE_PAIR);
+    ruby_cli(root, "**/*.rb")
+        .args([
+            "--baseline",
+            ".cuke-dedup-baseline.json",
+            "--update-baseline",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("updated baseline"))
+        .stderr(predicate::str::contains("1 added, 0 removed, 1 total"));
+    let baseline = ruby_report(&root.join(".cuke-dedup-baseline.json"));
+    assert_eq!(baseline["schemaVersion"], 3);
+    assert_eq!(ruby_baseline_total(&baseline), Some(1));
+
+    // Moved, shifted down and in reversed order: the primary and related sides swap, so the
+    // comparison fingerprint must not depend on pair order or on location.
+    fs::remove_file(root.join("steps.rb")).unwrap();
+    ruby_write(
+        root,
+        "moved/renamed.rb",
+        "\n\nGiven('same step') { second() }\nGiven('same step') { first() }\n",
+    );
+    ruby_cli(root, "**/*.rb")
+        .args([
+            "--baseline",
+            ".cuke-dedup-baseline.json",
+            "--reporters",
+            "terminal",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 suppressed"))
+        .stdout(predicate::str::contains(
+            "Duplication: 0 of 2 definitions (0.00%), threshold 0.00% — PASS",
+        ));
+
+    // A second copy of the accepted pair yields more findings with the accepted fingerprint than
+    // the baseline counts: only one is suppressed. A set-valued baseline would suppress all.
+    ruby_write(
+        root,
+        "moved/copy.rb",
+        "Given('same step') { first() }\nGiven('same step') { second() }\n",
+    );
+    let (code, rows) = ruby_jsonl(
+        root,
+        "**/*.rb",
+        &["--baseline", ".cuke-dedup-baseline.json"],
+    );
+    assert_eq!(code, 1);
+    let findings = rows
+        .iter()
+        .filter(|row| row["type"] == "finding")
+        .collect::<Vec<_>>();
+    let accepted = baseline["fingerprints"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let accepted_states = findings
+        .iter()
+        .filter(|row| row["fingerprint"].as_str() == Some(accepted.as_str()))
+        .map(|row| row["active"].as_bool().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_states.len(), 2);
+    assert_eq!(accepted_states.iter().filter(|active| **active).count(), 1);
+    ruby_cli(root, "**/*.rb")
+        .args(["--baseline", ".cuke-dedup-baseline.json", "--fail-on-new"])
+        .assert()
+        .code(1);
+    let baseline = ruby_report(&root.join(".cuke-dedup-baseline.json"));
+    assert_eq!(ruby_baseline_total(&baseline), Some(1));
+}
+
+/// Baseline updates over Ruby findings migrate old schemas, count removals without counting
+/// suppressed findings, and reject future, outdated, malformed or unsafe baseline inputs.
+#[test]
+fn ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", RUBY_DUPLICATE_PAIR);
+    let baseline_path = root.join("baseline.json");
+    for version in [1, 2] {
+        fs::write(
+            &baseline_path,
+            format!(r#"{{"schemaVersion":{version},"fingerprints":{{"legacy":1}}}}"#),
+        )
+        .unwrap();
+        ruby_cli(root, "*.rb")
+            .args(["--baseline", "baseline.json", "--update-baseline"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("updated baseline"));
+        assert_eq!(ruby_report(&baseline_path)["schemaVersion"], 3);
+    }
+    fs::write(&baseline_path, r#"{"schemaVersion":99,"fingerprints":{}}"#).unwrap();
+    ruby_cli(root, "*.rb")
+        .args(["--baseline", "baseline.json", "--update-baseline"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("newer than supported"));
+
+    ruby_write(
+        root,
+        "steps.rb",
+        "Given('alpha') { one() }\nGiven('alpha') { two() }\nGiven('beta') { three() }\nGiven('beta') { four() }\n",
+    );
+    ruby_cli(root, "*.rb")
+        .args(["--baseline", "nested/baseline.json", "--update-baseline"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("2 added, 0 removed, 2 total"));
+    // The remaining finding is inline-suppressed, so it neither counts as added nor stays.
+    ruby_write(
+        root,
+        "steps.rb",
+        "# cuke-dedup:ignore duplicate-matcher -- already accepted elsewhere\nGiven('alpha') { one() }\nGiven('alpha') { two() }\n",
+    );
+    ruby_cli(root, "*.rb")
+        .args(["--baseline", "nested/baseline.json", "--update-baseline"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("0 added, 2 removed, 0 total"));
+
+    let nested = root.join("nested/baseline.json");
+    for (contents, messages) in [
+        (
+            r#"{"schemaVersion":2,"fingerprints":{}}"#,
+            vec![
+                "unsupported baseline schema version `2` (expected `3`)",
+                "regenerate it with --update-baseline",
+            ],
+        ),
+        (
+            r#"{"schemaVersion":99,"fingerprints":{}}"#,
+            vec!["unsupported baseline schema"],
+        ),
+        ("not json", vec!["failed to parse baseline"]),
+    ] {
+        fs::write(&nested, contents).unwrap();
+        let mut assertion = ruby_cli(root, "*.rb")
+            .args(["--baseline", "nested/baseline.json"])
+            .assert()
+            .code(2);
+        for message in messages {
+            assertion = assertion.stderr(predicate::str::contains(message));
+        }
+    }
+
+    for arguments in [
+        vec!["--update-baseline"],
+        vec!["--fail-on-new"],
+        vec![
+            "--baseline",
+            "baseline.json",
+            "--update-baseline",
+            "--changed-since",
+            "HEAD",
+        ],
+    ] {
+        ruby_cli(root, "*.rb").args(arguments).assert().code(2);
+    }
+}
+
+/// A Ruby duplicate-handler cluster keeps its baseline identity when its members move and
+/// reorder, and a cluster that gains a member is a different, new finding.
+#[test]
+fn ruby_baseline_cluster_identity_ignores_location_and_member_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let members = ["alpha", "bravo", "charlie", "delta", "echo"];
+    let source = |names: &[&str]| -> String {
+        names
+            .iter()
+            .map(|name| format!("Given('{name}') {{ work() }}\n"))
+            .collect()
+    };
+    ruby_write(root, "steps/a.rb", &source(&members));
+    let (_, rows) = ruby_jsonl(root, "**/*.rb", &[]);
+    let clusters: Vec<_> = rows.iter().filter(|row| row["type"] == "finding").collect();
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(
+        clusters[0]["message"],
+        "5 step definitions form a connected `duplicate-handler` cluster"
+    );
+    ruby_cli(root, "**/*.rb")
+        .args(["--baseline", "baseline.json", "--update-baseline"])
+        .assert()
+        .success();
+
+    fs::remove_file(root.join("steps/a.rb")).unwrap();
+    let mut reordered = members;
+    reordered.reverse();
+    ruby_write(
+        root,
+        "moved/renamed.rb",
+        &format!("\n{}", source(&reordered)),
+    );
+    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--baseline", "baseline.json"]);
+    assert_eq!((code, ruby_finding_states(&rows)), (0, (0, 1)));
+
+    ruby_write(root, "moved/extra.rb", &source(&["foxtrot"]));
+    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--baseline", "baseline.json"]);
+    assert_eq!((code, ruby_finding_states(&rows)), (1, (1, 0)));
+}
+
+/// A repository directory name Git must round-trip exactly: trailing spaces off Linux.
+#[cfg(not(target_os = "linux"))]
+fn ruby_awkward_repository_name() -> std::path::PathBuf {
+    // Trailing spaces are valid on Unix and must not be trimmed from Git's output.
+    std::path::PathBuf::from(if cfg!(unix) {
+        " repository "
+    } else {
+        "repository"
+    })
+}
+
+/// A repository directory name Git must round-trip exactly: trailing spaces and a non-UTF-8 byte.
+#[cfg(target_os = "linux")]
+fn ruby_awkward_repository_name() -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    // Linux also permits non-UTF-8 bytes in repository roots.
+    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b" repository-\xff "))
+}
+
+/// Writes a `post-checkout` hook under `root` that fails, executable on Unix.
+fn ruby_write_failing_hook(root: &Path) {
+    ruby_write(root, "hooks/post-checkout", "#!/bin/sh\nexit 99\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let hook = root.join("hooks/post-checkout");
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+/// `--baseline-from-ref` over Ruby sources compares against history under the current policy,
+/// tolerates current parse failures unless strict, and never mutates the checkout.
+#[test]
+fn ruby_baseline_from_ref_compares_history_without_mutating_the_checkout() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join(ruby_awkward_repository_name());
+    let git = |args: &[&str]| ruby_git(&root, args);
+    fs::create_dir(&root).unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "test@example.invalid"],
+        &["config", "user.name", "Test"],
+    ] {
+        git(args);
+    }
+    let scope = root.join("packages/suite");
+    ruby_write(&scope, "README.md", "Synthetic suite\n");
+    for args in [
+        &["add", "."][..],
+        &["commit", "-qm", "empty suite"],
+        &["tag", "empty-suite"],
+    ] {
+        git(args);
+    }
+    ruby_write(
+        &scope,
+        "steps.rb",
+        "Given('shared') { first() }\nGiven('shared') { second() }\n",
+    );
+    ruby_write(
+        &scope,
+        "example.feature",
+        "Feature: Example\n  Scenario: Example\n    Given shared\n",
+    );
+    // The old policy disables all rules. The current explicit overrides must govern BOTH scans.
+    let rules: serde_json::Map<String, Value> = cuke_dedup::model::Rule::ALL
+        .iter()
+        .map(|rule| (rule.to_string(), Value::from("off")))
+        .collect();
+    ruby_write(
+        &scope,
+        ".cuke-dedup.json",
+        &serde_json::json!({ "rules": rules }).to_string(),
+    );
+    ruby_write(&root, ".gitattributes", "*.rb filter=unsafe\n");
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    // These would break checkout if the snapshot inherited repository config or hooks.
+    ruby_write_failing_hook(&root);
+    for setting in [
+        ["core.hooksPath", "hooks"],
+        ["filter.unsafe.required", "true"],
+        ["filter.unsafe.smudge", "nonexistent-cuke-filter"],
+    ] {
+        git(&[&["config"][..], &setting].concat());
+    }
+    let checkout_state = || {
+        [
+            git(&["rev-parse", "HEAD"]),
+            git(&["ls-files", "--stage"]),
+            git(&["worktree", "list", "--porcelain"]),
+        ]
+    };
+    let before = checkout_state();
+    fs::rename(scope.join("steps.rb"), scope.join("renamed café.rb")).unwrap();
+    let warn_on_matcher = ["--rule", "duplicate-matcher=warning"];
+    let run = |allowance: &str, expected: i32| {
+        let mut command = ruby_from_ref(&scope, "HEAD");
+        command
+            .env("GIT_DIR", sandbox.path().join("not-a-repository"))
+            .env("GIT_CONFIG_GLOBAL", root.join(".git/config"));
+        for (key, value) in [
+            ("git_config_count", "2"),
+            ("gIt_cOnFiG_kEy_0", "filter.unsafe.required"),
+            ("git_config_value_0", "true"),
+            ("git_config_key_1", "filter.unsafe.smudge"),
+            ("gIt_cOnFiG_vAlUe_1", "nonexistent-cuke-filter"),
+        ] {
+            command.env(key, value);
+        }
+        command
+            .args(["--fail-on-new", allowance])
+            .args(warn_on_matcher)
+            .args(["--reporters", "json", "--output"])
+            .arg(sandbox.path().join("reports"))
+            .assert()
+            .code(expected);
+    };
+    run("0", 0);
+    ruby_from_ref(&scope, "empty-suite")
+        .arg("--fail-on-new=0")
+        .args(warn_on_matcher)
+        .arg("--output")
+        .arg(sandbox.path().join("empty-report"))
+        .assert()
+        .code(1);
+    ruby_write(&scope, "third.rb", "Given('shared') { third() }\n");
+    run("0", 1);
+    run("1", 0);
+    let report_path = sandbox.path().join("reports/cuke-dedup.json");
+    assert_eq!(ruby_suppression_states(&ruby_report(&report_path)), (1, 1));
+    // A current-source parse failure is tolerated by default, but `--fail-on-unparseable` keeps it
+    // fatal even under a generous new-finding allowance.
+    ruby_write(&scope, "broken.rb", "Given('bad') do\n value =");
+    for (strict, code) in [(false, 0), (true, 2)] {
+        let mut command = ruby_from_ref(&scope, "HEAD");
+        command.args(["--fail-on-new", "99"]);
+        if strict {
+            command.arg("--fail-on-unparseable");
+        }
+        command
+            .args(warn_on_matcher)
+            .assert()
+            .code(code)
+            .stderr(predicate::str::contains(
+                "Ruby source contains syntax errors",
+            ));
+    }
+    fs::remove_file(scope.join("broken.rb")).unwrap();
+    assert_eq!(checkout_state(), before);
+    for (path, exists) in [
+        (scope.join("renamed café.rb"), true),
+        (scope.join("third.rb"), true),
+        (scope.join(".cuke-dedup-baseline.json"), false),
+    ] {
+        assert_eq!(path.exists(), exists, "{}", path.display());
+    }
+    let report = ruby_report(&report_path);
+    let mut primary_paths = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| finding["primary"]["path"].as_str().unwrap_or(""));
+    assert!(primary_paths.all(|path| !path.contains("checkout")));
+    fs::create_dir(scope.join("new-directory")).unwrap();
+    ruby_from_ref(&scope.join("new-directory"), "HEAD")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "does not contain the analysis directory",
+        ));
+    for (args, message) in [
+        (&["--baseline-from-ref", "missing-ref"][..], "baseline"),
+        (&["--baseline-from-ref=--help"], "baseline"),
+        (
+            &["--baseline-from-ref", "HEAD", "--baseline", "baseline.json"],
+            "cannot be used",
+        ),
+        (
+            &["--baseline-from-ref", "HEAD", "--update-baseline"],
+            "cannot be used",
+        ),
+        (&["--fail-on-new"], "required"),
+    ] {
+        ruby_cli(&scope, "*.rb")
+            .args(args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(message));
+    }
+}
+
+/// An incomplete Ruby base revision is rejected under `--fail-on-incomplete` even when the
+/// current files are valid, and is tolerated with a visible warning by default.
+#[test]
+fn ruby_baseline_from_ref_rejects_or_reports_incomplete_history() {
+    let valid_feature = "Feature: Example\n  Scenario: Example\n    Given shared\n";
+    // Control: a complete base under the same flags passes, so each rejection below is caused
+    // by its base, named by `cause`.
+    let directory = tempfile::tempdir().unwrap();
+    ruby_write(directory.path(), "steps.rb", "Given('shared') { work() }\n");
+    ruby_write(directory.path(), "example.feature", valid_feature);
+    ruby_init_repository(directory.path());
+    ruby_from_ref(directory.path(), "HEAD")
+        .args(["--fail-on-new=0", "--fail-on-incomplete"])
+        .assert()
+        .code(0);
+    for (bad_source, feature, cause) in [
+        (
+            "Given('shared') do\n value =",
+            Some(valid_feature),
+            "syntax errors",
+        ),
+        (
+            "require 'missing/glue'\nGiven('shared') { work() }\n",
+            Some(valid_feature),
+            "dependency is unresolved",
+        ),
+        (
+            "HELPER = 42\n",
+            Some(valid_feature),
+            "kept no step definitions",
+        ),
+        ("Given('shared') { work() }\n", None, "matched no files"),
+        (
+            "Given('shared') { work() }\n",
+            Some("invalid Gherkin"),
+            "failed to parse Gherkin feature",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        ruby_write(root, "steps.rb", bad_source);
+        if let Some(feature) = feature {
+            ruby_write(root, "example.feature", feature);
+        }
+        ruby_init_repository(root);
+        ruby_write(root, "steps.rb", "Given('shared') { work() }\n");
+        ruby_write(root, "example.feature", valid_feature);
+        // Control: the current corpus alone is complete.
+        ruby_cli(root, "*.rb")
+            .arg("--fail-on-incomplete")
+            .assert()
+            .code(0);
+        ruby_from_ref(root, "HEAD")
+            .args(["--fail-on-new=0", "--fail-on-incomplete"])
+            .assert()
+            .code(2)
+            .stderr(
+                predicate::str::contains("baseline")
+                    .and(predicate::str::contains("incomplete"))
+                    .and(predicate::str::contains(cause)),
+            );
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // The base still extracts the real definition; only the unparseable sibling is lost.
+    ruby_write(root, "steps.rb", "Given('shared') { work() }\n");
+    ruby_write(root, "broken.rb", "Given('broken') do\n value =");
+    ruby_write(root, "example.feature", valid_feature);
+    ruby_init_repository(root);
+    fs::remove_file(root.join("broken.rb")).unwrap();
+    ruby_from_ref(root, "HEAD").assert().success().stderr(
+        predicate::str::contains("baseline revision `HEAD` is incomplete")
+            .and(predicate::str::contains("--fail-on-incomplete")),
+    );
+    ruby_from_ref(root, "HEAD")
+        .arg("--fail-on-incomplete")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("incomplete"));
+}
+
+/// A Ruby base revision truncated by the structural-class limit is incomplete, and submodules
+/// are refused whether real or injected or hidden by Git replacement objects.
+#[test]
+fn ruby_baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let git = |args: &[&str]| ruby_git(root, args);
+    git(&["init", "-q"]);
+    // Receiver calls with literal arguments form one structural class of ten definitions.
+    let source: String = (0..10)
+        .map(|index| format!("Given('operation label {index}') {{ page.perform({index}) }}\n"))
+        .collect();
+    ruby_write(root, "steps.rb", &source);
+    ruby_write(
+        root,
+        "example.feature",
+        "Feature: Example\n  Scenario: Example\n    Given operation label 0\n",
+    );
+    git(&["add", "."]);
+    ruby_commit(root, "base");
+    ruby_write(
+        root,
+        "steps.rb",
+        "Given('operation label 0') { page.perform(0) }\n",
+    );
+    ruby_from_ref(root, "HEAD")
+        .args(["--max-structural-class-comparisons", "2"])
+        .arg("--fail-on-incomplete")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "baseline revision `HEAD` is incomplete",
+        ));
+    let rev_parse = |revision: &str| git(&["rev-parse", revision]);
+    let oid = rev_parse("HEAD");
+    let gitlink_entry = ["--cacheinfo", "160000", oid.trim(), "vendor"];
+    git(&[&["update-index", "--add"][..], &gitlink_entry].concat());
+    ruby_commit(root, "gitlink");
+    ruby_from_ref(root, "HEAD")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unsupported submodules"));
+    let gitlink = rev_parse("HEAD");
+    let gitlink_tree = rev_parse("HEAD^{tree}");
+    let clean_tree = rev_parse(&format!("{}^{{tree}}", oid.trim()));
+    for (original, replacement) in [
+        (gitlink.trim(), oid.trim()),
+        (gitlink_tree.trim(), clean_tree.trim()),
+    ] {
+        // A replacement must not hide a real submodule from the snapshot pre-check.
+        git(&["replace", original, replacement]);
+        ruby_from_ref(root, gitlink.trim())
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unsupported submodules"));
+        git(&["replace", "-d", original]);
+        // Conversely, a replacement must not inject a submodule into a clean base.
+        git(&["replace", replacement, original]);
+        ruby_from_ref(root, oid.trim()).assert().code(0);
+        git(&["replace", "-d", replacement]);
+    }
+}
+
+/// Changed mode decodes staged Unicode, untracked and leading-space Ruby paths relative to a
+/// repository subdirectory, keeps findings that reach a changed file as primary or related
+/// location, and drops findings among unchanged files only.
+#[test]
+fn ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "steps/existing.rb",
+        "Given('shared step') { existing() }\n",
+    );
+    ruby_init_repository(root);
+    ruby_write(
+        root,
+        "steps/café changed.rb",
+        "Given('shared step') { changed() }\n",
+    );
+    ruby_git(root, &["add", "steps/café changed.rb"]);
+    ruby_cli(root, "**/*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("duplicate-matcher"))
+        .stdout(predicate::str::contains("steps/café changed.rb"));
+    ruby_cli(root, "**/*.rb")
+        .args(["--changed-since", "HEAD", "--threshold", "100"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Duplication: 2 of 2 definitions (100.00%), threshold 100.00% — PASS",
+        ));
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "packages/e2e/steps/base.rb",
+        "Given('tracked step') { base_tracked() }\nGiven('new step') { base_new() }\nGiven('café step') { base_unicode() }\n",
+    );
+    ruby_write(
+        root,
+        "packages/e2e/steps/träcked.rb",
+        "Given('before edit') { before() }\n",
+    );
+    ruby_write(
+        root,
+        "packages/e2e/steps/old_a.rb",
+        "Given('old step') { old_a() }\n",
+    );
+    ruby_write(
+        root,
+        "packages/e2e/steps/old_b.rb",
+        "Given('old step') { old_b() }\n",
+    );
+    ruby_init_repository(root);
+    ruby_write(
+        root,
+        "packages/e2e/steps/träcked.rb",
+        "Given('tracked step') { after() }\n",
+    );
+    ruby_write(
+        root,
+        "packages/e2e/steps/ new step.rb",
+        "Given('new step') { added() }\n",
+    );
+    ruby_write(
+        root,
+        "packages/e2e/steps/café step.rb",
+        "Given('café step') { changed() }\n",
+    );
+    let subdirectory = root.join("packages/e2e");
+    let matcher_findings = |extra: &[&str]| -> Vec<(String, String)> {
+        let (code, rows) = ruby_jsonl(&subdirectory, "**/*.rb", extra);
+        assert_eq!(code, 1);
+        let mut found: Vec<_> = rows
+            .iter()
+            .filter(|row| row["rule"] == "duplicate-matcher")
+            .map(|row| {
+                (
+                    row["primary"]["path"].as_str().unwrap().to_owned(),
+                    row["related"][0]["path"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    };
+    // Control: a full run also reports the pair among unchanged files.
+    assert_eq!(matcher_findings(&[]).len(), 4);
+    assert_eq!(
+        matcher_findings(&["--changed-since", "HEAD"]),
+        [
+            ("steps/ new step.rb".to_owned(), "steps/base.rb".to_owned()),
+            ("steps/base.rb".to_owned(), "steps/café step.rb".to_owned()),
+            // The changed file is only the related location here.
+            ("steps/base.rb".to_owned(), "steps/träcked.rb".to_owned()),
+        ]
+    );
+}
+
+/// Asserts changed mode reports the changed pair: terminal names the rule, JSONL has two active.
+#[cfg(unix)]
+fn ruby_assert_changed_pair_reported(root: &Path) {
+    ruby_cli(root, "**/*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("duplicate-matcher"));
+    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--changed-since", "HEAD"]);
+    assert_eq!((code, ruby_finding_states(&rows)), (1, (2, 0)));
+}
+
+/// Changed mode keeps Ruby files whose names contain a newline, tracked and untracked.
+#[cfg(unix)]
+#[test]
+fn ruby_changed_since_preserves_newlines_in_unix_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "steps/existing.rb",
+        "Given('shared step') { existing_shared() }\nGiven('tracked step') { existing_tracked() }\n",
+    );
+    ruby_write(
+        root,
+        "steps/line\nbreak.rb",
+        "Given('before') { before() }\n",
+    );
+    ruby_init_repository(root);
+    // Control: nothing changed yet, so nothing is reported.
+    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--changed-since", "HEAD"]);
+    assert_eq!((code, ruby_finding_states(&rows)), (0, (0, 0)));
+    ruby_write(
+        root,
+        "steps/line\nbreak.rb",
+        "Given('tracked step') { changed_tracked() }\n",
+    );
+    ruby_write(
+        root,
+        "steps/new\nline.rb",
+        "Given('shared step') { changed_new() }\n",
+    );
+    ruby_assert_changed_pair_reported(root);
+}
+
+/// Changed mode keeps Ruby files whose names are not UTF-8, tracked and untracked.
+#[cfg(target_os = "linux")]
+#[test]
+fn ruby_changed_since_preserves_non_utf8_linux_names() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "steps/existing.rb",
+        "Given('shared step') { existing_shared() }\nGiven('tracked step') { existing_tracked() }\n",
+    );
+    let tracked = root
+        .join("steps")
+        .join(OsString::from_vec(b"tracked-\xfe.rb".to_vec()));
+    fs::write(&tracked, "Given('before') { before() }\n").unwrap();
+    ruby_init_repository(root);
+    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--changed-since", "HEAD"]);
+    assert_eq!((code, ruby_finding_states(&rows)), (0, (0, 0)));
+    fs::write(&tracked, "Given('tracked step') { changed_tracked() }\n").unwrap();
+    fs::write(
+        root.join("steps")
+            .join(OsString::from_vec(b"non-utf8-\xff.rb".to_vec())),
+        "Given('shared step') { changed_new() }\n",
+    )
+    .unwrap();
+    ruby_assert_changed_pair_reported(root);
+}
+
+/// Changed mode over Ruby sources rejects unsafe or unresolvable revisions, non-repositories,
+/// Git-ignored roots and an inherited Git environment instead of weakening the gate.
+#[test]
+fn ruby_changed_since_rejects_unsafe_revisions_roots_and_environments() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", RUBY_DUPLICATE_PAIR);
+    ruby_init_repository(root);
+    for (revision, message) in [
+        ("--diff-filter=X", "invalid --changed-since revision"),
+        ("", "invalid --changed-since revision"),
+        (" ", "invalid --changed-since revision"),
+        ("--all", "invalid --changed-since revision"),
+        (
+            "missing-revision",
+            "could not resolve --changed-since revision `missing-revision`",
+        ),
+    ] {
+        ruby_cli(root, "*.rb")
+            .arg(format!("--changed-since={revision}"))
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(message));
+    }
+
+    let ignored = tempfile::tempdir().unwrap();
+    ruby_write(ignored.path(), ".gitignore", "ignored/\n");
+    ruby_write(
+        ignored.path(),
+        "ignored/steps.rb",
+        "Given('ignored step') { work() }\n",
+    );
+    ruby_init_repository_adding(ignored.path(), ".gitignore");
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(ignored.path())
+        .args([
+            "ignored",
+            "--definitions",
+            "*.rb",
+            "--changed-since",
+            "HEAD",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("ignored by Git"));
+
+    // The analyzed root is not a repository, so only a leaked environment could resolve one.
+    let decoy = tempfile::tempdir().unwrap();
+    ruby_write(decoy.path(), "sentinel.txt", "sentinel\n");
+    ruby_init_repository(decoy.path());
+    let outside = tempfile::tempdir().unwrap();
+    ruby_write(
+        outside.path(),
+        "steps.rb",
+        "Given('shared step') { work() }\n",
+    );
+    ruby_cli(outside.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "changed-files mode requires a Git repository",
+        ));
+    ruby_cli(outside.path(), "*.rb")
+        .env("GIT_DIR", decoy.path().join(".git"))
+        .env("GIT_WORK_TREE", decoy.path())
+        .env("GIT_INDEX_FILE", decoy.path().join(".git/index"))
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "changed-files mode requires a Git repository",
+        ));
+    assert_eq!(ruby_git(decoy.path(), &["ls-files"]), "sentinel.txt\n");
+}
+
+/// Completeness failures in unchanged Ruby sources and features still surface in changed mode:
+/// unresolved registrations warn, syntax errors warn or fail under the flag, and unreadable,
+/// oversized or unparseable inputs fail closed.
+#[test]
+fn ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs() {
+    let changed_run = |setup: &dyn Fn(&Path)| {
+        let directory = tempfile::tempdir().unwrap();
+        setup(directory.path());
+        ruby_init_repository(directory.path());
+        ruby_write(directory.path(), "changed.txt", "changed\n");
+        directory
+    };
+
+    let unresolved = changed_run(&|root| {
+        ruby_write(
+            root,
+            "steps.rb",
+            "# a dynamic matcher cannot be resolved statically\nGiven(build_pattern) { work() }\n",
+        );
+    });
+    ruby_cli(unresolved.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "steps.rb:2:1: Ruby registration requires a static matcher and a statically resolved handler",
+        ));
+
+    let malformed = changed_run(&|root| ruby_write(root, "steps.rb", "Given('broken step') do\n"));
+    ruby_cli(malformed.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Ruby source contains syntax errors",
+        ));
+    ruby_cli(malformed.path(), "*.rb")
+        .args(["--changed-since", "HEAD", "--fail-on-unparseable"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "Ruby source contains syntax errors",
+        ));
+
+    let unreadable = changed_run(&|root| fs::write(root.join("steps.rb"), [0xff]).unwrap());
+    ruby_cli(unreadable.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("not valid UTF-8"));
+
+    let oversized = changed_run(&|root| {
+        ruby_write_sized(root, "steps.rb", 8 * 1024 * 1024 + 1);
+        ruby_write_sized(root, "features/example.feature", 8 * 1024 * 1024 + 1);
+    });
+    ruby_cli(oversized.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("definition source"))
+        .stderr(predicate::str::contains("feature file"));
+
+    let oversized_feature = changed_run(&|root| {
+        ruby_write(root, "steps.rb", "Given('small step') { work() }\n");
+        ruby_write_sized(root, "features/example.feature", 8 * 1024 * 1024 + 1);
+    });
+    ruby_cli(oversized_feature.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("feature file"))
+        .stderr(predicate::str::contains("input limit"))
+        .stderr(predicate::str::contains("definition source").not());
+
+    let broken_feature = tempfile::tempdir().unwrap();
+    ruby_write(
+        broken_feature.path(),
+        "steps.rb",
+        "Given('a step') { work() }\n",
+    );
+    ruby_write(
+        broken_feature.path(),
+        "broken.feature",
+        "Scenario: Missing feature\n  Given a step\n",
+    );
+    ruby_init_repository(broken_feature.path());
+    ruby_cli(broken_feature.path(), "*.rb")
+        .args(["--changed-since", "HEAD"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "found no tracked or untracked files",
+        ))
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
+
+    let unparsed = tempfile::tempdir().unwrap();
+    ruby_write(
+        unparsed.path(),
+        "vendor/broken.feature",
+        "Scenario: Missing feature\n  Given a step\n",
+    );
+    ruby_init_repository(unparsed.path());
+    ruby_write(
+        unparsed.path(),
+        "steps/new.rb",
+        "Given('new step') { work() }\n",
+    );
+    ruby_cli(unparsed.path(), "**/*.rb")
+        .args(["--changed-since", "HEAD"])
+        .args(["--rule", "unused-definition=error"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("unused-definition").not())
+        .stderr(
+            predicate::str::contains("no discovered feature file was parsed successfully")
+                .and(predicate::str::contains("failed to parse Gherkin feature")),
+        );
+}
+
+/// Exit status over Ruby findings follows rule severity, ignores the duplication threshold for
+/// non-duplication errors, and honours inline, configured and explicit-config suppression policy.
+#[test]
+fn ruby_exit_policy_follows_severity_threshold_and_suppressions() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", RUBY_DUPLICATE_PAIR);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([
+            "check",
+            ".",
+            "--definitions",
+            "*.rb",
+            "--rule",
+            "duplicate-matcher=warning",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"));
+    ruby_write(
+        root,
+        "example.feature",
+        "Feature: Ambiguous\n  Scenario: One\n    Given same step\n",
+    );
+    ruby_cli(root, "*.rb")
+        .args(["--threshold", "100"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("threshold 100.00% — PASS"))
+        .stdout(predicate::str::contains("ambiguous-step"));
+
+    // `--config` replaces the auto-discovered file, including its feature patterns and threshold.
+    // The auto file also turns ambiguous-step off, a key team.json leaves unset: merging the two
+    // files instead of replacing would hide the ambiguous-step finding asserted below.
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"threshold":0,"features":["missing/**/*.feature"],"rules":{"ambiguous-step":"off"}}"#,
+    );
+    ruby_write(
+        root,
+        "team.json",
+        r#"{"threshold":100,"features":["features/**/*.feature"]}"#,
+    );
+    fs::remove_file(root.join("example.feature")).unwrap();
+    ruby_write(
+        root,
+        "features/example.feature",
+        "Feature: Config\n  Scenario: Explicit\n    Given same step\n",
+    );
+    ruby_cli(root, "*.rb")
+        .args(["--config", "team.json"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("threshold 100.00% — PASS"))
+        .stdout(predicate::str::contains("ambiguous-step"));
+    // Control: the auto file's rule override takes effect when that file is used.
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"threshold":100,"features":["features/**/*.feature"],"rules":{"ambiguous-step":"off"}}"#,
+    );
+    ruby_cli(root, "*.rb")
+        .assert()
+        .stdout(predicate::str::contains("ambiguous-step").not());
+
+    let inline = tempfile::tempdir().unwrap();
+    ruby_write(
+        inline.path(),
+        "steps.rb",
+        "# cuke-dedup:ignore duplicate-matcher -- intentionally separate setup\nGiven('same') { first() }\nGiven('same') { second() }\n",
+    );
+    ruby_cli(inline.path(), "*.rb")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 suppressed"));
+    ruby_write(
+        inline.path(),
+        "broken.rb",
+        "Given('unrelated') { work() }\n# cuke-dedup:ignore duplicate-handler\nGiven('broken') { work() }\n",
+    );
+    ruby_cli(inline.path(), "*.rb")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "broken.rb:2:1: inline suppression must use `# cuke-dedup:ignore RULE -- REASON`",
+        ));
+
+    let ambiguous = tempfile::tempdir().unwrap();
+    ruby_write(
+        ambiguous.path(),
+        "steps.rb",
+        "Given('the gauge reads {word}') { parameterized() }\nGiven('the gauge reads high') { literal() }\n",
+    );
+    ruby_write(
+        ambiguous.path(),
+        "features/gauge.feature",
+        "Feature: Gauge\n  Scenario: One\n    Given the gauge reads high\n",
+    );
+    // At `warning` the finding is still reported and the run succeeds.
+    ruby_write(
+        ambiguous.path(),
+        ".cuke-dedup.json",
+        r#"{"rules": {"ambiguous-step": "warning"}, "reporters": ["json", "terminal"], "output": "reports"}"#,
+    );
+    ruby_cli(ambiguous.path(), "*.rb")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"))
+        .stdout(predicate::str::contains("ambiguous-step"));
+    // Control: at the default severity the same corpus fails.
+    ruby_write(
+        ambiguous.path(),
+        ".cuke-dedup.json",
+        r#"{"reporters": ["json", "terminal"], "output": "reports"}"#,
+    );
+    ruby_cli(ambiguous.path(), "*.rb")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("ambiguous-step"));
+    // Suppressed: the finding is retained in the report carrying its reason, not dropped.
+    ruby_write(
+        ambiguous.path(),
+        ".cuke-dedup.json",
+        r#"{"reporters": ["json", "terminal"], "output": "reports", "suppressions": [{"rule": "ambiguous-step", "matcher": "the gauge reads high", "reason": "the literal wins at runtime"}]}"#,
+    );
+    ruby_cli(ambiguous.path(), "*.rb")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 suppressed"));
+    let report = ruby_report(&ambiguous.path().join("reports/cuke-dedup.json"));
+    let ambiguity_reasons: Vec<_> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == "ambiguous-step")
+        .map(|finding| &finding["suppression"]["reason"])
+        .collect();
+    assert_eq!(ambiguity_reasons, ["the literal wins at runtime"]);
+    assert_eq!(report["summary"]["findings"], 0);
+
+    // `package.json` carries the Ruby definition pattern, reporters, rules and suppressions.
+    let package = tempfile::tempdir().unwrap();
+    ruby_write(
+        package.path(),
+        "package.json",
+        r#"{
+  "cukeDedup": {
+    "definitions": ["specs/**/*.rb"],
+    "features": ["specs/**/*.feature"],
+    "reporters": ["json"],
+    "output": "configured-reports",
+    "rules": {"ambiguous-step": "off"},
+    "suppressions": [{
+      "rule": "duplicate-matcher",
+      "matcher": "same step",
+      "reason": "intentional compatibility alias"
+    }]
+  }
+}"#,
+    );
+    ruby_write(package.path(), "specs/steps.rb", RUBY_DUPLICATE_PAIR);
+    ruby_write(
+        package.path(),
+        "specs/example.feature",
+        "Feature: Config\n  Scenario: One\n    Given same step\n",
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(package.path())
+        .arg(".")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "configured-reports/cuke-dedup.json",
+        ));
+    let report = ruby_report(&package.path().join("configured-reports/cuke-dedup.json"));
+    assert_eq!(report["summary"]["definitionsAnalyzed"], 2);
+    assert_eq!(report["summary"]["suppressed"], 1);
+    assert_eq!(
+        report["findings"][0]["suppression"]["reason"],
+        "intentional compatibility alias"
+    );
+}
+
+/// Candidate limits above the hard safety ceilings are rejected from config and CLI, and a Ruby
+/// run at the ceilings is accepted.
+#[test]
+fn ruby_candidate_limits_cannot_exceed_hard_safety_ceilings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", RUBY_DUPLICATE_PAIR);
+    for (config, expected) in [
+        (
+            r#"{"maxCandidateComparisons":2000001}"#,
+            "maxCandidateComparisons must not exceed the hard safety limit of 2000000",
+        ),
+        (
+            r#"{"maxStructuralClassComparisons":250001}"#,
+            "maxStructuralClassComparisons must not exceed the hard safety limit of 250000",
+        ),
+    ] {
+        ruby_write(root, ".cuke-dedup.json", config);
+        for print in [true, false] {
+            let mut command = ruby_cli(root, "*.rb");
+            if print {
+                command.arg("--print-config");
+            }
+            command
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains(expected));
+        }
+    }
+    ruby_write(root, ".cuke-dedup.json", "{}");
+    for (flag, value, expected) in [
+        (
+            "--max-candidate-comparisons",
+            "2000001",
+            "maxCandidateComparisons must not exceed the hard safety limit of 2000000",
+        ),
+        (
+            "--max-structural-class-comparisons",
+            "250001",
+            "maxStructuralClassComparisons must not exceed the hard safety limit of 250000",
+        ),
+    ] {
+        ruby_cli(root, "*.rb")
+            .args([flag, value])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(expected));
+    }
+    let ceilings = [
+        "--max-candidate-comparisons",
+        "2000000",
+        "--max-structural-class-comparisons",
+        "250000",
+    ];
+    let printed = ruby_cli(root, "*.rb")
+        .arg("--print-config")
+        .args(ceilings)
+        .assert()
+        .success();
+    let config: Value = serde_json::from_slice(&printed.get_output().stdout).unwrap();
+    ruby_assert_pointers(
+        &config,
+        &[
+            ("/maxCandidateComparisons", 2_000_000.into()),
+            ("/maxStructuralClassComparisons", 250_000.into()),
+        ],
+    );
+    let (code, rows) = ruby_jsonl(root, "*.rb", &ceilings);
+    assert_eq!(code, 1);
+    assert_eq!(rows.last().unwrap()["analysis"]["truncated"], false);
+    assert!(rows.iter().any(|row| row["rule"] == "duplicate-matcher"));
+}
+
+/// Ruby structural-class truncation warns, still writes findings to every reporter, refuses to
+/// update a baseline, and fails only when `--fail-on-incomplete` opts in.
+#[test]
+fn ruby_candidate_limits_warn_and_still_report_without_failing_the_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Receiver calls with literal arguments form one structural class of ten definitions.
+    let source: String = (0..10)
+        .map(|index| format!("Given('operation label {index}') {{ page.perform({index}) }}\n"))
+        .collect();
+    ruby_write(root, "steps.rb", &source);
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{
+          "reporters": ["json", "html", "sarif"],
+          "output": "reports",
+          "noMetrics": true,
+          "maxCandidateComparisons": 100,
+          "maxStructuralClassComparisons": 2
+        }"#,
+    );
+    ruby_cli(root, "*.rb")
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "warning: analysis is incomplete: evaluated 2 candidate definition comparisons",
+        ))
+        .stderr(predicate::str::contains(
+            "affected structural classes start at steps.rb:1:1",
+        ));
+    let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+    assert!(report.get("metrics").is_none());
+    ruby_assert_pointers(
+        &report["analysis"],
+        &[
+            ("/truncated", true.into()),
+            ("/candidateComparisonsEvaluated", 2.into()),
+            ("/skippedCandidateComparisons", 43.into()),
+            ("/truncatedStructuralClasses", 1.into()),
+            ("/candidateSources/structuralHandler/evaluated", 2.into()),
+        ],
+    );
+    assert!(!report["findings"].as_array().unwrap().is_empty());
+    let html = fs::read_to_string(root.join("reports/cuke-dedup.html")).unwrap();
+    assert!(html.contains("Analysis is incomplete: 2 candidate comparisons were evaluated"));
+    assert!(html.contains(r#"class="truncation-notice" role="alert""#));
+    let sarif = ruby_report(&root.join("reports/cuke-dedup.sarif"));
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["analysis"]["truncated"],
+        true
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+        false
+    );
+    let output = ruby_cli(root, "*.rb")
+        .args(["--reporters", "jsonl"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let summary = records(output.stdout).pop().unwrap();
+    assert_eq!(summary["type"], "summary");
+    assert_eq!(summary["analysis"]["truncated"], true);
+    assert!(summary.get("metrics").is_none());
+
+    ruby_cli(root, "*.rb")
+        .args([
+            "--baseline",
+            "incomplete-baseline.json",
+            "--update-baseline",
+            "--reporters",
+            "json",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "was not updated because analysis is incomplete",
+        ));
+    assert!(!root.join("incomplete-baseline.json").exists());
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "cuke-dedup: analysis is incomplete: evaluated 2 candidate definition comparisons",
+        ));
+}
+
+/// A Ruby registration with a dynamic matcher leaves the corpus incomplete: the default run
+/// passes, strict mode from the CLI or config fails, and no baseline is written.
+#[test]
+fn ruby_dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "steps.rb",
+        "Given('known') { work() }\nGiven(build_pattern) { work() }\n",
+    );
+    ruby_write(
+        root,
+        "suite.feature",
+        "Feature: Usage\n Scenario: Known\n  Given known\n",
+    );
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.rb"],"features":["*.feature"],"reporters":["json"],"output":"reports","noMetrics":true}"#,
+    );
+    let run = || {
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command.current_dir(root).arg(".");
+        command
+    };
+    run().assert().code(0).stderr(predicate::str::contains(
+        "steps.rb:2:1: Ruby registration requires a static matcher",
+    ));
+    let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+    assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
+    assert_eq!(report["corpus"]["incomplete"], true);
+    run().arg("--fail-on-incomplete").assert().code(2);
+    run()
+        .args(["--baseline", "baseline.json", "--update-baseline"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "was not updated because analysis is incomplete",
+        ));
+    assert!(!root.join("baseline.json").exists());
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"definitions":["steps.rb"],"features":["*.feature"],"reporters":["json"],"failOnIncomplete":true}"#,
+    );
+    run().assert().code(2);
+}
+
+/// Ruby sources without an opting-in definition pattern leave default discovery visibly empty,
+/// name the `.rb` opt-in fix, fail under `--require-definitions`, and are analyzed once opted in.
+#[test]
+fn ruby_default_discovery_is_visibly_empty_and_names_the_opt_in_pattern() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "example.feature",
+        "Feature: Empty\n  Scenario: No implementation\n    Given a missing step\n",
+    );
+    ruby_write(root, "steps.rb", "Given('a ruby step') { work() }\n");
+    let guidance = "1 cucumber-ruby source file(s) were not analyzed: opt-in languages need a definition pattern that names their suffix (`.rb`)";
+    let default = || {
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command.current_dir(root).arg(".");
+        command
+    };
+    default()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Analyzed 0 definitions"))
+        .stderr(predicate::str::contains(
+            "automatic discovery found no supported step-definition source files",
+        ))
+        .stderr(predicate::str::contains(guidance));
+    default()
+        .arg("--require-definitions")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(guidance))
+        .stderr(predicate::str::contains(
+            "no step definitions were extracted because no definition source files were discovered",
+        ));
+    ruby_cli(root, "*.rb")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Analyzed 1 definition"))
+        .stderr(predicate::str::contains("cucumber-ruby source file(s) were not analyzed").not());
+}
+
+/// Feature-corpus requirements over Ruby definitions: a missing corpus disables unused findings
+/// unless required, malformed features are summarized or fatal, an empty Markdown feature marks
+/// the corpus incomplete, and an empty classic feature does not hide unused definitions.
+#[test]
+fn ruby_feature_corpus_requirements_and_empty_features_are_visible() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", "Given('working step') { work() }\n");
+    ruby_cli(root, "*.rb")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unused-definition").not())
+        .stderr(predicate::str::contains(
+            "unused-definition findings are disabled",
+        ));
+    ruby_cli(root, "*.rb")
+        .arg("--require-features")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no feature files matched"));
+
+    ruby_write(
+        root,
+        "broken.feature",
+        "Scenario: Missing feature\n  Given a step\n",
+    );
+    ruby_cli(root, "*.rb")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
+    ruby_write(
+        root,
+        "valid.feature",
+        "Feature: Valid\n  Scenario: One\n    Given working step\n",
+    );
+    ruby_cli(root, "*.rb")
+        .arg("--require-features")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "1 discovered feature file(s) could not be parsed",
+        ));
+
+    let markdown = tempfile::tempdir().unwrap();
+    let root = markdown.path();
+    ruby_write(root, "steps.rb", "Given('una cuenta activa') { work() }\n");
+    ruby_write(
+        root,
+        "features/account.feature.md",
+        "# Característica: Cuenta\n\n## Escenario: Disponible\n\n* Dado una cuenta activa\n",
+    );
+    let assertion = ruby_cli(root, "*.rb")
+        .args(["--reporters", "json,jsonl,html,sarif"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unused-definition").not())
+        .stderr(predicate::str::contains(
+            "Gherkin Markdown file features/account.feature.md parsed successfully but produced 0 feature steps",
+        ));
+    let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+    assert_eq!(
+        report["summary"]["byRule"]["unused-definition"],
+        Value::Null
+    );
+    ruby_assert_pointers(
+        &report,
+        &[
+            ("/summary/definitionsAnalyzed", 1.into()),
+            ("/corpus/featureFiles", 1.into()),
+            ("/corpus/featureFilesParsed", 1.into()),
+            ("/corpus/featureFilesWithoutSteps", 1.into()),
+            ("/corpus/incomplete", true.into()),
+        ],
+    );
+    let summary = records(assertion.get_output().stdout.clone())
+        .pop()
+        .unwrap();
+    ruby_assert_pointers(
+        &summary["corpus"],
+        &[
+            ("/featureFilesWithoutSteps", 1.into()),
+            ("/incomplete", true.into()),
+        ],
+    );
+    let html = fs::read_to_string(root.join("reports/cuke-dedup/cuke-dedup.html")).unwrap();
+    assert!(html.contains("Corpus is incomplete"));
+    assert!(html.contains("\"featureFilesWithoutSteps\":1"));
+    let sarif = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.sarif"));
+    ruby_assert_pointers(
+        &sarif["runs"][0]["invocations"][0],
+        &[
+            ("/properties/corpus/featureFilesWithoutSteps", 1.into()),
+            ("/executionSuccessful", false.into()),
+        ],
+    );
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json", "--fail-on-incomplete"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "input extraction did not fully represent every discovered definition or feature file",
+        ));
+
+    let classic = tempfile::tempdir().unwrap();
+    let root = classic.path();
+    ruby_write(
+        root,
+        "steps.rb",
+        "Given('used step') { used() }\nGiven('unused step') { unused() }\n",
+    );
+    ruby_write(
+        root,
+        "features/placeholder.feature",
+        "Feature: Planned work\n",
+    );
+    ruby_write(
+        root,
+        "features/active.feature",
+        "Feature: Active\n  Scenario: Current\n    Given used step\n",
+    );
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("produced 0 feature steps").not());
+    let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+    assert_eq!(report["summary"]["byRule"]["unused-definition"], 1);
+    assert_eq!(report["corpus"]["featureFiles"], 2);
+    assert_eq!(report["corpus"]["featureFilesWithoutSteps"], 0);
+    assert_eq!(report["corpus"]["incomplete"], false);
+}
+
+/// Definition-side requirements over Ruby sources: zero extracted definitions can be required
+/// while reports are still written, unmatched patterns and suppressions are visible, and
+/// diagnostics leave the valid definitions analyzed.
+#[test]
+fn ruby_definition_requirements_and_source_diagnostics_are_visible() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "steps.rb", "HELPER = true\n");
+    ruby_write(
+        root,
+        "example.feature",
+        "Feature: Completeness\n  Scenario: Missing\n    Given invisible step\n",
+    );
+    ruby_cli(root, "*.rb")
+        .args([
+            "--require-definitions",
+            "--reporters",
+            "json",
+            "--output",
+            "reports",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions from 1 discovered definition source file(s)",
+        ));
+    assert!(root.join("reports/cuke-dedup.json").is_file());
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"definitions":["*.rb"],"requireDefinitions":true,"reporters":["json"],"output":"configured-report"}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .arg(".")
+        .assert()
+        .code(2);
+    assert!(root.join("configured-report/cuke-dedup.json").is_file());
+
+    let unmatched = tempfile::tempdir().unwrap();
+    ruby_write(
+        unmatched.path(),
+        "steps.rb",
+        "Given('present step') { work() }\n",
+    );
+    ruby_write(
+        unmatched.path(),
+        ".cuke-dedup.json",
+        r#"{
+  "definitions": ["missing/**/*.rb"],
+  "suppressions": [{
+    "rule": "duplicate-matcher",
+    "matcher": "missing step",
+    "reason": "migration exception"
+  }]
+}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(unmatched.path())
+        .arg(".")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "definition pattern `missing/**/*.rb` matched no files",
+        ))
+        .stderr(predicate::str::contains(
+            "suppression 1 for duplicate-matcher matched no step definitions",
+        ));
+
+    let diagnostics = tempfile::tempdir().unwrap();
+    ruby_write(
+        diagnostics.path(),
+        "steps.rb",
+        "# diagnostics start below line 1\nGiven(/value (?=ahead)/) { advanced() }\nGiven('valid step') { valid() }\nGiven(\"broken \\xZZ\") { broken() }\n",
+    );
+    ruby_write(
+        diagnostics.path(),
+        "example.feature",
+        "Feature: Partial\n  Scenario: Valid\n    Given valid step\n",
+    );
+    for (strict, code) in [(false, 0), (true, 2)] {
+        let mut command = ruby_cli(diagnostics.path(), "*.rb");
+        if strict {
+            command.arg("--fail-on-unparseable");
+        }
+        command
+            .assert()
+            .code(code)
+            .stdout(predicate::str::contains("Analyzed 2 definitions"))
+            .stderr(predicate::str::contains(
+                "steps.rb:2:1: Ruby regular expression is outside the supported static matching subset",
+            ))
+            .stderr(predicate::str::contains("Ruby source contains syntax errors"));
+    }
+}
+
+/// Oversized inputs beside Ruby sources fail closed whatever the reporter, while an oversized
+/// Ruby Cucumber Expression only warns and the report is still written.
+#[test]
+fn ruby_resource_limits_fail_closed_independently_of_reporters() {
+    let over_config_limit = 1024 * 1024 + 1;
+    let over_source_limit = 8 * 1024 * 1024 + 1;
+    let fails_over_limit =
+        |kind: &str| predicate::str::contains(kind).and(predicate::str::contains("input limit"));
+    for (relative, bytes, arguments, kind) in [
+        (
+            "package.json",
+            over_config_limit,
+            &[][..],
+            "package configuration",
+        ),
+        (
+            ".cuke-dedup.json",
+            over_config_limit,
+            &[],
+            "CukeDedup configuration",
+        ),
+        (
+            "playwright.config.ts",
+            over_config_limit,
+            &[],
+            "framework configuration",
+        ),
+        (
+            "baseline.json",
+            over_source_limit,
+            &["--baseline", "baseline.json"],
+            "baseline",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        ruby_write(directory.path(), "steps.rb", RUBY_DUPLICATE_PAIR);
+        ruby_write_sized(directory.path(), relative, bytes);
+        ruby_cli(directory.path(), "*.rb")
+            .args(arguments)
+            .assert()
+            .code(2)
+            .stderr(fails_over_limit(kind));
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    ruby_write_sized(directory.path(), "steps.rb", over_source_limit);
+    for reporter in ["terminal", "json", "jsonl", "html", "sarif"] {
+        let output = tempfile::tempdir().unwrap();
+        ruby_cli(directory.path(), "*.rb")
+            .args(["--reporters", reporter])
+            .arg("--output")
+            .arg(output.path())
+            .assert()
+            .code(2)
+            .stderr(fails_over_limit("definition source"));
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    ruby_write(
+        directory.path(),
+        "steps.rb",
+        &format!("Given('{}') {{ work() }}\n", "a".repeat(1024 * 1024 + 1)),
+    );
+    ruby_cli(directory.path(), "*.rb")
+        .args(["--reporters", "json"])
+        .arg("--output")
+        .arg(output.path())
+        .assert()
+        .code(0)
+        .stderr(
+            predicate::str::contains("warning: step matcher at")
+                .and(predicate::str::contains("regex resource limit")),
+        );
+    assert_eq!(
+        ruby_report(&output.path().join("cuke-dedup.json"))["summary"]["definitionsAnalyzed"],
+        1
+    );
+}
+
+/// Machine reports over Ruby findings: the implicit check writes every reporter with corpus and
+/// metric fields, `--no-metrics` and `noMetrics` drop metrics, JSON uses the default directory,
+/// JSONL streams only records, and `--reporters` before the target announces file output.
+#[test]
+fn ruby_machine_reports_follow_metrics_and_stream_contracts() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "features/steps/checkout.rb",
+        "Then('the receipt is visible') { receipt.verify_visible }\nThen('the receipt is visible') { other_receipt.verify_visible }\n",
+    );
+    ruby_write(
+        root,
+        "features/checkout.feature",
+        "Feature: Checkout\n  Scenario: Receipt\n    Then the receipt is visible\n",
+    );
+    ruby_cli(root, "**/*.rb")
+        .args(["--reporters", "terminal,json,html,sarif"])
+        .args(["--output", "artifacts"])
+        .assert()
+        .code(1)
+        .stdout(
+            predicate::str::contains("duplicate-matcher").and(predicate::str::contains(
+                "Analyzed 2 definitions and 1 feature step",
+            )),
+        );
+    let report = ruby_report(&root.join("artifacts/cuke-dedup.json"));
+    ruby_assert_pointers(
+        &report,
+        &[
+            ("/schemaVersion", "3".into()),
+            ("/summary/errors", 2.into()), // duplicate matcher + ambiguity
+            ("/metrics/definitionFiles", 1.into()),
+            ("/corpus/definitionFiles", 1.into()),
+            ("/corpus/definitionFilesWithDefinitions", 1.into()),
+            ("/corpus/definitionsExtracted", 2.into()),
+            ("/metrics/featureFiles", 1.into()),
+            ("/corpus/featureFiles", 1.into()),
+            ("/corpus/featureFilesParsed", 1.into()),
+            ("/metrics/filesDiscovered", 2.into()),
+        ],
+    );
+    for phase in ["discoveryMs", "parsingMs", "analysisMs"] {
+        let elapsed = report["metrics"].get(phase).and_then(Value::as_f64);
+        assert!(
+            elapsed.is_some_and(|value| value >= 0.0),
+            "missing non-negative {phase}"
+        );
+    }
+    let html = fs::read_to_string(root.join("artifacts/cuke-dedup.html")).unwrap();
+    assert!(html.contains("\"definitionFilesWithDefinitions\":1"));
+    let sarif = ruby_report(&root.join("artifacts/cuke-dedup.sarif"));
+    ruby_assert_pointers(
+        &sarif["runs"][0]["invocations"][0],
+        &[
+            (
+                "/properties/corpus/definitionFilesWithDefinitions",
+                1.into(),
+            ),
+            ("/executionSuccessful", true.into()),
+        ],
+    );
+
+    // JSONL streams finding records then one summary, with nothing else on stdout.
+    let streaming = ruby_cli(root, "**/*.rb")
+        .args(["--reporters", "jsonl"])
+        .assert()
+        .code(1);
+    let stdout = String::from_utf8(streaming.get_output().stdout.clone()).unwrap();
+    let streamed = records(stdout.clone().into_bytes());
+    let (summary, findings) = streamed.split_last().unwrap();
+    assert!(!findings.is_empty());
+    assert!(findings.iter().all(|record| record["type"] == "finding"));
+    ruby_assert_pointers(
+        summary,
+        &[
+            ("/type", "summary".into()),
+            ("/metrics/filesDiscovered", 2.into()),
+            ("/corpus/definitionFilesWithDefinitions", 1.into()),
+            ("/corpus/definitionsExtracted", 2.into()),
+            ("/corpus/featureFilesParsed", 1.into()),
+        ],
+    );
+    assert!(!stdout.contains("Reports written to:"));
+
+    let single = tempfile::tempdir().unwrap();
+    let root = single.path();
+    ruby_write(root, "steps.rb", "Given('one step') { work() }\n");
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json", "--no-metrics"])
+        .assert()
+        .success();
+    let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+    assert!(report.get("metrics").is_none());
+    ruby_assert_pointers(
+        &report["corpus"],
+        &[
+            ("/definitionFiles", 1.into()),
+            ("/definitionFilesWithDefinitions", 1.into()),
+            ("/definitionsExtracted", 1.into()),
+        ],
+    );
+    let (code, rows) = ruby_jsonl(root, "*.rb", &[]);
+    assert_eq!(code, 0);
+    assert_eq!(rows[0]["type"], "summary");
+    assert!(rows[0].get("metrics").is_none());
+    assert_eq!(rows[0]["corpus"]["definitionsExtracted"], 1);
+
+    fs::remove_dir_all(root.join("reports")).unwrap();
+    let mut announced = Command::cargo_bin("cuke-dedup").unwrap();
+    announced
+        .current_dir(root)
+        .args(["--reporters", "json", ".", "--definitions", "*.rb"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Reports written to:"))
+        .stdout(predicate::str::contains("cuke-dedup.json"));
+    // The documented default output directory, with metrics present unless disabled.
+    let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+    assert!(report.get("metrics").is_some());
+    assert_eq!(report["corpus"]["definitionsExtracted"], 1);
+
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"definitions":["*.rb"],"reporters":["json"],"noMetrics":true}"#,
+    );
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .arg(".")
+        .assert()
+        .success();
+    let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+    assert!(report.get("metrics").is_none());
+    assert_eq!(report["corpus"]["definitionsExtracted"], 1);
+}
+
+/// A JSONL consumer that closes the pipe early ends a Ruby run cleanly.
+#[cfg(unix)]
+#[test]
+fn ruby_closed_jsonl_consumer_is_a_clean_termination() {
+    let directory = tempfile::tempdir().unwrap();
+    // Distinct duplicate pairs, not one cluster: the stream must exceed the 64 KiB pipe buffer so
+    // a write reaches the closed consumer.
+    let definitions: String = (0..400)
+        .map(|index| {
+            format!("Given('step {index}') {{ alpha_{index}() }}\nGiven('step {index}') {{ beta_{index}() }}\n")
+        })
+        .collect();
+    ruby_write(directory.path(), "steps.rb", &definitions);
+    let output = ProcessCommand::new("bash")
+        .args([
+            "-o",
+            "pipefail",
+            "-c",
+            "\"$CUKE_BINARY\" \"$CUKE_ROOT\" --definitions '*.rb' --reporters jsonl --threshold 100 | head -n 1 >/dev/null",
+        ])
+        .env("CUKE_BINARY", assert_cmd::cargo::cargo_bin!("cuke-dedup"))
+        .env("CUKE_ROOT", directory.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Control: the uninterrupted stream is larger than a pipe buffer.
+    let stream = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(directory.path())
+        .args([
+            "--definitions",
+            "*.rb",
+            "--reporters",
+            "jsonl",
+            "--threshold",
+            "100",
+        ])
+        .output()
+        .unwrap()
+        .stdout;
+    assert!(stream.len() > 4 * 65_536, "{} bytes", stream.len());
+}
+
+/// An unparseable Ruby file is tolerated and reported by default with its valid neighbour's
+/// findings retained, fails under `--fail-on-unparseable` or `--fail-on-incomplete`, and a
+/// corpus of parseable files reports no syntax incompleteness under either default or flag.
+#[test]
+fn ruby_unparseable_sources_are_tolerated_reported_and_gated_by_flags() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"rules":{"duplicate-matcher":"warning"},"threshold":100}"#,
+    );
+    ruby_write(
+        root,
+        "valid.rb",
+        "Given('an analyzed step') { first() }\nGiven('an analyzed step') { second() }\n",
+    );
+    // Control: only parseable files, so no syntax warning and the strict flag passes.
+    ruby_cli(root, "*.rb")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Ruby source contains syntax errors").not());
+    ruby_cli(root, "*.rb")
+        .arg("--fail-on-unparseable")
+        .assert()
+        .success();
+
+    ruby_write(root, "broken.rb", "Given('broken') do\n");
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Ruby source contains syntax errors",
+        ));
+    let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+    assert_eq!(report["corpus"]["incomplete"], true);
+    assert_eq!(report["summary"]["byRule"]["duplicate-matcher"], 1);
+    ruby_cli(root, "*.rb")
+        .arg("--fail-on-unparseable")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "Ruby source contains syntax errors",
+        ));
+    ruby_cli(root, "*.rb")
+        .arg("--fail-on-incomplete")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("incomplete"));
 }

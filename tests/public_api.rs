@@ -385,3 +385,67 @@ fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
     usage.extend(None);
     assert!(usage.unknown);
 }
+
+/// External callers over Ruby extraction: an over-limit Ruby regex yields a typed `Incomplete`
+/// diagnostic off line 1, the partial result keeps the neighbouring Ruby finding with the
+/// regex resource-limit diagnostic, strict `analyze` rejects it, and every public renderer
+/// takes the Ruby result through one report context.
+#[test]
+fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api() {
+    use cuke_dedup::source_adapter::ExtractionDiagnosticKind;
+    let root = tempfile::tempdir().unwrap();
+    let file = SourceFile {
+        path: root.path().join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let source = format!(
+        "Given('kept') {{ kept }}\nGiven('kept') {{ other }}\n\nGiven(/{}/) {{ work }}\n",
+        "a".repeat(1024 * 1024 + 1)
+    );
+    let extracted = registered_adapter(SourceLanguage::Ruby)
+        .extract(&source, &file)
+        .unwrap();
+    assert_eq!(extracted.definitions.len(), 3);
+    let diagnostic = extracted
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains("regular expression"))
+        .unwrap();
+    assert_eq!(diagnostic.kind, ExtractionDiagnosticKind::Incomplete);
+    assert_eq!(diagnostic.level, ExtractionDiagnosticLevel::Warning);
+    assert_eq!(
+        (diagnostic.location.line, diagnostic.location.column),
+        (4, 1)
+    );
+
+    let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+    let outcome =
+        analyze_with_diagnostics(extracted.definitions.clone(), Vec::new(), &config).unwrap();
+    assert_eq!(outcome.result.definitions.len(), 3);
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("steps.rb:4:1 exceeds")
+            && message.contains("regex resource limit")));
+    assert_eq!(outcome.result.findings.len(), 1);
+    assert_eq!(outcome.result.findings[0].rule, Rule::DuplicateMatcher);
+    let error = analyze(extracted.definitions, Vec::new(), &config).unwrap_err();
+    assert!(error.to_string().contains("regex resource limit"));
+
+    let context = ReportContext::new(&outcome.result, root.path(), 5.0);
+    assert!(render_json(&context)
+        .unwrap()
+        .contains("\"path\": \"steps.rb\""));
+    assert!(render_jsonl(&context)
+        .unwrap()
+        .contains("\"type\":\"summary\""));
+    assert!(render_html(&context).unwrap().contains("steps.rb:1:1"));
+    assert!(render_sarif(&context)
+        .unwrap()
+        .contains("\"uri\": \"steps.rb\""));
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(terminal.contains("Analyzed 3 definitions"));
+    assert!(terminal.contains("steps.rb:1:1"));
+}

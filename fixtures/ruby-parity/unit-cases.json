@@ -1735,188 +1735,329 @@
       "tests": [
         {
           "name": "changed_mode_keeps_findings_related_to_a_changed_file",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode and baseline runs over Ruby sources (a baseline written from a Ruby corpus, a moved Ruby definition, a changed Ruby file) asserted through the built binary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
+          },
+          "rationale": "The changed-mode JSONL keeps exactly the three pairs touching changed Ruby files and drops the old_a.rb/old_b.rb pair that the full-run control reports.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "cluster_fingerprints_are_location_and_member_order_independent",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: baseline fingerprints over findings produced from Ruby sources (cluster membership, pair order, multipart framing against Ruby locations) pinned by a Ruby baseline run. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: the baseline sorts cluster member fingerprints before hashing. The analysis already emits sorted members, so no source can present another order; the end-to-end Ruby property is pinned by `ruby_baseline_cluster_identity_ignores_location_and_member_order`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "multipart_framing_cannot_suppress_a_different_cluster",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: baseline fingerprints over findings produced from Ruby sources (cluster membership, pair order, multipart framing against Ruby locations) pinned by a Ruby baseline run. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: framing of cluster fingerprint parts. The parts are analyzer-computed hashes that no source text can shape into a separator collision.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "multipart_framing_cannot_suppress_a_different_fallback_finding",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: baseline fingerprints over findings produced from Ruby sources (cluster membership, pair order, multipart framing against Ruby locations) pinned by a Ruby baseline run. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: framing of fallback finding parts. Message and matcher-difference fields are analyzer templates that no source text can shape into a separator collision.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_files_are_relative_to_a_subdirectory_and_include_untracked_files",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode path decoding exercised by a Ruby changed-mode run (non-UTF-8 and newline-bearing `.rb` names, subdirectory roots, untracked Ruby files). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
+          },
+          "rationale": "From packages/e2e, a modified tracked \"träcked.rb\", an untracked \" new step.rb\" and an untracked \"café step.rb\" are each in the changed set, shown by their findings with subdirectory-relative paths; the unix trailing-space name is not representable because a Ruby source must end in \".rb\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_files_preserve_newlines_in_unix_names",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode path decoding exercised by a Ruby changed-mode run (non-UTF-8 and newline-bearing `.rb` names, subdirectory roots, untracked Ruby files). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_preserves_newlines_in_unix_names"
+          },
+          "rationale": "A tracked \"steps/line\\nbreak.rb\" modified after commit contributes a duplicate-matcher finding in changed mode (2 active findings total), after a control showing no findings before the edit.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "git_path_decoder_preserves_non_utf8_unix_bytes",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode path decoding exercised by a Ruby changed-mode run (non-UTF-8 and newline-bearing `.rb` names, subdirectory roots, untracked Ruby files). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_preserves_non_utf8_linux_names"
+          },
+          "rationale": "The changed-mode run decodes non-UTF-8 Git path bytes for tracked and untracked .rb files into findings; gated to Linux because macOS filesystems reject non-UTF-8 names.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_files_preserve_non_utf8_linux_names",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode path decoding exercised by a Ruby changed-mode run (non-UTF-8 and newline-bearing `.rb` names, subdirectory roots, untracked Ruby files). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_preserves_non_utf8_linux_names"
+          },
+          "rationale": "A tracked steps/tracked-\\xfe.rb modified after commit contributes a finding in changed mode (2 active total) after a no-change control (Linux-gated).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "semantic_baseline_survives_location_changes_and_enforces_multiplicity",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode and baseline runs over Ruby sources (a baseline written from a Ruby corpus, a moved Ruby definition, a changed Ruby file) asserted through the built binary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings"
+          },
+          "rationale": "A baselined Ruby pair stays suppressed after a move to shifted lines; a second copy of the pair yields two findings with the accepted fingerprint, of which only one is suppressed, and the baseline still totals 1.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_mode_validates_revisions_repositories_and_ignored_roots",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode and baseline runs over Ruby sources (a baseline written from a Ruby corpus, a moved Ruby definition, a changed Ruby file) asserted through the built binary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
+          },
+          "rationale": "Revisions \"\", \" \", \"--all\" and \"missing-revision\" each exit 2 with the invalid/unresolvable revision message, a non-repository root fails with \"changed-files mode requires a Git repository\", and an ignored root fails with \"ignored by Git\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_mode_keeps_findings_with_changed_related_locations",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode and baseline runs over Ruby sources (a baseline written from a Ruby corpus, a moved Ruby definition, a changed Ruby file) asserted through the built binary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
+          },
+          "rationale": "The tracked step finding has the unchanged steps/base.rb as primary and the changed steps/träcked.rb only as related location, and is kept.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_validation_counts_removals_and_ignores_suppressed_findings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode and baseline runs over Ruby sources (a baseline written from a Ruby corpus, a moved Ruby definition, a changed Ruby file) asserted through the built binary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs"
+          },
+          "rationale": "Updating nested/baseline.json from two Ruby duplicate pairs reports \"2 added, 0 removed, 2 total\"; after one pair is removed and the other inline-suppressed the update reports \"0 added, 2 removed, 0 total\"; applying schema 2, schema 99 and non-JSON baselines exits 2 with the expected messages.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "comparison_fingerprints_are_independent_of_pair_order",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: baseline fingerprints over findings produced from Ruby sources (cluster membership, pair order, multipart framing against Ruby locations) pinned by a Ruby baseline run. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings"
+          },
+          "rationale": "The moved Ruby file lists the pair in reverse order, so the primary and related sides swap, and the baseline still suppresses it.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },
     "src/reporters/tests.rs": {
-      "sourceSha256": "f362c2afd1a9a4087c611eaed01f54ed76bcf5a849cd64295ae0a2cb93b9482b",
+      "sourceSha256": "a43ed588e50edaf63a56d5460cfcf8fa6fa38f37d8a29552259346e25e78b18b",
       "tests": [
         {
           "name": "json_uses_versioned_schema_and_relative_paths",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "The parity runner reads the JSON report and its required-finding oracles match relative primary paths and matcher identity for emitted findings. Remaining: The runner does not assert the schema version or every evidence field, so this does not cover the full reporter unit test."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test renders a Ruby analysis as versioned JSON with relative `steps/steps.rb` paths, camelCase evidence and the Ruby handler text.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "default_summary_uses_the_strict_zero_percent_threshold",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (default summary uses the strict zero percent threshold): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test builds the default summary from a Ruby result and asserts the 0% threshold fails.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "terminal_report_has_version_and_finding_spacing",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (terminal report has version and finding spacing): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_the_terminal_reporter"
+          },
+          "rationale": "The Ruby terminal test asserts the version header, rule headings, finding spacing and `.rb` locations over Ruby findings.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "terminal_report_colors_only_selected_text",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (terminal report colors only selected text): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_the_terminal_reporter"
+          },
+          "rationale": "The Ruby terminal test strips the color codes from colored output over Ruby findings and compares it with plain output.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "terminal_report_uses_singular_finding_and_omits_optional_timing",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (terminal report uses singular finding and omits optional timing): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_the_terminal_reporter"
+          },
+          "rationale": "The Ruby terminal test renders one Ruby finding without metrics and asserts singular wording and no timing line.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "terminal_report_propagates_footer_write_failures",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (terminal report propagates footer write failures): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_the_terminal_reporter"
+          },
+          "rationale": "The Ruby terminal test fails the writer at each footer line of a Ruby report and asserts the I/O error propagates.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "jsonl_emits_self_contained_findings_and_a_final_summary",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (jsonl emits self contained findings and a final summary): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test asserts self-contained JSONL finding records, the suppressed record and the final summary. Truncation is driven by a Ruby matcher over the limit; Ruby handler snippets are capped at the JSONL limit, so the handler field cannot truncate.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "machine_reporters_preserve_cluster_evidence",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (machine reporters preserve cluster evidence): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_respect_every_reporter_bound"
+          },
+          "rationale": "The Ruby bounds test asserts cluster evidence (member count, fingerprints, truncation flag) for a Ruby duplicate cluster in JSON, JSONL and SARIF.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "every_reporter_bounds_large_cluster_records_and_signals_omissions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (every reporter bounds large cluster records and signals omissions): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_respect_every_reporter_bound"
+          },
+          "rationale": "The Ruby bounds test caps a 300-member Ruby duplicate cluster in every reporter and asserts the omission signals.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "sarif_contains_only_active_findings_with_stable_locations",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (sarif contains only active findings with stable locations): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test asserts SARIF holds only the active Ruby findings, each with a `steps/steps.rb` location and a v3 fingerprint.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "every_sarif_rule_links_to_its_documentation_section",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (every sarif rule links to its documentation section): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test asserts the SARIF descriptor and documentation link for each rule the Ruby analysis produces; the full rule list is adapter-independent.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "html_is_self_contained_and_escapes_finding_text",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (html is self contained and escapes finding text): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test escapes a Ruby handler containing `</script>` in self-contained HTML and asserts the embedded data equals the JSON report.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "buffered_reports_cap_findings_and_signal_truncation",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (buffered reports cap findings and signal truncation): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_respect_every_reporter_bound"
+          },
+          "rationale": "The Ruby bounds test caps one more than the buffered limit of Ruby findings in JSON, SARIF, HTML and terminal and asserts each truncation notice; JSONL keeps them all.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "bounded_reports_never_displace_an_error_with_warnings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (bounded reports never displace an error with warnings): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_respect_every_reporter_bound"
+          },
+          "rationale": "The Ruby bounds test places one Ruby error after a full page of Ruby warnings and asserts every buffered reporter keeps it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "terminal_groups_each_rule_once_and_removes_control_characters",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (terminal groups each rule once and removes control characters): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_the_terminal_reporter"
+          },
+          "rationale": "The Ruby terminal test groups Ruby findings once per rule and strips escape, bidi and tag characters that a Ruby matcher carries (control asserts the matcher holds them).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "reporters_preserve_finding_counts_and_information_across_formats",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (reporters preserve finding counts and information across formats): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test asserts the same active, suppressed and per-severity counts across terminal, JSON, JSONL, SARIF and HTML for one Ruby analysis.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "public_report_writer_uses_one_context_for_every_configured_format",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: reporter output over a Ruby analysis result (public report writer uses one context for every configured format): every reporter rendered from one Ruby corpus with the asserted field, bounding and escaping checks. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "The Ruby machine-reporter test writes a Ruby analysis through the public writer with terminal, JSON, HTML and SARIF configured and asserts each file holds the Ruby path.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_findings_render_through_the_terminal_reporter",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_the_terminal_reporter"
+          },
+          "rationale": "Ruby terminal-reporter evidence: findings from the Ruby adapter rendered with header, colors, footer failures, rule grouping and control-character stripping.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_findings_render_through_every_machine_reporter",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_render_through_every_machine_reporter"
+          },
+          "rationale": "Ruby machine-reporter evidence: findings from the Ruby adapter rendered as JSON, JSONL, SARIF and HTML, plus counts and the public writer.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_findings_respect_every_reporter_bound",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/reporters/tests.rs",
+            "name": "ruby_findings_respect_every_reporter_bound"
+          },
+          "rationale": "Ruby reporter-bounds evidence: a large Ruby cluster, more Ruby findings than the buffered cap, and error priority over Ruby warnings.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },
@@ -3523,32 +3664,49 @@
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `baseline from ref compares history without mutating the checkout` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_from_ref_compares_history_without_mutating_the_checkout"
+          },
+          "rationale": "Ports the original over .rb sources in a space-named (non-UTF-8 on Linux) repository with hostile hooks, filters, a global config and GIT_* env (the mixed-case config variables take effect only on Windows): asserts exits 0/1/1/0 by allowance, 1 active + 1 suppressed after third.rb, Ruby parse failure fatal only under --fail-on-unparseable, HEAD/index/worktrees unchanged, and every flag-misuse error.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_valid",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `baseline from ref rejects incomplete history even when current files are valid` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_from_ref_rejects_or_reports_incomplete_history"
+          },
+          "rationale": "Five Ruby base revisions (syntax error, unresolved require, no definitions, no feature, invalid Gherkin) exit 2 under `--fail-on-incomplete`, each naming its cause, while a complete base under the same flags exits 0.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_from_ref_tolerates_incomplete_history_by_default_and_reports_it",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `baseline from ref tolerates incomplete history by default and reports it` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_from_ref_rejects_or_reports_incomplete_history"
+          },
+          "rationale": "A base with a valid steps.rb plus an unparseable broken.rb succeeds by default with \"baseline revision `HEAD` is incomplete\" and the --fail-on-incomplete hint, and exits 2 under --fail-on-incomplete.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `baseline from ref rejects truncated base and unmaterialized submodules` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules"
+          },
+          "rationale": "Ten Ruby page.perform(i) definitions truncated by --max-structural-class-comparisons 2 make the base incomplete (exit 2), and gitlink submodules are refused whether real, hidden or injected by git replace.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `baseline tree output is bounded before git exit and children are reaped` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: the Git tree-listing reader bound and child reaping. A Git shim supplies the listing, so no source of any language is read.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3559,9 +3717,13 @@
         },
         {
           "name": "threshold_does_not_tolerate_non_duplication_errors",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby corpus under the duplication threshold that still exits 1 on an ambiguous-step error, pinned by a group oracle. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
+          },
+          "rationale": "Ruby duplicate pair plus a feature step under --threshold 100 exits 1 with \"threshold 100.00% — PASS\" and an ambiguous-step finding.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "invalid_thresholds_are_configuration_errors",
@@ -3579,9 +3741,13 @@
         },
         {
           "name": "inline_suppressions_require_a_rule_and_reason_and_affect_exit_status",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the Ruby inline-suppression regression covers a scoped directive, an unrelated rule and a missing reason; unknown rules, adjacent directives and malformed directives on Ruby sources are not pinned. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
+          },
+          "rationale": "A Ruby \"# cuke-dedup:ignore duplicate-matcher -- reason\" directive yields \"1 suppressed\" and exit 0; a reason-less directive on line 2 of broken.rb exits 2 with \"broken.rb:2:1: inline suppression must use `# cuke-dedup:ignore RULE -- REASON`\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "print_config_reports_merged_values_without_running_discovery",
@@ -3592,33 +3758,53 @@
         },
         {
           "name": "candidate_limits_cannot_exceed_hard_safety_ceilings_from_config_or_cli",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate ceilings decoded from config and CLI applied to a Ruby run at the ceiling boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_limits_cannot_exceed_hard_safety_ceilings"
+          },
+          "rationale": "Over-ceiling limits from config (with and without --print-config) and CLI exit 2 with the hard-limit messages beside a Ruby corpus; at-ceiling values print 2000000/250000 and a Ruby run at those values completes untruncated with its duplicate-matcher finding.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "zero_config_implicit_check_reports_duplicates_and_writes_machine_reports",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `zero config implicit check reports duplicates and writes machine reports` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
+          },
+          "rationale": "With no config file (only the mandatory --definitions opt-in) the implicit check over two Ruby Then registrations exits 1, writes terminal/json/html/sarif, and asserts schemaVersion, errors 2, corpus and metrics counts, phase timings, HTML census and SARIF executionSuccessful true.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "no_metrics_produces_reproducible_machine_report_content",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `no metrics produces reproducible machine report content` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
+          },
+          "rationale": "--no-metrics over one Ruby definition omits metrics from the default-directory JSON report and from the JSONL summary while keeping corpus counts of 1.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "project_config_can_disable_metrics",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `project config can disable metrics` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
+          },
+          "rationale": "A .cuke-dedup.json with definitions [\"*.rb\"], reporters [\"json\"] and noMetrics true produces a JSON report without metrics and definitionsExtracted 1.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "empty_default_definition_discovery_is_visible",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `empty default definition discovery is visible` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_default_discovery_is_visibly_empty_and_names_the_opt_in_pattern"
+          },
+          "rationale": "With only a feature and an un-opted steps.rb, default discovery succeeds with \"automatic discovery found no supported step-definition source files\" and Analyzed 0 definitions, and --require-definitions exits 2 with \"no step definitions were extracted because no definition source files were discovered\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "unresolved_registration_calls_warn_and_expose_the_corpus_census",
@@ -3628,15 +3814,23 @@
         },
         {
           "name": "empty_converted_gherkin_markdown_marks_the_corpus_incomplete",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby Markdown feature is discovered but yields no feature steps; its oracle expects incomplete analysis and exit 2, while forbidding unsupported unused-definition conclusions. Remaining: The source test also asserts four reporter-specific corpus fields and diagnostics, which the parity oracle does not check."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
+          },
+          "rationale": "Ruby steps with a step-less features/account.feature.md assert the stderr notice, no unused-definition, JSON/JSONL/HTML/SARIF featureFilesWithoutSteps 1 and incomplete true, SARIF executionSuccessful false, and exit 2 under --fail-on-incomplete — all four reporter-specific fields the parity oracle lacked.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "valid_empty_classic_feature_does_not_hide_unused_definitions",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby group has a valid classic feature with zero steps, complete analysis, and required unused-definition findings. Remaining: The source test combines an empty feature with a separate non-empty feature; the Ruby group has zero feature steps across its corpus."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
+          },
+          "rationale": "An empty placeholder.feature beside a non-empty active.feature over Ruby used/unused steps: no 0-steps notice, unused-definition 1, featureFiles 2, featureFilesWithoutSteps 0, incomplete false.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "partial_definition_extraction_is_visible_in_the_corpus_census",
@@ -3646,27 +3840,43 @@
         },
         {
           "name": "unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: changed-mode run over Ruby sources keeping unresolved-registration warnings; needs a Ruby changed-mode test. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "In changed mode with only changed.txt changed, the unchanged steps.rb dynamic-matcher registration still warns \"steps.rb:2:1: Ruby registration requires a static matcher and a statically resolved handler\" and the run succeeds.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "empty_definition_extraction_can_be_required_and_still_writes_reports",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: `--require-definitions` over an empty Ruby corpus writing reports; needs a Ruby run (config decoding is covered by `require_definitions_is_available_from_project_config`). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_definition_requirements_and_source_diagnostics_are_visible"
+          },
+          "rationale": "A Ruby file with only HELPER = true under --require-definitions exits 2 with \"definition extraction produced 0 definitions from 1 discovered definition source file(s)\" and writes reports/cuke-dedup.json; the config-file form (requireDefinitions) exits 2 and writes configured-report/cuke-dedup.json.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "candidate_limits_warn_and_still_report_without_failing_the_run",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `candidate limits warn and still report without failing the run` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_limits_warn_and_still_report_without_failing_the_run"
+          },
+          "rationale": "Ten Ruby page.perform(i) definitions reproduce the original numbers exactly: exit 0 with the truncation warning at steps.rb:1:1, evaluated 2 / skipped 43 / 1 truncated class, HTML notice, SARIF unsuccessful, JSONL truncated, baseline update refused, and exit 2 under --fail-on-incomplete.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "explicit_check_honors_cli_rule_severity_for_exit_status",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `explicit check honors cli rule severity for exit status` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
+          },
+          "rationale": "\"check . --definitions *.rb --rule duplicate-matcher=warning\" over a Ruby duplicate pair succeeds and prints \"[warning]\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "zero_config_analyzes_playwright_bdd_without_loading_playwright",
@@ -3676,9 +3886,13 @@
         },
         {
           "name": "invalid_gherkin_is_an_operational_error",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Malformed Gherkin makes the Ruby corpus incomplete and strict execution exits 2; a valid neighboring feature still contributes its expected final findings. Remaining: The exact malformed syntax and stderr wording differ; only incomplete exit and retained-neighbor behavior map."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
+          },
+          "rationale": "A Ruby definition with a broken.feature lacking a Feature keyword exits 2 with \"failed to parse Gherkin feature\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "default_discovery_parses_gherkin_markdown",
@@ -3737,9 +3951,9 @@
         },
         {
           "name": "static_project_config_errors_survive_changed_mode_and_every_reporter",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `static project config errors survive changed mode and every reporter` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: `tsconfig.json` `extends` resolution in the TypeScript frontend. A Ruby run never reads `tsconfig.json`. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
         },
         {
           "name": "oversized_registration_modules_cannot_silently_remove_definitions",
@@ -3803,57 +4017,90 @@
         },
         {
           "name": "oversized_config_and_baseline_inputs_are_fatal",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an oversized baseline written from a Ruby corpus and an oversized config beside Ruby sources both fatal. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_resource_limits_fail_closed_independently_of_reporters"
+          },
+          "rationale": "Each oversized package.json, .cuke-dedup.json, playwright.config.ts and baseline.json beside a Ruby corpus exits 2 naming the input kind and \"input limit\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "oversized_unchanged_sources_and_features_fail_changed_analysis_closed",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `oversized unchanged sources and features fail changed analysis closed` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "An oversized unchanged steps.rb and feature in changed mode exit 2 naming both \"definition source\" and \"feature file\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "an_oversized_unchanged_feature_alone_fails_changed_analysis_closed",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `an oversized unchanged feature alone fails changed analysis closed` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "With a small valid steps.rb and only the unchanged feature oversized, changed mode exits 2 with \"feature file\" and \"input limit\" and no definition-source complaint.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `an unreadable unchanged definition cannot make changed analysis pass` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "An unchanged steps.rb containing byte 0xff makes changed mode exit 2 with \"not valid UTF-8\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "a_malformed_unchanged_definition_is_reported_in_changed_mode_and_gated_by_the_flag",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `a malformed unchanged definition is reported in changed mode and gated by the flag` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "An unchanged unterminated Ruby block succeeds in changed mode with \"Ruby source contains syntax errors\" and exits 2 with the same message under --fail-on-unparseable.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an unparseable Ruby file tolerated by default and fatal under the flag; needs a Ruby group with both runs. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unparseable_sources_are_tolerated_reported_and_gated_by_flags"
+          },
+          "rationale": "With duplicate-matcher=warning and threshold 100 in config, adding an unparseable broken.rb beside valid.rb succeeds with \"Ruby source contains syntax errors\", the JSON report has incomplete true and duplicate-matcher 1, and --fail-on-unparseable and --fail-on-incomplete each exit 2.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "a_corpus_of_only_parseable_files_reports_no_syntax_incompleteness",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `a corpus of only parseable files reports no syntax incompleteness` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unparseable_sources_are_tolerated_reported_and_gated_by_flags"
+          },
+          "rationale": "Before broken.rb exists the parseable Ruby corpus succeeds without the \"Ruby source contains syntax errors\" warning and also succeeds under --fail-on-unparseable, the opposite-answer control for the tolerance case.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed mode keeps non fatal warnings scoped to changed definitions` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Adapter-independent stage `session-plumbing`: changed mode scopes non-completeness warnings to changed files. Every Ruby warning is a completeness warning, which changed mode keeps; `ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs` pins that Ruby path.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "oversized_source_exit_behavior_is_reporter_independent",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `oversized source exit behavior is reporter independent` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_resource_limits_fail_closed_independently_of_reporters"
+          },
+          "rationale": "An oversized steps.rb exits 2 with \"definition source\" and \"input limit\" under each of terminal, json, jsonl, html and sarif.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus",
@@ -3869,9 +4116,13 @@
         },
         {
           "name": "oversized_cucumber_expression_fails_closed_and_still_writes_a_report",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `oversized cucumber expression fails closed and still writes a report` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_resource_limits_fail_closed_independently_of_reporters"
+          },
+          "rationale": "A Ruby Given with a 1 MiB+1 literal matcher exits 0 with \"warning: step matcher at\" and \"regex resource limit\" and the JSON report still counts 1 definition.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "local_domain_functions_are_not_mistaken_for_registration_barrels",
@@ -3887,9 +4138,13 @@
         },
         {
           "name": "explicit_config_flag_overrides_auto_discovery",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby run with `--config` pointing at a file that overrides auto-discovered configuration and passes its threshold; the test analyzes TypeScript sources. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
+          },
+          "rationale": "`--config team.json` over a Ruby corpus replaces the auto-discovered file: its threshold and features apply, and the auto file's ambiguous-step override, a key team.json leaves unset, does not; a control shows that override takes effect when the auto file is used.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "cypress_project_config_supplies_feature_discovery",
@@ -3899,93 +4154,153 @@
         },
         {
           "name": "missing_feature_corpus_is_safe_by_default_and_can_be_required",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby corpus without features run twice, default and `--require-features`, with both exits pinned. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
+          },
+          "rationale": "A Ruby corpus without features succeeds with no unused-definition and \"unused-definition findings are disabled\", and exits 2 with \"no feature files matched\" under --require-features.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "partial_feature_parse_failure_is_summarized_when_features_are_required",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby corpus with one malformed feature under `--require-features`, pinning the summary and exit. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
+          },
+          "rationale": "A valid and a malformed feature over Ruby definitions under --require-features exit 2 with \"1 discovered feature file(s) could not be parsed\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "unmatched_definition_patterns_and_suppressions_are_visible",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `unmatched definition patterns and suppressions are visible` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_definition_requirements_and_source_diagnostics_are_visible"
+          },
+          "rationale": "A config with definitions [\"missing/**/*.rb\"] and an unmatched suppression succeeds and warns \"definition pattern `missing/**/*.rb` matched no files\" and \"suppression 1 for duplicate-matcher matched no step definitions\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "semantic_baseline_can_be_updated_moved_and_gated_by_new_findings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `semantic baseline can be updated moved and gated by new findings` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings"
+          },
+          "rationale": "Updating writes a schema-3 baseline with total count 1; after moving to moved/renamed.rb the terminal run shows \"1 suppressed\" and \"Duplication: 0 of 2 definitions (0.00%), threshold 0.00% — PASS\"; a third copy fails --fail-on-new with exit 1.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_update_replaces_older_versions_but_refuses_unknown_future_schemas",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `baseline update replaces older versions but refuses unknown future schemas` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs"
+          },
+          "rationale": "Schema 1 and 2 baselines are rewritten as schema 3 by --update-baseline over Ruby findings; schema 99 fails with \"newer than supported\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "baseline_workflow_rejects_unsafe_or_incomplete_flag_combinations",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: baseline flag combinations rejected over a Ruby corpus (write + compare, incomplete corpus) through the built binary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs"
+          },
+          "rationale": "--update-baseline alone, --fail-on-new alone, and --update-baseline with --changed-since each exit 2 over the Ruby corpus.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "reporter_flag_does_not_swallow_the_target_and_announces_file_output",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby run with `--reporters` before the target path that writes the announced report file; the test runs the TypeScript adapter and asserts reporter output. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
+          },
+          "rationale": "\"--reporters json . --definitions *.rb\" succeeds, prints \"Reports written to:\" and cuke-dedup.json, and the report exists in the default directory.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_compares_a_unicode_changed_source_against_the_full_corpus",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since compares a unicode changed source against the full corpus` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
+          },
+          "rationale": "A staged \"steps/café changed.rb\" duplicating an unchanged Ruby definition exits 1 naming duplicate-matcher and the Unicode path, and passes with \"Duplication: 2 of 2 definitions (100.00%), threshold 100.00% — PASS\" at --threshold 100.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since rejects option like revisions instead of weakening the gate` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
+          },
+          "rationale": "--changed-since=--diff-filter=X over a Ruby repository exits 2 with \"invalid --changed-since revision\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since handles a unicode untracked file from a repo subdirectory` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
+          },
+          "rationale": "Analyzing packages/e2e, the untracked \"steps/café step.rb\" duplicate is reported (path relative to the subdirectory) with exit 1.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_handles_an_untracked_file_with_a_newline",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since handles an untracked file with a newline` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_preserves_newlines_in_unix_names"
+          },
+          "rationale": "An untracked \"steps/new\\nline.rb\" duplicating an unchanged definition is reported as duplicate-matcher with exit 1 (unix-gated as the original).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_handles_an_untracked_non_utf8_file",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since handles an untracked non utf8 file` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_preserves_non_utf8_linux_names"
+          },
+          "rationale": "An untracked steps/non-utf8-\\xff.rb duplicate is reported with exit 1 (Linux-gated as the original; compiled locally, runs only on Linux CI).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_rejects_a_gitignored_analysis_root",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since rejects a gitignored analysis root` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
+          },
+          "rationale": "Analyzing a Git-ignored \"ignored\" directory holding a Ruby step exits 2 with \"ignored by Git\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_disables_unused_findings_but_fails_when_no_feature_parses",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since disables unused findings but fails when no feature parses` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "An untracked steps/new.rb with only an unparseable tracked feature under --rule unused-definition=error exits 2, reports no unused-definition, and names both feature-parse failures.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "closed_jsonl_consumer_is_a_clean_termination",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `closed jsonl consumer is a clean termination` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_closed_jsonl_consumer_is_a_clean_termination"
+          },
+          "rationale": "400 distinct Ruby duplicate pairs stream more than four pipe buffers of JSONL into `head -n 1` under pipefail, and the run exits successfully; the control measures the uninterrupted stream size.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "large_equivalence_class_emits_a_bounded_spanning_finding_set",
@@ -3997,9 +4312,13 @@
         },
         {
           "name": "package_json_configuration_and_suppression_apply_end_to_end",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: configuration-file suppression over Ruby findings (`.cuke-dedup.json` suppressions with path and matcher selectors) pinned by a Ruby group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
+          },
+          "rationale": "package.json cukeDedup selects specs/**/*.rb, writes configured-reports/cuke-dedup.json, and the matcher suppression leaves 2 definitions analyzed, suppressed 1, and the configured reason on the finding.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "discovery_flags_can_include_hidden_and_default_excluded_sources",
@@ -4009,21 +4328,33 @@
         },
         {
           "name": "json_report_uses_the_documented_default_output_directory",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `json report uses the documented default output directory` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
+          },
+          "rationale": "A Ruby --reporters json run without --output writes reports/cuke-dedup/cuke-dedup.json.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "jsonl_report_streams_only_machine_records_to_stdout",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `jsonl report streams only machine records to stdout` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
+          },
+          "rationale": "JSONL over the Ruby duplicate corpus exits 1 with only finding records then one summary (filesDiscovered 2, definitionFilesWithDefinitions 1, definitionsExtracted 2, featureFilesParsed 1) and no \"Reports written to:\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "changed_since_fails_closed_on_unchanged_feature_parse_errors",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed since fails closed on unchanged feature parse errors` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+          },
+          "rationale": "A clean Ruby repository with an unchanged unparseable feature exits 2 with \"found no tracked or untracked files\" and \"failed to parse Gherkin feature\".",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "bare_check_subcommand_requires_an_explicit_path",
@@ -4034,15 +4365,23 @@
         },
         {
           "name": "source_diagnostics_are_visible_without_discarding_valid_definitions",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `malformed-matcher-keeps-valid-definitions` observes this only through a scalar oracle field (definitions), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: Ruby source diagnostics keep the valid definitions. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_definition_requirements_and_source_diagnostics_are_visible"
+          },
+          "rationale": "An unsupported Ruby regex (lookahead, line 2) is a per-definition diagnostic at `steps.rb:2:1` that keeps both valid definitions analyzed. The Ruby frontend has no error-level matcher diagnostic: the invalid `\\xZZ` escape that JS/TS reports as an error is a Ruby syntax error (`ruby -c`), so the run exits 0 by default and 2 under `--fail-on-unparseable`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "malformed_definition_sources_are_reported_with_actionable_extension_guidance",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the `.rb` opt-in guidance printed when Ruby files are discovered without a definitions pattern; needs a Ruby run asserting the warning. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_default_discovery_is_visibly_empty_and_names_the_opt_in_pattern"
+          },
+          "rationale": "An un-opted steps.rb succeeds with the \".rb\" opt-in guidance, --require-definitions exits 2 keeping the guidance, and the corrected --definitions *.rb run analyzes 1 definition without it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "path_before_check_is_rejected_and_discovery_flags_are_applied",
@@ -4053,15 +4392,23 @@
         },
         {
           "name": "changed_files_mode_ignores_an_inherited_git_environment",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `changed files mode ignores an inherited git environment` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
+          },
+          "rationale": "A non-repository Ruby root with GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE pointing at a decoy fails with \"changed-files mode requires a Git repository\" (same as the env-free control) and the decoy index still lists only sentinel.txt.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "ambiguous_step_severity_and_suppression_are_distinguishable_from_absence",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `ambiguous step severity and suppression are distinguishable from absence` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
+          },
+          "rationale": "Ruby {word} and literal gauge steps: ambiguous-step=warning succeeds with \"[warning]\", the default severity control exits 1, and the configured suppression keeps exactly one ambiguous-step finding with its reason and summary findings 0.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "generated_bundles_are_excluded_and_reported_without_failing_the_run",
@@ -4185,9 +4532,9 @@
         },
         {
           "name": "configured_registration_name_keeps_its_explicit_global_policy",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the `registrations` config key granting a Ruby `step 'x' do … end` registration its explicit global policy and incompleteness; no Ruby fixture configures `registrations`. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: the `registrations` key names JS/TS local registration functions; the Ruby adapter does not read it. Semantic residue: Ruby forwarding helpers are inferred, pinned by `ruby_transparent_wrapper_outcomes_preserve_forwarding_and_reject_uncertainty`.",
+          "behaviorClass": "language-specific-api"
         },
         {
           "name": "registration_barrels_cannot_reexport_a_shadowed_loader",
@@ -4209,9 +4556,13 @@
         },
         {
           "name": "dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "A recognized registration with a dynamic matcher marks the corpus incomplete, fails strict mode and cannot produce a baseline. The Ruby group pins incompleteness and strict exit 2 for a dynamic matcher; baseline rejection is not exercised for Ruby."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline"
+          },
+          "rationale": "Ruby Given(build_pattern) beside a known step: default exit 0 with the steps.rb:2:1 diagnostic, 1 definition and incomplete true; --fail-on-incomplete exits 2; --update-baseline refuses and writes no file; failOnIncomplete config exits 2.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "unsupported_matchers_mark_partial_extraction_incomplete",
@@ -4623,7 +4974,7 @@
       ]
     },
     "tests/public_api.rs": {
-      "sourceSha256": "f55680a12437b6b68344b30564806dc4a3ff9f5386f339fe3cc4051b044dc8b3",
+      "sourceSha256": "5af75402e1603979466b8f3cf1f7533db1e87f05f42e7441863b0738c78eb1aa",
       "tests": [
         {
           "name": "extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults",
@@ -4634,9 +4985,13 @@
         },
         {
           "name": "external_callers_can_preserve_partial_results_and_operational_diagnostics",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: partial-result and operational-diagnostic preservation demonstrated with Ruby extraction (an oversized Ruby regex matcher) through the public API. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/public_api.rs",
+            "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
+          },
+          "rationale": "The Ruby public-API test keeps the partial result and the regex resource-limit diagnostic for an over-limit Ruby regex, and strict `analyze` rejects it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "sessionless_file_extraction_uses_the_nearest_package_boundary",
@@ -4653,9 +5008,13 @@
         },
         {
           "name": "report_context_is_the_single_public_rendering_entry_point",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: rendering through the public report context over a Ruby analysis result. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/public_api.rs",
+            "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
+          },
+          "rationale": "The Ruby public-API test renders a Ruby analysis result through one public report context in every format.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "configured_registrations_enable_lowercase_global_step_names",
@@ -4677,9 +5036,13 @@
         },
         {
           "name": "adapters_can_classify_diagnostics_without_language_specific_messages",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby-produced typed diagnostic classified through the public kind API; the existing test constructs the diagnostic by hand. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/public_api.rs",
+            "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
+          },
+          "rationale": "The Ruby public-API test classifies a diagnostic the Ruby adapter produced through the public kind and level API, with its line and column.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "ruby_usage_metadata_and_legacy_analysis_remain_conservative",
@@ -4689,6 +5052,16 @@
             "name": "ruby_usage_metadata_and_legacy_analysis_remain_conservative"
           },
           "rationale": "Compares legacy analysis without usage metadata against analysis fed Ruby adapter metadata in-process; no CLI fixture can express the comparison, the test itself is the evidence.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/public_api.rs",
+            "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
+          },
+          "rationale": "Ruby public-API evidence: typed Ruby diagnostic, partial result with operational diagnostics, and rendering through the report context.",
           "behaviorClass": "ruby-behavior"
         }
       ]
