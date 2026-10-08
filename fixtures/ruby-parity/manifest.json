@@ -450,6 +450,29 @@
       ],
       "expectedExit": 0,
       "reason": "Preserve the original polarity-negative configuration and add a meaningful member-call positive. Disabling similarity cannot satisfy both."
+    },
+    "load-helper-dispatch-contained": {
+      "path": "loads/helper-invalidation",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": false,
+      "reason": "A dynamic dispatch inside an instance method of a helper class, in a suite whose load-time code is only registrations, literal loads and plain class definitions, cannot run during load: registrations survive. The run stays incomplete because the dispatch may call `step` while a scenario runs (indirect usage unknown).",
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "entry remains independently understood",
+            "entry remains independently understood"
+          ]
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "features/entry.feature",
+          "primaryLine": 3
+        }
+      ],
+      "expectedExit": 2,
+      "requiredAbsent": []
     }
   },
   "cases": [
@@ -1478,14 +1501,14 @@
     },
     {
       "id": "reachable-helper-metaprogramming-scope",
-      "requiredStatus": "contract-design-required",
-      "fixtureGroup": "loads/helper-invalidation",
+      "requiredStatus": "covered",
+      "fixtureGroup": "load-helper-dispatch-contained",
       "fixtureFiles": [
         "loads/helper-invalidation/entry.rb",
         "loads/helper-invalidation/lib/unrelated_helper.rb",
         "loads/helper-invalidation/features/entry.feature"
       ],
-      "rationale": "The synthetic helper uses deferred dynamic dispatch on an unrelated helper receiver. The current broad invalidation outcome needs a scope and phase design; no desired completeness or definition count is asserted."
+      "requiredBehavior": "Dynamic dispatch inside an instance method of a suite class does not withdraw registrations when every load-time statement of the suite is a registration, a literal load or a plain class definition and every load resolves; any other load-time statement keeps the suite-wide invalidation."
     },
     {
       "id": "trusted-ruby-assertion-providers",
