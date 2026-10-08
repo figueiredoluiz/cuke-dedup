@@ -1228,7 +1228,7 @@
       ]
     },
     "src/discovery.rs": {
-      "sourceSha256": "44c4e71e5c00f2c0b42a9aa5dea7e08bfd1eeb3a68248e8b71714eba855db43e",
+      "sourceSha256": "07bd3501936fc6bd13ff0cad4bcec97e4d1b1c3a5d7346cc8e71f5867b4483d8",
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -3519,7 +3519,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "8924afdb92cb8ecfc4d60bd6bc1c5e6aae6d9ea948ba3372782a527627a586ef",
+      "sourceSha256": "14abc053c750f6dac58345e593c67f596250088e59e4fcbfe2884729934d254d",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4429,6 +4429,16 @@
             "name": "regression_ruby_dotted_require_paths_load_the_ruby_file"
           },
           "rationale": "`regression_ruby_dotted_require_paths_load_the_ruby_file` runs Ruby sources through the built binary and pins dotted and native-suffix require resolution end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_loaded_files_are_not_reported_as_skipped",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_loaded_files_are_not_reported_as_skipped"
+          },
+          "rationale": "`regression_ruby_loaded_files_are_not_reported_as_skipped` runs Ruby sources through the built binary and pins the skipped-files warning against dependency-loaded files end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]
