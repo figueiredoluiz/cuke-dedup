@@ -135,6 +135,7 @@
     "equivalent-precision-decorator-values": {"status":"pass","digest":"f564d1a55bca25a077ba96ca1a3584e551cb161eea6c145878e4bffba2961e49"},
     "equivalent-vitest-cucumber-plugin-global-registrations": {"status":"pass","digest":"612a8d97e67cca636904c78ca34ec1f0de2ed6d627f23f0d5f3eb76485a82a80"},
     "equivalent-exact-match-remains-detectable": {"status":"pass","digest":"28630cab8e482bdfe2a4f2609335f1047fea2b781ec52101c23ba89a2da4731d"},
-    "equivalent-polarity-conflict-is-intentionally-not-near": {"status":"pass","digest":"0ec93e6cd4445022e26fafee5ef8593943383b63f235948b706695eedabea207"}
+    "equivalent-polarity-conflict-is-intentionally-not-near": {"status":"pass","digest":"0ec93e6cd4445022e26fafee5ef8593943383b63f235948b706695eedabea207"},
+    "load-helper-dispatch-contained": {"status":"pass","digest":"4e7a08a19334ccc209a5e549858de23a30ae184fd1acd576466b302b31c074b6"}
   }
 }

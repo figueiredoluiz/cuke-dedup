@@ -10,7 +10,7 @@ use crate::source_adapter::{
     UncertaintyScope,
 };
 use anyhow::{bail, Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
 mod assertions;
@@ -18,6 +18,7 @@ mod bindings;
 pub(crate) mod config;
 mod dependencies;
 mod handler;
+mod load_phase;
 mod ownership;
 mod parameters;
 mod providers;
@@ -34,6 +35,10 @@ pub(crate) struct RubySession {
     assertion_modules: Vec<String>,
     /// Set when provider proofs are unavailable because the selection exceeds the proof budget.
     proof_sources_exceeded: bool,
+    /// Ruby files prepared for the session and those actually extracted; a prepared file that was
+    /// never extracted (unreadable, or skipped by a caller) still loads, so the suite is open.
+    prepared: std::collections::BTreeSet<PathBuf>,
+    extracted: std::collections::BTreeSet<PathBuf>,
 }
 impl AdapterSessionState for RubySession {
     /// Resolves configured Ruby provider paths with the same rule discovery applies to loads.
@@ -53,6 +58,8 @@ impl AdapterSessionState for RubySession {
             assertions: Default::default(),
             assertion_modules: configured,
             proof_sources_exceeded: false,
+            prepared: Default::default(),
+            extracted: Default::default(),
         }
     }
 }
@@ -110,6 +117,11 @@ impl SourceAdapter for RubyAdapter {
         let edges = session.dependency_edges();
         let state = session.state::<RubySession>()?;
         state.proof_sources_exceeded = exceeded;
+        state.prepared = files
+            .iter()
+            .filter(|file| file.language == SourceLanguage::Ruby)
+            .map(|file| file.path.clone())
+            .collect();
         if let Some(units) = units {
             let (providers, assertions) = providers::Providers::from_units_with_assertions(
                 &units,
@@ -149,25 +161,43 @@ impl SourceAdapter for RubyAdapter {
                 format!("Ruby assertion-provider provenance is incomplete{limit}"),
             ));
         }
+        if !state.prepared.is_subset(&state.extracted) {
+            state.effects.open_load_phase();
+        }
+        // A call contained in an instance method runs during load once the suite's load phase is
+        // open, exactly like any other unresolved effect.
+        let escaped = state.effects.escaped_call().map(|site| {
+            format!(
+                "Ruby call at {}:{}:{} that may redefine the DSL or dispatch dynamically can run during load because the suite's load-time code is not limited to registrations, literal loads and plain class definitions",
+                site.path.display(),
+                site.line,
+                site.column
+            )
+        });
+        let cause = escaped
+            .as_ref()
+            .map(|reason| format!("; {reason}"))
+            .unwrap_or_default();
+        let invalidated = state.effects.invalidated() || escaped.is_some();
         if state.providers.work_exhausted() {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(SourceLanguage::Ruby),
-                if state.effects.invalidated() {
+                if invalidated {
                     UncertaintyCause::Registration
                 } else {
                     UncertaintyCause::Source
                 },
-                if state.effects.invalidated() {
-                    "Ruby registration source proof exceeded its work limit; DSL redefinition or metaprogramming also prevents trusted registration extraction"
+                if invalidated {
+                    format!("Ruby registration source proof exceeded its work limit; DSL redefinition or metaprogramming also prevents trusted registration extraction{cause}")
                 } else {
-                    "Ruby registration source proof exceeded its work limit"
+                    "Ruby registration source proof exceeded its work limit".to_owned()
                 },
             ));
-        } else if state.effects.invalidated() {
+        } else if invalidated {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(SourceLanguage::Ruby),
                 UncertaintyCause::Registration,
-                format!("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite{limit}"),
+                format!("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite{limit}{cause}"),
             ));
         }
         Ok(result)
@@ -187,8 +217,8 @@ impl SourceAdapter for RubyAdapter {
             .state::<RubySession>()?
             .providers
             .get(&file.path, source);
-        let (mut extraction, invalidated) =
-            extract_with_proof(source, file, proof, assertions.as_ref())?;
+        let (mut extraction, mut invalidated) =
+            extract_with_proof(source, file, proof, assertions.as_ref(), true)?;
         extraction.diagnostics.retain(|diagnostic| {
             diagnostic.kind != Kind::Dependency
                 || !session.dependency_resolved(&diagnostic.location)
@@ -202,7 +232,16 @@ impl SourceAdapter for RubyAdapter {
             }
         }
         mark_unresolved_dependency_usage(&mut extraction);
-        session.state::<RubySession>()?.effects.extend(invalidated);
+        // An unresolved top-level load runs unanalyzed code during load, so the suite's load phase
+        // is not closed. Loads inside handlers or methods run only when those do.
+        if extraction.diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == Kind::Dependency && invalidated.load_require(&diagnostic.location)
+        }) {
+            invalidated.open_load_phase();
+        }
+        let state = session.state::<RubySession>()?;
+        state.extracted.insert(file.path.clone());
+        state.effects.extend(invalidated);
         Ok(extraction)
     }
 }
@@ -231,11 +270,13 @@ fn mark_unresolved_dependency_usage(extraction: &mut Extraction) {
     }
 }
 
+/// Extracts one source without a session; no call is contained without suite finalization.
 fn extract(
     source: &str,
     file: &SourceFile,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
-    extract_with_proof(source, file, None, None)
+    // Without a session nothing finalizes the suite, so no call can be contained.
+    extract_with_proof(source, file, None, None, false)
 }
 
 /// Extracts registrations using source-owned provider and assertion evidence.
@@ -244,6 +285,7 @@ fn extract_with_proof(
     file: &SourceFile,
     proof: Option<&providers::Proof>,
     assertions: Option<&assertions::AssertionBindings>,
+    finalized: bool,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
     if file.language != SourceLanguage::Ruby {
         bail!("Ruby adapter requires Ruby source");
@@ -276,8 +318,9 @@ fn extract_with_proof(
         ));
     }
     result.parameter_types = parameters::collect(&nodes, source, file);
-    let mut effects =
-        ownership::RegistrationEffects::collect(root, source, &aliases, &wrappers, proof);
+    let mut effects = ownership::RegistrationEffects::collect(
+        file, finalized, root, source, &aliases, &wrappers, proof,
+    );
     if let Some(declaration) = result
         .parameter_types
         .iter()

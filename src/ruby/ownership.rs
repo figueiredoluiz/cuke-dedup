@@ -26,6 +26,13 @@ pub(super) struct RegistrationEffects {
     // Owners map to the first node that mutated or exposed them; only keys merge across sources.
     mutated_owners: BTreeMap<OwnerPath, (usize, usize)>,
     exposed_owners: BTreeMap<OwnerPath, (usize, usize)>,
+    // Whether some analyzed file's load phase is not closed or some load is unresolved.
+    open_load_phase: bool,
+    // Dispatch calls deferred because they sit in instance methods of a closed load phase; they
+    // invalidate only if the merged suite turns out to be open.
+    contained: Vec<crate::model::SourceLocation>,
+    // Top-level `require`/`require_relative` calls; only these run unresolved code during load.
+    load_requires: Vec<crate::model::SourceLocation>,
 }
 
 fn site(node: Node<'_>) -> (usize, usize) {
@@ -35,14 +42,22 @@ fn site(node: Node<'_>) -> (usize, usize) {
 impl RegistrationEffects {
     /// Collects source-local ownership evidence while preserving resolved captures and deferred bodies.
     pub(super) fn collect(
+        file: &crate::source_adapter::SourceFile,
+        finalized: bool,
         root: Node<'_>,
         source: &str,
         aliases: &super::registration_aliases::RegistrationAliases,
         wrappers: &super::registration_wrappers::RegistrationWrappers,
         proof: Option<&super::providers::Proof>,
     ) -> Self {
+        // Containment needs a finalized session to see the whole suite; without one it never applies.
+        let closed = finalized && super::load_phase::closed(root, source);
         let mut effects = Self {
             wrappers: wrappers.effects.clone(),
+            open_load_phase: !closed,
+            load_requires: super::load_phase::load_requires(root, source)
+                .map(|call| super::location(file, call, source))
+                .collect(),
             ..Self::default()
         };
         let declarations = Declarations::collect(root, source);
@@ -148,6 +163,18 @@ impl RegistrationEffects {
                     continue;
                 }
             }
+            if closed
+                && node.kind() == "call"
+                && super::load_phase::contained_scope(node).is_some_and(|scope| {
+                    declarations
+                        .scopes
+                        .get(&scope.id())
+                        .is_some_and(Option::is_some)
+                })
+            {
+                effects.contained.push(super::location(file, node, source));
+                continue;
+            }
             effects.mark_unknown(node);
         }
         effects
@@ -173,10 +200,29 @@ impl RegistrationEffects {
         }
     }
 
+    /// Records that the suite's load phase is open: a load-time `require` is unresolved, or an
+    /// analyzed file was never extracted.
+    pub(super) fn open_load_phase(&mut self) {
+        self.open_load_phase = true;
+    }
+
+    /// Whether `location` is one of this file's top-level `require` calls.
+    pub(super) fn load_require(&self, location: &crate::model::SourceLocation) -> bool {
+        self.load_requires.contains(location)
+    }
+
+    /// The first contained call, when the merged suite's load phase is open and the call can
+    /// therefore run during load.
+    pub(super) fn escaped_call(&self) -> Option<&crate::model::SourceLocation> {
+        self.contained.first().filter(|_| self.open_load_phase)
+    }
+
     /// Combines file effects so later sources can invalidate registrations extracted earlier.
     pub(super) fn extend(&mut self, other: Self) {
         self.wrappers.extend(other.wrappers);
         self.unknown |= other.unknown;
+        self.open_load_phase |= other.open_load_phase;
+        self.contained.extend(other.contained);
         for (owner, site) in other.mutated_owners {
             self.mutated_owners.entry(owner).or_insert(site);
         }

@@ -3519,7 +3519,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "14abc053c750f6dac58345e593c67f596250088e59e4fcbfe2884729934d254d",
+      "sourceSha256": "d6a50104e21b15654879b5c6efb40c6da565dedb22d65ab3a7601ea4548b58a5",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -4439,6 +4439,16 @@
             "name": "regression_ruby_loaded_files_are_not_reported_as_skipped"
           },
           "rationale": "`regression_ruby_loaded_files_are_not_reported_as_skipped` runs Ruby sources through the built binary and pins the skipped-files warning against dependency-loaded files end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_contained_dispatch_needs_a_closed_load_phase",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_contained_dispatch_needs_a_closed_load_phase"
+          },
+          "rationale": "`regression_ruby_contained_dispatch_needs_a_closed_load_phase` runs Ruby sources through the built binary and pins the closed-load-phase containment of dynamic dispatch, kept and invalidated, end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]

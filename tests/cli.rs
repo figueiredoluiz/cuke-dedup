@@ -6032,6 +6032,248 @@ fn regression_ruby_loaded_files_are_not_reported_as_skipped() {
     );
 }
 
+/// The closed-load-phase suite: an entry with a duplicate pair (the positive control) that loads
+/// a helper class whose instance method dispatches dynamically.
+const CLOSED_ENTRY: &str =
+    "require_relative 'helper'\nGiven('same step') { work(1) }\nGiven('same step') { work(2) }\n";
+const CLOSED_HELPER: &str =
+    "class LocalFormattingHelper\n  def log(level, message)\n    logger.send(level, message)\n  end\nend\n";
+
+/// A matrix row: a label and the files it overrides or adds to the closed-load-phase suite.
+type LoadPhaseRow = (&'static str, Vec<(&'static str, String)>);
+/// A kept matrix row: a label, its files, and the exact definition count it keeps.
+type KeptLoadPhaseRow = (&'static str, Vec<(&'static str, String)>, u64);
+
+/// Runs the closed-load-phase suite with the given file overrides and extra files.
+fn closed_load_phase_run(files: &[(&str, &str)]) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "steps/entry.rb", CLOSED_ENTRY);
+    write(directory.path(), "steps/helper.rb", CLOSED_HELPER);
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given same step\n",
+    );
+    for (path, contents) in files {
+        write(directory.path(), path, contents);
+    }
+    ruby_run(directory.path(), &["--definitions", "steps/*.rb"])
+}
+
+/// A dynamic dispatch inside an instance method of a suite class does not invalidate
+/// registrations when every load-time statement of the suite is a registration, a literal load or
+/// a plain class definition, and every load resolves; any other load-time statement anywhere in
+/// the suite restores the suite-wide invalidation.
+#[test]
+fn regression_ruby_contained_dispatch_needs_a_closed_load_phase() {
+    let helper = |body: &str| format!("class LocalFormattingHelper\n{body}\nend\n");
+    let dispatch = "  def log(level, message)\n    logger.send(level, message)\n  end";
+    let kept: [KeptLoadPhaseRow; 13] = [
+        ("closed suite", vec![], 2),
+        (
+            "helper used only inside a step handler",
+            vec![("steps/uses.rb", "Given('uses helper') { LocalFormattingHelper.new.log(:info, 'x') }\n".to_owned())],
+            3,
+        ),
+        (
+            "scenario hook and ParameterType with lambda transformers",
+            vec![("steps/hooks.rb", "# frozen_string_literal: true\nBefore('@tag') do\n  setup\nend\nParameterType(name: 'color', regexp: /red|blue/, transformer: ->(c) { c })\nParameterType(name: 'size', regexp: /big/, transformer: lambda { |s| s })\n".to_owned())],
+            2,
+        ),
+        (
+            "hook- and protocol-named instance methods",
+            vec![("steps/helper.rb", helper("  def initialize\n    logger.send(level, message)\n  end\n  def method_missing(*)\n    logger.send(level, message)\n  end\n  def to_s\n    logger.send(level, message)\n  end"))],
+            2,
+        ),
+        (
+            "nested and qualified declarations",
+            vec![("steps/helper.rb", format!("module Support\n  class LocalFormattingHelper\n{dispatch}\n  end\nend\nmodule Support::Formatting\n{dispatch}\nend\n"))],
+            2,
+        ),
+        (
+            "nested constant named like a core class",
+            vec![("steps/helper.rb", format!("module Support\n  class String\n{dispatch}\n  end\nend\n"))],
+            2,
+        ),
+        (
+            "dispatch nested in a block inside the instance method",
+            vec![("steps/helper.rb", helper("  def log(levels)\n    levels.each { |level| logger.send(level) }\n  end"))],
+            2,
+        ),
+        (
+            "transitive and repeated literal loads",
+            vec![
+                ("steps/entry.rb", format!("require_relative 'middle'\nrequire_relative 'middle'\n{}", CLOSED_ENTRY.lines().skip(1).collect::<Vec<_>>().join("\n"))),
+                ("steps/middle.rb", "require_relative 'helper'\n".to_owned()),
+            ],
+            2,
+        ),
+        (
+            "plain require through a load path",
+            vec![
+                (".cuke-dedup.json", r#"{"rubyLoadPaths":["lib"]}"#.to_owned()),
+                ("steps/entry.rb", CLOSED_ENTRY.replacen("require_relative 'helper'", "require 'helper'", 1)),
+                ("lib/helper.rb", CLOSED_HELPER.to_owned()),
+                ("steps/helper.rb", "# moved to lib\n".to_owned()),
+            ],
+            2,
+        ),
+        (
+            "eval and define_method inside an instance method",
+            vec![("steps/helper.rb", helper("  def install(code)\n    eval(code)\n    self.class.send(:define_method, :Given) { |*| nil }\n  end"))],
+            2,
+        ),
+        (
+            "unresolved require inside a step handler",
+            vec![("steps/uses.rb", "Given('loads json') { require 'json' }\n".to_owned())],
+            3,
+        ),
+        (
+            "unresolved require inside an instance method",
+            vec![("steps/helper.rb", helper(&format!("{dispatch}\n  def parse\n    require 'json'\n  end")))],
+            2,
+        ),
+        (
+            "comment-only file beside the suite",
+            vec![("steps/notes.rb", "# frozen_string_literal: true\n".to_owned())],
+            2,
+        ),
+    ];
+    for (label, files, definitions) in kept {
+        let files: Vec<_> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        let run = closed_load_phase_run(&files);
+        assert_eq!(run.definitions, definitions, "{label}: {}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{label}: {:?}",
+            run.active
+        );
+    }
+    let opened: [LoadPhaseRow; 14] = [
+        (
+            "constant assignment at top level",
+            vec![("steps/other.rb", "HELPER_LEVEL = 1\n".to_owned())],
+        ),
+        (
+            "World with a module",
+            vec![("steps/other.rb", "World(Support)\n".to_owned())],
+        ),
+        (
+            "instantiation in the class body",
+            vec![(
+                "steps/helper.rb",
+                helper(&format!("{dispatch}\n  new.log(:info, 'x')")),
+            )],
+        ),
+        (
+            "module_function in the class body",
+            vec![(
+                "steps/helper.rb",
+                format!("module LocalFormattingHelper\n{dispatch}\n  module_function :log\nend\n"),
+            )],
+        ),
+        (
+            "def inside class_exec",
+            vec![(
+                "steps/helper.rb",
+                helper(&format!("  Object.class_exec do\n  {dispatch}\n  end")),
+            )],
+        ),
+        (
+            "superclass",
+            vec![(
+                "steps/helper.rb",
+                format!("class LocalFormattingHelper < Struct\n{dispatch}\nend\n"),
+            )],
+        ),
+        (
+            "reopened core class",
+            vec![(
+                "steps/helper.rb",
+                format!("class String\n{dispatch}\nend\n"),
+            )],
+        ),
+        (
+            "Marshal.load at top level",
+            vec![(
+                "steps/other.rb",
+                "Marshal.load(File.binread('x'))\n".to_owned(),
+            )],
+        ),
+        (
+            "interpolated registration argument",
+            vec![(
+                "steps/other.rb",
+                "Given(\"#{PREFIX} step\") { work }\n".to_owned(),
+            )],
+        ),
+        (
+            "constant registration argument",
+            vec![("steps/other.rb", "Given(STEP_TEXT) { work }\n".to_owned())],
+        ),
+        (
+            "unresolved require",
+            vec![("steps/other.rb", "require 'capybara/cucumber'\n".to_owned())],
+        ),
+        (
+            "singleton method",
+            vec![(
+                "steps/helper.rb",
+                helper("  def self.log(level, message)\n    logger.send(level, message)\n  end"),
+            )],
+        ),
+        (
+            "open file sorted before the helper",
+            vec![("steps/a_open.rb", "puts 'loading'\n".to_owned())],
+        ),
+        (
+            "open file sorted after the helper",
+            vec![("steps/z_open.rb", "puts 'loading'\n".to_owned())],
+        ),
+    ];
+    for (label, files) in opened {
+        let files: Vec<_> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        let run = closed_load_phase_run(&files);
+        assert_eq!(run.definitions, 0, "{label}: {}", run.stderr);
+        assert!(run.incomplete, "{label}: {}", run.stderr);
+    }
+    // A prepared file that cannot be read is never extracted, yet the runner still loads it: the
+    // suite is open even though every file the analyzer saw is closed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "steps/entry.rb", CLOSED_ENTRY);
+        write(directory.path(), "steps/helper.rb", CLOSED_HELPER);
+        write(directory.path(), "steps/locked.rb", "# closed\n");
+        write(
+            directory.path(),
+            "features/a.feature",
+            "Feature: f\n  Scenario: s\n    Given same step\n",
+        );
+        let locked = directory.path().join("steps/locked.rb");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root ignores file modes, so the file stays readable and the suite stays closed.
+        let readable = fs::read(&locked).is_ok();
+        let run = ruby_run(directory.path(), &["--definitions", "steps/*.rb"]);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            run.definitions,
+            if readable { 2 } else { 0 },
+            "{}",
+            run.stderr
+        );
+    }
+    // When the suite opens, the warning names the contained dispatch call (helper.rb, line 3).
+    let run = closed_load_phase_run(&[("steps/other.rb", "HELPER_LEVEL = 1\n")]);
+    assert!(
+        run.stderr.contains("Ruby call at")
+            && run.stderr.contains("helper.rb:3:5 that may redefine the DSL or dispatch dynamically can run during load"),
+        "{}",
+        run.stderr
+    );
+}
+
 /// A zero-operand `load()` is an ordinary call; identical callback bodies under different
 /// wrappers are near, different bodies under one wrapper are not.
 #[test]
