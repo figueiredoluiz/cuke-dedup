@@ -146,6 +146,10 @@ take the matcher first and handler second.
 lowercase `given`/`when`/`then` used as globals. Without an entry here they are recognised only
 through a resolved import (see `safety-and-limitations.md`).
 
+`registrations` applies to JS/TS sources only. Every run still validates each entry as a JavaScript
+identifier, but the Ruby adapter does not read the names; Ruby forwarding helpers are inferred (see
+[Registrations and providers](discovery-and-frameworks.md#registrations-and-providers)).
+
 ## Trusted assertion modules
 
 `assertionModules` names module specifiers whose `expect` export is a real assertion factory.
