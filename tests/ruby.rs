@@ -4920,8 +4920,14 @@ fn ruby_fixture_git() -> ProcessCommand {
     command
 }
 
-/// Runs a fixture Git command in `root` and returns its stdout, failing on a non-zero exit.
+/// Runs a fixture Git command in `root` and returns its stdout as UTF-8, failing on a non-zero exit.
 fn ruby_git(root: &Path, args: &[&str]) -> String {
+    String::from_utf8(ruby_git_bytes(root, args)).unwrap()
+}
+
+/// Runs a fixture Git command in `root` and returns its raw stdout, which holds non-UTF-8 paths
+/// verbatim, failing on a non-zero exit.
+fn ruby_git_bytes(root: &Path, args: &[&str]) -> Vec<u8> {
     let output = ruby_fixture_git()
         .current_dir(root)
         .args(args)
@@ -4932,7 +4938,7 @@ fn ruby_git(root: &Path, args: &[&str]) -> String {
         "{args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout).unwrap()
+    output.stdout
 }
 
 /// Initializes a Git repository at `root` with a stable identity and a single initial commit.
@@ -5290,7 +5296,8 @@ fn ruby_write_failing_hook(root: &Path) {
 fn ruby_baseline_from_ref_compares_history_without_mutating_the_checkout() {
     let sandbox = tempfile::tempdir().unwrap();
     let root = sandbox.path().join(ruby_awkward_repository_name());
-    let git = |args: &[&str]| ruby_git(&root, args);
+    // Raw bytes: on Linux the repository name is not UTF-8 and appears in worktree listings.
+    let git = |args: &[&str]| ruby_git_bytes(&root, args);
     fs::create_dir(&root).unwrap();
     for args in [
         &["init", "-q"][..],
