@@ -10101,6 +10101,673 @@ fn ruby_definition_requirements_and_source_diagnostics_are_visible() {
     }
 }
 
+/// Copies the directory tree at `source` into `destination`.
+fn ruby_copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap().map(Result::unwrap) {
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            ruby_copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// Every one of the 136 Ruby parity manifest groups reproduces its scalar oracle, the rule of each
+/// required finding, the absence of each forbidden finding, its duplication summary and its
+/// candidate-source counts.
+#[test]
+fn ruby_parity_manifest_groups_match_their_scalar_oracles() {
+    let parity = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/ruby-parity");
+    let manifest = ruby_report(&parity.join("manifest.json"));
+    assert_eq!(manifest["schemaVersion"], 1);
+    let mut groups = manifest["groupOracles"].as_object().unwrap().clone();
+    let mut declared = groups.len();
+    for extension in manifest["groupManifests"].as_array().unwrap() {
+        let extension = ruby_report(&parity.join(extension.as_str().unwrap()));
+        let oracles = extension["groupOracles"].as_object().unwrap();
+        declared += oracles.len();
+        groups.extend(oracles.clone());
+    }
+    assert_eq!(groups.len(), declared, "group names are unique");
+    for (name, oracle) in &groups {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("case");
+        ruby_copy_tree(&parity.join(oracle["path"].as_str().unwrap()), &root);
+        for item in oracle["materialize"].as_array().into_iter().flatten() {
+            let destination = root.join(item["destination"].as_str().unwrap());
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::copy(root.join(item["source"].as_str().unwrap()), destination).unwrap();
+        }
+        let pattern = oracle["definitionsPattern"].as_str().unwrap_or("*.rb");
+        let arguments: Vec<&str> = oracle["arguments"].as_array().map_or_else(
+            || vec!["--definitions", pattern],
+            |values| values.iter().map(|value| value.as_str().unwrap()).collect(),
+        );
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command.current_dir(&root).arg(".").args(arguments);
+        command.args([
+            "--reporters",
+            "json",
+            "--no-metrics",
+            "--fail-on-incomplete",
+        ]);
+        command.arg("--output");
+        let output = command.arg(sandbox.path().join("out")).output().unwrap();
+        let report = fs::read_to_string(sandbox.path().join("out/cuke-dedup.json"))
+            .map(|text| serde_json::from_str::<Value>(&text).unwrap())
+            .unwrap_or_else(|_| panic!("{name}: {}", String::from_utf8_lossy(&output.stderr)));
+        let (summary, corpus) = (&report["summary"], &report["corpus"]);
+        let observed = [
+            &summary["definitionsAnalyzed"],
+            &summary["featureStepsAnalyzed"],
+        ];
+        let complete = Value::from(corpus["incomplete"] == false);
+        let exit = Value::from(output.status.code().unwrap());
+        let wanted = ["definitions", "featureSteps", "complete", "expectedExit"];
+        assert_eq!(
+            [observed[0], observed[1], &complete, &exit],
+            wanted.map(|key| &oracle[key]),
+            "{name}"
+        );
+        let active = report["findings"].as_array().unwrap().iter();
+        let active: Vec<&Value> = active
+            .filter(|finding| finding["suppression"].is_null())
+            .collect();
+        for required in oracle["requiredFindings"].as_array().unwrap() {
+            let found = active
+                .iter()
+                .any(|finding| finding["rule"] == required["rule"]);
+            assert!(found, "{name}: {required}");
+        }
+        // Mirrors `findingMatches` (recall-oracle.mjs) for the keys `requiredAbsent` uses.
+        let matches = |finding: &Value, expected: &Value| {
+            let sorted = |values: Vec<&Value>| {
+                let mut texts: Vec<String> = values.iter().map(|value| value.to_string()).collect();
+                texts.sort();
+                texts
+            };
+            expected
+                .as_object()
+                .unwrap()
+                .iter()
+                .all(|(key, wanted)| match key.as_str() {
+                    "rule" => finding["rule"] == *wanted,
+                    "primaryPath" => finding["primary"]["path"] == *wanted,
+                    "primaryLine" => finding["primary"]["line"] == *wanted,
+                    "matchers" => {
+                        let comparison = &finding["evidence"]["comparison"];
+                        let actual = vec![&comparison["leftMatcher"], &comparison["rightMatcher"]];
+                        sorted(actual) == sorted(wanted.as_array().unwrap().iter().collect())
+                    }
+                    _ => panic!("{name}: unmodeled requiredAbsent key {key}"),
+                })
+        };
+        for absent in oracle["requiredAbsent"].as_array().unwrap() {
+            let found = active.iter().any(|finding| matches(finding, absent));
+            assert!(!found, "{name}: forbidden {absent}");
+        }
+        for (key, value) in oracle["duplication"].as_object().into_iter().flatten() {
+            assert_eq!(
+                &summary["duplication"][key], value,
+                "{name}: duplication.{key}"
+            );
+        }
+        let sources = oracle["expectedCandidateSources"]
+            .as_object()
+            .into_iter()
+            .flatten();
+        for (source, count) in sources {
+            let evaluated = &report["analysis"]["candidateSources"][source]["evaluated"];
+            assert_eq!(evaluated, count, "{name}: {source} candidates");
+        }
+    }
+    assert_eq!(groups.len(), 136, "executed parity groups");
+}
+
+/// Returns the `cuke-dedup:` stderr lines without the tool prefix, keeping `warning: ` so the
+/// routed level stays part of the comparison.
+fn ruby_diagnostic_lines(stderr: &[u8]) -> Vec<String> {
+    let stderr = String::from_utf8_lossy(stderr);
+    let lines = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("cuke-dedup: "));
+    lines.map(str::to_owned).collect()
+}
+
+/// Unresolved Ruby registrations, alone or beside a resolved file, and a later file that
+/// redefines the DSL (withdrawing provisional definitions at finalization) warn at their source
+/// location and expose the JSON and JSONL corpus census; strict mode fails exactly when the
+/// census is incomplete, and fully static registrations are the complete control.
+#[test]
+fn ruby_unresolved_registrations_warn_and_expose_the_corpus_census() {
+    let dynamic = "# the registration below is unresolved\nThen(build_pattern) { work() }\n";
+    let pair = "Given('shared step') { work() }\nThen('shared step') { work() }\n";
+    let zero = "warning: definition extraction produced 0 definitions from";
+    let static_matcher =
+        "Ruby registration requires a static matcher and a statically resolved handler";
+    for (files, census, warnings) in [
+        (&[("steps.rb", dynamic)][..], [1, 0, 0], vec![format!("warning: steps.rb:2:1: {static_matcher}"), format!("{zero} 1 discovered definition source file(s)")]),
+        (&[("resolved.rb", "Given('visible step') { work() }\n"), ("unresolved.rb", dynamic)], [2, 1, 1], vec![format!("warning: unresolved.rb:2:1: {static_matcher}")]),
+        // The redefinition is extracted after the registrations, so only finalization removes them.
+        (&[("a_registrations.rb", pair), ("b_mutation.rb", "# the DSL is redefined below\ndef Given(text); :replaced; end\n")], [2, 0, 0], vec![
+            "warning: b_mutation.rb:2:1: Ruby registration ownership or executable source effects are unresolved".to_owned(),
+            "warning: Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite".to_owned(),
+            format!("{zero} 2 discovered definition source file(s)"),
+        ]),
+        (&[("a_registrations.rb", pair), ("b_mutation.rb", "def helper(text); :kept; end\n")], [2, 1, 2], vec![]),
+    ] {
+        let directory = ruby_project(files);
+        let root = directory.path();
+        ruby_write(root, "example.feature", "Feature: Census\n  Scenario: Steps\n    Given visible step\n");
+        let incomplete = !warnings.is_empty();
+        let output = ruby_cli(root, "*.rb").args(["--reporters", "json,jsonl", "--no-metrics"]).output().unwrap();
+        assert_eq!(output.status.code(), Some(i32::from(census == [2, 1, 2])), "{files:?}");
+        assert_eq!(ruby_diagnostic_lines(&output.stderr), warnings, "{files:?}");
+        let summary = records(output.stdout).pop().unwrap();
+        let report = ruby_report(&root.join("reports/cuke-dedup/cuke-dedup.json"));
+        for corpus in [&report["corpus"], &summary["corpus"]] {
+            let fields = ["definitionFiles", "definitionFilesWithDefinitions", "definitionsExtracted"];
+            assert_eq!(fields.map(|field| corpus[field].as_u64().unwrap()), census, "{files:?}");
+            assert_eq!(corpus["incomplete"], incomplete, "{files:?}");
+            assert_eq!([&corpus["featureFiles"], &corpus["featureFilesParsed"]], [1, 1], "{files:?}");
+        }
+        assert_eq!(report["summary"]["definitionsAnalyzed"], census[2], "{files:?}");
+        let strict = ruby_cli(root, "*.rb").args(["--fail-on-incomplete", "--no-metrics"]).output().unwrap();
+        assert_eq!(strict.status.code(), Some(if incomplete { 2 } else { 1 }), "{files:?}");
+    }
+}
+
+/// An unresolved Ruby load leaves the whole run incomplete in the JSON, HTML and SARIF reports,
+/// refuses a baseline update, and fails under the strict flag or its configuration key; the same
+/// project without the load is the complete control.
+#[test]
+fn ruby_unresolved_load_marks_the_whole_run_incomplete() {
+    let refusal =
+        "input extraction did not fully represent every discovered definition or feature file";
+    let config = r#"{"definitions":["steps.rb"],"reporters":["json","html","sarif"],"output":"reports","noMetrics":true"#;
+    for (load, incomplete) in [("require dependency_name\n", true), ("", false)] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        ruby_write(root, ".cuke-dedup.json", &format!("{config}}}"));
+        let steps = format!(
+            "# the load below is unresolved\n{load}Given('kept beside the load') {{ work() }}\n"
+        );
+        ruby_write(root, "steps.rb", &steps);
+        let run = |extra: &[&str]| {
+            let output = ruby_cli(root, "steps.rb").args(extra).output().unwrap();
+            (
+                output.status.code().unwrap(),
+                String::from_utf8(output.stderr).unwrap(),
+            )
+        };
+        let (code, stderr) = run(&[]);
+        let located = stderr.contains("steps.rb:2:1: Ruby source dependency is unresolved");
+        assert_eq!((code, located), (0, incomplete), "{stderr}");
+        let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+        assert_eq!(report["corpus"]["incomplete"], incomplete);
+        assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
+        let html = fs::read_to_string(root.join("reports/cuke-dedup.html")).unwrap();
+        assert_eq!(html.contains("Corpus is incomplete"), incomplete);
+        let sarif = ruby_report(&root.join("reports/cuke-dedup.sarif"));
+        assert_eq!(
+            sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+            !incomplete
+        );
+        let (code, stderr) = run(&["--baseline", "accepted.json", "--update-baseline"]);
+        let refused = stderr.contains("was not updated because analysis is incomplete");
+        assert_eq!((code, refused), (0, incomplete), "{stderr}");
+        assert_eq!(root.join("accepted.json").exists(), !incomplete);
+        for (flag, configured) in [(&["--fail-on-incomplete"][..], false), (&[][..], true)] {
+            if configured {
+                ruby_write(
+                    root,
+                    ".cuke-dedup.json",
+                    &format!("{config},\"failOnIncomplete\":true}}"),
+                );
+            }
+            let (code, stderr) = run(flag);
+            let expected = (if incomplete { 2 } else { 0 }, incomplete);
+            assert_eq!((code, stderr.contains(refusal)), expected, "{stderr}");
+        }
+    }
+}
+
+/// A Ruby load target the filesystem refuses to read is an operational failure naming the file,
+/// not an unresolved-load warning; the readable target is the passing control.
+#[cfg(unix)]
+#[test]
+fn ruby_unreadable_load_targets_remain_operational_failures() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "support/world.rb", "def world_helper; end\n");
+    let steps = "# the load below targets an unreadable file\nrequire_relative 'support/world'\nGiven('behind the load') { work() }\n";
+    ruby_write(root, "steps.rb", steps);
+    let target = root.join("support/world.rb");
+    /// Restores a readable mode on drop, so a panic cannot leave an unreadable file behind.
+    struct Readable<'a>(&'a Path);
+    impl Drop for Readable<'_> {
+        /// Restores mode 0644.
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o644));
+        }
+    }
+    for (mode, code) in [(0o000, 2), (0o644, 0)] {
+        let _restore = Readable(&target);
+        fs::set_permissions(&target, fs::Permissions::from_mode(mode)).unwrap();
+        // Running as root, mode 000 does not prevent reading: the failing case cannot occur.
+        if mode == 0 && fs::read(&target).is_ok() {
+            continue;
+        }
+        let output = ruby_cli(root, "steps.rb")
+            .arg("--no-metrics")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(code), "{stderr}");
+        let failed = stderr
+            .lines()
+            .any(|line| line.contains("failed to read") && line.contains("support/world.rb"));
+        assert_eq!(failed, code == 2, "{stderr}");
+        assert!(!stderr.contains("dependency is unresolved"), "{stderr}");
+    }
+}
+
+/// Unsupported Ruby matchers and uncertain wrapper forwarding mark the corpus incomplete at their
+/// located registration, fail strict mode and SARIF execution, and keep the neighbouring
+/// duplicate-matcher finding; static matchers and non-registration calls are complete controls.
+#[test]
+fn ruby_unsupported_matchers_mark_partial_extraction_incomplete() {
+    let dynamic = "Ruby registration requires a static matcher and a statically resolved handler";
+    let regex = "Ruby regular expression is outside the supported static matching subset";
+    let unsupported = Some(("3:1", dynamic));
+    let flags = "--features *.feature --reporters json,sarif --output reports --no-metrics --fail-on-unparseable";
+    let wrapper = "def wrap(value, &block) = Given(value, &block)";
+    for (row, definitions, cause) in [
+        ("Given(pattern) { work() }", 2, unsupported),
+        ("Given(build_pattern()) do work() end", 2, unsupported),
+        ("Given(\"value #{runtime}\") { work() }", 2, unsupported),
+        ("Given(42) { work() }", 2, unsupported),
+        ("Given(:symbol) { work() }", 2, unsupported),
+        ("Given() { work() }", 2, unsupported),
+        ("Given('static', &handler)", 2, unsupported),
+        (
+            "Given(/value (?=ahead)/) { work() }",
+            3,
+            Some(("3:1", regex)),
+        ),
+        (
+            &format!("{wrapper}\nwrap(pattern) {{ work() }}"),
+            2,
+            Some(("4:1", dynamic)),
+        ),
+        ("Given('static') { work() }", 3, None),
+        ("Given(/static/) { work() }", 3, None),
+        (&format!("{wrapper}\nwrap('static') {{ work() }}"), 3, None),
+        ("helper(pattern) { work() }", 2, None),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let source = format!("When('known') {{ open() }}\nWhen('known') {{ close() }}\n{row}\n");
+        ruby_write(root, "steps.rb", &source);
+        ruby_write(
+            root,
+            "suite.feature",
+            "Feature: Usage\n Scenario: Known\n  When known\n",
+        );
+        for strict in [false, true] {
+            let mut command = ruby_cli(root, "*.rb");
+            command.args(flags.split(' '));
+            if strict {
+                command.arg("--fail-on-incomplete");
+            }
+            let output = command.output().unwrap();
+            let mut expected: Vec<String> = cause
+                .iter()
+                .map(|(at, why)| format!("warning: steps.rb:{at}: {why}"))
+                .collect();
+            if strict && cause.is_some() {
+                expected.push("input extraction did not fully represent every discovered definition or feature file, so the analyzed corpus is incomplete".to_owned());
+            }
+            assert_eq!(ruby_diagnostic_lines(&output.stderr), expected, "{row}");
+            assert_eq!(
+                output.status.code(),
+                Some(if strict && cause.is_some() { 2 } else { 1 }),
+                "{row}"
+            );
+            let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+            assert_eq!(report["corpus"]["incomplete"], cause.is_some(), "{row}");
+            assert_eq!(
+                report["summary"]["definitionsAnalyzed"], definitions,
+                "{row}"
+            );
+            let findings = report["findings"].as_array().unwrap();
+            assert_eq!(
+                ruby_rule_locations(findings, "duplicate-matcher"),
+                ["steps.rb:1 steps.rb:2"],
+                "{row}"
+            );
+            let sarif = ruby_report(&root.join("reports/cuke-dedup.sarif"));
+            assert_eq!(
+                sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+                cause.is_none(),
+                "{row}"
+            );
+        }
+    }
+}
+
+/// A Ruby project whose only registration-shaped calls are sends on a local non-provider receiver
+/// passes strict mode with no definitions and no diagnostic beyond the empty-extraction notice;
+/// the same send on the main object is the control that leaves the corpus incomplete and fails.
+#[test]
+fn ruby_inert_receiver_only_project_passes_strict_mode() {
+    // `perform` must exist on the class: an undefined method on the receiver is not provably inert.
+    let helpers = "class LocalRouter\n  def Given(_matcher, &_handler)\n    :local\n  end\n\n  def perform\n    :local\n  end\nend\n";
+    for (call, inert) in [
+        ("router.send(:Given, 'inert') { router.perform() }", true),
+        ("router.Given('inert') { router.perform() }", true),
+        ("send(:Given, 'inert') { router.perform() }", false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        ruby_write(root, "providers/helpers.rb", helpers);
+        let entry =
+            format!("require_relative 'providers/helpers'\nrouter = LocalRouter.new\n{call}\n");
+        ruby_write(root, "entry.rb", &entry);
+        ruby_write(
+            root,
+            "router.feature",
+            "Feature: Router\n  Scenario: Local\n    Given inert\n",
+        );
+        let (code, summary, stderr) = ruby_summary_run(root, "entry.rb", &["--fail-on-incomplete"]);
+        assert_eq!(code, if inert { 0 } else { 2 }, "{call}: {stderr}");
+        if inert {
+            assert_eq!(summary["summary"]["definitionsAnalyzed"], 0, "{call}");
+        }
+        assert_eq!(summary["corpus"]["incomplete"], !inert, "{call}");
+        let notice =
+            ruby_diagnostic_count(&stderr) == 1 && stderr.contains("produced 0 definitions");
+        assert_eq!(notice, inert, "{call}: {stderr}");
+    }
+}
+
+/// Ruby extraction diagnostics route by kind, whatever their wording, under the default and
+/// `--fail-on-unparseable`: a syntax error escalates to an error though its message lacks the
+/// legacy JavaScript prefix, a dynamic matcher and an unresolved load stay incomplete warnings,
+/// and a malformed suppression directive is an error that leaves the corpus complete.
+#[test]
+fn ruby_typed_diagnostics_route_by_kind_not_wording() {
+    let usage =
+        "warning: Ruby indirect step usage is unresolved; unused-definition findings are disabled";
+    // Ruby syntax diagnostics are located at 1:1 whatever the error line (known defect), so only
+    // their routing and message are asserted; `unlocated` drops the `steps.rb:L:C: ` segment.
+    let syntax = "Ruby source contains syntax errors; extraction is incomplete";
+    let unlocated = |line: &str| match line.split_once("steps.rb:") {
+        Some((level, rest)) if rest.contains(syntax) => format!("{level}{syntax}"),
+        _ => line.to_owned(),
+    };
+    let warned = format!("warning: {syntax}");
+    let dynamic = "warning: steps.rb:3:1: Ruby registration requires a static matcher and a statically resolved handler";
+    let load = "warning: steps.rb:3:1: Ruby source dependency is unresolved";
+    let directive =
+        "steps.rb:3:1: inline suppression must use `# cuke-dedup:ignore RULE -- REASON`";
+    let directive_row = "# cuke-dedup:ignore duplicate-matcher\nGiven('second step') { work() }";
+    for (row, incomplete, default, escalated) in [
+        (
+            "value = (",
+            true,
+            &[warned.as_str(), usage][..],
+            Some(&[usage, syntax][..]),
+        ),
+        ("Given(build_pattern) { work() }", true, &[dynamic], None),
+        ("require dependency_name", true, &[load, usage], None),
+        (directive_row, false, &[directive], None),
+        ("helper(pattern)", false, &[], None),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let steps =
+            format!("# diagnostics start on line 3\nGiven('kept step') {{ work() }}\n{row}\n");
+        ruby_write(root, "steps.rb", &steps);
+        ruby_write(
+            root,
+            "kept.feature",
+            "Feature: Kept\n  Scenario: Kept\n    Given kept step\n",
+        );
+        for strict in [false, true] {
+            let mut command = ruby_cli(root, "*.rb");
+            command.args(["--reporters", "json", "--output", "reports", "--no-metrics"]);
+            if strict {
+                command.arg("--fail-on-unparseable");
+            }
+            let output = command.output().unwrap();
+            let expected = escalated.filter(|_| strict).unwrap_or(default);
+            let errors = expected.iter().any(|line| !line.starts_with("warning: "));
+            let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+            let lines = ruby_diagnostic_lines(&output.stderr)
+                .into_iter()
+                .map(|line| unlocated(&line));
+            let lines = lines.collect::<Vec<_>>().join("\n");
+            let observed = (lines, output.status.code(), &report["corpus"]["incomplete"]);
+            let wanted = (
+                expected.join("\n"),
+                Some(if errors { 2 } else { 0 }),
+                &Value::from(incomplete),
+            );
+            assert_eq!(observed, wanted, "{row} strict={strict}");
+        }
+    }
+}
+
+/// Extracts `source` as `name` under `root` in `session`, routing by suffix or by the language the
+/// suffix classifies.
+fn ruby_session_extract(
+    session: &mut cuke_dedup::source_adapter::SourceExtractionSession,
+    root: &Path,
+    (name, source): (&str, &str),
+    by_language: bool,
+) -> cuke_dedup::source_adapter::Extraction {
+    use cuke_dedup::source_adapter::{adapter_for_language, adapter_for_path, language_for_path};
+    let path = root.join(name);
+    let adapter = if by_language {
+        adapter_for_language(language_for_path(&path).unwrap())
+    } else {
+        adapter_for_path(&path).unwrap()
+    };
+    let language = adapter.language();
+    let file = cuke_dedup::source_adapter::SourceFile { path, language };
+    adapter
+        .extract_with_session(source, &file, session)
+        .unwrap()
+}
+
+/// Library routing and sessions with Ruby: `.rb` and `SourceLanguage::Ruby` select the registry's
+/// one Ruby adapter; language- and suffix-routed extraction share one session state in either
+/// order, so a later DSL redefinition through the other route withdraws earlier registrations at
+/// finalization while a separate session cannot; and Ruby extracted first, between or last beside
+/// ECMAScript sources extracts as in fresh sessions, keeps the shared resolver cache, and keeps one
+/// duplicate-matcher finding per comparison domain, which analysis refuses to mix, for a matcher
+/// text both register.
+#[test]
+fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
+    use cuke_dedup::source_adapter::*;
+    let registry = SOURCE_ADAPTER_REGISTRY.iter();
+    let registered = registry
+        .filter(|entry| entry.suffix == ".rb")
+        .map(|entry| entry.adapter);
+    let registered: Vec<_> = registered
+        .map(|adapter| adapter as *const dyn SourceAdapter)
+        .collect();
+    let ruby_path = Path::new("steps.rb");
+    let ruby = SourceLanguage::Ruby;
+    for adapter in [
+        adapter_for_path(ruby_path).unwrap(),
+        adapter_for_language(ruby),
+    ] {
+        assert!(std::ptr::addr_eq(
+            adapter as *const dyn SourceAdapter,
+            registered[0]
+        ));
+        assert_eq!(
+            (adapter.name(), adapter.language(), registered.len()),
+            ("cucumber-ruby", ruby, 1)
+        );
+    }
+    assert_eq!(language_for_path(ruby_path), Some(ruby));
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    let ruby = "Given('shared step') { work() }\nThen('shared step') { work() }\n";
+    let registrations = ("a.rb", ruby);
+    let mutation = ("b.rb", "def Given(text); :replaced; end\n");
+    let file = |name: &str| SourceFile {
+        path: root.join(name),
+        language: SourceLanguage::Ruby,
+    };
+    let files = [file("a.rb"), file("b.rb")];
+    for (language_first, shared) in [(true, true), (false, true), (true, false)] {
+        let mut session = SourceExtractionSession::new(root);
+        let mut other = SourceExtractionSession::new(root);
+        let mut definitions =
+            ruby_session_extract(&mut session, root, registrations, language_first).definitions;
+        let late = if shared { &mut session } else { &mut other };
+        ruby_session_extract(late, root, mutation, !language_first);
+        assert_eq!(definitions.len(), 2);
+        let finalization = session.finalize(&files, &mut definitions).unwrap();
+        let withdrawn = !finalization.uncertainties.is_empty();
+        assert_eq!(
+            (withdrawn, definitions.len()),
+            (shared, if shared { 0 } else { 2 })
+        );
+    }
+    let imported = "import { Given } from './support'; Given('shared step', () => work());";
+    let source = |name: &str| [imported, ruby][usize::from(name.ends_with(".rb"))];
+    let template = "export { NAME } from '@cucumber/cucumber';";
+    for order in [
+        ["steps.ts", "steps.rb", "steps.js"],
+        ["steps.rb", "steps.js", "steps.ts"],
+        ["steps.js", "steps.ts", "steps.rb"],
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        ruby_write(root, "package.json", "{}");
+        let support = |name: &str| ruby_write(root, "support.ts", &template.replace("NAME", name));
+        support("Given");
+        let mut session = SourceExtractionSession::new(root);
+        let mut definitions = Vec::new();
+        for name in order {
+            let extracted = ruby_session_extract(&mut session, root, (name, source(name)), false);
+            assert!(
+                extracted.diagnostics.is_empty() && !extracted.definitions.is_empty(),
+                "{name}"
+            );
+            definitions.extend(extracted.definitions);
+            if !name.ends_with(".rb") {
+                // A second resolver would observe this edit; the shared session keeps its exports.
+                support("When");
+            }
+        }
+        support("Given");
+        let fresh = order.into_iter().flat_map(|name| {
+            let mut fresh = SourceExtractionSession::default();
+            ruby_session_extract(&mut fresh, root, (name, source(name)), false).definitions
+        });
+        assert_eq!(definitions, fresh.collect::<Vec<_>>(), "{order:?}");
+        let config = cuke_dedup::config::Config::load(root, Default::default()).unwrap();
+        let analyze = |domain: Vec<cuke_dedup::model::StepDefinition>| {
+            cuke_dedup::analysis::analyze_with_diagnostics(domain, vec![], &config)
+        };
+        // The analysis entry point refuses mixed comparison domains, so it partitions by domain.
+        let mixed = analyze(definitions.clone())
+            .err()
+            .map(|error| error.to_string());
+        let refusal = "Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots";
+        assert_eq!(mixed.as_deref(), Some(refusal), "{order:?}");
+        let first = definitions[0].clone();
+        let (first_domain, other_domain): (Vec<_>, Vec<_>) = definitions
+            .into_iter()
+            .partition(|definition| analyze(vec![first.clone(), definition.clone()]).is_ok());
+        let findings = [first_domain, other_domain]
+            .into_iter()
+            .flat_map(|domain| analyze(domain).unwrap().result.findings);
+        let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
+        let mut pairs: Vec<[String; 2]> = findings
+            .filter(|finding| finding.rule == cuke_dedup::model::Rule::DuplicateMatcher)
+            .map(|finding| {
+                assert_eq!(finding.related.len(), 1, "{order:?}");
+                let mut pair = [name(&finding.primary.path), name(&finding.related[0].path)];
+                pair.sort();
+                pair
+            })
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            [["steps.js", "steps.ts"], ["steps.rb", "steps.rb"]],
+            "{order:?}"
+        );
+    }
+}
+
+/// Definition, file and registry uncertainty scopes applied to Ruby definitions withdraw or
+/// downgrade only their own scope and keep independent final findings; a JavaScript registry
+/// scope is the control that leaves every Ruby definition and finding in place.
+#[test]
+fn ruby_finalization_scopes_preserve_independent_final_findings() {
+    use cuke_dedup::model::Rule;
+    use cuke_dedup::source_adapter::*;
+    use UncertaintyCause::{Handler, Registration, Source};
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    let mut session = SourceExtractionSession::new(root);
+    let control =
+        "Given('unrelated control') { check() }\nGiven('unrelated control') { check() }\n";
+    let panels = "Given('opens red panel') { work() }\nGiven('opens red panel') { work() }\nGiven('opens blue panel') { work() }\n";
+    let mut definitions =
+        ruby_session_extract(&mut session, root, ("control.rb", control), false).definitions;
+    definitions
+        .extend(ruby_session_extract(&mut session, root, ("steps.rb", panels), false).definitions);
+    assert_eq!(definitions[4].matcher, "opens blue panel");
+    let config = cuke_dedup::config::Config::load(root, Default::default()).unwrap();
+    let blue = UncertaintyScope::Definition(definitions[4].location.clone());
+    let panel_file = UncertaintyScope::File(root.join("steps.rb"));
+    let ruby = UncertaintyScope::Registry(SourceLanguage::Ruby);
+    let javascript = UncertaintyScope::Registry(SourceLanguage::JavaScript);
+    // Expected: [definitions retained, duplicate-matcher findings, duplicate-handler findings].
+    for (cause, scope, expected) in [
+        (Registration, blue.clone(), [4, 2, 0]),
+        (Handler, blue, [5, 2, 0]),
+        (Registration, panel_file.clone(), [2, 1, 0]),
+        (Handler, panel_file, [5, 2, 0]),
+        (Source, ruby.clone(), [5, 2, 2]),
+        (Registration, ruby, [0, 0, 0]),
+        (Registration, javascript, [5, 2, 2]),
+    ] {
+        let uncertainty = SourceUncertainty::new(scope, cause, "scoped");
+        let mut finalization = SourceFinalization::default();
+        finalization.uncertainties.push(uncertainty);
+        let mut kept = definitions.clone();
+        finalization.apply(&mut kept);
+        let total = kept.len();
+        let outcome = cuke_dedup::analysis::analyze_with_diagnostics(kept, vec![], &config);
+        let findings = outcome.unwrap().result.findings;
+        let count = |rule: Rule| {
+            findings
+                .iter()
+                .filter(|finding| finding.rule == rule)
+                .count()
+        };
+        let observed = [
+            total,
+            count(Rule::DuplicateMatcher),
+            count(Rule::DuplicateHandler),
+        ];
+        assert_eq!(observed, expected, "{finalization:?}");
+    }
+}
+
 /// Oversized inputs beside Ruby sources fail closed whatever the reporter, while an oversized
 /// Ruby Cucumber Expression only warns and the report is still written.
 #[test]
