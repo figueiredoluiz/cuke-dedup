@@ -1659,10 +1659,7 @@ fn ruby_near_exact_respects_handler_threshold_and_capture_context() {
 /// Runs the binary over `files` written to a fresh project with the JSON reporter, returning the
 /// exit code, the parsed report and stderr; a run that writes no report fails with both.
 fn ruby_pair_report(files: &[(&str, &str)], pattern: &str, extra: &[&str]) -> (i32, Value, String) {
-    let directory = tempfile::tempdir().unwrap();
-    for (path, contents) in files {
-        ruby_write(directory.path(), path, contents);
-    }
+    let directory = ruby_project(files);
     let output = ruby_cli(directory.path(), pattern)
         .args(["--reporters", "json", "--output", "out", "--no-metrics"])
         .args(extra)
@@ -3500,6 +3497,274 @@ fn ruby_native_regex_usage_and_encoding_outcomes() {
             "{literal}"
         );
     }
+}
+
+/// Writes each `(path, contents)` pair into a fresh temporary project root.
+fn ruby_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        ruby_write(directory.path(), path, contents);
+    }
+    directory
+}
+
+/// Runs the binary with JSONL output over `files` written to a temporary root, with the `*.rb`
+/// definitions and `extra` arguments; returns the records and stderr, surfacing exit code and
+/// stderr when no summary is produced.
+fn ruby_records_run(files: &[(&str, &str)], extra: &[&str]) -> (Vec<Value>, String) {
+    let directory = ruby_project(files);
+    let output = ruby_cli(directory.path(), "*.rb")
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert!(
+        rows.last().is_some_and(|row| row["type"] == "summary"),
+        "exit {:?}: {stderr}",
+        output.status.code()
+    );
+    (rows, stderr)
+}
+
+/// Runs `steps` as `steps.rb` over the `usage.feature` scenario body `feature` with `extra`
+/// arguments; returns the records and stderr.
+fn ruby_usage_run(steps: &str, feature: &str, extra: &[&str]) -> (Vec<Value>, String) {
+    let feature = format!("Feature: Usage\n{feature}");
+    let arguments = [&["--features", "usage.feature"], extra].concat();
+    ruby_records_run(
+        &[("steps.rb", steps), ("usage.feature", &feature)],
+        &arguments,
+    )
+}
+
+/// Renders each `rule` finding as `path:line` of its primary followed by its related locations,
+/// sorted, so assertions pin which step and definitions a finding names.
+fn ruby_rule_locations(rows: &[Value], rule: &str) -> Vec<String> {
+    let location = |value: &Value| format!("{}:{}", value["path"].as_str().unwrap(), value["line"]);
+    let mut found: Vec<String> = rows
+        .iter()
+        .filter(|row| row["rule"] == rule)
+        .map(|row| {
+            let related = row["related"].as_array().unwrap().iter().map(location);
+            std::iter::once(location(&row["primary"]))
+                .chain(related)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Ruby `steps.rb` definitions over a `usage.feature` scenario body: complete analysis, and
+/// exactly the expected `ambiguous-step` findings (feature step, then matching definitions) and
+/// `unused-definition` findings (definition).
+#[test]
+fn ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps() {
+    const NO_TYPES: &str = "# no parameter types declared";
+    let outline = |rows: &str| {
+        format!(" Scenario Outline: Rows\n  Given I have <count> items\n  Then the user is here\n  Examples:\n   | count |\n{rows}")
+    };
+    let fallback = |types: &str| {
+        format!("{types}\nGiven('I have {{quantity}} cucumber(s)') {{ count() }}\nThen('they are in my belly/stomach with {{mood}}') {{ verify() }}")
+    };
+    let declared = "ParameterType(name: 'quantity', regexp: /several|one/, transformer: ->(s) { s }); ParameterType(name: 'mood', regexp: /joy|grief/, transformer: ->(s) { s })";
+    let wait = |types: &str| {
+        format!("{types}\nGiven('I wait {{duration}}') {{ wait_duration() }}\nGiven('I wait for the page') {{ wait_for_page() }}")
+    };
+    let duration = |pattern: &str| {
+        format!("ParameterType(name: 'duration', regexp: /{pattern}/, transformer: ->(s) {{ s }})")
+    };
+    let concrete = "Given('a user named {word}') { make_user() }\nGiven(/^a user named .+$/) { make_other_user() }";
+    let insensitive =
+        "Given('I have {int} items') { count() }\nThen(/^THE USER IS HERE$/i) { verify() }";
+    let sensitive =
+        "Given('I have {int} items') { count() }\nThen(/^THE USER IS HERE$/) { verify() }";
+    let expression = "Given('I have {int} cucumber(s)') { count() }\nThen('they are in my belly/stomach') { verify() }";
+    let cases: Vec<(String, String, &[&str], &[&str])> = vec![
+        // A concrete step matched by two definitions is one ambiguity and uses both.
+        (concrete.into(), " Scenario: S\n  Given a user named Ada\n".into(), &["usage.feature:3 steps.rb:1 steps.rb:2"], &[]),
+        (concrete.into(), " Scenario: S\n  Given a stranger named Ada\n".into(), &[], &["steps.rb:1", "steps.rb:2"]),
+        // Expanded outline rows and a Ruby `/i` regex mark usage. The original wording `EXISTS`
+        // contains `st`, which the documented Ruby `i` subset excludes (Unicode ligature folding).
+        (insensitive.into(), outline("   | 2 |\n"), &[], &[]),
+        (sensitive.into(), outline("   | 2 |\n"), &[], &["steps.rb:2"]),
+        (insensitive.into(), outline("   | two |\n"), &[], &["steps.rb:1"]),
+        // Optional `(s)` and alternative `belly/stomach` text in a plain Cucumber Expression.
+        (expression.into(), " Scenario: S\n  Given I have 2 cucumbers\n  Then they are in my stomach\n".into(), &[], &[]),
+        (expression.into(), " Scenario: S\n  Given I have 1 cucumber\n  Then they are in my belly\n".into(), &[], &[]),
+        (expression.into(), " Scenario: S\n  Given I have 2 cucumberz\n  Then they are in my liver\n".into(), &[], &["steps.rb:1", "steps.rb:2"]),
+        // Declared `ParameterType`s make the custom-parameter fallback exact while keeping its
+        // optional and alternative text, so a step outside that text is unused.
+        (fallback(declared), " Scenario: S\n  Given I have several cucumbers\n  Then they are in my stomach with joy\n".into(), &[], &[]),
+        (fallback(declared), " Scenario: S\n  Given I have one cucumber\n  Then they are in my belly with grief\n".into(), &[], &[]),
+        (fallback(declared), " Scenario: S\n  Given I have several cucumberz\n  Then they are in my liver with joy\n".into(), &[], &["steps.rb:2", "steps.rb:3"]),
+        // An undeclared `{duration}` cannot prove ambiguity (its usage half is vacuous: every
+        // non-exact matcher counts as used); a declared type that accepts the same steps proves
+        // the ambiguity, and one that rejects them is unused.
+        (wait(NO_TYPES), " Scenario: S\n  Given I wait for the page\n  Given I wait 3 seconds\n".into(), &[], &[]),
+        (wait(&duration(r"for the page|\d+ seconds")), " Scenario: S\n  Given I wait for the page\n  Given I wait 3 seconds\n".into(), &["usage.feature:3 steps.rb:2 steps.rb:3"], &[]),
+        (wait(&duration(r"\d+ minutes")), " Scenario: S\n  Given I wait for the page\n  Given I wait 3 seconds\n".into(), &[], &["steps.rb:2"]),
+    ];
+    for (steps, feature, ambiguous, unused) in cases {
+        let (rows, stderr) = ruby_usage_run(&steps, &feature, &[]);
+        assert_eq!(stderr, "", "{steps}\n{feature}");
+        assert_eq!(
+            rows.last().unwrap()["corpus"]["incomplete"],
+            false,
+            "{steps}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{steps}\n{feature}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{steps}\n{feature}"
+        );
+    }
+}
+
+/// Ruby outline ambiguities are reported once per template step and match set: repeated rows with
+/// one match set collapse, disjoint match sets stay separate, and concrete steps stay per line.
+#[test]
+fn ruby_outline_ambiguities_group_by_template_location_and_match_set() {
+    let items =
+        "Given('I have {int} items') { first() }\nGiven(/^I have \\d+ items$/) { second() }";
+    let values = "Given('value {int}') { first() }\nGiven(/^value \\d+$/) { second() }\nGiven(/^value 1$/) { third() }";
+    let outline = |step: &str, rows: &str| {
+        format!(" Scenario Outline: Rows\n  Given {step}\n  Examples:\n   | count |\n{rows}")
+    };
+    let cases: [(&str, String, &[&str], usize); 5] = [
+        (
+            items,
+            outline("I have <count> items", "   | 1 |\n   | 2 |\n   | 3 |\n"),
+            &["usage.feature:3 steps.rb:1 steps.rb:2"],
+            3,
+        ),
+        // Control: the same matches from two concrete lines are two findings.
+        (
+            items,
+            " Scenario: S\n  Given I have 1 items\n  Given I have 2 items\n".into(),
+            &[
+                "usage.feature:3 steps.rb:1 steps.rb:2",
+                "usage.feature:4 steps.rb:1 steps.rb:2",
+            ],
+            2,
+        ),
+        // Row 1 also matches `/^value 1$/`, so the template carries two match sets.
+        (
+            values,
+            outline("value <count>", "   | 1 |\n   | 2 |\n"),
+            &[
+                "usage.feature:3 steps.rb:1 steps.rb:2",
+                "usage.feature:3 steps.rb:1 steps.rb:2 steps.rb:3",
+            ],
+            2,
+        ),
+        (
+            values,
+            outline("value <count>", "   | 2 |\n   | 3 |\n"),
+            &["usage.feature:3 steps.rb:1 steps.rb:2"],
+            2,
+        ),
+        (
+            values,
+            outline("value <count>", "   | 1 |\n   | 1 |\n"),
+            &["usage.feature:3 steps.rb:1 steps.rb:2 steps.rb:3"],
+            2,
+        ),
+    ];
+    for (steps, feature, ambiguous, feature_steps) in cases {
+        let (rows, stderr) = ruby_usage_run(steps, &feature, &[]);
+        assert_eq!(stderr, "", "{feature}");
+        let summary = &rows.last().unwrap()["summary"];
+        assert_eq!(summary["featureStepsAnalyzed"], feature_steps, "{feature}");
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{feature}"
+        );
+    }
+}
+
+/// The Ruby duplication summary counts only duplication rules: error-severity `ambiguous-step` and
+/// `unused-definition` findings neither add definitions nor rules, and a suite with zero
+/// definitions reports 0% and passes the default 0% threshold.
+#[test]
+fn ruby_duplication_threshold_excludes_correctness_and_usage_findings() {
+    let steps = "Given('I click save') { page.click('save') }\nGiven('I click cancel') { page.click('cancel') }\nGiven('the cart is open') { open_cart() }\nWhen('the cart is open') { show_cart() }\nThen('a user named {word}') { make_user() }\nThen(/^a user named .+$/) { make_other_user() }\nThen('never used') { nothing() }";
+    let feature = " Scenario: S\n  Given I click save\n  Given I click cancel\n  Given the cart is open\n  Then a user named Ada\n";
+    let errors = [
+        "--rule",
+        "unused-definition=error",
+        "--rule",
+        "parameterization-candidate=error",
+    ];
+    let (rows, _) = ruby_usage_run(steps, feature, &errors);
+    let mut contributions: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] == "finding")
+        .map(|row| {
+            assert_eq!(row["severity"], "error", "{row}");
+            let rule = row["rule"].as_str().unwrap();
+            (
+                rule.to_owned(),
+                row["contributesToThreshold"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    contributions.sort();
+    contributions.dedup();
+    assert_eq!(
+        contributions,
+        [
+            ("ambiguous-step".to_owned(), false),
+            ("duplicate-matcher".to_owned(), true),
+            ("parameterization-candidate".to_owned(), true),
+            ("unused-definition".to_owned(), false),
+        ]
+    );
+    // Lines 1-4 are duplicated; the ambiguity-only lines (5, 6) and the unused definition (7)
+    // would raise 4 to 7. Keyword-agnostic matching makes lines 3 and 4 ambiguous too.
+    for (rule, expected) in [
+        ("duplicate-matcher", &["steps.rb:3 steps.rb:4"][..]),
+        ("parameterization-candidate", &["steps.rb:1 steps.rb:2"]),
+        (
+            "ambiguous-step",
+            &[
+                "usage.feature:5 steps.rb:3 steps.rb:4",
+                "usage.feature:6 steps.rb:5 steps.rb:6",
+            ],
+        ),
+        ("unused-definition", &["steps.rb:7"]),
+    ] {
+        assert_eq!(ruby_rule_locations(&rows, rule), expected, "{rule}");
+    }
+    let duplication = &rows.last().unwrap()["summary"]["duplication"];
+    ruby_assert_pointers(
+        duplication,
+        &[
+            ("/duplicatedDefinitions", 4.into()),
+            ("/totalDefinitions", 7.into()),
+            ("/percentage", (4_f64 / 7_f64 * 100.0).into()),
+            ("/passed", false.into()),
+            (
+                "/rules",
+                serde_json::json!(["duplicate-matcher", "parameterization-candidate"]),
+            ),
+        ],
+    );
+    let (rows, stderr) = ruby_usage_run("# no step definitions\n", feature, &[]);
+    assert!(stderr.contains("produced 0 definitions"), "{stderr}");
+    assert_eq!(
+        rows.last().unwrap()["summary"]["duplication"],
+        serde_json::json!({"threshold": 0.0, "duplicatedDefinitions": 0, "totalDefinitions": 0, "percentage": 0.0, "passed": true, "rules": []})
+    );
 }
 
 #[test]
@@ -6813,23 +7078,14 @@ fn ruby_candidate_limits_warn_and_still_report_without_failing_the_run() {
 
 /// Runs `source` as `steps.rb` under both candidate limits; returns the JSONL records and stderr.
 fn ruby_limited_run(source: &str, candidates: usize, structural: usize) -> (Vec<Value>, String) {
-    let directory = tempfile::tempdir().unwrap();
-    ruby_write(directory.path(), "steps.rb", source);
     let (candidates, structural) = (candidates.to_string(), structural.to_string());
-    let output = ruby_cli(directory.path(), "*.rb")
-        .args(["--reporters", "jsonl", "--no-metrics"])
-        .args(["--max-candidate-comparisons", &candidates])
-        .args(["--max-structural-class-comparisons", &structural])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    // Unlike `ruby_jsonl`, callers need stderr; a run that fails before analysis reports why.
-    assert!(
-        !output.stdout.is_empty(),
-        "exit {:?}: {stderr}",
-        output.status.code()
-    );
-    (records(output.stdout), stderr)
+    let limits = [
+        "--max-candidate-comparisons",
+        &candidates,
+        "--max-structural-class-comparisons",
+        &structural,
+    ];
+    ruby_records_run(&[("steps.rb", source)], &limits)
 }
 
 /// Joins one registration line per index.
