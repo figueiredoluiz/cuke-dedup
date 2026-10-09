@@ -10114,9 +10114,83 @@ fn ruby_copy_tree(source: &Path, destination: &Path) {
     }
 }
 
-/// Every one of the 136 Ruby parity manifest groups reproduces its scalar oracle, the rule of each
-/// required finding, the absence of each forbidden finding, its duplication summary and its
-/// candidate-source counts.
+/// Mirrors `findingMatches` in `recall-oracle.mjs`; an oracle key it does not model fails closed.
+fn ruby_oracle_matches(name: &str, finding: &Value, expected: &Value) -> bool {
+    let sorted = |values: Vec<String>| {
+        let mut values = values;
+        values.sort();
+        values
+    };
+    let texts = |values: &Value| {
+        values
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(Value::to_string)
+            .collect()
+    };
+    let related = || {
+        let related = finding["related"].as_array().unwrap().iter();
+        related.map(|location| {
+            format!(
+                "{}:{}",
+                location["path"].as_str().unwrap(),
+                location["line"]
+            )
+        })
+    };
+    let cluster = &finding["evidence"]["cluster"];
+    let comparison = &finding["evidence"]["comparison"];
+    expected
+        .as_object()
+        .unwrap()
+        .iter()
+        .all(|(key, wanted)| match key.as_str() {
+            "rule" => finding["rule"] == *wanted,
+            "primaryPath" => finding["primary"]["path"] == *wanted,
+            "primaryLine" => finding["primary"]["line"] == *wanted,
+            "relatedLocations" => {
+                let wanted = wanted
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|label| label.as_str().unwrap().to_owned());
+                sorted(related().collect()) == sorted(wanted.collect())
+            }
+            "relatedCount" => {
+                finding["related"].as_array().unwrap().len() as u64 == wanted.as_u64().unwrap()
+            }
+            "messageIncludes" => finding["message"]
+                .as_str()
+                .unwrap()
+                .contains(wanted.as_str().unwrap()),
+            "cluster" => match wanted {
+                Value::Bool(present) => !cluster.is_null() == *present,
+                fields => {
+                    !cluster.is_null()
+                        && fields
+                            .as_object()
+                            .unwrap()
+                            .iter()
+                            .all(|(field, value)| cluster[field] == *value)
+                }
+            },
+            "matchers" => {
+                let actual = Value::from(vec![
+                    comparison["leftMatcher"].clone(),
+                    comparison["rightMatcher"].clone(),
+                ]);
+                !comparison.is_null() && sorted(texts(&actual)) == sorted(texts(wanted))
+            }
+            "count" => true,
+            _ => panic!("{name}: unmodeled oracle key {key}"),
+        })
+}
+
+/// Every one of the 136 Ruby parity manifest groups reproduces its scalar oracle, an untruncated
+/// finding list, each required finding with all declared fields exactly `count` (default one)
+/// times, no forbidden finding, exactly one owning requirement per active finding, its duplication
+/// summary and its candidate-source counts, as `parityDeficits` in `ruby-parity.mjs` defines them.
 #[test]
 fn ruby_parity_manifest_groups_match_their_scalar_oracles() {
     let parity = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/ruby-parity");
@@ -10171,42 +10245,40 @@ fn ruby_parity_manifest_groups_match_their_scalar_oracles() {
             wanted.map(|key| &oracle[key]),
             "{name}"
         );
+        assert_eq!(report["findingsTruncated"], 0, "{name}: truncated findings");
         let active = report["findings"].as_array().unwrap().iter();
         let active: Vec<&Value> = active
             .filter(|finding| finding["suppression"].is_null())
             .collect();
-        for required in oracle["requiredFindings"].as_array().unwrap() {
-            let found = active
+        let count = |expected: &Value| {
+            let matching = active
                 .iter()
-                .any(|finding| finding["rule"] == required["rule"]);
-            assert!(found, "{name}: {required}");
-        }
-        // Mirrors `findingMatches` (recall-oracle.mjs) for the keys `requiredAbsent` uses.
-        let matches = |finding: &Value, expected: &Value| {
-            let sorted = |values: Vec<&Value>| {
-                let mut texts: Vec<String> = values.iter().map(|value| value.to_string()).collect();
-                texts.sort();
-                texts
-            };
-            expected
-                .as_object()
-                .unwrap()
-                .iter()
-                .all(|(key, wanted)| match key.as_str() {
-                    "rule" => finding["rule"] == *wanted,
-                    "primaryPath" => finding["primary"]["path"] == *wanted,
-                    "primaryLine" => finding["primary"]["line"] == *wanted,
-                    "matchers" => {
-                        let comparison = &finding["evidence"]["comparison"];
-                        let actual = vec![&comparison["leftMatcher"], &comparison["rightMatcher"]];
-                        sorted(actual) == sorted(wanted.as_array().unwrap().iter().collect())
-                    }
-                    _ => panic!("{name}: unmodeled requiredAbsent key {key}"),
-                })
+                .filter(|finding| ruby_oracle_matches(name, finding, expected));
+            matching.count()
         };
+        let required = oracle["requiredFindings"].as_array().unwrap();
+        for expected in required {
+            let wanted = expected["count"].as_u64().unwrap_or(1);
+            assert_eq!(
+                count(expected) as u64,
+                wanted,
+                "{name}: required {expected}"
+            );
+        }
         for absent in oracle["requiredAbsent"].as_array().unwrap() {
-            let found = active.iter().any(|finding| matches(finding, absent));
-            assert!(!found, "{name}: forbidden {absent}");
+            assert_eq!(count(absent), 0, "{name}: forbidden {absent}");
+        }
+        for finding in &active {
+            let owners = required
+                .iter()
+                .filter(|expected| ruby_oracle_matches(name, finding, expected));
+            let location = &finding["primary"];
+            assert_eq!(
+                owners.count(),
+                1,
+                "{name}: finding ownership {} at {location}",
+                finding["rule"]
+            );
         }
         for (key, value) in oracle["duplication"].as_object().into_iter().flatten() {
             assert_eq!(
@@ -10685,13 +10757,20 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
             .map(|error| error.to_string());
         let refusal = "Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots";
         assert_eq!(mixed.as_deref(), Some(refusal), "{order:?}");
-        let first = definitions[0].clone();
-        let (first_domain, other_domain): (Vec<_>, Vec<_>) = definitions
-            .into_iter()
-            .partition(|definition| analyze(vec![first.clone(), definition.clone()]).is_ok());
-        let findings = [first_domain, other_domain]
-            .into_iter()
-            .flat_map(|domain| analyze(domain).unwrap().result.findings);
+        // `Framework::CucumberRuby` is the routing key of the Ruby comparison domain, so the
+        // partition holds in every order and never depends on which definition comes first.
+        let ruby_framework = cuke_dedup::model::Framework::CucumberRuby;
+        let domains: [Vec<_>; 2] = [true, false].map(|in_ruby| {
+            let domain = definitions
+                .iter()
+                .filter(|definition| (definition.framework == ruby_framework) == in_ruby);
+            domain.cloned().collect()
+        });
+        assert!(domains.iter().all(|domain| !domain.is_empty()), "{order:?}");
+        let findings = domains.into_iter().flat_map(|domain| {
+            let outcome = analyze(domain).unwrap_or_else(|error| panic!("{order:?}: {error}"));
+            outcome.result.findings
+        });
         let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
         let mut pairs: Vec<[String; 2]> = findings
             .filter(|finding| finding.rule == cuke_dedup::model::Rule::DuplicateMatcher)

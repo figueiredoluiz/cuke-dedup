@@ -4139,7 +4139,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_parity_manifest_groups_match_their_scalar_oracles"
           },
-          "rationale": "Loads the versioned Ruby parity manifest and its group manifests, runs all 136 executable groups with their manifest arguments under --fail-on-incomplete, and asserts each group's definition count, feature-step count, completeness, strict exit, required active findings, forbidden findings (requiredAbsent), duplication values and expected candidate sources.",
+          "rationale": "Loads the versioned Ruby parity manifest and its group manifests, runs all 136 executable groups with their manifest arguments under --fail-on-incomplete, and asserts each group's definition count, feature-step count, completeness, strict exit, zero truncated findings, each required finding matched on every declared field (rule, primaryPath, primaryLine, relatedLocations, relatedCount, messageIncludes, cluster, matchers) by exactly its count (default 1) of active findings, zero active matches for each requiredAbsent entry, exactly one owning requiredFindings entry per active finding, duplication values and expected candidate sources; an unmodeled oracle key fails the test.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
