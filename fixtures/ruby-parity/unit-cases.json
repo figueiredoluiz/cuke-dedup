@@ -161,7 +161,7 @@
             "name": "ruby_near_wording_rejects_mixed_syntax_and_opposite_words"
           },
           "rationale": "A Cucumber expression against a regex with the same text, and against a regex one word away, are not near; the regex/regex and expression/expression pairs one word apart are near. inactive and cannot rows pin the polarity half.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "similarity_helpers_cover_empty_exact_structural_and_lcs_paths",
@@ -171,7 +171,7 @@
             "name": "ruby_pair_evidence_reports_similarity_paths_and_matcher_delta"
           },
           "rationale": "Ruby pairs pin the helper paths: `Given('')` beside `Given(//)` reaches the empty-matcher branch (matcherSimilarity 1.0), and alpha, structural, ordered-overlap and empty-stream handler pairs give 1.0, 0.95, 0.5/0.667 and 0.0.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "method_metadata_is_a_compatibility_gate_not_similarity_evidence",
@@ -381,7 +381,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "100 Ruby registrations with unique wording and distinct receiver methods evaluate 0 candidate comparisons; three `Given('same')` registrations evaluate exactly 2 normalizedMatcher pairs.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "candidate_limits_preserve_partial_analysis_and_report_skipped_work",
@@ -391,7 +391,7 @@
             "name": "ruby_structural_truncation_keeps_later_classes_and_bounds_locations"
           },
           "rationale": "143 Ruby receiver-call registrations at limits 100/20 report truncated, 20 evaluated (under the global limit), one truncated structural class, structuralHandler skips, retained parameterization findings, and exactly one partial-findings diagnostic.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "similarity_work_limits_fail_closed_before_quadratic_pair_verification",
@@ -401,7 +401,7 @@
             "name": "ruby_similarity_work_limits_fail_closed_before_pair_verification"
           },
           "rationale": "Ruby pairs whose matcher matrix (10,011-character matchers) or handler event matrix (10,002 events) exceed the cell ceiling report identicalHandler or matcherBlocking skipped 1, evaluated 0, truncated, a safety-limit diagnostic and no duplicate-handler or near-duplicate finding; sub-ceiling controls evaluate and report.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "suppression_globs_compile_once_and_pair_lookups_share_the_work_budget",
@@ -421,7 +421,7 @@
             "name": "ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained"
           },
           "rationale": "A Ruby duplicate pair extracted through the Ruby adapter and analyzed through the library API with a caller-built `**` suppression carrying the original 420,000-character reason retains one duplicate-matcher finding whose reason is the first 512 characters.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "structural_class_limit_preserves_work_from_later_classes",
@@ -431,7 +431,7 @@
             "name": "ruby_structural_truncation_keeps_later_classes_and_bounds_locations"
           },
           "rationale": "Two six-member Ruby structural classes at structural limit 2 report two truncated classes, 4 structuralHandler evaluations, and parameterization findings from both classes.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "global_candidate_limit_reports_the_source_that_was_truncated",
@@ -441,7 +441,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "Five Ruby `Given('same')` registrations at global limit 2 report normalizedMatcher evaluated 2 and skipped 2, and total evaluated equals 2.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "candidate_limits_are_inclusive_at_the_exact_boundary",
@@ -457,7 +457,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "Three Ruby `Given('same') { page.perform(i) }` registrations, which share one structural class, at global limit 1 skip 1 normalizedMatcher pair and 0 structuralHandler pairs.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "same_normalized_pairs_do_not_consume_the_structural_limit",
@@ -467,7 +467,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "The same three-member Ruby group at structural limit 1 evaluates 2 normalizedMatcher and 0 structuralHandler pairs with no truncation; distinct-matcher rows with the same handlers are the truncating control.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "same_normalized_class_does_not_report_false_structural_truncation",
@@ -477,7 +477,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "Four same-matcher Ruby registrations in one structural class at structural limit 1 evaluate 3 normalizedMatcher pairs with 0 skipped and no truncation.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "structural_overlap_ignores_existing_pairs_within_one_handler_group",
@@ -487,7 +487,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "Four Ruby `page.act(<literal>)` registrations with one identical-handler pair at structural limit 1 report identicalHandler evaluated 1 and exactly 4 skipped (not 5); the unlimited control evaluates 6 without truncation.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "trivial_and_unresolved_handlers_do_not_consume_candidate_budgets",
@@ -497,7 +497,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "Two extracted Ruby definitions with empty blocks, and two with uncomparable handlers (optional block parameter), evaluate 0 candidates; non-trivial and comparable controls evaluate 1 identicalHandler pair.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "candidate_limit_diagnostic_bounds_affected_class_locations",
@@ -507,7 +507,7 @@
             "name": "ruby_structural_truncation_keeps_later_classes_and_bounds_locations"
           },
           "rationale": "Five truncated Ruby structural classes list three locations followed by `and 2 more`; a single truncated class lists one location with no `and N more` suffix.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers",
@@ -517,7 +517,7 @@
             "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
           },
           "rationale": "A Ruby regexp over the compiled-program limit yields exactly one regex-resource diagnostic at its own line, keeps 1 analyzed definition, exits 0 by default and 2 under `--fail-on-incomplete`; `/a{100}/` is the control with no diagnostic and exit 0 when strict. The library path over Ruby definitions (strict `analyze` rejects, `analyze_with_diagnostics` keeps the partial result) is pinned by `ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "equivalence_classes_report_a_spanning_set_instead_of_every_pair",
@@ -543,7 +543,7 @@
             "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
           },
           "rationale": "A Ruby `# cuke-dedup:ignore duplicate-matcher -- ...` directive above line 4 suppresses the duplicate-matcher pair steps.rb:4/steps.rb:5 with reason `wording fixed by an external contract`, while line 4's duplicate-handler pair with steps.rb:6 stays active; a `duplicate-handler` directive on the related definition (related.rb:3) suppresses the pair related.rb:1/related.rb:3. Rows assert rule, primary, related and reason.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "wording_drift_with_same_handler_is_near_duplicate",
@@ -561,7 +561,7 @@
             "name": "ruby_matcher_blocking_admits_only_handlers_that_share_actions"
           },
           "rationale": "Row one: Ruby handlers with two and three calls (different structure) get one matcherBlocking candidate and a near finding at a 0.5 floor with handler similarity 0.667, the same value their duplicate-matcher evidence reports.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_blocking_rejects_similar_wording_without_handler_agreement",
@@ -571,7 +571,7 @@
             "name": "ruby_matcher_blocking_admits_only_handlers_that_share_actions"
           },
           "rationale": "Row two: the same near-worded matchers over handlers with no shared action produce zero matcherBlocking candidates and no near finding at either floor, with handler similarity 0.0; row one is the opposite control.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_blocking_semantic_boundary_is_table_driven",
@@ -581,7 +581,7 @@
             "name": "ruby_matcher_blocking_admits_only_handlers_that_share_actions"
           },
           "rationale": "Rows three to nine pin candidate count, near outcome at a 0.5 floor and exact handler similarity: one shared action of two (0.5, near), direct versus fluent call (0.5, near), unrelated helpers (0.0), different receivers (0.0), control flow alone (0.5, not a candidate), one shared action of three (0.333), different terminal methods (0.0). The control-flow row uses two `if` events against one with no call, so its overlap is 0.5 where the JavaScript row's shape gives 2/3; identical Ruby streams would be vetoed for a different reason.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_blocking_finds_near_members_outside_an_identical_handler_spanning_tree",
@@ -591,7 +591,7 @@
             "name": "ruby_matcher_blocking_reaches_near_pairs_beside_identical_handlers"
           },
           "rationale": "Three Ruby definitions with one handler body: identicalHandler evaluates 2 spanning pairs, matcherBlocking adds the third, and exactly one near finding names `the account is enabled` and `the accounts are enabled`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_blocking_keeps_alpha_identical_handlers_with_empty_behavior_signatures",
@@ -601,7 +601,7 @@
             "name": "ruby_matcher_blocking_reaches_near_pairs_beside_identical_handlers"
           },
           "rationale": "Second body `|value| stored = value` is comparable, non-trivial and records no action event; it still gets one matcherBlocking candidate and the near finding. Removing the identical-structure shortcut fails only this body.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_blocking_respects_the_global_candidate_limit",
@@ -611,7 +611,7 @@
             "name": "ruby_matcher_blocking_respects_the_global_candidate_limit"
           },
           "rationale": "Four Ruby handlers sharing two of three actions under `--max-candidate-comparisons 2`: matcherBlocking evaluated 2 and skipped 1, candidateComparisonsEvaluated 2, truncated true and the incompleteness warning; the unlimited control evaluates 6 with no truncation.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "homogeneous_handler_groups_generate_linear_candidates",
@@ -621,7 +621,7 @@
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
           "rationale": "300 Ruby registrations with one shared handler evaluate 299 identicalHandler pairs and at most 600 comparisons in total (44,850 if quadratic).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "parameterization_requires_a_bounded_value_like_matcher_difference",
@@ -631,7 +631,7 @@
             "name": "ruby_parameterization_requires_one_bounded_value_change"
           },
           "rationale": "The first ten of the test's fourteen rows, the original matcher rows over literal-only Ruby handler differences: save/cancel and New York/York City are parameterization candidates; the five-word change, `not`, `dis-`, `in-`, `il-`, `im-`, `ir-` opposites and the flanked two-change pair are not; none is a near or duplicate-handler finding. The last four rows are the long-context cases mapped to shared_context_does_not_override_parameterization_evidence.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "near_duplicate_handler_similarity_floor_is_configurable",
@@ -641,7 +641,7 @@
             "name": "ruby_matcher_blocking_admits_only_handlers_that_share_actions"
           },
           "rationale": "Every row runs at the default floor (0.70) and with `nearDuplicateHandlerSimilarity` 0.5: 0.5 and 0.667 overlap rows are near only at 0.5, and a 0.75 overlap row (`page.click` beside `page.click` plus `page.wait_for_load_state`) is near at both, so changing the default floor fails the test.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "literal_handler_differences_prefer_parameterization_over_near_wording",
@@ -659,7 +659,7 @@
             "name": "ruby_empty_handlers_and_disjoint_placeholder_types_do_not_fail_analysis"
           },
           "rationale": "Three empty Ruby handlers under `{int}`, `{string}` and literal matchers: exit 0, 3 definitions, complete corpus, no findings. Controls: `work()` bodies add exactly one duplicate-handler, and a whitespace-only matcher change adds exactly one normalized-matcher.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "semantically_distinct_matchers_do_not_become_error_equivalent",
@@ -683,7 +683,7 @@
             "name": "ruby_near_wording_rejects_mixed_syntax_and_opposite_words"
           },
           "rationale": "active/inactive and can/cannot matcher pairs over identical Ruby handlers produce no near finding while still producing the duplicate-handler; the `now active` pair is the near control.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_similarity_gates_are_pinned_at_short_and_long_boundaries",
@@ -707,7 +707,7 @@
             "name": "ruby_pair_evidence_reports_similarity_paths_and_matcher_delta"
           },
           "rationale": "Ruby pairs pin each handler-similarity row reachable from source through duplicate-matcher evidence: alpha 1.0, structural 0.95, ordered overlap 0.667, no events 0.0, and a trust-split pair (one file loads the configured assertion module, the other does not) with the same exact syntax scoring 0.0, against 1.0 when both load it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "duplicate_matcher_components_are_invariant_to_definition_input_order",
@@ -717,7 +717,7 @@
             "name": "ruby_duplicate_matcher_components_are_invariant_to_definition_order"
           },
           "rationale": "Three same-matcher Ruby definitions in the four original source orders always yield two duplicate-matcher findings whose members are all three handlers, identified by handler source.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "shared_context_does_not_override_parameterization_evidence",
@@ -727,7 +727,7 @@
             "name": "ruby_parameterization_requires_one_bounded_value_change"
           },
           "rationale": "The last four of the test's fourteen rows, the original long-context rows: save/cancel, first/last and dark/light are parameterization candidates, enabled/disabled is not, and none is a near finding.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "path_and_matcher_suppression_must_select_the_same_definition",
@@ -737,7 +737,7 @@
             "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
           },
           "rationale": "Ruby duplicate-handler pair in left.rb/right.rb: `path: left.rb` + `matcher: right matcher` and `path: *.rb` + `matcher: missing matcher` leave the finding active and report the suppression as matching no definition; `path: *.rb` + `matcher: right matcher` suppresses it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "suppression_path_globs_remain_root_relative",
@@ -747,7 +747,7 @@
             "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
           },
           "rationale": "Ruby pair in root.rb and nested/steps.rb: `path: *.rb` suppresses it; `path: steps.rb` does not and is reported as matching no definition.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "path_suppression_requires_every_definition_in_a_pair_to_be_in_scope",
@@ -757,7 +757,7 @@
             "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
           },
           "rationale": "`path: legacy/**` leaves the Ruby pair in legacy/left.rb and current/right.rb active and suppresses the pair when both files are under legacy/.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "suppression_directory_patterns_and_unmatched_detection_share_semantics",
@@ -767,7 +767,7 @@
             "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
           },
           "rationale": "For a Ruby pair under legacy/nested/, `path: legacy/` suppresses the finding with no unmatched warning, and `path: missing/**` leaves it active with `suppression 1 for duplicate-handler matched no step definitions`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "opposite_assertions_are_not_duplicate_handlers",
@@ -817,7 +817,7 @@
             "name": "ruby_mostly_matching_ordered_assertions_remain_near_duplicates"
           },
           "rationale": "Ten configured Ruby assertions differing only in the last value give a near finding at the default floor with similarity 0.9; three changed values give 0.7 (still near), four give none. The original's other shape, structurally identical ordinary-call handlers differing only in literals, is never near in Ruby by documented policy (identical action streams are parameterization material; docs/discovery-and-frameworks.md, Handlers and assertion evidence), so the shared ordered-overlap property is pinned with configured assertions.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "decorated_method_metadata_does_not_create_near_duplicate_findings",
@@ -839,7 +839,7 @@
             "name": "ruby_pair_evidence_reports_similarity_paths_and_matcher_delta"
           },
           "rationale": "Ruby findings for `the item is visible`/`the items are visible` report the diff `the item| is|s are| visible` with the handler source and the matcherDifference string; `the café is open`/`the cafè is open`, whose change sits inside a multibyte character sharing a leading byte, reports prefix `the caf`, changes `é`/`è` and suffix ` is open`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "concrete_feature_step_detects_ambiguity_and_usage",
@@ -849,7 +849,7 @@
             "name": "ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps"
           },
           "rationale": "Ruby `Given('a user named {word}')` and `Given(/^a user named .+$/)` with step `a user named Ada` yield exactly one ambiguous-step at usage.feature:3 naming steps.rb:1 and steps.rb:2 and no unused-definition; the control step `a stranger named Ada` yields no ambiguity and both definitions unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "scenario_outline_rows_and_case_insensitive_regexes_count_as_usage",
@@ -859,7 +859,7 @@
             "name": "ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps"
           },
           "rationale": "A Scenario Outline row `2` uses `Given('I have {int} items')` and `Then the user is here` uses `/^THE USER IS HERE$/i` on a complete corpus; dropping the `i` flag leaves steps.rb:2 unused and the row `two` leaves steps.rb:1 unused. The wording avoids `st`, which the documented Ruby `i` subset excludes.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "supports_optional_and_alternative_cucumber_expression_syntax",
@@ -869,7 +869,7 @@
             "name": "ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps"
           },
           "rationale": "Ruby `'I have {int} cucumber(s)'` and `'they are in my belly/stomach'` are used by `2 cucumbers`/`stomach` and by `1 cucumber`/`belly`; the control `2 cucumberz`/`liver` leaves both definitions unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "fallback_for_custom_parameters_preserves_optional_and_alternative_syntax",
@@ -879,7 +879,7 @@
             "name": "ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps"
           },
           "rationale": "With Ruby `ParameterType` declarations the fallback is exact but keeps optional and alternative text: `several cucumbers`/`stomach with joy` and `one cucumber`/`belly with grief` are used, and `several cucumberz`/`liver with joy` leaves steps.rb:2 and steps.rb:3 unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "named_handlers_with_different_bodies_and_stub_handlers_do_not_duplicate",
@@ -901,7 +901,7 @@
             "name": "ruby_outline_ambiguities_group_by_template_location_and_match_set"
           },
           "rationale": "Three outline rows matched by `'I have {int} items'` and `/^I have \\d+ items$/` give 3 feature steps and exactly one ambiguous-step at usage.feature:3 naming steps.rb:1 and steps.rb:2; the control with two concrete lines gives two findings, at lines 3 and 4.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "outline_ambiguities_keep_disjoint_match_sets_separate",
@@ -911,7 +911,7 @@
             "name": "ruby_outline_ambiguities_group_by_template_location_and_match_set"
           },
           "rationale": "Rows 1 and 2 under `value {int}`, `/^value \\d+$/`, `/^value 1$/` give two ambiguous-step findings at usage.feature:3, one naming steps.rb:1-2 and one naming steps.rb:1-3; rows 2/3 and rows 1/1 each collapse to one finding with their single match set.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "custom_parameter_fallback_marks_usage_but_cannot_prove_ambiguity",
@@ -921,7 +921,7 @@
             "name": "ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps"
           },
           "rationale": "Undeclared `{duration}` beside `'I wait for the page'` with steps `I wait for the page` and `I wait 3 seconds` gives no ambiguous-step finding, while declaring `duration` as /for the page|\\d+ seconds/ proves the ambiguity at usage.feature:3 (steps.rb:2, steps.rb:3). The usage half is engine-wide: every non-exact matcher is marked used before matching, so it is not observable per row.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "ordered_behavior_similarity_uses_longest_common_subsequence",
@@ -1239,7 +1239,7 @@
             "name": "ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive"
           },
           "rationale": "For both candidate flags, `0`, `-1` and `many` exit 2 over a Ruby corpus; `--print-config` with `7` for each flag reports `maxCandidateComparisons` and `maxStructuralClassComparisons` as 7.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag",
@@ -1915,7 +1915,7 @@
             "name": "ruby_duplication_threshold_excludes_correctness_and_usage_findings"
           },
           "rationale": "With every finding at error severity, the Ruby findings are exactly duplicate-matcher steps.rb:3/4, parameterization-candidate steps.rb:1/2, ambiguous-step usage.feature:5 (steps.rb:3, 4) and usage.feature:6 (steps.rb:5, 6), and unused-definition steps.rb:7; only the first two carry contributesToThreshold, and summary.duplication counts 4 of 7 definitions, 400/7 percent, rules [duplicate-matcher, parameterization-candidate].",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "duplication_threshold_counts_unique_active_error_definitions",
@@ -1933,7 +1933,7 @@
             "name": "ruby_duplication_threshold_excludes_correctness_and_usage_findings"
           },
           "rationale": "A Ruby suite whose only file has no registrations reports `produced 0 definitions` and summary.duplication {threshold 0, duplicated 0, total 0, percentage 0, passed true, rules []}; the populated suite in the same test fails the same default 0% threshold.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "duplication_threshold_counts_multiple_definitions_at_one_location",
@@ -1970,7 +1970,7 @@
             "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
           },
           "rationale": "The changed-mode JSONL keeps exactly the three pairs touching changed Ruby files and drops the old_a.rb/old_b.rb pair that the full-run control reports.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "cluster_fingerprints_are_location_and_member_order_independent",
@@ -2001,7 +2001,7 @@
             "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
           },
           "rationale": "From packages/e2e, a modified tracked \"träcked.rb\", an untracked \" new step.rb\" and an untracked \"café step.rb\" are each in the changed set, shown by their findings with subdirectory-relative paths; the unix trailing-space name is not representable because a Ruby source must end in \".rb\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_files_preserve_newlines_in_unix_names",
@@ -2011,7 +2011,7 @@
             "name": "ruby_changed_since_preserves_newlines_in_unix_names"
           },
           "rationale": "A tracked \"steps/line\\nbreak.rb\" modified after commit contributes a duplicate-matcher finding in changed mode (2 active findings total), after a control showing no findings before the edit.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "git_path_decoder_preserves_non_utf8_unix_bytes",
@@ -2021,7 +2021,7 @@
             "name": "ruby_changed_since_preserves_non_utf8_linux_names"
           },
           "rationale": "The changed-mode run decodes non-UTF-8 Git path bytes for tracked and untracked .rb files into findings; gated to Linux because macOS filesystems reject non-UTF-8 names.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_files_preserve_non_utf8_linux_names",
@@ -2031,7 +2031,7 @@
             "name": "ruby_changed_since_preserves_non_utf8_linux_names"
           },
           "rationale": "A tracked steps/tracked-\\xfe.rb modified after commit contributes a finding in changed mode (2 active total) after a no-change control (Linux-gated).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "semantic_baseline_survives_location_changes_and_enforces_multiplicity",
@@ -2041,7 +2041,7 @@
             "name": "ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings"
           },
           "rationale": "A baselined Ruby pair stays suppressed after a move to shifted lines; a second copy of the pair yields two findings with the accepted fingerprint, of which only one is suppressed, and the baseline still totals 1.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_mode_validates_revisions_repositories_and_ignored_roots",
@@ -2051,7 +2051,7 @@
             "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
           },
           "rationale": "Revisions \"\", \" \", \"--all\" and \"missing-revision\" each exit 2 with the invalid/unresolvable revision message, a non-repository root fails with \"changed-files mode requires a Git repository\", and an ignored root fails with \"ignored by Git\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_mode_keeps_findings_with_changed_related_locations",
@@ -2061,7 +2061,7 @@
             "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
           },
           "rationale": "The tracked step finding has the unchanged steps/base.rb as primary and the changed steps/träcked.rb only as related location, and is kept.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_validation_counts_removals_and_ignores_suppressed_findings",
@@ -2071,7 +2071,7 @@
             "name": "ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs"
           },
           "rationale": "Updating nested/baseline.json from two Ruby duplicate pairs reports \"2 added, 0 removed, 2 total\"; after one pair is removed and the other inline-suppressed the update reports \"0 added, 2 removed, 0 total\"; applying schema 2, schema 99 and non-JSON baselines exits 2 with the expected messages.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "comparison_fingerprints_are_independent_of_pair_order",
@@ -2081,7 +2081,7 @@
             "name": "ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings"
           },
           "rationale": "The moved Ruby file lists the pair in reverse order, so the primary and related sides swap, and the baseline still suppresses it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -2096,7 +2096,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test renders a Ruby analysis as versioned JSON with relative `steps/steps.rb` paths, camelCase evidence and the Ruby handler text.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "default_summary_uses_the_strict_zero_percent_threshold",
@@ -2106,7 +2106,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test builds the default summary from a Ruby result and asserts the 0% threshold fails.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "terminal_report_has_version_and_finding_spacing",
@@ -2116,7 +2116,7 @@
             "name": "ruby_findings_render_through_the_terminal_reporter"
           },
           "rationale": "The Ruby terminal test asserts the version header, rule headings, finding spacing and `.rb` locations over Ruby findings.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "terminal_report_colors_only_selected_text",
@@ -2126,7 +2126,7 @@
             "name": "ruby_findings_render_through_the_terminal_reporter"
           },
           "rationale": "The Ruby terminal test strips the color codes from colored output over Ruby findings and compares it with plain output.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "terminal_report_uses_singular_finding_and_omits_optional_timing",
@@ -2136,7 +2136,7 @@
             "name": "ruby_findings_render_through_the_terminal_reporter"
           },
           "rationale": "The Ruby terminal test renders one Ruby finding without metrics and asserts singular wording and no timing line.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "terminal_report_propagates_footer_write_failures",
@@ -2146,7 +2146,7 @@
             "name": "ruby_findings_render_through_the_terminal_reporter"
           },
           "rationale": "The Ruby terminal test fails the writer at each footer line of a Ruby report and asserts the I/O error propagates.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "jsonl_emits_self_contained_findings_and_a_final_summary",
@@ -2156,7 +2156,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test asserts self-contained JSONL finding records, the suppressed record and the final summary. Truncation is driven by a Ruby matcher over the limit; Ruby handler snippets are capped at the JSONL limit, so the handler field cannot truncate.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "machine_reporters_preserve_cluster_evidence",
@@ -2166,7 +2166,7 @@
             "name": "ruby_findings_respect_every_reporter_bound"
           },
           "rationale": "The Ruby bounds test asserts cluster evidence (member count, fingerprints, truncation flag) for a Ruby duplicate cluster in JSON, JSONL and SARIF.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "every_reporter_bounds_large_cluster_records_and_signals_omissions",
@@ -2176,7 +2176,7 @@
             "name": "ruby_findings_respect_every_reporter_bound"
           },
           "rationale": "The Ruby bounds test caps a 300-member Ruby duplicate cluster in every reporter and asserts the omission signals.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "sarif_contains_only_active_findings_with_stable_locations",
@@ -2186,7 +2186,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test asserts SARIF holds only the active Ruby findings, each with a `steps/steps.rb` location and a v3 fingerprint.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "every_sarif_rule_links_to_its_documentation_section",
@@ -2196,7 +2196,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test asserts the SARIF descriptor and documentation link for each rule the Ruby analysis produces; the full rule list is adapter-independent.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "html_is_self_contained_and_escapes_finding_text",
@@ -2206,7 +2206,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test escapes a Ruby handler containing `</script>` in self-contained HTML and asserts the embedded data equals the JSON report.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "buffered_reports_cap_findings_and_signal_truncation",
@@ -2216,7 +2216,7 @@
             "name": "ruby_findings_respect_every_reporter_bound"
           },
           "rationale": "The Ruby bounds test caps one more than the buffered limit of Ruby findings in JSON, SARIF, HTML and terminal and asserts each truncation notice; JSONL keeps them all.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "bounded_reports_never_displace_an_error_with_warnings",
@@ -2226,7 +2226,7 @@
             "name": "ruby_findings_respect_every_reporter_bound"
           },
           "rationale": "The Ruby bounds test places one Ruby error after a full page of Ruby warnings and asserts every buffered reporter keeps it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "terminal_groups_each_rule_once_and_removes_control_characters",
@@ -2236,7 +2236,7 @@
             "name": "ruby_findings_render_through_the_terminal_reporter"
           },
           "rationale": "The Ruby terminal test groups Ruby findings once per rule and strips escape, bidi and tag characters that a Ruby matcher carries (control asserts the matcher holds them).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "reporters_preserve_finding_counts_and_information_across_formats",
@@ -2246,7 +2246,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test asserts the same active, suppressed and per-severity counts across terminal, JSON, JSONL, SARIF and HTML for one Ruby analysis.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "public_report_writer_uses_one_context_for_every_configured_format",
@@ -2256,7 +2256,7 @@
             "name": "ruby_findings_render_through_every_machine_reporter"
           },
           "rationale": "The Ruby machine-reporter test writes a Ruby analysis through the public writer with terminal, JSON, HTML and SARIF configured and asserts each file holds the Ruby path.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "ruby_findings_render_through_the_terminal_reporter",
@@ -3270,7 +3270,7 @@
             "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
           },
           "rationale": "Two adjacent Ruby directives on one registration suppress its duplicate-matcher and unused-definition findings with their own reasons and nothing else; a directive without `--`, an unknown rule and an empty reason each produce exactly one located error (steps.rb:7:1, 9:1, 11:1), and the findings the first and third target stay active, with exit 2 and exactly four `cuke-dedup:` stderr lines in the run.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "rejects_oversized_inline_suppression_reasons",
@@ -3280,7 +3280,7 @@
             "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
           },
           "rationale": "A Ruby directive with a 513-character reason is rejected with `oversized.rb:2:1: inline suppression reason exceeds the 512-character limit` and its unused-definition finding stays active; the control with exactly 512 characters suppresses its finding and retains the full reason.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "structural_fingerprint_masks_string_literal_contents",
@@ -3907,7 +3907,7 @@
             "name": "ruby_baseline_from_ref_compares_history_without_mutating_the_checkout"
           },
           "rationale": "Ports the original over .rb sources in a space-named (non-UTF-8 on Linux) repository with hostile hooks, filters, a global config and GIT_* env (the mixed-case config variables take effect only on Windows): asserts exits 0/1/1/0 by allowance, 1 active + 1 suppressed after third.rb, Ruby parse failure fatal only under --fail-on-unparseable, HEAD/index/worktrees unchanged, and every flag-misuse error.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_valid",
@@ -3917,7 +3917,7 @@
             "name": "ruby_baseline_from_ref_rejects_or_reports_incomplete_history"
           },
           "rationale": "Five Ruby base revisions (syntax error, unresolved require, no definitions, no feature, invalid Gherkin) exit 2 under `--fail-on-incomplete`, each naming its cause, while a complete base under the same flags exits 0.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_from_ref_tolerates_incomplete_history_by_default_and_reports_it",
@@ -3927,7 +3927,7 @@
             "name": "ruby_baseline_from_ref_rejects_or_reports_incomplete_history"
           },
           "rationale": "A base with a valid steps.rb plus an unparseable broken.rb succeeds by default with \"baseline revision `HEAD` is incomplete\" and the --fail-on-incomplete hint, and exits 2 under --fail-on-incomplete.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules",
@@ -3937,7 +3937,7 @@
             "name": "ruby_baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules"
           },
           "rationale": "Ten Ruby page.perform(i) definitions truncated by --max-structural-class-comparisons 2 make the base incomplete (exit 2), and gitlink submodules are refused whether real, hidden or injected by git replace.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped",
@@ -3960,7 +3960,7 @@
             "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
           },
           "rationale": "Ruby duplicate pair plus a feature step under --threshold 100 exits 1 with \"threshold 100.00% — PASS\" and an ambiguous-step finding.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "invalid_thresholds_are_configuration_errors",
@@ -3984,7 +3984,7 @@
             "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
           },
           "rationale": "A Ruby \"# cuke-dedup:ignore duplicate-matcher -- reason\" directive yields \"1 suppressed\" and exit 0; a reason-less directive on line 2 of broken.rb exits 2 with \"broken.rb:2:1: inline suppression must use `# cuke-dedup:ignore RULE -- REASON`\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "print_config_reports_merged_values_without_running_discovery",
@@ -4001,7 +4001,7 @@
             "name": "ruby_candidate_limits_cannot_exceed_hard_safety_ceilings"
           },
           "rationale": "Over-ceiling limits from config (with and without --print-config) and CLI exit 2 with the hard-limit messages beside a Ruby corpus; at-ceiling values print 2000000/250000 and a Ruby run at those values completes untruncated with its duplicate-matcher finding.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "zero_config_implicit_check_reports_duplicates_and_writes_machine_reports",
@@ -4011,7 +4011,7 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "With no config file (only the mandatory --definitions opt-in) the implicit check over two Ruby Then registrations exits 1, writes terminal/json/html/sarif, and asserts schemaVersion, errors 2, corpus and metrics counts, phase timings, HTML census and SARIF executionSuccessful true.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "no_metrics_produces_reproducible_machine_report_content",
@@ -4021,7 +4021,7 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "--no-metrics over one Ruby definition omits metrics from the default-directory JSON report and from the JSONL summary while keeping corpus counts of 1.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "project_config_can_disable_metrics",
@@ -4031,7 +4031,7 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "A .cuke-dedup.json with definitions [\"*.rb\"], reporters [\"json\"] and noMetrics true produces a JSON report without metrics and definitionsExtracted 1.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "empty_default_definition_discovery_is_visible",
@@ -4041,7 +4041,7 @@
             "name": "ruby_default_discovery_is_visibly_empty_and_names_the_opt_in_pattern"
           },
           "rationale": "With only a feature and an un-opted steps.rb, default discovery succeeds with \"automatic discovery found no supported step-definition source files\" and Analyzed 0 definitions, and --require-definitions exits 2 with \"no step definitions were extracted because no definition source files were discovered\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unresolved_registration_calls_warn_and_expose_the_corpus_census",
@@ -4057,7 +4057,7 @@
             "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
           },
           "rationale": "Ruby steps with a step-less features/account.feature.md assert the stderr notice, no unused-definition, JSON/JSONL/HTML/SARIF featureFilesWithoutSteps 1 and incomplete true, SARIF executionSuccessful false, and exit 2 under --fail-on-incomplete — all four reporter-specific fields the parity oracle lacked.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "valid_empty_classic_feature_does_not_hide_unused_definitions",
@@ -4067,7 +4067,7 @@
             "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
           },
           "rationale": "An empty placeholder.feature beside a non-empty active.feature over Ruby used/unused steps: no 0-steps notice, unused-definition 1, featureFiles 2, featureFilesWithoutSteps 0, incomplete false.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "partial_definition_extraction_is_visible_in_the_corpus_census",
@@ -4083,7 +4083,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "In changed mode with only changed.txt changed, the unchanged steps.rb dynamic-matcher registration still warns \"steps.rb:2:1: Ruby registration requires a static matcher and a statically resolved handler\" and the run succeeds.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "empty_definition_extraction_can_be_required_and_still_writes_reports",
@@ -4093,7 +4093,7 @@
             "name": "ruby_definition_requirements_and_source_diagnostics_are_visible"
           },
           "rationale": "A Ruby file with only HELPER = true under --require-definitions exits 2 with \"definition extraction produced 0 definitions from 1 discovered definition source file(s)\" and writes reports/cuke-dedup.json; the config-file form (requireDefinitions) exits 2 and writes configured-report/cuke-dedup.json.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "candidate_limits_warn_and_still_report_without_failing_the_run",
@@ -4103,7 +4103,7 @@
             "name": "ruby_candidate_limits_warn_and_still_report_without_failing_the_run"
           },
           "rationale": "Ten Ruby page.perform(i) definitions reproduce the original numbers exactly: exit 0 with the truncation warning at steps.rb:1:1, evaluated 2 / skipped 43 / 1 truncated class, HTML notice, SARIF unsuccessful, JSONL truncated, baseline update refused, and exit 2 under --fail-on-incomplete.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "explicit_check_honors_cli_rule_severity_for_exit_status",
@@ -4113,7 +4113,7 @@
             "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
           },
           "rationale": "\"check . --definitions *.rb --rule duplicate-matcher=warning\" over a Ruby duplicate pair succeeds and prints \"[warning]\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "zero_config_analyzes_playwright_bdd_without_loading_playwright",
@@ -4129,7 +4129,7 @@
             "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
           },
           "rationale": "A Ruby definition with a broken.feature lacking a Feature keyword exits 2 with \"failed to parse Gherkin feature\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "default_discovery_parses_gherkin_markdown",
@@ -4222,7 +4222,7 @@
             "name": "ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive"
           },
           "rationale": "Three Ruby `value {first|second|third}` registrations with configured `red|green` parameter types and `maxCandidateComparisons: 1` warn that matcher-overlap analysis is incomplete, report truncated=true with matcherOverlap evaluated 1/skipped 1, exit 0 by default and 2 under `--fail-on-incomplete`; `--max-candidate-comparisons=7` is the control (3 evaluated, 0 skipped, exit 0 when strict).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "declared_parameter_types_make_usage_analysis_exact",
@@ -4252,7 +4252,7 @@
             "name": "ruby_load_budget_is_shared_across_selected_definition_files"
           },
           "rationale": "Two selected Ruby files with 520 distinct `require_relative` loads each are complete alone under `--fail-on-incomplete`; selected together, exactly 16 loads (steps-b.rb lines 505-520) are refused with the 1,024-file limit message, 17 diagnostic lines total, 1,026 definition files, corpus incomplete, and exit 2 under `--fail-on-incomplete`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "type_only_and_over_depth_barrels_do_not_create_runtime_registrations",
@@ -4268,7 +4268,7 @@
             "name": "ruby_resource_limits_fail_closed_independently_of_reporters"
           },
           "rationale": "Each oversized package.json, .cuke-dedup.json, playwright.config.ts and baseline.json beside a Ruby corpus exits 2 naming the input kind and \"input limit\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "oversized_unchanged_sources_and_features_fail_changed_analysis_closed",
@@ -4278,7 +4278,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "An oversized unchanged steps.rb and feature in changed mode exit 2 naming both \"definition source\" and \"feature file\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "an_oversized_unchanged_feature_alone_fails_changed_analysis_closed",
@@ -4288,7 +4288,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "With a small valid steps.rb and only the unchanged feature oversized, changed mode exits 2 with \"feature file\" and \"input limit\" and no definition-source complaint.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass",
@@ -4298,7 +4298,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "An unchanged steps.rb containing byte 0xff makes changed mode exit 2 with \"not valid UTF-8\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "a_malformed_unchanged_definition_is_reported_in_changed_mode_and_gated_by_the_flag",
@@ -4308,7 +4308,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "An unchanged unterminated Ruby block succeeds in changed mode with \"Ruby source contains syntax errors\" and exits 2 with the same message under --fail-on-unparseable.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags",
@@ -4318,7 +4318,7 @@
             "name": "ruby_unparseable_sources_are_tolerated_reported_and_gated_by_flags"
           },
           "rationale": "With duplicate-matcher=warning and threshold 100 in config, adding an unparseable broken.rb beside valid.rb succeeds with \"Ruby source contains syntax errors\", the JSON report has incomplete true and duplicate-matcher 1, and --fail-on-unparseable and --fail-on-incomplete each exit 2.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "a_corpus_of_only_parseable_files_reports_no_syntax_incompleteness",
@@ -4328,7 +4328,7 @@
             "name": "ruby_unparseable_sources_are_tolerated_reported_and_gated_by_flags"
           },
           "rationale": "Before broken.rb exists the parseable Ruby corpus succeeds without the \"Ruby source contains syntax errors\" warning and also succeeds under --fail-on-unparseable, the opposite-answer control for the tolerance case.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions",
@@ -4345,7 +4345,7 @@
             "name": "ruby_resource_limits_fail_closed_independently_of_reporters"
           },
           "rationale": "An oversized steps.rb exits 2 with \"definition source\" and \"input limit\" under each of terminal, json, jsonl, html and sarif.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus",
@@ -4355,7 +4355,7 @@
             "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
           },
           "rationale": "An explicitly excluded oversized Ruby source leaves the run complete: exit 0 under `--fail-on-incomplete` with no diagnostic lines; without the exclusion the same file fails the run on the input limit.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "pathological_matcher_programs_fail_with_an_actionable_resource_error",
@@ -4365,7 +4365,7 @@
             "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
           },
           "rationale": "`Given(/a{100000}/)` beside a broken feature exits 2 with the regex resource limit and `simplify the matcher` guidance plus the Gherkin parse failure, and the JSON report keeps 1 analyzed definition. The repeat is 100,000 instead of 1,000,000 because Ruby rejects repeats above 100,000 (`too big number for repeat range`).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "oversized_cucumber_expression_fails_closed_and_still_writes_a_report",
@@ -4375,7 +4375,7 @@
             "name": "ruby_resource_limits_fail_closed_independently_of_reporters"
           },
           "rationale": "A Ruby Given with a 1 MiB+1 literal matcher exits 0 with \"warning: step matcher at\" and \"regex resource limit\" and the JSON report still counts 1 definition.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "local_domain_functions_are_not_mistaken_for_registration_barrels",
@@ -4397,7 +4397,7 @@
             "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
           },
           "rationale": "`--config team.json` over a Ruby corpus replaces the auto-discovered file: its threshold and features apply, and the auto file's ambiguous-step override, a key team.json leaves unset, does not; a control shows that override takes effect when the auto file is used.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "cypress_project_config_supplies_feature_discovery",
@@ -4413,7 +4413,7 @@
             "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
           },
           "rationale": "A Ruby corpus without features succeeds with no unused-definition and \"unused-definition findings are disabled\", and exits 2 with \"no feature files matched\" under --require-features.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "partial_feature_parse_failure_is_summarized_when_features_are_required",
@@ -4423,7 +4423,7 @@
             "name": "ruby_feature_corpus_requirements_and_empty_features_are_visible"
           },
           "rationale": "A valid and a malformed feature over Ruby definitions under --require-features exit 2 with \"1 discovered feature file(s) could not be parsed\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unmatched_definition_patterns_and_suppressions_are_visible",
@@ -4433,7 +4433,7 @@
             "name": "ruby_definition_requirements_and_source_diagnostics_are_visible"
           },
           "rationale": "A config with definitions [\"missing/**/*.rb\"] and an unmatched suppression succeeds and warns \"definition pattern `missing/**/*.rb` matched no files\" and \"suppression 1 for duplicate-matcher matched no step definitions\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "semantic_baseline_can_be_updated_moved_and_gated_by_new_findings",
@@ -4443,7 +4443,7 @@
             "name": "ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings"
           },
           "rationale": "Updating writes a schema-3 baseline with total count 1; after moving to moved/renamed.rb the terminal run shows \"1 suppressed\" and \"Duplication: 0 of 2 definitions (0.00%), threshold 0.00% — PASS\"; a third copy fails --fail-on-new with exit 1.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_update_replaces_older_versions_but_refuses_unknown_future_schemas",
@@ -4453,7 +4453,7 @@
             "name": "ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs"
           },
           "rationale": "Schema 1 and 2 baselines are rewritten as schema 3 by --update-baseline over Ruby findings; schema 99 fails with \"newer than supported\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "baseline_workflow_rejects_unsafe_or_incomplete_flag_combinations",
@@ -4463,7 +4463,7 @@
             "name": "ruby_baseline_update_migrates_counts_removals_and_rejects_invalid_inputs"
           },
           "rationale": "--update-baseline alone, --fail-on-new alone, and --update-baseline with --changed-since each exit 2 over the Ruby corpus.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "reporter_flag_does_not_swallow_the_target_and_announces_file_output",
@@ -4473,7 +4473,7 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "\"--reporters json . --definitions *.rb\" succeeds, prints \"Reports written to:\" and cuke-dedup.json, and the report exists in the default directory.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_compares_a_unicode_changed_source_against_the_full_corpus",
@@ -4483,7 +4483,7 @@
             "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
           },
           "rationale": "A staged \"steps/café changed.rb\" duplicating an unchanged Ruby definition exits 1 naming duplicate-matcher and the Unicode path, and passes with \"Duplication: 2 of 2 definitions (100.00%), threshold 100.00% — PASS\" at --threshold 100.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate",
@@ -4493,7 +4493,7 @@
             "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
           },
           "rationale": "--changed-since=--diff-filter=X over a Ruby repository exits 2 with \"invalid --changed-since revision\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory",
@@ -4503,7 +4503,7 @@
             "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
           },
           "rationale": "Analyzing packages/e2e, the untracked \"steps/café step.rb\" duplicate is reported (path relative to the subdirectory) with exit 1.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_handles_an_untracked_file_with_a_newline",
@@ -4513,7 +4513,7 @@
             "name": "ruby_changed_since_preserves_newlines_in_unix_names"
           },
           "rationale": "An untracked \"steps/new\\nline.rb\" duplicating an unchanged definition is reported as duplicate-matcher with exit 1 (unix-gated as the original).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_handles_an_untracked_non_utf8_file",
@@ -4523,7 +4523,7 @@
             "name": "ruby_changed_since_preserves_non_utf8_linux_names"
           },
           "rationale": "An untracked steps/non-utf8-\\xff.rb duplicate is reported with exit 1 (Linux-gated as the original; compiled locally, runs only on Linux CI).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_rejects_a_gitignored_analysis_root",
@@ -4533,7 +4533,7 @@
             "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
           },
           "rationale": "Analyzing a Git-ignored \"ignored\" directory holding a Ruby step exits 2 with \"ignored by Git\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_disables_unused_findings_but_fails_when_no_feature_parses",
@@ -4543,7 +4543,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "An untracked steps/new.rb with only an unparseable tracked feature under --rule unused-definition=error exits 2, reports no unused-definition, and names both feature-parse failures.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "closed_jsonl_consumer_is_a_clean_termination",
@@ -4553,7 +4553,7 @@
             "name": "ruby_closed_jsonl_consumer_is_a_clean_termination"
           },
           "rationale": "400 distinct Ruby duplicate pairs stream more than four pipe buffers of JSONL into `head -n 1` under pipefail, and the run exits successfully; the control measures the uninterrupted stream size.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "large_equivalence_class_emits_a_bounded_spanning_finding_set",
@@ -4571,7 +4571,7 @@
             "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
           },
           "rationale": "package.json cukeDedup selects specs/**/*.rb, writes configured-reports/cuke-dedup.json, and the matcher suppression leaves 2 definitions analyzed, suppressed 1, and the configured reason on the finding.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "discovery_flags_can_include_hidden_and_default_excluded_sources",
@@ -4581,7 +4581,7 @@
             "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
           },
           "rationale": "Hidden and default-excluded Ruby sources each need their own discovery flag: no flag admits none, `--include-hidden` admits only `.steps/hidden.rb`, `--no-default-excludes` admits only `node_modules/workspace/nested.rb`, and both flags admit both, asserted by analyzed paths.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "json_report_uses_the_documented_default_output_directory",
@@ -4591,7 +4591,7 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "A Ruby --reporters json run without --output writes reports/cuke-dedup/cuke-dedup.json.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "jsonl_report_streams_only_machine_records_to_stdout",
@@ -4601,7 +4601,7 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "JSONL over the Ruby duplicate corpus exits 1 with only finding records then one summary (filesDiscovered 2, definitionFilesWithDefinitions 1, definitionsExtracted 2, featureFilesParsed 1) and no \"Reports written to:\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "changed_since_fails_closed_on_unchanged_feature_parse_errors",
@@ -4611,7 +4611,7 @@
             "name": "ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
           },
           "rationale": "A clean Ruby repository with an unchanged unparseable feature exits 2 with \"found no tracked or untracked files\" and \"failed to parse Gherkin feature\".",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "bare_check_subcommand_requires_an_explicit_path",
@@ -4628,7 +4628,7 @@
             "name": "ruby_definition_requirements_and_source_diagnostics_are_visible"
           },
           "rationale": "An unsupported Ruby regex (lookahead, line 2) is a per-definition diagnostic at `steps.rb:2:1` that keeps both valid definitions analyzed. The Ruby frontend has no error-level matcher diagnostic: the invalid `\\xZZ` escape that JS/TS reports as an error is a Ruby syntax error (`ruby -c`), so the run exits 0 by default and 2 under `--fail-on-unparseable`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "malformed_definition_sources_are_reported_with_actionable_extension_guidance",
@@ -4638,7 +4638,7 @@
             "name": "ruby_default_discovery_is_visibly_empty_and_names_the_opt_in_pattern"
           },
           "rationale": "An un-opted steps.rb succeeds with the \".rb\" opt-in guidance, --require-definitions exits 2 keeping the guidance, and the corrected --definitions *.rb run analyzes 1 definition without it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "path_before_check_is_rejected_and_discovery_flags_are_applied",
@@ -4655,7 +4655,7 @@
             "name": "ruby_changed_since_rejects_unsafe_revisions_roots_and_environments"
           },
           "rationale": "A non-repository Ruby root with GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE pointing at a decoy fails with \"changed-files mode requires a Git repository\" (same as the env-free control) and the decoy index still lists only sentinel.txt.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "ambiguous_step_severity_and_suppression_are_distinguishable_from_absence",
@@ -4665,7 +4665,7 @@
             "name": "ruby_exit_policy_follows_severity_threshold_and_suppressions"
           },
           "rationale": "Ruby {word} and literal gauge steps: ambiguous-step=warning succeeds with \"[warning]\", the default severity control exits 1, and the configured suppression keeps exactly one ambiguous-step finding with its reason and summary findings 0.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "generated_bundles_are_excluded_and_reported_without_failing_the_run",
@@ -4699,7 +4699,7 @@
             "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
           },
           "rationale": "A clean Ruby corpus exits 0 under `--fail-on-incomplete` with `corpus.incomplete` false and no diagnostic lines; the same corpus plus one dynamic matcher exits 2 under the flag with exactly two diagnostic lines, one at `steps.rb:3:1`, and 0 without it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "a_binary_exclusion_also_makes_the_corpus_incomplete",
@@ -4823,7 +4823,7 @@
             "name": "ruby_dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline"
           },
           "rationale": "Ruby Given(build_pattern) beside a known step: default exit 0 with the steps.rb:2:1 diagnostic, 1 definition and incomplete true; --fail-on-incomplete exits 2; --update-baseline refuses and writes no file; failOnIncomplete config exits 2.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unsupported_matchers_mark_partial_extraction_incomplete",
@@ -5252,7 +5252,7 @@
             "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
           },
           "rationale": "The Ruby public-API test keeps the partial result and the regex resource-limit diagnostic for an over-limit Ruby regex, and strict `analyze` rejects it.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "sessionless_file_extraction_uses_the_nearest_package_boundary",
@@ -5275,7 +5275,7 @@
             "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
           },
           "rationale": "The Ruby public-API test renders a Ruby analysis result through one public report context in every format.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "configured_registrations_enable_lowercase_global_step_names",
@@ -5303,7 +5303,7 @@
             "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
           },
           "rationale": "The Ruby public-API test classifies a diagnostic the Ruby adapter produced through the public kind and level API, with its line and column.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "ruby_usage_metadata_and_legacy_analysis_remain_conservative",
