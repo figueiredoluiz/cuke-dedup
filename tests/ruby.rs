@@ -1786,6 +1786,487 @@ fn ruby_review_matcher_text_does_not_spend_budget_on_internal_identity() {
     assert!(!rows.to_string().contains("ruby:CucumberExpression"));
 }
 
+/// The candidate source that proposes pairs from shared matcher shingles.
+const BLOCKING: &str = "matcherBlocking";
+
+/// Writes `files` and a `.cuke-dedup.json` holding `config`, runs the binary over `*.rb`, and
+/// returns the JSONL records and stderr, failing with both when no record was produced.
+fn ruby_pair_run(files: &[(String, String)], config: &str) -> (Vec<Value>, String) {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, contents) in files {
+        ruby_write(directory.path(), name, contents);
+    }
+    ruby_write(directory.path(), ".cuke-dedup.json", config);
+    let output = run_project(directory.path(), "*.rb", &[]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    let code = output.status.code();
+    assert!(!rows.is_empty(), "exit {code:?}: {stderr}");
+    (rows, stderr)
+}
+
+/// One `steps.rb` holding two definitions, each `(matcher, body)`.
+fn ruby_pair_file(
+    left: (impl std::fmt::Display, impl std::fmt::Display),
+    right: (impl std::fmt::Display, impl std::fmt::Display),
+) -> Vec<(String, String)> {
+    let source = format!(
+        "Given('{}') {{ {} }}\nThen('{}') {{ {} }}",
+        left.0, left.1, right.0, right.1
+    );
+    vec![("steps.rb".to_owned(), source)]
+}
+
+/// Spreads `definitions` over files of 32, each led by `prelude`: one large file extracts slowly.
+fn ruby_spread(prelude: &str, definitions: &[String]) -> Vec<(String, String)> {
+    let body = |chunk: &[String]| format!("{prelude}\n{}", chunk.join("\n"));
+    let chunks = definitions.chunks(32).map(body).enumerate();
+    chunks
+        .map(|(index, body)| (format!("s{index:03}.rb"), body))
+        .collect()
+}
+
+/// The census as `[truncated, evaluated, source evaluated, source skipped]`; a truncated census
+/// prints exactly one incompleteness warning and a complete one prints none.
+fn ruby_census(rows: &[Value], stderr: &str, source: &str) -> [u64; 4] {
+    let analysis = &rows.last().unwrap()["analysis"];
+    let truncated = u64::from(analysis["truncated"].as_bool().unwrap());
+    let warnings = stderr.matches("analysis is incomplete").count();
+    assert_eq!(u64::try_from(warnings).unwrap(), truncated, "{stderr}");
+    let census = &analysis["candidateSources"][source];
+    let total = &analysis["candidateComparisonsEvaluated"];
+    let [total, evaluated, skipped] =
+        [total, &census["evaluated"], &census["skipped"]].map(|count| count.as_u64().unwrap());
+    [truncated, total, evaluated, skipped]
+}
+
+/// Runs `files` under `config`, asserts the `source` census, and returns the records.
+fn ruby_pair_census(
+    files: &[(String, String)],
+    config: &str,
+    source: &str,
+    census: [u64; 4],
+) -> Vec<Value> {
+    let (rows, stderr) = ruby_pair_run(files, config);
+    assert_eq!(ruby_census(&rows, &stderr, source), census, "{config}");
+    rows
+}
+
+/// The census of a run whose single candidate was verified or, when `truncated`, skipped.
+fn ruby_single(truncated: bool) -> [u64; 4] {
+    let skipped = u64::from(truncated);
+    [skipped, 1 - skipped, 1 - skipped, skipped]
+}
+
+/// The finding records of `rule`.
+fn ruby_rule_rows<'a>(rows: &'a [Value], rule: &str) -> Vec<&'a Value> {
+    rows.iter().filter(|row| row["rule"] == rule).collect()
+}
+
+/// Primary then related line numbers of a finding.
+fn ruby_finding_lines(row: &Value) -> Vec<u64> {
+    let related = row["related"].as_array().unwrap().iter();
+    let mut lines = vec![row["primary"]["line"].as_u64().unwrap()];
+    lines.extend(related.map(|location| location["line"].as_u64().unwrap()));
+    lines
+}
+
+/// Runs `source` beside the trusted assertion provider and returns the records and stderr.
+fn ruby_assertion_run(source: &str) -> (Vec<Value>, String) {
+    let root = assertion_project(ASSERTION_PROVIDER, source, true);
+    let output = run_project(root.path(), "*.rb", &[]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    (records(output.stdout), stderr)
+}
+
+/// Near-duplicate pairs are never collapsed into clusters, and a suppressed duplicate-handler
+/// pair stays a pair outside the active cluster it is connected to.
+#[test]
+fn ruby_pair_clusters_keep_fuzzy_and_suppressed_evidence_apart() {
+    let source = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+        .map(|word| format!("Given('legacy step {word}') {{ verify(:ready) }}"))
+        .join("\n");
+    let config = r#"{"suppressions":[{"rule":"duplicate-handler","reason":"accepted legacy pair","matcher":"legacy step foxtrot"}]}"#;
+    let (rows, _) = ruby_pair_run(&[("steps.rb".to_owned(), source)], config);
+    // Four near edges connect five definitions, enough to form a cluster if near pairs collapsed.
+    // The edges depend on matcher-similarity margins: alpha against bravo..echo scores
+    // 0.906-0.921, above the near gate, and alpha against foxtrot 0.888, below it.
+    let near = ruby_rule_rows(&rows, "near-duplicate-step");
+    let near_lines = near.iter().map(|row| ruby_finding_lines(row));
+    let expected: Vec<Vec<u64>> = vec![vec![1, 2], vec![1, 3], vec![1, 4], vec![1, 5]];
+    assert_eq!(near_lines.collect::<Vec<_>>(), expected);
+    let pairs = near.iter().map(|row| &row["evidence"]);
+    assert!(pairs
+        .clone()
+        .all(|pair| pair["comparison"].is_object() && pair["cluster"].is_null()));
+    let duplicates = ruby_rule_rows(&rows, "duplicate-handler");
+    assert_eq!(duplicates.len(), 2);
+    let (suppressed, active): (Vec<_>, Vec<_>) = duplicates
+        .into_iter()
+        .partition(|row| row["suppression"]["reason"] == "accepted legacy pair");
+    assert_eq!(ruby_finding_lines(suppressed[0]), [1, 6]);
+    assert!(suppressed[0]["evidence"]["comparison"].is_object());
+    assert_eq!(ruby_finding_lines(active[0]), [1, 2, 3, 4, 5]);
+    assert_eq!(active[0]["evidence"]["cluster"]["memberCount"], 5);
+}
+
+/// Each candidate source feeds its own rule; matcher-blocking survivors and pairs whose sibling
+/// rule is disabled report the computed similarities, never a placeholder.
+#[test]
+fn ruby_candidate_sources_feed_their_rules_with_computed_evidence() {
+    let enabled = ("the account is enabled", "open(); fill(); save()");
+    let plural = ("the accounts are enabled", "open(); fill(); save()");
+    let record = (
+        "the account record is enabled",
+        "open(); fill(); save(); close(); archive()",
+    );
+    let records = ("the account records are enabled", "open(); fill(); save()");
+    let threshold = r#"{"nearDuplicateHandlerSimilarity":0.5}"#;
+    let identical = ruby_pair_file(enabled, plural);
+    let blocking = ruby_pair_file(record, records);
+    let normalized = ruby_pair_file(("a  panel", "open()"), ("a panel", "close()"));
+    let dark = ("the theme is chosen", "page.theme('dark')");
+    let structural = ruby_pair_file(dark, ("the theme is picked", "page.theme('light')"));
+    let expected = [
+        "identicalHandler: duplicate-handler near-duplicate-step",
+        "matcherBlocking: near-duplicate-step",
+        "normalizedMatcher: normalized-matcher",
+        "structuralHandler: parameterization-candidate",
+    ];
+    let pairs = [identical, blocking, normalized, structural];
+    let configs = ["{}", threshold, "{}", "{}"];
+    for ((pair, config), expected) in pairs.iter().zip(configs).zip(expected) {
+        let (source, rules) = expected.split_once(": ").unwrap();
+        let rows = ruby_pair_census(pair, config, source, [0, 1, 1, 0]);
+        let found = rows.iter().filter_map(|row| row["rule"].as_str());
+        assert_eq!(found.collect::<Vec<_>>().join(" "), rules);
+    }
+    // Identical handlers make the matcher similarity independent of the candidate source.
+    let evidence = |left, right, config| {
+        let (rows, _) = ruby_pair_run(&ruby_pair_file(left, right), config);
+        ruby_rule_rows(&rows, "near-duplicate-step")[0]["evidence"].clone()
+    };
+    let identical = evidence(record, (records.0, record.1), "{}");
+    let survivor = evidence(record, records, threshold);
+    assert!(identical["matcherSimilarity"].as_f64().unwrap() < 1.0);
+    let fields = ["matcherSimilarity", "handlerSimilarity", "handlerEvidence"];
+    let overlap = "Handlers share 60.0% ordered behavior";
+    let expected = [identical[fields[0]].clone(), 0.6.into(), overlap.into()];
+    assert_eq!(fields.map(|field| survivor[field].clone()), expected);
+    assert!(survivor["comparison"].is_object());
+    let baseline = evidence(enabled, plural, "{}")["matcherSimilarity"].clone();
+    for (disabled, kept) in [
+        ("duplicate-handler", "near-duplicate-step"),
+        ("near-duplicate-step", "duplicate-handler"),
+    ] {
+        let config = format!(r#"{{"rules":{{"{disabled}":"off"}}}}"#);
+        let (rows, _) = ruby_pair_run(&ruby_pair_file(enabled, plural), &config);
+        assert!(ruby_rule_rows(&rows, disabled).is_empty());
+        let evidence = &ruby_rule_rows(&rows, kept)[0]["evidence"];
+        assert_eq!(evidence["matcherSimilarity"], baseline, "{kept}");
+        assert_eq!(evidence["handlerSimilarity"], 1.0, "{kept}");
+        assert!(evidence["comparison"].is_object());
+    }
+}
+
+/// Matcher-blocking pairs whose wording is not near, and structural pairs whose only rule is
+/// disabled, are evaluated without charging the oversized handler or matcher matrix.
+#[test]
+fn ruby_unneeded_similarity_stages_do_not_spend_pair_work() {
+    // 10,001 events per handler: the handler LCS matrix exceeds the 100,000,000-cell ceiling.
+    let calls = "shared(); ".repeat(10_000);
+    let (left, right) = (format!("{calls}left()"), format!("{calls}right()"));
+    let (x, y) = ("x".repeat(64), "y".repeat(64));
+    let near = ["the parcel is ready", "the parcel is now ready"].map(String::from);
+    for ([given, then], truncated) in [
+        ([format!("abc {x}"), format!("abc {y}")], false),
+        (near, true),
+    ] {
+        let pair = ruby_pair_file((given, &left), (then, &right));
+        let rows = ruby_pair_census(&pair, "{}", BLOCKING, ruby_single(truncated));
+        assert_eq!(rows.len(), 1);
+    }
+    // 10,002-character matchers cross the production matrix ceiling; the original's 100,000
+    // characters exceed the Ruby regex resource limit and drop the definitions. This half pins
+    // the disabled-rule gate only: no Ruby structural pair is otherwise near-eligible. Action
+    // streams require distinct events, configured-assertion streams bind every literal's source
+    // text, and every other stream requires the same handler.
+    let prefix = "a".repeat(10_001);
+    let left = (format!("{prefix}b"), "page.theme(1)");
+    let pair = ruby_pair_file(left, (format!("{prefix}c"), "page.theme(2)"));
+    for (config, truncated) in [
+        (r#"{"rules":{"parameterization-candidate":"off"}}"#, false),
+        ("{}", true),
+    ] {
+        let rows = ruby_pair_census(&pair, config, "structuralHandler", ruby_single(truncated));
+        assert_eq!(rows.len(), 1, "{config}");
+    }
+}
+
+/// A pair mixing a complete event stream with an exact-policy handler needs the same handler in
+/// both orders, never charges the matcher matrix it cannot use, and keeps positive controls.
+#[test]
+fn ruby_mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
+    let check = "Assertions.expect(page).to_be(:ready); open(); fill()";
+    // An untrusted `expect` keeps the exact-handler policy: its stream carries no complete marker.
+    let exact = format!("{check}; expect(other)");
+    let (one, two) = (format!("{check}; notify(1)"), format!("{check}; notify(2)"));
+    let prefix = "a".repeat(10_001);
+    let long = [format!("{prefix}b"), format!("{prefix}c")];
+    let short = ["the parcel is verified", "the parcel is now verified"].map(String::from);
+    for (left, right, matchers, finding) in [
+        (check, exact.as_str(), &short, false),
+        (check, exact.as_str(), &long, false),
+        (one.as_str(), two.as_str(), &short, true),
+        (exact.as_str(), exact.as_str(), &short, true),
+    ] {
+        for (first, second) in [(left, right), (right, left)] {
+            let [given, then] = matchers;
+            let source = format!("Given('{given}') {{ {first} }}\nThen('{then}') {{ {second} }}");
+            let (rows, stderr) = ruby_assertion_run(&source);
+            let census = ruby_census(&rows, &stderr, BLOCKING);
+            assert_eq!(census[..2], [0, 1], "{first} | {second}");
+            // Only the two missing-feature-file warnings: no incompleteness diagnostic.
+            assert_eq!(stderr.matches("cuke-dedup:").count(), 2, "{stderr}");
+            let rules = ["near-duplicate-step", "duplicate-handler"].map(Value::from);
+            let reported = rows.iter().any(|row| rules.contains(&row["rule"]));
+            assert_eq!(reported, finding, "{first} | {second}");
+        }
+    }
+}
+
+/// Matcher-blocking prefilters admit every pair that can reach the handler-similarity gate and
+/// reject trivial, unresolved, conflicting and runtime-incompatible pairs.
+#[test]
+fn ruby_matcher_blocking_prefilters_are_safe_upper_bounds() {
+    let ten: Vec<_> = (0..10).map(|step| format!("step{step}()")).collect();
+    let ten_nine = format!("{} | {} | 1", ten.join("; "), ten[..9].join("; "));
+    // `left | right | candidates`: overlap at least 1/2 of the longer stream is the gate.
+    for case in [
+        "open(); fill(); save(); close() | open(); fill() | 1",
+        "open(); fill(); save(); close(); log() | open(); fill() | 0",
+        "open(); open(); open() | open(); fill(); fill() | 0",
+        "open(); fill(); fill() | open(); open(); open() | 0",
+        "@x = 1; return | @x = 1; return; return | 0",
+        " |  | 0",
+        " | open() | 0",
+        "|value:| open(value) | |value:| open(value) | 0",
+        "verify(:ready) | verify(:rejected) | 0",
+        "verify(:ready); log() | verify(:ready); audit() | 1",
+        "open(); fill(); save() | save(); fill(); open() | 1",
+        ten_nine.as_str(),
+    ] {
+        let parts = case.rsplitn(2, " | ").collect::<Vec<_>>();
+        let (left, right) = parts[1].split_once(" | ").unwrap();
+        let pair = ruby_pair_file(
+            ("the parcel status is ready", left),
+            ("the parcel status is now ready", right),
+        );
+        let candidates = parts[0].parse::<u64>().unwrap();
+        let (rows, stderr) = ruby_pair_run(&pair, "{}");
+        let census = ruby_census(&rows, &stderr, BLOCKING);
+        assert_eq!(census, [0, candidates, candidates, 0], "{case}");
+    }
+    // A file-local capture binds each handler to its own file: only the same-file pair is proposed.
+    let given = "Given('the parcel status is ready') { open(captured); fill() }";
+    let then = "Then('the parcel status is now ready') { open(captured); save() }";
+    let file = |name: &str, body| (name.to_owned(), format!("captured = 1\n{body}"));
+    let joined = vec![file("steps.rb", format!("{given}\n{then}"))];
+    let split = vec![
+        file("a.rb", given.to_owned()),
+        file("b.rb", then.to_owned()),
+    ];
+    for (files, candidates) in [(joined, 1), (split, 0)] {
+        ruby_pair_census(&files, "{}", BLOCKING, [0, candidates, candidates, 0]);
+    }
+    // Configured assertion values keep equal handler structures apart in the event stream: the
+    // equal-structure shortcut needs identical ordered events, so the conflicting pair still
+    // meets the overlap gate, and two shared calls carry the control past it.
+    for (tail, candidates) in [("", 0), ("; open(); fill()", 1)] {
+        let check = |value| format!("Assertions.expect(page).to_be('{value}'){tail}");
+        let (ready, rejected) = (check("ready"), check("rejected"));
+        let given = format!("Given('the parcel status is ready') {{ {ready} }}");
+        let then = format!("Then('the parcel status is now ready') {{ {rejected} }}");
+        let (rows, stderr) = ruby_assertion_run(&format!("{given}\n{then}"));
+        let census = ruby_census(&rows, &stderr, BLOCKING);
+        assert_eq!(census, [0, candidates, candidates, 0], "{tail}");
+    }
+}
+
+/// Suppression lookup work is charged per suppression entry for each rule that reports a finding,
+/// summed across the pair's rules, and never for a configured rule the pair does not report.
+#[test]
+fn ruby_suppression_work_is_charged_only_for_reported_rules() {
+    // Each entry costs 2 * (1 + 2 * (1 + 8 + 4,000)) = 16,038 for this pair against the
+    // 100,000,000 limit: 2 * 3,117 entries fit and 2 * 3,118 do not.
+    let pad = "x".repeat(3_978);
+    let body = "open(); fill(); save()";
+    let left = (format!("the account is enabled{pad}"), body);
+    let right = (format!("the accounts are enabled{}", &pad[2..]), body);
+    let mut files = ruby_pair_file(left, right);
+    // Listed first, its short matcher keeps unmatched-suppression scanning cheap.
+    files.push(("a.rb".to_owned(), "Given('a') { other() }".to_owned()));
+    for (rules, count, truncated) in [
+        ("duplicate-handler near-duplicate-step", 3_117, false),
+        ("duplicate-handler near-duplicate-step", 3_118, true),
+        (
+            "parameterization-candidate near-duplicate-step",
+            3_118,
+            false,
+        ),
+    ] {
+        let entry = |rule| format!(r#"{{"rule":"{rule}","reason":"migration","path":"**"}}"#);
+        let entries: Vec<_> = rules
+            .split(' ')
+            .map(|rule| vec![entry(rule); count])
+            .collect();
+        let entries = entries.concat().join(",");
+        let config = format!(r#"{{"suppressions":[{entries}]}}"#);
+        ruby_pair_census(&files, &config, "identicalHandler", ruby_single(truncated));
+    }
+}
+
+/// Postings past 256 members use a per-posting lexical fallback that keeps interleaved groups
+/// independent, a 256-member posting is still expanded, and a pair repeated across postings
+/// is charged once.
+#[test]
+fn ruby_saturated_matcher_postings_use_independent_linear_fallbacks() {
+    let threshold = r#"{"nearDuplicateHandlerSimilarity":0.5}"#;
+    let paired = |rows: &[Value], left: &str, right: &str| {
+        let mut comparisons = rows.iter().map(|row| &row["evidence"]["comparison"]);
+        comparisons.any(|row| row["leftMatcher"] == left && row["rightMatcher"] == right)
+    };
+    let record = |index| format!("the account record {index:03} is enabled");
+    // Digit runs share one shingle, so every shingle's posting holds every definition.
+    for (count, evaluated) in [(257, 256), (256, 32_640)] {
+        let body = |index| format!("open(); fill(); specific{index}()");
+        let definition = |index| format!("Given('{}') {{ {} }}", record(index), body(index));
+        let files = ruby_spread("", &(0..count).map(definition).collect::<Vec<_>>());
+        let rows = ruby_pair_census(&files, threshold, BLOCKING, [0, evaluated, evaluated, 0]);
+        assert!(paired(&rows, &record(0), &record(1)), "{count}");
+    }
+    // Shared shingles saturate across both groups; each group's own shingles saturate alone.
+    // Cross-group pairs overlap 1/5 and never reach the gate, so only per-group fallbacks insert.
+    let definition = |index, group, shingle| {
+        let calls = format!("g{group}a(); g{group}b(); g{group}c(); open(); s{group}x{index}()");
+        format!("Given('{index:03} {shingle} shared') {{ {calls} }}")
+    };
+    let groups =
+        (0..257).flat_map(|index| [definition(index, 0, "aaa"), definition(index, 1, "bbb")]);
+    let files = ruby_spread("", &groups.collect::<Vec<_>>());
+    let rows = ruby_pair_census(&files, threshold, BLOCKING, [0, 512, 512, 0]);
+    assert!(paired(&rows, "000 aaa shared", "001 aaa shared"));
+    assert!(paired(&rows, "000 bbb shared", "001 bbb shared"));
+    // 78 shingles share one 256-member posting: 32,640 unique pairs, 2,545,920 if each repeat
+    // were charged against the 2,000,000 proposal limit. Disjoint events insert nothing.
+    let prefix: String = (0x4E00..0x4E50).filter_map(char::from_u32).collect();
+    let definition = |index: u32| {
+        let last = char::from_u32(0x5000 + index).unwrap();
+        format!("Given('{prefix}{last}') {{ event{index}() }}")
+    };
+    let files = ruby_spread("", &(0..256).map(definition).collect::<Vec<_>>());
+    ruby_pair_census(&files, "{}", BLOCKING, [0, 0, 0, 0]);
+}
+
+/// Matcher blocking fails closed, dropping its candidates, at each work budget: the
+/// per-definition shingle limit, pinned exactly at its boundary, the event-work limit and the
+/// proposal limit, each bracketed by the nearest counts on either side.
+#[test]
+fn ruby_matcher_blocking_fails_closed_at_every_work_budget() {
+    // n distinct characters yield n - 2 shingles; the limit is 4,096 per definition.
+    for (characters, truncated) in [(4_098, false), (4_099, true)] {
+        let end = 0x4E00 + characters;
+        let matcher: String = (0x4E00..end).filter_map(char::from_u32).collect();
+        let ready = ("the parcel is ready", "open(); fill()");
+        let now = ("the parcel is now ready", "open(); fill(); save()");
+        let mut files = ruby_pair_file(ready, now);
+        let wide = format!("Given('{matcher}') {{ open() }}");
+        files.push(("wide.rb".to_owned(), wide));
+        ruby_pair_census(&files, "{}", BLOCKING, ruby_single(truncated));
+    }
+    // 256 definitions share one posting: 32,640 pairs each charged 4 * events. 76 events cost
+    // 9,922,560 and 77 cost 10,053,120, bracketing the 10,000,000 limit; disjoint events insert
+    // nothing.
+    for (events, truncated) in [(76, 0), (77, 1)] {
+        let definition = |index| {
+            let calls: String = (0..events).map(|e| format!("e{index}x{e}();")).collect();
+            format!("Given('the account record {index:03} is enabled') {{ {calls} }}")
+        };
+        let files = ruby_spread("", &(0..256).map(definition).collect::<Vec<_>>());
+        ruby_pair_census(&files, "{}", BLOCKING, [truncated, 0, 0, truncated]);
+    }
+    ruby_assert_proposal_budget_precedes_semantic_rejection();
+}
+
+/// Asserts that matcher blocking charges every unique proposal against the 2,000,000 limit,
+/// bracketed by 1,996,800 and 2,011,136 proposals, before rejecting runtime-incompatible pairs,
+/// and charges event work only for pairs that survive that rejection.
+fn ruby_assert_proposal_budget_precedes_semantic_rejection() {
+    // 2,048 definitions; each parity class splits them into 8 postings of 256 by three GF(2)
+    // functionals of the id. 22 classes propose 1,996,800 unique pairs, 23 propose 2,011,136.
+    // File-local captures make every cross-file pair runtime-incompatible. Two events per handler
+    // would cost at least 6 event work per proposal, pushing the rejected pairs alone past the
+    // 10,000,000 event limit if rejection came after the event charge.
+    let mut state = 1_u64;
+    let mut classes = Vec::new();
+    while classes.len() < 23 {
+        let functionals = [(); 3].map(|()| {
+            state = (state * 1_103_515_245 + 12_345) % (1 << 31);
+            u32::try_from((state >> 8) & 0x7FF).unwrap()
+        });
+        let mut basis = Vec::<u32>::new();
+        for mut functional in functionals {
+            for row in &basis {
+                functional = functional.min(functional ^ row);
+            }
+            basis.extend((functional != 0).then_some(functional));
+        }
+        classes.extend((basis.len() == 3).then_some(functionals));
+    }
+    let tag = |id: u32, (class, functionals): (usize, &[u32; 3])| -> String {
+        let parity = |bit: usize| ((id & functionals[bit]).count_ones() & 1) << bit;
+        let group = (0..3).map(parity).sum::<u32>();
+        let first = 0x4E00 + 3 * (u32::try_from(class).unwrap() * 8 + group);
+        (first..first + 3).filter_map(char::from_u32).collect()
+    };
+    for (count, truncated) in [(22, 0), (23, 1)] {
+        let definition = |id| {
+            let matcher: String = classes[..count]
+                .iter()
+                .enumerate()
+                .map(|c| tag(id, c))
+                .collect();
+            format!("Given('{matcher}') {{ store{id}(captured); settle{id}() }}")
+        };
+        let definitions: Vec<_> = (0..2_048).map(definition).collect();
+        let files = ruby_spread("captured = 1", &definitions);
+        ruby_pair_census(&files, "{}", BLOCKING, [truncated, 0, 0, truncated]);
+    }
+}
+
+/// Pair verification stops at the 1,000,000,000 total similarity-work limit, pinned at the
+/// literal length whose evidence work first crosses it on the last pair.
+#[test]
+fn ruby_pair_verification_fails_closed_at_the_total_similarity_budget() {
+    // 32 near matchers over one handler: 496 pairs, each charged evidence work for its
+    // duplicate-handler and near-duplicate-step findings. One more literal character pushes the
+    // last pair past the limit; identical handlers charge no handler matrix.
+    for (length, truncated) in [(58_527, 0), (58_528, 1)] {
+        let literal = "x".repeat(length);
+        let definition = |index| {
+            let source = format!(
+                "Given('the account record {index:02} is enabled') {{ open('{literal}') }}\n"
+            );
+            (format!("s{index:02}.rb"), source)
+        };
+        let files: Vec<_> = (0..32).map(definition).collect();
+        let census = [truncated, 496 - truncated, 465 - truncated, truncated];
+        let rows = ruby_pair_census(&files, "{}", BLOCKING, census);
+        let identical = &rows.last().unwrap()["analysis"]["candidateSources"]["identicalHandler"];
+        assert_eq!(identical["evaluated"], 31);
+    }
+}
+
 #[test]
 fn ruby_review_block_forms_preserve_call_ownership_and_effects() {
     for (left, right, duplicate) in [
