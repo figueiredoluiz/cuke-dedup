@@ -741,7 +741,6 @@ fn plain_verbatim_path(
     rest: &[Component<'_>],
     suffix_len: usize,
 ) -> Option<PathBuf> {
-    let separator = std::ffi::OsStr::new(r"\");
     let names: Vec<_> = rest
         .iter()
         .filter_map(|component| match component {
@@ -750,32 +749,92 @@ fn plain_verbatim_path(
         })
         .collect();
     let mut plain = std::ffi::OsString::from(lead);
-    plain.push(head.join(separator));
+    plain.push(join_with_separator(head));
     let head_len = plain.len();
-    plain.push(separator);
-    plain.push(names.join(separator));
-    (plain.len() == head_len + suffix_len && head.iter().chain(&names).all(|name| plain_name(name)))
-        .then(|| plain.into())
+    plain.push(r"\");
+    plain.push(join_with_separator(&names));
+    (plain.len() == head_len + suffix_len
+        && head.iter().all(|name| plain_name(name))
+        && names
+            .iter()
+            .all(|name| plain_name(name) && plain_chars(name)))
+    .then(|| plain.into())
+}
+
+/// `parts` joined with `\`, built without the unstable `OsStr` slice `join`.
+#[cfg(any(windows, test))]
+fn join_with_separator(parts: &[&std::ffi::OsStr]) -> std::ffi::OsString {
+    let mut joined = std::ffi::OsString::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            joined.push(r"\");
+        }
+        joined.push(part);
+    }
+    joined
+}
+
+/// Whether `name` holds no character Win32 rejects or reinterprets: the reserved `<>:"|?*`
+/// (`:` starts a stream name) and control characters below U+0020. Checked on the `names` only;
+/// the head is a drive or server name the verbatim form already validated.
+#[cfg(any(windows, test))]
+fn plain_chars(name: &std::ffi::OsStr) -> bool {
+    name.as_encoded_bytes()
+        .iter()
+        .all(|&byte| byte >= 0x20 && !br#"<>:"|?*"#.contains(&byte))
 }
 
 /// Whether Win32 keeps `name` unchanged in a plain path: not a DOS device name (superscript
-/// aliases included), no trailing dot or space, no `/`. Names that are not valid Unicode cannot be
-/// device names and are checked on their encoded bytes, without conversion.
+/// aliases and console handles included), no trailing dot or space, no `/`. Device checks run on
+/// the encoded bytes, so names that are not valid Unicode are checked too; `plain_chars` covers
+/// the remaining characters.
 #[cfg(any(windows, test))]
 fn plain_name(name: &std::ffi::OsStr) -> bool {
-    // The reserved names listed in Win32 "Naming Files, Paths, and Namespaces".
-    const RESERVED: [&str; 30] = [
-        "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
-        "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
-        "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
+    // Reserved names from "Naming Files, Paths, and Namespaces", and the console handles from
+    // "CreateFileW".
+    const RESERVED: [&[u8]; 32] = [
+        b"CON",
+        b"CONIN$",
+        b"CONOUT$",
+        b"PRN",
+        b"AUX",
+        b"NUL",
+        b"COM0",
+        b"COM1",
+        b"COM2",
+        b"COM3",
+        b"COM4",
+        b"COM5",
+        b"COM6",
+        b"COM7",
+        b"COM8",
+        b"COM9",
+        "COM¹".as_bytes(),
+        "COM²".as_bytes(),
+        "COM³".as_bytes(),
+        b"LPT0",
+        b"LPT1",
+        b"LPT2",
+        b"LPT3",
+        b"LPT4",
+        b"LPT5",
+        b"LPT6",
+        b"LPT7",
+        b"LPT8",
+        b"LPT9",
+        "LPT¹".as_bytes(),
+        "LPT²".as_bytes(),
+        "LPT³".as_bytes(),
     ];
     let bytes = name.as_encoded_bytes();
-    let device = name.to_str().is_some_and(|text| {
-        let stem = text.split('.').next().unwrap_or(text).trim_end();
-        RESERVED
-            .iter()
-            .any(|reserved| stem.eq_ignore_ascii_case(reserved))
-    });
+    let stem = bytes
+        .split(|&byte| byte == b'.')
+        .next()
+        .unwrap_or_default()
+        .trim_ascii_end();
+    let device = RESERVED
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved));
     !bytes.ends_with(b".") && !bytes.ends_with(b" ") && !bytes.contains(&b'/') && !device
 }
 

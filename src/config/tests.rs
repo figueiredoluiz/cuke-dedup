@@ -630,6 +630,15 @@ fn verbatim_paths_rebuild_to_plain_windows_paths() {
         (disk(r"\work\lpt³"), None),
         (disk(r"\work\com0.rb"), None),
         (disk(r"\work\COM¹x.rb"), Some(r"C:\work\COM¹x.rb")),
+        (disk(r"\work\CONIN$.rb"), None),
+        (disk(r"\work\conout$"), None),
+        (disk(r"\work\CONIN$x.rb"), Some(r"C:\work\CONIN$x.rb")),
+        (disk(r"\work\CONIN$ .rb"), None),
+        (disk(r"\work\COM¹ .rb"), None),
+        (disk("\\work\\CON\t.rb"), None),
+        (disk(r"\work\a?b.rb"), None),
+        (disk(r"\work\a:b"), None),
+        (disk("\\work\\a\u{1f}b"), None),
         (disk(r"\work\steps."), None),
         (disk(r"\work\steps "), None),
         (disk(r"\work/steps.rb"), None),
@@ -677,6 +686,14 @@ fn verbatim_prefix_strip_keeps_non_unicode_windows_names() {
             wide(plain).as_os_str().encode_wide().collect::<Vec<_>>()
         );
     }
+    assert_eq!(
+        normalize_platform_path(wide(r"\\?\C:\work\NUL.")),
+        wide(r"\\?\C:\work\NUL.")
+    );
+    assert_eq!(
+        normalize_platform_path(wide(r"\\?\C:\work\CON")),
+        wide(r"C:\work\CON")
+    );
     let multibyte = format!(r"C:\work\{}", "é".repeat(200));
     assert_eq!(
         normalize_platform_path(PathBuf::from(format!(r"\\?\{multibyte}"))),
@@ -684,6 +701,8 @@ fn verbatim_prefix_strip_keeps_non_unicode_windows_names() {
     );
     for kept in [
         r"\\?\C:\work\COM¹.rb",
+        r"\\?\C:\work\CONOUT$.rb",
+        r"\\?\C:\work\NUL",
         r"C:\work\steps.rb",
         r"\\server\share\steps.rb",
         r"\\?\Volume{0b1c}\steps.rb",
