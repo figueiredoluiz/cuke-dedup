@@ -1668,7 +1668,7 @@
             "name": "ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings"
           },
           "rationale": "A ragged table under a Background and under a Rule outline each rejects broken.feature at lines 5 and 7 (exit 2, corpus incomplete, featureStepsAnalyzed 1); well-formed controls contribute 3 and 2 steps and mark the `table`/`done` and `a` Ruby definitions used.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "extracts_steps_from_full_document_structure",
@@ -1678,7 +1678,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "The checkout feature yields 6 steps; the Background, Rule Background and expanded `card stolen is rejected` steps mark their Ruby definitions used, and only the outline-template definition is unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "expands_every_scenario_outline_examples_row",
@@ -1688,7 +1688,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "Both Examples rows expand (2 steps) and mark `I have 2 apples` and `I have 3 pears` used; the template-text definition is unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "header_only_examples_preserve_verbatim_scenario_steps",
@@ -1714,7 +1714,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "A populated block beside a header-only block yields 1 step: `value first` is used and the `value <value>` template definition stays unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "uses_upstream_localized_dialect_keywords",
@@ -1732,7 +1732,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "A Feature/Rule/Example file with no steps adds no step beside a one-step neighbour (1 step); unanchored Ruby regexes `/Structure only/`, `/No steps/` and `/Empty/`, which a heading misread as a step would match by name or whole line, stay unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "extracts_official_gherkin_markdown_structure_and_preserves_lines",
@@ -1742,7 +1742,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "The Markdown Rule outline (2 rows x 3 steps) beside a classic feature gives 7 steps; ambiguities are reported at staying-alive.feature.md:10 (steps.rb:1, 2) and :12 (steps.rb:4, 5), and the classic step marks its definition used.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_supports_doc_strings_and_an_implicit_feature_heading",
@@ -1752,7 +1752,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "A Markdown file with an implicit feature heading yields 1 step, ambiguous at checkout.feature.md:5 (steps.rb:1, 2); the keyword list item inside the fenced doc string leaves its definition unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_ignores_colon_prose_headings",
@@ -1783,7 +1783,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "Prose, a keyword-less list item and a fenced keyword list item add no steps (1 step); the `first note` and `a fenced example` definitions are unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_accepts_all_common_list_markers_and_bold_keywords",
@@ -1793,7 +1793,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "`+`, `-`, ordered `1.` and `*` items with a bold keyword yield 4 steps and leave none of the 4 Ruby definitions unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_preserves_a_final_step_without_a_trailing_newline",
@@ -1803,7 +1803,7 @@
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
           "rationale": "A Markdown file ending in a step without a newline yields 1 step, ambiguous at final.feature.md:5 (steps.rb:1, 2), over a complete corpus.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_accepts_single_dash_gfm_table_separators",
@@ -4180,7 +4180,7 @@
             "name": "ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_request"
           },
           "rationale": "Without `--features`, features/documentation.feature.md is listed as `[gherkin-markdown]`, the run reports 2 definitions and 1 feature step, and only the Ruby definition the Markdown step does not use is unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "custom_patterns_allow_nonstandard_gherkin_extensions",
@@ -4190,7 +4190,7 @@
             "name": "ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_request"
           },
           "rationale": "`.spec` files are not discovered by default; a recursive `--features` pattern for `*.spec` parses both a top-level and a nested `specs/nested/deep.spec` (2 steps), marking both custom definitions used and leaving the Markdown-only definition unused.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "framework_feature_paths_are_defaults_and_own_config_overrides_them",
@@ -5387,7 +5387,7 @@
             "name": "ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings"
           },
           "rationale": "Under `--fail-on-incomplete`, the escaped `C:\\tmp\\q` outline keeps 1 feature step and the ambiguity at valid.feature:3 with its escaped text; exit is 1 alone and 2 with a ragged neighbour row, rejected at its line, or an unterminated neighbour row, which rejects its file (`broken.feature: Error at`; the parser reports a position after the row, so it is not pinned), each with exactly 3 `cuke-dedup:` stderr lines. The definition-side duplicate-matcher (steps.rb:1, 2) shows only that the run continues.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
