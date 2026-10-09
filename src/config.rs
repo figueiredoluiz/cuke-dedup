@@ -696,48 +696,86 @@ fn validate_project_output(root: &Path, output: &Path) -> Result<()> {
 pub(crate) fn normalize_platform_path(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
-        if let Some(plain) = strip_verbatim_prefix(&path.to_string_lossy()) {
-            return PathBuf::from(plain);
+        if let Some(plain) = strip_verbatim_prefix(&path) {
+            return plain;
         }
     }
     path
 }
 
-/// `value` without its `\\?\` or `\\?\UNC\` verbatim prefix when the plain form names the same
-/// file: a drive-letter or UNC path under the legacy length limit whose components are not DOS
-/// device names and do not end in a dot or space. `None` keeps the verbatim form.
+/// `path` without its `\\?\X:` or `\\?\UNC\server\share` verbatim prefix, rebuilt from its
+/// components without any `OsStr` to `str` conversion. `None` keeps the verbatim form.
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: &Path) -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use std::path::Prefix;
+    let mut components = path.components();
+    let prefix = match components.next() {
+        Some(Component::Prefix(prefix)) => prefix,
+        _ => return None, // fail-closed: a path without a prefix has nothing to strip
+    };
+    let drive;
+    let (lead, head) = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => {
+            drive = format!("{}:", char::from(letter));
+            ("", vec![OsStr::new(&drive)])
+        }
+        Prefix::VerbatimUNC(server, share) => (r"\\", vec![server, share]),
+        _ => return None, // fail-closed: device, volume and non-verbatim prefixes keep their form
+    };
+    let rest: Vec<_> = components.collect();
+    let suffix_len = path.as_os_str().len() - prefix.as_os_str().len();
+    plain_verbatim_path(lead, &head, &rest, suffix_len)
+}
+
+/// The plain form `lead` + `head` + `\` + the `Normal` names of `rest` when it names the same
+/// file: under the legacy length limit, every name passes `plain_name`, and its length equals the
+/// head plus `suffix_len` (the verbatim length after the prefix), which holds only when `rest` is
+/// one root followed by `\`-separated names, so no `.`, `..`, empty or trailing component was
+/// dropped. `None` keeps the verbatim form.
 #[cfg(any(windows, test))]
-fn strip_verbatim_prefix(value: &str) -> Option<String> {
+fn plain_verbatim_path(
+    lead: &str,
+    head: &[&std::ffi::OsStr],
+    rest: &[Component<'_>],
+    suffix_len: usize,
+) -> Option<PathBuf> {
+    let separator = std::ffi::OsStr::new(r"\");
+    let names: Vec<_> = rest
+        .iter()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(*name),
+            _ => None, // fail-closed: the length check rejects any dropped component but the root
+        })
+        .collect();
+    let mut plain = std::ffi::OsString::from(lead);
+    plain.push(head.join(separator));
+    let head_len = plain.len();
+    plain.push(separator);
+    plain.push(names.join(separator));
+    (plain.len() < 260
+        && plain.len() == head_len + suffix_len
+        && head.iter().chain(&names).all(|name| plain_name(name)))
+    .then(|| plain.into())
+}
+
+/// Whether Win32 keeps `name` unchanged in a plain path: not a DOS device name, no trailing dot or
+/// space, no `/`. Reads the encoded bytes, so names that are not valid Unicode are checked as-is.
+#[cfg(any(windows, test))]
+fn plain_name(name: &std::ffi::OsStr) -> bool {
     const RESERVED: [&str; 22] = [
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
         "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
-    let (plain, components) = match value.strip_prefix(r"\\?\UNC\") {
-        Some(unc) => (format!(r"\\{unc}"), unc),
-        None => {
-            let local = value.strip_prefix(r"\\?\")?;
-            let bytes = local.as_bytes();
-            let drive = bytes.len() >= 3
-                && bytes[0].is_ascii_alphabetic()
-                && bytes[1] == b':'
-                && bytes[2] == b'\\';
-            (local.to_owned(), drive.then(|| &local[3..])?)
-        }
-    };
-    let plain_component = |component: &str| {
-        let stem = component.split('.').next().unwrap_or(component);
-        !component.ends_with(['.', ' '])
-            && !component.contains('/')
-            && !RESERVED
-                .iter()
-                .any(|name| stem.trim_end().eq_ignore_ascii_case(name))
-    };
-    (plain.len() < 260
-        && components
-            .split('\\')
-            .filter(|c| !c.is_empty())
-            .all(plain_component))
-    .then_some(plain)
+    let bytes = name.as_encoded_bytes();
+    let stem = bytes.split(|byte| *byte == b'.').next().unwrap_or(bytes);
+    !bytes.ends_with(b".")
+        && !bytes.ends_with(b" ")
+        && !bytes.contains(&b'/')
+        && !RESERVED.iter().any(|reserved| {
+            stem.trim_ascii_end()
+                .eq_ignore_ascii_case(reserved.as_bytes())
+        })
 }
 
 /// `path` canonicalized and normalized like `Config::root`, so paths reached through the

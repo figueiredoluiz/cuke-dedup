@@ -595,35 +595,93 @@ fn malformed_auto_config_warns_and_falls_through_to_package_config() {
     assert_eq!(config.config_warnings.len(), 1);
 }
 
-/// Verbatim local and UNC prefixes are stripped only when the plain form names the same file;
-/// volume GUIDs, DOS device names, trailing dots or spaces and over-long paths keep the prefix.
+/// Plain forms of verbatim paths are built only when they name the same file; device names,
+/// trailing dots or spaces, `/`, `.`/`..`, unrooted, non-canonical and over-long paths keep the prefix.
 #[test]
-fn verbatim_prefixes_strip_to_plain_windows_paths() {
+fn verbatim_paths_rebuild_to_plain_windows_paths() {
+    /// Splits `suffix` the way `Path::components` splits a verbatim path after its prefix.
+    fn plain(lead: &str, head: &[&str], suffix: &str) -> Option<String> {
+        let head: Vec<_> = head.iter().map(std::ffi::OsStr::new).collect();
+        let rest: Vec<_> = suffix
+            .split('\\')
+            .enumerate()
+            .filter_map(|(index, name)| match (index, name) {
+                (0, "") => Some(Component::RootDir),
+                (_, "") => None,
+                (_, ".") => Some(Component::CurDir),
+                (_, "..") => Some(Component::ParentDir),
+                _ => Some(Component::Normal(std::ffi::OsStr::new(name))),
+            })
+            .collect();
+        plain_verbatim_path(lead, &head, &rest, suffix.len())
+            .map(|path| path.into_os_string().into_string().unwrap())
+    }
+    let disk = |suffix| plain("", &["C:"], suffix);
     let cases = [
-        (r"\\?\C:\work\steps.rb", Some(r"C:\work\steps.rb")),
+        (disk(r"\work\steps.rb"), Some(r"C:\work\steps.rb")),
+        (disk(r"\"), Some(r"C:\")),
+        (disk(r"\auxiliary.rb"), Some(r"C:\auxiliary.rb")),
+        (disk(r"\work\aux.rb"), None),
+        (disk(r"\work\Com1 .rb"), None),
+        (disk(r"\work\steps."), None),
+        (disk(r"\work\steps "), None),
+        (disk(r"\work/steps.rb"), None),
+        (disk(r"\work\..\steps.rb"), None),
+        (disk(r"\work\.\steps.rb"), None),
+        (disk(r"\work\\steps.rb"), None),
+        (disk(r"\work\"), None),
+        (disk(r"work\steps.rb"), None),
+        (disk(""), None),
         (
-            r"\\?\UNC\server\share\steps.rb",
+            plain(r"\\", &["server", "share"], r"\steps.rb"),
             Some(r"\\server\share\steps.rb"),
         ),
-        (r"C:\work\steps.rb", None),
-        (r"\\server\share\steps.rb", None),
-        ("/work/steps.rb", None),
-        (r"\\?\Volume{0b1c}\steps.rb", None),
-        (r"\\?\GLOBALROOT\Device\steps.rb", None),
-        (r"\\?\C:\work\aux.rb", None),
-        (r"\\?\C:\work\Com1 .rb", None),
-        (r"\\?\C:\work\steps.", None),
-        (r"\\?\C:\work\steps ", None),
-        (r"\\?\C:\work/steps.rb", None),
-        (r"\\?\UNC\server\nul\steps.rb", None),
-        (r"\\?\C:\", Some(r"C:\")),
-        (r"\\?\C:\auxiliary.rb", Some(r"C:\auxiliary.rb")),
+        (plain(r"\\", &["server", "nul"], r"\steps.rb"), None),
     ];
-    for (input, expected) in cases {
-        assert_eq!(strip_verbatim_prefix(input).as_deref(), expected, "{input}");
+    for (index, (actual, expected)) in cases.into_iter().enumerate() {
+        assert_eq!(actual.as_deref(), expected, "case {index}");
     }
-    let long = format!(r"\\?\C:\{}", "a".repeat(260));
-    assert_eq!(strip_verbatim_prefix(&long), None);
+    assert_eq!(disk(&format!(r"\{}", "a".repeat(260))), None);
+}
+
+/// On Windows the verbatim prefix is stripped from the path itself: a name holding an unpaired
+/// UTF-16 surrogate survives unchanged, and prefixes without a plain form are kept.
+#[cfg(windows)]
+#[test]
+fn verbatim_prefix_strip_keeps_non_unicode_windows_names() {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    /// `text` with an unpaired surrogate appended, as a wide-character path.
+    fn wide(text: &str) -> PathBuf {
+        let mut units: Vec<u16> = text.encode_utf16().collect();
+        units.extend([0xD800, u16::from(b'x')]);
+        PathBuf::from(OsString::from_wide(&units))
+    }
+    for (verbatim, plain) in [
+        (r"\\?\C:\work\steps", r"C:\work\steps"),
+        (r"\\?\UNC\server\share\steps", r"\\server\share\steps"),
+    ] {
+        let normalized = normalize_platform_path(wide(verbatim));
+        assert_eq!(normalized, wide(plain));
+        assert_eq!(
+            normalized.as_os_str().encode_wide().collect::<Vec<_>>(),
+            wide(plain).as_os_str().encode_wide().collect::<Vec<_>>()
+        );
+    }
+    for kept in [
+        r"C:\work\steps.rb",
+        r"\\server\share\steps.rb",
+        r"\\?\Volume{0b1c}\steps.rb",
+        r"\\?\GLOBALROOT\Device\steps.rb",
+        r"\\.\C:\steps.rb",
+        r"\\?\C:\work\aux.rb",
+        r"\\?\UNC\server\nul\steps.rb",
+    ] {
+        assert_eq!(
+            normalize_platform_path(PathBuf::from(kept)),
+            Path::new(kept)
+        );
+    }
 }
 
 /// A canonicalized file under the analysis root strips to its relative path against

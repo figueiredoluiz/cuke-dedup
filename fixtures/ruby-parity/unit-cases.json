@@ -1313,7 +1313,7 @@
       ]
     },
     "src/config/tests.rs": {
-      "sourceSha256": "ec96da424cc341a2acda1b9a62353bf6540f58860133a617d45561dfe6cf9312",
+      "sourceSha256": "4a3971d56d7750979c3b1743ee45b0038db4f42b7d6a198ebdb347fabfb761cb",
       "tests": [
         {
           "name": "standalone_config_overrides_package_and_cli_overrides_both",
@@ -1499,10 +1499,17 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "verbatim_prefixes_strip_to_plain_windows_paths",
+          "name": "verbatim_paths_rebuild_to_plain_windows_paths",
           "requiredStatus": "engine-invariant",
           "stage": "config-decoding",
-          "rationale": "Adapter-independent stage `config-decoding`: Windows verbatim-prefix stripping for the analysis root and canonical source paths is string handling shared by every frontend; Ruby load targets are covered end to end by `regression_119_ruby_loaded_file_paths_stay_relative_to_the_root`.",
+          "rationale": "Adapter-independent stage `config-decoding`: rebuilding a Windows verbatim path in plain form for the analysis root and canonical source paths is path handling shared by every frontend; Ruby load targets are covered end to end by `regression_119_ruby_loaded_file_paths_stay_relative_to_the_root`.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_prefix_strip_keeps_non_unicode_windows_names",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Windows-only check that verbatim-prefix stripping keeps non-Unicode names byte for byte; path handling shared by every frontend, no adapter runs.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
