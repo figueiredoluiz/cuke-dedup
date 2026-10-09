@@ -84,7 +84,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_matcher_blocking_fails_closed_at_every_work_budget"
           },
-          "rationale": "Shingle limit, exact: a 4,098-character matcher (4,096 shingles) keeps a neighbouring candidate, 4,099 skips matcherBlocking once and drops it. Event limit, bracketed: 256 definitions in one posting with 76 versus 77 disjoint calls cost 9,922,560 versus 10,053,120 event work; only 77 truncates. Proposal limit, bracketed: 2,048 definitions in 64 files with file-local captures and two calls per handler propose 1,996,800 versus 2,011,136 unique pairs, almost all runtime-incompatible; only the second truncates, and charging event work for rejected pairs would truncate the first.",
+          "rationale": "Shingle limit, exact: a 4,098-character matcher (4,096 shingles) keeps a neighbouring candidate, 4,099 skips matcherBlocking once and drops it. Event limit, exact: 512 definitions each share a bit-tag posting with every index except their complement (510 pairs each); 19 calls per handler, 151 repeating one, plus a separate 108/107-call pair cost exactly 10,000,000 and complete; one more repeated call in that pair makes 10,000,001 and truncates. Proposal limit, exact: 2,048 definitions in 4-definition files with file-local captures and two calls per handler propose 1,996,800 unique pairs; an 80-definition clique plus a hub with 40 spokes brings proposals to exactly 2,000,000, which completes, and a 41st spoke truncates. Almost all proposals are runtime-incompatible, and charging event work for rejected pairs would truncate the at-limit row.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
