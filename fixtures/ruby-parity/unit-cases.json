@@ -614,7 +614,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_parameterization_requires_one_bounded_value_change"
           },
-          "rationale": "All ten original matcher rows over literal-only Ruby handler differences: save/cancel and New York/York City are parameterization candidates; the five-word change, `not`, `dis-`, `in-`, `il-`, `im-`, `ir-` opposites and the flanked two-change pair are not; none is a near or duplicate-handler finding.",
+          "rationale": "The first ten of the test's fourteen rows, the original matcher rows over literal-only Ruby handler differences: save/cancel and New York/York City are parameterization candidates; the five-word change, `not`, `dis-`, `in-`, `il-`, `im-`, `ir-` opposites and the flanked two-change pair are not; none is a near or duplicate-handler finding. The last four rows are the long-context cases mapped to shared_context_does_not_override_parameterization_evidence.",
           "behaviorClass": "ruby-behavior"
         },
         {
@@ -710,7 +710,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_parameterization_requires_one_bounded_value_change"
           },
-          "rationale": "The four original long-context rows: save/cancel, first/last and dark/light are parameterization candidates, enabled/disabled is not, and none is a near finding.",
+          "rationale": "The last four of the test's fourteen rows, the original long-context rows: save/cancel, first/last and dark/light are parameterization candidates, enabled/disabled is not, and none is a near finding.",
           "behaviorClass": "ruby-behavior"
         },
         {
