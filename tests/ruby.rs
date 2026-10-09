@@ -1656,6 +1656,495 @@ fn ruby_near_exact_respects_handler_threshold_and_capture_context() {
     }
 }
 
+/// Runs the binary over `files` written to a fresh project with the JSON reporter, returning the
+/// exit code, the parsed report and stderr; a run that writes no report fails with both.
+fn ruby_pair_report(files: &[(&str, &str)], pattern: &str, extra: &[&str]) -> (i32, Value, String) {
+    let directory = ruby_project(files);
+    let output = ruby_cli(directory.path(), pattern)
+        .args(["--reporters", "json", "--output", "out", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let path = directory.path().join("out/cuke-dedup.json");
+    assert!(path.is_file(), "exit {code}, no report: {stderr}");
+    (code, ruby_report(&path), stderr)
+}
+
+/// The `rule` findings of a JSON report as `(primary line, first related line, evidence)`.
+fn ruby_pair_findings<'a>(report: &'a Value, rule: &str) -> Vec<(u64, u64, &'a Value)> {
+    report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == rule)
+        .map(|finding| {
+            let line = |location: &Value| location["line"].as_u64().unwrap();
+            (
+                line(&finding["primary"]),
+                line(&finding["related"][0]),
+                &finding["evidence"],
+            )
+        })
+        .collect()
+}
+
+/// Matcher blocking proposes a near-worded Ruby pair only when the action streams overlap; the
+/// configured floor (default 0.70) decides the finding, and the same bodies under one matcher
+/// expose the handler similarity through duplicate-matcher evidence.
+#[test]
+fn ruby_matcher_blocking_admits_only_handlers_that_share_actions() {
+    // `left | right | near at a 0.5 floor | handler similarity`; a pair is a matcher-blocking
+    // candidate exactly when it is near here, and near at the default floor from 0.70 up. The control-flow row needs differing streams
+    // (two `if` events against one) with no call: identical streams are vetoed for another reason.
+    let login = "page.goto('/login'); page.fill('#email', 'user@example.test')";
+    let rows = [
+        format!("{login} | {login}; page.wait_for_load_state | true | 0.667"),
+        format!("{login} | unrelated_audit; unrelated_notification | false | 0.0"),
+        "page.goto('/login') | page.goto('/login'); page.wait_for_load_state | true | 0.5".into(),
+        "page.click('#save') | page.locator('#save').click | true | 0.5".into(),
+        "load_account | write_audit | false | 0.0".into(),
+        "page.click('#save') | audit.click('#save') | false | 0.0".into(),
+        "ready = true; if ready then :a end; if ready then :b end | active = true; if active then :c end | false | 0.5".into(),
+        "page.goto('/'); page.fill('#x', 'x'); page.click('#save') | page.goto('/'); page.reload; page.screenshot | false | 0.333".into(),
+        "page.click('#save') | page.fill('#save', 'value') | false | 0.0".into(),
+        format!("{login}; page.click('#go') | {login}; page.click('#go'); page.wait_for_load_state | true | 0.75"),
+    ];
+    for row in rows {
+        let [left, right, near, similarity] = row.split(" | ").collect::<Vec<_>>()[..] else {
+            panic!("{row}")
+        };
+        let near: bool = near.parse().unwrap();
+        let similarity = Some(similarity.parse::<f64>().unwrap());
+        let pair = |first: &str, second: &str| {
+            format!("Given({first:?}) {{ {left} }}\nGiven({second:?}) {{ {right} }}\n")
+        };
+        let (_, report, _) = ruby_pair_report(&[("steps.rb", &pair("same", "same"))], "*.rb", &[]);
+        let duplicates = ruby_pair_findings(&report, "duplicate-matcher");
+        assert_eq!(duplicates.len(), 1, "{row}");
+        assert_eq!(
+            duplicates[0].2["handlerSimilarity"].as_f64(),
+            similarity,
+            "{row}"
+        );
+        let near_pair = pair("I am on login page", "I am on the login page");
+        for (config, expected) in [
+            (r#"{"nearDuplicateHandlerSimilarity":0.5}"#, near),
+            ("{}", near && similarity >= Some(0.7)),
+        ] {
+            let files = [("steps.rb", &near_pair[..]), (".cuke-dedup.json", config)];
+            let (_, report, _) = ruby_pair_report(&files, "*.rb", &[]);
+            let blocked = &report["analysis"]["candidateSources"]["matcherBlocking"]["evaluated"];
+            assert_eq!(blocked, u64::from(near), "{config}: {row}");
+            let found: Vec<_> = ruby_pair_findings(&report, "near-duplicate-step")
+                .into_iter()
+                .map(|(line, related, evidence)| {
+                    (line, related, evidence["handlerSimilarity"].as_f64())
+                })
+                .collect();
+            let wanted = expected
+                .then_some((1, 2, similarity))
+                .into_iter()
+                .collect::<Vec<_>>();
+            assert_eq!(found, wanted, "{config}: {row}");
+        }
+    }
+}
+
+/// An identical-handler spanning tree does not hide the near-worded pair it leaves out, also when
+/// the handlers record no actions at all.
+#[test]
+fn ruby_matcher_blocking_reaches_near_pairs_beside_identical_handlers() {
+    // `stored = value` records no action event, so only identical-handler structure admits it.
+    for body in ["shared_implementation()", "|value| stored = value"] {
+        let source = format!(
+            "Given('completely unrelated setup') {{ {body} }}\nGiven('the account is enabled') {{ {body} }}\nGiven('the accounts are enabled') {{ {body} }}\n"
+        );
+        let (_, report, _) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", &[]);
+        let sources = &report["analysis"]["candidateSources"];
+        assert_eq!(sources["identicalHandler"]["evaluated"], 2, "{body}");
+        assert_eq!(sources["matcherBlocking"]["evaluated"], 1, "{body}");
+        let near = ruby_pair_findings(&report, "near-duplicate-step");
+        assert_eq!(near.len(), 1, "{body}");
+        let comparison = &near[0].2["comparison"];
+        assert_eq!(
+            [&comparison["leftMatcher"], &comparison["rightMatcher"]],
+            ["the account is enabled", "the accounts are enabled"],
+            "{body}"
+        );
+    }
+}
+
+/// Matcher blocking stops at the global candidate limit, counts the proposal it could not keep and
+/// marks the analysis truncated; the unlimited run is the control.
+#[test]
+fn ruby_matcher_blocking_respects_the_global_candidate_limit() {
+    // Distinct handlers sharing two of three actions: every pair passes the blocking gate, and no
+    // pair has identical streams, which Ruby never proposes as near material.
+    let source: String = ["one", "two", "three", "four"]
+        .iter()
+        .map(|name| {
+            format!("Given('account operation {name}') {{ page.open; page.fill; {name}_step }}\n")
+        })
+        .collect();
+    for (extra, evaluated, skipped, truncated) in [
+        (&["--max-candidate-comparisons", "2"][..], 2, 1, true),
+        (&[][..], 6, 0, false),
+    ] {
+        let (code, report, stderr) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", extra);
+        assert_eq!(code, 0, "{stderr}");
+        ruby_assert_pointers(
+            &report["analysis"],
+            &[
+                ("/truncated", truncated.into()),
+                ("/candidateComparisonsEvaluated", evaluated.into()),
+                (
+                    "/candidateSources/matcherBlocking/evaluated",
+                    evaluated.into(),
+                ),
+                ("/candidateSources/matcherBlocking/skipped", skipped.into()),
+            ],
+        );
+        assert_eq!(
+            stderr.contains("analysis is incomplete: evaluated 2 candidate definition comparisons and skipped 1"),
+            truncated,
+            "{stderr}"
+        );
+    }
+}
+
+/// A parameterization candidate needs one bounded, value-like matcher change without a polarity
+/// conflict, however much context the matchers share; it never becomes a near finding.
+#[test]
+fn ruby_parameterization_requires_one_bounded_value_change() {
+    for (left, right, expected) in [
+        (
+            "the save button is shown",
+            "the cancel button is shown",
+            true,
+        ),
+        (
+            "the AI chatbot toggle button should be visible",
+            "the AI chatbot window should be open",
+            false,
+        ),
+        (
+            "the panel should be shown",
+            "the panel should not be shown",
+            false,
+        ),
+        (
+            "the client should connect",
+            "the client should disconnect",
+            false,
+        ),
+        ("the value is valid", "the value is invalid", false),
+        (
+            "the argument is logical",
+            "the argument is illogical",
+            false,
+        ),
+        ("the action is possible", "the action is impossible", false),
+        ("the layout is regular", "the layout is irregular", false),
+        ("the red button shown", "the blue button hidden", false),
+        (
+            "the New York office is open",
+            "the York City office is open",
+            true,
+        ),
+        (
+            "I click the save button on the checkout summary page",
+            "I click the cancel button on the checkout summary page",
+            true,
+        ),
+        (
+            "I select the first row of the table",
+            "I select the last row of the table",
+            true,
+        ),
+        (
+            "the advanced reporting feature is enabled for this account",
+            "the advanced reporting feature is disabled for this account",
+            false,
+        ),
+        (
+            "the advanced reporting feature uses dark theme for this account",
+            "the advanced reporting feature uses light theme for this account",
+            true,
+        ),
+    ] {
+        // Literal-only handler difference: the handlers share one structural class, so only the
+        // matcher shape decides.
+        let source =
+            format!("Then({left:?}) {{ page.choose('left') }}\nThen({right:?}) {{ page.choose('right') }}\n");
+        let (_, report, _) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", &[]);
+        let rows = report["findings"].as_array().unwrap();
+        assert_parameterization_outcome(rows, expected, &source);
+    }
+}
+
+/// Near wording needs matchers of one syntax without opposite words; the same handlers under a
+/// compatible pair are the control.
+#[test]
+fn ruby_near_wording_rejects_mixed_syntax_and_opposite_words() {
+    for (left, right, near) in [
+        (
+            "'the account is active'",
+            "'the account is inactive'",
+            false,
+        ),
+        ("'the user can log in'", "'the user cannot log in'", false),
+        (
+            "'the account is active'",
+            "'the account is now active'",
+            true,
+        ),
+        ("'account is active'", "/account is active/", false),
+        ("'account is active'", "/account is now active/", false),
+        ("/account is active/", "/account is now active/", true),
+    ] {
+        let source = format!(
+            "Given({left}) {{ page.check(account) }}\nGiven({right}) {{ page.check(account) }}\n"
+        );
+        let (_, report, _) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", &[]);
+        let found = ruby_pair_findings(&report, "near-duplicate-step");
+        assert_eq!(found.len(), usize::from(near), "{source}");
+        assert_eq!(
+            ruby_pair_findings(&report, "duplicate-handler").len(),
+            1,
+            "{source}"
+        );
+    }
+}
+
+/// Empty handlers and matchers with disjoint placeholder types complete without handler or
+/// matcher findings; non-empty handlers and a whitespace-only matcher change are the controls.
+#[test]
+fn ruby_empty_handlers_and_disjoint_placeholder_types_do_not_fail_analysis() {
+    for (body, extra_matcher, rules) in [
+        ("", "another empty step", &[][..]),
+        ("work()", "another empty step", &["duplicate-handler"][..]),
+        ("", "an  integer {int}", &["normalized-matcher"][..]),
+    ] {
+        let source = format!(
+            "Given('an integer {{int}}') {{ {body} }}\nGiven('a string {{string}}') {{ {body} }}\nGiven('{extra_matcher}') {{ }}\n"
+        );
+        let (code, report, stderr) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", &[]);
+        assert_eq!(code, i32::from(!rules.is_empty()), "{source}: {stderr}");
+        ruby_assert_pointers(
+            &report,
+            &[
+                ("/summary/definitionsAnalyzed", 3.into()),
+                ("/corpus/incomplete", false.into()),
+            ],
+        );
+        let found: Vec<_> = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding["rule"].as_str().unwrap())
+            .collect();
+        assert_eq!(found, rules, "{source}");
+    }
+}
+
+/// Configured assertions that differ only in their last values keep ordered overlap: ten
+/// statements with one or three changed values stay near at the default 0.70 floor, four do not.
+#[test]
+fn ruby_mostly_matching_ordered_assertions_remain_near_duplicates() {
+    let assertions = |changed: usize, value: &str| {
+        (0..10)
+            .map(|index| {
+                let expected = if index >= 10 - changed {
+                    value
+                } else {
+                    "shared"
+                };
+                format!("Assertions.expect(state.field{index}).to_be('{expected}'); ")
+            })
+            .collect::<String>()
+    };
+    for (changed, similarity) in [(1, Some(0.9)), (3, Some(0.7)), (4, None)] {
+        let source = format!(
+            "require_relative 'assertions'\nThen('the account workflow is ready') {{ {} }}\nThen('the account workflow is nearly ready') {{ {} }}\n",
+            assertions(changed, "first"),
+            assertions(changed, "second")
+        );
+        let files = [
+            ("assertions.rb", ASSERTION_PROVIDER),
+            ("steps.rb", &source[..]),
+            (
+                ".cuke-dedup.json",
+                r#"{"assertionModules":["./assertions"]}"#,
+            ),
+        ];
+        let (_, report, _) = ruby_pair_report(&files, "steps.rb", &[]);
+        assert_eq!(report["corpus"]["incomplete"], false, "{changed}");
+        let near = ruby_pair_findings(&report, "near-duplicate-step");
+        let found = near
+            .first()
+            .map(|(_, _, evidence)| evidence["handlerSimilarity"].as_f64().unwrap());
+        assert_eq!(found, similarity, "{changed}");
+    }
+}
+
+/// Pair evidence over Ruby definitions: each handler-similarity path with its classification, the
+/// rounded ordered overlap, and a source-bearing, Unicode-safe matcher delta with fingerprints.
+#[test]
+fn ruby_pair_evidence_reports_similarity_paths_and_matcher_delta() {
+    let plain = "\
+Given('exact') { work() }
+Given('exact') { work() }
+Given('alpha') { x = page.open; x.go }
+Given('alpha') { y = page.open; y.go }
+Given('structure') { page.open('/a') }
+Given('structure') { page.open('/b') }
+Given('overlap') { page.goto('/') }
+Given('overlap') { page.goto('/'); page.wait_for_load_state }
+Given('ordered') { page.open; page.fill; page.save }
+Given('ordered') { page.open; page.save; page.notify }
+Given('renamed') { |value| stored = value }
+Given('renamed') { |other| stored = other }
+Given('silent') { value = :a }
+Given('silent') { value = :b; other = :c }
+Given('the item is visible') { page.check(item) }
+Given('the items are visible') { page.check(item) }
+Given('the café is open') { page.check(cafe) }
+Given('the cafè is open') { page.check(cafe) }
+";
+    // An untrusted `expect` chain withdraws the action stream, so `partial` cannot measure the
+    // overlap that `full` measures; `theme` shares one structure with conflicting assertion values.
+    let trusted = "require_relative 'assertions'
+Given('theme') { Assertions.expect(page).to_be('dark') }
+Given('theme') { Assertions.expect(page).to_be('light') }
+Given('partial') { Assertions.expect(page).to_be('dark'); expect(page).to be_ready; page.goto('/') }
+Given('partial') { Assertions.expect(page).to_be('dark'); expect(page).to be_ready; page.goto('/'); page.wait_for_load_state }
+Given('full') { Assertions.expect(page).to_be('dark'); page.goto('/') }
+Given('full') { Assertions.expect(page).to_be('dark'); page.goto('/'); page.wait_for_load_state }
+";
+    let (_, report, _) = ruby_pair_report(&[("steps.rb", plain)], "*.rb", &[]);
+    let files = [
+        ("assertions.rb", ASSERTION_PROVIDER),
+        ("steps.rb", trusted),
+        (
+            ".cuke-dedup.json",
+            r#"{"assertionModules":["./assertions"]}"#,
+        ),
+    ];
+    let (_, trusted_report, _) = ruby_pair_report(&files, "steps.rb", &[]);
+    let scores = |report: &Value| -> Vec<String> {
+        ruby_pair_findings(report, "duplicate-matcher")
+            .into_iter()
+            .map(|(line, related, evidence)| {
+                let field = |name: &str| evidence[name].to_string();
+                let fields =
+                    ["matcherSimilarity", "handlerSimilarity", "handlerEvidence"].map(field);
+                format!("{line}:{related} {}", fields.join(" "))
+            })
+            .collect()
+    };
+    assert_eq!(
+        scores(&report),
+        [
+            r#"1:2 1.0 1.0 "Handlers have the same exact syntax fingerprint""#,
+            r#"3:4 1.0 1.0 "Handlers differ only in parameter or local-variable names""#,
+            r#"5:6 1.0 0.95 "Handlers share the same structure after literal normalization""#,
+            r#"7:8 1.0 0.5 "Handler behavior signatures differ""#,
+            r#"9:10 1.0 0.667 "Handler behavior signatures differ""#,
+            r#"11:12 1.0 1.0 "Handlers differ only in parameter or local-variable names""#,
+            r#"13:14 1.0 0.0 "Handler behavior signatures differ""#,
+        ]
+    );
+    assert_eq!(
+        scores(&trusted_report),
+        [
+            r#"2:3 1.0 0.0 "Handlers share the same structure after literal normalization""#,
+            r#"4:5 1.0 0.0 "Handler behavior signatures differ""#,
+            r#"6:7 1.0 0.667 "Handler behavior signatures differ""#,
+        ]
+    );
+    // Exact-equal handlers whose events conflict: only `a.rb` loads the provider, so trust splits.
+    let step = "Given('same') { Assertions.expect(page).to_be('dark') }\n";
+    let loaded = format!("require_relative 'assertions'\n{step}");
+    for (other, similarity) in [(step, 0.0), (&loaded[..], 1.0)] {
+        let split = [files[0], files[2], ("a.rb", &loaded[..]), ("b.rb", other)];
+        let (_, split_report, _) = ruby_pair_report(&split, "[ab].rb", &[]);
+        let evidence = ruby_pair_findings(&split_report, "duplicate-matcher")[0].2;
+        let exact = "Handlers have the same exact syntax fingerprint";
+        assert_eq!(evidence["handlerSimilarity"], similarity, "{other}");
+        assert_eq!(evidence["handlerEvidence"], exact, "{other}");
+    }
+    // Differing matcher kinds skip the normalized shortcut; two empty matchers still score 1.0.
+    let empty = [("steps.rb", "Given('') { work() }\nGiven(//) { work() }\n")];
+    let (_, empty_report, _) = ruby_pair_report(&empty, "*.rb", &[]);
+    let duplicate = ruby_pair_findings(&empty_report, "duplicate-handler")[0].2;
+    assert_eq!(duplicate["matcherSimilarity"], 1.0);
+    let near = ruby_pair_findings(&report, "near-duplicate-step");
+    let deltas: Vec<_> = near
+        .iter()
+        .map(|(line, related, evidence)| {
+            let comparison = &evidence["comparison"];
+            assert!(comparison["leftHandler"]
+                .as_str()
+                .unwrap()
+                .contains("page.check("));
+            let fingerprints = ["leftFingerprint", "rightFingerprint"]
+                .map(|side| comparison[side].as_str().unwrap());
+            assert!(fingerprints
+                .iter()
+                .all(|fingerprint| fingerprint.len() == 32
+                    && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())));
+            assert_ne!(fingerprints[0], fingerprints[1]);
+            let diff = &comparison["matcherDiff"];
+            let parts = ["prefix", "leftChange", "rightChange", "suffix"]
+                .map(|part| diff[part].as_str().unwrap());
+            format!("{line}:{related} {}", parts.join("|"))
+        })
+        .collect();
+    assert_eq!(
+        deltas,
+        [
+            "15:16 the item| is|s are| visible",
+            "17:18 the caf|é|è| is open"
+        ]
+    );
+    assert_eq!(
+        near[0].2["matcherDifference"],
+        "`the item is visible` ↔ `the items are visible`"
+    );
+}
+
+/// Duplicate-matcher findings over three same-matcher Ruby definitions keep one component of all
+/// three handlers in two findings, whatever the definitions' source order.
+#[test]
+fn ruby_duplicate_matcher_components_are_invariant_to_definition_order() {
+    let handlers = ["first_step", "second_step", "third_step"];
+    for permutation in [[0, 1, 2], [2, 1, 0], [0, 2, 1], [1, 0, 2]] {
+        let source: String = permutation
+            .iter()
+            .map(|&index| format!("Given('same') {{ {}() }}\n", handlers[index]))
+            .collect();
+        let (_, report, _) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", &[]);
+        let findings = ruby_pair_findings(&report, "duplicate-matcher");
+        let mut members: Vec<_> = findings
+            .iter()
+            .flat_map(|(_, _, evidence)| {
+                ["leftHandler", "rightHandler"]
+                    .map(|side| evidence["comparison"][side].as_str().unwrap())
+            })
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        assert_eq!(
+            members,
+            ["{ first_step() }", "{ second_step() }", "{ third_step() }"],
+            "{permutation:?}"
+        );
+        assert_eq!(findings.len(), 2, "{permutation:?}");
+    }
+}
+
 #[test]
 fn ruby_parameter_types_are_static_and_suite_scoped() {
     let dir = tempfile::tempdir().unwrap();
@@ -3008,6 +3497,274 @@ fn ruby_native_regex_usage_and_encoding_outcomes() {
             "{literal}"
         );
     }
+}
+
+/// Writes each `(path, contents)` pair into a fresh temporary project root.
+fn ruby_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        ruby_write(directory.path(), path, contents);
+    }
+    directory
+}
+
+/// Runs the binary with JSONL output over `files` written to a temporary root, with the `*.rb`
+/// definitions and `extra` arguments; returns the records and stderr, surfacing exit code and
+/// stderr when no summary is produced.
+fn ruby_records_run(files: &[(&str, &str)], extra: &[&str]) -> (Vec<Value>, String) {
+    let directory = ruby_project(files);
+    let output = ruby_cli(directory.path(), "*.rb")
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert!(
+        rows.last().is_some_and(|row| row["type"] == "summary"),
+        "exit {:?}: {stderr}",
+        output.status.code()
+    );
+    (rows, stderr)
+}
+
+/// Runs `steps` as `steps.rb` over the `usage.feature` scenario body `feature` with `extra`
+/// arguments; returns the records and stderr.
+fn ruby_usage_run(steps: &str, feature: &str, extra: &[&str]) -> (Vec<Value>, String) {
+    let feature = format!("Feature: Usage\n{feature}");
+    let arguments = [&["--features", "usage.feature"], extra].concat();
+    ruby_records_run(
+        &[("steps.rb", steps), ("usage.feature", &feature)],
+        &arguments,
+    )
+}
+
+/// Renders each `rule` finding as `path:line` of its primary followed by its related locations,
+/// sorted, so assertions pin which step and definitions a finding names.
+fn ruby_rule_locations(rows: &[Value], rule: &str) -> Vec<String> {
+    let location = |value: &Value| format!("{}:{}", value["path"].as_str().unwrap(), value["line"]);
+    let mut found: Vec<String> = rows
+        .iter()
+        .filter(|row| row["rule"] == rule)
+        .map(|row| {
+            let related = row["related"].as_array().unwrap().iter().map(location);
+            std::iter::once(location(&row["primary"]))
+                .chain(related)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Ruby `steps.rb` definitions over a `usage.feature` scenario body: complete analysis, and
+/// exactly the expected `ambiguous-step` findings (feature step, then matching definitions) and
+/// `unused-definition` findings (definition).
+#[test]
+fn ruby_usage_and_ambiguity_outcomes_for_concrete_outline_and_expression_steps() {
+    const NO_TYPES: &str = "# no parameter types declared";
+    let outline = |rows: &str| {
+        format!(" Scenario Outline: Rows\n  Given I have <count> items\n  Then the user is here\n  Examples:\n   | count |\n{rows}")
+    };
+    let fallback = |types: &str| {
+        format!("{types}\nGiven('I have {{quantity}} cucumber(s)') {{ count() }}\nThen('they are in my belly/stomach with {{mood}}') {{ verify() }}")
+    };
+    let declared = "ParameterType(name: 'quantity', regexp: /several|one/, transformer: ->(s) { s }); ParameterType(name: 'mood', regexp: /joy|grief/, transformer: ->(s) { s })";
+    let wait = |types: &str| {
+        format!("{types}\nGiven('I wait {{duration}}') {{ wait_duration() }}\nGiven('I wait for the page') {{ wait_for_page() }}")
+    };
+    let duration = |pattern: &str| {
+        format!("ParameterType(name: 'duration', regexp: /{pattern}/, transformer: ->(s) {{ s }})")
+    };
+    let concrete = "Given('a user named {word}') { make_user() }\nGiven(/^a user named .+$/) { make_other_user() }";
+    let insensitive =
+        "Given('I have {int} items') { count() }\nThen(/^THE USER IS HERE$/i) { verify() }";
+    let sensitive =
+        "Given('I have {int} items') { count() }\nThen(/^THE USER IS HERE$/) { verify() }";
+    let expression = "Given('I have {int} cucumber(s)') { count() }\nThen('they are in my belly/stomach') { verify() }";
+    let cases: Vec<(String, String, &[&str], &[&str])> = vec![
+        // A concrete step matched by two definitions is one ambiguity and uses both.
+        (concrete.into(), " Scenario: S\n  Given a user named Ada\n".into(), &["usage.feature:3 steps.rb:1 steps.rb:2"], &[]),
+        (concrete.into(), " Scenario: S\n  Given a stranger named Ada\n".into(), &[], &["steps.rb:1", "steps.rb:2"]),
+        // Expanded outline rows and a Ruby `/i` regex mark usage. The original wording `EXISTS`
+        // contains `st`, which the documented Ruby `i` subset excludes (Unicode ligature folding).
+        (insensitive.into(), outline("   | 2 |\n"), &[], &[]),
+        (sensitive.into(), outline("   | 2 |\n"), &[], &["steps.rb:2"]),
+        (insensitive.into(), outline("   | two |\n"), &[], &["steps.rb:1"]),
+        // Optional `(s)` and alternative `belly/stomach` text in a plain Cucumber Expression.
+        (expression.into(), " Scenario: S\n  Given I have 2 cucumbers\n  Then they are in my stomach\n".into(), &[], &[]),
+        (expression.into(), " Scenario: S\n  Given I have 1 cucumber\n  Then they are in my belly\n".into(), &[], &[]),
+        (expression.into(), " Scenario: S\n  Given I have 2 cucumberz\n  Then they are in my liver\n".into(), &[], &["steps.rb:1", "steps.rb:2"]),
+        // Declared `ParameterType`s make the custom-parameter fallback exact while keeping its
+        // optional and alternative text, so a step outside that text is unused.
+        (fallback(declared), " Scenario: S\n  Given I have several cucumbers\n  Then they are in my stomach with joy\n".into(), &[], &[]),
+        (fallback(declared), " Scenario: S\n  Given I have one cucumber\n  Then they are in my belly with grief\n".into(), &[], &[]),
+        (fallback(declared), " Scenario: S\n  Given I have several cucumberz\n  Then they are in my liver with joy\n".into(), &[], &["steps.rb:2", "steps.rb:3"]),
+        // An undeclared `{duration}` cannot prove ambiguity (its usage half is vacuous: every
+        // non-exact matcher counts as used); a declared type that accepts the same steps proves
+        // the ambiguity, and one that rejects them is unused.
+        (wait(NO_TYPES), " Scenario: S\n  Given I wait for the page\n  Given I wait 3 seconds\n".into(), &[], &[]),
+        (wait(&duration(r"for the page|\d+ seconds")), " Scenario: S\n  Given I wait for the page\n  Given I wait 3 seconds\n".into(), &["usage.feature:3 steps.rb:2 steps.rb:3"], &[]),
+        (wait(&duration(r"\d+ minutes")), " Scenario: S\n  Given I wait for the page\n  Given I wait 3 seconds\n".into(), &[], &["steps.rb:2"]),
+    ];
+    for (steps, feature, ambiguous, unused) in cases {
+        let (rows, stderr) = ruby_usage_run(&steps, &feature, &[]);
+        assert_eq!(stderr, "", "{steps}\n{feature}");
+        assert_eq!(
+            rows.last().unwrap()["corpus"]["incomplete"],
+            false,
+            "{steps}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{steps}\n{feature}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{steps}\n{feature}"
+        );
+    }
+}
+
+/// Ruby outline ambiguities are reported once per template step and match set: repeated rows with
+/// one match set collapse, disjoint match sets stay separate, and concrete steps stay per line.
+#[test]
+fn ruby_outline_ambiguities_group_by_template_location_and_match_set() {
+    let items =
+        "Given('I have {int} items') { first() }\nGiven(/^I have \\d+ items$/) { second() }";
+    let values = "Given('value {int}') { first() }\nGiven(/^value \\d+$/) { second() }\nGiven(/^value 1$/) { third() }";
+    let outline = |step: &str, rows: &str| {
+        format!(" Scenario Outline: Rows\n  Given {step}\n  Examples:\n   | count |\n{rows}")
+    };
+    let cases: [(&str, String, &[&str], usize); 5] = [
+        (
+            items,
+            outline("I have <count> items", "   | 1 |\n   | 2 |\n   | 3 |\n"),
+            &["usage.feature:3 steps.rb:1 steps.rb:2"],
+            3,
+        ),
+        // Control: the same matches from two concrete lines are two findings.
+        (
+            items,
+            " Scenario: S\n  Given I have 1 items\n  Given I have 2 items\n".into(),
+            &[
+                "usage.feature:3 steps.rb:1 steps.rb:2",
+                "usage.feature:4 steps.rb:1 steps.rb:2",
+            ],
+            2,
+        ),
+        // Row 1 also matches `/^value 1$/`, so the template carries two match sets.
+        (
+            values,
+            outline("value <count>", "   | 1 |\n   | 2 |\n"),
+            &[
+                "usage.feature:3 steps.rb:1 steps.rb:2",
+                "usage.feature:3 steps.rb:1 steps.rb:2 steps.rb:3",
+            ],
+            2,
+        ),
+        (
+            values,
+            outline("value <count>", "   | 2 |\n   | 3 |\n"),
+            &["usage.feature:3 steps.rb:1 steps.rb:2"],
+            2,
+        ),
+        (
+            values,
+            outline("value <count>", "   | 1 |\n   | 1 |\n"),
+            &["usage.feature:3 steps.rb:1 steps.rb:2 steps.rb:3"],
+            2,
+        ),
+    ];
+    for (steps, feature, ambiguous, feature_steps) in cases {
+        let (rows, stderr) = ruby_usage_run(steps, &feature, &[]);
+        assert_eq!(stderr, "", "{feature}");
+        let summary = &rows.last().unwrap()["summary"];
+        assert_eq!(summary["featureStepsAnalyzed"], feature_steps, "{feature}");
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{feature}"
+        );
+    }
+}
+
+/// The Ruby duplication summary counts only duplication rules: error-severity `ambiguous-step` and
+/// `unused-definition` findings neither add definitions nor rules, and a suite with zero
+/// definitions reports 0% and passes the default 0% threshold.
+#[test]
+fn ruby_duplication_threshold_excludes_correctness_and_usage_findings() {
+    let steps = "Given('I click save') { page.click('save') }\nGiven('I click cancel') { page.click('cancel') }\nGiven('the cart is open') { open_cart() }\nWhen('the cart is open') { show_cart() }\nThen('a user named {word}') { make_user() }\nThen(/^a user named .+$/) { make_other_user() }\nThen('never used') { nothing() }";
+    let feature = " Scenario: S\n  Given I click save\n  Given I click cancel\n  Given the cart is open\n  Then a user named Ada\n";
+    let errors = [
+        "--rule",
+        "unused-definition=error",
+        "--rule",
+        "parameterization-candidate=error",
+    ];
+    let (rows, _) = ruby_usage_run(steps, feature, &errors);
+    let mut contributions: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] == "finding")
+        .map(|row| {
+            assert_eq!(row["severity"], "error", "{row}");
+            let rule = row["rule"].as_str().unwrap();
+            (
+                rule.to_owned(),
+                row["contributesToThreshold"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    contributions.sort();
+    contributions.dedup();
+    assert_eq!(
+        contributions,
+        [
+            ("ambiguous-step".to_owned(), false),
+            ("duplicate-matcher".to_owned(), true),
+            ("parameterization-candidate".to_owned(), true),
+            ("unused-definition".to_owned(), false),
+        ]
+    );
+    // Lines 1-4 are duplicated; the ambiguity-only lines (5, 6) and the unused definition (7)
+    // would raise 4 to 7. Keyword-agnostic matching makes lines 3 and 4 ambiguous too.
+    for (rule, expected) in [
+        ("duplicate-matcher", &["steps.rb:3 steps.rb:4"][..]),
+        ("parameterization-candidate", &["steps.rb:1 steps.rb:2"]),
+        (
+            "ambiguous-step",
+            &[
+                "usage.feature:5 steps.rb:3 steps.rb:4",
+                "usage.feature:6 steps.rb:5 steps.rb:6",
+            ],
+        ),
+        ("unused-definition", &["steps.rb:7"]),
+    ] {
+        assert_eq!(ruby_rule_locations(&rows, rule), expected, "{rule}");
+    }
+    let duplication = &rows.last().unwrap()["summary"]["duplication"];
+    ruby_assert_pointers(
+        duplication,
+        &[
+            ("/duplicatedDefinitions", 4.into()),
+            ("/totalDefinitions", 7.into()),
+            ("/percentage", (4_f64 / 7_f64 * 100.0).into()),
+            ("/passed", false.into()),
+            (
+                "/rules",
+                serde_json::json!(["duplicate-matcher", "parameterization-candidate"]),
+            ),
+        ],
+    );
+    let (rows, stderr) = ruby_usage_run("# no step definitions\n", feature, &[]);
+    assert!(stderr.contains("produced 0 definitions"), "{stderr}");
+    assert_eq!(
+        rows.last().unwrap()["summary"]["duplication"],
+        serde_json::json!({"threshold": 0.0, "duplicatedDefinitions": 0, "totalDefinitions": 0, "percentage": 0.0, "passed": true, "rules": []})
+    );
 }
 
 #[test]
@@ -6733,23 +7490,14 @@ fn ruby_candidate_limits_warn_and_still_report_without_failing_the_run() {
 
 /// Runs `source` as `steps.rb` under both candidate limits; returns the JSONL records and stderr.
 fn ruby_limited_run(source: &str, candidates: usize, structural: usize) -> (Vec<Value>, String) {
-    let directory = tempfile::tempdir().unwrap();
-    ruby_write(directory.path(), "steps.rb", source);
     let (candidates, structural) = (candidates.to_string(), structural.to_string());
-    let output = ruby_cli(directory.path(), "*.rb")
-        .args(["--reporters", "jsonl", "--no-metrics"])
-        .args(["--max-candidate-comparisons", &candidates])
-        .args(["--max-structural-class-comparisons", &structural])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    // Unlike `ruby_jsonl`, callers need stderr; a run that fails before analysis reports why.
-    assert!(
-        !output.stdout.is_empty(),
-        "exit {:?}: {stderr}",
-        output.status.code()
-    );
-    (records(output.stdout), stderr)
+    let limits = [
+        "--max-candidate-comparisons",
+        &candidates,
+        "--max-structural-class-comparisons",
+        &structural,
+    ];
+    ruby_records_run(&[("steps.rb", source)], &limits)
 }
 
 /// Joins one registration line per index.
