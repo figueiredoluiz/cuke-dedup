@@ -405,9 +405,12 @@
         },
         {
           "name": "suppression_globs_compile_once_and_pair_lookups_share_the_work_budget",
-          "requiredStatus": "engine-invariant",
-          "stage": "config-decoding",
-          "rationale": "Adapter-independent stage `config-decoding`: each configured suppression path glob compiles once from the suppression config, which reads no adapter data; the compile count has no output in any build. The adapter-facing half, pair lookups sharing the work budget, is pinned over Ruby definitions by `ruby_suppression_lookups_share_the_pair_work_budget`.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_suppression_lookups_share_the_pair_work_budget"
+          },
+          "rationale": "700 Ruby definitions in one identical-handler class with 1,000 duplicate-handler path suppressions exhaust the pair work budget (truncated, identicalHandler evaluated < 699, one safety-limit diagnostic); the same suppressions under unused-definition charge no pair work (1,397 comparisons evaluated). Globs compile once in `SuppressionIndex::new`; lookups take `&self` and read the compiled list, so no source text can trigger recompilation.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
