@@ -503,9 +503,13 @@
         },
         {
           "name": "regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the pinned engine outcome (`regex resource errors are preserved for cli reporting and library callers`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
+          },
+          "rationale": "A Ruby regexp over the compiled-program limit yields exactly one regex-resource diagnostic at its own line, keeps 1 analyzed definition, exits 0 by default and 2 under `--fail-on-incomplete`; `/a{100}/` is the control with no diagnostic and exit 0 when strict. The library path over Ruby definitions (strict `analyze` rejects, `analyze_with_diagnostics` keeps the partial result) is pinned by `ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "equivalence_classes_report_a_spanning_set_instead_of_every_pair",
@@ -1161,9 +1165,13 @@
         },
         {
           "name": "candidate_limit_cli_values_must_be_positive",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate-limit CLI values (positive, zero, negative, non-numeric) exercised on a Ruby run; candidate budgets are consumer behaviour by the census rule. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive"
+          },
+          "rationale": "For both candidate flags, `0`, `-1` and `many` exit 2 over a Ruby corpus; `--print-config` with `7` for each flag reports `maxCandidateComparisons` and `maxStructuralClassComparisons` as 7.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag",
@@ -2248,7 +2256,7 @@
         {
           "name": "release_resource_limits_match_the_documented_policy",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the policy table also fixes candidate and registration budgets; Ruby runs must show those budgets apply (candidate-limit boundary and registration-module budget cases over Ruby sources). Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: every documented release limit over Ruby input. The 1,024-file load budget is pinned by `ruby_load_budget_is_shared_across_selected_definition_files`; the 64 MiB Ruby load byte budget has no Ruby run (nine 8 MiB loads take about 13 s in a debug build).",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -4111,7 +4119,7 @@
         {
           "name": "oversized_registration_modules_cannot_silently_remove_definitions",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an oversized Ruby provider file must not silently drop definitions; needs a Ruby group. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: an oversized loaded provider must not silently remove definitions. A Ruby provider over the 8 MiB input limit loaded by `require_relative` is named with its limit, but the run fails with exit 2 where an oversized JS/TS imported module only warns and exits 0. Map after the Ruby exit policy matches.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4132,9 +4140,13 @@
         },
         {
           "name": "matcher_overlap_limit_is_machine_visible_and_can_fail_closed",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `matcher overlap limit is machine visible and can fail closed` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive"
+          },
+          "rationale": "Three Ruby `value {first|second|third}` registrations with configured `red|green` parameter types and `maxCandidateComparisons: 1` warn that matcher-overlap analysis is incomplete, report truncated=true with matcherOverlap evaluated 1/skipped 1, exit 0 by default and 2 under `--fail-on-incomplete`; `--max-candidate-comparisons=7` is the control (3 evaluated, 0 skipped, exit 0 when strict).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "declared_parameter_types_make_usage_analysis_exact",
@@ -4158,9 +4170,13 @@
         },
         {
           "name": "registration_module_budget_is_shared_across_definition_files",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the shared load budget over several Ruby definition files; needs a Ruby group at the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_load_budget_is_shared_across_selected_definition_files"
+          },
+          "rationale": "Two selected Ruby files with 520 distinct `require_relative` loads each are complete alone under `--fail-on-incomplete`; selected together, exactly 16 loads (steps-b.rb lines 505-520) are refused with the 1,024-file limit message, 17 diagnostic lines total, 1,026 definition files, corpus incomplete, and exit 2 under `--fail-on-incomplete`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "type_only_and_over_depth_barrels_do_not_create_runtime_registrations",
@@ -4257,15 +4273,23 @@
         },
         {
           "name": "explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `explicitly excluded oversized inputs are outside the analysis corpus` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
+          },
+          "rationale": "An explicitly excluded oversized Ruby source leaves the run complete: exit 0 under `--fail-on-incomplete` with no diagnostic lines; without the exclusion the same file fails the run on the input limit.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "pathological_matcher_programs_fail_with_an_actionable_resource_error",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `pathological matcher programs fail with an actionable resource error` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
+          },
+          "rationale": "`Given(/a{100000}/)` beside a broken feature exits 2 with the regex resource limit and `simplify the matcher` guidance plus the Gherkin parse failure, and the JSON report keeps 1 analyzed definition. The repeat is 100,000 instead of 1,000,000 because Ruby rejects repeats above 100,000 (`too big number for repeat range`).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "oversized_cucumber_expression_fails_closed_and_still_writes_a_report",
@@ -4475,9 +4499,13 @@
         },
         {
           "name": "discovery_flags_can_include_hidden_and_default_excluded_sources",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby project group exercises both --include-hidden and --no-default-excludes and asserts the resulting definition/feature counts and complete outcome. Remaining: It does not cover all discovery flags or their precedence combinations."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
+          },
+          "rationale": "Hidden and default-excluded Ruby sources each need their own discovery flag: no flag admits none, `--include-hidden` admits only `.steps/hidden.rb`, `--no-default-excludes` admits only `node_modules/workspace/nested.rb`, and both flags admit both, asserted by analyzed paths.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "json_report_uses_the_documented_default_output_directory",
@@ -4589,21 +4617,25 @@
         },
         {
           "name": "a_run_with_nothing_excluded_stays_complete",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the opposite-answer control for every exclusion rule over a Ruby corpus: nothing excluded, `--fail-on-incomplete` passes, pinned by a Ruby group with `complete=true`. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
+          },
+          "rationale": "A clean Ruby corpus exits 0 under `--fail-on-incomplete` with `corpus.incomplete` false and no diagnostic lines; the same corpus plus one dynamic matcher exits 2 under the flag with exactly two diagnostic lines, one at `steps.rb:3:1`, and 0 without it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "a_binary_exclusion_also_makes_the_corpus_incomplete",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a NUL-bearing `.rb` file: the Ruby adapter currently parses binary content instead of excluding it (`source_exclusion_stays_with_javascript_adapter`); the desired Ruby outcome (exclude and mark incomplete, or parse) must be decided and pinned. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: a NUL-bearing source is not proof of no definitions, so the corpus must not be reported complete. The Ruby adapter excludes nothing by content and parses such files, but a NUL inside a comment (valid Ruby) is reported as a syntax error at 1:1, and code after a top-level NUL (which ends a Ruby script) is still extracted. Map after Ruby NUL handling matches Ruby.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "a_long_exclusion_list_is_summarized_rather_than_printed_in_full",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: exclusion-warning summarization (shared `src/cli.rs`) over a Ruby corpus with many excluded files, pinning the summarized warning. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: summarized warning for content-excluded JavaScript bundles (`report_excluded_sources`). The warning lists only sources an adapter excluded by content; the Ruby adapter excludes none, and a selection mixing Ruby with JS bundles is rejected. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
         },
         {
           "name": "regression_framework_review_fallback_registrations_preserve_outcomes",
