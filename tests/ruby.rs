@@ -9411,17 +9411,19 @@ fn ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_req
         ),
     ]);
     let root = directory.path();
-    ruby_cli(root, "*.rb")
+    let explained = ruby_cli(root, "*.rb")
         .arg("--explain-discovery")
         .assert()
         .success()
         .stdout(predicate::str::contains(
             "Analyzed 3 definitions and 1 feature step",
         ))
-        .stderr(predicate::str::contains(
-            "features/documentation.feature.md [gherkin-markdown]",
-        ))
         .stderr(predicate::str::contains(".spec").not());
+    let stderr = String::from_utf8_lossy(&explained.get_output().stderr).replace('\\', "/");
+    assert!(
+        stderr.contains("features/documentation.feature.md [gherkin-markdown]"),
+        "{stderr}"
+    );
     let (_, rows) = ruby_jsonl(root, "*.rb", &[]);
     assert_eq!(
         ruby_rule_locations(&rows, "unused-definition"),
