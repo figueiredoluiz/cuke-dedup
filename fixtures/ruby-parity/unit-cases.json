@@ -1703,27 +1703,40 @@
         },
         {
           "name": "table_escape_adaptation_is_bounded_and_does_not_change_docstrings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby feature with escaped table cells beside a doc string whose oracle pins the doc-string step text. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: the reserved-character budget of table-escape adaptation is a per-feature-file parser bound computed before any adapter runs, from feature text alone. Leaving doc-string contents unadapted is the same parser stage; the `doc string before escaped table` row of `ruby_feature_structure_decides_definition_usage_and_ambiguity_locations` shows only that an escaped-looking doc-string line before an escaped table still parses and drives usage, not the doc-string text.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "malformed_tables_under_rules_and_backgrounds_are_not_truncated",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls placing the malformed table under a Rule and a Background; the group pins only the neighbouring-step findings. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings"
+          },
+          "rationale": "A ragged table under a Background and under a Rule outline each rejects broken.feature at lines 5 and 7 (exit 2, corpus incomplete, featureStepsAnalyzed 1); well-formed controls contribute 3 and 2 steps and mark the `table`/`done` and `a` Ruby definitions used.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "extracts_steps_from_full_document_structure",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `gherkin-backgrounds-and-rules` observes this only through a scalar oracle field (featureSteps), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: Background and Rule steps are counted and mark definitions used. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "The checkout feature yields 6 steps; the Background, Rule Background and expanded `card stolen is rejected` steps mark their Ruby definitions used, and only the outline-template definition is unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "expands_every_scenario_outline_examples_row",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `gherkin-outline-examples-rows` observes this only through a scalar oracle field (featureSteps), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: Every Examples row expands to a step. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "Both Examples rows expand (2 steps) and mark `I have 2 apples` and `I have 3 pears` used; the template-text definition is unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "header_only_examples_preserve_verbatim_scenario_steps",
@@ -1743,9 +1756,13 @@
         },
         {
           "name": "multiple_examples_blocks_keep_only_available_rows",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `gherkin-outline-examples-rows` observes this only through a scalar oracle field (featureSteps), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: Only available rows contribute steps. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "A populated block beside a header-only block yields 1 step: `value first` is used and the `value <value>` template definition stays unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "uses_upstream_localized_dialect_keywords",
@@ -1757,21 +1774,33 @@
         },
         {
           "name": "structural_keywords_are_not_mistaken_for_steps",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `gherkin-backgrounds-and-rules` observes this only through a scalar oracle field (featureSteps), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: Only step lines count as steps under Background and Rule. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "A Feature/Rule/Example file with no steps adds no step beside a one-step neighbour (1 step); unanchored Ruby regexes `/Structure only/`, `/No steps/` and `/Empty/`, which a heading misread as a step would match by name or whole line, stay unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "extracts_official_gherkin_markdown_structure_and_preserves_lines",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `gherkin-classic-and-markdown-files` observes this only through a scalar oracle field (featureSteps), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: Markdown features contribute steps beside classic ones. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "The Markdown Rule outline (2 rows x 3 steps) beside a classic feature gives 7 steps; ambiguities are reported at staying-alive.feature.md:10 (steps.rb:1, 2) and :12 (steps.rb:4, 5), and the classic step marks its definition used.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_supports_doc_strings_and_an_implicit_feature_heading",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls for Markdown doc strings and an implicit feature heading; the group pins only that a Markdown feature marks a definition used. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "A Markdown file with an implicit feature heading yields 1 step, ambiguous at checkout.feature.md:5 (steps.rb:1, 2); the keyword list item inside the fenced doc string leaves its definition unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_ignores_colon_prose_headings",
@@ -1796,20 +1825,32 @@
         },
         {
           "name": "gherkin_markdown_separates_steps_from_prose_lists_and_fenced_examples",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls for prose lists and fenced examples; the group pins only that prose creates no steps. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "Prose, a keyword-less list item and a fenced keyword list item add no steps (1 step); the `first note` and `a fenced example` definitions are unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_accepts_all_common_list_markers_and_bold_keywords",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby Markdown feature using `*`, `-`, `+` list markers and bold keywords whose step count is pinned. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "`+`, `-`, ordered (`1.`, `2.`) and `*` items, each marker once with a plain and once with a bold keyword, yield 8 steps and leave none of the 8 Ruby definitions unused.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "gherkin_markdown_preserves_a_final_step_without_a_trailing_newline",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby Markdown feature ending without a newline whose step count is pinned. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
+          },
+          "rationale": "A Markdown file ending in a step without a newline yields 1 step, ambiguous at final.feature.md:5 (steps.rb:1, 2), over a complete corpus.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4181,14 +4222,22 @@
         },
         {
           "name": "default_discovery_parses_gherkin_markdown",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `gherkin-markdown-default-discovery` observes this only through a scalar oracle field (featureSteps), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: The default feature pattern discovers a Markdown feature for a Ruby corpus and counts its steps. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_request"
+          },
+          "rationale": "Without `--features`, features/documentation.feature.md is listed as `[gherkin-markdown]`, the run reports 3 definitions and 1 feature step, and the two Ruby definitions the Markdown step does not use (`steps.rb:2`, `steps.rb:3`) are unused.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "custom_patterns_allow_nonstandard_gherkin_extensions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby project whose features use a non-standard extension selected through `--features`; needs a Ruby group. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_request"
+          },
+          "rationale": "`.spec` files are not discovered by default; a recursive `--features` pattern for `*.spec` parses both a top-level and a nested `specs/nested/deep.spec` (2 steps), marking both custom definitions used and leaving the Markdown-only definition unused.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -5380,9 +5429,13 @@
       "tests": [
         {
           "name": "escaped_tables_preserve_findings_and_reject_malformed_neighbors_in_both_languages",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: one Ruby group pinning escaped-table findings and a malformed neighbour together; `gherkin-table-cell-escapes` and `malformed-table-neighbor` each pin one claim. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings"
+          },
+          "rationale": "Under `--fail-on-incomplete`, the escaped `C:\\tmp\\q` outline keeps 1 feature step and the ambiguity at valid.feature:3 with its escaped text; exit is 1 alone and 2 with a ragged neighbour row, rejected at its line, or an unterminated neighbour row, which rejects its file (`broken.feature: Error at`; the parser reports a position after the row, so it is not pinned), each with exactly 3 `cuke-dedup:` stderr lines. The definition-side duplicate-matcher (steps.rb:1, 2) shows only that the run continues.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
