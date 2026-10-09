@@ -1705,7 +1705,7 @@
           "name": "table_escape_adaptation_is_bounded_and_does_not_change_docstrings",
           "requiredStatus": "engine-invariant",
           "stage": "gherkin-parser",
-          "rationale": "Adapter-independent stage `gherkin-parser`: the reserved-character budget of table-escape adaptation is a per-feature-file parser bound computed before any adapter runs, from feature text alone. The doc-string half is visible from Ruby and pinned by the `doc string before escaped table` row of `ruby_feature_structure_decides_definition_usage_and_ambiguity_locations` (an escaped-looking doc-string line before an escaped table parses and drives usage).",
+          "rationale": "Adapter-independent stage `gherkin-parser`: the reserved-character budget of table-escape adaptation is a per-feature-file parser bound computed before any adapter runs, from feature text alone. Leaving doc-string contents unadapted is the same parser stage; the `doc string before escaped table` row of `ruby_feature_structure_decides_definition_usage_and_ambiguity_locations` shows only that an escaped-looking doc-string line before an escaped table still parses and drives usage, not the doc-string text.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1840,7 +1840,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_feature_structure_decides_definition_usage_and_ambiguity_locations"
           },
-          "rationale": "`+`, `-`, ordered `1.` and `*` items with a bold keyword yield 4 steps and leave none of the 4 Ruby definitions unused.",
+          "rationale": "`+`, `-`, ordered (`1.`, `2.`) and `*` items, each marker once with a plain and once with a bold keyword, yield 8 steps and leave none of the 8 Ruby definitions unused.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

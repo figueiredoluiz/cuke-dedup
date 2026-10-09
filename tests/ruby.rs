@@ -9162,7 +9162,7 @@ fn ruby_feature_structure_decides_definition_usage_and_ambiguity_locations() {
     let cucumber_steps = "Given('there are {int} cucumbers') { count() }\nGiven(/^there are \\d+ cucumbers$/) { tally() }\nWhen('I eat {int} cucumbers') { eat() }\nThen('I should have {int} cucumbers') { left() }\nThen(/^I should have \\d+ cucumbers$/) { remaining() }\nGiven('a classic step') { classic() }\nGiven('an unused control') { control() }";
     let payload = "Checkout documentation\n\n## Scenario: payload\n\n- Given this payload\n\n  ```json\n  * Given inside the payload\n  ```\n";
     let prose = "# Checkout: overview\n\n## Scenario: behavior\n\n* Given a documented step\n\n### Notes\n\nProse explains the notes.\n\n* first note\n\n```text\n* Given a fenced example\n```\n";
-    let lists = "# Feature: Lists\n\n## Scenario: behavior\n\n+ Given a plus step\n- And a dash step\n1. When an ordered step runs\n* **Then** a bold step works\n";
+    let lists = "# Feature: Lists\n\n## Scenario: behavior\n\n+ Given a plus step\n+ **Given** a bold plus step\n- And a dash step\n- **And** a bold dash step\n1. When an ordered step runs\n2. **When** a bold ordered step runs\n* Then a star step works\n* **Then** a bold step works\n";
     let classic = (
         "classic.feature",
         "Feature: Classic\n Scenario: S\n  Given a classic step\n",
@@ -9199,9 +9199,10 @@ fn ruby_feature_structure_decides_definition_usage_and_ambiguity_locations() {
         // a keyword list item so that only fence handling keeps it out.
         ("markdown prose", "Given('a documented step') { documented() }\nGiven('first note') { note() }\nGiven('a fenced example') { fence() }",
             &[("documentation.feature.md", prose)], 1, &[], &["steps.rb:2", "steps.rb:3"]),
-        // `+`, `-`, ordered and `*` markers with a bold keyword each yield a step.
-        ("markdown markers", "Given('a plus step') { plus() }\nGiven('a dash step') { dash() }\nWhen('an ordered step runs') { ordered() }\nThen('a bold step works') { bold() }",
-            &[("lists.feature.md", lists)], 4, &[], &[]),
+        // `+`, `-`, ordered and `*` markers each yield a step with a plain and with a bold keyword;
+        // every definition matches one item only, so a dropped item leaves it unused.
+        ("markdown markers", "Given('a plus step') { plus() }\nGiven('a bold plus step') { bold_plus() }\nGiven('a dash step') { dash() }\nGiven('a bold dash step') { bold_dash() }\nWhen('an ordered step runs') { ordered() }\nWhen('a bold ordered step runs') { bold_ordered() }\nThen('a star step works') { star() }\nThen('a bold step works') { bold() }",
+            &[("lists.feature.md", lists)], 8, &[], &[]),
         // The final step has no trailing newline and keeps its line.
         ("markdown final line", "Given('the final step') { first() }\nGiven(/^the final step$/) { second() }",
             &[("final.feature.md", "# Feature: Final line\n\n## Scenario: behavior\n\n* Given the final step")],
