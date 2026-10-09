@@ -1378,7 +1378,7 @@
             "name": "ruby_exclude_layers_and_config_escape_hatches_select_ruby_sources"
           },
           "rationale": "Against a baseline of four Ruby sources: a `package.json` `exclude` hides `package-only/a.rb`; a standalone config's `exclude` hides `config-only/b.rb`; CLI `--exclude cli-only` replaces the config exclude, so `config-only/b.rb` reappears and `cli-only/c.rb` is hidden; `node_modules/pkg/d.rb` stays excluded until `--no-default-excludes`. Selections are pinned by explain lines and `unused-definition` paths.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "default_excludes_and_hidden_directories_have_explicit_escape_hatches",
@@ -1388,7 +1388,7 @@
             "name": "ruby_exclude_layers_and_config_escape_hatches_select_ruby_sources"
           },
           "rationale": "Against a `{definitions, features}`-only baseline, config `excludeDefaults: false` adds exactly `node_modules/pkg/d.rb`, `includeHidden: true` adds exactly `.hidden/e.rb`, and both keys add both. Each selection is pinned by explain lines and `unused-definition` paths.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "jsonl_is_configurable_but_cannot_be_mixed_with_terminal_output",
@@ -1467,7 +1467,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "With `.gitignore` excluding `ignored/` and no git repository, `--explain-discovery` lists exactly the two features and the three selected Ruby definitions, `ignored/step.rb` absent; the feature steps use two of them, leaving one `unused-definition` at `packages/second/local.rb:1`. After the ignore files are removed, all seven Ruby sources are listed.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "cuke_dedup_ignore_supports_scoped_gitignore_rules_and_negation",
@@ -1477,7 +1477,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "A root `.cuke-dedupignore` (`skipped/`, `*.generated.rb`, `!keep.generated.rb`) and a `packages/first/.cuke-dedupignore` (`local.rb`) leave exactly `features/steps/example.rb`, `keep.generated.rb` and `packages/second/local.rb` selected. Removing the ignore files restores `skipped/step.rb`, `drop.generated.rb` and `packages/first/local.rb`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "discovers_classic_and_markdown_features_with_parser_metadata",
@@ -1487,7 +1487,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "Explain lines list `features/a.feature [gherkin]` and `features/nested/b.feature.md [gherkin-markdown]`, each with its selecting pattern and no unmatched-pattern warning. Ruby definitions used only by the classic feature and only by the Markdown feature report no `unused-definition`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "overlapping_feature_patterns_are_both_counted_as_matched",
@@ -1497,7 +1497,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "With features `*.feature` and `*a.feature`, whose only match is attributed to `*.feature`, the stderr lines contain no warning. The control `*.feature` plus `*missing.feature` produces exactly one warning naming `*missing.feature`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "configured_definition_globs_narrow_source_files",
@@ -1507,7 +1507,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "Definition glob `packages/*.rb` selects only `packages/second/local.rb`, and `{features,packages}/*.rb` selects only `features/steps/example.rb` and `packages/second/local.rb`. Neither run prints an unmatched-pattern warning; `*.rb` selects all three.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "configured_globs_use_documented_cross_separator_and_brace_semantics",
@@ -1517,7 +1517,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "`*.rb` selects the nested `features/steps/example.rb`, and `features/*.{feature,feature.md}` selects `features/nested/b.feature.md` but not `features/c.md`, whose step would otherwise hide the one unused finding. A brace definitions glob narrows the Ruby sources. The test runs on every CI OS, with separators normalized.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "reports_each_unmatched_definition_glob",
@@ -1527,7 +1527,7 @@
             "name": "ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources"
           },
           "rationale": "Definitions `stpes/*.rb` alone select no Ruby source and warn once; `packages/*.rb`, `stpes/*.rb` and `support/*.rb` together select `packages/second/local.rb` and warn exactly once for each unmatched glob and never for the matched one (explain lines, without the feature-patterns header).",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "declaration_and_source_map_files_are_not_definition_sources",
@@ -1543,7 +1543,7 @@
             "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
           },
           "rationale": "Under default excludes, an explicit `node_modules/workspace` Ruby pattern admits nothing. With `--no-default-excludes`, `node_modules/workspace/nested.rb` is analyzed, pinned by its `unused-definition` path and `definitionsAnalyzed`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "hidden_sources_require_the_include_hidden_option",
@@ -1553,7 +1553,7 @@
             "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
           },
           "rationale": "An explicit `.steps` Ruby pattern admits nothing by default. With `--include-hidden`, `.steps/hidden.rb` is analyzed, pinned by its `unused-definition` path and `definitionsAnalyzed`.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "traversal_errors_are_collected_without_discarding_other_files",
@@ -1563,7 +1563,7 @@
             "name": "ruby_traversal_errors_are_reported_without_dropping_readable_sources"
           },
           "rationale": "On Unix, a mode-000 `locked/` directory yields exactly one `failed while walking target directory ...locked: ...` error and exit 2. `visible.rb` is still listed, and its `unused-definition` is reported at `visible.rb:1`. The directory mode is restored by a drop guard; where the locked directory stays readable (running as root) the test returns early.",
-          "behaviorClass": "ruby-behavior"
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "excluded_directories_are_pruned_before_traversal",
