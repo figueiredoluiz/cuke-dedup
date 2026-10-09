@@ -7440,6 +7440,418 @@ fn ruby_exit_policy_follows_severity_threshold_and_suppressions() {
     );
 }
 
+/// Runs the binary on `root` with JSONL output and returns the exit code, records and stderr,
+/// failing with both when no summary record was produced.
+fn ruby_suppression_run(root: &Path, pattern: &str) -> (i32, Vec<Value>, String) {
+    let output = ruby_cli(root, pattern)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert!(
+        rows.iter().any(|row| row["type"] == "summary"),
+        "exit {code}: {stderr}"
+    );
+    (code, rows, stderr)
+}
+
+/// Each finding as `(rule, primary path:line, related path:line list, suppression reason)`,
+/// sorted, so a test asserts which definitions each rule flagged together with its suppression
+/// state.
+fn ruby_suppression_rows(rows: &[Value]) -> Vec<(String, String, String, Option<String>)> {
+    let location = |value: &Value| format!("{}:{}", value["path"].as_str().unwrap(), value["line"]);
+    let mut findings: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] == "finding")
+        .map(|row| {
+            (
+                row["rule"].as_str().unwrap().to_owned(),
+                location(&row["primary"]),
+                row["related"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(location)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                row["suppression"]["reason"].as_str().map(str::to_owned),
+            )
+        })
+        .collect();
+    findings.sort();
+    findings
+}
+
+/// Ruby `# cuke-dedup:ignore` directives go through the shared parser: adjacent directives each
+/// suppress only their own rule on the registration below them, a pair finding takes the inline
+/// reason from either of its definitions, and missing separators, unknown rules, empty reasons and reasons over 512 characters
+/// are rejected with located errors while the targeted findings stay active.
+#[test]
+fn ruby_inline_directives_are_rule_scoped_and_reject_malformed_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Rejected directives target `unused-definition`, so each rejection leaves an active finding
+    // on its registration instead of a suppressed one.
+    ruby_write(
+        root,
+        "steps.rb",
+        "# directives start below line 1
+# cuke-dedup:ignore duplicate-matcher -- wording fixed by an external contract
+# cuke-dedup:ignore unused-definition -- exercised by a remote suite
+Given('external wording') { work() }
+Given('external wording') { other_work() }
+Given('separate wording') { work() }
+# cuke-dedup:ignore unused-definition
+Then('broken directive') { other() }
+# cuke-dedup:ignore unknown-rule -- not a real rule
+When('unknown rule') { another() }
+# cuke-dedup:ignore unused-definition --
+When('empty reason') { final_action() }
+",
+    );
+    // 513 characters exceed the limit; exactly 512 are accepted and retained in full.
+    let (oversized, boundary) = ("x".repeat(513), "y".repeat(512));
+    ruby_write(
+        root,
+        "oversized.rb",
+        &format!(
+            "# boundary directives start below line 1
+# cuke-dedup:ignore unused-definition -- {oversized}
+Given('oversized reason') {{ left() }}
+# cuke-dedup:ignore unused-definition -- {boundary}
+Given('boundary reason') {{ right() }}
+"
+        ),
+    );
+    // The directive sits on the pair's related definition, not its primary one.
+    ruby_write(
+        root,
+        "related.rb",
+        "Given('related left') { shared_related() }
+# cuke-dedup:ignore duplicate-handler -- attached to the related definition
+Given('related right') { shared_related() }
+",
+    );
+    ruby_write(
+        root,
+        "usage.feature",
+        "Feature: Usage\n  Scenario: None\n    Given nothing matches\n",
+    );
+    let (code, rows, stderr) = ruby_suppression_run(root, "*.rb");
+    assert_eq!(code, 2, "{stderr}");
+    let row = |rule: &str, location: &str, related: &str, reason: Option<&str>| {
+        (
+            rule.to_owned(),
+            location.to_owned(),
+            related.to_owned(),
+            reason.map(str::to_owned),
+        )
+    };
+    let unused = "unused-definition";
+    assert_eq!(
+        ruby_suppression_rows(&rows),
+        [
+            row(
+                "duplicate-handler",
+                "related.rb:1",
+                "related.rb:3",
+                Some("attached to the related definition")
+            ),
+            // Line 4's `duplicate-matcher` directive does not reach its handler pair with line 6.
+            row("duplicate-handler", "steps.rb:4", "steps.rb:6", None),
+            row(
+                "duplicate-matcher",
+                "steps.rb:4",
+                "steps.rb:5",
+                Some("wording fixed by an external contract")
+            ),
+            row(unused, "oversized.rb:3", "", None),
+            row(unused, "oversized.rb:5", "", Some(&boundary)),
+            row(unused, "related.rb:1", "", None),
+            row(unused, "related.rb:3", "", None),
+            row(unused, "steps.rb:10", "", None),
+            row(unused, "steps.rb:12", "", None),
+            row(
+                unused,
+                "steps.rb:4",
+                "",
+                Some("exercised by a remote suite")
+            ),
+            row(unused, "steps.rb:5", "", None),
+            row(unused, "steps.rb:6", "", None),
+            row(unused, "steps.rb:8", "", None),
+        ]
+    );
+    let diagnostics: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.starts_with("cuke-dedup:"))
+        .collect();
+    assert_eq!(
+        diagnostics,
+        [
+            "cuke-dedup: oversized.rb:2:1: inline suppression reason exceeds the 512-character limit",
+            "cuke-dedup: steps.rb:7:1: inline suppression must use `# cuke-dedup:ignore RULE -- REASON`",
+            "cuke-dedup: steps.rb:9:1: unknown rule `unknown-rule`",
+            "cuke-dedup: steps.rb:11:1: inline suppression reason must not be empty",
+        ]
+    );
+}
+
+/// Configured suppressions over Ruby findings: `path` is a root-relative glob that must cover
+/// every definition of a pair, `path` and `matcher` must select the same definition, a trailing
+/// `/` selects the directory tree, and unmatched detection uses the same selection.
+#[test]
+fn ruby_configured_suppressions_select_root_relative_paths_and_matchers() {
+    let pair = |left: &'static str, right: &'static str| {
+        [
+            (left, "Given('left matcher') { work() }\n"),
+            (right, "Given('right matcher') { work() }\n"),
+        ]
+    };
+    // (files, path, matcher, suppressed, reported as matching no definition)
+    let cases = [
+        (
+            pair("left.rb", "right.rb"),
+            "left.rb",
+            Some("right matcher"),
+            false,
+            true,
+        ),
+        (
+            pair("left.rb", "right.rb"),
+            "*.rb",
+            Some("missing matcher"),
+            false,
+            true,
+        ),
+        (
+            pair("left.rb", "right.rb"),
+            "*.rb",
+            Some("right matcher"),
+            true,
+            false,
+        ),
+        // `*` crosses `/`, so a root glob covers nested files; a bare file name does not.
+        (
+            pair("root.rb", "nested/steps.rb"),
+            "*.rb",
+            None,
+            true,
+            false,
+        ),
+        (
+            pair("root.rb", "nested/steps.rb"),
+            "steps.rb",
+            None,
+            false,
+            true,
+        ),
+        (
+            pair("legacy/left.rb", "current/right.rb"),
+            "legacy/**",
+            None,
+            false,
+            false,
+        ),
+        (
+            pair("legacy/left.rb", "legacy/right.rb"),
+            "legacy/**",
+            None,
+            true,
+            false,
+        ),
+        (
+            pair("legacy/nested/left.rb", "legacy/nested/right.rb"),
+            "legacy/",
+            None,
+            true,
+            false,
+        ),
+        (
+            pair("legacy/nested/left.rb", "legacy/nested/right.rb"),
+            "missing/**",
+            None,
+            false,
+            true,
+        ),
+    ];
+    for (index, (files, path, matcher, suppressed, unmatched)) in cases.into_iter().enumerate() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        for (relative, source) in files {
+            ruby_write(root, relative, source);
+        }
+        let reason = format!("case {index}");
+        let suppression = serde_json::json!({
+            "rule": "duplicate-handler", "reason": reason, "path": path, "matcher": matcher,
+        });
+        ruby_write(
+            root,
+            ".cuke-dedup.json",
+            &serde_json::json!({ "suppressions": [suppression] }).to_string(),
+        );
+        let (_, rows, stderr) = ruby_suppression_run(root, "**/*.rb");
+        let handler_rows: Vec<_> = ruby_suppression_rows(&rows)
+            .into_iter()
+            .filter(|(rule, ..)| rule == "duplicate-handler")
+            .map(|(_, primary, related, reason)| (primary, related, reason))
+            .collect();
+        // Discovery sorts paths, so the lexically first file is the primary definition.
+        let mut locations = files.map(|(relative, _)| format!("{relative}:1"));
+        locations.sort();
+        let [primary, related] = locations;
+        let context = format!("case {index}: {path} {matcher:?}\n{stderr}");
+        assert_eq!(
+            handler_rows,
+            [(primary, related, suppressed.then(|| reason.clone()))],
+            "{context}"
+        );
+        assert_eq!(
+            stderr.contains("suppression 1 for duplicate-handler matched no step definitions"),
+            unmatched,
+            "{context}"
+        );
+    }
+}
+
+/// Configured suppression lookups charge the pair work budget per suppression of the looked-up
+/// rule, and unmatched-suppression validation stops at its own limit over 700 Ruby files while a
+/// few unmatched suppressions are all reported.
+#[test]
+fn ruby_suppression_lookups_share_the_pair_work_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Long paths and 1,000 path suppressions make each pair lookup expensive; the same handler
+    // body puts all 700 definitions in one identical-handler class.
+    let nested = "nested/".repeat(30);
+    for index in 0..700 {
+        ruby_write(
+            root,
+            &format!("{nested}steps-{index}.rb"),
+            &format!("Given('operation label {index:04}') {{ shared_implementation() }}\n"),
+        );
+    }
+    // Controls: the same suppressions under a rule no pair lookup consults charge no pair work,
+    // and three unmatched suppressions stay within the validation limit.
+    // (rule, suppressions, pair budget exhausted, validation stopped)
+    for (rule, count, truncated, stopped) in [
+        ("duplicate-handler", 1_000, true, true),
+        ("unused-definition", 1_000, false, true),
+        ("unused-definition", 3, false, false),
+    ] {
+        let suppressions: Vec<_> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "rule": rule, "reason": format!("legacy exception {index}"),
+                    "path": format!("missing-{index}/**"),
+                })
+            })
+            .collect();
+        ruby_write(
+            root,
+            ".cuke-dedup.json",
+            &serde_json::json!({ "suppressions": suppressions }).to_string(),
+        );
+        let (_, rows, stderr) = ruby_suppression_run(root, "**/*.rb");
+        let analysis = &rows.last().unwrap()["analysis"];
+        let sources = &analysis["candidateSources"];
+        let context = format!("{rule} x{count}: {analysis}");
+        assert_eq!(analysis["truncated"], truncated, "{context}");
+        let evaluated = |source: &str| sources[source]["evaluated"].as_u64().unwrap();
+        if truncated {
+            // The budget runs out inside the identical-handler class, before its 699 pairs.
+            assert!(evaluated("identicalHandler") < 699, "{context}");
+            assert!(
+                analysis["candidateComparisonsEvaluated"].as_u64().unwrap() < 1_397,
+                "{context}"
+            );
+        } else {
+            assert_eq!(
+                analysis["candidateComparisonsEvaluated"], 1_397,
+                "{context}"
+            );
+            assert_eq!(
+                (evaluated("identicalHandler"), evaluated("matcherBlocking")),
+                (699, 698),
+                "{context}"
+            );
+        }
+        assert_eq!(
+            stderr.matches("after safety limits").count(),
+            usize::from(truncated),
+            "{context}\n{stderr}"
+        );
+        assert_eq!(
+            stderr.contains("unmatched suppression validation stopped after its safety limit"),
+            stopped,
+            "{context}"
+        );
+        let unmatched = stderr.matches("matched no step definitions").count();
+        if stopped {
+            assert!(unmatched < count, "{context}: {unmatched}");
+        } else {
+            assert_eq!(unmatched, count, "{context}");
+        }
+    }
+}
+
+/// A library caller can bypass config decoding with an over-limit suppression reason; the
+/// retained Ruby finding records the reason truncated to the 512-character bound.
+#[test]
+fn ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained() {
+    use cuke_dedup::config::{Config, ConfigOverrides, SuppressionConfig};
+    use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let file = SourceFile {
+        path: root.join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let extracted = cuke_dedup::source_adapter::SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| adapter.language() == SourceLanguage::Ruby)
+        .unwrap()
+        .extract(RUBY_DUPLICATE_PAIR, &file)
+        .unwrap();
+    let mut config = Config::load(root, ConfigOverrides::default()).unwrap();
+    let reason = "accepted because migration is in progress ".repeat(10_000);
+    config.suppressions.push(SuppressionConfig {
+        rule: cuke_dedup::model::Rule::DuplicateMatcher,
+        reason: reason.clone(),
+        path: Some("**".to_owned()),
+        matcher: None,
+    });
+    let outcome =
+        cuke_dedup::analysis::analyze_with_diagnostics(extracted.definitions, Vec::new(), &config)
+            .unwrap();
+    let suppressed: Vec<_> = outcome
+        .result
+        .findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.rule,
+                finding.suppression.as_ref().map(|s| s.reason.len()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        suppressed,
+        [(cuke_dedup::model::Rule::DuplicateMatcher, Some(512))]
+    );
+    assert_eq!(
+        outcome.result.findings[0]
+            .suppression
+            .as_ref()
+            .unwrap()
+            .reason,
+        reason[..512]
+    );
+}
+
 /// Candidate limits above the hard safety ceilings are rejected from config and CLI, and a Ruby
 /// run at the ceilings is accepted.
 #[test]
@@ -8396,6 +8808,332 @@ fn ruby_resource_limits_fail_closed_independently_of_reporters() {
         ruby_report(&output.path().join("cuke-dedup.json"))["summary"]["definitionsAnalyzed"],
         1
     );
+}
+
+/// Runs `ruby_cli` with JSONL output; returns the exit code, the last record (`Null` when the run
+/// wrote none) and stderr, so a run that fails before reporting still shows why.
+fn ruby_summary_run(root: &Path, pattern: &str, extra: &[&str]) -> (i32, Value, String) {
+    let output = ruby_cli(root, pattern)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let last = records(output.stdout).pop().unwrap_or(Value::Null);
+    (output.status.code().unwrap_or(-1), last, stderr)
+}
+
+/// Counts every `cuke-dedup:` diagnostic line in `stderr`, warnings and strict-mode errors alike.
+fn ruby_diagnostic_count(stderr: &str) -> usize {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("cuke-dedup:"))
+        .count()
+}
+
+/// The Ruby load budget of 1,024 dependency-only files is one budget across every selected
+/// definition file: each file's 520 loads fit alone, and together the loads past 1,024 are not
+/// followed and mark the run incomplete.
+#[test]
+fn ruby_load_budget_is_shared_across_selected_definition_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for group in ["a", "b"] {
+        let mut entry = String::new();
+        for index in 0..520 {
+            ruby_write(
+                root,
+                &format!("support/{group}-{index}.rb"),
+                &format!("LOADED_{}_{index} = 1\n", group.to_uppercase()),
+            );
+            entry.push_str(&format!("require_relative 'support/{group}-{index}'\n"));
+        }
+        entry.push_str(&format!("Given('step {group}') {{ work('{group}') }}\n"));
+        ruby_write(root, &format!("steps-{group}.rb"), &entry);
+    }
+    ruby_write(
+        root,
+        "budget.feature",
+        "Feature: Budget\n  Scenario: Both\n    Given step a\n    Given step b\n",
+    );
+    let refused =
+        "Ruby source dependency was not followed: the source graph exceeds the 1,024-file limit";
+    for alone in ["steps-a.rb", "steps-b.rb"] {
+        let (code, summary, stderr) = ruby_summary_run(root, alone, &["--fail-on-incomplete"]);
+        assert_eq!(code, 0, "{alone}: {stderr}");
+        assert_eq!(ruby_diagnostic_count(&stderr), 0, "{alone}: {stderr}");
+        assert_eq!(summary["corpus"]["incomplete"], false, "{alone}");
+    }
+    let both = "steps-a.rb,steps-b.rb";
+    let (code, summary, stderr) = ruby_summary_run(root, both, &[]);
+    assert_eq!(code, 0, "{stderr}");
+    // 1,024 - 520 = 504 loads of `steps-b.rb` fit; lines 505..=520 are refused, one warning each,
+    // plus the indirect-usage warning the incomplete graph causes.
+    assert_eq!(stderr.matches(refused).count(), 16, "{stderr}");
+    for line in [505, 520] {
+        assert!(
+            stderr.contains(&format!("steps-b.rb:{line}:1: {refused}")),
+            "{stderr}"
+        );
+    }
+    assert_eq!(ruby_diagnostic_count(&stderr), 17, "{stderr}");
+    ruby_assert_pointers(
+        &summary,
+        &[
+            ("/corpus/definitionFiles", 1026.into()),
+            ("/corpus/incomplete", true.into()),
+            ("/summary/definitionsAnalyzed", 2.into()),
+        ],
+    );
+    let (strict, _, _) = ruby_summary_run(root, both, &["--fail-on-incomplete"]);
+    assert_eq!(strict, 2);
+}
+
+/// The matcher-overlap candidate limit over Ruby Cucumber Expressions is visible in the report and
+/// fails closed under `--fail-on-incomplete`; candidate-limit flags accept only positive integers.
+#[test]
+fn ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "steps.rb",
+        "Given('value {first}') { }\nGiven('value {second}') { }\nGiven('value {third}') { }\n",
+    );
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"threshold":100,"reporters":["json"],"output":"reports","noMetrics":true,
+            "maxCandidateComparisons":1,
+            "parameterTypes":{"first":"red|green","second":"red|green","third":"red|green"}}"#,
+    );
+    let incomplete =
+        "static matcher-overlap analysis is incomplete: evaluated 1 definition comparisons";
+    // `7` lifts the configured limit of 1 above the 3 pairwise comparisons: the control.
+    for (extra, strict_code, evaluated, skipped) in [
+        (None, 2, 1, 1),
+        (Some("--max-candidate-comparisons=7"), 0, 3, 0),
+    ] {
+        for strict in [false, true] {
+            let mut command = ruby_cli(root, "*.rb");
+            command.args(extra);
+            if strict {
+                command.arg("--fail-on-incomplete");
+            }
+            let output = command.output().unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let code = if strict { strict_code } else { 0 };
+            assert_eq!(output.status.code(), Some(code), "{extra:?}: {stderr}");
+            assert_eq!(stderr.contains(incomplete), skipped > 0, "{stderr}");
+        }
+        let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+        ruby_assert_pointers(
+            &report["analysis"],
+            &[
+                ("/truncated", (skipped > 0).into()),
+                (
+                    "/candidateSources/matcherOverlap/evaluated",
+                    evaluated.into(),
+                ),
+                ("/candidateSources/matcherOverlap/skipped", skipped.into()),
+            ],
+        );
+    }
+    let printed = ruby_cli(root, "*.rb")
+        .args([
+            "--print-config",
+            "--max-candidate-comparisons=7",
+            "--max-structural-class-comparisons=7",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(printed.status.code(), Some(0));
+    let config: Value = serde_json::from_slice(&printed.stdout).unwrap();
+    ruby_assert_pointers(
+        &config,
+        &[
+            ("/maxCandidateComparisons", 7.into()),
+            ("/maxStructuralClassComparisons", 7.into()),
+        ],
+    );
+    for flag in [
+        "--max-candidate-comparisons",
+        "--max-structural-class-comparisons",
+    ] {
+        for value in ["0", "-1", "many"] {
+            ruby_cli(root, "*.rb")
+                .arg(format!("{flag}={value}"))
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains(format!(
+                    "invalid value '{value}' for '{flag} <COUNT>': expected an integer greater than zero"
+                )));
+        }
+    }
+}
+
+/// An explicitly excluded oversized Ruby file is outside the corpus, so the run stays complete
+/// under `--fail-on-incomplete`; without the exclusion it fails on the input limit. A clean Ruby
+/// corpus is complete, one dynamic matcher makes it incomplete, and hidden and default-excluded
+/// Ruby sources each need their own discovery flag.
+#[test]
+fn ruby_exclusions_and_discovery_flags_define_the_analysis_corpus() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write_sized(root, "generated/oversized.rb", 8 * 1024 * 1024 + 1);
+    ruby_write(root, "steps.rb", "Given('included step') { work() }\n");
+    ruby_write(
+        root,
+        "included.feature",
+        "Feature: Included\n  Scenario: One\n    Given included step\n",
+    );
+    for (config, code) in [(r#"{"exclude":["generated/**"]}"#, 0), ("{}", 2)] {
+        ruby_write(root, ".cuke-dedup.json", config);
+        let output = ruby_cli(root, "**/*.rb")
+            .args(["--threshold", "100", "--fail-on-incomplete"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(code), "{config}: {stderr}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Analyzed 1 definition and"));
+        let excluded = code == 0;
+        assert_eq!(stderr.contains("input limit"), !excluded, "{stderr}");
+        if excluded {
+            assert_eq!(ruby_diagnostic_count(&stderr), 0, "{stderr}");
+        }
+    }
+
+    // Completeness: the clean corpus and the dynamic-matcher corpus differ only in the
+    // registration whose matcher cannot be resolved statically.
+    let completeness = tempfile::tempdir().unwrap();
+    let root = completeness.path();
+    ruby_write(
+        root,
+        "used.feature",
+        "Feature: Used\n  Scenario: One\n    Given static step\n",
+    );
+    for (source, incomplete) in [
+        ("Given('static step') { work() }\n", false),
+        (
+            "Given('static step') { work() }\nname = 'dynamic step'\nGiven(name) { }\n",
+            true,
+        ),
+    ] {
+        ruby_write(root, "steps.rb", source);
+        let (strict, summary, stderr) = ruby_summary_run(root, "*.rb", &["--fail-on-incomplete"]);
+        assert_eq!(strict, if incomplete { 2 } else { 0 }, "{stderr}");
+        assert_eq!(summary["corpus"]["incomplete"], incomplete, "{stderr}");
+        assert_eq!(
+            stderr.contains("steps.rb:3:1: Ruby registration requires a static matcher"),
+            incomplete,
+            "{stderr}"
+        );
+        assert_eq!(
+            ruby_diagnostic_count(&stderr),
+            if incomplete { 2 } else { 0 },
+            "{stderr}"
+        );
+        let (lenient, _, stderr) = ruby_summary_run(root, "*.rb", &[]);
+        assert_eq!(lenient, 0, "{stderr}");
+    }
+
+    let discovery = tempfile::tempdir().unwrap();
+    let root = discovery.path();
+    ruby_write(
+        root,
+        ".steps/hidden.rb",
+        "Given('hidden step') { hidden() }\n",
+    );
+    ruby_write(
+        root,
+        "node_modules/workspace/nested.rb",
+        "Given('nested step') { nested() }\n",
+    );
+    // A feature that uses neither definition makes each analyzed one an `unused-definition`
+    // finding, which names the file the discovery flag admitted.
+    ruby_write(
+        root,
+        "other.feature",
+        "Feature: Other\n  Scenario: One\n    Given other step\n",
+    );
+    let hidden = ".steps/hidden.rb";
+    let nested = "node_modules/workspace/nested.rb";
+    for (flags, admitted) in [
+        (&[][..], &[][..]),
+        (&["--include-hidden"], &[hidden][..]),
+        (&["--no-default-excludes"], &[nested]),
+        (
+            &["--include-hidden", "--no-default-excludes"],
+            &[hidden, nested],
+        ),
+    ] {
+        let (code, rows) = ruby_jsonl(root, ".steps/**/*.rb,node_modules/workspace/**/*.rb", flags);
+        assert_eq!(code, 0, "{flags:?}");
+        let mut paths: Vec<&str> = rows
+            .iter()
+            .filter(|row| row["rule"] == "unused-definition")
+            .filter_map(|row| row["primary"]["path"].as_str())
+            .collect();
+        paths.sort_unstable();
+        assert_eq!(paths, admitted, "{flags:?}");
+        let summary = rows.last().unwrap();
+        assert_eq!(
+            summary["summary"]["definitionsAnalyzed"],
+            admitted.len(),
+            "{flags:?}"
+        );
+    }
+}
+
+/// A valid Ruby regexp whose compiled program exceeds the 1 MiB regex limit is named with the
+/// actionable fix, keeps its definition in the reports, and fails under `--fail-on-incomplete`.
+#[test]
+fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
+    // Ruby rejects the original `a{1000000}` (Onigmo caps a repeat at 100,000), so this uses the
+    // largest repeat Ruby accepts, which still exceeds the compiled-program limit.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // The regexp sits on line 3 so a `1:1` location fallback cannot satisfy `limit`.
+    let oversized = "# Oversized repeat.\n\nGiven(/a{100000}/) { work() }\n";
+    ruby_write(root, "steps.rb", oversized);
+    let limit = "steps.rb:3:1 exceeds the 1048576-byte regex resource limit; simplify the matcher";
+    for strict in [false, true] {
+        let mut extra = vec!["--threshold", "100"];
+        if strict {
+            extra.push("--fail-on-incomplete");
+        }
+        let (code, summary, stderr) = ruby_summary_run(root, "*.rb", &extra);
+        assert_eq!(code, if strict { 2 } else { 0 }, "{stderr}");
+        assert_eq!(
+            stderr.matches("regex resource limit").count(),
+            1,
+            "{stderr}"
+        );
+        assert!(stderr.contains(limit), "{stderr}");
+        assert_eq!(summary["summary"]["definitionsAnalyzed"], 1);
+    }
+    // Control: a small repeat compiles, so the run carries no resource diagnostic.
+    ruby_write(root, "steps.rb", "Given(/a{100}/) { work() }\n");
+    let (code, _, stderr) = ruby_summary_run(root, "*.rb", &["--fail-on-incomplete"]);
+    assert!(!stderr.contains("regex resource limit"), "{stderr}");
+    assert_eq!(code, 0, "{stderr}");
+
+    ruby_write(root, "steps.rb", oversized);
+    ruby_write(
+        root,
+        "broken.feature",
+        "Scenario: No feature\n  Given a step\n",
+    );
+    let output = tempfile::tempdir().unwrap();
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json", "--output"])
+        .arg(output.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(limit))
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
+    let report = ruby_report(&output.path().join("cuke-dedup.json"));
+    assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
 }
 
 /// Machine reports over Ruby findings: the implicit check writes every reporter with corpus and
