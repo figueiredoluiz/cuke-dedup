@@ -8500,6 +8500,514 @@ fn ruby_default_discovery_is_visibly_empty_and_names_the_opt_in_pattern() {
         .stderr(predicate::str::contains("cucumber-ruby source file(s) were not analyzed").not());
 }
 
+/// Runs the binary from `root` on `.` with `--explain-discovery`, JSONL output and `args`;
+/// returns the exit code, the records and every stderr line without its `cuke-dedup: ` prefix,
+/// separators normalized to `/`, except the always-printed feature-pattern header.
+fn ruby_explained(root: &Path, args: &[&str]) -> (i32, Vec<Value>, Vec<String>) {
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([".", "--explain-discovery", "--reporters", "jsonl"])
+        .args(["--no-metrics"])
+        .args(args)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let lines = stderr
+        .lines()
+        .map(|line| line.strip_prefix("cuke-dedup: ").expect(&stderr))
+        .filter(|line| !line.starts_with("feature patterns: "))
+        .map(|line| line.replace('\\', "/"))
+        .collect();
+    let code = output.status.code().expect(&stderr);
+    (code, records(output.stdout), lines)
+}
+
+/// `directory/pattern` built at run time: a slash-star sequence inside a string literal opens a
+/// comment for the duplication tokenizer.
+fn ruby_glob(directory: &str, pattern: &str) -> String {
+    format!("{directory}/{pattern}")
+}
+
+/// `definition <path>` explain lines for `paths`, in the given order.
+fn ruby_definition_lines(paths: &[&str]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| format!("definition {path}"))
+        .collect()
+}
+
+/// Ruby definition selection: `.gitignore` and scoped `.cuke-dedupignore` rules with negation
+/// prune Ruby sources and removing them restores every source; `*` crosses `/`; braces select
+/// classic and Markdown features with their parser, and the selected Ruby definitions are used by
+/// both formats; definition globs, braces included, narrow the Ruby sources; an unmatched
+/// definition or feature glob is reported once by name, each of several unmatched definition
+/// globs is reported once beside a matched one, and a feature glob whose only match is
+/// attributed to an earlier overlapping glob is not reported.
+#[test]
+fn ruby_discovery_applies_ignore_files_and_glob_semantics_to_ruby_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let sources = [
+        "features/steps/example.rb",
+        "keep.generated.rb",
+        "packages/second/local.rb",
+        "ignored/step.rb",
+        "skipped/step.rb",
+        "drop.generated.rb",
+        "packages/first/local.rb",
+    ];
+    for (index, path) in sources.iter().enumerate() {
+        ruby_write(
+            root,
+            path,
+            &format!("Given('step {index}') {{ action_{index}() }}\n"),
+        );
+    }
+    ruby_write(root, ".gitignore", "ignored/\n");
+    ruby_write(
+        root,
+        ".cuke-dedupignore",
+        "skipped/\n*.generated.rb\n!keep.generated.rb\n",
+    );
+    ruby_write(root, "packages/first/.cuke-dedupignore", "local.rb\n");
+    ruby_write(
+        root,
+        "features/a.feature",
+        "Feature: A\n  Scenario: S\n    Given step 0\n",
+    );
+    let markdown = "# Feature: B\n\n## Scenario: S\n\n* Given step 1\n";
+    ruby_write(root, "features/nested/b.feature.md", markdown);
+    // Uses `step 2`: selecting this non-feature Markdown file would hide the one unused finding.
+    ruby_write(root, "features/c.md", &markdown.replace("step 1", "step 2"));
+
+    let brace = ruby_glob("features", "*.{feature,feature.md}");
+    let classic = "feature features/a.feature [gherkin] via *.feature";
+    let both_formats = [
+        classic.to_owned(),
+        format!("feature features/nested/b.feature.md [gherkin-markdown] via {brace}"),
+    ];
+    let selected = [
+        "features/steps/example.rb",
+        "keep.generated.rb",
+        "packages/second/local.rb",
+    ];
+    let unmatched = ruby_glob("stpes", "*.rb");
+    let also_unmatched = ruby_glob("support", "*.rb");
+    let packages = ruby_glob("packages", "*.rb");
+    let both_directories = ruby_glob("{features,packages}", "*.rb");
+    // Definition globs, feature globs, explain lines, unused-definition locations. Explain lines
+    // omit the `feature patterns:` header that `ruby_explained` drops.
+    type Row<'a> = (Vec<&'a str>, Vec<&'a str>, Vec<String>, Vec<&'a str>);
+    let rows: Vec<Row> = vec![
+        (
+            vec!["*.rb"],
+            vec!["*.feature", &brace],
+            [&both_formats[..], &ruby_definition_lines(&selected)].concat(),
+            vec!["packages/second/local.rb:1"],
+        ),
+        (
+            vec![&both_directories],
+            vec!["*.feature", &brace],
+            [
+                &both_formats[..],
+                &ruby_definition_lines(&["features/steps/example.rb", "packages/second/local.rb"]),
+            ]
+            .concat(),
+            vec!["packages/second/local.rb:1"],
+        ),
+        (
+            vec![&packages],
+            vec!["*.feature"],
+            [classic.to_owned(), "definition packages/second/local.rb".to_owned()].to_vec(),
+            vec!["packages/second/local.rb:1"],
+        ),
+        (
+            vec![&unmatched],
+            vec!["*.feature"],
+            vec![
+                classic.to_owned(),
+                format!("warning: definition pattern `{unmatched}` matched no files"),
+            ],
+            vec![],
+        ),
+        // One matched and two unmatched definition globs: one warning per unmatched glob only.
+        (
+            vec![&packages, &unmatched, &also_unmatched],
+            vec!["*.feature"],
+            vec![
+                classic.to_owned(),
+                "definition packages/second/local.rb".to_owned(),
+                format!("warning: definition pattern `{unmatched}` matched no files"),
+                format!("warning: definition pattern `{also_unmatched}` matched no files"),
+            ],
+            vec!["packages/second/local.rb:1"],
+        ),
+        // Overlap: `*a.feature` matches only `features/a.feature`, which `*.feature` selects first.
+        (
+            vec!["*.rb"],
+            vec!["*.feature", "*a.feature"],
+            [&[classic.to_owned()][..], &ruby_definition_lines(&selected)].concat(),
+            vec!["keep.generated.rb:1", "packages/second/local.rb:1"],
+        ),
+        (
+            vec!["*.rb"],
+            vec!["*.feature", "*missing.feature"],
+            [
+                &[classic.to_owned()][..],
+                &ruby_definition_lines(&selected),
+                &["warning: feature pattern `*missing.feature` from .cuke-dedup.json matched no files"
+                    .to_owned()],
+            ]
+            .concat(),
+            vec!["keep.generated.rb:1", "packages/second/local.rb:1"],
+        ),
+    ];
+    for (definitions, features, expected, unused) in rows {
+        let config = serde_json::json!({ "definitions": definitions, "features": features });
+        ruby_write(root, ".cuke-dedup.json", &config.to_string());
+        let (code, rows, lines) = ruby_explained(root, &[]);
+        assert_eq!((code, &lines), (0, &expected), "{config}");
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{config}"
+        );
+    }
+
+    for ignore in [
+        ".gitignore",
+        ".cuke-dedupignore",
+        "packages/first/.cuke-dedupignore",
+    ] {
+        fs::remove_file(root.join(ignore)).unwrap();
+    }
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"definitions":["*.rb"],"features":["*.feature"]}"#,
+    );
+    let mut every = sources.to_vec();
+    every.sort_unstable();
+    let (code, _, lines) = ruby_explained(root, &[]);
+    let expected = [&[classic.to_owned()][..], &ruby_definition_lines(&every)].concat();
+    assert_eq!((code, lines), (0, expected));
+}
+
+/// Ruby selection under exclude layers, each measured against a baseline config that admits every
+/// non-hidden source outside `node_modules`: a `package.json`-only `exclude` and a standalone
+/// config's `exclude` each hide their own source, a CLI `--exclude` replaces the config `exclude`
+/// while the built-in `node_modules` exclusion stays until `--no-default-excludes`, and the
+/// `excludeDefaults` and `includeHidden` config keys each admit exactly their one Ruby source.
+#[test]
+fn ruby_exclude_layers_and_config_escape_hatches_select_ruby_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let sources = [
+        ".hidden/e.rb",
+        "cli-only/c.rb",
+        "config-only/b.rb",
+        "keep.rb",
+        "node_modules/pkg/d.rb",
+        "package-only/a.rb",
+    ];
+    for (index, path) in sources.iter().enumerate() {
+        ruby_write(
+            root,
+            path,
+            &format!("Given('layer {index}') {{ layer_{index}() }}\n"),
+        );
+    }
+    ruby_write(
+        root,
+        "other.feature",
+        "Feature: Other\n  Scenario: One\n    Given other step\n",
+    );
+    let baseline = [
+        "cli-only/c.rb",
+        "config-only/b.rb",
+        "keep.rb",
+        "package-only/a.rb",
+    ];
+    let without = |hidden: &str| -> Vec<&str> {
+        baseline
+            .iter()
+            .copied()
+            .filter(|path| !path.starts_with(hidden))
+            .collect()
+    };
+    let adding = |added| {
+        let mut admitted = [&baseline[..], &[added]].concat();
+        admitted.sort_unstable();
+        admitted
+    };
+    let selection = r#""definitions":["*.rb"],"features":["*.feature"]"#;
+    let config_exclude = r#","exclude":["config-only"]"#;
+    let cli_exclude = ["--exclude", "cli-only"];
+    // `package.json#cukeDedup` settings, standalone config settings, CLI arguments, admitted
+    // sources. A standalone config replaces the whole `package.json` block, so each layer is
+    // measured with the other absent.
+    type Row<'a> = (Option<&'a str>, Option<&'a str>, Vec<&'a str>, Vec<&'a str>);
+    let rows: Vec<Row> = vec![
+        (None, Some(""), vec![], baseline.to_vec()),
+        (
+            Some(r#","exclude":["package-only"]"#),
+            None,
+            vec![],
+            without("package-only"),
+        ),
+        (None, Some(config_exclude), vec![], without("config-only")),
+        (
+            None,
+            Some(config_exclude),
+            cli_exclude.to_vec(),
+            without("cli-only"),
+        ),
+        (
+            None,
+            Some(config_exclude),
+            [&cli_exclude[..], &["--no-default-excludes"]].concat(),
+            [
+                "config-only/b.rb",
+                "keep.rb",
+                "node_modules/pkg/d.rb",
+                "package-only/a.rb",
+            ]
+            .to_vec(),
+        ),
+        (
+            None,
+            Some(r#","excludeDefaults":false"#),
+            vec![],
+            adding("node_modules/pkg/d.rb"),
+        ),
+        (
+            None,
+            Some(r#","includeHidden":true"#),
+            vec![],
+            adding(".hidden/e.rb"),
+        ),
+        (
+            None,
+            Some(r#","excludeDefaults":false,"includeHidden":true"#),
+            vec![],
+            sources.to_vec(),
+        ),
+    ];
+    for (package, standalone, args, admitted) in rows {
+        let package =
+            package.map(|settings| format!(r#"{{"cukeDedup":{{{selection}{settings}}}}}"#));
+        let standalone = standalone.map(|settings| format!("{{{selection}{settings}}}"));
+        for (path, content) in [
+            ("package.json", &package),
+            ("cuke-dedup.config.json", &standalone),
+        ] {
+            match content {
+                Some(content) => ruby_write(root, path, content),
+                None if root.join(path).exists() => fs::remove_file(root.join(path)).unwrap(),
+                None => {}
+            }
+        }
+        let (code, rows, lines) = ruby_explained(root, &args);
+        let context = format!("{package:?} {standalone:?} {args:?}");
+        let mut expected = vec!["feature other.feature [gherkin] via *.feature".to_owned()];
+        expected.extend(ruby_definition_lines(&admitted));
+        assert_eq!((code, lines), (0, expected), "{context}");
+        let unused: Vec<String> = admitted.iter().map(|path| format!("{path}:1")).collect();
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{context}"
+        );
+    }
+}
+
+/// Asserts explain `lines` equal `expected`. On Windows a definition reached only through a load
+/// prints its verbatim (`\\?\`) canonical path, because the analysis root is normalized and the
+/// load target is not, so there each expected definition matches a printed line ending in it.
+fn ruby_assert_explained(lines: &[String], expected: &[String], context: &str) {
+    #[cfg(windows)]
+    {
+        assert_eq!(lines.len(), expected.len(), "{context}: {lines:?}");
+        for line in expected {
+            let suffix = line
+                .strip_prefix("definition ")
+                .map(|path| format!("/{path}"));
+            assert!(
+                lines.iter().any(|printed| printed == line
+                    || suffix.as_deref().is_some_and(|suffix| {
+                        printed.starts_with("definition ") && printed.ends_with(suffix)
+                    })),
+                "{context}: `{line}` not in {lines:?}"
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    assert_eq!(lines, expected, "{context}");
+}
+
+/// Ruby loads cannot leave their root: `require_relative` through `..` and an explicit `./..`
+/// require are refused against the analysis root, and a load-path require through `..` is refused
+/// against its declared load path, each with a located unresolved-dependency warning and the
+/// outside definition unanalyzed, while the same load form inside its root is followed.
+#[test]
+fn ruby_source_loads_cannot_escape_the_analysis_root() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join("root");
+    // Declared outside the analysis root, so only the load-path containment arm admits its files.
+    let load_path = sandbox.path().join("lib");
+    ruby_write(
+        sandbox.path(),
+        "outside/world.rb",
+        "Given('outside step') { outside() }\n",
+    );
+    ruby_write(
+        &load_path,
+        "x/world.rb",
+        "Given('load path step') { load_path() }\n",
+    );
+    ruby_write(
+        &root,
+        "inside/world.rb",
+        "Given('inside step') { inside() }\n",
+    );
+    ruby_write(
+        &root,
+        "other.feature",
+        "Feature: Other\n  Scenario: One\n    Given other step\n",
+    );
+    let loaded = load_path.canonicalize().unwrap().join("x").join("world.rb");
+    let loaded = loaded.to_string_lossy().replace('\\', "/");
+    let feature = "feature other.feature [gherkin] via *.feature".to_owned();
+    let followed = |path: &str| {
+        [
+            &[feature.clone()][..],
+            &ruby_definition_lines(&[path, "steps.rb"]),
+        ]
+        .concat()
+    };
+    let refused = vec![
+        feature.clone(),
+        "definition steps.rb".to_owned(),
+        "warning: steps.rb:2:1: Ruby source dependency is unresolved".to_owned(),
+        "warning: Ruby indirect step usage is unresolved; unused-definition findings are disabled"
+            .to_owned(),
+    ];
+    // Load, whether `lib` is a declared load path, expected explain lines.
+    let rows = [
+        (
+            "require_relative 'inside/world'",
+            false,
+            followed("inside/world.rb"),
+        ),
+        (
+            "require_relative '../outside/world'",
+            false,
+            refused.clone(),
+        ),
+        (
+            "require './inside/world'",
+            false,
+            followed("inside/world.rb"),
+        ),
+        ("require './../outside/world'", false, refused.clone()),
+        ("require 'x/world'", true, followed(&loaded)),
+        ("require 'x/../../outside/world'", true, refused),
+    ];
+    let config = root.join(".cuke-dedup.json");
+    for (load, declared, expected) in rows {
+        if declared {
+            let paths = serde_json::json!({ "rubyLoadPaths": [&load_path] });
+            ruby_write(&root, ".cuke-dedup.json", &paths.to_string());
+        } else if config.exists() {
+            fs::remove_file(&config).unwrap();
+        }
+        // The load sits on line 2 so a fallback location cannot match the warning.
+        ruby_write(
+            &root,
+            "steps.rb",
+            &format!("# entry\n{load}\nGiven('entry step') {{ entry() }}\n"),
+        );
+        let (code, rows, lines) = ruby_explained(
+            &root,
+            &["--definitions", "steps.rb", "--features", "*.feature"],
+        );
+        assert_eq!(code, 0, "{load}: {lines:?}");
+        ruby_assert_explained(&lines, &expected, load);
+        let summary = rows.last().unwrap();
+        let definitions = expected
+            .iter()
+            .filter(|line| line.starts_with("definition "));
+        assert_eq!(
+            summary["summary"]["definitionsAnalyzed"],
+            definitions.count(),
+            "{load}"
+        );
+    }
+}
+
+/// An unreadable directory under a Ruby suite is reported as a traversal error that fails the run,
+/// while the readable Ruby source is still discovered and analyzed.
+#[cfg(unix)]
+#[test]
+fn ruby_traversal_errors_are_reported_without_dropping_readable_sources() {
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Restores the locked directory's permissions on drop so a failed assertion cannot leave the
+    /// temporary directory undeletable.
+    struct Unlock(std::path::PathBuf);
+    impl Drop for Unlock {
+        /// Makes the locked directory readable and removable again.
+        fn drop(&mut self) {
+            if let Err(error) = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700)) {
+                eprintln!("cannot unlock {}: {error}", self.0.display());
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, "visible.rb", "Given('visible step') { visible() }\n");
+    ruby_write(
+        root,
+        "locked/hidden.rb",
+        "Given('locked step') { locked() }\n",
+    );
+    ruby_write(
+        root,
+        "other.feature",
+        "Feature: Other\n  Scenario: One\n    Given other step\n",
+    );
+    let locked = Unlock(root.join("locked"));
+    fs::set_permissions(&locked.0, fs::Permissions::from_mode(0o000)).unwrap();
+    // Permission bits do not bind a privileged user such as root; with the directory still
+    // readable there is no traversal error to observe.
+    if fs::read_dir(&locked.0).is_ok() {
+        return;
+    }
+    let (code, rows, lines) =
+        ruby_explained(root, &["--definitions", "*.rb", "--features", "*.feature"]);
+
+    assert_eq!(code, 2, "{lines:?}");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(
+        lines[..2],
+        [
+            "feature other.feature [gherkin] via *.feature",
+            "definition visible.rb"
+        ]
+    );
+    assert!(
+        lines[2].starts_with("failed while walking target directory ")
+            && lines[2].contains("/locked: "),
+        "{lines:?}"
+    );
+    assert_eq!(
+        ruby_rule_locations(&rows, "unused-definition"),
+        ["visible.rb:1"]
+    );
+}
+
 /// Feature-corpus requirements over Ruby definitions: a missing corpus disables unused findings
 /// unless required, malformed features are summarized or fatal, an empty Markdown feature marks
 /// the corpus incomplete, and an empty classic feature does not hide unused definitions.
