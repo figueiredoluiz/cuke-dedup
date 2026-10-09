@@ -39,20 +39,28 @@
       "tests": [
         {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (fuzzy pair evidence is never collapsed into clusters) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_pair_clusters_keep_fuzzy_and_suppressed_evidence_apart"
+          },
+          "rationale": "Six Ruby definitions with identical handlers yield four near-duplicate-step findings (lines 1-2, 1-3, 1-4, 1-5) connecting five definitions; each stays a pair with comparison evidence and no cluster, while duplicate-handler findings on the same definitions do collapse.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "cluster_reporting_does_not_cross_suppression_partitions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (cluster reporting does not cross suppression partitions) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_pair_clusters_keep_fuzzy_and_suppressed_evidence_apart"
+          },
+          "rationale": "A matcher suppression selects the sixth definition: the suppressed duplicate-handler pair (lines 1-6) keeps comparison evidence and one related location, and the active findings collapse into one cluster of 5 members with 4 related locations.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "candidate_source_flags_preserve_independent_rule_inputs",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (candidate source flags preserve independent rule inputs) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence for multi-source candidates: Ruby pins each candidate source feeding its own rule (`ruby_candidate_sources_feed_their_rules_with_computed_evidence`), but a pair carrying two source flags, and the normalized-only and structural near-feed bits, has no adapter producer because candidate sources never propose the same pair twice. Decide whether the flag merge is reachable or engine-only.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -71,14 +79,18 @@
         },
         {
           "name": "matcher_blocking_fails_closed_when_a_work_budget_is_exceeded",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (matcher blocking fails closed when a work budget is exceeded) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_blocking_fails_closed_at_every_work_budget"
+          },
+          "rationale": "Shingle limit, exact: a 4,098-character matcher (4,096 shingles) keeps a neighbouring candidate, 4,099 skips matcherBlocking once and drops it. Event limit, bracketed: 256 definitions in one posting with 76 versus 77 disjoint calls cost 9,922,560 versus 10,053,120 event work; only 77 truncates. Proposal limit, bracketed: 2,048 definitions in 64 files with file-local captures and two calls per handler propose 1,996,800 versus 2,011,136 unique pairs, almost all runtime-incompatible; only the second truncates, and charging event work for rejected pairs would truncate the first.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "handler_prefilters_are_safe_upper_bounds_for_the_near_rule",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (handler prefilters are safe upper bounds for the near rule) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence for `covered_by_structural_source`: value-only rejection refuses the same pairs, so no Ruby run distinguishes the structural-coverage check (three `{red|green|blue}` definitions at structural limit 1 report matcherBlocking 0 either way). `ruby_matcher_blocking_prefilters_are_safe_upper_bounds` pins the similarity gate and the equal-structure shortcut (same-structure trusted assertions with conflicting values are not admitted; a shared-action control is).",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -90,62 +102,94 @@
         },
         {
           "name": "matcher_blocking_rejections_do_not_spend_handler_lcs_work",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (matcher blocking rejections do not spend handler lcs work) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unneeded_similarity_stages_do_not_spend_pair_work"
+          },
+          "rationale": "Two Ruby handlers with 10,001 action events each and non-near matchers (`abc x*64` / `abc y*64`) form one matcherBlocking candidate that is evaluated without truncation, incompleteness or findings; the control with near matchers charges the handler LCS matrix past the 100,000,000-cell ceiling and is skipped.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_blocking_survivors_retain_computed_similarity_evidence",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (matcher blocking survivors retain computed similarity evidence) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_sources_feed_their_rules_with_computed_evidence"
+          },
+          "rationale": "The original's matchers and five-versus-three call streams, with nearDuplicateHandlerSimilarity 0.5, give one matcherBlocking candidate whose near finding reports handlerSimilarity 0.6, `Handlers share 60.0% ordered behavior`, comparison evidence, and the same matcherSimilarity (< 1.0) as an identical-handler control on the same matchers.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "disabled_source_rules_do_not_leak_placeholder_similarity_evidence",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (disabled source rules do not leak placeholder similarity evidence) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_sources_feed_their_rules_with_computed_evidence"
+          },
+          "rationale": "With duplicate-handler off, the identical-handler pair reports only near-duplicate-step; with near-duplicate-step off, only duplicate-handler. Each reports handlerSimilarity 1.0, comparison evidence, and the matcherSimilarity of the default run, never the 0.0 placeholder.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "disabled_parameterization_skips_unreachable_structural_matcher_work",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (disabled parameterization skips unreachable structural matcher work) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence that structural pairs cannot feed the near rule. `ruby_unneeded_similarity_stages_do_not_spend_pair_work` pins the disabled-rule half (with parameterization-candidate off, a structural `page.theme(1)`/`page.theme(2)` pair with 10,002-character matchers spends no matcher matrix work). No Ruby shape yields a structural pair that is otherwise near-eligible: action streams reject value-only differences, complete-event streams record every literal, and other streams require the same handler (about 20 trusted shapes tried).",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "work_accounting_contract_charges_similarity_stages_and_enforces_boundaries",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (work accounting contract charges similarity stages and enforces boundaries) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence for the masked partial-stream case and the `u64` overflow guard, which no input reaches. The 1e9 total similarity budget and evidence-stage charging are pinned exactly by `ruby_pair_verification_fails_closed_at_the_total_similarity_budget` (32 identical-handler definitions with a 58,527- versus 58,528-character literal flip truncation); matcher-blocking budgets by `ruby_matcher_blocking_fails_closed_at_every_work_budget`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "work_accounting_contract_charges_only_rules_that_will_be_evaluated",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (work accounting contract charges only rules that will be evaluated) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_suppression_work_is_charged_only_for_reported_rules"
+          },
+          "rationale": "An identical-handler pair reporting duplicate-handler and near-duplicate-step, with 4,000-byte matchers (16,038 work per entry): 3,117 path entries for each reported rule fit the 100,000,000 suppression budget, 3,118 truncate, and 3,118 entries for unreported parameterization-candidate plus 3,118 for near-duplicate-step do not truncate.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "saturated_matcher_postings_use_a_linear_lexical_fallback",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (saturated matcher postings use a linear lexical fallback) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_saturated_matcher_postings_use_independent_linear_fallbacks"
+          },
+          "rationale": "257 Ruby definitions `the account record NNN is enabled` share every shingle (posting 257 > 256): matcher blocking evaluates exactly 256 lexical-neighbour candidates, skips none, and reports the record 000 / record 001 pair.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "saturated_matcher_fallback_keeps_interleaved_postings_independent",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (saturated matcher fallback keeps interleaved postings independent) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_saturated_matcher_postings_use_independent_linear_fallbacks"
+          },
+          "rationale": "257 indices x two interleaved groups (`NNN aaa shared`, `NNN bbb shared`), cross-group overlap 1/5: 512 candidates, none skipped, including 000 aaa / 001 aaa and 000 bbb / 001 bbb, which a merged lexical order would never pair.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "repeated_posting_pairs_are_charged_once_and_fallback_requires_saturation",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (repeated posting pairs are charged once and fallback requires saturation) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_saturated_matcher_postings_use_independent_linear_fallbacks"
+          },
+          "rationale": "256 definitions sharing an 80-character prefix put 32,640 pairs in each of 78 identical postings (2,545,920 if repeats were charged against the 2,000,000 limit): no truncation and no candidate. A 256-member posting is fully expanded (32,640 candidates) rather than sampled.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate, blocking or work-budget behaviour (mixed near profiles preserve outcomes and budget in both orders) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders"
+          },
+          "rationale": "Configured-assertion Ruby handlers: complete-event versus exact-policy (untrusted `expect`) with different handlers gives no finding, also with 10,002-character matchers; two complete streams give a near finding; two identical exact-policy handlers give a finding. Every row, in both orders, evaluates one candidate with no truncation and no diagnostic beyond the two missing-feature warnings.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
