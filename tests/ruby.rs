@@ -2831,12 +2831,22 @@ fn ruby_spread(prelude: &str, definitions: &[String]) -> Vec<(String, String)> {
 }
 
 /// The census as `[truncated, evaluated, source evaluated, source skipped]`; a truncated census
-/// prints exactly one incompleteness warning and a complete one prints none.
+/// prints exactly one incompleteness warning and a complete one prints none, and the public
+/// `skippedCandidateComparisons` aggregate is the sum of every source's skipped count.
 fn ruby_census(rows: &[Value], stderr: &str, source: &str) -> [u64; 4] {
     let analysis = &rows.last().unwrap()["analysis"];
     let truncated = u64::from(analysis["truncated"].as_bool().unwrap());
     let warnings = stderr.matches("analysis is incomplete").count();
     assert_eq!(u64::try_from(warnings).unwrap(), truncated, "{stderr}");
+    let sources = analysis["candidateSources"].as_object().unwrap();
+    let skipped_total: u64 = sources
+        .values()
+        .map(|census| census["skipped"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        analysis["skippedCandidateComparisons"], skipped_total,
+        "{stderr}"
+    );
     let census = &analysis["candidateSources"][source];
     let total = &analysis["candidateComparisonsEvaluated"];
     let [total, evaluated, skipped] =
