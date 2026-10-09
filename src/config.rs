@@ -729,10 +729,11 @@ fn strip_verbatim_prefix(path: &Path) -> Option<PathBuf> {
 }
 
 /// The plain form `lead` + `head` + `\` + the `Normal` names of `rest` when it names the same
-/// file: under the legacy length limit, every name passes `plain_name`, and its length equals the
-/// head plus `suffix_len` (the verbatim length after the prefix), which holds only when `rest` is
-/// one root followed by `\`-separated names, so no `.`, `..`, empty or trailing component was
-/// dropped. `None` keeps the verbatim form.
+/// file: every name passes `plain_name`, and its length equals the head plus `suffix_len` (the
+/// verbatim length after the prefix), which holds only when `rest` is one root followed by
+/// `\`-separated names, so no `.`, `..`, empty or trailing component was dropped. Length is not
+/// limited: std re-adds the verbatim prefix to long paths, and a limit would leave a long path
+/// verbatim under a plain `Config::root`, failing containment. `None` keeps the verbatim form.
 #[cfg(any(windows, test))]
 fn plain_verbatim_path(
     lead: &str,
@@ -753,29 +754,29 @@ fn plain_verbatim_path(
     let head_len = plain.len();
     plain.push(separator);
     plain.push(names.join(separator));
-    (plain.len() < 260
-        && plain.len() == head_len + suffix_len
-        && head.iter().chain(&names).all(|name| plain_name(name)))
-    .then(|| plain.into())
+    (plain.len() == head_len + suffix_len && head.iter().chain(&names).all(|name| plain_name(name)))
+        .then(|| plain.into())
 }
 
-/// Whether Win32 keeps `name` unchanged in a plain path: not a DOS device name, no trailing dot or
-/// space, no `/`. Reads the encoded bytes, so names that are not valid Unicode are checked as-is.
+/// Whether Win32 keeps `name` unchanged in a plain path: not a DOS device name (superscript
+/// aliases included), no trailing dot or space, no `/`. Names that are not valid Unicode cannot be
+/// device names and are checked on their encoded bytes, without conversion.
 #[cfg(any(windows, test))]
 fn plain_name(name: &std::ffi::OsStr) -> bool {
-    const RESERVED: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    // The reserved names listed in Win32 "Naming Files, Paths, and Namespaces".
+    const RESERVED: [&str; 30] = [
+        "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+        "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
     ];
     let bytes = name.as_encoded_bytes();
-    let stem = bytes.split(|byte| *byte == b'.').next().unwrap_or(bytes);
-    !bytes.ends_with(b".")
-        && !bytes.ends_with(b" ")
-        && !bytes.contains(&b'/')
-        && !RESERVED.iter().any(|reserved| {
-            stem.trim_ascii_end()
-                .eq_ignore_ascii_case(reserved.as_bytes())
-        })
+    let device = name.to_str().is_some_and(|text| {
+        let stem = text.split('.').next().unwrap_or(text).trim_end();
+        RESERVED
+            .iter()
+            .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    });
+    !bytes.ends_with(b".") && !bytes.ends_with(b" ") && !bytes.contains(&b'/') && !device
 }
 
 /// `path` canonicalized and normalized like `Config::root`, so paths reached through the

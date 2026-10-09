@@ -1313,7 +1313,7 @@
       ]
     },
     "src/config/tests.rs": {
-      "sourceSha256": "4a3971d56d7750979c3b1743ee45b0038db4f42b7d6a198ebdb347fabfb761cb",
+      "sourceSha256": "125a167f379174c1f3164fc2594b161a18e4bb46d7401379aa7cf24e5e36adf4",
       "tests": [
         {
           "name": "standalone_config_overrides_package_and_cli_overrides_both",
@@ -1510,6 +1510,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "config-decoding",
           "rationale": "Adapter-independent stage `config-decoding`: Windows-only check that verbatim-prefix stripping keeps non-Unicode names byte for byte; path handling shared by every frontend, no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "long_canonical_windows_paths_stay_plain_under_the_root",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Windows-only check that a canonical path longer than MAX_PATH strips to plain form under the analysis root; path handling shared by every frontend, no adapter runs.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

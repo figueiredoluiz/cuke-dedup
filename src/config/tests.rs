@@ -596,7 +596,7 @@ fn malformed_auto_config_warns_and_falls_through_to_package_config() {
 }
 
 /// Plain forms of verbatim paths are built only when they name the same file; device names,
-/// trailing dots or spaces, `/`, `.`/`..`, unrooted, non-canonical and over-long paths keep the prefix.
+/// trailing dots or spaces, `/`, `.`/`..`, unrooted and non-canonical paths keep the prefix.
 #[test]
 fn verbatim_paths_rebuild_to_plain_windows_paths() {
     /// Splits `suffix` the way `Path::components` splits a verbatim path after its prefix.
@@ -616,13 +616,20 @@ fn verbatim_paths_rebuild_to_plain_windows_paths() {
         plain_verbatim_path(lead, &head, &rest, suffix.len())
             .map(|path| path.into_os_string().into_string().unwrap())
     }
-    let disk = |suffix| plain("", &["C:"], suffix);
+    /// `plain` for a path on drive `C:`.
+    fn disk(suffix: &str) -> Option<String> {
+        plain("", &["C:"], suffix)
+    }
     let cases = [
         (disk(r"\work\steps.rb"), Some(r"C:\work\steps.rb")),
         (disk(r"\"), Some(r"C:\")),
         (disk(r"\auxiliary.rb"), Some(r"C:\auxiliary.rb")),
         (disk(r"\work\aux.rb"), None),
         (disk(r"\work\Com1 .rb"), None),
+        (disk(r"\work\COM¹.rb"), None),
+        (disk(r"\work\lpt³"), None),
+        (disk(r"\work\com0.rb"), None),
+        (disk(r"\work\COM¹x.rb"), Some(r"C:\work\COM¹x.rb")),
         (disk(r"\work\steps."), None),
         (disk(r"\work\steps "), None),
         (disk(r"\work/steps.rb"), None),
@@ -641,7 +648,9 @@ fn verbatim_paths_rebuild_to_plain_windows_paths() {
     for (index, (actual, expected)) in cases.into_iter().enumerate() {
         assert_eq!(actual.as_deref(), expected, "case {index}");
     }
-    assert_eq!(disk(&format!(r"\{}", "a".repeat(260))), None);
+    // No length limit: std re-adds the verbatim prefix when it opens a long plain path.
+    let long = "a".repeat(300);
+    assert_eq!(disk(&format!(r"\{long}")), Some(format!(r"C:\{long}")));
 }
 
 /// On Windows the verbatim prefix is stripped from the path itself: a name holding an unpaired
@@ -668,7 +677,13 @@ fn verbatim_prefix_strip_keeps_non_unicode_windows_names() {
             wide(plain).as_os_str().encode_wide().collect::<Vec<_>>()
         );
     }
+    let multibyte = format!(r"C:\work\{}", "é".repeat(200));
+    assert_eq!(
+        normalize_platform_path(PathBuf::from(format!(r"\\?\{multibyte}"))),
+        Path::new(&multibyte)
+    );
     for kept in [
+        r"\\?\C:\work\COM¹.rb",
         r"C:\work\steps.rb",
         r"\\server\share\steps.rb",
         r"\\?\Volume{0b1c}\steps.rb",
@@ -697,4 +712,23 @@ fn canonical_platform_paths_strip_against_the_config_root() {
         canonical.strip_prefix(&config.root).unwrap(),
         Path::new("providers").join("steps.rb")
     );
+}
+
+/// On Windows a canonical path longer than `MAX_PATH` strips to plain form, stays under the plain
+/// root and stays readable, because std re-adds the verbatim prefix when it opens the file.
+#[cfg(windows)]
+#[test]
+fn long_canonical_windows_paths_stay_plain_under_the_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let nested = (0..8).fold(directory.path().to_path_buf(), |path, index| {
+        path.join(format!("{index}{}", "d".repeat(40)))
+    });
+    fs::create_dir_all(&nested).unwrap();
+    let file = nested.join("steps.rb");
+    fs::write(&file, "ok").unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    let canonical = canonical_platform_path(&file).unwrap();
+    assert!(canonical.as_os_str().len() > 260);
+    assert!(canonical.starts_with(&root), "{}", canonical.display());
+    assert_eq!(fs::read_to_string(&canonical).unwrap(), "ok");
 }
