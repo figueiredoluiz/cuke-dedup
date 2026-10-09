@@ -2821,10 +2821,11 @@ fn ruby_pair_file(
     vec![("steps.rb".to_owned(), source)]
 }
 
-/// Spreads `definitions` over files of 32, each led by `prelude`: one large file extracts slowly.
-fn ruby_spread(prelude: &str, definitions: &[String]) -> Vec<(String, String)> {
+/// Spreads `definitions` over files of `size`, each led by `prelude`: one large file extracts
+/// slowly.
+fn ruby_spread(prelude: &str, definitions: &[String], size: usize) -> Vec<(String, String)> {
     let body = |chunk: &[String]| format!("{prelude}\n{}", chunk.join("\n"));
-    let chunks = definitions.chunks(32).map(body).enumerate();
+    let chunks = definitions.chunks(size).map(body).enumerate();
     chunks
         .map(|(index, body)| (format!("s{index:03}.rb"), body))
         .collect()
@@ -3155,7 +3156,7 @@ fn ruby_saturated_matcher_postings_use_independent_linear_fallbacks() {
     for (count, evaluated) in [(257, 256), (256, 32_640)] {
         let body = |index| format!("open(); fill(); specific{index}()");
         let definition = |index| format!("Given('{}') {{ {} }}", record(index), body(index));
-        let files = ruby_spread("", &(0..count).map(definition).collect::<Vec<_>>());
+        let files = ruby_spread("", &(0..count).map(definition).collect::<Vec<_>>(), 32);
         let rows = ruby_pair_census(&files, threshold, BLOCKING, [0, evaluated, evaluated, 0]);
         assert!(paired(&rows, &record(0), &record(1)), "{count}");
     }
@@ -3167,7 +3168,7 @@ fn ruby_saturated_matcher_postings_use_independent_linear_fallbacks() {
     };
     let groups =
         (0..257).flat_map(|index| [definition(index, 0, "aaa"), definition(index, 1, "bbb")]);
-    let files = ruby_spread("", &groups.collect::<Vec<_>>());
+    let files = ruby_spread("", &groups.collect::<Vec<_>>(), 32);
     let rows = ruby_pair_census(&files, threshold, BLOCKING, [0, 512, 512, 0]);
     assert!(paired(&rows, "000 aaa shared", "001 aaa shared"));
     assert!(paired(&rows, "000 bbb shared", "001 bbb shared"));
@@ -3178,17 +3179,41 @@ fn ruby_saturated_matcher_postings_use_independent_linear_fallbacks() {
         let last = char::from_u32(0x5000 + index).unwrap();
         format!("Given('{prefix}{last}') {{ event{index}() }}")
     };
-    let files = ruby_spread("", &(0..256).map(definition).collect::<Vec<_>>());
+    let files = ruby_spread("", &(0..256).map(definition).collect::<Vec<_>>(), 32);
     ruby_pair_census(&files, "{}", BLOCKING, [0, 0, 0, 0]);
 }
 
-/// Matcher blocking fails closed, dropping its candidates, at each work budget: the
-/// per-definition shingle limit, pinned exactly at its boundary, the event-work limit and the
-/// proposal limit, each bracketed by the nearest counts on either side.
+/// Matcher blocking fails closed, skipping once and reporting truncation, at each work budget:
+/// the per-definition shingle limit, the event-work limit and the proposal limit, each pinned
+/// at exactly the limit and one work unit past it. The shingle rows also show the dropped
+/// candidate; the event and proposal rows insert none, so they observe only the truncation.
 #[test]
 fn ruby_matcher_blocking_fails_closed_at_every_work_budget() {
-    // n distinct characters yield n - 2 shingles; the limit is 4,096 per definition.
-    for (characters, truncated) in [(4_098, false), (4_099, true)] {
+    // The six runs are independent processes; running them together cuts wall time. Each thread
+    // carries its row label, so a panic in a shared helper still names the failing row.
+    let rows = ruby_shingle_budget_rows().into_iter();
+    let rows = rows
+        .chain(ruby_event_budget_rows())
+        .chain(ruby_proposal_budget_rows());
+    std::thread::scope(|scope| {
+        for (label, files, census) in rows {
+            let thread = std::thread::Builder::new().name(label.to_owned());
+            let run = move || {
+                let (records, stderr) = ruby_pair_run(&files, "{}");
+                assert_eq!(ruby_census(&records, &stderr, BLOCKING), census, "{label}");
+            };
+            thread.spawn_scoped(scope, run).unwrap();
+        }
+    });
+}
+
+/// Row label, fixture files and expected matcher-blocking census of one budget run.
+type RubyBudgetRow = (&'static str, Vec<(String, String)>, [u64; 4]);
+
+/// Runs pinning the 4,096 per-definition shingle limit: n distinct characters yield n - 2
+/// shingles, so 4,098 keeps the neighbouring candidate and 4,099 drops it.
+fn ruby_shingle_budget_rows() -> Vec<RubyBudgetRow> {
+    let row = |label, characters: u32, truncated| -> RubyBudgetRow {
         let end = 0x4E00 + characters;
         let matcher: String = (0x4E00..end).filter_map(char::from_u32).collect();
         let ready = ("the parcel is ready", "open(); fill()");
@@ -3196,34 +3221,83 @@ fn ruby_matcher_blocking_fails_closed_at_every_work_budget() {
         let mut files = ruby_pair_file(ready, now);
         let wide = format!("Given('{matcher}') {{ open() }}");
         files.push(("wide.rb".to_owned(), wide));
-        ruby_pair_census(&files, "{}", BLOCKING, ruby_single(truncated));
-    }
-    // 256 definitions share one posting: 32,640 pairs each charged 4 * events. 76 events cost
-    // 9,922,560 and 77 cost 10,053,120, bracketing the 10,000,000 limit; disjoint events insert
-    // nothing.
-    for (events, truncated) in [(76, 0), (77, 1)] {
-        let definition = |index| {
-            let calls: String = (0..events).map(|e| format!("e{index}x{e}();")).collect();
-            format!("Given('the account record {index:03} is enabled') {{ {calls} }}")
-        };
-        let files = ruby_spread("", &(0..256).map(definition).collect::<Vec<_>>());
-        ruby_pair_census(&files, "{}", BLOCKING, [truncated, 0, 0, truncated]);
-    }
-    ruby_assert_proposal_budget_precedes_semantic_rejection();
+        (label, files, ruby_single(truncated))
+    };
+    vec![
+        row("shingles at limit", 4_098, false),
+        row("shingles past limit", 4_099, true),
+    ]
 }
 
-/// Asserts that matcher blocking charges every unique proposal against the 2,000,000 limit,
-/// bracketed by 1,996,800 and 2,011,136 proposals, before rejecting runtime-incompatible pairs,
-/// and charges event work only for pairs that survive that rejection.
-fn ruby_assert_proposal_budget_precedes_semantic_rejection() {
+/// Three distinct characters starting at the `index`-th block after `base`: one shingle.
+fn ruby_block_tag(base: u32, index: u32) -> String {
+    let first = base + 3 * index;
+    (first..first + 3)
+        .map(|code| char::from_u32(code).unwrap())
+        .collect()
+}
+
+/// `count` distinct calls named `prefix` plus an index, then a repeat of the first when `repeat`.
+fn ruby_calls(prefix: &str, count: u32, repeat: bool) -> String {
+    let calls = (0..count).map(|call| format!("{prefix}{call}(); "));
+    let repeated = repeat.then(|| format!("{prefix}0();"));
+    calls.chain(repeated).collect()
+}
+
+/// Runs pinning that matcher blocking stops once event work exceeds 10,000,000: a run charging
+/// exactly 10,000,000 completes and one charging 10,000,001 is truncated.
+fn ruby_event_budget_rows() -> Vec<RubyBudgetRow> {
+    // 512 definitions carry one tag per bit of their index, so each of the 9 bits splits them
+    // into two postings of 256 and every pair except bitwise complements shares one: each
+    // definition is charged in 510 pairs. A pair costs the sorted plus anchor events of both
+    // handlers: 2 per distinct call, 1 per repeated call. 19 calls each, 151 handlers repeating
+    // one, cost 510 * 19,607 = 9,999,570. A separate pair of 108 and 107 calls adds 430 and lands
+    // on the limit; repeating one of its calls adds the unit past it. Disjoint events insert
+    // nothing. The repeat is load-bearing: it is the only odd-weight event shape here. The total
+    // also relies on distinct callee names keeping handler structures distinct; same-structure
+    // pairs are skipped before any event charge. Adjacent tags also form boundary shingles, so a
+    // pair recurs in several postings; `considered_pairs` charges it once, which the total needs.
+    let tag = |index| ruby_block_tag(0x4E00, index);
+    let row = |repeat: bool| -> RubyBudgetRow {
+        let definition = |index: u32| {
+            let matcher: String = (0..9)
+                .map(|bit| tag(2 * bit + ((index >> bit) & 1)))
+                .collect();
+            let calls = ruby_calls(&format!("e{index}x"), 19, index < 151);
+            format!("Given('{matcher}') {{ {calls} }}")
+        };
+        let mut definitions: Vec<_> = (0..512).map(definition).collect();
+        let (left, right) = (ruby_calls("a", 108, false), ruby_calls("b", 107, repeat));
+        definitions.push(format!("Given('{}{}') {{ {left} }}", tag(18), tag(19)));
+        definitions.push(format!("Given('{}{}') {{ {right} }}", tag(18), tag(20)));
+        let truncated = u64::from(repeat);
+        let files = ruby_spread("", &definitions, 4);
+        let label = if repeat {
+            "event work past limit"
+        } else {
+            "event work at limit"
+        };
+        (label, files, [truncated, 0, 0, truncated])
+    };
+    vec![row(false), row(true)]
+}
+
+/// Runs pinning that matcher blocking charges every unique proposal against the 2,000,000
+/// limit, exactly at the limit and one proposal past it, before rejecting runtime-incompatible
+/// pairs, and charges event work only for pairs that survive that rejection.
+fn ruby_proposal_budget_rows() -> Vec<RubyBudgetRow> {
     // 2,048 definitions; each parity class splits them into 8 postings of 256 by three GF(2)
-    // functionals of the id. 22 classes propose 1,996,800 unique pairs, 23 propose 2,011,136.
+    // functionals of the id. 22 classes propose 1,996,800 unique pairs: 1,950 of the 2,047
+    // nonzero id differences fall in some class kernel, 1,024 pairs each. An 80-definition clique
+    // on its own shingle adds 3,160 and a hub sharing another shingle with 40 of its members adds
+    // 40, landing on the limit; a 41st spoke adds the proposal past it. Their tags start at
+    // U+6000, past every class tag, so they share no posting with the 2,048.
     // File-local captures make every cross-file pair runtime-incompatible. Two events per handler
     // would cost at least 6 event work per proposal, pushing the rejected pairs alone past the
     // 10,000,000 event limit if rejection came after the event charge.
     let mut state = 1_u64;
     let mut classes = Vec::new();
-    while classes.len() < 23 {
+    while classes.len() < 22 {
         let functionals = [(); 3].map(|()| {
             state = (state * 1_103_515_245 + 12_345) % (1 << 31);
             u32::try_from((state >> 8) & 0x7FF).unwrap()
@@ -3240,22 +3314,38 @@ fn ruby_assert_proposal_budget_precedes_semantic_rejection() {
     let tag = |id: u32, (class, functionals): (usize, &[u32; 3])| -> String {
         let parity = |bit: usize| ((id & functionals[bit]).count_ones() & 1) << bit;
         let group = (0..3).map(parity).sum::<u32>();
-        let first = 0x4E00 + 3 * (u32::try_from(class).unwrap() * 8 + group);
-        (first..first + 3).filter_map(char::from_u32).collect()
+        ruby_block_tag(0x4E00, u32::try_from(class).unwrap() * 8 + group)
     };
-    for (count, truncated) in [(22, 0), (23, 1)] {
-        let definition = |id| {
-            let matcher: String = classes[..count]
-                .iter()
-                .enumerate()
-                .map(|c| tag(id, c))
-                .collect();
-            format!("Given('{matcher}') {{ store{id}(captured); settle{id}() }}")
+    let handler = |id: u32| format!("{{ store{id}(captured); settle{id}() }}");
+    let definition = |id| {
+        let matcher: String = classes.iter().enumerate().map(|c| tag(id, c)).collect();
+        format!("Given('{matcher}') {}", handler(id))
+    };
+    let main: Vec<_> = (0..2_048).map(definition).collect();
+    let adjustment = |index| ruby_block_tag(0x6000, index);
+    let row = |spokes: u32| -> RubyBudgetRow {
+        let mut definitions = main.clone();
+        definitions.extend((0..80).map(|member: u32| {
+            let spoke = if member < spokes {
+                adjustment(1)
+            } else {
+                String::new()
+            };
+            let matcher = format!("{}{spoke}{}", adjustment(0), adjustment(2 + member));
+            format!("Given('{matcher}') {}", handler(2_048 + member))
+        }));
+        let hub = format!("{}{}", adjustment(1), adjustment(82));
+        definitions.push(format!("Given('{hub}') {}", handler(2_128)));
+        let truncated = u64::from(spokes > 40);
+        let files = ruby_spread("captured = 1", &definitions, 4);
+        let label = if spokes > 40 {
+            "proposals past limit"
+        } else {
+            "proposals at limit"
         };
-        let definitions: Vec<_> = (0..2_048).map(definition).collect();
-        let files = ruby_spread("captured = 1", &definitions);
-        ruby_pair_census(&files, "{}", BLOCKING, [truncated, 0, 0, truncated]);
-    }
+        (label, files, [truncated, 0, 0, truncated])
+    };
+    vec![row(40), row(41)]
 }
 
 /// Pair verification stops at the 1,000,000,000 total similarity-work limit, pinned at the
