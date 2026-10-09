@@ -690,6 +690,7 @@ fn verbatim_prefix_strip_keeps_non_unicode_windows_names() {
         normalize_platform_path(wide(r"\\?\C:\work\NUL.")),
         wide(r"\\?\C:\work\NUL.")
     );
+    // `wide` appends an unpaired surrogate, so the name is not the device `CON`.
     assert_eq!(
         normalize_platform_path(wide(r"\\?\C:\work\CON")),
         wide(r"C:\work\CON")
