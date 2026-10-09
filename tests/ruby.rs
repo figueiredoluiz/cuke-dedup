@@ -8106,6 +8106,302 @@ fn ruby_feature_corpus_requirements_and_empty_features_are_visible() {
     assert_eq!(report["corpus"]["incomplete"], false);
 }
 
+/// A Ruby feature-parsing row: label, `steps.rb`, feature files found by default discovery, then
+/// the expected `featureStepsAnalyzed`, `ambiguous-step` and `unused-definition` locations.
+type RubyFeatureRow<'a> = (
+    &'a str,
+    &'a str,
+    &'a [(&'a str, &'a str)],
+    u64,
+    &'a [&'a str],
+    &'a [&'a str],
+);
+
+/// Classic and Markdown feature structure drives Ruby usage: Background, Rule, outline rows,
+/// Markdown lists, doc strings and final lines decide which Ruby definitions are used, ambiguous
+/// at which feature line, or unused, over a complete corpus.
+#[test]
+fn ruby_feature_structure_decides_definition_usage_and_ambiguity_locations() {
+    let checkout = "Feature: Checkout\n  Background:\nGiven a configured shop\n\n  Scenario: Successful purchase\nWhen I pay\nThen the receipt is shown\n\n  Rule: Declined cards are rejected\nBackground:\n  Given card checks are enabled\n\nExample: Declined purchase\n  When I use a declined card\n\nScenario Outline: Several invalid cards\n  Then card <card> is rejected\n  Examples:\n    | card    |\n    | stolen |\n";
+    let checkout_steps = "Given('a configured shop') { shop() }\nWhen('I pay') { pay() }\nThen('the receipt is shown') { receipt() }\nGiven('card checks are enabled') { checks() }\nWhen('I use a declined card') { decline() }\nThen('card stolen is rejected') { reject() }\nThen('card <card> is rejected') { template() }";
+    let staying_alive = "# Feature: Staying alive\n\nThis is living documentation with [a link](https://example.com).\n\n## Rule: If you don't eat you die\n\n`@important` `@essential`\n### Scenario Outline: eating\n\n* Given there are <start> cucumbers\n* When I eat <eat> cucumbers\n* Then I should have <left> cucumbers\n\n#### Examples:\n\n  | start | eat | left |\n  | ----- | --- | ---- |\n  |    12 |   5 |    7 |\n  |    20 |   5 |   15 |\n";
+    let cucumber_steps = "Given('there are {int} cucumbers') { count() }\nGiven(/^there are \\d+ cucumbers$/) { tally() }\nWhen('I eat {int} cucumbers') { eat() }\nThen('I should have {int} cucumbers') { left() }\nThen(/^I should have \\d+ cucumbers$/) { remaining() }\nGiven('a classic step') { classic() }\nGiven('an unused control') { control() }";
+    let payload = "Checkout documentation\n\n## Scenario: payload\n\n- Given this payload\n\n  ```json\n  * Given inside the payload\n  ```\n";
+    let prose = "# Checkout: overview\n\n## Scenario: behavior\n\n* Given a documented step\n\n### Notes\n\nProse explains the notes.\n\n* first note\n\n```text\n* Given a fenced example\n```\n";
+    let lists = "# Feature: Lists\n\n## Scenario: behavior\n\n+ Given a plus step\n- And a dash step\n1. When an ordered step runs\n* **Then** a bold step works\n";
+    let classic = (
+        "classic.feature",
+        "Feature: Classic\n Scenario: S\n  Given a classic step\n",
+    );
+    let rows: &[RubyFeatureRow] = &[
+        // Background and Rule-scoped Background steps are counted; the outline template is not.
+        ("full structure", checkout_steps, &[("checkout.feature", checkout)], 6, &[], &["steps.rb:7"]),
+        // Every Examples row expands; the unexpanded template text is no step.
+        ("outline rows", "Given('I have 2 apples') { apples() }\nGiven('I have 3 pears') { pears() }\nGiven('I have <count> <item>') { template() }",
+            &[("inventory.feature", "Feature: Inventory\n  Scenario Outline: Counts\nGiven I have <count> <item>\nExamples:\n  | count | item   |\n  | 2     | apples |\n  | 3     | pears  |\n")],
+            2, &[], &["steps.rb:3"]),
+        // A header-only Examples block beside a populated one adds no template fallback step.
+        ("mixed examples", "Given('value first') { first() }\nGiven('value <value>') { template() }",
+            &[("mixed.feature", "Feature: Several examples\n  Scenario Outline: Mixed blocks\nGiven value <value>\nExamples: Populated\n  | value |\n  | first |\nExamples: Header only\n  | value |\n")],
+            1, &[], &["steps.rb:2"]),
+        // Rule and Example names are not steps; the neighbour keeps unused findings enabled.
+        // Unanchored regexes match a heading read as a step by name or by whole line.
+        ("structural keywords", "Given('used step') { used() }\nGiven(/Structure only/) { rule() }\nGiven(/No steps/) { example() }\nGiven(/Empty/) { feature() }",
+            &[("empty.feature", "Feature: Empty\n  Rule: Structure only\n    Example: No steps\n"), ("active.feature", "Feature: Active\n Scenario: S\n  Given used step\n")],
+            1, &[], &["steps.rb:2", "steps.rb:3", "steps.rb:4"]),
+        // Markdown Rule outline beside a classic feature: both rows expand (6 + 1 steps) and
+        // ambiguities name the original Markdown lines 10 and 12.
+        ("markdown structure", cucumber_steps, &[("staying-alive.feature.md", staying_alive), classic], 7,
+            &["staying-alive.feature.md:10 steps.rb:1 steps.rb:2", "staying-alive.feature.md:12 steps.rb:4 steps.rb:5"], &["steps.rb:7"]),
+        // A doc-string line shaped like an escaped table row stays literal; the fence closes, so
+        // the real escaped table after it parses and the ambiguity keeps line 7.
+        ("doc string before escaped table", "Given('a literal payload') { payload() }\nThen('a table') { table() }\nThen(/^a table$/) { regex() }\nGiven('an unused control') { control() }",
+            &[("literal.feature", "Feature: Doc strings\n  Scenario: Literal rows\n    Given a literal payload\n      ```\n      | literal\\q |\n      ```\n    Then a table\n      | table\\q |\n")],
+            2, &["literal.feature:7 steps.rb:2 steps.rb:3"], &["steps.rb:4"]),
+        // Implicit feature heading; a list item inside the fenced doc string is no step.
+        ("markdown doc string", "Given('this payload') { first() }\nGiven(/^this payload$/) { second() }\nGiven('inside the payload') { inner() }",
+            &[("checkout.feature.md", payload)], 1, &["checkout.feature.md:5 steps.rb:1 steps.rb:2"], &["steps.rb:3"]),
+        // Prose, a keyword-less list item and a fenced example are not steps; the fence holds
+        // a keyword list item so that only fence handling keeps it out.
+        ("markdown prose", "Given('a documented step') { documented() }\nGiven('first note') { note() }\nGiven('a fenced example') { fence() }",
+            &[("documentation.feature.md", prose)], 1, &[], &["steps.rb:2", "steps.rb:3"]),
+        // `+`, `-`, ordered and `*` markers with a bold keyword each yield a step.
+        ("markdown markers", "Given('a plus step') { plus() }\nGiven('a dash step') { dash() }\nWhen('an ordered step runs') { ordered() }\nThen('a bold step works') { bold() }",
+            &[("lists.feature.md", lists)], 4, &[], &[]),
+        // The final step has no trailing newline and keeps its line.
+        ("markdown final line", "Given('the final step') { first() }\nGiven(/^the final step$/) { second() }",
+            &[("final.feature.md", "# Feature: Final line\n\n## Scenario: behavior\n\n* Given the final step")],
+            1, &["final.feature.md:5 steps.rb:1 steps.rb:2"], &[]),
+    ];
+    for (label, steps, features, feature_steps, ambiguous, unused) in rows {
+        let files = [&[("steps.rb", *steps)][..], features].concat();
+        let (rows, stderr) = ruby_records_run(&files, &[]);
+        assert_eq!(stderr, "", "{label}");
+        let summary = rows.last().unwrap();
+        assert_eq!(
+            summary["summary"]["featureStepsAnalyzed"], *feature_steps,
+            "{label}"
+        );
+        assert_eq!(
+            summary["corpus"]["featureFilesParsed"],
+            features.len(),
+            "{label}"
+        );
+        assert_eq!(summary["corpus"]["incomplete"], false, "{label}");
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            *ambiguous,
+            "{label}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            *unused,
+            "{label}"
+        );
+    }
+}
+
+/// A table row: optional `broken.feature`, expected diagnostic, `featureStepsAnalyzed`, then the
+/// `ambiguous-step` and `unused-definition` locations.
+type RubyTableCase<'a> = (
+    Option<String>,
+    Option<&'a str>,
+    u64,
+    Vec<&'a str>,
+    Vec<&'a str>,
+);
+
+/// Malformed feature tables beside an escaped-path feature, under `--fail-on-incomplete`: a ragged
+/// outline row, a ragged Background table and a ragged table under a Rule reject only their file
+/// at its line, and an unterminated outline row rejects its file; the escaped neighbour keeps its
+/// ambiguity and the run keeps its duplicate-matcher; well-formed controls contribute their steps.
+#[test]
+fn ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings() {
+    let steps = "Given('path {word}') { first() }\nThen('path {word}') { second() }\nGiven('table') { third() }\nThen('done') { fourth() }\nGiven('a') { fifth() }\n";
+    let valid = "Feature: paths\n Scenario Outline: escaped\n  Given path <value>\n Examples:\n  | value |\n  | C:\\tmp\\q |\n";
+    let outline = |row: &str| {
+        format!("Feature: invalid\n Scenario Outline: rows\n  Given path <value>\n Examples:\n  | value |\n  {row}\n")
+    };
+    let background = |table: &str| {
+        format!("Feature: rows\n Background:\n  Given table\n   | one |\n   {table}\n Scenario: next\n  Then done\n")
+    };
+    let rule = |row: &str| {
+        format!("Feature: rows\n Rule: scoped\n  Scenario Outline: example\n   Given <v>\n  Examples:\n   | v |\n   {row}\n")
+    };
+    let path_ambiguity = "valid.feature:3 steps.rb:1 steps.rb:2";
+    let cases: Vec<RubyTableCase> = vec![
+        (
+            None,
+            None,
+            1,
+            vec![path_ambiguity],
+            vec!["steps.rb:3", "steps.rb:4", "steps.rb:5"],
+        ),
+        (
+            Some(outline(r"| a\q | b |")),
+            Some("broken.feature: inconsistent Gherkin table width at line 6"),
+            1,
+            vec![path_ambiguity],
+            vec![],
+        ),
+        // Unterminated row: only file-level rejection is pinned; the parser reports the position
+        // after the row, which moves with the content that follows it.
+        (
+            Some(outline(r"| bad\q")),
+            Some("broken.feature: Error at"),
+            1,
+            vec![path_ambiguity],
+            vec![],
+        ),
+        (
+            Some(background("| a | b |")),
+            Some("broken.feature: inconsistent Gherkin table width at line 5"),
+            1,
+            vec![path_ambiguity],
+            vec![],
+        ),
+        (
+            Some(background("| a |")),
+            None,
+            3,
+            vec![path_ambiguity],
+            vec!["steps.rb:5"],
+        ),
+        (
+            Some(rule("| a | b |")),
+            Some("broken.feature: inconsistent Gherkin table width at line 7"),
+            1,
+            vec![path_ambiguity],
+            vec![],
+        ),
+        (
+            Some(rule("| a |")),
+            None,
+            2,
+            vec![path_ambiguity],
+            vec!["steps.rb:3", "steps.rb:4"],
+        ),
+    ];
+    for (broken, diagnostic, feature_steps, ambiguous, unused) in cases {
+        let mut files = vec![("steps.rb", steps), ("valid.feature", valid)];
+        files.extend(broken.as_deref().map(|text| ("broken.feature", text)));
+        let directory = ruby_project(&files);
+        let output = ruby_cli(directory.path(), "*.rb")
+            .args([
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+                "--fail-on-incomplete",
+            ])
+            .output()
+            .unwrap();
+        let (code, rows) = (output.status.code().unwrap(), records(output.stdout));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let label = diagnostic.unwrap_or("well-formed");
+        assert_eq!(
+            code,
+            if diagnostic.is_some() { 2 } else { 1 },
+            "{label}: {stderr}"
+        );
+        // A rejected file emits the unparsed-file warning, its cause and the strict-mode failure.
+        assert_eq!(
+            stderr.matches("cuke-dedup:").count(),
+            if diagnostic.is_some() { 3 } else { 0 },
+            "{label}: {stderr}"
+        );
+        assert!(
+            diagnostic.is_none_or(|cause| stderr.contains(cause)),
+            "{label}: {stderr}"
+        );
+        let summary = rows.last().unwrap();
+        ruby_assert_pointers(
+            summary,
+            &[
+                ("/summary/definitionsAnalyzed", 5.into()),
+                ("/summary/featureStepsAnalyzed", feature_steps.into()),
+                (
+                    "/corpus/featureFilesParsed",
+                    (files.len() - 1 - usize::from(diagnostic.is_some())).into(),
+                ),
+                ("/corpus/incomplete", diagnostic.is_some().into()),
+            ],
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "duplicate-matcher"),
+            ["steps.rb:1 steps.rb:2"],
+            "{label}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{label}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{label}"
+        );
+        let message = rows
+            .iter()
+            .find(|row| row["primary"]["path"] == "valid.feature")
+            .unwrap();
+        assert_eq!(
+            message["message"], "Feature step `path C:\\tmp\\q` matches 2 definitions",
+            "{label}"
+        );
+    }
+}
+
+/// Feature discovery for a Ruby suite: the built-in feature patterns find a nested Markdown
+/// feature that marks a Ruby definition used, and nonstandard-extension files, top-level and
+/// nested, are analyzed only when a recursive `--features` pattern selects them.
+#[test]
+fn ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_request() {
+    let directory = ruby_project(&[
+        (
+            "steps.rb",
+            "Given('a documented step') { documented() }\nGiven('a custom feature') { custom() }\nGiven('a nested feature') { nested() }\n",
+        ),
+        (
+            "features/documentation.feature.md",
+            "# Feature: Documentation\n\n## Scenario: Markdown\n\n* Given a documented step\n",
+        ),
+        (
+            "example.spec",
+            "Feature: Custom\n  Scenario: Extension\n    Given a custom feature\n",
+        ),
+        (
+            "specs/nested/deep.spec",
+            "Feature: Nested\n  Scenario: Extension\n    Given a nested feature\n",
+        ),
+    ]);
+    let root = directory.path();
+    ruby_cli(root, "*.rb")
+        .arg("--explain-discovery")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Analyzed 3 definitions and 1 feature step",
+        ))
+        .stderr(predicate::str::contains(
+            "features/documentation.feature.md [gherkin-markdown]",
+        ))
+        .stderr(predicate::str::contains(".spec").not());
+    let (_, rows) = ruby_jsonl(root, "*.rb", &[]);
+    assert_eq!(
+        ruby_rule_locations(&rows, "unused-definition"),
+        ["steps.rb:2", "steps.rb:3"]
+    );
+    let recursive = format!("**{}*.spec", '/');
+    let (code, rows) = ruby_jsonl(root, "*.rb", &["--features", &recursive]);
+    assert_eq!(code, 0);
+    assert_eq!(rows.last().unwrap()["summary"]["featureStepsAnalyzed"], 2);
+    assert_eq!(
+        ruby_rule_locations(&rows, "unused-definition"),
+        ["steps.rb:1"]
+    );
+}
+
 /// Definition-side requirements over Ruby sources: zero extracted definitions can be required
 /// while reports are still written, unmatched patterns and suppressions are visible, and
 /// diagnostics leave the valid definitions analyzed.
