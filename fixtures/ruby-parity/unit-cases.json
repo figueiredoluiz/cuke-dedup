@@ -449,15 +449,23 @@
         },
         {
           "name": "suppression_globs_compile_once_and_pair_lookups_share_the_work_budget",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_suppression_lookups_share_the_pair_work_budget"
+          },
+          "rationale": "700 Ruby definitions in one identical-handler class with 1,000 duplicate-handler path suppressions exhaust the pair work budget (truncated, identicalHandler evaluated < 699, one safety-limit diagnostic); the same suppressions under unused-definition charge no pair work (1,397 comparisons evaluated). Globs compile once in `SuppressionIndex::new`; lookups take `&self` and read the compiled list, so no source text can trigger recompilation.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "suppression_lookup_borrows_and_bounds_large_reasons_until_a_finding_is_retained",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained"
+          },
+          "rationale": "A Ruby duplicate pair extracted through the Ruby adapter and analyzed through the library API with a caller-built `**` suppression carrying the original 420,000-character reason retains one duplicate-matcher finding whose reason is the first 512 characters.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "structural_class_limit_preserves_work_from_later_classes",
@@ -547,9 +555,13 @@
         },
         {
           "name": "regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the pinned engine outcome (`regex resource errors are preserved for cli reporting and library callers`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
+          },
+          "rationale": "A Ruby regexp over the compiled-program limit yields exactly one regex-resource diagnostic at its own line, keeps 1 analyzed definition, exits 0 by default and 2 under `--fail-on-incomplete`; `/a{100}/` is the control with no diagnostic and exit 0 when strict. The library path over Ruby definitions (strict `analyze` rejects, `analyze_with_diagnostics` keeps the partial result) is pinned by `ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "equivalence_classes_report_a_spanning_set_instead_of_every_pair",
@@ -569,9 +581,13 @@
         },
         {
           "name": "inline_suppression_applies_to_pair_findings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
+          },
+          "rationale": "A Ruby `# cuke-dedup:ignore duplicate-matcher -- ...` directive above line 4 suppresses the duplicate-matcher pair steps.rb:4/steps.rb:5 with reason `wording fixed by an external contract`, while line 4's duplicate-handler pair with steps.rb:6 stays active; a `duplicate-handler` directive on the related definition (related.rb:3) suppresses the pair related.rb:1/related.rb:3. Rows assert rule, primary, related and reason.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "wording_drift_with_same_handler_is_near_duplicate",
@@ -759,27 +775,43 @@
         },
         {
           "name": "path_and_matcher_suppression_must_select_the_same_definition",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "Ruby duplicate-handler pair in left.rb/right.rb: `path: left.rb` + `matcher: right matcher` and `path: *.rb` + `matcher: missing matcher` leave the finding active and report the suppression as matching no definition; `path: *.rb` + `matcher: right matcher` suppresses it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "suppression_path_globs_remain_root_relative",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "Ruby pair in root.rb and nested/steps.rb: `path: *.rb` suppresses it; `path: steps.rb` does not and is reported as matching no definition.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "path_suppression_requires_every_definition_in_a_pair_to_be_in_scope",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "`path: legacy/**` leaves the Ruby pair in legacy/left.rb and current/right.rb active and suppresses the pair when both files are under legacy/.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "suppression_directory_patterns_and_unmatched_detection_share_semantics",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "For a Ruby pair under legacy/nested/, `path: legacy/` suppresses the finding with no unmatched warning, and `path: missing/**` leaves it active with `suppression 1 for duplicate-handler matched no step definitions`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "opposite_assertions_are_not_duplicate_handlers",
@@ -1095,61 +1127,93 @@
         {
           "name": "broad_ambiguity_groups_use_linear_membership_storage",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (broad ambiguity groups use linear membership storage) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: an observable for the linear ambiguity-membership layout (for example a work charge or limit tied to membership size). Today a quadratic layout yields identical findings and census for any adapter.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_overlap_respects_the_shared_candidate_budget",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher overlap respects the shared candidate budget) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Three Ruby `value {type}` definitions with `red|green` ParameterTypes at --max-candidate-comparisons 1 report matcherOverlap evaluated 1 / skipped 1, analysis.truncated, only the steps.rb:4-5 overlap and one overlap-incomplete diagnostic; the limit-3 control evaluates all 3 pairs. Adding one identical-handler pair that runs first makes limit 3 leave overlap at evaluated 2 / skipped 1 and limit 4 evaluate all 3, with candidateComparisonsEvaluated equal to overlap plus handler comparisons, so overlap shares the handler budget.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_overlap_charges_index_scans_before_candidate_generation",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher overlap charges index scans before candidate generation) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Five Ruby `value {name}` definitions with `<name>-only` types run at CUKE_DEDUP_MATCHER_WINDOW=1: limit 1 and limit 2 both report evaluated 0 / skipped 1, no finding and one diagnostic, while the single-window control at limit 2 reports skipped 0, so only the per-window scan charge truncates.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "reverse_witnesses_do_not_consume_the_unique_pair_budget_twice",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (reverse witnesses do not consume the unique pair budget twice) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Two mutually overlapping Ruby definitions at --max-candidate-comparisons 1 report evaluated 1 / skipped 0, the steps.rb:3-4 overlap, analysis.truncated false and no overlap diagnostic, although both witnesses propose the pair.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_overlap_caps_finding_storms_and_marks_the_result_incomplete",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher overlap caps finding storms and marks the result incomplete) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_caps_finding_storms_at_the_retained_limit"
+          },
+          "rationale": "150 overlapping Ruby definitions (11,175 pairs) at a 30,000 candidate limit report exactly 10,000 findings, all overlapping-matcher, evaluated 10,001 / skipped 1 and one overlap-incomplete diagnostic; the 141-definition control reports all 9,870 pairs with skipped 0 and no diagnostic.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "oversized_combined_matcher_programs_split_without_changing_matches",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (oversized combined matcher programs split without changing matches) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_split_matcher_index_keeps_each_step_on_its_own_definition"
+          },
+          "rationale": "200 Ruby regex definitions ending in `.{10}` exceed the production 1 MiB combined-set limit (the original shrinks the limits to 4 KiB/64 KiB, which a binary run cannot), so the index splits into four sets; with two declared-type witnesses at --max-candidate-comparisons 1 the per-set scan charge truncates overlap (skipped 1) only for the split corpus, while the `[a-j]{10}` control in one set does not. Steps for definitions 1, 124 and 200 leave exactly the other 197 unused and no ambiguity in both corpora.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_index_falls_back_when_even_one_combined_pattern_is_rejected",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher index falls back when even one combined pattern is rejected) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence for the combined-index fallback: no Ruby or JS/TS input is known to reach `MatcherIndex::fallback_definitions` (a one-pattern RegexSet rejected after its Regex compiled); only the unit test reaches it with a hand-built expression. Decide whether the branch is reachable or dead code to delete.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "ambiguity_membership_intersection_handles_ordered_disjoint_groups",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (ambiguity membership intersection handles ordered disjoint groups) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_proven_ambiguity_membership_withholds_only_pairs_sharing_a_group"
+          },
+          "rationale": "Five Ruby definitions whose feature steps prove groups {0,2}, {1,3}, {2,4} report exactly those three ambiguities and only the unproven overlaps (0,1), (1,2), (1,4); the proven pairs (0,2), (1,3) and (2,4), which require stepping past a smaller group, are withheld, and the no-usage control reports all six overlaps.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "feature_usage_caches_repeated_text_and_supports_suppressed_ambiguity",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (feature usage caches repeated text and supports suppressed ambiguity) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_repeated_step_text_and_suppressed_ambiguity_keep_usage"
+          },
+          "rationale": "Ruby `'same step'` and `/^same step$/` over an outline repeating that text on lines 3 and 4 report both ambiguities (each with both definitions), no unused or overlap finding, and with a path suppression both carry reason `known overlap` and are inactive; the unsuppressed control keeps them active. The original asserts only the used set and the two suppressed findings; neither it nor this test observes the cache beyond identical match sets per repeated text, so the Ruby evidence matches the original's observable claim.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "overlap_and_unused_rules_honor_disabled_severity_and_usage",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (overlap and unused rules honor disabled severity and usage) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_disabled_overlap_and_unused_rules_report_nothing"
+          },
+          "rationale": "With `--rule overlapping-matcher=off --rule unused-definition=off` a Ruby corpus with one overlapping pair and three unused definitions reports no finding and a zero matcherOverlap census; the default control reports the overlap, three unused definitions and evaluated 1; with only overlap off, the definition a step uses is not reported unused.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1163,25 +1227,33 @@
         {
           "name": "witness_generation_covers_builtins_declared_literals_and_unknowns",
           "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls for built-in parameter types and unknown types; the group pins only declared types. Owned by the completion follow-up."
+          "rationale": "Needs Ruby evidence for unknown placeholders: an undeclared parameter makes the matcher non-authoritative, so overlap skips it before witness generation and no run observes the `None` witness. Builtin and declared-literal witnesses are pinned by `ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns`. The array form `regexp: [/red/, /green/]` yields no witness and misses an overlap Cucumber reports.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "fallback_expression_handles_optional_alternative_and_declared_parameters",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls for optional and alternative fallback syntax; the group pins only array-declared types. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_fallback_expressions_keep_optional_alternative_and_declared_text_exact"
+          },
+          "rationale": "With a Ruby-declared type the fallback for `I eat/eats {int} cucumber(s) with {colour}`, `open(unclosed {colour}` and `two  spaces {colour}` uses steps inside that text (including `-2`) and reports steps outside it unused; an undeclared `{custom}` is never unused while the declared control is.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_compilation_reports_limits_but_not_unsupported_syntax",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby matcher over the compile limit beside an unsupported-syntax matcher, pinning that only the limit is reported as a limit. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: a Ruby regex that compiles too big is reported as \"outside the supported static matching subset\" (alone, or beside the resource limit) where JS/TS reports only the resource limit, and the unsupported-syntax arm of `compile_definition_regex` is unreachable from Ruby because dialect translation validates first. The resource-limit diagnostics themselves are pinned by `ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "windowing_does_not_change_findings_on_any_axis",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (windowing does not change findings on any axis) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_windowing_does_not_change_findings_on_any_axis"
+          },
+          "rationale": "The five original axes as Ruby corpora run at CUKE_DEDUP_MATCHER_WINDOW 1, 2 and wider than the corpus produce identical JSONL records and stderr, and the pinned ambiguous-step, overlapping-matcher and unused-definition locations show each axis discriminates.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -1205,9 +1277,13 @@
         },
         {
           "name": "candidate_limit_cli_values_must_be_positive",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate-limit CLI values (positive, zero, negative, non-numeric) exercised on a Ruby run; candidate budgets are consumer behaviour by the census rule. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive"
+          },
+          "rationale": "For both candidate flags, `0`, `-1` and `many` exit 2 over a Ruby corpus; `--print-config` with `7` for each flag reports `maxCandidateComparisons` and `maxStructuralClassComparisons` as 7.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag",
@@ -2292,7 +2368,7 @@
         {
           "name": "release_resource_limits_match_the_documented_policy",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the policy table also fixes candidate and registration budgets; Ruby runs must show those budgets apply (candidate-limit boundary and registration-module budget cases over Ruby sources). Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: every documented release limit over Ruby input. The 1,024-file load budget is pinned by `ruby_load_budget_is_shared_across_selected_definition_files`; the 64 MiB Ruby load byte budget has no Ruby run (nine 8 MiB loads take about 13 s in a debug build).",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -3232,15 +3308,23 @@
         },
         {
           "name": "extracts_rule_scoped_inline_suppressions_and_rejects_malformed_directives",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby `# cuke-dedup:ignore` directives through the shared parser: rule-scoped directives, adjacent directives, unknown rules and empty reasons, pinned on Ruby sources. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
+          },
+          "rationale": "Two adjacent Ruby directives on one registration suppress its duplicate-matcher and unused-definition findings with their own reasons and nothing else; a directive without `--`, an unknown rule and an empty reason each produce exactly one located error (steps.rb:7:1, 9:1, 11:1), and the findings the first and third target stay active, with exit 2 and exactly four `cuke-dedup:` stderr lines in the run.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "rejects_oversized_inline_suppression_reasons",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby inline suppression reason over the 512-character limit rejected through the shared parser. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
+          },
+          "rationale": "A Ruby directive with a 513-character reason is rejected with `oversized.rb:2:1: inline suppression reason exceeds the 512-character limit` and its unused-definition finding stays active; the control with exactly 512 characters suppresses its finding and retains the full reason.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "structural_fingerprint_masks_string_literal_contents",
@@ -4155,7 +4239,7 @@
         {
           "name": "oversized_registration_modules_cannot_silently_remove_definitions",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an oversized Ruby provider file must not silently drop definitions; needs a Ruby group. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: an oversized loaded provider must not silently remove definitions. A Ruby provider over the 8 MiB input limit loaded by `require_relative` is named with its limit, but the run fails with exit 2 where an oversized JS/TS imported module only warns and exits 0. Map after the Ruby exit policy matches.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4176,9 +4260,13 @@
         },
         {
           "name": "matcher_overlap_limit_is_machine_visible_and_can_fail_closed",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `matcher overlap limit is machine visible and can fail closed` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive"
+          },
+          "rationale": "Three Ruby `value {first|second|third}` registrations with configured `red|green` parameter types and `maxCandidateComparisons: 1` warn that matcher-overlap analysis is incomplete, report truncated=true with matcherOverlap evaluated 1/skipped 1, exit 0 by default and 2 under `--fail-on-incomplete`; `--max-candidate-comparisons=7` is the control (3 evaluated, 0 skipped, exit 0 when strict).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "declared_parameter_types_make_usage_analysis_exact",
@@ -4202,9 +4290,13 @@
         },
         {
           "name": "registration_module_budget_is_shared_across_definition_files",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the shared load budget over several Ruby definition files; needs a Ruby group at the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_load_budget_is_shared_across_selected_definition_files"
+          },
+          "rationale": "Two selected Ruby files with 520 distinct `require_relative` loads each are complete alone under `--fail-on-incomplete`; selected together, exactly 16 loads (steps-b.rb lines 505-520) are refused with the 1,024-file limit message, 17 diagnostic lines total, 1,026 definition files, corpus incomplete, and exit 2 under `--fail-on-incomplete`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "type_only_and_over_depth_barrels_do_not_create_runtime_registrations",
@@ -4301,15 +4393,23 @@
         },
         {
           "name": "explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `explicitly excluded oversized inputs are outside the analysis corpus` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
+          },
+          "rationale": "An explicitly excluded oversized Ruby source leaves the run complete: exit 0 under `--fail-on-incomplete` with no diagnostic lines; without the exclusion the same file fails the run on the input limit.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "pathological_matcher_programs_fail_with_an_actionable_resource_error",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the end-to-end behaviour `pathological matcher programs fail with an actionable resource error` run over Ruby sources through the built binary (baseline/changed mode, resource limits, reporters or exit policy). Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
+          },
+          "rationale": "`Given(/a{100000}/)` beside a broken feature exits 2 with the regex resource limit and `simplify the matcher` guidance plus the Gherkin parse failure, and the JSON report keeps 1 analyzed definition. The repeat is 100,000 instead of 1,000,000 because Ruby rejects repeats above 100,000 (`too big number for repeat range`).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "oversized_cucumber_expression_fails_closed_and_still_writes_a_report",
@@ -4519,9 +4619,13 @@
         },
         {
           "name": "discovery_flags_can_include_hidden_and_default_excluded_sources",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby project group exercises both --include-hidden and --no-default-excludes and asserts the resulting definition/feature counts and complete outcome. Remaining: It does not cover all discovery flags or their precedence combinations."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
+          },
+          "rationale": "Hidden and default-excluded Ruby sources each need their own discovery flag: no flag admits none, `--include-hidden` admits only `.steps/hidden.rb`, `--no-default-excludes` admits only `node_modules/workspace/nested.rb`, and both flags admit both, asserted by analyzed paths.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "json_report_uses_the_documented_default_output_directory",
@@ -4633,21 +4737,25 @@
         },
         {
           "name": "a_run_with_nothing_excluded_stays_complete",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the opposite-answer control for every exclusion rule over a Ruby corpus: nothing excluded, `--fail-on-incomplete` passes, pinned by a Ruby group with `complete=true`. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_exclusions_and_discovery_flags_define_the_analysis_corpus"
+          },
+          "rationale": "A clean Ruby corpus exits 0 under `--fail-on-incomplete` with `corpus.incomplete` false and no diagnostic lines; the same corpus plus one dynamic matcher exits 2 under the flag with exactly two diagnostic lines, one at `steps.rb:3:1`, and 0 without it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "a_binary_exclusion_also_makes_the_corpus_incomplete",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a NUL-bearing `.rb` file: the Ruby adapter currently parses binary content instead of excluding it (`source_exclusion_stays_with_javascript_adapter`); the desired Ruby outcome (exclude and mark incomplete, or parse) must be decided and pinned. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: a NUL-bearing source is not proof of no definitions, so the corpus must not be reported complete. The Ruby adapter excludes nothing by content and parses such files, but a NUL inside a comment (valid Ruby) is reported as a syntax error at 1:1, and code after a top-level NUL (which ends a Ruby script) is still extracted. Map after Ruby NUL handling matches Ruby.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "a_long_exclusion_list_is_summarized_rather_than_printed_in_full",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: exclusion-warning summarization (shared `src/cli.rs`) over a Ruby corpus with many excluded files, pinning the summarized warning. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: summarized warning for content-excluded JavaScript bundles (`report_excluded_sources`). The warning lists only sources an adapter excluded by content; the Ruby adapter excludes none, and a selection mixing Ruby with JS bundles is rejected. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
         },
         {
           "name": "regression_framework_review_fallback_registrations_preserve_outcomes",

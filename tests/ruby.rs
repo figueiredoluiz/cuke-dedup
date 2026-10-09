@@ -1108,6 +1108,521 @@ fn ruby_regex_classes_and_dotall_preserve_final_matching_outcomes() {
     }
 }
 
+/// Stderr text of the matcher-overlap incompleteness diagnostic.
+const RUBY_OVERLAP_INCOMPLETE: &str = "static matcher-overlap analysis is incomplete";
+
+/// The summary's `matcherOverlap` census as `(evaluated, skipped)`.
+fn ruby_overlap_census(rows: &[Value]) -> (u64, u64) {
+    let census = &rows.last().unwrap()["analysis"]["candidateSources"]["matcherOverlap"];
+    let count = |field: &str| census[field].as_u64().unwrap();
+    (count("evaluated"), count("skipped"))
+}
+
+/// Expands a `;`-separated spec of space-separated locations into sorted `ruby_rule_locations`
+/// rows; a bare number is a `steps.rb` line.
+fn ruby_locations(spec: &str) -> Vec<String> {
+    let location = |token: &str| match token.contains(':') {
+        true => token.to_owned(),
+        false => format!("steps.rb:{token}"),
+    };
+    let row = |row: &str| row.split(' ').map(location).collect::<Vec<_>>().join(" ");
+    let mut rows: Vec<String> = spec
+        .split(';')
+        .filter(|row| !row.is_empty())
+        .map(row)
+        .collect();
+    rows.sort();
+    rows
+}
+
+/// One Ruby `ParameterType` declaration line for `name` with the regexp literal body `regexp`.
+fn ruby_parameter_type(name: &str, regexp: &str) -> String {
+    format!("ParameterType(name: '{name}', regexp: /{regexp}/, transformer: ->(s) {{ s }})\n")
+}
+
+/// Declares each `(name, regexp)` type, then registers `value {name}` for each in order.
+fn ruby_value_types(types: &[(&str, &str)]) -> String {
+    let declarations = types
+        .iter()
+        .map(|(name, regexp)| ruby_parameter_type(name, regexp));
+    let steps = types
+        .iter()
+        .map(|(name, _)| format!("Given('value {{{name}}}') {{ {name}_action() }}\n"));
+    declarations.chain(steps).collect()
+}
+
+/// Matcher overlap shares the global candidate limit with handler comparisons, spends it once per
+/// unordered pair (a reverse witness is not a second comparison), and charges one index scan per
+/// matcher window before any pair is proposed; every truncation is one stderr diagnostic.
+#[test]
+fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
+    let shared = |names: &[&'static str]| {
+        ruby_value_types(
+            &names
+                .iter()
+                .map(|name| (*name, "red|green"))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let (three, two) = (
+        shared(&["first", "second", "third"]),
+        shared(&["first", "second"]),
+    );
+    // Lines 7-8 form one identical-handler comparison, evaluated before overlap, whose literal
+    // witnesses accept only their own definition.
+    let handlers = format!(
+        "{three}Given('alpha step') {{ shared_work(1) }}\nGiven('beta step') {{ shared_work(1) }}\n"
+    );
+    // `<name>-only` witnesses match only their own definition, so nothing overlaps and only the
+    // scan charge can truncate: five windows of one cost 5 scans per witness against a witness
+    // scan budget of 4 x limit, while one window costs 1.
+    let names = ["first", "second", "third", "fourth", "fifth"];
+    let own = names.map(|name| format!("{name}-only"));
+    let five = ruby_value_types(
+        &names
+            .into_iter()
+            .zip(own.iter().map(String::as_str))
+            .collect::<Vec<_>>(),
+    );
+    // context, source, window, candidate limit, handler comparisons, (evaluated, skipped),
+    // overlap findings
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        Option<usize>,
+        usize,
+        u64,
+        (u64, u64),
+        &'a str,
+    );
+    let rows: [Row<'_>; 8] = [
+        ("limit 1 of 3 pairs", &three, None, 1, 0, (1, 1), "4 5"),
+        (
+            "limit 3 of 3 pairs",
+            &three,
+            None,
+            3,
+            0,
+            (3, 0),
+            "4 5;4 6;5 6",
+        ),
+        (
+            "handler pair spends 1 of limit 3",
+            &handlers,
+            None,
+            3,
+            1,
+            (2, 1),
+            "4 5;4 6",
+        ),
+        (
+            "handler pair within limit 4",
+            &handlers,
+            None,
+            4,
+            1,
+            (3, 0),
+            "4 5;4 6;5 6",
+        ),
+        (
+            "reverse witness reuses the pair",
+            &two,
+            None,
+            1,
+            0,
+            (1, 0),
+            "3 4",
+        ),
+        ("five windows at limit 1", &five, Some(1), 1, 0, (0, 1), ""),
+        ("five windows at limit 2", &five, Some(1), 2, 0, (0, 1), ""),
+        ("one window at limit 2", &five, None, 2, 0, (0, 0), ""),
+    ];
+    for (context, source, window, limit, handlers, census, overlaps) in rows {
+        let limit = limit.to_string();
+        let arguments = ["--max-candidate-comparisons", &limit];
+        let (rows, stderr) = ruby_records_run(&[("steps.rb", source)], window, &arguments);
+        assert_eq!(ruby_overlap_census(&rows), census, "{context}");
+        let analysis = &rows.last().unwrap()["analysis"];
+        assert_eq!(
+            analysis["candidateSources"]["identicalHandler"]["evaluated"], handlers,
+            "{context}"
+        );
+        assert_eq!(
+            analysis["candidateComparisonsEvaluated"],
+            census.0 + handlers,
+            "{context}"
+        );
+        assert_eq!(analysis["truncated"], census.1 > 0, "{context}");
+        let found = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(found, ruby_locations(overlaps), "{context}");
+        // Two lines report the absent feature corpus; the rest is the overlap diagnostic.
+        let truncated = usize::from(census.1 > 0);
+        assert_eq!(stderr.lines().count(), 2 + truncated, "{context}: {stderr}");
+        assert_eq!(
+            stderr.matches(RUBY_OVERLAP_INCOMPLETE).count(),
+            truncated,
+            "{context}"
+        );
+    }
+}
+
+/// Overlap findings stop at the 10,000 retained-finding cap and mark the run incomplete; a corpus
+/// whose 9,870 pairs fit under the cap reports every pair and stays complete.
+#[test]
+fn ruby_matcher_overlap_caps_finding_storms_at_the_retained_limit() {
+    // 150 mutually overlapping definitions form 11,175 pairs, more than the cap, inside a
+    // candidate limit of 30,000; 141 form 9,870.
+    for (count, findings, census) in [(150, 10_000, (10_001, 1)), (141, 9_870, (9_870, 0))] {
+        let names: Vec<_> = (0..count).map(|index| format!("type_{index}")).collect();
+        let types: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), "red|green"))
+            .collect();
+        let arguments = ["--max-candidate-comparisons", "30000"];
+        let source = ruby_value_types(&types);
+        let (rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+        let overlaps = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(overlaps.len(), findings, "{count}");
+        assert_eq!(rows.len(), findings + 1, "{count}: only overlap findings");
+        let first = format!("steps.rb:{} steps.rb:{}", count + 1, count + 2);
+        assert!(overlaps.contains(&first), "{count}");
+        assert_eq!(ruby_overlap_census(&rows), census, "{count}");
+        let truncated = usize::from(census.1 > 0);
+        assert_eq!(stderr.matches(RUBY_OVERLAP_INCOMPLETE).count(), truncated);
+    }
+}
+
+/// A window whose combined matcher program exceeds the 1 MiB regex limit is split into several
+/// sets, and each feature step still marks exactly the definition it matches as used; the split is
+/// observable as the overlap scan charge of one witness per set.
+#[test]
+fn ruby_split_matcher_index_keeps_each_step_on_its_own_definition() {
+    // `.{10}` compiles to a Unicode-wide program: 200 of them exceed the combined limit, so the
+    // default window splits into four sets and definitions 123 and 199 sit in later sets than
+    // definition 0. `[a-j]{10}` accepts the same feature steps and fits one set. The two declared
+    // `-only` witnesses (lines 203-204) match only their own definition, so nothing overlaps and
+    // only the scan charge can truncate: at limit 1 the witness scan budget is 4, which affords
+    // both witnesses against one set but one witness against four.
+    let used = [0, 123, 199];
+    let feature: String = used
+        .iter()
+        .map(|index| format!("  Given distinct matcher value {index:04} abcdefghij\n"))
+        .collect();
+    let witnesses = ruby_value_types(&[("first", "first-only"), ("second", "second-only")]);
+    let arguments = ["--max-candidate-comparisons", "1"];
+    // matcher suffix, (evaluated, skipped) overlap census
+    for (suffix, census) in [(".{10}", (0, 1)), ("[a-j]{10}", (0, 0))] {
+        let steps = ruby_steps(200, |index| {
+            format!("Given(/^distinct matcher value {index:04} {suffix}$/) {{ action_{index}() }}")
+        });
+        let steps = format!("{steps}{witnesses}");
+        let (rows, stderr) =
+            ruby_usage_run(&steps, &format!(" Scenario: S\n{feature}"), &arguments);
+        let truncated = usize::from(census.1 > 0);
+        assert_eq!(stderr.lines().count(), truncated, "{suffix}: {stderr}");
+        assert_eq!(
+            stderr.matches(RUBY_OVERLAP_INCOMPLETE).count(),
+            truncated,
+            "{suffix}"
+        );
+        assert_eq!(ruby_overlap_census(&rows), census, "{suffix}");
+        let analysis = &rows.last().unwrap()["analysis"];
+        assert_eq!(analysis["truncated"], census.1 > 0, "{suffix}");
+        let unused: Vec<String> = (1..=200)
+            .filter(|line| !used.contains(&(line - 1)))
+            .chain([203, 204])
+            .map(|line| line.to_string())
+            .collect();
+        let unused = ruby_locations(&unused.join(";"));
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{suffix}"
+        );
+        for rule in ["ambiguous-step", "overlapping-matcher"] {
+            assert!(
+                ruby_rule_locations(&rows, rule).is_empty(),
+                "{suffix}: {rule}"
+            );
+        }
+    }
+}
+
+/// Proven ambiguity withholds an overlap only for definitions that share one ambiguity group,
+/// including when their memberships are ordered and interleaved; without feature steps every
+/// overlapping pair is reported.
+#[test]
+fn ruby_proven_ambiguity_membership_withholds_only_pairs_sharing_a_group() {
+    // Feature steps prove groups {0,2}, {1,3}, {2,4} (lines 6-10). Witnesses propose (0,1), (0,2),
+    // (1,2), (1,3), (1,4) and (2,4): (2,4) needs the intersection to step past definition 2's
+    // first group, and (1,2) starts with the right side's smaller group.
+    let source = ruby_value_types(&[
+        ("p0", "w01|g02|w20"),
+        ("p1", "w14|w01|g13"),
+        ("p2", "w20|g02|g24|w42|w14"),
+        ("p3", "g13"),
+        ("p4", "w42|w14|g24"),
+    ]);
+    let groups = "usage.feature:3 6 8;usage.feature:4 7 9;usage.feature:5 8 10";
+    let every = "6 7;6 8;7 8;7 9;7 10;8 10";
+    for (steps, ambiguous, overlaps) in [
+        (
+            "value g02\n  Given value g13\n  Given value g24",
+            groups,
+            "6 7;7 8;7 10",
+        ),
+        ("value none", "", every),
+    ] {
+        let feature = format!(" Scenario: S\n  Given {steps}\n");
+        let (rows, stderr) = ruby_usage_run(&source, &feature, &[]);
+        assert_eq!(stderr, "", "{steps}");
+        let found = ruby_rule_locations(&rows, "ambiguous-step");
+        assert_eq!(found, ruby_locations(ambiguous), "{steps}");
+        let found = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(found, ruby_locations(overlaps), "{steps}");
+    }
+}
+
+/// Repeated outline step text gets the full match set at each location, and a path suppression
+/// marks both resulting ambiguities suppressed while both definitions stay used.
+#[test]
+fn ruby_repeated_step_text_and_suppressed_ambiguity_keep_usage() {
+    let steps = "Given('same step') { first_action() }\nGiven(/^same step$/) { second_action() }\n";
+    let feature = "Feature: F\n Scenario Outline: S\n  Given same step\n  And same step\n  Examples:\n   | value |\n   | one |\n";
+    let suppression = r#"{"suppressions":[{"rule":"ambiguous-step","path":"steps.rb","reason":"known overlap"}]}"#;
+    for (config, reason) in [(suppression, Some("known overlap")), ("{}", None)] {
+        let files = [
+            ("steps.rb", steps),
+            ("usage.feature", feature),
+            (".cuke-dedup.json", config),
+        ];
+        let (rows, stderr) = ruby_records_run(&files, None, &["--features", "usage.feature"]);
+        assert_eq!(stderr, "", "{config}");
+        let ambiguous = ruby_locations("usage.feature:3 1 2;usage.feature:4 1 2");
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{config}"
+        );
+        for rule in ["unused-definition", "overlapping-matcher"] {
+            assert!(
+                ruby_rule_locations(&rows, rule).is_empty(),
+                "{config}: {rule}"
+            );
+        }
+        for row in rows.iter().filter(|row| row["rule"] == "ambiguous-step") {
+            assert_eq!(row["suppression"]["reason"].as_str(), reason, "{config}");
+            assert_eq!(row["active"], reason.is_none(), "{config}");
+        }
+    }
+}
+
+/// `overlapping-matcher` and `unused-definition` set to `off` report nothing and leave the overlap
+/// census at zero; an enabled `unused-definition` still skips a definition a step uses.
+#[test]
+fn ruby_disabled_overlap_and_unused_rules_report_nothing() {
+    let steps = "Given('unused') { unused_work() }\nGiven('pick {word}') { pick_one() }\nGiven(/^pick .*$/) { pick_other() }\n";
+    let both = [
+        "--rule",
+        "overlapping-matcher=off",
+        "--rule",
+        "unused-definition=off",
+    ];
+    // arguments, feature step, overlap findings, unused findings, overlap census
+    type Row<'a> = (&'a [&'a str], &'a str, &'a str, &'a str, (u64, u64));
+    let rows: [Row<'_>; 3] = [
+        (&both, "nothing here", "", "", (0, 0)),
+        (&[], "nothing here", "2 3", "1;2;3", (1, 0)),
+        (&both[..2], "unused", "", "2;3", (0, 0)),
+    ];
+    for (arguments, step, overlaps, unused, census) in rows {
+        let feature = format!(" Scenario: S\n  Given {step}\n");
+        let (rows, stderr) = ruby_usage_run(steps, &feature, arguments);
+        assert_eq!(stderr, "", "{arguments:?}");
+        let found = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(found, ruby_locations(overlaps), "{arguments:?}");
+        let found = ruby_rule_locations(&rows, "unused-definition");
+        assert_eq!(found, ruby_locations(unused), "{arguments:?}");
+        assert_eq!(ruby_overlap_census(&rows), census, "{arguments:?}");
+        let findings = rows.iter().filter(|row| row["type"] == "finding").count();
+        assert_eq!(findings, rows.len() - 1, "{arguments:?}");
+        assert_eq!(
+            rows.last().unwrap()["summary"]["findings"],
+            findings,
+            "{arguments:?}"
+        );
+    }
+}
+
+/// Witnesses come from built-in parameter samples, declared enumerable patterns (Ruby regexp
+/// literals and configured `(?ms:` scopes) and resolved Cucumber literal syntax; regex matchers and
+/// non-enumerable declared patterns yield none, so the permissive regex reports no overlap for them.
+#[test]
+fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
+    // `declared regexp;configured pattern;expression;permissive regex;witness`, with `-` for no
+    // declaration or configuration and an empty witness for no overlap. The regex-only pair on
+    // every row must never overlap: regexes have no witness, and the unanchored `/regex one/` text
+    // would match `/^regex .*$/` if a regex were reversed into one.
+    let rows = [
+        "-;-;I have {int} item(s) in red/blue;^I have .*$;I have 1 items in red",
+        r#"-;-;n {float} w {word} s {string};^n .*$;n 1.5 w sample s "sample""#,
+        r"-;-;x a\\(b) c/d;^x a.*$;x a(b) c",
+        "-;-;open(unclosed;^open.*$;open(unclosed",
+        "red|green;-;pick {colour};^pick .*$;pick red",
+        "(red|green);-;pick {colour};^pick .*$;pick red",
+        "(?:red|green);-;pick {colour};^pick .*$;pick red",
+        "((red|green));-;pick {colour};^pick .*$;pick red",
+        "(red)|(green);-;pick {colour};^pick .*$;",
+        ";-;pick {colour};^pick .*$;",
+        "red.*;-;pick {colour};^pick .*$;",
+        "-;(?ms:red|green);pick {colour};^pick .*$;pick red",
+        "-;(?m:red|green);pick {colour};^pick .*$;pick red",
+    ];
+    for row in rows {
+        let [declared, configured, expression, regex, witness] =
+            <[&str; 5]>::try_from(row.split(';').collect::<Vec<_>>()).unwrap();
+        let declared = match declared {
+            "-" => String::new(),
+            pattern => ruby_parameter_type("colour", pattern),
+        };
+        let config = format!(r#"{{"parameterTypes":{{"colour":"{configured}"}}}}"#);
+        let config = if configured == "-" { "{}" } else { &config };
+        let source = format!("{declared}Given('{expression}') {{ expression_action() }}\nGiven(/{regex}/) {{ regex_action() }}\nGiven(/regex one/) {{ one_action() }}\nGiven(/^regex .*$/) {{ any_action() }}\n");
+        let files = [("steps.rb", source.as_str()), (".cuke-dedup.json", config)];
+        let (rows, stderr) = ruby_records_run(&files, None, &["--rule", "unused-definition=off"]);
+        assert_eq!(
+            rows.last().unwrap()["corpus"]["incomplete"],
+            false,
+            "{source}: {stderr}"
+        );
+        let messages: Vec<_> = rows
+            .iter()
+            .filter(|row| row["rule"] == "overlapping-matcher")
+            .map(|row| row["message"].as_str().unwrap())
+            .collect();
+        let shown = expression.replace(r"\\", r"\");
+        let accepts = format!("Matchers `{shown}` and `{regex}` both accept the step `{witness}`");
+        let expected: &[&str] = if witness.is_empty() { &[] } else { &[&accepts] };
+        assert_eq!(messages, expected, "{source}");
+    }
+}
+
+/// The custom-parameter fallback keeps optional text, `/` alternatives, signed integers, escaped
+/// unclosed parentheses and repeated spaces exact with a declared type, so a step outside that
+/// text is unused; an undeclared type makes the fallback inexact, so the definition is never
+/// unused.
+#[test]
+fn ruby_fallback_expressions_keep_optional_alternative_and_declared_text_exact() {
+    let colour = ruby_parameter_type("colour", "red|green");
+    let custom = ruby_parameter_type("custom", "known");
+    let eat = "I eat/eats {int} cucumber(s) with {colour}";
+    // declarations, expression, feature step, unused
+    let rows: [(&str, &str, &str, bool); 10] = [
+        (&colour, eat, "I eat 2 cucumbers with red", false),
+        (&colour, eat, "I eats -2 cucumber with green", false),
+        (&colour, eat, "I eat 2 cucumbers with blue", true),
+        (
+            &colour,
+            "open(unclosed {colour}",
+            "open(unclosed red",
+            false,
+        ),
+        (&colour, "open(unclosed {colour}", "openunclosed red", true),
+        (&colour, "two  spaces {colour}", "two  spaces red", false),
+        (&colour, "two  spaces {colour}", "two spaces red", true),
+        ("", "a {custom}", "b anything", false),
+        (&custom, "a {custom}", "b anything", true),
+        (&custom, "a {custom}", "a known", false),
+    ];
+    for (types, expression, step, unused) in rows {
+        let steps = format!("{types}Given('{expression}') {{ work() }}\n");
+        let feature = format!(" Scenario: S\n  Given {step}\n");
+        let (rows, stderr) = ruby_usage_run(&steps, &feature, &[]);
+        assert_eq!(stderr, "", "{expression}: {step}");
+        let line = types.lines().count() + 1;
+        let expected = if unused {
+            line.to_string()
+        } else {
+            String::new()
+        };
+        let found = ruby_rule_locations(&rows, "unused-definition");
+        assert_eq!(found, ruby_locations(&expected), "{expression}: {step}");
+    }
+}
+
+/// Regex and Cucumber Expression matchers over the 1 MiB pattern limit each report the regex
+/// resource limit at their own location; a matcher outside the supported regex subset reports
+/// its subset diagnostic, never the limit.
+#[test]
+fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
+    let oversized = "x".repeat(1024 * 1024 + 1);
+    let source = format!("# limits\nGiven(/{oversized}/) {{ long_regex() }}\nGiven(/^a++$/) {{ possessive() }}\nGiven('{oversized}') {{ long_expression() }}\nGiven('fine') {{ fine() }}\n");
+    let arguments = ["--rule", "unused-definition=off"];
+    let (_, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+    // The resource-limit diagnostic names the absolute temporary path, so each line is pinned by
+    // its fixed prefix and its located suffix, joined by the platform path separator.
+    let limits: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.contains("resource limit"))
+        .collect();
+    assert_eq!(limits.len(), 2, "{stderr}");
+    for (limit, line) in limits.iter().zip([2, 4]) {
+        let suffix = format!("{}steps.rb:{line}:1 exceeds the 1048576-byte regex resource limit; simplify the matcher or remove its source from definition discovery", std::path::MAIN_SEPARATOR);
+        assert!(
+            limit.starts_with("cuke-dedup: warning: step matcher at "),
+            "{limit}"
+        );
+        assert!(limit.ends_with(&suffix), "{limit}");
+    }
+    let subset = "Ruby regular expression is outside the supported static matching subset";
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line == format!("cuke-dedup: warning: steps.rb:3:1: {subset}")),
+        "{stderr}"
+    );
+}
+
+/// Matcher windows of one, two and wider than the corpus produce identical records and stderr on
+/// every axis: step matches split across windows, a proven ambiguity split across windows that
+/// withholds its overlap, overlap without feature usage, an equivalent-matcher group spanning
+/// windows, and usage decided across windows.
+#[test]
+fn ruby_windowing_does_not_change_findings_on_any_axis() {
+    let gate = "Given('the gate opens {word}') { gate_word() }\nGiven(/^the gate opens wide$/) { gate_regex() }\nGiven('the gate opens wide') { gate_text() }\n";
+    // At window 1 the proven pair sits in two windows and must still withhold the overlap.
+    let dial = "Given('the dial reads {int}') { dial_int() }\nGiven(/^the dial reads \\d+$/) { dial_regex() }\n";
+    let pump = "Given('the pump runs {word}') { pump_word() }\nGiven(/^the pump runs .+$/) { pump_regex() }\n";
+    let lamp = "Given('the lamp glows {word}') { lamp_one() }\nGiven('the lamp glows {word}') { lamp_two() }\nGiven(/^the lamp glows .+$/) { lamp_regex() }\n";
+    let parts = "Given('the seal closes') { seal() }\nGiven('the rotor spins') { rotor() }\nGiven('the brake holds') { brake() }\n";
+    // steps, feature step, ambiguous-step, overlapping-matcher and unused-definition findings
+    let cases = [
+        (gate, "the gate opens wide", "usage.feature:3 1 2 3", "", ""),
+        (dial, "the dial reads 7", "usage.feature:3 1 2", "", ""),
+        (pump, "something unrelated", "", "1 2", "1;2"),
+        (lamp, "nothing here", "", "1 3", "1;2;3"),
+        (parts, "the rotor spins", "", "", "1;3"),
+    ];
+    for (steps, step, ambiguous, overlaps, unused) in cases {
+        let feature = format!("Feature: F\n Scenario: S\n  Given {step}\n");
+        let files = [("steps.rb", steps), ("usage.feature", feature.as_str())];
+        let arguments = ["--features", "usage.feature"];
+        let windows = [1, 2, steps.lines().count() + 5];
+        let runs = windows.map(|window| ruby_records_run(&files, Some(window), &arguments));
+        assert_eq!(runs[1], runs[0], "{step}: window 2");
+        assert_eq!(runs[2], runs[0], "{step}: one window");
+        let rows = &runs[0].0;
+        for (rule, expected) in [
+            ("ambiguous-step", ambiguous),
+            ("overlapping-matcher", overlaps),
+            ("unused-definition", unused),
+        ] {
+            let found = ruby_rule_locations(rows, rule);
+            assert_eq!(found, ruby_locations(expected), "{step}: {rule}");
+        }
+    }
+}
+
 #[test]
 fn ruby_nested_handler_outcomes_preserve_structure_and_capture_scope() {
     for (left, right, duplicate) in [
@@ -3990,11 +4505,21 @@ fn ruby_project(files: &[(&str, &str)]) -> tempfile::TempDir {
 }
 
 /// Runs the binary with JSONL output over `files` written to a temporary root, with the `*.rb`
-/// definitions and `extra` arguments; returns the records and stderr, surfacing exit code and
-/// stderr when no summary is produced.
-fn ruby_records_run(files: &[(&str, &str)], extra: &[&str]) -> (Vec<Value>, String) {
+/// definitions, matcher window `window` (an inherited override is removed when `None`) and `extra`
+/// arguments; returns the records and stderr, surfacing exit code and stderr when no summary is
+/// produced.
+fn ruby_records_run(
+    files: &[(&str, &str)],
+    window: Option<usize>,
+    extra: &[&str],
+) -> (Vec<Value>, String) {
     let directory = ruby_project(files);
-    let output = ruby_cli(directory.path(), "*.rb")
+    let mut command = ruby_cli(directory.path(), "*.rb");
+    match window {
+        Some(size) => command.env("CUKE_DEDUP_MATCHER_WINDOW", size.to_string()),
+        None => command.env_remove("CUKE_DEDUP_MATCHER_WINDOW"),
+    };
+    let output = command
         .args(["--reporters", "jsonl", "--no-metrics"])
         .args(extra)
         .output()
@@ -4016,6 +4541,7 @@ fn ruby_usage_run(steps: &str, feature: &str, extra: &[&str]) -> (Vec<Value>, St
     let arguments = [&["--features", "usage.feature"], extra].concat();
     ruby_records_run(
         &[("steps.rb", steps), ("usage.feature", &feature)],
+        None,
         &arguments,
     )
 }
@@ -7395,6 +7921,418 @@ fn ruby_exit_policy_follows_severity_threshold_and_suppressions() {
     );
 }
 
+/// Runs the binary on `root` with JSONL output and returns the exit code, records and stderr,
+/// failing with both when no summary record was produced.
+fn ruby_suppression_run(root: &Path, pattern: &str) -> (i32, Vec<Value>, String) {
+    let output = ruby_cli(root, pattern)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert!(
+        rows.iter().any(|row| row["type"] == "summary"),
+        "exit {code}: {stderr}"
+    );
+    (code, rows, stderr)
+}
+
+/// Each finding as `(rule, primary path:line, related path:line list, suppression reason)`,
+/// sorted, so a test asserts which definitions each rule flagged together with its suppression
+/// state.
+fn ruby_suppression_rows(rows: &[Value]) -> Vec<(String, String, String, Option<String>)> {
+    let location = |value: &Value| format!("{}:{}", value["path"].as_str().unwrap(), value["line"]);
+    let mut findings: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] == "finding")
+        .map(|row| {
+            (
+                row["rule"].as_str().unwrap().to_owned(),
+                location(&row["primary"]),
+                row["related"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(location)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                row["suppression"]["reason"].as_str().map(str::to_owned),
+            )
+        })
+        .collect();
+    findings.sort();
+    findings
+}
+
+/// Ruby `# cuke-dedup:ignore` directives go through the shared parser: adjacent directives each
+/// suppress only their own rule on the registration below them, a pair finding takes the inline
+/// reason from either of its definitions, and missing separators, unknown rules, empty reasons and reasons over 512 characters
+/// are rejected with located errors while the targeted findings stay active.
+#[test]
+fn ruby_inline_directives_are_rule_scoped_and_reject_malformed_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Rejected directives target `unused-definition`, so each rejection leaves an active finding
+    // on its registration instead of a suppressed one.
+    ruby_write(
+        root,
+        "steps.rb",
+        "# directives start below line 1
+# cuke-dedup:ignore duplicate-matcher -- wording fixed by an external contract
+# cuke-dedup:ignore unused-definition -- exercised by a remote suite
+Given('external wording') { work() }
+Given('external wording') { other_work() }
+Given('separate wording') { work() }
+# cuke-dedup:ignore unused-definition
+Then('broken directive') { other() }
+# cuke-dedup:ignore unknown-rule -- not a real rule
+When('unknown rule') { another() }
+# cuke-dedup:ignore unused-definition --
+When('empty reason') { final_action() }
+",
+    );
+    // 513 characters exceed the limit; exactly 512 are accepted and retained in full.
+    let (oversized, boundary) = ("x".repeat(513), "y".repeat(512));
+    ruby_write(
+        root,
+        "oversized.rb",
+        &format!(
+            "# boundary directives start below line 1
+# cuke-dedup:ignore unused-definition -- {oversized}
+Given('oversized reason') {{ left() }}
+# cuke-dedup:ignore unused-definition -- {boundary}
+Given('boundary reason') {{ right() }}
+"
+        ),
+    );
+    // The directive sits on the pair's related definition, not its primary one.
+    ruby_write(
+        root,
+        "related.rb",
+        "Given('related left') { shared_related() }
+# cuke-dedup:ignore duplicate-handler -- attached to the related definition
+Given('related right') { shared_related() }
+",
+    );
+    ruby_write(
+        root,
+        "usage.feature",
+        "Feature: Usage\n  Scenario: None\n    Given nothing matches\n",
+    );
+    let (code, rows, stderr) = ruby_suppression_run(root, "*.rb");
+    assert_eq!(code, 2, "{stderr}");
+    let row = |rule: &str, location: &str, related: &str, reason: Option<&str>| {
+        (
+            rule.to_owned(),
+            location.to_owned(),
+            related.to_owned(),
+            reason.map(str::to_owned),
+        )
+    };
+    let unused = "unused-definition";
+    assert_eq!(
+        ruby_suppression_rows(&rows),
+        [
+            row(
+                "duplicate-handler",
+                "related.rb:1",
+                "related.rb:3",
+                Some("attached to the related definition")
+            ),
+            // Line 4's `duplicate-matcher` directive does not reach its handler pair with line 6.
+            row("duplicate-handler", "steps.rb:4", "steps.rb:6", None),
+            row(
+                "duplicate-matcher",
+                "steps.rb:4",
+                "steps.rb:5",
+                Some("wording fixed by an external contract")
+            ),
+            row(unused, "oversized.rb:3", "", None),
+            row(unused, "oversized.rb:5", "", Some(&boundary)),
+            row(unused, "related.rb:1", "", None),
+            row(unused, "related.rb:3", "", None),
+            row(unused, "steps.rb:10", "", None),
+            row(unused, "steps.rb:12", "", None),
+            row(
+                unused,
+                "steps.rb:4",
+                "",
+                Some("exercised by a remote suite")
+            ),
+            row(unused, "steps.rb:5", "", None),
+            row(unused, "steps.rb:6", "", None),
+            row(unused, "steps.rb:8", "", None),
+        ]
+    );
+    let diagnostics: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.starts_with("cuke-dedup:"))
+        .collect();
+    assert_eq!(
+        diagnostics,
+        [
+            "cuke-dedup: oversized.rb:2:1: inline suppression reason exceeds the 512-character limit",
+            "cuke-dedup: steps.rb:7:1: inline suppression must use `# cuke-dedup:ignore RULE -- REASON`",
+            "cuke-dedup: steps.rb:9:1: unknown rule `unknown-rule`",
+            "cuke-dedup: steps.rb:11:1: inline suppression reason must not be empty",
+        ]
+    );
+}
+
+/// Configured suppressions over Ruby findings: `path` is a root-relative glob that must cover
+/// every definition of a pair, `path` and `matcher` must select the same definition, a trailing
+/// `/` selects the directory tree, and unmatched detection uses the same selection.
+#[test]
+fn ruby_configured_suppressions_select_root_relative_paths_and_matchers() {
+    let pair = |left: &'static str, right: &'static str| {
+        [
+            (left, "Given('left matcher') { work() }\n"),
+            (right, "Given('right matcher') { work() }\n"),
+        ]
+    };
+    // (files, path, matcher, suppressed, reported as matching no definition)
+    let cases = [
+        (
+            pair("left.rb", "right.rb"),
+            "left.rb",
+            Some("right matcher"),
+            false,
+            true,
+        ),
+        (
+            pair("left.rb", "right.rb"),
+            "*.rb",
+            Some("missing matcher"),
+            false,
+            true,
+        ),
+        (
+            pair("left.rb", "right.rb"),
+            "*.rb",
+            Some("right matcher"),
+            true,
+            false,
+        ),
+        // `*` crosses `/`, so a root glob covers nested files; a bare file name does not.
+        (
+            pair("root.rb", "nested/steps.rb"),
+            "*.rb",
+            None,
+            true,
+            false,
+        ),
+        (
+            pair("root.rb", "nested/steps.rb"),
+            "steps.rb",
+            None,
+            false,
+            true,
+        ),
+        (
+            pair("legacy/left.rb", "current/right.rb"),
+            "legacy/**",
+            None,
+            false,
+            false,
+        ),
+        (
+            pair("legacy/left.rb", "legacy/right.rb"),
+            "legacy/**",
+            None,
+            true,
+            false,
+        ),
+        (
+            pair("legacy/nested/left.rb", "legacy/nested/right.rb"),
+            "legacy/",
+            None,
+            true,
+            false,
+        ),
+        (
+            pair("legacy/nested/left.rb", "legacy/nested/right.rb"),
+            "missing/**",
+            None,
+            false,
+            true,
+        ),
+    ];
+    for (index, (files, path, matcher, suppressed, unmatched)) in cases.into_iter().enumerate() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        for (relative, source) in files {
+            ruby_write(root, relative, source);
+        }
+        let reason = format!("case {index}");
+        let suppression = serde_json::json!({
+            "rule": "duplicate-handler", "reason": reason, "path": path, "matcher": matcher,
+        });
+        ruby_write(
+            root,
+            ".cuke-dedup.json",
+            &serde_json::json!({ "suppressions": [suppression] }).to_string(),
+        );
+        let (_, rows, stderr) = ruby_suppression_run(root, "**/*.rb");
+        let handler_rows: Vec<_> = ruby_suppression_rows(&rows)
+            .into_iter()
+            .filter(|(rule, ..)| rule == "duplicate-handler")
+            .map(|(_, primary, related, reason)| (primary, related, reason))
+            .collect();
+        // Discovery sorts paths, so the lexically first file is the primary definition.
+        let mut locations = files.map(|(relative, _)| format!("{relative}:1"));
+        locations.sort();
+        let [primary, related] = locations;
+        let context = format!("case {index}: {path} {matcher:?}\n{stderr}");
+        assert_eq!(
+            handler_rows,
+            [(primary, related, suppressed.then(|| reason.clone()))],
+            "{context}"
+        );
+        assert_eq!(
+            stderr.contains("suppression 1 for duplicate-handler matched no step definitions"),
+            unmatched,
+            "{context}"
+        );
+    }
+}
+
+/// Configured suppression lookups charge the pair work budget per suppression of the looked-up
+/// rule, and unmatched-suppression validation stops at its own limit over 700 Ruby files while a
+/// few unmatched suppressions are all reported.
+#[test]
+fn ruby_suppression_lookups_share_the_pair_work_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Long paths and 1,000 path suppressions make each pair lookup expensive; the same handler
+    // body puts all 700 definitions in one identical-handler class.
+    let nested = "nested/".repeat(30);
+    for index in 0..700 {
+        ruby_write(
+            root,
+            &format!("{nested}steps-{index}.rb"),
+            &format!("Given('operation label {index:04}') {{ shared_implementation() }}\n"),
+        );
+    }
+    // Controls: the same suppressions under a rule no pair lookup consults charge no pair work,
+    // and three unmatched suppressions stay within the validation limit.
+    // (rule, suppressions, pair budget exhausted, validation stopped)
+    for (rule, count, truncated, stopped) in [
+        ("duplicate-handler", 1_000, true, true),
+        ("unused-definition", 1_000, false, true),
+        ("unused-definition", 3, false, false),
+    ] {
+        let suppressions: Vec<_> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "rule": rule, "reason": format!("legacy exception {index}"),
+                    "path": format!("missing-{index}/**"),
+                })
+            })
+            .collect();
+        ruby_write(
+            root,
+            ".cuke-dedup.json",
+            &serde_json::json!({ "suppressions": suppressions }).to_string(),
+        );
+        let (_, rows, stderr) = ruby_suppression_run(root, "**/*.rb");
+        let analysis = &rows.last().unwrap()["analysis"];
+        let sources = &analysis["candidateSources"];
+        let context = format!("{rule} x{count}: {analysis}");
+        assert_eq!(analysis["truncated"], truncated, "{context}");
+        let evaluated = |source: &str| sources[source]["evaluated"].as_u64().unwrap();
+        if truncated {
+            // The budget runs out inside the identical-handler class, before its 699 pairs.
+            assert!(evaluated("identicalHandler") < 699, "{context}");
+            assert!(
+                analysis["candidateComparisonsEvaluated"].as_u64().unwrap() < 1_397,
+                "{context}"
+            );
+        } else {
+            assert_eq!(
+                analysis["candidateComparisonsEvaluated"], 1_397,
+                "{context}"
+            );
+            assert_eq!(
+                (evaluated("identicalHandler"), evaluated("matcherBlocking")),
+                (699, 698),
+                "{context}"
+            );
+        }
+        assert_eq!(
+            stderr.matches("after safety limits").count(),
+            usize::from(truncated),
+            "{context}\n{stderr}"
+        );
+        assert_eq!(
+            stderr.contains("unmatched suppression validation stopped after its safety limit"),
+            stopped,
+            "{context}"
+        );
+        let unmatched = stderr.matches("matched no step definitions").count();
+        if stopped {
+            assert!(unmatched < count, "{context}: {unmatched}");
+        } else {
+            assert_eq!(unmatched, count, "{context}");
+        }
+    }
+}
+
+/// A library caller can bypass config decoding with an over-limit suppression reason; the
+/// retained Ruby finding records the reason truncated to the 512-character bound.
+#[test]
+fn ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained() {
+    use cuke_dedup::config::{Config, ConfigOverrides, SuppressionConfig};
+    use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let file = SourceFile {
+        path: root.join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let extracted = cuke_dedup::source_adapter::SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| adapter.language() == SourceLanguage::Ruby)
+        .unwrap()
+        .extract(RUBY_DUPLICATE_PAIR, &file)
+        .unwrap();
+    let mut config = Config::load(root, ConfigOverrides::default()).unwrap();
+    let reason = "accepted because migration is in progress ".repeat(10_000);
+    config.suppressions.push(SuppressionConfig {
+        rule: cuke_dedup::model::Rule::DuplicateMatcher,
+        reason: reason.clone(),
+        path: Some("**".to_owned()),
+        matcher: None,
+    });
+    let outcome =
+        cuke_dedup::analysis::analyze_with_diagnostics(extracted.definitions, Vec::new(), &config)
+            .unwrap();
+    let suppressed: Vec<_> = outcome
+        .result
+        .findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.rule,
+                finding.suppression.as_ref().map(|s| s.reason.len()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        suppressed,
+        [(cuke_dedup::model::Rule::DuplicateMatcher, Some(512))]
+    );
+    assert_eq!(
+        outcome.result.findings[0]
+            .suppression
+            .as_ref()
+            .unwrap()
+            .reason,
+        reason[..512]
+    );
+}
+
 /// Candidate limits above the hard safety ceilings are rejected from config and CLI, and a Ruby
 /// run at the ceilings is accepted.
 #[test]
@@ -7566,7 +8504,7 @@ fn ruby_limited_run(source: &str, candidates: usize, structural: usize) -> (Vec<
         "--max-structural-class-comparisons",
         &structural,
     ];
-    ruby_records_run(&[("steps.rb", source)], &limits)
+    ruby_records_run(&[("steps.rb", source)], None, &limits)
 }
 
 /// Joins one registration line per index.
@@ -8351,6 +9289,332 @@ fn ruby_resource_limits_fail_closed_independently_of_reporters() {
         ruby_report(&output.path().join("cuke-dedup.json"))["summary"]["definitionsAnalyzed"],
         1
     );
+}
+
+/// Runs `ruby_cli` with JSONL output; returns the exit code, the last record (`Null` when the run
+/// wrote none) and stderr, so a run that fails before reporting still shows why.
+fn ruby_summary_run(root: &Path, pattern: &str, extra: &[&str]) -> (i32, Value, String) {
+    let output = ruby_cli(root, pattern)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let last = records(output.stdout).pop().unwrap_or(Value::Null);
+    (output.status.code().unwrap_or(-1), last, stderr)
+}
+
+/// Counts every `cuke-dedup:` diagnostic line in `stderr`, warnings and strict-mode errors alike.
+fn ruby_diagnostic_count(stderr: &str) -> usize {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("cuke-dedup:"))
+        .count()
+}
+
+/// The Ruby load budget of 1,024 dependency-only files is one budget across every selected
+/// definition file: each file's 520 loads fit alone, and together the loads past 1,024 are not
+/// followed and mark the run incomplete.
+#[test]
+fn ruby_load_budget_is_shared_across_selected_definition_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for group in ["a", "b"] {
+        let mut entry = String::new();
+        for index in 0..520 {
+            ruby_write(
+                root,
+                &format!("support/{group}-{index}.rb"),
+                &format!("LOADED_{}_{index} = 1\n", group.to_uppercase()),
+            );
+            entry.push_str(&format!("require_relative 'support/{group}-{index}'\n"));
+        }
+        entry.push_str(&format!("Given('step {group}') {{ work('{group}') }}\n"));
+        ruby_write(root, &format!("steps-{group}.rb"), &entry);
+    }
+    ruby_write(
+        root,
+        "budget.feature",
+        "Feature: Budget\n  Scenario: Both\n    Given step a\n    Given step b\n",
+    );
+    let refused =
+        "Ruby source dependency was not followed: the source graph exceeds the 1,024-file limit";
+    for alone in ["steps-a.rb", "steps-b.rb"] {
+        let (code, summary, stderr) = ruby_summary_run(root, alone, &["--fail-on-incomplete"]);
+        assert_eq!(code, 0, "{alone}: {stderr}");
+        assert_eq!(ruby_diagnostic_count(&stderr), 0, "{alone}: {stderr}");
+        assert_eq!(summary["corpus"]["incomplete"], false, "{alone}");
+    }
+    let both = "steps-a.rb,steps-b.rb";
+    let (code, summary, stderr) = ruby_summary_run(root, both, &[]);
+    assert_eq!(code, 0, "{stderr}");
+    // 1,024 - 520 = 504 loads of `steps-b.rb` fit; lines 505..=520 are refused, one warning each,
+    // plus the indirect-usage warning the incomplete graph causes.
+    assert_eq!(stderr.matches(refused).count(), 16, "{stderr}");
+    for line in [505, 520] {
+        assert!(
+            stderr.contains(&format!("steps-b.rb:{line}:1: {refused}")),
+            "{stderr}"
+        );
+    }
+    assert_eq!(ruby_diagnostic_count(&stderr), 17, "{stderr}");
+    ruby_assert_pointers(
+        &summary,
+        &[
+            ("/corpus/definitionFiles", 1026.into()),
+            ("/corpus/incomplete", true.into()),
+            ("/summary/definitionsAnalyzed", 2.into()),
+        ],
+    );
+    let (strict, _, _) = ruby_summary_run(root, both, &["--fail-on-incomplete"]);
+    assert_eq!(strict, 2);
+}
+
+/// The matcher-overlap candidate limit over Ruby Cucumber Expressions is visible in the report and
+/// fails closed under `--fail-on-incomplete`; candidate-limit flags accept only positive integers.
+#[test]
+fn ruby_matcher_overlap_limit_is_visible_and_candidate_flags_must_be_positive() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(
+        root,
+        "steps.rb",
+        "Given('value {first}') { }\nGiven('value {second}') { }\nGiven('value {third}') { }\n",
+    );
+    ruby_write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"threshold":100,"reporters":["json"],"output":"reports","noMetrics":true,
+            "maxCandidateComparisons":1,
+            "parameterTypes":{"first":"red|green","second":"red|green","third":"red|green"}}"#,
+    );
+    let incomplete =
+        "static matcher-overlap analysis is incomplete: evaluated 1 definition comparisons";
+    // `7` lifts the configured limit of 1 above the 3 pairwise comparisons: the control.
+    for (extra, strict_code, evaluated, skipped) in [
+        (None, 2, 1, 1),
+        (Some("--max-candidate-comparisons=7"), 0, 3, 0),
+    ] {
+        for strict in [false, true] {
+            let mut command = ruby_cli(root, "*.rb");
+            command.args(extra);
+            if strict {
+                command.arg("--fail-on-incomplete");
+            }
+            let output = command.output().unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let code = if strict { strict_code } else { 0 };
+            assert_eq!(output.status.code(), Some(code), "{extra:?}: {stderr}");
+            assert_eq!(stderr.contains(incomplete), skipped > 0, "{stderr}");
+        }
+        let report = ruby_report(&root.join("reports/cuke-dedup.json"));
+        ruby_assert_pointers(
+            &report["analysis"],
+            &[
+                ("/truncated", (skipped > 0).into()),
+                (
+                    "/candidateSources/matcherOverlap/evaluated",
+                    evaluated.into(),
+                ),
+                ("/candidateSources/matcherOverlap/skipped", skipped.into()),
+            ],
+        );
+    }
+    let printed = ruby_cli(root, "*.rb")
+        .args([
+            "--print-config",
+            "--max-candidate-comparisons=7",
+            "--max-structural-class-comparisons=7",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(printed.status.code(), Some(0));
+    let config: Value = serde_json::from_slice(&printed.stdout).unwrap();
+    ruby_assert_pointers(
+        &config,
+        &[
+            ("/maxCandidateComparisons", 7.into()),
+            ("/maxStructuralClassComparisons", 7.into()),
+        ],
+    );
+    for flag in [
+        "--max-candidate-comparisons",
+        "--max-structural-class-comparisons",
+    ] {
+        for value in ["0", "-1", "many"] {
+            ruby_cli(root, "*.rb")
+                .arg(format!("{flag}={value}"))
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains(format!(
+                    "invalid value '{value}' for '{flag} <COUNT>': expected an integer greater than zero"
+                )));
+        }
+    }
+}
+
+/// An explicitly excluded oversized Ruby file is outside the corpus, so the run stays complete
+/// under `--fail-on-incomplete`; without the exclusion it fails on the input limit. A clean Ruby
+/// corpus is complete, one dynamic matcher makes it incomplete, and hidden and default-excluded
+/// Ruby sources each need their own discovery flag.
+#[test]
+fn ruby_exclusions_and_discovery_flags_define_the_analysis_corpus() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write_sized(root, "generated/oversized.rb", 8 * 1024 * 1024 + 1);
+    ruby_write(root, "steps.rb", "Given('included step') { work() }\n");
+    ruby_write(
+        root,
+        "included.feature",
+        "Feature: Included\n  Scenario: One\n    Given included step\n",
+    );
+    for (config, code) in [(r#"{"exclude":["generated/**"]}"#, 0), ("{}", 2)] {
+        ruby_write(root, ".cuke-dedup.json", config);
+        let output = ruby_cli(root, "**/*.rb")
+            .args(["--threshold", "100", "--fail-on-incomplete"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(code), "{config}: {stderr}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Analyzed 1 definition and"));
+        let excluded = code == 0;
+        assert_eq!(stderr.contains("input limit"), !excluded, "{stderr}");
+        if excluded {
+            assert_eq!(ruby_diagnostic_count(&stderr), 0, "{stderr}");
+        }
+    }
+
+    // Completeness: the clean corpus and the dynamic-matcher corpus differ only in the
+    // registration whose matcher cannot be resolved statically.
+    let completeness = tempfile::tempdir().unwrap();
+    let root = completeness.path();
+    ruby_write(
+        root,
+        "used.feature",
+        "Feature: Used\n  Scenario: One\n    Given static step\n",
+    );
+    for (source, incomplete) in [
+        ("Given('static step') { work() }\n", false),
+        (
+            "Given('static step') { work() }\nname = 'dynamic step'\nGiven(name) { }\n",
+            true,
+        ),
+    ] {
+        ruby_write(root, "steps.rb", source);
+        let (strict, summary, stderr) = ruby_summary_run(root, "*.rb", &["--fail-on-incomplete"]);
+        assert_eq!(strict, if incomplete { 2 } else { 0 }, "{stderr}");
+        assert_eq!(summary["corpus"]["incomplete"], incomplete, "{stderr}");
+        assert_eq!(
+            stderr.contains("steps.rb:3:1: Ruby registration requires a static matcher"),
+            incomplete,
+            "{stderr}"
+        );
+        assert_eq!(
+            ruby_diagnostic_count(&stderr),
+            if incomplete { 2 } else { 0 },
+            "{stderr}"
+        );
+        let (lenient, _, stderr) = ruby_summary_run(root, "*.rb", &[]);
+        assert_eq!(lenient, 0, "{stderr}");
+    }
+
+    let discovery = tempfile::tempdir().unwrap();
+    let root = discovery.path();
+    ruby_write(
+        root,
+        ".steps/hidden.rb",
+        "Given('hidden step') { hidden() }\n",
+    );
+    ruby_write(
+        root,
+        "node_modules/workspace/nested.rb",
+        "Given('nested step') { nested() }\n",
+    );
+    // A feature that uses neither definition makes each analyzed one an `unused-definition`
+    // finding, which names the file the discovery flag admitted.
+    ruby_write(
+        root,
+        "other.feature",
+        "Feature: Other\n  Scenario: One\n    Given other step\n",
+    );
+    let hidden = ".steps/hidden.rb";
+    let nested = "node_modules/workspace/nested.rb";
+    for (flags, admitted) in [
+        (&[][..], &[][..]),
+        (&["--include-hidden"], &[hidden][..]),
+        (&["--no-default-excludes"], &[nested]),
+        (
+            &["--include-hidden", "--no-default-excludes"],
+            &[hidden, nested],
+        ),
+    ] {
+        let (code, rows) = ruby_jsonl(root, ".steps/**/*.rb,node_modules/workspace/**/*.rb", flags);
+        assert_eq!(code, 0, "{flags:?}");
+        let mut paths: Vec<&str> = rows
+            .iter()
+            .filter(|row| row["rule"] == "unused-definition")
+            .filter_map(|row| row["primary"]["path"].as_str())
+            .collect();
+        paths.sort_unstable();
+        assert_eq!(paths, admitted, "{flags:?}");
+        let summary = rows.last().unwrap();
+        assert_eq!(
+            summary["summary"]["definitionsAnalyzed"],
+            admitted.len(),
+            "{flags:?}"
+        );
+    }
+}
+
+/// A valid Ruby regexp whose compiled program exceeds the 1 MiB regex limit is named with the
+/// actionable fix, keeps its definition in the reports, and fails under `--fail-on-incomplete`.
+#[test]
+fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
+    // Ruby rejects the original `a{1000000}` (Onigmo caps a repeat at 100,000), so this uses the
+    // largest repeat Ruby accepts, which still exceeds the compiled-program limit.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // The regexp sits on line 3 so a `1:1` location fallback cannot satisfy `limit`.
+    let oversized = "# Oversized repeat.\n\nGiven(/a{100000}/) { work() }\n";
+    ruby_write(root, "steps.rb", oversized);
+    let limit = "steps.rb:3:1 exceeds the 1048576-byte regex resource limit; simplify the matcher";
+    for strict in [false, true] {
+        let mut extra = vec!["--threshold", "100"];
+        if strict {
+            extra.push("--fail-on-incomplete");
+        }
+        let (code, summary, stderr) = ruby_summary_run(root, "*.rb", &extra);
+        assert_eq!(code, if strict { 2 } else { 0 }, "{stderr}");
+        assert_eq!(
+            stderr.matches("regex resource limit").count(),
+            1,
+            "{stderr}"
+        );
+        assert!(stderr.contains(limit), "{stderr}");
+        assert_eq!(summary["summary"]["definitionsAnalyzed"], 1);
+    }
+    // Control: a small repeat compiles, so the run carries no resource diagnostic.
+    ruby_write(root, "steps.rb", "Given(/a{100}/) { work() }\n");
+    let (code, _, stderr) = ruby_summary_run(root, "*.rb", &["--fail-on-incomplete"]);
+    assert!(!stderr.contains("regex resource limit"), "{stderr}");
+    assert_eq!(code, 0, "{stderr}");
+
+    ruby_write(root, "steps.rb", oversized);
+    ruby_write(
+        root,
+        "broken.feature",
+        "Scenario: No feature\n  Given a step\n",
+    );
+    let output = tempfile::tempdir().unwrap();
+    ruby_cli(root, "*.rb")
+        .args(["--reporters", "json", "--output"])
+        .arg(output.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(limit))
+        .stderr(predicate::str::contains("failed to parse Gherkin feature"));
+    let report = ruby_report(&output.path().join("cuke-dedup.json"));
+    assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
 }
 
 /// Machine reports over Ruby findings: the implicit check writes every reporter with corpus and
