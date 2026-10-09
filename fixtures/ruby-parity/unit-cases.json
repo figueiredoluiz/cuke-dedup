@@ -1159,7 +1159,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_repeated_step_text_and_suppressed_ambiguity_keep_usage"
           },
-          "rationale": "Ruby `'same step'` and `/^same step$/` over an outline repeating that text on lines 3 and 4 report both ambiguities (each with both definitions), no unused or overlap finding, and with a path suppression both carry reason `known overlap` and are inactive; the unsuppressed control keeps them active. The cache itself has no observable beyond identical match sets per repeated text, as in the original.",
+          "rationale": "Ruby `'same step'` and `/^same step$/` over an outline repeating that text on lines 3 and 4 report both ambiguities (each with both definitions), no unused or overlap finding, and with a path suppression both carry reason `known overlap` and are inactive; the unsuppressed control keeps them active. The original asserts only the used set and the two suppressed findings; neither it nor this test observes the cache beyond identical match sets per repeated text, so the Ruby evidence matches the original's observable claim.",
           "behaviorClass": "ruby-behavior"
         },
         {
