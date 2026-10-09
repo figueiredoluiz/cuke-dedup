@@ -1560,14 +1560,14 @@ fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
     let arguments = ["--rule", "unused-definition=off"];
     let (_, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
     // The resource-limit diagnostic names the absolute temporary path, so each line is pinned by
-    // its fixed prefix and its located suffix.
+    // its fixed prefix and its located suffix, joined by the platform path separator.
     let limits: Vec<_> = stderr
         .lines()
         .filter(|line| line.contains("resource limit"))
         .collect();
     assert_eq!(limits.len(), 2, "{stderr}");
     for (limit, line) in limits.iter().zip([2, 4]) {
-        let suffix = format!("/steps.rb:{line}:1 exceeds the 1048576-byte regex resource limit; simplify the matcher or remove its source from definition discovery");
+        let suffix = format!("{}steps.rb:{line}:1 exceeds the 1048576-byte regex resource limit; simplify the matcher or remove its source from definition discovery", std::path::MAIN_SEPARATOR);
         assert!(
             limit.starts_with("cuke-dedup: warning: step matcher at "),
             "{limit}"
