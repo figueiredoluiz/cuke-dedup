@@ -1,7 +1,7 @@
 //! Bounded source-only resolution. No Ruby, gem metadata or installation hooks are executed.
 
 use super::{descendants, literal_string, location, text};
-use crate::config::Config;
+use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::resource_limits::{
     read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
@@ -98,11 +98,11 @@ fn resolve_graph(
     files: &mut DiscoveredFiles,
     budget: (usize, usize),
 ) -> anyhow::Result<()> {
-    let root = config.root.canonicalize()?;
+    let root = config.root.clone();
     let load_paths = config
         .ruby_load_paths()
         .iter()
-        .map(|path| root.join(path).canonicalize())
+        .map(|path| canonical_platform_path(&root.join(path)))
         .collect::<Result<Vec<_>, _>>()?;
     anyhow::ensure!(
         load_paths.iter().all(|p| p.is_dir()),
@@ -117,7 +117,7 @@ fn resolve_graph(
     // An entry point that cannot be canonicalized loses only its own edges; extraction reports it.
     let entry_points: BTreeSet<_> = queue
         .iter()
-        .filter_map(|f| f.path.canonicalize().ok())
+        .filter_map(|f| canonical_platform_path(&f.path).ok())
         .collect();
     let mut known = entry_points.clone();
     // Skipped Ruby files by canonical path. A load this graph admits analyzes the file, so it is no
@@ -126,7 +126,7 @@ fn resolve_graph(
         .skipped_definitions
         .iter()
         .filter(|file| file.language == SourceLanguage::Ruby)
-        .filter_map(|file| Some((file.path.canonicalize().ok()?, file.path.clone())))
+        .filter_map(|file| Some((canonical_platform_path(&file.path).ok()?, file.path.clone())))
         .collect();
     let mut promoted = BTreeSet::new();
     let mut expansion = Expansion::default();
@@ -276,7 +276,9 @@ fn ruby_file(path: &Path) -> Option<PathBuf> {
         candidate.push(".rb");
         PathBuf::from(candidate)
     };
-    path.is_file().then(|| path.canonicalize().ok()).flatten()
+    path.is_file()
+        .then(|| canonical_platform_path(&path).ok())
+        .flatten()
 }
 
 #[cfg(test)]
@@ -319,7 +321,7 @@ mod tests {
     #[test]
     fn expansion_budget_refuses_past_its_limits_and_stays_exhausted() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = canonical_platform_path(directory.path()).unwrap();
         std::fs::write(root.join("a.rb"), "A = 1 # ten\n").unwrap();
         std::fs::write(root.join("b.rb"), "B = 1 # ten\n").unwrap();
         std::fs::write(root.join("c.rb"), "C\n").unwrap();
@@ -351,7 +353,7 @@ mod tests {
     #[test]
     fn selected_entry_points_never_charge_the_expansion_budget() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = canonical_platform_path(directory.path()).unwrap();
         std::fs::write(
             root.join("first.rb"),
             "require_relative 'second'\nrequire_relative 'helper'\n",
@@ -385,7 +387,7 @@ mod tests {
     #[test]
     fn requests_resolve_to_the_file_ruby_loads() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = canonical_platform_path(directory.path()).unwrap();
         for name in [
             "checkout.v2.rb",
             "config.local.rb",
@@ -472,7 +474,7 @@ mod tests {
     #[test]
     fn a_native_candidate_in_any_base_shadows_the_ruby_fallback() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = canonical_platform_path(directory.path()).unwrap();
         let (first, second) = (root.join("a"), root.join("b"));
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
@@ -493,7 +495,7 @@ mod tests {
     #[test]
     fn admitted_loads_remove_files_from_the_skipped_list() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = canonical_platform_path(directory.path()).unwrap();
         std::fs::create_dir_all(root.join("lib")).unwrap();
         std::fs::write(
             root.join(".cuke-dedup.json"),
@@ -550,7 +552,7 @@ mod tests {
     fn an_unreadable_selected_file_loses_only_its_own_loads() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = canonical_platform_path(directory.path()).unwrap();
         std::fs::write(root.join("helper.rb"), "HELPER = 1\n").unwrap();
         std::fs::write(root.join("locked.rb"), "require_relative 'helper'\n").unwrap();
         std::fs::write(root.join("open.rb"), "\nrequire_relative 'helper'\n").unwrap();

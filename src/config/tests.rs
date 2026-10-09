@@ -594,3 +594,49 @@ fn malformed_auto_config_warns_and_falls_through_to_package_config() {
     assert_eq!(config.threshold, 25.0);
     assert_eq!(config.config_warnings.len(), 1);
 }
+
+/// Verbatim local and UNC prefixes are stripped only when the plain form names the same file;
+/// volume GUIDs, DOS device names, trailing dots or spaces and over-long paths keep the prefix.
+#[test]
+fn verbatim_prefixes_strip_to_plain_windows_paths() {
+    let cases = [
+        (r"\\?\C:\work\steps.rb", Some(r"C:\work\steps.rb")),
+        (
+            r"\\?\UNC\server\share\steps.rb",
+            Some(r"\\server\share\steps.rb"),
+        ),
+        (r"C:\work\steps.rb", None),
+        (r"\\server\share\steps.rb", None),
+        ("/work/steps.rb", None),
+        (r"\\?\Volume{0b1c}\steps.rb", None),
+        (r"\\?\GLOBALROOT\Device\steps.rb", None),
+        (r"\\?\C:\work\aux.rb", None),
+        (r"\\?\C:\work\Com1 .rb", None),
+        (r"\\?\C:\work\steps.", None),
+        (r"\\?\C:\work\steps ", None),
+        (r"\\?\C:\work/steps.rb", None),
+        (r"\\?\UNC\server\nul\steps.rb", None),
+        (r"\\?\C:\", Some(r"C:\")),
+        (r"\\?\C:\auxiliary.rb", Some(r"C:\auxiliary.rb")),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(strip_verbatim_prefix(input).as_deref(), expected, "{input}");
+    }
+    let long = format!(r"\\?\C:\{}", "a".repeat(260));
+    assert_eq!(strip_verbatim_prefix(&long), None);
+}
+
+/// A canonicalized file under the analysis root strips to its relative path against
+/// `Config::root`, which a raw `canonicalize()` does not on Windows.
+#[test]
+fn canonical_platform_paths_strip_against_the_config_root() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("providers")).unwrap();
+    fs::write(directory.path().join("providers/steps.rb"), "").unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let canonical = canonical_platform_path(&directory.path().join("providers/steps.rb")).unwrap();
+    assert_eq!(
+        canonical.strip_prefix(&config.root).unwrap(),
+        Path::new("providers").join("steps.rb")
+    );
+}

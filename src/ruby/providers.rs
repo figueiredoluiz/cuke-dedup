@@ -121,7 +121,7 @@ pub(super) fn load_proof_sources(
         let tree = parser
             .parse(&source, None)
             .context("Ruby provider parser returned no tree")?;
-        let Ok(canonical_path) = file.path.canonicalize() else {
+        let Ok(canonical_path) = crate::config::canonical_platform_path(&file.path) else {
             return Ok(ProofSources::Unreadable);
         };
         units.push(Unit {
@@ -1249,6 +1249,7 @@ mod tests {
         assert_eq!(finalized.uncertainties.len(), 1);
     }
 
+    /// Provider proofs need a resolvable edge, are absent on cycles and respect file and byte budgets.
     #[test]
     fn optional_provider_proofs_respect_both_resource_limits() {
         let dir = tempfile::tempdir().unwrap();
@@ -1268,7 +1269,7 @@ mod tests {
             .collect();
         let edges = [SourceDependency::new(
             crate::model::SourceLocation::new(files[1].path.clone(), 1, 1, 1, 28),
-            files[0].path.canonicalize().unwrap(),
+            crate::config::canonical_platform_path(&files[0].path).unwrap(),
         )];
         let bytes = provider.len() + consumer.len();
         let positive = Providers::collect_with_budget(&files, &edges, (2, bytes)).unwrap();
@@ -1285,7 +1286,7 @@ mod tests {
         let mut cycle = edges.to_vec();
         cycle.push(SourceDependency::new(
             edges[0].location.clone(),
-            files[1].path.canonicalize().unwrap(),
+            crate::config::canonical_platform_path(&files[1].path).unwrap(),
         ));
         assert!(Providers::collect(&files, &cycle).unwrap().0.is_empty());
         for budget in [(1, bytes), (2, bytes - 1)] {

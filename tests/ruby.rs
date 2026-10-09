@@ -8822,30 +8822,6 @@ fn ruby_exclude_layers_and_config_escape_hatches_select_ruby_sources() {
     }
 }
 
-/// Asserts explain `lines` equal `expected`. On Windows a definition reached only through a load
-/// prints its verbatim (`\\?\`) canonical path, because the analysis root is normalized and the
-/// load target is not, so there each expected definition matches a printed line ending in it.
-fn ruby_assert_explained(lines: &[String], expected: &[String], context: &str) {
-    #[cfg(windows)]
-    {
-        assert_eq!(lines.len(), expected.len(), "{context}: {lines:?}");
-        for line in expected {
-            let suffix = line
-                .strip_prefix("definition ")
-                .map(|path| format!("/{path}"));
-            assert!(
-                lines.iter().any(|printed| printed == line
-                    || suffix.as_deref().is_some_and(|suffix| {
-                        printed.starts_with("definition ") && printed.ends_with(suffix)
-                    })),
-                "{context}: `{line}` not in {lines:?}"
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    assert_eq!(lines, expected, "{context}");
-}
-
 /// Ruby loads cannot leave their root: `require_relative` through `..` and an explicit `./..`
 /// require are refused against the analysis root, and a load-path require through `..` is refused
 /// against its declared load path, each with a located unresolved-dependency warning and the
@@ -8876,8 +8852,13 @@ fn ruby_source_loads_cannot_escape_the_analysis_root() {
         "other.feature",
         "Feature: Other\n  Scenario: One\n    Given other step\n",
     );
+    // Outside the root the definition prints absolute, without the Windows verbatim prefix.
     let loaded = load_path.canonicalize().unwrap().join("x").join("world.rb");
-    let loaded = loaded.to_string_lossy().replace('\\', "/");
+    let loaded = loaded.to_string_lossy();
+    let loaded = loaded
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&loaded)
+        .replace('\\', "/");
     let feature = "feature other.feature [gherkin] via *.feature".to_owned();
     let followed = |path: &str| {
         [
@@ -8933,7 +8914,7 @@ fn ruby_source_loads_cannot_escape_the_analysis_root() {
             &["--definitions", "steps.rb", "--features", "*.feature"],
         );
         assert_eq!(code, 0, "{load}: {lines:?}");
-        ruby_assert_explained(&lines, &expected, load);
+        assert_eq!(lines, expected, "{load}");
         let summary = rows.last().unwrap();
         let definitions = expected
             .iter()

@@ -248,15 +248,15 @@ impl Config {
         Self::load_internal(root, overrides, cli_overrides)
     }
 
+    /// Loads the configuration for `root` with the given overrides, resolving `root` to its
+    /// canonical, platform-normalized form first.
     fn load_internal(
         root: &Path,
         overrides: ConfigOverrides,
         cli_overrides: CliConfigOverrides,
     ) -> Result<Self> {
-        let root = normalize_platform_path(
-            root.canonicalize()
-                .with_context(|| format!("cannot access target directory {}", root.display()))?,
-        );
+        let root = canonical_platform_path(root)
+            .with_context(|| format!("cannot access target directory {}", root.display()))?;
         if !root.is_dir() {
             bail!("target {} is not a directory", root.display());
         }
@@ -691,18 +691,59 @@ fn validate_project_output(root: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `path` without the Windows verbatim prefix, so it compares with `Config::root` and strips to
+/// a relative display path; unchanged on other platforms.
 pub(crate) fn normalize_platform_path(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
-        let value = path.to_string_lossy();
-        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-            return PathBuf::from(format!(r"\\{unc}"));
-        }
-        if let Some(local) = value.strip_prefix(r"\\?\") {
-            return PathBuf::from(local);
+        if let Some(plain) = strip_verbatim_prefix(&path.to_string_lossy()) {
+            return PathBuf::from(plain);
         }
     }
     path
+}
+
+/// `value` without its `\\?\` or `\\?\UNC\` verbatim prefix when the plain form names the same
+/// file: a drive-letter or UNC path under the legacy length limit whose components are not DOS
+/// device names and do not end in a dot or space. `None` keeps the verbatim form.
+#[cfg(any(windows, test))]
+fn strip_verbatim_prefix(value: &str) -> Option<String> {
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let (plain, components) = match value.strip_prefix(r"\\?\UNC\") {
+        Some(unc) => (format!(r"\\{unc}"), unc),
+        None => {
+            let local = value.strip_prefix(r"\\?\")?;
+            let bytes = local.as_bytes();
+            let drive = bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && bytes[2] == b'\\';
+            (local.to_owned(), drive.then(|| &local[3..])?)
+        }
+    };
+    let plain_component = |component: &str| {
+        let stem = component.split('.').next().unwrap_or(component);
+        !component.ends_with(['.', ' '])
+            && !component.contains('/')
+            && !RESERVED
+                .iter()
+                .any(|name| stem.trim_end().eq_ignore_ascii_case(name))
+    };
+    (plain.len() < 260
+        && components
+            .split('\\')
+            .filter(|c| !c.is_empty())
+            .all(plain_component))
+    .then_some(plain)
+}
+
+/// `path` canonicalized and normalized like `Config::root`, so paths reached through the
+/// filesystem compare with, and strip to relative paths under, the analysis root on every platform.
+pub(crate) fn canonical_platform_path(path: &Path) -> std::io::Result<PathBuf> {
+    path.canonicalize().map(normalize_platform_path)
 }
 
 fn read_raw_config(path: &Path) -> Result<RawConfig> {

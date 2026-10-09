@@ -6405,3 +6405,71 @@ fn regression_ruby_action_evidence_untrusted_expectations_keep_exact_policy() {
     // The identical pair's wording is far apart, so only the duplicate is reported.
     assert_eq!(run.active, vec!["duplicate-handler"]);
 }
+
+/// Ruby files reached only through `require_relative` or a `rubyLoadPaths` `require` report paths
+/// relative to the analysis root, in findings and in discovery output. On Windows a raw
+/// `canonicalize()` returns verbatim `\\?\C:\...` targets that do not strip against the root.
+#[test]
+fn regression_119_ruby_loaded_file_paths_stay_relative_to_the_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Each file's pair shares a body no other file has, so every finding stays within one file.
+    let handlers = |action: &str| {
+        format!("Given('the cart is empty') do\n  {action}(:all)\nend\n\nGiven('the basket has nothing') do\n  {action}(:all)\nend\n")
+    };
+    write(root, ".cuke-dedup.json", r#"{"rubyLoadPaths":["lib"]}"#);
+    write(
+        root,
+        "entry.rb",
+        "require_relative 'providers/steps'\nrequire 'shared/steps'\n",
+    );
+    write(root, "providers/steps.rb", &handlers("clear_cart"));
+    write(root, "lib/shared/steps.rb", &handlers("empty_basket"));
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(root)
+        .args([
+            "--reporters",
+            "jsonl",
+            "--no-metrics",
+            "--explain-discovery",
+        ])
+        .args(["--definitions", "entry.rb"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["type"] == "finding" && row["rule"] == "duplicate-handler")
+        .flat_map(|row| {
+            let related = row["related"].as_array().unwrap().clone();
+            std::iter::once(row["primary"].clone()).chain(related)
+        })
+        .map(|location| {
+            format!(
+                "{}:{}",
+                location["path"].as_str().unwrap(),
+                location["line"]
+            )
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        [
+            "lib/shared/steps.rb:1",
+            "lib/shared/steps.rb:5",
+            "providers/steps.rb:1",
+            "providers/steps.rb:5"
+        ],
+        "{stderr}"
+    );
+    for relative in ["providers/steps.rb", "lib/shared/steps.rb"] {
+        let shown = relative.replace('/', std::path::MAIN_SEPARATOR_STR);
+        assert!(
+            stderr.contains(&format!("cuke-dedup: definition {shown}\n")),
+            "{stderr}"
+        );
+    }
+}
