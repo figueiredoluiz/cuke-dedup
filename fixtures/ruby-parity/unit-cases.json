@@ -186,8 +186,9 @@
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the pinned engine outcome (`public analysis rejects mutated configs above hard safety ceilings`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: the library `analyze` and `analyze_with_diagnostics` entry points re-validate a `Config` mutated after decoding; the test passes empty inputs, so no adapter-produced data is consumed, and Ruby source never constructs a `Config`; and every config-file and CLI path rejects the values before analysis starts. `ruby_candidate_limits_cannot_exceed_hard_safety_ceilings` pins the end-to-end rejection and the accepted ceilings on a Ruby corpus.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -374,21 +375,33 @@
         },
         {
           "name": "candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`candidate buckets skip unrelated pairs and keep exact groups`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "100 Ruby registrations with unique wording and distinct receiver methods evaluate 0 candidate comparisons; three `Given('same')` registrations evaluate exactly 2 normalizedMatcher pairs.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "candidate_limits_preserve_partial_analysis_and_report_skipped_work",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`candidate limits preserve partial analysis and report skipped work`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_structural_truncation_keeps_later_classes_and_bounds_locations"
+          },
+          "rationale": "143 Ruby receiver-call registrations at limits 100/20 report truncated, 20 evaluated (under the global limit), one truncated structural class, structuralHandler skips, retained parameterization findings, and exactly one partial-findings diagnostic.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "similarity_work_limits_fail_closed_before_quadratic_pair_verification",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`similarity work limits fail closed before quadratic pair verification`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_similarity_work_limits_fail_closed_before_pair_verification"
+          },
+          "rationale": "Ruby pairs whose matcher matrix (10,011-character matchers) or handler event matrix (10,002 events) exceed the cell ceiling report identicalHandler or matcherBlocking skipped 1, evaluated 0, truncated, a safety-limit diagnostic and no duplicate-handler or near-duplicate finding; sub-ceiling controls evaluate and report.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "suppression_globs_compile_once_and_pair_lookups_share_the_work_budget",
@@ -404,57 +417,89 @@
         },
         {
           "name": "structural_class_limit_preserves_work_from_later_classes",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`structural class limit preserves work from later classes`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_structural_truncation_keeps_later_classes_and_bounds_locations"
+          },
+          "rationale": "Two six-member Ruby structural classes at structural limit 2 report two truncated classes, 4 structuralHandler evaluations, and parameterization findings from both classes.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "global_candidate_limit_reports_the_source_that_was_truncated",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`global candidate limit reports the source that was truncated`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "Five Ruby `Given('same')` registrations at global limit 2 report normalizedMatcher evaluated 2 and skipped 2, and total evaluated equals 2.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "candidate_limits_are_inclusive_at_the_exact_boundary",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`candidate limits are inclusive at the exact boundary`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: end-to-end inclusivity at the exact global limit. With `--max-candidate-comparisons` equal to the pair count, the Ruby pair stage is inclusive and a three-pair structural class at structural limit 3 is not truncated given global headroom (`ruby_candidate_census_pins_buckets_and_limit_boundaries`), but the matcher-overlap pass then reports one skipped comparison with nothing to overlap and marks the run incomplete. Map after that is fixed.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "candidate_limits_do_not_count_structural_pairs_that_cannot_reach_a_rule",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`candidate limits do not count structural pairs that cannot reach a rule`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "Three Ruby `Given('same') { page.perform(i) }` registrations, which share one structural class, at global limit 1 skip 1 normalizedMatcher pair and 0 structuralHandler pairs.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "same_normalized_pairs_do_not_consume_the_structural_limit",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`same normalized pairs do not consume the structural limit`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "The same three-member Ruby group at structural limit 1 evaluates 2 normalizedMatcher and 0 structuralHandler pairs with no truncation; distinct-matcher rows with the same handlers are the truncating control.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "same_normalized_class_does_not_report_false_structural_truncation",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`same normalized class does not report false structural truncation`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "Four same-matcher Ruby registrations in one structural class at structural limit 1 evaluate 3 normalizedMatcher pairs with 0 skipped and no truncation.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "structural_overlap_ignores_existing_pairs_within_one_handler_group",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the pinned engine outcome (`structural overlap ignores existing pairs within one handler group`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "Four Ruby `page.act(<literal>)` registrations with one identical-handler pair at structural limit 1 report identicalHandler evaluated 1 and exactly 4 skipped (not 5); the unlimited control evaluates 6 without truncation.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "trivial_and_unresolved_handlers_do_not_consume_candidate_budgets",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`trivial and unresolved handlers do not consume candidate budgets`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "Two extracted Ruby definitions with empty blocks, and two with uncomparable handlers (optional block parameter), evaluate 0 candidates; non-trivial and comparable controls evaluate 1 identicalHandler pair.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "candidate_limit_diagnostic_bounds_affected_class_locations",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: candidate or work budget at its boundary (`candidate limit diagnostic bounds affected class locations`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_structural_truncation_keeps_later_classes_and_bounds_locations"
+          },
+          "rationale": "Five truncated Ruby structural classes list three locations followed by `and 2 more`; a single truncated class lists one location with no `and N more` suffix.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers",
@@ -554,9 +599,13 @@
         },
         {
           "name": "homogeneous_handler_groups_generate_linear_candidates",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby group of four identical handlers asserting the linear candidate count through `expectedCandidateSources`. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
+          },
+          "rationale": "300 Ruby registrations with one shared handler evaluate 299 identicalHandler pairs and at most 600 comparisons in total (44,850 if quadratic).",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "parameterization_requires_a_bounded_value_like_matcher_difference",

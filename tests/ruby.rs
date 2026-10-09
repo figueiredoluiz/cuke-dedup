@@ -6811,6 +6811,411 @@ fn ruby_candidate_limits_warn_and_still_report_without_failing_the_run() {
         ));
 }
 
+/// Runs `source` as `steps.rb` under both candidate limits; returns the JSONL records and stderr.
+fn ruby_limited_run(source: &str, candidates: usize, structural: usize) -> (Vec<Value>, String) {
+    let directory = tempfile::tempdir().unwrap();
+    ruby_write(directory.path(), "steps.rb", source);
+    let (candidates, structural) = (candidates.to_string(), structural.to_string());
+    let output = ruby_cli(directory.path(), "*.rb")
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(["--max-candidate-comparisons", &candidates])
+        .args(["--max-structural-class-comparisons", &structural])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    // Unlike `ruby_jsonl`, callers need stderr; a run that fails before analysis reports why.
+    assert!(
+        !output.stdout.is_empty(),
+        "exit {:?}: {stderr}",
+        output.status.code()
+    );
+    (records(output.stdout), stderr)
+}
+
+/// Joins one registration line per index.
+fn ruby_steps(count: usize, line: impl Fn(usize) -> String) -> String {
+    (0..count).map(|index| line(index) + "\n").collect()
+}
+
+/// One census row: context, Ruby source, candidate limit, structural limit, expected pointers.
+type RubyCensusRow<'a> = (&'a str, String, usize, usize, &'a [(&'a str, Value)]);
+
+/// Ruby candidate buckets, source attribution and both limit boundaries match the engine census:
+/// unrelated pairs are never proposed, same-matcher pairs never spend the structural limit, and
+/// trivial or uncomparable handlers spend no budget.
+#[test]
+fn ruby_candidate_census_pins_buckets_and_limit_boundaries() {
+    // `page.perform(<literal>)` handlers share one structural class, so every `same` row also
+    // carries structural pairs that the matcher partition must keep out of the structural limit.
+    let same = |count| ruby_steps(count, |i| format!("Given('same') {{ page.perform({i}) }}"));
+    let distinct = ruby_steps(3, |i| {
+        format!("Given('operation {i}') {{ page.perform({i}) }}")
+    });
+    let unrelated = ruby_steps(100, |i| {
+        format!("Given('unique step {i}') {{ page.action_{i}(1) }}")
+    });
+    // One identical-handler pair inside a four-member structural class: the structural pass must
+    // skip the pair the identical-handler source already holds (4 skipped, not 5).
+    let overlap = ["first", "second", "third", "fourth"]
+        .iter()
+        .zip(["same", "same", "third", "fourth"])
+        .map(|(matcher, value)| format!("Given('{matcher}') {{ page.act('{value}') }}\n"))
+        .collect::<String>();
+    let pair = |handler: &str| format!("Given('one') {handler}\nGiven('two') {handler}\n");
+    let rows: [RubyCensusRow<'_>; 15] = [
+        (
+            "unrelated wording and receivers",
+            unrelated,
+            100,
+            100,
+            &[
+                ("/analysis/candidateComparisonsEvaluated", 0.into()),
+                ("/summary/definitionsAnalyzed", 100.into()),
+            ],
+        ),
+        (
+            "exact matcher group is a spanning chain",
+            same(3),
+            100,
+            100,
+            &[
+                (
+                    "/analysis/candidateSources/normalizedMatcher/evaluated",
+                    2.into(),
+                ),
+                ("/analysis/candidateComparisonsEvaluated", 2.into()),
+                ("/analysis/truncated", false.into()),
+            ],
+        ),
+        (
+            "global limit attributes skips to its source",
+            same(5),
+            2,
+            100,
+            &[
+                (
+                    "/analysis/candidateSources/normalizedMatcher/evaluated",
+                    2.into(),
+                ),
+                (
+                    "/analysis/candidateSources/normalizedMatcher/skipped",
+                    2.into(),
+                ),
+                ("/analysis/candidateComparisonsEvaluated", 2.into()),
+                ("/analysis/truncated", true.into()),
+            ],
+        ),
+        (
+            "structural limit is inclusive",
+            distinct.clone(),
+            4,
+            3,
+            &[
+                (
+                    "/analysis/candidateSources/structuralHandler/evaluated",
+                    3.into(),
+                ),
+                ("/analysis/truncatedStructuralClasses", 0.into()),
+                ("/analysis/truncated", false.into()),
+            ],
+        ),
+        (
+            "structural limit one below the class",
+            distinct,
+            4,
+            2,
+            &[
+                (
+                    "/analysis/candidateSources/structuralHandler/evaluated",
+                    2.into(),
+                ),
+                (
+                    "/analysis/candidateSources/structuralHandler/skipped",
+                    1.into(),
+                ),
+                ("/analysis/truncatedStructuralClasses", 1.into()),
+            ],
+        ),
+        // Only the pair stage is pinned: at this exact boundary the overlap pass still reports a
+        // skip with nothing to overlap, so end-to-end inclusivity is not claimed here.
+        (
+            "global limit is inclusive at the pair stage",
+            same(3),
+            2,
+            10,
+            &[
+                (
+                    "/analysis/candidateSources/normalizedMatcher/evaluated",
+                    2.into(),
+                ),
+                (
+                    "/analysis/candidateSources/normalizedMatcher/skipped",
+                    0.into(),
+                ),
+            ],
+        ),
+        (
+            "global limit one below skips matcher pairs only",
+            same(3),
+            1,
+            10,
+            &[
+                (
+                    "/analysis/candidateSources/normalizedMatcher/skipped",
+                    1.into(),
+                ),
+                (
+                    "/analysis/candidateSources/structuralHandler/skipped",
+                    0.into(),
+                ),
+                (
+                    "/analysis/candidateSources/structuralHandler/evaluated",
+                    0.into(),
+                ),
+            ],
+        ),
+        (
+            "same-matcher pairs spare the structural limit",
+            same(3),
+            3,
+            1,
+            &[
+                (
+                    "/analysis/candidateSources/normalizedMatcher/evaluated",
+                    2.into(),
+                ),
+                (
+                    "/analysis/candidateSources/structuralHandler/evaluated",
+                    0.into(),
+                ),
+                ("/analysis/truncatedStructuralClasses", 0.into()),
+                ("/analysis/truncated", false.into()),
+            ],
+        ),
+        (
+            "same-matcher class reports no structural truncation",
+            same(4),
+            10,
+            1,
+            &[
+                (
+                    "/analysis/candidateSources/normalizedMatcher/evaluated",
+                    3.into(),
+                ),
+                ("/analysis/skippedCandidateComparisons", 0.into()),
+                ("/analysis/truncated", false.into()),
+            ],
+        ),
+        (
+            "structural pass skips pairs held by a handler group",
+            overlap.clone(),
+            10,
+            1,
+            &[
+                (
+                    "/analysis/candidateSources/identicalHandler/evaluated",
+                    1.into(),
+                ),
+                (
+                    "/analysis/candidateSources/structuralHandler/skipped",
+                    4.into(),
+                ),
+                ("/analysis/skippedCandidateComparisons", 4.into()),
+                ("/analysis/truncated", true.into()),
+            ],
+        ),
+        (
+            "overlap shape without the structural limit",
+            overlap,
+            10,
+            100,
+            &[
+                ("/analysis/candidateComparisonsEvaluated", 6.into()),
+                ("/analysis/truncated", false.into()),
+            ],
+        ),
+        (
+            "trivial handlers",
+            pair("{}"),
+            100,
+            100,
+            &[
+                ("/analysis/candidateComparisonsEvaluated", 0.into()),
+                ("/summary/definitionsAnalyzed", 2.into()),
+            ],
+        ),
+        (
+            "non-trivial control",
+            pair("{ page.perform }"),
+            100,
+            100,
+            &[(
+                "/analysis/candidateSources/identicalHandler/evaluated",
+                1.into(),
+            )],
+        ),
+        // An optional block parameter leaves the handler uncomparable but the definition extracted.
+        (
+            "uncomparable handlers",
+            pair("{ |value = 1| page.perform(value) }"),
+            100,
+            100,
+            &[
+                ("/analysis/candidateComparisonsEvaluated", 0.into()),
+                ("/summary/definitionsAnalyzed", 2.into()),
+                ("/corpus/incomplete", true.into()),
+            ],
+        ),
+        (
+            "comparable control",
+            pair("{ |value| page.perform(value) }"),
+            100,
+            100,
+            &[(
+                "/analysis/candidateSources/identicalHandler/evaluated",
+                1.into(),
+            )],
+        ),
+    ];
+    for (context, source, candidates, structural, expected) in rows {
+        let (rows, _) = ruby_limited_run(&source, candidates, structural);
+        let summary = rows.last().unwrap();
+        for (pointer, want) in expected {
+            assert_eq!(summary.pointer(pointer), Some(want), "{context}: {pointer}");
+        }
+    }
+
+    // Past the matcher-blocking posting cap a homogeneous handler group stays linear: a spanning
+    // identical-handler chain, not the 44,850 pairs of the group.
+    let homogeneous = ruby_steps(300, |i| {
+        format!("Given('homogeneous handler wording {i}') {{ shared_implementation() }}")
+    });
+    let (rows, _) = ruby_limited_run(&homogeneous, 2_000_000, 250_000);
+    let analysis = &rows.last().unwrap()["analysis"];
+    assert_eq!(
+        analysis["candidateSources"]["identicalHandler"]["evaluated"],
+        299
+    );
+    assert!(analysis["candidateComparisonsEvaluated"].as_u64().unwrap() <= 600);
+}
+
+/// Ruby structural truncation spends the class limit per class, keeps findings from every class,
+/// reports one partial-findings diagnostic, and bounds its listed class locations.
+#[test]
+fn ruby_structural_truncation_keeps_later_classes_and_bounds_locations() {
+    let classes = |count: usize, members: usize| {
+        ruby_steps(count * members, |i| {
+            let class = i / members;
+            format!("Given('class {class} operation {i}') {{ receiver{class}.act({i}) }}")
+        })
+    };
+    let (rows, _) = ruby_limited_run(&classes(2, 6), 100, 2);
+    ruby_assert_pointers(
+        &rows.last().unwrap()["analysis"],
+        &[
+            ("/truncatedStructuralClasses", 2.into()),
+            ("/candidateSources/structuralHandler/evaluated", 4.into()),
+        ],
+    );
+    let lines: Vec<u64> = rows
+        .iter()
+        .filter(|row| row["rule"] == "parameterization-candidate")
+        .map(|row| row["primary"]["line"].as_u64().unwrap())
+        .collect();
+    assert!(lines.iter().any(|line| *line <= 6), "{lines:?}");
+    assert!(lines.iter().any(|line| *line > 6), "{lines:?}");
+
+    let (rows, stderr) = ruby_limited_run(&classes(1, 143), 100, 20);
+    let analysis = &rows.last().unwrap()["analysis"];
+    ruby_assert_pointers(
+        analysis,
+        &[
+            ("/truncated", true.into()),
+            ("/candidateComparisonsEvaluated", 20.into()),
+            ("/truncatedStructuralClasses", 1.into()),
+        ],
+    );
+    assert!(analysis["candidateSources"]["structuralHandler"]["skipped"].as_u64() > Some(0));
+    assert!(rows
+        .iter()
+        .any(|row| row["rule"] == "parameterization-candidate"));
+    // Two missing-feature warnings plus exactly one incompleteness diagnostic.
+    assert_eq!(
+        stderr.matches("cuke-dedup: warning:").count(),
+        3,
+        "{stderr}"
+    );
+    assert_eq!(stderr.matches("partial findings are available").count(), 1);
+
+    let (rows, stderr) = ruby_limited_run(&classes(5, 3), 100, 1);
+    assert_eq!(
+        rows.last().unwrap()["analysis"]["truncatedStructuralClasses"],
+        5
+    );
+    assert!(stderr.contains("start at steps.rb:1:1, steps.rb:4:1, steps.rb:7:1, and 2 more;"));
+    let (rows, stderr) = ruby_limited_run(&classes(1, 3), 100, 1);
+    assert_eq!(
+        rows.last().unwrap()["analysis"]["truncatedStructuralClasses"],
+        1
+    );
+    assert!(
+        stderr.contains("start at steps.rb:1:1; partial"),
+        "{stderr}"
+    );
+}
+
+/// Ruby pairs whose matcher or handler similarity matrix exceeds the work ceiling are skipped
+/// before verification, report truncation, and produce no similarity finding.
+#[test]
+fn ruby_similarity_work_limits_fail_closed_before_pair_verification() {
+    // Matchers just past the 100,000,000-cell matrix ceiling (`l * r + l + r`); 1,010 characters
+    // is the evaluated control.
+    let matchers = |length: usize| {
+        let prefix = "a".repeat(length);
+        ruby_steps(2, |i| {
+            let suffix = ["b", "c"][i];
+            format!("Given('{prefix}{suffix}') {{ shared_implementation() }}")
+        })
+    };
+    // 10,002 action events per handler exceed the same ceiling for the handler matrix; differing
+    // final calls keep the handlers out of the identical and structural sources.
+    let handlers = |events: usize| {
+        let body = "page.shared_event\n".repeat(events);
+        ruby_steps(2, |i| {
+            let (noun, last) = [("account is", "first"), ("accounts are", "second")][i];
+            format!("Given('the {noun} enabled') do\n{body}{last}\nend")
+        })
+    };
+    for (source, kind, refused) in [
+        (matchers(10_010), "identicalHandler", true),
+        (matchers(1_010), "identicalHandler", false),
+        (handlers(10_000), "matcherBlocking", true),
+        (handlers(10), "matcherBlocking", false),
+    ] {
+        let (rows, stderr) = ruby_limited_run(&source, 100, 100);
+        let analysis = &rows.last().unwrap()["analysis"];
+        let similar = rows.iter().any(|row| {
+            matches!(
+                row["rule"].as_str(),
+                Some("duplicate-handler" | "near-duplicate-step")
+            )
+        });
+        assert_eq!(analysis["truncated"], refused, "{kind}");
+        assert_eq!(
+            analysis["candidateSources"][kind]["skipped"],
+            u64::from(refused),
+            "{kind}"
+        );
+        assert_eq!(
+            analysis["candidateSources"][kind]["evaluated"],
+            u64::from(!refused),
+            "{kind}"
+        );
+        assert_eq!(similar, !refused, "{kind}");
+        assert_eq!(stderr.contains("after safety limits"), refused, "{kind}");
+    }
+}
+
 /// A Ruby registration with a dynamic matcher leaves the corpus incomplete: the default run
 /// passes, strict mode from the CLI or config fails, and no baseline is written.
 #[test]
