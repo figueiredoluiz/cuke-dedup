@@ -397,15 +397,20 @@
         },
         {
           "name": "suppression_globs_compile_once_and_pair_lookups_share_the_work_budget",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: each configured suppression path glob compiles once from the suppression config, which reads no adapter data; the compile count has no output in any build. The adapter-facing half, pair lookups sharing the work budget, is pinned over Ruby definitions by `ruby_suppression_lookups_share_the_pair_work_budget`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "suppression_lookup_borrows_and_bounds_large_reasons_until_a_finding_is_retained",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained"
+          },
+          "rationale": "A Ruby duplicate pair extracted through the Ruby adapter and analyzed through the library API with a caller-built `**` suppression carrying the original 420,000-character reason retains one duplicate-matcher finding whose reason is the first 512 characters.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "structural_class_limit_preserves_work_from_later_classes",
@@ -517,9 +522,13 @@
         },
         {
           "name": "inline_suppression_applies_to_pair_findings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
+          },
+          "rationale": "A Ruby `# cuke-dedup:ignore duplicate-matcher -- ...` directive above line 4 suppresses the duplicate-matcher pair steps.rb:4/steps.rb:5 with reason `wording fixed by an external contract`, while line 4's duplicate-handler pair with steps.rb:6 stays active; a `duplicate-handler` directive on the related definition (related.rb:3) suppresses the pair related.rb:1/related.rb:3. Rows assert rule, primary, related and reason.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "wording_drift_with_same_handler_is_near_duplicate",
@@ -655,27 +664,43 @@
         },
         {
           "name": "path_and_matcher_suppression_must_select_the_same_definition",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "Ruby duplicate-handler pair in left.rb/right.rb: `path: left.rb` + `matcher: right matcher` and `path: *.rb` + `matcher: missing matcher` leave the finding active and report the suppression as matching no definition; `path: *.rb` + `matcher: right matcher` suppresses it.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "suppression_path_globs_remain_root_relative",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "Ruby pair in root.rb and nested/steps.rb: `path: *.rb` suppresses it; `path: steps.rb` does not and is reported as matching no definition.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "path_suppression_requires_every_definition_in_a_pair_to_be_in_scope",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "`path: legacy/**` leaves the Ruby pair in legacy/left.rb and current/right.rb active and suppresses the pair when both files are under legacy/.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "suppression_directory_patterns_and_unmatched_detection_share_semantics",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: suppression over Ruby findings (inline directive, path and matcher selectors, directory globs) in a Ruby fixture group with suppressed and active controls. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_suppressions_select_root_relative_paths_and_matchers"
+          },
+          "rationale": "For a Ruby pair under legacy/nested/, `path: legacy/` suppresses the finding with no unmatched warning, and `path: missing/**` leaves it active with `suppression 1 for duplicate-handler matched no step definitions`.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "opposite_assertions_are_not_duplicate_handlers",
@@ -3084,15 +3109,23 @@
         },
         {
           "name": "extracts_rule_scoped_inline_suppressions_and_rejects_malformed_directives",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby `# cuke-dedup:ignore` directives through the shared parser: rule-scoped directives, adjacent directives, unknown rules and empty reasons, pinned on Ruby sources. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
+          },
+          "rationale": "Two adjacent Ruby directives on one registration suppress its duplicate-matcher and unused-definition findings with their own reasons and nothing else; a directive without `--`, an unknown rule and an empty reason each produce exactly one located error (steps.rb:7:1, 9:1, 11:1), and the findings the first and third target stay active, with exit 2 and exactly four `cuke-dedup:` stderr lines in the run.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "rejects_oversized_inline_suppression_reasons",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby inline suppression reason over the 512-character limit rejected through the shared parser. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inline_directives_are_rule_scoped_and_reject_malformed_input"
+          },
+          "rationale": "A Ruby directive with a 513-character reason is rejected with `oversized.rb:2:1: inline suppression reason exceeds the 512-character limit` and its unused-definition finding stays active; the control with exactly 512 characters suppresses its finding and retains the full reason.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "structural_fingerprint_masks_string_literal_contents",
