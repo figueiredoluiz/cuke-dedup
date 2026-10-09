@@ -1108,6 +1108,521 @@ fn ruby_regex_classes_and_dotall_preserve_final_matching_outcomes() {
     }
 }
 
+/// Stderr text of the matcher-overlap incompleteness diagnostic.
+const RUBY_OVERLAP_INCOMPLETE: &str = "static matcher-overlap analysis is incomplete";
+
+/// The summary's `matcherOverlap` census as `(evaluated, skipped)`.
+fn ruby_overlap_census(rows: &[Value]) -> (u64, u64) {
+    let census = &rows.last().unwrap()["analysis"]["candidateSources"]["matcherOverlap"];
+    let count = |field: &str| census[field].as_u64().unwrap();
+    (count("evaluated"), count("skipped"))
+}
+
+/// Expands a `;`-separated spec of space-separated locations into sorted `ruby_rule_locations`
+/// rows; a bare number is a `steps.rb` line.
+fn ruby_locations(spec: &str) -> Vec<String> {
+    let location = |token: &str| match token.contains(':') {
+        true => token.to_owned(),
+        false => format!("steps.rb:{token}"),
+    };
+    let row = |row: &str| row.split(' ').map(location).collect::<Vec<_>>().join(" ");
+    let mut rows: Vec<String> = spec
+        .split(';')
+        .filter(|row| !row.is_empty())
+        .map(row)
+        .collect();
+    rows.sort();
+    rows
+}
+
+/// One Ruby `ParameterType` declaration line for `name` with the regexp literal body `regexp`.
+fn ruby_parameter_type(name: &str, regexp: &str) -> String {
+    format!("ParameterType(name: '{name}', regexp: /{regexp}/, transformer: ->(s) {{ s }})\n")
+}
+
+/// Declares each `(name, regexp)` type, then registers `value {name}` for each in order.
+fn ruby_value_types(types: &[(&str, &str)]) -> String {
+    let declarations = types
+        .iter()
+        .map(|(name, regexp)| ruby_parameter_type(name, regexp));
+    let steps = types
+        .iter()
+        .map(|(name, _)| format!("Given('value {{{name}}}') {{ {name}_action() }}\n"));
+    declarations.chain(steps).collect()
+}
+
+/// Matcher overlap shares the global candidate limit with handler comparisons, spends it once per
+/// unordered pair (a reverse witness is not a second comparison), and charges one index scan per
+/// matcher window before any pair is proposed; every truncation is one stderr diagnostic.
+#[test]
+fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
+    let shared = |names: &[&'static str]| {
+        ruby_value_types(
+            &names
+                .iter()
+                .map(|name| (*name, "red|green"))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let (three, two) = (
+        shared(&["first", "second", "third"]),
+        shared(&["first", "second"]),
+    );
+    // Lines 7-8 form one identical-handler comparison, evaluated before overlap, whose literal
+    // witnesses accept only their own definition.
+    let handlers = format!(
+        "{three}Given('alpha step') {{ shared_work(1) }}\nGiven('beta step') {{ shared_work(1) }}\n"
+    );
+    // `<name>-only` witnesses match only their own definition, so nothing overlaps and only the
+    // scan charge can truncate: five windows of one cost 5 scans per witness against a witness
+    // scan budget of 4 x limit, while one window costs 1.
+    let names = ["first", "second", "third", "fourth", "fifth"];
+    let own = names.map(|name| format!("{name}-only"));
+    let five = ruby_value_types(
+        &names
+            .into_iter()
+            .zip(own.iter().map(String::as_str))
+            .collect::<Vec<_>>(),
+    );
+    // context, source, window, candidate limit, handler comparisons, (evaluated, skipped),
+    // overlap findings
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        Option<usize>,
+        usize,
+        u64,
+        (u64, u64),
+        &'a str,
+    );
+    let rows: [Row<'_>; 8] = [
+        ("limit 1 of 3 pairs", &three, None, 1, 0, (1, 1), "4 5"),
+        (
+            "limit 3 of 3 pairs",
+            &three,
+            None,
+            3,
+            0,
+            (3, 0),
+            "4 5;4 6;5 6",
+        ),
+        (
+            "handler pair spends 1 of limit 3",
+            &handlers,
+            None,
+            3,
+            1,
+            (2, 1),
+            "4 5;4 6",
+        ),
+        (
+            "handler pair within limit 4",
+            &handlers,
+            None,
+            4,
+            1,
+            (3, 0),
+            "4 5;4 6;5 6",
+        ),
+        (
+            "reverse witness reuses the pair",
+            &two,
+            None,
+            1,
+            0,
+            (1, 0),
+            "3 4",
+        ),
+        ("five windows at limit 1", &five, Some(1), 1, 0, (0, 1), ""),
+        ("five windows at limit 2", &five, Some(1), 2, 0, (0, 1), ""),
+        ("one window at limit 2", &five, None, 2, 0, (0, 0), ""),
+    ];
+    for (context, source, window, limit, handlers, census, overlaps) in rows {
+        let limit = limit.to_string();
+        let arguments = ["--max-candidate-comparisons", &limit];
+        let (rows, stderr) = ruby_records_run(&[("steps.rb", source)], window, &arguments);
+        assert_eq!(ruby_overlap_census(&rows), census, "{context}");
+        let analysis = &rows.last().unwrap()["analysis"];
+        assert_eq!(
+            analysis["candidateSources"]["identicalHandler"]["evaluated"], handlers,
+            "{context}"
+        );
+        assert_eq!(
+            analysis["candidateComparisonsEvaluated"],
+            census.0 + handlers,
+            "{context}"
+        );
+        assert_eq!(analysis["truncated"], census.1 > 0, "{context}");
+        let found = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(found, ruby_locations(overlaps), "{context}");
+        // Two lines report the absent feature corpus; the rest is the overlap diagnostic.
+        let truncated = usize::from(census.1 > 0);
+        assert_eq!(stderr.lines().count(), 2 + truncated, "{context}: {stderr}");
+        assert_eq!(
+            stderr.matches(RUBY_OVERLAP_INCOMPLETE).count(),
+            truncated,
+            "{context}"
+        );
+    }
+}
+
+/// Overlap findings stop at the 10,000 retained-finding cap and mark the run incomplete; a corpus
+/// whose 9,870 pairs fit under the cap reports every pair and stays complete.
+#[test]
+fn ruby_matcher_overlap_caps_finding_storms_at_the_retained_limit() {
+    // 150 mutually overlapping definitions form 11,175 pairs, more than the cap, inside a
+    // candidate limit of 30,000; 141 form 9,870.
+    for (count, findings, census) in [(150, 10_000, (10_001, 1)), (141, 9_870, (9_870, 0))] {
+        let names: Vec<_> = (0..count).map(|index| format!("type_{index}")).collect();
+        let types: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), "red|green"))
+            .collect();
+        let arguments = ["--max-candidate-comparisons", "30000"];
+        let source = ruby_value_types(&types);
+        let (rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+        let overlaps = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(overlaps.len(), findings, "{count}");
+        assert_eq!(rows.len(), findings + 1, "{count}: only overlap findings");
+        let first = format!("steps.rb:{} steps.rb:{}", count + 1, count + 2);
+        assert!(overlaps.contains(&first), "{count}");
+        assert_eq!(ruby_overlap_census(&rows), census, "{count}");
+        let truncated = usize::from(census.1 > 0);
+        assert_eq!(stderr.matches(RUBY_OVERLAP_INCOMPLETE).count(), truncated);
+    }
+}
+
+/// A window whose combined matcher program exceeds the 1 MiB regex limit is split into several
+/// sets, and each feature step still marks exactly the definition it matches as used; the split is
+/// observable as the overlap scan charge of one witness per set.
+#[test]
+fn ruby_split_matcher_index_keeps_each_step_on_its_own_definition() {
+    // `.{10}` compiles to a Unicode-wide program: 200 of them exceed the combined limit, so the
+    // default window splits into four sets and definitions 123 and 199 sit in later sets than
+    // definition 0. `[a-j]{10}` accepts the same feature steps and fits one set. The two declared
+    // `-only` witnesses (lines 203-204) match only their own definition, so nothing overlaps and
+    // only the scan charge can truncate: at limit 1 the witness scan budget is 4, which affords
+    // both witnesses against one set but one witness against four.
+    let used = [0, 123, 199];
+    let feature: String = used
+        .iter()
+        .map(|index| format!("  Given distinct matcher value {index:04} abcdefghij\n"))
+        .collect();
+    let witnesses = ruby_value_types(&[("first", "first-only"), ("second", "second-only")]);
+    let arguments = ["--max-candidate-comparisons", "1"];
+    // matcher suffix, (evaluated, skipped) overlap census
+    for (suffix, census) in [(".{10}", (0, 1)), ("[a-j]{10}", (0, 0))] {
+        let steps = ruby_steps(200, |index| {
+            format!("Given(/^distinct matcher value {index:04} {suffix}$/) {{ action_{index}() }}")
+        });
+        let steps = format!("{steps}{witnesses}");
+        let (rows, stderr) =
+            ruby_usage_run(&steps, &format!(" Scenario: S\n{feature}"), &arguments);
+        let truncated = usize::from(census.1 > 0);
+        assert_eq!(stderr.lines().count(), truncated, "{suffix}: {stderr}");
+        assert_eq!(
+            stderr.matches(RUBY_OVERLAP_INCOMPLETE).count(),
+            truncated,
+            "{suffix}"
+        );
+        assert_eq!(ruby_overlap_census(&rows), census, "{suffix}");
+        let analysis = &rows.last().unwrap()["analysis"];
+        assert_eq!(analysis["truncated"], census.1 > 0, "{suffix}");
+        let unused: Vec<String> = (1..=200)
+            .filter(|line| !used.contains(&(line - 1)))
+            .chain([203, 204])
+            .map(|line| line.to_string())
+            .collect();
+        let unused = ruby_locations(&unused.join(";"));
+        assert_eq!(
+            ruby_rule_locations(&rows, "unused-definition"),
+            unused,
+            "{suffix}"
+        );
+        for rule in ["ambiguous-step", "overlapping-matcher"] {
+            assert!(
+                ruby_rule_locations(&rows, rule).is_empty(),
+                "{suffix}: {rule}"
+            );
+        }
+    }
+}
+
+/// Proven ambiguity withholds an overlap only for definitions that share one ambiguity group,
+/// including when their memberships are ordered and interleaved; without feature steps every
+/// overlapping pair is reported.
+#[test]
+fn ruby_proven_ambiguity_membership_withholds_only_pairs_sharing_a_group() {
+    // Feature steps prove groups {0,2}, {1,3}, {2,4} (lines 6-10). Witnesses propose (0,1), (0,2),
+    // (1,2), (1,3), (1,4) and (2,4): (2,4) needs the intersection to step past definition 2's
+    // first group, and (1,2) starts with the right side's smaller group.
+    let source = ruby_value_types(&[
+        ("p0", "w01|g02|w20"),
+        ("p1", "w14|w01|g13"),
+        ("p2", "w20|g02|g24|w42|w14"),
+        ("p3", "g13"),
+        ("p4", "w42|w14|g24"),
+    ]);
+    let groups = "usage.feature:3 6 8;usage.feature:4 7 9;usage.feature:5 8 10";
+    let every = "6 7;6 8;7 8;7 9;7 10;8 10";
+    for (steps, ambiguous, overlaps) in [
+        (
+            "value g02\n  Given value g13\n  Given value g24",
+            groups,
+            "6 7;7 8;7 10",
+        ),
+        ("value none", "", every),
+    ] {
+        let feature = format!(" Scenario: S\n  Given {steps}\n");
+        let (rows, stderr) = ruby_usage_run(&source, &feature, &[]);
+        assert_eq!(stderr, "", "{steps}");
+        let found = ruby_rule_locations(&rows, "ambiguous-step");
+        assert_eq!(found, ruby_locations(ambiguous), "{steps}");
+        let found = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(found, ruby_locations(overlaps), "{steps}");
+    }
+}
+
+/// Repeated outline step text gets the full match set at each location, and a path suppression
+/// marks both resulting ambiguities suppressed while both definitions stay used.
+#[test]
+fn ruby_repeated_step_text_and_suppressed_ambiguity_keep_usage() {
+    let steps = "Given('same step') { first_action() }\nGiven(/^same step$/) { second_action() }\n";
+    let feature = "Feature: F\n Scenario Outline: S\n  Given same step\n  And same step\n  Examples:\n   | value |\n   | one |\n";
+    let suppression = r#"{"suppressions":[{"rule":"ambiguous-step","path":"steps.rb","reason":"known overlap"}]}"#;
+    for (config, reason) in [(suppression, Some("known overlap")), ("{}", None)] {
+        let files = [
+            ("steps.rb", steps),
+            ("usage.feature", feature),
+            (".cuke-dedup.json", config),
+        ];
+        let (rows, stderr) = ruby_records_run(&files, None, &["--features", "usage.feature"]);
+        assert_eq!(stderr, "", "{config}");
+        let ambiguous = ruby_locations("usage.feature:3 1 2;usage.feature:4 1 2");
+        assert_eq!(
+            ruby_rule_locations(&rows, "ambiguous-step"),
+            ambiguous,
+            "{config}"
+        );
+        for rule in ["unused-definition", "overlapping-matcher"] {
+            assert!(
+                ruby_rule_locations(&rows, rule).is_empty(),
+                "{config}: {rule}"
+            );
+        }
+        for row in rows.iter().filter(|row| row["rule"] == "ambiguous-step") {
+            assert_eq!(row["suppression"]["reason"].as_str(), reason, "{config}");
+            assert_eq!(row["active"], reason.is_none(), "{config}");
+        }
+    }
+}
+
+/// `overlapping-matcher` and `unused-definition` set to `off` report nothing and leave the overlap
+/// census at zero; an enabled `unused-definition` still skips a definition a step uses.
+#[test]
+fn ruby_disabled_overlap_and_unused_rules_report_nothing() {
+    let steps = "Given('unused') { unused_work() }\nGiven('pick {word}') { pick_one() }\nGiven(/^pick .*$/) { pick_other() }\n";
+    let both = [
+        "--rule",
+        "overlapping-matcher=off",
+        "--rule",
+        "unused-definition=off",
+    ];
+    // arguments, feature step, overlap findings, unused findings, overlap census
+    type Row<'a> = (&'a [&'a str], &'a str, &'a str, &'a str, (u64, u64));
+    let rows: [Row<'_>; 3] = [
+        (&both, "nothing here", "", "", (0, 0)),
+        (&[], "nothing here", "2 3", "1;2;3", (1, 0)),
+        (&both[..2], "unused", "", "2;3", (0, 0)),
+    ];
+    for (arguments, step, overlaps, unused, census) in rows {
+        let feature = format!(" Scenario: S\n  Given {step}\n");
+        let (rows, stderr) = ruby_usage_run(steps, &feature, arguments);
+        assert_eq!(stderr, "", "{arguments:?}");
+        let found = ruby_rule_locations(&rows, "overlapping-matcher");
+        assert_eq!(found, ruby_locations(overlaps), "{arguments:?}");
+        let found = ruby_rule_locations(&rows, "unused-definition");
+        assert_eq!(found, ruby_locations(unused), "{arguments:?}");
+        assert_eq!(ruby_overlap_census(&rows), census, "{arguments:?}");
+        let findings = rows.iter().filter(|row| row["type"] == "finding").count();
+        assert_eq!(findings, rows.len() - 1, "{arguments:?}");
+        assert_eq!(
+            rows.last().unwrap()["summary"]["findings"],
+            findings,
+            "{arguments:?}"
+        );
+    }
+}
+
+/// Witnesses come from built-in parameter samples, declared enumerable patterns (Ruby regexp
+/// literals and configured `(?ms:` scopes) and resolved Cucumber literal syntax; regex matchers and
+/// non-enumerable declared patterns yield none, so the permissive regex reports no overlap for them.
+#[test]
+fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
+    // `declared regexp;configured pattern;expression;permissive regex;witness`, with `-` for no
+    // declaration or configuration and an empty witness for no overlap. The regex-only pair on
+    // every row must never overlap: regexes have no witness, and the unanchored `/regex one/` text
+    // would match `/^regex .*$/` if a regex were reversed into one.
+    let rows = [
+        "-;-;I have {int} item(s) in red/blue;^I have .*$;I have 1 items in red",
+        r#"-;-;n {float} w {word} s {string};^n .*$;n 1.5 w sample s "sample""#,
+        r"-;-;x a\\(b) c/d;^x a.*$;x a(b) c",
+        "-;-;open(unclosed;^open.*$;open(unclosed",
+        "red|green;-;pick {colour};^pick .*$;pick red",
+        "(red|green);-;pick {colour};^pick .*$;pick red",
+        "(?:red|green);-;pick {colour};^pick .*$;pick red",
+        "((red|green));-;pick {colour};^pick .*$;pick red",
+        "(red)|(green);-;pick {colour};^pick .*$;",
+        ";-;pick {colour};^pick .*$;",
+        "red.*;-;pick {colour};^pick .*$;",
+        "-;(?ms:red|green);pick {colour};^pick .*$;pick red",
+        "-;(?m:red|green);pick {colour};^pick .*$;pick red",
+    ];
+    for row in rows {
+        let [declared, configured, expression, regex, witness] =
+            <[&str; 5]>::try_from(row.split(';').collect::<Vec<_>>()).unwrap();
+        let declared = match declared {
+            "-" => String::new(),
+            pattern => ruby_parameter_type("colour", pattern),
+        };
+        let config = format!(r#"{{"parameterTypes":{{"colour":"{configured}"}}}}"#);
+        let config = if configured == "-" { "{}" } else { &config };
+        let source = format!("{declared}Given('{expression}') {{ expression_action() }}\nGiven(/{regex}/) {{ regex_action() }}\nGiven(/regex one/) {{ one_action() }}\nGiven(/^regex .*$/) {{ any_action() }}\n");
+        let files = [("steps.rb", source.as_str()), (".cuke-dedup.json", config)];
+        let (rows, stderr) = ruby_records_run(&files, None, &["--rule", "unused-definition=off"]);
+        assert_eq!(
+            rows.last().unwrap()["corpus"]["incomplete"],
+            false,
+            "{source}: {stderr}"
+        );
+        let messages: Vec<_> = rows
+            .iter()
+            .filter(|row| row["rule"] == "overlapping-matcher")
+            .map(|row| row["message"].as_str().unwrap())
+            .collect();
+        let shown = expression.replace(r"\\", r"\");
+        let accepts = format!("Matchers `{shown}` and `{regex}` both accept the step `{witness}`");
+        let expected: &[&str] = if witness.is_empty() { &[] } else { &[&accepts] };
+        assert_eq!(messages, expected, "{source}");
+    }
+}
+
+/// The custom-parameter fallback keeps optional text, `/` alternatives, signed integers, escaped
+/// unclosed parentheses and repeated spaces exact with a declared type, so a step outside that
+/// text is unused; an undeclared type makes the fallback inexact, so the definition is never
+/// unused.
+#[test]
+fn ruby_fallback_expressions_keep_optional_alternative_and_declared_text_exact() {
+    let colour = ruby_parameter_type("colour", "red|green");
+    let custom = ruby_parameter_type("custom", "known");
+    let eat = "I eat/eats {int} cucumber(s) with {colour}";
+    // declarations, expression, feature step, unused
+    let rows: [(&str, &str, &str, bool); 10] = [
+        (&colour, eat, "I eat 2 cucumbers with red", false),
+        (&colour, eat, "I eats -2 cucumber with green", false),
+        (&colour, eat, "I eat 2 cucumbers with blue", true),
+        (
+            &colour,
+            "open(unclosed {colour}",
+            "open(unclosed red",
+            false,
+        ),
+        (&colour, "open(unclosed {colour}", "openunclosed red", true),
+        (&colour, "two  spaces {colour}", "two  spaces red", false),
+        (&colour, "two  spaces {colour}", "two spaces red", true),
+        ("", "a {custom}", "b anything", false),
+        (&custom, "a {custom}", "b anything", true),
+        (&custom, "a {custom}", "a known", false),
+    ];
+    for (types, expression, step, unused) in rows {
+        let steps = format!("{types}Given('{expression}') {{ work() }}\n");
+        let feature = format!(" Scenario: S\n  Given {step}\n");
+        let (rows, stderr) = ruby_usage_run(&steps, &feature, &[]);
+        assert_eq!(stderr, "", "{expression}: {step}");
+        let line = types.lines().count() + 1;
+        let expected = if unused {
+            line.to_string()
+        } else {
+            String::new()
+        };
+        let found = ruby_rule_locations(&rows, "unused-definition");
+        assert_eq!(found, ruby_locations(&expected), "{expression}: {step}");
+    }
+}
+
+/// Regex and Cucumber Expression matchers over the 1 MiB pattern limit each report the regex
+/// resource limit at their own location; a matcher outside the supported regex subset reports
+/// its subset diagnostic, never the limit.
+#[test]
+fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
+    let oversized = "x".repeat(1024 * 1024 + 1);
+    let source = format!("# limits\nGiven(/{oversized}/) {{ long_regex() }}\nGiven(/^a++$/) {{ possessive() }}\nGiven('{oversized}') {{ long_expression() }}\nGiven('fine') {{ fine() }}\n");
+    let arguments = ["--rule", "unused-definition=off"];
+    let (_, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+    // The resource-limit diagnostic names the absolute temporary path, so each line is pinned by
+    // its fixed prefix and its located suffix.
+    let limits: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.contains("resource limit"))
+        .collect();
+    assert_eq!(limits.len(), 2, "{stderr}");
+    for (limit, line) in limits.iter().zip([2, 4]) {
+        let suffix = format!("/steps.rb:{line}:1 exceeds the 1048576-byte regex resource limit; simplify the matcher or remove its source from definition discovery");
+        assert!(
+            limit.starts_with("cuke-dedup: warning: step matcher at "),
+            "{limit}"
+        );
+        assert!(limit.ends_with(&suffix), "{limit}");
+    }
+    let subset = "Ruby regular expression is outside the supported static matching subset";
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line == format!("cuke-dedup: warning: steps.rb:3:1: {subset}")),
+        "{stderr}"
+    );
+}
+
+/// Matcher windows of one, two and wider than the corpus produce identical records and stderr on
+/// every axis: step matches split across windows, a proven ambiguity split across windows that
+/// withholds its overlap, overlap without feature usage, an equivalent-matcher group spanning
+/// windows, and usage decided across windows.
+#[test]
+fn ruby_windowing_does_not_change_findings_on_any_axis() {
+    let gate = "Given('the gate opens {word}') { gate_word() }\nGiven(/^the gate opens wide$/) { gate_regex() }\nGiven('the gate opens wide') { gate_text() }\n";
+    // At window 1 the proven pair sits in two windows and must still withhold the overlap.
+    let dial = "Given('the dial reads {int}') { dial_int() }\nGiven(/^the dial reads \\d+$/) { dial_regex() }\n";
+    let pump = "Given('the pump runs {word}') { pump_word() }\nGiven(/^the pump runs .+$/) { pump_regex() }\n";
+    let lamp = "Given('the lamp glows {word}') { lamp_one() }\nGiven('the lamp glows {word}') { lamp_two() }\nGiven(/^the lamp glows .+$/) { lamp_regex() }\n";
+    let parts = "Given('the seal closes') { seal() }\nGiven('the rotor spins') { rotor() }\nGiven('the brake holds') { brake() }\n";
+    // steps, feature step, ambiguous-step, overlapping-matcher and unused-definition findings
+    let cases = [
+        (gate, "the gate opens wide", "usage.feature:3 1 2 3", "", ""),
+        (dial, "the dial reads 7", "usage.feature:3 1 2", "", ""),
+        (pump, "something unrelated", "", "1 2", "1;2"),
+        (lamp, "nothing here", "", "1 3", "1;2;3"),
+        (parts, "the rotor spins", "", "", "1;3"),
+    ];
+    for (steps, step, ambiguous, overlaps, unused) in cases {
+        let feature = format!("Feature: F\n Scenario: S\n  Given {step}\n");
+        let files = [("steps.rb", steps), ("usage.feature", feature.as_str())];
+        let arguments = ["--features", "usage.feature"];
+        let windows = [1, 2, steps.lines().count() + 5];
+        let runs = windows.map(|window| ruby_records_run(&files, Some(window), &arguments));
+        assert_eq!(runs[1], runs[0], "{step}: window 2");
+        assert_eq!(runs[2], runs[0], "{step}: one window");
+        let rows = &runs[0].0;
+        for (rule, expected) in [
+            ("ambiguous-step", ambiguous),
+            ("overlapping-matcher", overlaps),
+            ("unused-definition", unused),
+        ] {
+            let found = ruby_rule_locations(rows, rule);
+            assert_eq!(found, ruby_locations(expected), "{step}: {rule}");
+        }
+    }
+}
+
 #[test]
 fn ruby_nested_handler_outcomes_preserve_structure_and_capture_scope() {
     for (left, right, duplicate) in [
@@ -3509,11 +4024,21 @@ fn ruby_project(files: &[(&str, &str)]) -> tempfile::TempDir {
 }
 
 /// Runs the binary with JSONL output over `files` written to a temporary root, with the `*.rb`
-/// definitions and `extra` arguments; returns the records and stderr, surfacing exit code and
-/// stderr when no summary is produced.
-fn ruby_records_run(files: &[(&str, &str)], extra: &[&str]) -> (Vec<Value>, String) {
+/// definitions, matcher window `window` (an inherited override is removed when `None`) and `extra`
+/// arguments; returns the records and stderr, surfacing exit code and stderr when no summary is
+/// produced.
+fn ruby_records_run(
+    files: &[(&str, &str)],
+    window: Option<usize>,
+    extra: &[&str],
+) -> (Vec<Value>, String) {
     let directory = ruby_project(files);
-    let output = ruby_cli(directory.path(), "*.rb")
+    let mut command = ruby_cli(directory.path(), "*.rb");
+    match window {
+        Some(size) => command.env("CUKE_DEDUP_MATCHER_WINDOW", size.to_string()),
+        None => command.env_remove("CUKE_DEDUP_MATCHER_WINDOW"),
+    };
+    let output = command
         .args(["--reporters", "jsonl", "--no-metrics"])
         .args(extra)
         .output()
@@ -3535,6 +4060,7 @@ fn ruby_usage_run(steps: &str, feature: &str, extra: &[&str]) -> (Vec<Value>, St
     let arguments = [&["--features", "usage.feature"], extra].concat();
     ruby_records_run(
         &[("steps.rb", steps), ("usage.feature", &feature)],
+        None,
         &arguments,
     )
 }
@@ -7085,7 +7611,7 @@ fn ruby_limited_run(source: &str, candidates: usize, structural: usize) -> (Vec<
         "--max-structural-class-comparisons",
         &structural,
     ];
-    ruby_records_run(&[("steps.rb", source)], &limits)
+    ruby_records_run(&[("steps.rb", source)], None, &limits)
 }
 
 /// Joins one registration line per index.

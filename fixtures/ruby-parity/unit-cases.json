@@ -1051,62 +1051,94 @@
         {
           "name": "broad_ambiguity_groups_use_linear_membership_storage",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (broad ambiguity groups use linear membership storage) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: an observable for the linear ambiguity-membership layout (for example a work charge or limit tied to membership size). Today a quadratic layout yields identical findings and census for any adapter.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "matcher_overlap_respects_the_shared_candidate_budget",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher overlap respects the shared candidate budget) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Three Ruby `value {type}` definitions with `red|green` ParameterTypes at --max-candidate-comparisons 1 report matcherOverlap evaluated 1 / skipped 1, analysis.truncated, only the steps.rb:4-5 overlap and one overlap-incomplete diagnostic; the limit-3 control evaluates all 3 pairs. Adding one identical-handler pair that runs first makes limit 3 leave overlap at evaluated 2 / skipped 1 and limit 4 evaluate all 3, with candidateComparisonsEvaluated equal to overlap plus handler comparisons, so overlap shares the handler budget.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "matcher_overlap_charges_index_scans_before_candidate_generation",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher overlap charges index scans before candidate generation) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Five Ruby `value {name}` definitions with `<name>-only` types run at CUKE_DEDUP_MATCHER_WINDOW=1: limit 1 and limit 2 both report evaluated 0 / skipped 1, no finding and one diagnostic, while the single-window control at limit 2 reports skipped 0, so only the per-window scan charge truncates.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "reverse_witnesses_do_not_consume_the_unique_pair_budget_twice",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (reverse witnesses do not consume the unique pair budget twice) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Two mutually overlapping Ruby definitions at --max-candidate-comparisons 1 report evaluated 1 / skipped 0, the steps.rb:3-4 overlap, analysis.truncated false and no overlap diagnostic, although both witnesses propose the pair.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "matcher_overlap_caps_finding_storms_and_marks_the_result_incomplete",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher overlap caps finding storms and marks the result incomplete) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_caps_finding_storms_at_the_retained_limit"
+          },
+          "rationale": "150 overlapping Ruby definitions (11,175 pairs) at a 30,000 candidate limit report exactly 10,000 findings, all overlapping-matcher, evaluated 10,001 / skipped 1 and one overlap-incomplete diagnostic; the 141-definition control reports all 9,870 pairs with skipped 0 and no diagnostic.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "oversized_combined_matcher_programs_split_without_changing_matches",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (oversized combined matcher programs split without changing matches) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_split_matcher_index_keeps_each_step_on_its_own_definition"
+          },
+          "rationale": "200 Ruby regex definitions ending in `.{10}` exceed the production 1 MiB combined-set limit (the original shrinks the limits to 4 KiB/64 KiB, which a binary run cannot), so the index splits into four sets; with two declared-type witnesses at --max-candidate-comparisons 1 the per-set scan charge truncates overlap (skipped 1) only for the split corpus, while the `[a-j]{10}` control in one set does not. Steps for definitions 1, 124 and 200 leave exactly the other 197 unused and no ambiguity in both corpora.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "matcher_index_falls_back_when_even_one_combined_pattern_is_rejected",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (matcher index falls back when even one combined pattern is rejected) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence for the combined-index fallback: no Ruby or JS/TS input is known to reach `MatcherIndex::fallback_definitions` (a one-pattern RegexSet rejected after its Regex compiled); only the unit test reaches it with a hand-built expression. Decide whether the branch is reachable or dead code to delete.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "ambiguity_membership_intersection_handles_ordered_disjoint_groups",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (ambiguity membership intersection handles ordered disjoint groups) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_proven_ambiguity_membership_withholds_only_pairs_sharing_a_group"
+          },
+          "rationale": "Five Ruby definitions whose feature steps prove groups {0,2}, {1,3}, {2,4} report exactly those three ambiguities and only the unproven overlaps (0,1), (1,2), (1,4); the proven pairs (0,2), (1,3) and (2,4), which require stepping past a smaller group, are withheld, and the no-usage control reports all six overlaps.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "feature_usage_caches_repeated_text_and_supports_suppressed_ambiguity",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (feature usage caches repeated text and supports suppressed ambiguity) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_repeated_step_text_and_suppressed_ambiguity_keep_usage"
+          },
+          "rationale": "Ruby `'same step'` and `/^same step$/` over an outline repeating that text on lines 3 and 4 report both ambiguities (each with both definitions), no unused or overlap finding, and with a path suppression both carry reason `known overlap` and are inactive; the unsuppressed control keeps them active. The cache itself has no observable beyond identical match sets per repeated text, as in the original.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "overlap_and_unused_rules_honor_disabled_severity_and_usage",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (overlap and unused rules honor disabled severity and usage) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_disabled_overlap_and_unused_rules_report_nothing"
+          },
+          "rationale": "With `--rule overlapping-matcher=off --rule unused-definition=off` a Ruby corpus with one overlapping pair and three unused definitions reports no finding and a zero matcherOverlap census; the default control reports the overlap, three unused definitions and evaluated 1; with only overlap off, the definition a step uses is not reported unused.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "non_authoritative_matchers_cannot_prove_a_definition_unused",
@@ -1119,26 +1151,34 @@
         {
           "name": "witness_generation_covers_builtins_declared_literals_and_unknowns",
           "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls for built-in parameter types and unknown types; the group pins only declared types. Owned by the completion follow-up."
+          "rationale": "Needs Ruby evidence for unknown placeholders: an undeclared parameter makes the matcher non-authoritative, so overlap skips it before witness generation and no run observes the `None` witness. Builtin and declared-literal witnesses are pinned by `ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns`. The array form `regexp: [/red/, /green/]` yields no witness and misses an overlap Cucumber reports.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "fallback_expression_handles_optional_alternative_and_declared_parameters",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: Ruby controls for optional and alternative fallback syntax; the group pins only array-declared types. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_fallback_expressions_keep_optional_alternative_and_declared_text_exact"
+          },
+          "rationale": "With a Ruby-declared type the fallback for `I eat/eats {int} cucumber(s) with {colour}`, `open(unclosed {colour}` and `two  spaces {colour}` uses steps inside that text (including `-2`) and reports steps outside it unused; an undeclared `{custom}` is never unused while the declared control is.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "matcher_compilation_reports_limits_but_not_unsupported_syntax",
           "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby matcher over the compile limit beside an unsupported-syntax matcher, pinning that only the limit is reported as a limit. Owned by the completion follow-up.",
+          "rationale": "Needs Ruby evidence: a Ruby regex that compiles too big is reported as \"outside the supported static matching subset\" (alone, or beside the resource limit) where JS/TS reports only the resource limit, and the unsupported-syntax arm of `compile_definition_regex` is unreachable from Ruby because dialect translation validates first. The resource-limit diagnostics themselves are pinned by `ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "windowing_does_not_change_findings_on_any_axis",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: usage/overlap budget or index behaviour (windowing does not change findings on any axis) observed on a Ruby corpus sized to the boundary. Owned by the completion follow-up.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_windowing_does_not_change_findings_on_any_axis"
+          },
+          "rationale": "The five original axes as Ruby corpora run at CUKE_DEDUP_MATCHER_WINDOW 1, 2 and wider than the corpus produce identical JSONL records and stderr, and the pinned ambiguous-step, overlapping-matcher and unused-definition locations show each axis discriminates.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },
