@@ -851,7 +851,7 @@
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
-      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one, skip the overlap pass and report the truncation diagnostics; the corpus itself stays complete."
+      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one and report the truncation diagnostic; the matcher-overlap pass completes because no matcher pair overlaps, and the corpus itself stays complete."
     },
     "equivalent-handlers-review-gap-candidate-small-budget": {
       "sourceCase": "review-gap-candidate-small-budget",
@@ -908,7 +908,7 @@
       "expectedCandidateSources": {
         "matcherBlocking": 1
       },
-      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one, skip the overlap pass and report the truncation diagnostics; the corpus itself stays complete."
+      "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one and report the truncation diagnostic; the matcher-overlap pass completes because no matcher pair overlaps, and the corpus itself stays complete."
     },
     "equivalent-handlers-review-gap-lexical-tdz": {
       "sourceCase": "review-gap-lexical-tdz",

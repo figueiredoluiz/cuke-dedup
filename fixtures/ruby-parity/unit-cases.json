@@ -489,8 +489,12 @@
         },
         {
           "name": "candidate_limits_are_inclusive_at_the_exact_boundary",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: end-to-end inclusivity at the exact global limit. With `--max-candidate-comparisons` equal to the pair count, the Ruby pair stage is inclusive and a three-pair structural class at structural limit 3 is not truncated given global headroom (`ruby_candidate_census_pins_buckets_and_limit_boundaries`), but the matcher-overlap pass then reports one skipped comparison with nothing to overlap and marks the run incomplete. Map after that is fixed.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_exact_global_limit_does_not_truncate_matcher_overlap"
+          },
+          "rationale": "`regression_exact_global_limit_does_not_truncate_matcher_overlap` runs Ruby and TypeScript corpora through the built binary at a global limit equal to their needed comparisons (a single matcher group, a three-pair structural class at structural limit 3, a real overlap) without truncation, and one comparison short of a real overlap as the truncating control that fails strict mode.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1112,7 +1116,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "54e4bf0a740a26bec2d57046537a5de8df0de71aa06aeb5cb8db0e158bf65172",
+      "sourceSha256": "f8ad81024f15281db45ca6cb8fa1178115b4ea3acbc60ee0439441799a1bdb01",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1152,6 +1156,22 @@
             "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
           },
           "rationale": "Five Ruby `value {name}` definitions with `<name>-only` types run at CUKE_DEDUP_MATCHER_WINDOW=1: limit 1 and limit 2 both report evaluated 0 / skipped 1, no finding and one diagnostic, while the single-window control at limit 2 reports skipped 0, so only the per-window scan charge truncates.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Ruby `alpha {word}` and `beta {word}` with seven `beta` and two `alpha` regexes at limit 2 (overlap cap 8): with windows of 9 the earlier witness `alpha` crosses the cap in window 2, keeps one proposal and the replay reports `1 10;2 3`; checked once per witness it kept both and reported `1 10;1 11`, which the single-window control still reports.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "scan_windows_stop_at_a_break",
+          "requiredStatus": "partial",
+          "rationale": "Needs Ruby evidence: an observable for skipped window compilation after the overlap cap is reached. The skipped windows store nothing, so findings and census are identical for any adapter; same class as broad_ambiguity_groups_use_linear_membership_storage.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4087,7 +4107,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "a6428964ca4fe08c040ee1eea546d29f1196324cb04d900da325d44df79f7243",
+      "sourceSha256": "170487e9c5adb7bb3a7aeb54c56bca65a678f14760c061b20724800658140e12",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5313,6 +5333,16 @@
             "name": "regression_ruby_pending_stub_handlers_are_not_duplicates"
           },
           "rationale": "`regression_ruby_pending_stub_handlers_are_not_duplicates` runs Ruby pending-stub handlers across blocks, do-blocks, lambdas and `&method` handlers through the built binary: stubs report no handler findings, real work and an unlabelled `raise NotImplementedError` stay duplicates.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_exact_global_limit_does_not_truncate_matcher_overlap",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_exact_global_limit_does_not_truncate_matcher_overlap"
+          },
+          "rationale": "`regression_exact_global_limit_does_not_truncate_matcher_overlap` pins exact global-limit inclusivity of the matcher-overlap pass end to end for Ruby and TypeScript, with a one-short truncating control.",
           "behaviorClass": "ruby-behavior"
         }
       ]

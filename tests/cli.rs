@@ -6583,3 +6583,136 @@ fn regression_ruby_pending_stub_handlers_are_not_duplicates() {
         );
     }
 }
+
+/// At a global comparison limit equal to the comparisons a corpus needs, analysis is complete in
+/// both languages: witnesses that propose nothing cost no comparison, so the matcher-overlap pass
+/// is not truncated. One comparison short of a real overlap still truncates and fails strict mode.
+#[test]
+fn regression_exact_global_limit_does_not_truncate_matcher_overlap() {
+    let ts = |body: &str| format!("import {{ Given }} from '@cucumber/cucumber';\n{body}");
+    let rows = [
+        (
+            "steps.ts",
+            ts("Given('same step', () => { work(1); });\nGiven('same step', () => { work(2); });\n"),
+            "1",
+            false,
+            0,
+        ),
+        (
+            "steps.ts",
+            ts("Given('operation one', () => perform(1));\nGiven('operation two', () => perform(2));\nGiven('operation three', () => perform(3));\n"),
+            "3",
+            false,
+            0,
+        ),
+        (
+            "steps.ts",
+            ts("Given('same step', () => { work(1); });\nGiven('same step', () => { work(2); });\nGiven(/red$/, () => { left(); });\nGiven('pick red', () => { right(); });\n"),
+            "2",
+            false,
+            1,
+        ),
+        (
+            "steps.ts",
+            ts("Given('same step', () => { work(1); });\nGiven('same step', () => { work(2); });\nGiven(/red$/, () => { left(); });\nGiven('pick red', () => { right(); });\n"),
+            "1",
+            true,
+            0,
+        ),
+        (
+            "steps.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\n".to_owned(),
+            "1",
+            false,
+            0,
+        ),
+        (
+            "steps.rb",
+            "Given('operation one') { page.perform(1) }\nGiven('operation two') { page.perform(2) }\nGiven('operation three') { page.perform(3) }\n".to_owned(),
+            "3",
+            false,
+            0,
+        ),
+        (
+            "steps.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\nGiven(/red$/) { left() }\nGiven('pick red') { right() }\n".to_owned(),
+            "2",
+            false,
+            1,
+        ),
+        (
+            "steps.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\nGiven(/red$/) { left() }\nGiven('pick red') { right() }\n".to_owned(),
+            "1",
+            true,
+            0,
+        ),
+    ];
+    for (file, steps, limit, truncated, overlap) in rows {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), file, &steps);
+        write(
+            directory.path(),
+            "limits.feature",
+            "Feature: limits\n  Scenario: steps\n    Given same step\n",
+        );
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(directory.path())
+            .args([
+                "--definitions",
+                file,
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+            ])
+            .args(["--fail-on-incomplete", "--max-candidate-comparisons", limit])
+            .args(["--max-structural-class-comparisons", "3"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let row = format!("{file} limit {limit}: {steps}\n{stderr}");
+        let records: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect();
+        let summary = records
+            .iter()
+            .find(|record| record["type"] == "summary")
+            .unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record["rule"] == "overlapping-matcher")
+                .count(),
+            overlap,
+            "{row}"
+        );
+        let analysis = &summary["analysis"];
+        assert_eq!(analysis["truncated"], truncated, "{row}");
+        assert_eq!(
+            analysis["skippedCandidateComparisons"],
+            u64::from(truncated),
+            "{row}"
+        );
+        assert_eq!(
+            analysis["candidateSources"]["matcherOverlap"]["skipped"],
+            u64::from(truncated),
+            "{row}"
+        );
+        assert_eq!(
+            analysis["candidateSources"]["matcherOverlap"]["evaluated"], overlap as u64,
+            "{row}"
+        );
+        assert_eq!(
+            stderr.contains("static matcher-overlap analysis is incomplete"),
+            truncated,
+            "{row}"
+        );
+        if truncated {
+            assert_eq!(output.status.code(), Some(2), "{row}");
+        } else {
+            assert_ne!(output.status.code(), Some(2), "{row}");
+        }
+    }
+}

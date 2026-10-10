@@ -14,6 +14,20 @@ fn definitions(source: &str) -> Vec<StepDefinition> {
     .unwrap()
 }
 
+/// Matcher summaries as the step-matching pass computes them, for direct overlap calls.
+fn summaries(definitions: &[StepDefinition], config: &Config) -> Vec<MatcherSummary> {
+    definitions
+        .iter()
+        .map(|definition| {
+            let matcher = compile_matcher(definition, &config.parameter_types).0;
+            MatcherSummary {
+                authoritative: matcher.authoritative,
+                has_regex: matcher.regex.is_some(),
+            }
+        })
+        .collect()
+}
+
 fn config() -> (tempfile::TempDir, Config) {
     let directory = tempfile::tempdir().unwrap();
     let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
@@ -93,6 +107,7 @@ fn matcher_overlap_respects_the_shared_candidate_budget() {
         .any(|diagnostic| diagnostic.contains("matcher-overlap analysis is incomplete")));
 }
 
+/// Witness index scans are charged against the configured limit before any candidate is proposed.
 #[test]
 fn matcher_overlap_charges_index_scans_before_candidate_generation() {
     let definitions = definitions(
@@ -103,21 +118,13 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
          Given('value {fifth}', () => fifth());",
     );
     let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 1;
     for name in ["first", "second", "third", "fourth", "fifth"] {
         config
             .parameter_types
             .insert(name.to_owned(), format!("{name}-only"));
     }
-    let summaries = definitions
-        .iter()
-        .map(|definition| {
-            let matcher = compile_matcher(definition, &config.parameter_types).0;
-            MatcherSummary {
-                authoritative: matcher.authoritative,
-                has_regex: matcher.regex.is_some(),
-            }
-        })
-        .collect::<Vec<_>>();
+    let summaries = summaries(&definitions, &config);
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
 
@@ -144,6 +151,77 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
     assert_eq!(outcome.census.skipped, 1);
     assert!(outcome.incomplete.is_some());
     assert!(findings.is_empty());
+}
+
+/// Stored overlap proposals never exceed the budget, even when one witness's match list crosses
+/// it inside a single window, and the proposable match that did not fit is reported.
+#[test]
+fn matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list() {
+    // Six regexes accept the one witness `value red`: one match list of six against a budget of 4.
+    let definitions = definitions(
+        "Given('value {colour}', () => colour());\n\
+         Given(/^value red$/, () => one());\n\
+         Given(/^value r.*$/, () => two());\n\
+         Given(/^value .*$/, () => three());\n\
+         Given(/^val.*$/, () => four());\n\
+         Given(/^v.*$/, () => five());\n\
+         Given(/^.*red$/, () => six());",
+    );
+    let (_directory, mut config) = config();
+    config
+        .parameter_types
+        .insert("colour".to_owned(), "red".to_owned());
+    let summaries = summaries(&definitions, &config);
+    let witnesses = vec![(0, "value red".to_owned())];
+    let collect = |window, budget| {
+        collect_overlap_proposals(
+            &definitions,
+            &summaries,
+            &config.parameter_types,
+            window,
+            &witnesses,
+            budget,
+        )
+    };
+    assert_eq!(
+        collect(definitions.len(), 4),
+        (vec![vec![1, 2, 3, 4]], true)
+    );
+    assert_eq!(
+        collect(definitions.len(), 6),
+        (vec![vec![1, 2, 3, 4, 5, 6]], false)
+    );
+}
+
+/// A `Break` from the visitor ends the window walk: no later window is compiled or visited.
+#[test]
+fn scan_windows_stop_at_a_break() {
+    let definitions = definitions(
+        "Given('one', () => one());\n\
+         Given('two', () => two());\n\
+         Given('three', () => three());",
+    );
+    let (_directory, config) = config();
+    let mut visited = Vec::new();
+    let work = scan_windows(
+        &definitions,
+        &config.parameter_types,
+        1,
+        |start, _, _, _| {
+            visited.push(start);
+            if start == 1 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        },
+    );
+    assert_eq!(visited, vec![0, 1]);
+    // Only the two visited windows are compiled and charged.
+    let whole = scan_windows(&definitions, &config.parameter_types, 1, |_, _, _, _| {
+        ControlFlow::Continue(())
+    });
+    assert_eq!((work, whole), (2, 3));
 }
 
 #[test]

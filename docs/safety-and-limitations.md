@@ -84,6 +84,7 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 | Unique definition comparisons and static overlap pairs | 2,000,000 |
 | Structural proposals per handler class | 250,000 |
 | Raw overlap witness proposals | Four times the remaining unique-pair budget |
+| Overlap witness index scans | Four times the configured unique-pair limit |
 | Retained overlap findings | 10,000 |
 | Trigram keys per definition / per run | 4,096 / 250,000 |
 | Matcher-blocking posting proposals | 2,000,000 |
