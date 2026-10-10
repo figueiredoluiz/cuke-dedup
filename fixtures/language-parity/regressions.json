@@ -27,7 +27,7 @@
     "normalized-matcher-kind-boundary": {"status":"pass","digest":"94c0bb5c9dfa48354fd3ea5fcc6356c9842088402c0c2f9db212857b931588b3"},
     "normalized-regex-flags-boundary": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"},
     "discovery-unknown-matcher": {"status":"pass","digest":"600239b7c1cab660b89781a83c5854e4d7103d08ec3b3413627294e6d9befe68"},
-    "discovery-foreign-receiver": {"status":"pass","digest":"8fbf91ce356c1cba4892114e6598673f68f9e99145d02c9be0af1e764be35143"},
+    "discovery-foreign-receiver": {"status":"known-gap","digest":"50decc0faafd147bf3b4ac71e55b54a2cb6fb3cfcf3fe1cde069e3a2587d8c8c","reason":"Ruby fails closed by design: `foreign.Given(...) do ... end` may register because a local can be rebound to main through `binding` or `binding_of_caller`, so the Ruby corpus is incomplete while the TypeScript object literal is provably foreign; definitions and findings match."},
     "assertion-identical": {"status":"pass","digest":"1b3522a9151afa589bec4e16f2c840e89c153526dfe2e7966c5e5edcf9e199b2"},
     "assertion-conflicting": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"},
     "assertion-deferred-conflicting": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"}
