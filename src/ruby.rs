@@ -575,6 +575,37 @@ fn argument_value(node: Node<'_>, source: &str) -> ArgumentValue {
     }
 }
 
+/// Whether a `**` operand is a literal empty Hash (`Some(true)`), a literal non-empty one
+/// (`Some(false)`), or unknown. `nil` is empty, parentheses are transparent, and a literal Hash is
+/// non-empty when it has a pair or a non-empty nested `**` literal.
+fn literal_hash_empty(node: Node<'_>) -> Option<bool> {
+    let node = bindings::unparenthesized(node);
+    match node.kind() {
+        "nil" => Some(true),
+        "hash" => {
+            let mut empty = Some(true);
+            for entry in bindings::semantic_children(node) {
+                empty = if entry.kind() == "hash_splat_argument" {
+                    either_non_empty(empty, entry.named_child(0).and_then(literal_hash_empty))
+                } else {
+                    Some(false) // a pair
+                };
+            }
+            empty
+        }
+        _ => None, // fail-closed: runtime decides whether the Hash is empty.
+    }
+}
+
+/// Combines two emptiness answers: non-empty if either is, unknown if either is, else empty.
+fn either_non_empty(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (Some(true), Some(true)) => Some(true),
+        _ => None, // fail-closed: either side may be non-empty at runtime.
+    }
+}
+
 /// One positional argument: a known value, or a splat or `...` supplying any number of values.
 #[derive(Clone, Copy)]
 enum Positional {
@@ -601,13 +632,10 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
     for argument in &arguments {
         match argument.kind() {
             "pair" => keywords = Some(true),
-            "hash_splat_argument" => match argument.named_child(0).map(|value| value.kind()) {
-                Some("hash")
-                    if argument
-                        .named_child(0)
-                        .is_some_and(|hash| hash.named_child_count() == 0) => {}
-                Some("hash") => keywords = Some(true),
-                _ => keywords = Some(keywords.unwrap_or(false)),
+            "hash_splat_argument" => match argument.named_child(0).and_then(literal_hash_empty) {
+                Some(true) => {}
+                Some(false) => keywords = Some(true),
+                None => keywords = Some(keywords.unwrap_or(false)),
             },
             "block_argument" => {
                 block |= argument
@@ -619,19 +647,32 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
                 keywords = Some(keywords.unwrap_or(false));
                 positional.push(Positional::Variadic);
             }
-            "splat_argument" => match argument.named_child(0) {
+            "splat_argument" => match argument.named_child(0).map(bindings::unparenthesized) {
                 Some(value) if value.kind() == "nil" => {}
-                Some(value)
-                    if value.kind() == "array"
-                        && bindings::semantic_children(value).iter().all(|element| {
-                            !matches!(element.kind(), "splat_argument" | "pair")
-                        }) =>
-                {
-                    positional.extend(
-                        bindings::semantic_children(value)
-                            .iter()
-                            .map(|element| Positional::Fixed(argument_value(*element, source))),
-                    );
+                // A literal array supplies its elements; its keyword pairs are one trailing Hash.
+                Some(value) if value.kind() == "array" => {
+                    let mut hash = Some(true);
+                    for element in bindings::semantic_children(value) {
+                        match element.kind() {
+                            "pair" => hash = Some(false),
+                            "hash_splat_argument" => {
+                                hash = either_non_empty(
+                                    hash,
+                                    element.named_child(0).and_then(literal_hash_empty),
+                                );
+                            }
+                            "splat_argument" => positional.push(Positional::Variadic),
+                            _ => {
+                                positional.push(Positional::Fixed(argument_value(element, source)))
+                            }
+                        }
+                    }
+                    match hash {
+                        Some(true) => {}
+                        Some(false) => positional.push(Positional::Fixed(ArgumentValue::Other)),
+                        // fail-closed: a Hash that may be empty is zero or one more argument.
+                        None => positional.push(Positional::Variadic),
+                    }
                 }
                 _ => positional.push(Positional::Variadic),
             },
