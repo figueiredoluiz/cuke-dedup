@@ -134,7 +134,7 @@ fn ruby_transparent_wrapper_outcomes_preserve_forwarding_and_reject_uncertainty(
             "def wrap(text, &handler); foreign.Given(text, &handler); end",
             "wrap('alpha') { work() }",
             0,
-            false,
+            true,
             false,
         ),
         (
@@ -374,6 +374,8 @@ fn ruby_cucumber_normalization_preserves_matcher_and_handler_boundaries() {
     }
 }
 
+/// Final Ruby outcomes keep definition counts, handler findings and completeness, with positive
+/// and conflicting controls for each shape.
 #[test]
 fn ruby_final_outcomes_have_positive_and_conflicting_controls() {
     for (source, definitions, handler, incomplete) in [
@@ -402,7 +404,7 @@ fn ruby_final_outcomes_have_positive_and_conflicting_controls() {
             false,
         ),
         ("Given 'a' do; store.write('x'); end", 1, false, false),
-        ("object.Given('a') { store.write('x') }", 0, false, false),
+        ("object.Given('a') { store.write('x') }", 0, false, true),
         (
             "def Given(x); end; Given('a') { store.write('x') }",
             0,
@@ -2018,22 +2020,34 @@ fn ruby_namespace_effects_are_independent_of_extraction_order() {
     }
 }
 
+/// A step keyword called with a block through `self`, an unknown receiver (which may evaluate to
+/// main) or a local instance of a source class is incomplete; the same call without a block cannot
+/// register and stays complete.
 #[test]
 fn ruby_unsupported_self_registrations_report_incomplete_discovery() {
-    for receiver in [
-        "self",
-        "(self)",
-        "((self))",
-        "(# comment\n self)",
-        "(work(); self)",
-        "object",
+    let foreign = "class Foreign; def Given(*) = nil; def When(*) = nil; def Then(*) = nil; def And(*) = nil; def But(*) = nil; end; foreign = Foreign.new; ";
+    for (prelude, receiver) in [
+        ("", "self"),
+        ("", "(self)"),
+        ("", "((self))"),
+        ("", "(# comment\n self)"),
+        ("", "(work(); self)"),
+        ("", "object"),
+        (foreign, "foreign"),
+        ("", "plain"),
     ] {
         for keyword in ["Given", "When", "Then", "And", "But"] {
             for operator in [".", "&."] {
-                let source = format!("Given('first') {{ work(:same) }}; Given('second') {{ work(:same) }}; {receiver}{operator}{keyword}('hidden') {{ other() }}");
+                // `plain` calls the keyword without a block, which raises MissingProc in Ruby.
+                let block = if receiver == "plain" {
+                    ""
+                } else {
+                    " { other() }"
+                };
+                let source = format!("{prelude}Given('first') {{ work(:same) }}; Given('second') {{ work(:same) }}; {receiver}{operator}{keyword}('hidden'){block}");
                 let (code, rows, _) = analyze(&source, &["--fail-on-incomplete"]);
                 let rows = rows.as_array().unwrap();
-                let incomplete = receiver != "object";
+                let incomplete = receiver != "plain";
                 assert_eq!(code, if incomplete { 2 } else { 1 }, "{source}: {rows:?}");
                 assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
                 assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], incomplete);
@@ -10187,7 +10201,7 @@ fn ruby_oracle_matches(name: &str, finding: &Value, expected: &Value) -> bool {
         })
 }
 
-/// Every one of the 136 Ruby parity manifest groups reproduces its scalar oracle, an untruncated
+/// Every one of the 137 Ruby parity manifest groups reproduces its scalar oracle, an untruncated
 /// finding list, each required finding with all declared fields exactly `count` (default one)
 /// times, no forbidden finding, exactly one owning requirement per active finding, its duplication
 /// summary and its candidate-source counts, as `parityDeficits` in `ruby-parity.mjs` defines them.
@@ -10295,7 +10309,7 @@ fn ruby_parity_manifest_groups_match_their_scalar_oracles() {
             assert_eq!(evaluated, count, "{name}: {source} candidates");
         }
     }
-    assert_eq!(groups.len(), 136, "executed parity groups");
+    assert_eq!(groups.len(), 137, "executed parity groups");
 }
 
 /// Returns the `cuke-dedup:` stderr lines without the tool prefix, keeping `warning: ` so the
@@ -10533,14 +10547,15 @@ fn ruby_unsupported_matchers_mark_partial_extraction_incomplete() {
 
 /// A Ruby project whose only registration-shaped calls are sends on a local non-provider receiver
 /// passes strict mode with no definitions and no diagnostic beyond the empty-extraction notice;
-/// the same send on the main object is the control that leaves the corpus incomplete and fails.
+/// the same send on the main object is the control that leaves the corpus incomplete and fails, as
+/// does a direct keyword call on the local, which `binding_of_caller` could have rebound to main.
 #[test]
 fn ruby_inert_receiver_only_project_passes_strict_mode() {
     // `perform` must exist on the class: an undefined method on the receiver is not provably inert.
     let helpers = "class LocalRouter\n  def Given(_matcher, &_handler)\n    :local\n  end\n\n  def perform\n    :local\n  end\nend\n";
     for (call, inert) in [
         ("router.send(:Given, 'inert') { router.perform() }", true),
-        ("router.Given('inert') { router.perform() }", true),
+        ("router.Given('inert') { router.perform() }", false),
         ("send(:Given, 'inert') { router.perform() }", false),
     ] {
         let directory = tempfile::tempdir().unwrap();

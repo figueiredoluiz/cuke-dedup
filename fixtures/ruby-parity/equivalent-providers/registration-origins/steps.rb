@@ -44,9 +44,6 @@ shadowed.call('the pi rod extends far') { shadow_two() }
 given = ->(text, &handler) { handler }
 given.call('the iota shaft drives {word}') { lower_one() }
 given.call('the iota shaft drives hard') { lower_two() }
-ordinary = OrdinaryNamespace
-ordinary.Given('the sigma wheel locks {word}') { default_one() }
-ordinary.Given('the sigma wheel locks hard') { default_two() }
 erased_analogue = ->(text, &handler) { nil }
 erased_analogue.call('the upsilon belt slips {word}') { erased_one() }
 erased_analogue.call('the upsilon belt slips loose') { erased_two() }

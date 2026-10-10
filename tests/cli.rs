@@ -6583,3 +6583,213 @@ fn regression_ruby_pending_stub_handlers_are_not_duplicates() {
         );
     }
 }
+
+/// A step keyword called through a receiver fails closed at the call whenever Cucumber-Ruby could
+/// register it, because any receiver may evaluate to main (`def me = self`, a local rebound through
+/// `binding` or `binding_of_caller`), including a local instance of a source class. The keywords
+/// take `(pattern, symbol = nil, options = {}, &proc)` with a String or Regexp pattern and
+/// `symbol || proc`: shapes Ruby rejects (no pattern, a non-pattern literal, a second argument that
+/// is neither Symbol nor Proc, no proc) stay complete, as Watir and Builder `a(...)` calls do.
+/// Known registrations keep their findings.
+#[test]
+fn regression_122_ruby_receiver_registrations_fail_closed() {
+    let unresolved =
+        "Ruby registration through a receiver is not resolved; definitions may be missing";
+    let foreign = "class Foreign; def Given(*) = nil; end; foreign = Foreign.new";
+    let namespace = "module Ns; def self.Given(text, &handler) = [text, handler]; end; ns = Ns";
+    for (prelude, call, location) in [
+        (
+            "def me = self",
+            "me.Given('hidden') { other() }",
+            Some("4:1"),
+        ),
+        (
+            "target = self",
+            "target.When('hidden') { other() }",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(target) = target.Then('hidden') { other() }",
+            "wrap(self)",
+            Some("3:20"),
+        ),
+        ("", "@browser.a('hidden') { other() }", Some("4:1")),
+        ("", "Steps.But('hidden') { other() }", Some("4:1")),
+        (
+            "handler = -> { other() }",
+            "router.Given('hidden', &handler)",
+            Some("4:1"),
+        ),
+        (
+            "handler = -> { other() }",
+            "router.Given('hidden', nil, &handler)",
+            Some("4:1"),
+        ),
+        ("", "router.Given('hidden', false) { other() }", Some("4:1")),
+        ("", "router.Given('hidden', :step_method)", Some("4:1")),
+        ("", "router.Given('hidden', :\"step_method\")", Some("4:1")),
+        ("", "router.Given((1)) { other() }", None),
+        (
+            "name = :step_method",
+            "router.Given('hidden', name)",
+            Some("4:1"),
+        ),
+        ("", "router.Given('hidden', -> { other() })", Some("4:1")),
+        (
+            "args = ['hidden', :step_method]",
+            "router.Given(*args)",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(...) = target.Given(...)",
+            "wrap('hidden') { other() }",
+            Some("3:17"),
+        ),
+        (foreign, "foreign.Given('hidden') { other() }", Some("4:1")),
+        (namespace, "ns.Given('hidden') { other() }", Some("4:1")),
+        (
+            foreign,
+            "foreign.Given(self).When('hidden') { other() }",
+            Some("4:1"),
+        ),
+        // Every String or Regexp pattern form registers with a block.
+        ("", "router.Given(/x/) { other() }", Some("4:1")),
+        ("", "router.Given(%r{x}) { other() }", Some("4:1")),
+        ("", "router.Given(%q(x)) { other() }", Some("4:1")),
+        ("", "router.Given(?x) { other() }", Some("4:1")),
+        ("", "router.Given('a' 'b') { other() }", Some("4:1")),
+        (
+            "",
+            "router.Given(<<~TEXT) { other() }\ntext\nTEXT",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(...) = target.Given('hidden', nil, ...)",
+            "wrap { other() }",
+            Some("3:17"),
+        ),
+        (
+            "def wrap(...) = target.Given('hidden', nil, {}, ...)",
+            "wrap { other() }",
+            Some("3:17"),
+        ),
+        (
+            "def wrap(...) = target.Given('hidden', false, ...)",
+            "wrap { other() }",
+            Some("3:17"),
+        ),
+        (
+            "def wrap(&) = target.Given('hidden', &)",
+            "wrap { other() }",
+            Some("3:15"),
+        ),
+        (
+            "opts = {}",
+            "router.Given('hidden', **opts) { other() }",
+            Some("4:1"),
+        ),
+        ("args = []", "router.Given(42, *args) { other() }", None),
+        // `false.to_proc` and the backtick method can be redefined to return a Proc or Symbol.
+        ("", "router.Given('hidden', &false)", Some("4:1")),
+        ("", "router.Given('hidden', &(nil))", None),
+        ("", "router.Given('hidden', `true`)", Some("4:1")),
+        ("", "router.Given('hidden', <<~`CMD`)\nls\nCMD", Some("4:1")),
+        (
+            "",
+            "router.Given('hidden', nil, {}, key: 1) { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given('hidden', 'b', *rest) { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given('hidden', nil, {}, 4, *rest) { other() }",
+            None,
+        ),
+        ("", "router.Given('hidden', ('second')) { other() }", None),
+        ("", "router.Given(-> { other() }) { other() }", None),
+        ("", "router.Given('hidden', nil, {}, 4) { other() }", None),
+        // Each literal that is neither a String nor a Regexp is rejected as a pattern.
+        ("", "router.Given(:\"x\") { other() }", None),
+        ("", "router.Given(1) { other() }", None),
+        ("", "router.Given(1.5) { other() }", None),
+        ("", "router.Given(1r) { other() }", None),
+        ("", "router.Given(1i) { other() }", None),
+        ("", "router.Given(nil) { other() }", None),
+        ("", "router.Given(true) { other() }", None),
+        ("", "router.Given(false) { other() }", None),
+        ("", "router.Given([]) { other() }", None),
+        ("", "router.Given(%w[a]) { other() }", None),
+        ("", "router.Given(%i[a]) { other() }", None),
+        ("", "router.Given({}) { other() }", None),
+        ("", "router.Given(1..2) { other() }", None),
+        // Shapes Ruby rejects: no proc (MissingProc), a pattern that is not a String or Regexp,
+        // no pattern at all, or a second argument that is neither Symbol nor Proc.
+        ("", "@browser.a(text: 'Go').click", None),
+        ("", "browser.a('Go')", None),
+        ("link = 'Go'", "browser.a(:text, link)", None),
+        ("", "browser.a(:text) { other() }", None),
+        (
+            "def page(xml) = xml.a(href: '/x') { xml.text('Go') }",
+            "page(nil)",
+            None,
+        ),
+        ("", "router.Given { other() }", None),
+        ("", "router.Given('hidden')", None),
+        ("", "router.Given('hidden', &nil)", None),
+        ("", "router.Given('hidden', 'second') { other() }", None),
+        ("", "router.Given('hidden', true) { other() }", None),
+        ("", "router.Given('hidden', key: 1) { other() }", None),
+        ("", "router.Given('hidden', <<~TEXT)\ntext\nTEXT", None),
+        ("opts = {}", "router.Given('hidden', **opts)", None),
+        ("", "self.Given('hidden')", None),
+        // A second argument that is a literal neither Symbol nor Proc raises ArgumentError.
+        ("", "router.Given('hidden', 'a' 'b')", None),
+        ("", "router.Given('hidden', ?c)", None),
+        ("", "router.Given('hidden', 1)", None),
+        ("", "router.Given('hidden', 1.5)", None),
+        ("", "router.Given('hidden', 1r)", None),
+        ("", "router.Given('hidden', 1i)", None),
+        ("", "router.Given('hidden', /x/)", None),
+        ("", "router.Given('hidden', [])", None),
+        ("", "router.Given('hidden', %w[a])", None),
+        ("", "router.Given('hidden', %i[a])", None),
+        ("", "router.Given('hidden', {})", None),
+        ("", "router.Given('hidden', 1..2)", None),
+        ("", "router.Given('hidden', nil)", None),
+        ("", "router.Given('hidden', false)", None),
+        ("", "record.Given", None),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps.rb",
+            &format!("{RUBY_RELEASE_STEPS}{prelude}\n{call}\n"),
+        );
+        write(directory.path(), "release.feature", RUBY_RELEASE_FEATURE);
+        let run = ruby_run(
+            directory.path(),
+            &["--definitions", "steps.rb", "--fail-on-incomplete"],
+        );
+        let row = format!("{prelude} / {call}: {}", run.stderr);
+        assert_eq!(run.definitions, 2, "{row}");
+        assert_eq!(run.active, ["duplicate-handler"], "{row}");
+        assert_eq!(run.incomplete, location.is_some(), "{row}");
+        assert_eq!(
+            run.code,
+            Some(if location.is_some() { 2 } else { 1 }),
+            "{row}"
+        );
+        assert_eq!(run.stderr.contains(unresolved), location.is_some(), "{row}");
+        if let Some(location) = location {
+            assert!(
+                run.stderr
+                    .contains(&format!("steps.rb:{location}: {unresolved}")),
+                "{row}"
+            );
+        }
+    }
+}
