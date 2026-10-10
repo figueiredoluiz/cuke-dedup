@@ -576,12 +576,12 @@ fn argument_value(node: Node<'_>, source: &str) -> ArgumentValue {
 }
 
 /// Whether a `**` operand is a literal empty Hash (`Some(true)`), a literal non-empty one
-/// (`Some(false)`), or unknown. `nil` is empty, parentheses are transparent, and a literal Hash is
-/// non-empty when it has a pair or a non-empty nested `**` literal.
+/// (`Some(false)`), or unknown. Parentheses are transparent, and a literal Hash is non-empty when it
+/// has a pair or a non-empty nested `**` literal. `**nil` passes nothing, which "unknown" already
+/// allows.
 fn literal_hash_empty(node: Node<'_>) -> Option<bool> {
     let node = bindings::unparenthesized(node);
     match node.kind() {
-        "nil" => Some(true),
         "hash" => {
             let mut empty = Some(true);
             for entry in bindings::semantic_children(node) {
@@ -594,6 +594,18 @@ fn literal_hash_empty(node: Node<'_>) -> Option<bool> {
             empty
         }
         _ => None, // fail-closed: runtime decides whether the Hash is empty.
+    }
+}
+
+/// Whether an expression is `nil` by its syntax: `nil`, `()`, or parentheses whose last statement
+/// is one of those (`(1; nil)`).
+fn evaluates_to_nil(node: Node<'_>) -> bool {
+    match node.kind() {
+        "nil" => true,
+        "parenthesized_statements" => bindings::semantic_children(node)
+            .last()
+            .is_none_or(|last| evaluates_to_nil(*last)),
+        _ => false, // fail-closed: any other operand may be non-nil, so it may pass a block.
     }
 }
 
@@ -640,7 +652,7 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
             "block_argument" => {
                 block |= argument
                     .named_child(0)
-                    .is_none_or(|value| bindings::unparenthesized(value).kind() != "nil");
+                    .is_none_or(|value| !evaluates_to_nil(value));
             }
             "forward_argument" => {
                 block = true;
@@ -648,7 +660,7 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
                 positional.push(Positional::Variadic);
             }
             "splat_argument" => match argument.named_child(0).map(bindings::unparenthesized) {
-                Some(value) if value.kind() == "nil" => {}
+                Some(value) if evaluates_to_nil(value) => {}
                 // A literal array supplies its elements; its keyword pairs are one trailing Hash.
                 Some(value) if value.kind() == "array" => {
                     let mut hash = Some(true);
