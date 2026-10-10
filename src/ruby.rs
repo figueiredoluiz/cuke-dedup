@@ -519,147 +519,170 @@ fn extract_with_proof(
     Ok((result, effects))
 }
 
+/// What an argument evaluates to, as far as Cucumber-Ruby's registrar can tell: a step pattern
+/// (String or Regexp), a handler (Symbol or Proc), `nil`/`false`, another known type, or a value
+/// only runtime decides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArgumentValue {
+    Pattern,
+    Handler,
+    Falsy,
+    Other,
+    Unknown,
+}
+
+/// The value class of one argument node. Every `argument_list` expression kind of tree-sitter-ruby
+/// not listed here is `Unknown`; the listed classes were checked with `ruby -e`.
+fn argument_value(node: Node<'_>, source: &str) -> ArgumentValue {
+    match node.kind() {
+        // `(a; b)` is the last statement, `()` is nil.
+        "parenthesized_statements" => bindings::semantic_children(node)
+            .last()
+            .map_or(ArgumentValue::Falsy, |last| argument_value(*last, source)),
+        "assignment" => node
+            .child_by_field_name("right")
+            .map_or(ArgumentValue::Unknown, |right| {
+                argument_value(right, source)
+            }),
+        "string" | "chained_string" | "character" | "regex" => ArgumentValue::Pattern,
+        // A backtick heredoc calls the redefinable backtick method.
+        "heredoc_beginning" if !text(node, source).contains('`') => ArgumentValue::Pattern,
+        // `def` returns its name as a Symbol.
+        "simple_symbol" | "delimited_symbol" | "lambda" | "method" | "singleton_method" => {
+            ArgumentValue::Handler
+        }
+        "nil" | "false" | "test_pattern" => ArgumentValue::Falsy,
+        "true" | "integer" | "float" | "rational" | "complex" | "array" | "string_array"
+        | "symbol_array" | "hash" | "range" => ArgumentValue::Other,
+        // A sign written directly before a number is part of the literal; `- 1` is a call.
+        "unary"
+            if node.child_by_field_name("operand").is_some_and(|operand| {
+                matches!(operand.kind(), "integer" | "float" | "rational" | "complex")
+                    && node.child(0).is_some_and(|sign| {
+                        matches!(sign.kind(), "-" | "+") && sign.end_byte() == operand.start_byte()
+                    })
+            }) =>
+        {
+            ArgumentValue::Other
+        }
+        // tree-sitter parses these reserved keywords as identifiers; Ruby never binds them.
+        "identifier" => match text(node, source) {
+            "__FILE__" => ArgumentValue::Pattern,
+            "__LINE__" | "__ENCODING__" => ArgumentValue::Other,
+            _ => ArgumentValue::Unknown, // fail-closed: a local or method may hold anything.
+        },
+        _ => ArgumentValue::Unknown, // fail-closed: runtime decides the value.
+    }
+}
+
+/// One positional argument: a known value, or a splat or `...` supplying any number of values.
+#[derive(Clone, Copy)]
+enum Positional {
+    Fixed(ArgumentValue),
+    Variadic,
+}
+
 /// Whether a step-keyword call can register. Cucumber-Ruby keywords take
-/// `(pattern, symbol = nil, options = {}, &proc)`, require a String or Regexp pattern, and use
-/// `symbol || proc`, which must be a Symbol or a Proc. Each splat or `...` supplies an unknown
-/// number of arguments among the fixed ones, so every combination that keeps the call within three
-/// arguments is tried. The call can register when, for some combination,
-/// its first argument may be a String or Regexp and either its second argument may be a Symbol or
-/// a Proc or, when that argument is absent, `nil` or `false`, a block, a block argument other than
-/// `&nil`, or `...` (which forwards a block) supplies the proc. Keyword pairs are one trailing Hash
-/// argument; a `**hash` splat may be empty, so it is not counted.
+/// `(pattern, symbol = nil, options = {}, &proc)`: the pattern must be a String or Regexp, and
+/// `symbol || proc` must be a Symbol or a Proc. Keyword pairs and a non-empty `**hash` are one
+/// trailing Hash argument; each splat or `...` supplies any number of arguments, so every
+/// argument list within three arguments is tried, and the call can register when one of them
+/// has a possible pattern and either a possible handler second or, with that argument absent,
+/// `nil` or `false`, a possible block.
 fn may_register(call: Node<'_>, source: &str) -> bool {
     let arguments = call
         .child_by_field_name("arguments")
         .map(bindings::semantic_children)
         .unwrap_or_default();
-    let keywords = arguments.iter().any(|argument| argument.kind() == "pair");
-    let block = call.child_by_field_name("block").is_some()
-        || arguments.iter().any(|argument| match argument.kind() {
-            "block_argument" => argument
-                .named_child(0)
-                .is_none_or(|value| argument_kind(value, source) != "nil"),
-            kind => kind == "forward_argument",
-        });
-    // Each splat or `...` may supply any number of arguments. Only distinct lists within the
-    // three-argument cap (keyword pairs take one place) are kept, so the work per argument is
-    // bounded however many splats a call has.
-    let cap = 3 - usize::from(keywords);
-    let mut expansions: Vec<Vec<Option<Node<'_>>>> = vec![Vec::new()];
-    for argument in positional_arguments(&arguments) {
-        let variadic = matches!(argument.kind(), "splat_argument" | "forward_argument");
-        let mut next: Vec<Vec<Option<Node<'_>>>> = Vec::new();
+    let mut positional = Vec::new();
+    // `None`: no keyword Hash; `Some(false)`: maybe one; `Some(true)`: always one.
+    let mut keywords: Option<bool> = None;
+    let mut block = call.child_by_field_name("block").is_some();
+    for argument in &arguments {
+        match argument.kind() {
+            "pair" => keywords = Some(true),
+            "hash_splat_argument" => match argument.named_child(0).map(|value| value.kind()) {
+                Some("hash")
+                    if argument
+                        .named_child(0)
+                        .is_some_and(|hash| hash.named_child_count() == 0) => {}
+                Some("hash") => keywords = Some(true),
+                _ => keywords = Some(keywords.unwrap_or(false)),
+            },
+            "block_argument" => {
+                block |= argument
+                    .named_child(0)
+                    .is_none_or(|value| bindings::unparenthesized(value).kind() != "nil");
+            }
+            "forward_argument" => {
+                block = true;
+                keywords = Some(keywords.unwrap_or(false));
+                positional.push(Positional::Variadic);
+            }
+            "splat_argument" => match argument.named_child(0) {
+                Some(value) if value.kind() == "nil" => {}
+                Some(value)
+                    if value.kind() == "array"
+                        && bindings::semantic_children(value).iter().all(|element| {
+                            !matches!(element.kind(), "splat_argument" | "pair")
+                        }) =>
+                {
+                    positional.extend(
+                        bindings::semantic_children(value)
+                            .iter()
+                            .map(|element| Positional::Fixed(argument_value(*element, source))),
+                    );
+                }
+                _ => positional.push(Positional::Variadic),
+            },
+            _ => positional.push(Positional::Fixed(argument_value(*argument, source))),
+        }
+    }
+    // Distinct argument lists within the three-argument cap; `None` is a value a splat supplied.
+    let mut expansions: Vec<Vec<Option<ArgumentValue>>> = vec![Vec::new()];
+    for item in &positional {
+        let mut next: Vec<Vec<Option<ArgumentValue>>> = Vec::new();
         for prefix in &expansions {
-            for width in if variadic { 0..=cap } else { 1..=1 } {
+            let choices: Vec<Vec<Option<ArgumentValue>>> = match item {
+                Positional::Fixed(value) => vec![vec![Some(*value)]],
+                Positional::Variadic => (0..=3).map(|width| vec![None; width]).collect(),
+            };
+            for choice in choices {
                 let mut slots = prefix.clone();
-                slots.extend(std::iter::repeat_n((!variadic).then_some(argument), width));
-                if slots.len() <= cap && !next.contains(&slots) {
+                slots.extend(choice);
+                if slots.len() <= 3 && !next.contains(&slots) {
                     next.push(slots);
                 }
             }
         }
         expansions = next;
     }
-    expansions.into_iter().any(|slots| {
-        let pattern = slots.first().is_some_and(|first| {
-            first.is_none_or(|node| !non_pattern(argument_kind(node, source)))
-        });
-        let proc = match slots.get(1) {
-            Some(None) => true,
-            Some(Some(second)) if non_proc_literal(*second, source) => false,
-            Some(Some(second)) if !matches!(argument_kind(*second, source), "nil" | "false") => {
-                true
+    let hashes: &[bool] = match keywords {
+        None => &[false],
+        Some(false) => &[false, true],
+        Some(true) => &[true],
+    };
+    expansions.iter().any(|slots| {
+        hashes.iter().any(|&hash| {
+            let mut slots = slots.clone();
+            if hash {
+                slots.push(Some(ArgumentValue::Other));
             }
-            // Keyword pairs fill an absent second argument with a Hash, which is no handler.
-            None if keywords => false,
-            // fail-closed: `nil`, `false` or absent; any block source supplies the proc.
-            _ => block,
-        };
-        pattern && proc
+            let pattern = slots.first().is_some_and(|first| {
+                matches!(
+                    first,
+                    None | Some(ArgumentValue::Pattern | ArgumentValue::Unknown)
+                )
+            });
+            let proc = match slots.get(1) {
+                Some(None | Some(ArgumentValue::Handler | ArgumentValue::Unknown)) => true,
+                Some(Some(ArgumentValue::Pattern | ArgumentValue::Other)) => false,
+                // `nil`, `false` or absent: the block is the handler.
+                Some(Some(ArgumentValue::Falsy)) | None => block,
+            };
+            slots.len() <= 3 && pattern && proc
+        })
     })
-}
-
-/// The positional arguments of a call, splats included: keyword pairs, `**hash` and block
-/// arguments bind elsewhere.
-fn positional_arguments<'a>(arguments: &[Node<'a>]) -> Vec<Node<'a>> {
-    arguments
-        .iter()
-        .filter(|argument| {
-            !matches!(
-                argument.kind(),
-                "pair" | "hash_splat_argument" | "block_argument"
-            )
-        })
-        .copied()
-        .collect()
-}
-
-/// The kind of an argument with redundant parentheses removed, as `(nil)` evaluates to `nil`. A
-/// sign written directly before a number is part of the literal (`-1`), which tree-sitter parses
-/// as a unary operator.
-fn argument_kind<'a>(node: Node<'a>, source: &str) -> &'a str {
-    let node = bindings::unparenthesized(node);
-    // tree-sitter parses these reserved keywords as identifiers; Ruby never binds them.
-    if node.kind() == "identifier" {
-        match text(node, source) {
-            "__LINE__" => return "line",
-            "__FILE__" => return "file",
-            "__ENCODING__" => return "encoding",
-            _ => {} // fail-closed: any other identifier keeps its kind and may be anything.
-        }
-    }
-    node.child_by_field_name("operand")
-        .filter(|operand| {
-            node.kind() == "unary"
-                && matches!(operand.kind(), "integer" | "float" | "rational" | "complex")
-                && node.child(0).is_some_and(|sign| {
-                    matches!(sign.kind(), "-" | "+") && sign.end_byte() == operand.start_byte()
-                })
-        })
-        .map_or(node.kind(), |operand| operand.kind())
-}
-
-/// Whether a literal kind is neither a String nor a Regexp, so Cucumber-Ruby rejects it as a step
-/// pattern.
-fn non_pattern_literal(kind: &str) -> bool {
-    matches!(
-        kind,
-        "simple_symbol"
-            | "delimited_symbol"
-            | "integer"
-            | "float"
-            | "rational"
-            | "complex"
-            | "nil"
-            | "true"
-            | "false"
-            | "array"
-            | "string_array"
-            | "symbol_array"
-            | "hash"
-            | "range"
-            | "line"
-            | "encoding"
-    )
-}
-
-/// Whether a node kind is never a String or Regexp, so Cucumber-Ruby rejects it as a step pattern.
-fn non_pattern(kind: &str) -> bool {
-    non_pattern_literal(kind) || kind == "lambda"
-}
-
-/// Whether a literal is neither a Symbol nor a Proc, so it cannot name a step handler; `nil` and
-/// `false` leave the choice to the block. Backtick strings call an overridable method and may
-/// return either.
-fn non_proc_literal(node: Node<'_>, source: &str) -> bool {
-    match argument_kind(node, source) {
-        "heredoc_beginning" => !text(bindings::unparenthesized(node), source).contains('`'),
-        "string" | "chained_string" | "character" | "regex" | "file" => true,
-        kind => {
-            non_pattern_literal(kind)
-                && !matches!(kind, "simple_symbol" | "delimited_symbol" | "nil" | "false")
-        }
-    }
 }
 
 /// Whether a call passes any argument, ignoring comments inside the parentheses.
