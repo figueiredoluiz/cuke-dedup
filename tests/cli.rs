@@ -6473,3 +6473,113 @@ fn regression_119_ruby_loaded_file_paths_stay_relative_to_the_root() {
         );
     }
 }
+
+/// Ruby handlers that only mark their step pending are trivial, as in the TypeScript frontend: an
+/// empty body, or one `pending`/`todo`/`not_implemented` call, stub-label string, `nil`, bare
+/// `next`/`return` of one, or `raise`/`fail` with a stub label. Inline blocks, do-blocks, lambdas
+/// and `&method` handlers share the rule; real work, an unlabelled `raise NotImplementedError` (as
+/// TypeScript's `throw new NotImplementedError()`) and two statements stay duplicates.
+#[test]
+fn regression_ruby_pending_stub_handlers_are_not_duplicates() {
+    let inline = |body: &str| {
+        format!("Given('pending one') {{ {body} }}\nGiven('pending two') {{ {body} }}\n")
+    };
+    let named = |declaration: &str| {
+        format!("{declaration}\nGiven('pending one', &method(:stub))\nGiven('pending two', &method(:stub))\n")
+    };
+    let mut rows: Vec<(String, bool)> = [
+        "pending",
+        "pending('todo')",
+        "pending 'todo'",
+        "self.pending",
+        "(pending)",
+        "not_implemented",
+        "raise 'pending'",
+        "fail 'not implemented'",
+        "raise NotImplementedError, 'todo'",
+        "raise Cucumber::Pending",
+        "fail todo",
+        // TypeScript parity: `throw new Boom(audit('todo'))` and `pending(work())` are trivial.
+        "raise Boom, audit('todo')",
+        "pending(work())",
+        "next",
+        "next pending",
+        // Call-free parity rows: TypeScript stubs that the existing call-free rule already covers.
+        "next 'pending'",
+        "nil",
+        "'TODO'",
+    ]
+    .iter()
+    .map(|body| (inline(body), false))
+    .collect();
+    rows.extend([
+        // Both handlers carry the trailing comment: one stub alone already excludes the pair.
+        ("Given('pending one') do\n  pending\n  # waiting on the API\nend\nGiven('pending two') do\n  pending\n  # waiting on the API\nend\n".to_owned(), false),
+        ("Given('pending one', &-> { pending })\nGiven('pending two', &-> { pending })\n".to_owned(), false),
+        ("Given('pending one', &lambda { fail 'todo' })\nGiven('pending two', &lambda { fail 'todo' })\n".to_owned(), false),
+        (named("def stub = pending"), false),
+        (named("def stub; end"), false),
+        (named("def stub\n  return\nend"), false),
+        (named("def stub\n  return pending\nend"), false),
+        (inline("raise NotImplementedError"), true),
+        (inline("raise 'boom'"), true),
+        (inline("raise message"), true),
+        (inline("raise Boom, report.todo"), true),
+        (inline("work()"), true),
+        (inline("pending; work()"), true),
+        (inline("next work()"), true),
+        (named("def stub = work"), true),
+    ]);
+    for (steps, duplicate) in rows {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "steps.rb", &steps);
+        write(
+            directory.path(),
+            "pending.feature",
+            "Feature: pending\n  Scenario: steps\n    Given pending one\n    Given pending two\n",
+        );
+        let run = ruby_run(directory.path(), &["--definitions", "steps.rb"]);
+        assert_eq!(run.definitions, 2, "{steps}: {}", run.stderr);
+        assert!(!run.incomplete, "{steps}: {}", run.stderr);
+        let expected: &[&str] = if duplicate {
+            &["duplicate-handler", "near-duplicate-step"]
+        } else {
+            &[]
+        };
+        let mut active = run.active.clone();
+        active.sort();
+        assert_eq!(active, expected, "{steps}");
+    }
+    // Named handlers with different bodies in two files never duplicate. Ruby binds each
+    // registration to the definition current at the call; the adapter withdraws same-named
+    // handlers (incomplete), while distinct names are analyzed.
+    for (left, right, definitions) in [("handler", "handler", 0), ("alpha", "beta", 2)] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "a.rb",
+            &format!("def {left}; do_alpha(); end\nGiven('alpha step', &method(:{left}))\n"),
+        );
+        write(
+            directory.path(),
+            "b.rb",
+            &format!("def {right}; do_beta(); end\nGiven('bravo step', &method(:{right}))\n"),
+        );
+        write(
+            directory.path(),
+            "pending.feature",
+            "Feature: pending\n  Scenario: steps\n    Given alpha step\n",
+        );
+        let run = ruby_run(directory.path(), &["--definitions", "*.rb"]);
+        assert_eq!(
+            run.definitions, definitions,
+            "{left}/{right}: {}",
+            run.stderr
+        );
+        assert_eq!(run.incomplete, definitions == 0, "{left}/{right}");
+        assert!(
+            !run.active.iter().any(|rule| rule == "duplicate-handler"),
+            "{left}/{right}"
+        );
+    }
+}
