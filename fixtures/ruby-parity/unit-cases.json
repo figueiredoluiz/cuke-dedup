@@ -1287,14 +1287,22 @@
         },
         {
           "name": "unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: diagnostic routing consumes adapter diagnostics; needs a Ruby run with an unparseable file and typed adapter diagnostics asserting the exit and report routing. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_typed_diagnostics_route_by_kind_not_wording"
+          },
+          "rationale": "A Ruby syntax error is a warning with exit 0 and an incomplete corpus by default and becomes an error (exit 2, still incomplete) under --fail-on-unparseable; a dynamic matcher stays an incomplete warning under the flag (exit 0); a malformed suppression directive (the Ruby Other-kind diagnostic, emitted at error level) does not mark the corpus incomplete. Exact diagnostic lines are asserted, with locations for every diagnostic except the syntax error, whose Ruby location is always 1:1.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "typed_adapter_diagnostics_route_independently_of_language_and_wording",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: diagnostic routing consumes adapter diagnostics; needs a Ruby run with an unparseable file and typed adapter diagnostics asserting the exit and report routing. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_typed_diagnostics_route_by_kind_not_wording"
+          },
+          "rationale": "Routes every kind/level pair the Ruby adapter emits through the CLI under both --fail-on-unparseable settings: Unparseable/Warning (message lacks the legacy JavaScript prefix yet escalates), Incomplete/Warning and Dependency/Warning (incomplete, never escalated), Other/Error (error, corpus complete), plus a diagnostic-free control; diagnostic lines, exit codes and corpus completeness are asserted. Other/Warning, Incomplete/Error and Unparseable/Error have no Ruby producer.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1306,8 +1314,9 @@
         },
         {
           "name": "finalization_failure_discards_provisional_definitions_and_reports_incompleteness",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby finalization error path (late Ruby effects failing) that must discard provisional definitions and mark the corpus incomplete; the test injects a frontend failure without Ruby input. Owned by the completion follow-up.",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Adapter-independent stage `session-plumbing`: the test injects a caller-built finalization `Err` (README exception: a value the caller constructs), which clears every definition and reports `failed to finalize source evidence`. No source text reaches that arm: a session with a root initializes the Ruby state at construction, and a root-less session initializes it lazily on first use. The adapter-facing Ok-with-uncertainty arm (withdrawn registrations, recounted files) is pinned over Ruby by `ruby_unresolved_registrations_warn_and_expose_the_corpus_census`.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -2502,8 +2511,12 @@
         },
         {
           "name": "session_mixed_languages_share_cache_and_preserve_findings_in_either_order",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the same session cache and finding-preservation contract with Ruby sources extracted beside ECMAScript ones in both orders; the test uses js/ts/tsx only. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_library_routes_and_sessions_share_state_beside_ecmascript"
+          },
+          "rationale": "Extracts steps.rb beside steps.ts and steps.js in one SourceExtractionSession with Ruby first, between and last; support.ts is edited after each ECMAScript extraction, and the session's definitions equal fresh-session extractions, proving the resolver cache survives Ruby extraction. Analyzing all definitions together is refused (separate comparison domains), and per-domain analysis keeps exactly one duplicate-matcher pair per language (steps.js/steps.ts and steps.rb/steps.rb).",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -2577,14 +2590,22 @@
         },
         {
           "name": "language_lookup_and_suffix_routing_agree_on_one_adapter_table",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby language lookup and `.rb` suffix routing agreeing on one adapter entry; the test does not name Ruby. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_library_routes_and_sessions_share_state_beside_ecmascript"
+          },
+          "rationale": "adapter_for_path(\"steps.rb\") and adapter_for_language(Ruby) both have the data address of the single `.rb` SOURCE_ADAPTER_REGISTRY entry, name `cucumber-ruby` and language Ruby, and language_for_path(\"steps.rb\") is Ruby.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "language_routed_and_suffix_routed_extraction_share_session_state",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: language-routed and suffix-routed Ruby extraction sharing one session state; the test routes js/ts/tsx only. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_library_routes_and_sessions_share_state_beside_ecmascript"
+          },
+          "rationale": "Ruby registrations extracted through one route and a later `def Given` redefinition extracted through the other route, in both orders, share session state: finalize reports an uncertainty and withdraws both definitions; extracting the redefinition in a separate session is the control that keeps both.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -2596,8 +2617,12 @@
         },
         {
           "name": "finalization_scopes_preserve_independent_final_findings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby definition, file and registry uncertainty scopes retaining independent final findings; the test finalizes JavaScript definitions only. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_finalization_scopes_preserve_independent_final_findings"
+          },
+          "rationale": "Over five Ruby-extracted definitions (control pair in control.rb; red, red, blue in steps.rb), caller-built Definition, File and Registry(Ruby) uncertainties with Registration, Handler and Source causes retain 4/2/5/5/5/0 definitions with exact duplicate-matcher and duplicate-handler counts, and Registry(JavaScript) is the control that leaves all 5 and both findings. The Ruby frontend itself emits only Registry scopes; its Registration-cause withdrawal is also run end to end in ruby_unresolved_registrations_warn_and_expose_the_corpus_census.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4109,9 +4134,13 @@
         },
         {
           "name": "fixture_corpus_matches_the_versioned_manifest",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `matcher-family` observes this only through a scalar oracle field (definitions), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: The Ruby parity manifests pin every group's definition counts. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_parity_manifest_groups_match_their_scalar_oracles"
+          },
+          "rationale": "Loads the versioned Ruby parity manifest and its group manifests, runs all 136 executable groups with their manifest arguments under --fail-on-incomplete, and asserts each group's definition count, feature-step count, completeness, strict exit, zero truncated findings, each required finding matched on every declared field (rule, primaryPath, primaryLine, relatedLocations, relatedCount, messageIncludes, cluster, matchers) by exactly its count (default 1) of active findings, zero active matches for each requiredAbsent entry, exactly one owning requiredFindings entry per active finding, duplication values and expected candidate sources; an unmodeled oracle key fails the test.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "threshold_does_not_tolerate_non_duplication_errors",
@@ -4206,9 +4235,13 @@
         },
         {
           "name": "unresolved_registration_calls_warn_and_expose_the_corpus_census",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `registration-uncertain-dynamic` observes this only through a scalar oracle field (complete), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: An uncertain Ruby registration keeps the corpus incomplete and visible. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unresolved_registrations_warn_and_expose_the_corpus_census"
+          },
+          "rationale": "A single Ruby file whose only registration has a dynamic matcher exits 0 with exactly two warnings (`steps.rb:2:1: Ruby registration requires a static matcher...` and `produced 0 definitions from 1 discovered definition source file(s)`); the JSON and JSONL census report definitionFiles 1, definitionFilesWithDefinitions 0, definitionsExtracted 0, featureFiles 1, featureFilesParsed 1, incomplete true; a fully static project is the complete control.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "empty_converted_gherkin_markdown_marks_the_corpus_incomplete",
@@ -4232,9 +4265,13 @@
         },
         {
           "name": "partial_definition_extraction_is_visible_in_the_corpus_census",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `malformed-matcher-keeps-valid-definitions` observes this only through a scalar oracle field (complete), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: A malformed Ruby matcher marks the corpus incomplete while valid definitions are kept. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unresolved_registrations_warn_and_expose_the_corpus_census"
+          },
+          "rationale": "resolved.rb beside unresolved.rb (dynamic matcher) warns exactly once at `unresolved.rb:2:1` and the JSON and JSONL census report definitionFiles 2, definitionFilesWithDefinitions 1, definitionsExtracted 1, incomplete true; strict mode exits 2.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files",
@@ -4403,14 +4440,22 @@
         },
         {
           "name": "an_unresolved_registration_import_marks_the_whole_run_incomplete",
-          "requiredStatus": "partial",
-          "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: `load-unresolved` observes this only through a scalar oracle field (complete), which is not a clause; a required or forbidden finding, or a dedicated group, must pin: An unresolved Ruby load marks the run incomplete. Owned by the completion follow-up."
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unresolved_load_marks_the_whole_run_incomplete"
+          },
+          "rationale": "A dynamic `require` on line 2 warns at `steps.rb:2:1`, keeps the definition, and marks the JSON report incomplete, the HTML report `Corpus is incomplete` and SARIF executionSuccessful false; --update-baseline exits 0 without writing the baseline; --fail-on-incomplete and the failOnIncomplete config key both exit 2 with the extraction refusal. The project without the load is the complete control for every assertion.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unreadable_registration_modules_remain_operational_failures",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an unreadable Ruby load target must stay an operational failure; needs a Ruby group. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unreadable_load_targets_remain_operational_failures"
+          },
+          "rationale": "A `require_relative` target with mode 000 makes the default run exit 2 with a `failed to read` error naming support/world.rb and no unresolved-dependency warning; the readable target exits 0 (unix only, like the original).",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4998,7 +5043,7 @@
           "name": "unsupported_matchers_mark_partial_extraction_incomplete",
           "requiredStatus": "partial",
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "Unsupported matchers mark partial extraction incomplete while neighboring definitions remain analyzed. The Ruby group pins incompleteness for a dynamic matcher; retained neighboring findings and the JS wrapper-mutation forms have no Ruby counterpart."
+          "rationale": "Needs Ruby evidence for the invalid-escape row: Ruby rejects `\"\\u{110000}\"` as a SyntaxError, but the adapter only warns that the registration requires a static matcher and exits 0 even under `--fail-on-unparseable`, where JS/TS treats the invalid escape as an error. Unsupported Ruby matchers and uncertain wrapper forms otherwise mark extraction incomplete at their exact locations while neighbouring definitions stay analyzed (`ruby_unsupported_matchers_mark_partial_extraction_incomplete`)."
         },
         {
           "name": "inert_local_members_do_not_make_registration_discovery_incomplete",
@@ -5008,8 +5053,12 @@
         },
         {
           "name": "inert_receiver_only_project_passes_strict_mode",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby project whose only registration-shaped call is a send on a local non-provider receiver passes `--fail-on-incomplete` with no definitions; `provider-context-receiver-local-send` pins the inert send only beside real registrations. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inert_receiver_only_project_passes_strict_mode"
+          },
+          "rationale": "A project whose only registration-shaped calls are `router.send(:Given, ...)` or `router.Given(...)` on a LocalRouter instance (class loaded from providers/helpers.rb) passes --fail-on-incomplete with 0 definitions, a complete corpus and the empty-extraction notice as its only diagnostic; `send(:Given, ...)` on main is the control that exits 2 with an incomplete corpus.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
