@@ -88,10 +88,11 @@ pub(super) fn fingerprint(
         // An unmodeled construct keeps the exact-handler policy: no marker, no near overlap.
         behavior_signature.extend(events.unwrap_or_default());
     }
-    let trivial = bindings.calls.is_empty()
+    let trivial = (bindings.calls.is_empty()
         && !nodes
             .iter()
-            .any(|node| matches!(node.kind(), "call" | "assignment" | "operator_assignment"));
+            .any(|node| matches!(node.kind(), "call" | "assignment" | "operator_assignment")))
+        || stub_body(block, source);
     let alpha_normalized =
         serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
     HandlerSemantics {
@@ -484,4 +485,99 @@ pub(super) fn action_stream(
         );
     }
     Some(events)
+}
+
+/// Whether a handler only marks its step as pending, as the TypeScript frontend's trivial handler
+/// rule does: an empty body, or one statement that is a stub expression, a `return`/`next` of one,
+/// or a `raise`/`fail` whose arguments carry a stub label.
+fn stub_body(handler: Node<'_>, source: &str) -> bool {
+    let block = if handler.kind() == "lambda" {
+        handler.child_by_field_name("body")
+    } else {
+        Some(handler)
+    };
+    let statements: Vec<_> = block
+        .and_then(|block| block.child_by_field_name("body"))
+        .map(|body| {
+            if matches!(body.kind(), "block_body" | "body_statement") {
+                let mut cursor = body.walk();
+                body.named_children(&mut cursor)
+                    .filter(|statement| statement.kind() != "comment")
+                    .collect()
+            } else {
+                vec![body]
+            }
+        })
+        .unwrap_or_default();
+    match statements.as_slice() {
+        [] => true,
+        [statement] => {
+            let statement = unparenthesized(*statement);
+            match statement.kind() {
+                "return" | "next" => statement.named_child(0).is_none_or(|arguments| {
+                    arguments.named_child_count() == 1
+                        && arguments
+                            .named_child(0)
+                            .is_some_and(|value| stub_expression(value, source))
+                }),
+                "call"
+                    if statement.child_by_field_name("receiver").is_none()
+                        && statement
+                            .child_by_field_name("method")
+                            .is_some_and(|method| {
+                                matches!(text(method, source), "raise" | "fail")
+                            }) =>
+                {
+                    statement
+                        .child_by_field_name("arguments")
+                        .is_some_and(|arguments| {
+                            // Any label in the arguments marks the stub, as TypeScript's
+                            // `contains_explicit_stub_marker` does for `throw`; a method name
+                            // called on a receiver is a member, never a marker.
+                            descendants(arguments).iter().any(|node| {
+                                matches!(node.kind(), "string" | "identifier" | "constant")
+                                    && !node.parent().is_some_and(|call| {
+                                        call.child_by_field_name("receiver").is_some()
+                                            && call.child_by_field_name("method") == Some(*node)
+                                    })
+                                    && stub_label(text(*node, source))
+                            })
+                        })
+                }
+                _ => stub_expression(statement, source),
+            }
+        }
+        _ => false, // fail-closed: two or more statements do real work and stay compared
+    }
+}
+
+/// A call or bare identifier whose name is a stub label. `nil`, strings and a bare identifier that
+/// is a local leave the handler call-free, which is trivial already.
+fn stub_expression(node: Node<'_>, source: &str) -> bool {
+    let node = unparenthesized(node);
+    match node.kind() {
+        "identifier" => stub_label(text(node, source)),
+        "call" => node
+            .child_by_field_name("method")
+            .is_some_and(|method| stub_label(text(method, source))),
+        _ => false, // fail-closed: any other expression is ordinary behaviour and stays compared
+    }
+}
+
+/// The single statement inside nested parentheses, or `node` itself.
+fn unparenthesized(mut node: Node<'_>) -> Node<'_> {
+    while node.kind() == "parenthesized_statements" && node.named_child_count() == 1 {
+        node = node.named_child(0).unwrap();
+    }
+    node
+}
+
+/// Whether text names a pending marker once punctuation and case are dropped.
+fn stub_label(text: &str) -> bool {
+    let normalized: String = text
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    matches!(normalized.as_str(), "pending" | "notimplemented" | "todo")
 }
