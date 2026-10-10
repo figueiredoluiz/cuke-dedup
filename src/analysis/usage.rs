@@ -470,7 +470,11 @@ fn analyze_matcher_overlap(
     // silently losing the overlap coverage of every authoritative member behind it.
     let mut witnessed_groups = HashSet::new();
     let mut witnesses: Vec<(usize, String)> = Vec::new();
-    let witness_scan_budget = proposal_budget;
+    // Scanning a witness evaluates no comparison, so it is bounded by the configured limit rather
+    // than by what the pair stage left: at an exact limit, witnesses that accept nothing complete.
+    let witness_scan_budget = config
+        .max_candidate_comparisons
+        .saturating_mul(OVERLAP_PROPOSAL_WORK_MULTIPLIER);
     for (left, definition) in definitions.iter().enumerate() {
         if !summaries[left].authoritative {
             continue;
@@ -500,6 +504,7 @@ fn analyze_matcher_overlap(
 
     let mut proposals: Vec<Vec<usize>> = vec![Vec::new(); witnesses.len()];
     let mut accumulated = 0_usize;
+    let mut overflow = false;
     let mut local = Vec::new();
     // Summaries and compilation diagnostics were already collected by the step-matching pass;
     // recompiling here must not duplicate them.
@@ -522,9 +527,9 @@ fn analyze_matcher_overlap(
                 // because a run that sets `incomplete` already promises only a subset: "the absence
                 // of a finding proves nothing" (see `analyze_with_diagnostics`). A run that does not
                 // truncate is byte-identical at any window size.
-                if accumulated >= proposal_budget {
-                    break;
-                }
+                // An exhausted budget still scans the witness (the scan budget affords it): only a
+                // proposable match it cannot hold makes the pass incomplete.
+                let exhausted = accumulated >= proposal_budget;
                 index.matches(compiled, witness, &mut local);
                 let definition = &definitions[*left];
                 for right in local.iter().map(|index| index + start) {
@@ -537,6 +542,10 @@ fn analyze_matcher_overlap(
                     {
                         continue;
                     }
+                    if exhausted {
+                        overflow = true;
+                        return;
+                    }
                     accepted.push(right);
                     accumulated += 1;
                 }
@@ -548,7 +557,7 @@ fn analyze_matcher_overlap(
     let mut evaluated = 0_usize;
     let mut proposal_work = 0_usize;
     let mut retained = 0_usize;
-    let mut truncated = scan_truncated;
+    let mut truncated = scan_truncated || overflow;
     let mut suppression_work = 0_u64;
     'definitions: for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter()) {
         for right in accepted.iter().copied() {

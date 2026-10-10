@@ -120,7 +120,7 @@
     "equivalent-handlers-precision-mixed-positive": {"status":"pass","digest":"7c0263c8e2282a333b20a7cbf6db1d2e4964a7257052b9c1a9b0de1581313cc6"},
     "equivalent-handlers-review-gap-callback-call-evidence": {"status":"pass","digest":"4523d2aa241d217fdf702427765a2bed1c122873342e04fa824049d11bb6f91e"},
     "equivalent-handlers-review-gap-candidate-filter": {"status":"pass","digest":"21abddc89896f9f98d6d54b5268f4a7309fbb6e861a5fb7d0b1b8f7e2f51b15b"},
-    "equivalent-handlers-review-gap-candidate-small-budget": {"status":"pass","digest":"10f7eeb906ed6c1a1a03e8e7ebc6234bed4c7e5219e7c9c44766de2a24e7166b"},
+    "equivalent-handlers-review-gap-candidate-small-budget": {"status":"pass","digest":"436a241fc7e5cb900365880dc909a70734d9178286b0cb17432a1db43d0269e6"},
     "equivalent-handlers-review-gap-lexical-tdz": {"status":"pass","digest":"f564d1a55bca25a077ba96ca1a3584e551cb161eea6c145878e4bffba2961e49"},
     "equivalent-handlers-regex-flag-identity-keeps-semantic-flags": {"status":"pass","digest":"52870ad279f4fa21834dd927f3575fb148c249c58c4845dc4f50694131a5165e"},
     "equivalent-handlers-module-constant-values-reach-the-fingerprint": {"status":"pass","digest":"54ebb88d252495b7ec7b2fe8ffe0f90cb078cd2e2754ee69eb198773c306890d"},

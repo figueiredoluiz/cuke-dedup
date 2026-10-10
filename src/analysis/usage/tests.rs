@@ -93,6 +93,7 @@ fn matcher_overlap_respects_the_shared_candidate_budget() {
         .any(|diagnostic| diagnostic.contains("matcher-overlap analysis is incomplete")));
 }
 
+/// Witness index scans are charged against the configured limit before any candidate is proposed.
 #[test]
 fn matcher_overlap_charges_index_scans_before_candidate_generation() {
     let definitions = definitions(
@@ -103,6 +104,7 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
          Given('value {fifth}', () => fifth());",
     );
     let (_directory, mut config) = config();
+    config.max_candidate_comparisons = 1;
     for name in ["first", "second", "third", "fourth", "fifth"] {
         config
             .parameter_types

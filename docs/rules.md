@@ -47,6 +47,9 @@ rules are not repeated, and unsupported regular expressions are never reversed i
 The rule complements `ambiguous-step`: ambiguity is demonstrated by a discovered feature step,
 while overlap is demonstrated from definitions alone. Work shares `maxCandidateComparisons` with
 other pair rules and retains at most 10,000 findings. Reaching a limit marks analysis incomplete.
+Scanning definitions for witnesses evaluates no comparison, so a limit equal to the comparisons a
+corpus needs stays complete; the pass is incomplete when an overlap pair exceeds the remaining
+budget or witness scans exceed four times the limit.
 
 ### duplicate-handler
 
