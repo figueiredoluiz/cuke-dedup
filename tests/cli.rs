@@ -6822,6 +6822,56 @@ fn regression_122_ruby_receiver_registrations_fail_closed() {
             Some("4:1"),
         ),
         ("args = []", "router.Given(42, *args) { other() }", None),
+        // A sign written directly before a number is part of the literal; a spaced one is a call.
+        ("", "router.Given(-1) { other() }", None),
+        ("", "router.Given('hidden', -1) { other() }", None),
+        ("", "router.Given('hidden', - 1) { other() }", Some("4:1")),
+        // Arguments after a splat are fixed too.
+        (
+            "rest = []",
+            "router.Given('hidden', *rest, 1, 2, 3) { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given(*rest, 'hidden', 'b') { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given(*rest, 'hidden', :step_method)",
+            Some("4:1"),
+        ),
+        // `__LINE__` and `__ENCODING__` are never a pattern; `__FILE__` is a String.
+        ("", "router.Given(__LINE__) { other() }", None),
+        ("", "router.Given(__ENCODING__) { other() }", None),
+        ("", "router.Given('hidden', __FILE__)", None),
+        ("", "router.Given('hidden', __LINE__)", None),
+        // Hundreds of splats stay bounded: four fixed arguments always exceed the cap.
+        (
+            "rest = []",
+            &format!(
+                "router.Given({}1, 1, 1, 1) {{ other() }}",
+                "*rest, ".repeat(300)
+            ),
+            None,
+        ),
+        // Every splat or `...` supplies its own number of arguments.
+        (
+            "rest = []",
+            "router.Given('hidden', *rest, :step_method, *rest, {})",
+            Some("4:1"),
+        ),
+        (
+            "rest = []",
+            "router.Given(*rest, *rest, 'hidden', :step_method)",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(...) = target.Given(*pre, 'hidden', :step_method, {}, ...)",
+            "wrap",
+            Some("3:17"),
+        ),
         // `false.to_proc` and the backtick method can be redefined to return a Proc or Symbol.
         ("", "router.Given('hidden', &false)", Some("4:1")),
         ("", "router.Given('hidden', &(nil))", None),

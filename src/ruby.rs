@@ -521,22 +521,68 @@ fn extract_with_proof(
 
 /// Whether a step-keyword call can register. Cucumber-Ruby keywords take
 /// `(pattern, symbol = nil, options = {}, &proc)`, require a String or Regexp pattern, and use
-/// `symbol || proc`, which must be a Symbol or a Proc. Arguments written before a splat or `...`
-/// are fixed; the splat may supply any later one. The call needs at most three fixed arguments
-/// (keyword pairs count as one wherever they appear), a pattern that may be a String or Regexp,
-/// and either a second argument that may be a Symbol or a Proc or, when that argument is absent,
-/// `nil` or `false`, a block, a block argument other than `&nil`, or `...`, which forwards a
-/// block. Keyword pairs fill the second slot as a Hash only when no second positional argument is
-/// given; a `**hash` splat may be empty, so it neither counts nor fills the slot.
+/// `symbol || proc`, which must be a Symbol or a Proc. Each splat or `...` supplies an unknown
+/// number of arguments among the fixed ones, so every combination that keeps the call within three
+/// arguments is tried. The call can register when, for some combination,
+/// its first argument may be a String or Regexp and either its second argument may be a Symbol or
+/// a Proc or, when that argument is absent, `nil` or `false`, a block, a block argument other than
+/// `&nil`, or `...` (which forwards a block) supplies the proc. Keyword pairs are one trailing Hash
+/// argument; a `**hash` splat may be empty, so it is not counted.
 fn may_register(call: Node<'_>, source: &str) -> bool {
     let arguments = call
         .child_by_field_name("arguments")
         .map(bindings::semantic_children)
         .unwrap_or_default();
-    let splat = arguments
-        .iter()
-        .position(|argument| matches!(argument.kind(), "splat_argument" | "forward_argument"));
-    let positional: Vec<_> = arguments[..splat.unwrap_or(arguments.len())]
+    let keywords = arguments.iter().any(|argument| argument.kind() == "pair");
+    let block = call.child_by_field_name("block").is_some()
+        || arguments.iter().any(|argument| match argument.kind() {
+            "block_argument" => argument
+                .named_child(0)
+                .is_none_or(|value| argument_kind(value, source) != "nil"),
+            kind => kind == "forward_argument",
+        });
+    // Each splat or `...` may supply any number of arguments. Only distinct lists within the
+    // three-argument cap (keyword pairs take one place) are kept, so the work per argument is
+    // bounded however many splats a call has.
+    let cap = 3 - usize::from(keywords);
+    let mut expansions: Vec<Vec<Option<Node<'_>>>> = vec![Vec::new()];
+    for argument in positional_arguments(&arguments) {
+        let variadic = matches!(argument.kind(), "splat_argument" | "forward_argument");
+        let mut next: Vec<Vec<Option<Node<'_>>>> = Vec::new();
+        for prefix in &expansions {
+            for width in if variadic { 0..=cap } else { 1..=1 } {
+                let mut slots = prefix.clone();
+                slots.extend(std::iter::repeat_n((!variadic).then_some(argument), width));
+                if slots.len() <= cap && !next.contains(&slots) {
+                    next.push(slots);
+                }
+            }
+        }
+        expansions = next;
+    }
+    expansions.into_iter().any(|slots| {
+        let pattern = slots.first().is_some_and(|first| {
+            first.is_none_or(|node| !non_pattern(argument_kind(node, source)))
+        });
+        let proc = match slots.get(1) {
+            Some(None) => true,
+            Some(Some(second)) if non_proc_literal(*second, source) => false,
+            Some(Some(second)) if !matches!(argument_kind(*second, source), "nil" | "false") => {
+                true
+            }
+            // Keyword pairs fill an absent second argument with a Hash, which is no handler.
+            None if keywords => false,
+            // fail-closed: `nil`, `false` or absent; any block source supplies the proc.
+            _ => block,
+        };
+        pattern && proc
+    })
+}
+
+/// The positional arguments of a call, splats included: keyword pairs, `**hash` and block
+/// arguments bind elsewhere.
+fn positional_arguments<'a>(arguments: &[Node<'a>]) -> Vec<Node<'a>> {
+    arguments
         .iter()
         .filter(|argument| {
             !matches!(
@@ -544,38 +590,33 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
                 "pair" | "hash_splat_argument" | "block_argument"
             )
         })
-        .collect();
-    let keywords = arguments.iter().any(|argument| argument.kind() == "pair");
-    if positional.len() + usize::from(keywords) > 3 {
-        return false;
-    }
-    let pattern = positional.first().map_or(splat.is_some(), |first| {
-        !non_pattern(argument_kind(**first))
-    });
-    match positional
-        .get(1)
-        .map(|second| bindings::unparenthesized(**second))
-    {
-        Some(second) if non_proc_literal(second, source) => return false,
-        Some(second) if !matches!(second.kind(), "nil" | "false") => return pattern,
-        None if splat.is_some() => return pattern,
-        None if keywords => return false,
-        _ => {} // fail-closed: `nil`, `false` or absent; the block check below decides.
-    }
-    // `...` forwards the caller's block too.
-    let proc = call.child_by_field_name("block").is_some()
-        || arguments.iter().any(|argument| match argument.kind() {
-            "block_argument" => argument
-                .named_child(0)
-                .is_none_or(|value| argument_kind(value) != "nil"),
-            kind => kind == "forward_argument",
-        });
-    pattern && proc
+        .copied()
+        .collect()
 }
 
-/// The kind of an argument with redundant parentheses removed, as `(nil)` evaluates to `nil`.
-fn argument_kind(node: Node<'_>) -> &str {
-    bindings::unparenthesized(node).kind()
+/// The kind of an argument with redundant parentheses removed, as `(nil)` evaluates to `nil`. A
+/// sign written directly before a number is part of the literal (`-1`), which tree-sitter parses
+/// as a unary operator.
+fn argument_kind<'a>(node: Node<'a>, source: &str) -> &'a str {
+    let node = bindings::unparenthesized(node);
+    // tree-sitter parses these reserved keywords as identifiers; Ruby never binds them.
+    if node.kind() == "identifier" {
+        match text(node, source) {
+            "__LINE__" => return "line",
+            "__FILE__" => return "file",
+            "__ENCODING__" => return "encoding",
+            _ => {} // fail-closed: any other identifier keeps its kind and may be anything.
+        }
+    }
+    node.child_by_field_name("operand")
+        .filter(|operand| {
+            node.kind() == "unary"
+                && matches!(operand.kind(), "integer" | "float" | "rational" | "complex")
+                && node.child(0).is_some_and(|sign| {
+                    matches!(sign.kind(), "-" | "+") && sign.end_byte() == operand.start_byte()
+                })
+        })
+        .map_or(node.kind(), |operand| operand.kind())
 }
 
 /// Whether a literal kind is neither a String nor a Regexp, so Cucumber-Ruby rejects it as a step
@@ -597,6 +638,8 @@ fn non_pattern_literal(kind: &str) -> bool {
             | "symbol_array"
             | "hash"
             | "range"
+            | "line"
+            | "encoding"
     )
 }
 
@@ -609,9 +652,9 @@ fn non_pattern(kind: &str) -> bool {
 /// `false` leave the choice to the block. Backtick strings call an overridable method and may
 /// return either.
 fn non_proc_literal(node: Node<'_>, source: &str) -> bool {
-    match node.kind() {
-        "heredoc_beginning" => !text(node, source).contains('`'),
-        "string" | "chained_string" | "character" | "regex" => true,
+    match argument_kind(node, source) {
+        "heredoc_beginning" => !text(bindings::unparenthesized(node), source).contains('`'),
+        "string" | "chained_string" | "character" | "regex" | "file" => true,
         kind => {
             non_pattern_literal(kind)
                 && !matches!(kind, "simple_symbol" | "delimited_symbol" | "nil" | "false")
