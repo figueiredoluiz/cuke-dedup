@@ -532,11 +532,29 @@
         ]
       }
     },
+    "equivalent-provider-receiver-origin": {
+      "path": "equivalent-providers/receiver-origin",
+      "definitionsPattern": "steps.rb",
+      "definitions": 0,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-matcher"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ],
+      "reason": "Ruby divergence for the sigma origin of ambiguous-step-definition-origins: `ordinary.Given(...)` calls a keyword through a local that `binding` or `binding_of_caller` can rebind to main, where it registers, so the corpus is incomplete; the TypeScript import binding it mirrors is immutable."
+    },
     "equivalent-provider-registration-origins": {
       "path": "equivalent-providers/registration-origins",
       "definitionsPattern": "steps.rb",
       "definitions": 30,
-      "featureSteps": 20,
+      "featureSteps": 19,
       "complete": true,
       "expectedExit": 1,
       "requiredFindings": [
@@ -815,7 +833,7 @@
           },
           {
             "sourceShape": "absent default export",
-            "rubyShape": "ordinary namespace Given method does not forward to DSL",
+            "rubyShape": "ordinary namespace Given called through a local alias; incomplete in Ruby (group equivalent-provider-receiver-origin) because the local can be rebound to main",
             "origin": "sigma",
             "excludedApi": "undefined CommonJS/ESM default-export behavior"
           },

@@ -4107,7 +4107,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "170487e9c5adb7bb3a7aeb54c56bca65a678f14760c061b20724800658140e12",
+      "sourceSha256": "6c29664fa0195d1b60577fa228d507ad491207c04609777d76c72c4f543ec2a5",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5343,6 +5343,16 @@
             "name": "regression_exact_global_limit_does_not_truncate_matcher_overlap"
           },
           "rationale": "`regression_exact_global_limit_does_not_truncate_matcher_overlap` pins exact global-limit inclusivity of the matcher-overlap pass end to end for Ruby and TypeScript, with a one-short truncating control.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_122_ruby_receiver_registrations_fail_closed",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_122_ruby_receiver_registrations_fail_closed"
+          },
+          "rationale": "`regression_122_ruby_receiver_registrations_fail_closed` runs Ruby step keywords called through receivers through the built binary: every shape Cucumber-Ruby can register (a String or Regexp pattern in any literal form, at most three arguments, and a splat or `...`, a second argument that may be a Symbol or Proc, or a block or block argument when that argument is absent, nil or false), on any receiver including a local source-class instance or namespace alias, fails closed at its located call, while shapes Ruby rejects (Watir and Builder `a(...)` calls, each non-pattern literal or a lambda as pattern, no pattern, literal, parenthesized or keyword second arguments, more than three fixed arguments, a fixed literal second argument before a splat, `&nil`, `self.Given` without a block) stay complete.",
           "behaviorClass": "ruby-behavior"
         }
       ]
