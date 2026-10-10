@@ -653,6 +653,15 @@ fn verbatim_paths_rebuild_to_plain_windows_paths() {
             Some(r"\\server\share\steps.rb"),
         ),
         (plain(r"\\", &["server", "nul"], r"\steps.rb"), None),
+        (
+            plain(r"\\", &["server", "share"], ""),
+            Some(r"\\server\share"),
+        ),
+        (
+            plain(r"\\", &["server", "share"], r"\"),
+            Some(r"\\server\share\"),
+        ),
+        (plain(r"\\", &["server", "nul"], ""), None),
     ];
     for (index, (actual, expected)) in cases.into_iter().enumerate() {
         assert_eq!(actual.as_deref(), expected, "case {index}");

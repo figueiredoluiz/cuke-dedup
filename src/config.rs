@@ -731,7 +731,9 @@ fn strip_verbatim_prefix(path: &Path) -> Option<PathBuf> {
 /// The plain form `lead` + `head` + `\` + the `Normal` names of `rest` when it names the same
 /// file: every name passes `plain_name`, and its length equals the head plus `suffix_len` (the
 /// verbatim length after the prefix), which holds only when `rest` is one root followed by
-/// `\`-separated names, so no `.`, `..`, empty or trailing component was dropped. Length is not
+/// `\`-separated names, so no `.`, `..`, empty or trailing component was dropped. An empty suffix
+/// is a UNC share root (`\\server\share`); a drive has none, since plain `C:` names its current
+/// directory. Length is not
 /// limited: std re-adds the verbatim prefix to long paths, and a limit would leave a long path
 /// verbatim under a plain `Config::root`, failing containment. `None` keeps the verbatim form.
 #[cfg(any(windows, test))]
@@ -751,9 +753,12 @@ fn plain_verbatim_path(
     let mut plain = std::ffi::OsString::from(lead);
     plain.push(join_with_separator(head));
     let head_len = plain.len();
-    plain.push(r"\");
-    plain.push(join_with_separator(&names));
+    if suffix_len > 0 {
+        plain.push(r"\");
+        plain.push(join_with_separator(&names));
+    }
     (plain.len() == head_len + suffix_len
+        && (suffix_len > 0 || !lead.is_empty())
         && head.iter().all(|name| plain_name(name))
         && names
             .iter()
