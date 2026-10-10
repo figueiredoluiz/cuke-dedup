@@ -248,15 +248,15 @@ impl Config {
         Self::load_internal(root, overrides, cli_overrides)
     }
 
+    /// Loads the configuration for `root` with the given overrides, resolving `root` to its
+    /// canonical, platform-normalized form first.
     fn load_internal(
         root: &Path,
         overrides: ConfigOverrides,
         cli_overrides: CliConfigOverrides,
     ) -> Result<Self> {
-        let root = normalize_platform_path(
-            root.canonicalize()
-                .with_context(|| format!("cannot access target directory {}", root.display()))?,
-        );
+        let root = canonical_platform_path(root)
+            .with_context(|| format!("cannot access target directory {}", root.display()))?;
         if !root.is_dir() {
             bail!("target {} is not a directory", root.display());
         }
@@ -691,18 +691,162 @@ fn validate_project_output(root: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `path` without the Windows verbatim prefix, so it compares with `Config::root` and strips to
+/// a relative display path; unchanged on other platforms.
 pub(crate) fn normalize_platform_path(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
-        let value = path.to_string_lossy();
-        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-            return PathBuf::from(format!(r"\\{unc}"));
-        }
-        if let Some(local) = value.strip_prefix(r"\\?\") {
-            return PathBuf::from(local);
+        if let Some(plain) = strip_verbatim_prefix(&path) {
+            return plain;
         }
     }
     path
+}
+
+/// `path` without its `\\?\X:` or `\\?\UNC\server\share` verbatim prefix, rebuilt from its
+/// components without any `OsStr` to `str` conversion. `None` keeps the verbatim form.
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: &Path) -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use std::path::Prefix;
+    let mut components = path.components();
+    let prefix = match components.next() {
+        Some(Component::Prefix(prefix)) => prefix,
+        _ => return None, // fail-closed: a path without a prefix has nothing to strip
+    };
+    let drive;
+    let (lead, head) = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => {
+            drive = format!("{}:", char::from(letter));
+            ("", vec![OsStr::new(&drive)])
+        }
+        Prefix::VerbatimUNC(server, share) => (r"\\", vec![server, share]),
+        _ => return None, // fail-closed: device, volume and non-verbatim prefixes keep their form
+    };
+    let rest: Vec<_> = components.collect();
+    let suffix_len = path.as_os_str().len() - prefix.as_os_str().len();
+    plain_verbatim_path(lead, &head, &rest, suffix_len)
+}
+
+/// The plain form `lead` + `head` + `\` + the `Normal` names of `rest` when it names the same
+/// file: every name passes `plain_name`, and its length equals the head plus `suffix_len` (the
+/// verbatim length after the prefix), which holds only when `rest` is one root followed by
+/// `\`-separated names, so no `.`, `..`, empty or trailing component was dropped. An empty suffix
+/// is a UNC share root (`\\server\share`); a drive has none, since plain `C:` names its current
+/// directory. Length is not
+/// limited: std re-adds the verbatim prefix to long paths, and a limit would leave a long path
+/// verbatim under a plain `Config::root`, failing containment. `None` keeps the verbatim form.
+#[cfg(any(windows, test))]
+fn plain_verbatim_path(
+    lead: &str,
+    head: &[&std::ffi::OsStr],
+    rest: &[Component<'_>],
+    suffix_len: usize,
+) -> Option<PathBuf> {
+    let names: Vec<_> = rest
+        .iter()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(*name),
+            _ => None, // fail-closed: the length check rejects any dropped component but the root
+        })
+        .collect();
+    let mut plain = std::ffi::OsString::from(lead);
+    plain.push(join_with_separator(head));
+    let head_len = plain.len();
+    if suffix_len > 0 {
+        plain.push(r"\");
+        plain.push(join_with_separator(&names));
+    }
+    (plain.len() == head_len + suffix_len
+        && (suffix_len > 0 || !lead.is_empty())
+        && head.iter().all(|name| plain_name(name))
+        && names
+            .iter()
+            .all(|name| plain_name(name) && plain_chars(name)))
+    .then(|| plain.into())
+}
+
+/// `parts` joined with `\`, built without the unstable `OsStr` slice `join`.
+#[cfg(any(windows, test))]
+fn join_with_separator(parts: &[&std::ffi::OsStr]) -> std::ffi::OsString {
+    let mut joined = std::ffi::OsString::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            joined.push(r"\");
+        }
+        joined.push(part);
+    }
+    joined
+}
+
+/// Whether `name` holds no character Win32 rejects or reinterprets: the reserved `<>:"|?*`
+/// (`:` starts a stream name) and control characters below U+0020. Checked on the `names` only;
+/// the head is a drive or server name the verbatim form already validated.
+#[cfg(any(windows, test))]
+fn plain_chars(name: &std::ffi::OsStr) -> bool {
+    name.as_encoded_bytes()
+        .iter()
+        .all(|&byte| byte >= 0x20 && !br#"<>:"|?*"#.contains(&byte))
+}
+
+/// Whether Win32 keeps `name` unchanged in a plain path: not a DOS device name (superscript
+/// aliases and console handles included), no trailing dot or space, no `/`. Device checks run on
+/// the encoded bytes, so names that are not valid Unicode are checked too; `plain_chars` covers
+/// the remaining characters.
+#[cfg(any(windows, test))]
+fn plain_name(name: &std::ffi::OsStr) -> bool {
+    // Reserved names from "Naming Files, Paths, and Namespaces", and the console handles from
+    // "CreateFileW".
+    const RESERVED: [&[u8]; 32] = [
+        b"CON",
+        b"CONIN$",
+        b"CONOUT$",
+        b"PRN",
+        b"AUX",
+        b"NUL",
+        b"COM0",
+        b"COM1",
+        b"COM2",
+        b"COM3",
+        b"COM4",
+        b"COM5",
+        b"COM6",
+        b"COM7",
+        b"COM8",
+        b"COM9",
+        "COM¹".as_bytes(),
+        "COM²".as_bytes(),
+        "COM³".as_bytes(),
+        b"LPT0",
+        b"LPT1",
+        b"LPT2",
+        b"LPT3",
+        b"LPT4",
+        b"LPT5",
+        b"LPT6",
+        b"LPT7",
+        b"LPT8",
+        b"LPT9",
+        "LPT¹".as_bytes(),
+        "LPT²".as_bytes(),
+        "LPT³".as_bytes(),
+    ];
+    let bytes = name.as_encoded_bytes();
+    let stem = bytes
+        .split(|&byte| byte == b'.')
+        .next()
+        .unwrap_or_default()
+        .trim_ascii_end();
+    let device = RESERVED
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved));
+    !bytes.ends_with(b".") && !bytes.ends_with(b" ") && !bytes.contains(&b'/') && !device
+}
+
+/// `path` canonicalized and normalized like `Config::root`, so paths reached through the
+/// filesystem compare with, and strip to relative paths under, the analysis root on every platform.
+pub(crate) fn canonical_platform_path(path: &Path) -> std::io::Result<PathBuf> {
+    path.canonicalize().map(normalize_platform_path)
 }
 
 fn read_raw_config(path: &Path) -> Result<RawConfig> {

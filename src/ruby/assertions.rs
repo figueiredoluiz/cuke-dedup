@@ -1031,7 +1031,7 @@ mod tests {
             .unwrap();
         let loop_edge = SourceDependency::new(
             definitions[0].location.clone(),
-            file.path.canonicalize().unwrap(),
+            crate::config::canonical_platform_path(&file.path).unwrap(),
         );
         let mut cases: Vec<_> = [vec![], vec!["./steps".to_owned()]]
             .into_iter()
@@ -1106,7 +1106,7 @@ mod tests {
         let edge = |node| {
             SourceDependency::new(
                 location(&files[0], node, source),
-                files[1].path.canonicalize().unwrap(),
+                crate::config::canonical_platform_path(&files[1].path).unwrap(),
             )
         };
         let configured = ["./assertions".into()];
@@ -1152,6 +1152,7 @@ mod tests {
         }
     }
 
+    /// Session proofs survive source deletion without reloading and are keyed by current source bytes.
     #[test]
     fn shared_snapshot_retains_proofs_without_reloading_and_checks_current_source_bytes() {
         let root = tempfile::tempdir().unwrap();
@@ -1170,7 +1171,7 @@ mod tests {
         let load = root_node.named_child(0).unwrap();
         let edges = [SourceDependency::new(
             location(&files[0], load, source),
-            files[1].path.canonicalize().unwrap(),
+            crate::config::canonical_platform_path(&files[1].path).unwrap(),
         )];
         for file in &files {
             std::fs::remove_file(&file.path).unwrap();
@@ -1217,7 +1218,7 @@ mod tests {
             std::fs::write(&files[1].path, provider).unwrap();
             let edges = [SourceDependency::new(
                 crate::model::SourceLocation::new(files[0].path.clone(), 1, 1, 1, 30),
-                files[1].path.canonicalize().unwrap(),
+                crate::config::canonical_platform_path(&files[1].path).unwrap(),
             )];
             let mut session =
                 SourceExtractionSession::with_options(root.path(), &[], &["./assertions".into()])

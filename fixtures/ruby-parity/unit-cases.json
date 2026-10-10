@@ -1313,7 +1313,7 @@
       ]
     },
     "src/config/tests.rs": {
-      "sourceSha256": "66a8b3068beefc5017ac2e109e33520427a0d40f70ba3efcdf680366ccc1d88f",
+      "sourceSha256": "ccaae8b3f1ea19386a30a377545cf7943d37756e11e6486c37a0df2b76fc8e77",
       "tests": [
         {
           "name": "standalone_config_overrides_package_and_cli_overrides_both",
@@ -1496,6 +1496,34 @@
           "requiredStatus": "engine-invariant",
           "stage": "config-decoding",
           "rationale": "Adapter-independent stage `config-decoding`: Generic configuration decoding, validation and precedence (malformed auto config warns and falls through to package config); the decoded values are language-independent and no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_paths_rebuild_to_plain_windows_paths",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: rebuilding a Windows verbatim path in plain form for the analysis root and canonical source paths is path handling shared by every frontend; Ruby load targets are covered end to end by `regression_119_ruby_loaded_file_paths_stay_relative_to_the_root`.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_prefix_strip_keeps_non_unicode_windows_names",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Windows-only check that verbatim-prefix stripping keeps non-Unicode names byte for byte; path handling shared by every frontend, no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "long_canonical_windows_paths_stay_plain_under_the_root",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Windows-only check that a canonical path longer than MAX_PATH strips to plain form under the analysis root; path handling shared by every frontend, no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "canonical_platform_paths_strip_against_the_config_root",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: a canonicalized path strips against the normalized analysis root; no adapter runs, and Ruby load targets are covered end to end by `regression_119_ruby_loaded_file_paths_stay_relative_to_the_root`.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -4030,7 +4058,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "ccd15c6dfa59bd1406aea81ee13e523f3992fe2ec6e4560da98ac1e1f611bf05",
+      "sourceSha256": "33f2cf825e8b30e3f55a29a791badabfdabc74f40fdb5b3ee6cf28353298cd09",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5212,6 +5240,16 @@
             "name": "regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers"
           },
           "rationale": "`regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers` runs Ruby sources through the built binary and pins scenario-hook block deferral and the hooks that stay conservative end to end.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_119_ruby_loaded_file_paths_stay_relative_to_the_root",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_119_ruby_loaded_file_paths_stay_relative_to_the_root"
+          },
+          "rationale": "`regression_119_ruby_loaded_file_paths_stay_relative_to_the_root` runs Ruby sources reached only through `require_relative` and a `rubyLoadPaths` `require` through the built binary and pins root-relative finding and discovery paths end to end.",
           "behaviorClass": "ruby-behavior"
         }
       ]

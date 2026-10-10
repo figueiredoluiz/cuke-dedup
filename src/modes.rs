@@ -1,6 +1,6 @@
 //! Changed-files and existing-findings baseline modes for incremental CI adoption.
 
-use crate::config::normalize_platform_path;
+use crate::config::{canonical_platform_path, normalize_platform_path};
 use crate::model::{stable_fingerprint_parts, Finding, Suppression};
 use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
@@ -229,10 +229,8 @@ pub(crate) fn baseline_snapshot(
     if !scoped.is_dir() {
         bail!("baseline revision does not contain the analysis directory");
     }
-    let scoped = crate::config::normalize_platform_path(scoped.canonicalize()?);
-    if !scoped.starts_with(crate::config::normalize_platform_path(
-        checkout.canonicalize()?,
-    )) {
+    let scoped = crate::config::canonical_platform_path(&scoped)?;
+    if !scoped.starts_with(crate::config::canonical_platform_path(&checkout)?) {
         bail!("baseline analysis directory escapes its checkout");
     }
     Ok((temporary, scoped))
@@ -251,15 +249,12 @@ pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
             String::from_utf8_lossy(&repository.stderr).trim()
         );
     }
-    let repository = normalize_platform_path(
-        PathBuf::from(
-            String::from_utf8(repository.stdout)
-                .context("git returned a non-UTF-8 repository path")?
-                .trim(),
-        )
-        .canonicalize()
-        .with_context(|| "failed to canonicalize the Git repository root")?,
-    );
+    let repository = canonical_platform_path(Path::new(
+        String::from_utf8(repository.stdout)
+            .context("git returned a non-UTF-8 repository path")?
+            .trim(),
+    ))
+    .with_context(|| "failed to canonicalize the Git repository root")?;
     if root == repository {
         return Ok(());
     }
