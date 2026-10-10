@@ -1116,7 +1116,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "c36e7cd305f0444b04337cd6803bd6c1186f6c09a542dedade97f8e7d5baf7b7",
+      "sourceSha256": "f8ad81024f15281db45ca6cb8fa1178115b4ea3acbc60ee0439441799a1bdb01",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1156,6 +1156,22 @@
             "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
           },
           "rationale": "Five Ruby `value {name}` definitions with `<name>-only` types run at CUKE_DEDUP_MATCHER_WINDOW=1: limit 1 and limit 2 both report evaluated 0 / skipped 1, no finding and one diagnostic, while the single-window control at limit 2 reports skipped 0, so only the per-window scan charge truncates.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans"
+          },
+          "rationale": "Ruby `alpha {word}` and `beta {word}` with seven `beta` and two `alpha` regexes at limit 2 (overlap cap 8): with windows of 9 the earlier witness `alpha` crosses the cap in window 2, keeps one proposal and the replay reports `1 10;2 3`; checked once per witness it kept both and reported `1 10;1 11`, which the single-window control still reports.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "scan_windows_stop_at_a_break",
+          "requiredStatus": "partial",
+          "rationale": "Needs Ruby evidence: an observable for skipped window compilation after the overlap cap is reached. The skipped windows store nothing, so findings and census are identical for any adapter; same class as broad_ambiguity_groups_use_linear_membership_storage.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

@@ -1152,8 +1152,10 @@ fn ruby_value_types(types: &[(&str, &str)]) -> String {
 }
 
 /// Matcher overlap shares the global candidate limit with handler comparisons, spends it once per
-/// unordered pair (a reverse witness is not a second comparison), and charges one index scan per
-/// matcher window before any pair is proposed; every truncation is one stderr diagnostic.
+/// unordered pair (a reverse witness is not a second comparison), charges one index scan per
+/// matcher window before any pair is proposed, and caps stored proposals per match, so a witness
+/// that crosses the cap in a later window keeps only what fits; every truncation is one stderr
+/// diagnostic.
 #[test]
 fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
     let shared = |names: &[&'static str]| {
@@ -1184,6 +1186,10 @@ fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
             .zip(own.iter().map(String::as_str))
             .collect::<Vec<_>>(),
     );
+    // Window 1 (9 definitions) stores 7 `beta` proposals; in window 2 the earlier witness `alpha`
+    // has two, against a cap of 8 (4 x limit 2). Checked per match, `alpha` keeps one and the
+    // replay reaches `beta`; checked once per witness, `alpha` kept both. One window is the control.
+    let crossing = "Given('alpha {word}') { zero() }\nGiven('beta {word}') { one() }\nGiven(/^beta s/) { b1() }\nGiven(/^beta sa/) { b2() }\nGiven(/^beta sam/) { b3() }\nGiven(/^beta samp/) { b4() }\nGiven(/^beta sampl/) { b5() }\nGiven(/^beta sample/) { b6() }\nGiven(/^beta/) { b7() }\nGiven(/^alpha s/) { a1() }\nGiven(/^alpha/) { a2() }\n";
     // context, source, window, candidate limit, handler comparisons, (evaluated, skipped),
     // overlap findings
     type Row<'a> = (
@@ -1195,7 +1201,7 @@ fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
         (u64, u64),
         &'a str,
     );
-    let rows: [Row<'_>; 8] = [
+    let rows: [Row<'_>; 10] = [
         ("limit 1 of 3 pairs", &three, None, 1, 0, (1, 1), "4 5"),
         (
             "limit 3 of 3 pairs",
@@ -1236,6 +1242,24 @@ fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
         ("five windows at limit 1", &five, Some(1), 1, 0, (0, 1), ""),
         ("five windows at limit 2", &five, Some(1), 2, 0, (0, 1), ""),
         ("one window at limit 2", &five, None, 2, 0, (0, 0), ""),
+        (
+            "cap cut inside a later window",
+            crossing,
+            Some(9),
+            2,
+            0,
+            (2, 1),
+            "1 10;2 3",
+        ),
+        (
+            "cap cut in one window",
+            crossing,
+            None,
+            2,
+            0,
+            (2, 1),
+            "1 10;1 11",
+        ),
     ];
     for (context, source, window, limit, handlers, census, overlaps) in rows {
         let limit = limit.to_string();

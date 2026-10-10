@@ -8,6 +8,7 @@ use crate::resource_limits::{compile_regex, MAX_REGEX_PATTERN_BYTES, MAX_STATIC_
 use cucumber_expressions::expand::IntoRegexCharIter;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::ControlFlow;
 use std::sync::LazyLock;
 
 static FALLBACK_PLACEHOLDER: LazyLock<Regex> =
@@ -159,7 +160,9 @@ struct MatcherSummary {
     has_regex: bool,
 }
 
-/// Compiles each window in index order and hands it to `visit` before dropping it.
+/// Compiles each window in index order and hands it to `visit` before dropping it; a `Break`
+/// from `visit` stops the walk, so no later window is compiled. Returns the scan work of the
+/// windows visited, which is the whole corpus only when `visit` never breaks.
 ///
 /// `visit` receives the window's start offset so local indices can be mapped back to definition
 /// indices. Windows are visited in ascending order and `MatcherIndex::matches` returns sorted local
@@ -168,7 +171,12 @@ fn scan_windows(
     definitions: &[StepDefinition],
     parameter_types: &BTreeMap<String, String>,
     window: usize,
-    mut visit: impl FnMut(usize, &[CompiledMatcher], &MatcherIndex, Vec<Option<String>>),
+    mut visit: impl FnMut(
+        usize,
+        &[CompiledMatcher],
+        &MatcherIndex,
+        Vec<Option<String>>,
+    ) -> ControlFlow<()>,
 ) -> usize {
     let mut scan_work = 0_usize;
     for start in (0..definitions.len()).step_by(window) {
@@ -179,7 +187,9 @@ fn scan_windows(
             .unzip();
         let index = MatcherIndex::build(&compiled);
         scan_work = scan_work.saturating_add(index.scan_work());
-        visit(start, &compiled, &index, diagnostics);
+        if visit(start, &compiled, &index, diagnostics).is_break() {
+            break;
+        }
     }
     scan_work
 }
@@ -297,6 +307,7 @@ fn analyze_feature_usage_in_windows(
                 index.matches(compiled, text, &mut local);
                 accumulated.extend(local.iter().map(|index| index + start));
             }
+            ControlFlow::Continue(())
         },
     );
 
@@ -445,8 +456,8 @@ fn analyze_matcher_overlap(
     // Automaton scans one witness costs across the whole corpus, measured by the step-matching
     // walk and spent here to bound the witness walk. Sound only because both walks build the same
     // windows from the same definitions under the same limits, so `MatcherIndex` splits the same
-    // way and the count is identical. Changing the window size between the two walks would break
-    // that.
+    // way and the count is identical, and because the step-matching visitor never breaks.
+    // Changing the window size between the two walks, or breaking that walk early, would break it.
     scan_work: usize,
 ) -> OverlapOutcome {
     let severity = config.severity(Rule::OverlappingMatcher);
@@ -492,8 +503,7 @@ fn analyze_matcher_overlap(
     // the same three filters a single pass applies — so this holds the pairs the replay below
     // would consider and nothing more, capped by the proposal budget.
     // Every witness costs the same full-index scan, so the number the budget affords is exact and
-    // the cut is a uniform prefix: a witness is scanned against every window or none, which keeps
-    // each accumulated match set complete. Charging this before scanning restores the bound a
+    // the cut is a uniform prefix of witnesses. Charging this before scanning restores the bound a
     // single pass had — otherwise witnesses that accept nothing would sweep every window while
     // advancing no budget at all.
     let affordable = witness_scan_budget
@@ -502,70 +512,22 @@ fn analyze_matcher_overlap(
     let scan_truncated = witnesses.len() > affordable;
     witnesses.truncate(affordable);
 
-    let mut proposals: Vec<Vec<usize>> = vec![Vec::new(); witnesses.len()];
-    let mut accumulated = 0_usize;
-    let mut overflow = false;
-    let mut local = Vec::new();
-    // Summaries and compilation diagnostics were already collected by the step-matching pass;
-    // recompiling here must not duplicate them.
-    scan_windows(
+    let (proposals, overflow) = collect_overlap_proposals(
         definitions,
+        summaries,
         &config.parameter_types,
         window,
-        |start, compiled, index, _diagnostics| {
-            for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter_mut()) {
-                // Checked per witness rather than per match: a witness is either accumulated whole
-                // or not at all, so storage is bounded by the budget plus one match list.
-                //
-                // **Equivalence with a single pass holds only until this budget is exhausted.**
-                // Windows are walked outermost, so the candidate stream is window-major while a
-                // single pass was witness-major. When the cap cuts the stream, which pairs survive
-                // depends on the window size: measured 160/163/172 findings at windows 1/5/1000 on
-                // a corpus built to exhaust it. That is accepted rather than fixed — restoring
-                // witness-major order would mean holding every window alive at once, which is the
-                // cost this whole design exists to avoid, or a third counting walk. It is sound
-                // because a run that sets `incomplete` already promises only a subset: "the absence
-                // of a finding proves nothing" (see `analyze_with_diagnostics`). A run that does not
-                // truncate is byte-identical at any window size.
-                // An exhausted budget still scans the witness (the scan budget affords it): only a
-                // proposable match it cannot hold makes the pass incomplete.
-                let exhausted = accumulated >= proposal_budget;
-                index.matches(compiled, witness, &mut local);
-                let definition = &definitions[*left];
-                for right in local.iter().map(|index| index + start) {
-                    if right == *left || !summaries[right].authoritative {
-                        continue;
-                    }
-                    // Equivalent matchers are already reported as duplicates; overlap adds nothing.
-                    if definition.matcher_kind == definitions[right].matcher_kind
-                        && definition.normalized_matcher == definitions[right].normalized_matcher
-                    {
-                        continue;
-                    }
-                    if exhausted {
-                        overflow = true;
-                        return;
-                    }
-                    accepted.push(right);
-                    accumulated += 1;
-                }
-            }
-        },
+        &witnesses,
+        proposal_budget,
     );
 
     let mut considered = HashSet::new();
     let mut evaluated = 0_usize;
-    let mut proposal_work = 0_usize;
     let mut retained = 0_usize;
     let mut truncated = scan_truncated || overflow;
     let mut suppression_work = 0_u64;
     'definitions: for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter()) {
         for right in accepted.iter().copied() {
-            if proposal_work == proposal_budget {
-                truncated = true;
-                break 'definitions;
-            }
-            proposal_work += 1;
             let pair = if *left < right {
                 (*left, right)
             } else {
@@ -642,6 +604,67 @@ fn analyze_matcher_overlap(
             )
         }),
     }
+}
+
+/// Each witness's proposable matches across every window, storing at most `budget` of them; the
+/// flag reports a proposable match that did not fit. Proposable means the three filters a single
+/// pass applies: another authoritative definition whose matcher is not equivalent.
+fn collect_overlap_proposals(
+    definitions: &[StepDefinition],
+    summaries: &[MatcherSummary],
+    parameter_types: &BTreeMap<String, String>,
+    window: usize,
+    witnesses: &[(usize, String)],
+    budget: usize,
+) -> (Vec<Vec<usize>>, bool) {
+    if witnesses.is_empty() {
+        return (Vec::new(), false);
+    }
+    let mut proposals: Vec<Vec<usize>> = vec![Vec::new(); witnesses.len()];
+    let mut stored = 0_usize;
+    let mut overflow = false;
+    let mut local = Vec::new();
+    // **Equivalence with a single pass holds only until the budget is exhausted.** Windows are
+    // walked outermost, so the stored stream is window-major while a single pass was witness-major;
+    // when the cap cuts it, which pairs survive depends on the window size. That is accepted:
+    // restoring witness-major order would hold every window alive at once or need a third walk, and
+    // a run that sets `incomplete` already promises only a subset ("the absence of a finding proves
+    // nothing", see `analyze_with_diagnostics`). A run that does not truncate is byte-identical at
+    // any window size. The cap is checked per proposable match, so a witness cut mid-list keeps a
+    // partial match set; that is sound because the cut marks the pass incomplete, and no later
+    // window is compiled.
+    scan_windows(
+        definitions,
+        parameter_types,
+        window,
+        // Summaries and compilation diagnostics were already collected by the step-matching pass;
+        // recompiling here must not duplicate them.
+        |start, compiled, index, _diagnostics| {
+            for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter_mut()) {
+                index.matches(compiled, witness, &mut local);
+                let definition = &definitions[*left];
+                for right in local.iter().map(|index| index + start) {
+                    if right == *left || !summaries[right].authoritative {
+                        continue;
+                    }
+                    // Equivalent matchers are already reported as duplicates; overlap adds nothing.
+                    if definition.matcher_kind == definitions[right].matcher_kind
+                        && definition.normalized_matcher == definitions[right].normalized_matcher
+                    {
+                        continue;
+                    }
+                    if stored == budget {
+                        overflow = true;
+                        return ControlFlow::Break(());
+                    }
+                    accepted.push(right);
+                    stored += 1;
+                }
+            }
+            ControlFlow::Continue(())
+        },
+    );
+    (proposals, overflow)
 }
 
 /// Builds one concrete step text a Cucumber Expression would accept, or `None` when unknown.
@@ -731,6 +754,7 @@ fn witness_literal(literal: &str) -> String {
     output
 }
 
+/// Marks definitions reached by statically known indirect step texts (`step 'x'`) as used.
 pub(super) fn apply_indirect_usage(
     definitions: &[StepDefinition],
     usage: Option<&crate::source_adapter::IndirectStepUsage>,
@@ -766,6 +790,7 @@ pub(super) fn apply_indirect_usage(
                     .used
                     .extend(matched.iter().map(|index| index + start));
             }
+            ControlFlow::Continue(())
         },
     );
 }
