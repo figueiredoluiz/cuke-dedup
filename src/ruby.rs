@@ -618,10 +618,13 @@ fn either_non_empty(left: Option<bool>, right: Option<bool>) -> Option<bool> {
     }
 }
 
-/// One positional argument: a known value, or a splat or `...` supplying any number of values.
+/// One positional argument: a known value, zero or one known value, or a splat or `...`
+/// supplying any number of values.
 #[derive(Clone, Copy)]
 enum Positional {
     Fixed(ArgumentValue),
+    /// Zero or one value of a known class, as an unknown `**hash` entry adds nothing or a Hash.
+    Optional(ArgumentValue),
     Variadic,
 }
 
@@ -682,8 +685,8 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
                     match hash {
                         Some(true) => {}
                         Some(false) => positional.push(Positional::Fixed(ArgumentValue::Other)),
-                        // fail-closed: a Hash that may be empty is zero or one more argument.
-                        None => positional.push(Positional::Variadic),
+                        // A Hash that may be empty is zero or one more argument, never another value.
+                        None => positional.push(Positional::Optional(ArgumentValue::Other)),
                     }
                 }
                 _ => positional.push(Positional::Variadic),
@@ -698,6 +701,7 @@ fn may_register(call: Node<'_>, source: &str) -> bool {
         for prefix in &expansions {
             let choices: Vec<Vec<Option<ArgumentValue>>> = match item {
                 Positional::Fixed(value) => vec![vec![Some(*value)]],
+                Positional::Optional(value) => vec![Vec::new(), vec![Some(*value)]],
                 Positional::Variadic => (0..=3).map(|width| vec![None; width]).collect(),
             };
             for choice in choices {

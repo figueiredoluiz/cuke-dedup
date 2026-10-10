@@ -579,6 +579,7 @@ fn receiver_registration_counts_keywords_blocks_and_splats() {
         ("*(['x', :s])", false, true),
         ("*(['x', 1])", false, false),
         ("*['x', **h]", true, true),
+        ("*['x', **h]", false, false),
         ("*['x', **{key: 1}]", true, false),
         // A pattern test is false at runtime when the value does not match, and the block registers.
         ("'x', (x in Integer)", true, true),
