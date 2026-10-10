@@ -9436,6 +9436,8 @@ fn ruby_source_loads_cannot_escape_the_analysis_root() {
     // Outside the root the definition prints absolute, without the Windows verbatim prefix.
     let loaded = load_path.canonicalize().unwrap().join("x").join("world.rb");
     let loaded = loaded.to_string_lossy();
+    // A UNC share keeps its `\\server\share` lead, as `normalize_platform_path` rebuilds it.
+    let loaded = loaded.replacen(r"\\?\UNC\", r"\\", 1);
     let loaded = loaded
         .strip_prefix(r"\\?\")
         .unwrap_or(&loaded)
