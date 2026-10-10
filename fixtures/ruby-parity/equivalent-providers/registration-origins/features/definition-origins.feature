@@ -52,7 +52,7 @@ Feature: Definition origins
     Given the rho cable tightens fully
 
   Scenario: A default import
-    Given the sigma wheel locks hard
+    # This origin runs in the group equivalent-provider-receiver-origin.
 
   Scenario: A TypeScript import-equals
     Given the tau chain feeds evenly

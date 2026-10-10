@@ -9,9 +9,3 @@ module RegistrationProvider
     GIVEN.call(text, &handler)
   end
 end
-
-module OrdinaryNamespace
-  def self.Given(text, &handler)
-    [text, handler]
-  end
-end
