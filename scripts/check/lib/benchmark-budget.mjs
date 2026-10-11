@@ -14,6 +14,7 @@ export function validateBenchmark(report, budgets) {
   assert.equal(report.schemaVersion, 3, "unsupported benchmark schema");
   assert.equal(budgets.schemaVersion, 1, "unsupported benchmark-budget schema");
   assert.equal(report.smoke, false, "performance budgets require the full benchmark profile");
+  assert.ok(Array.isArray(report.results), "benchmark report has no results");
   const failures = [];
   const advisories = [];
   if (!Number.isInteger(report.binaryBytes) || report.binaryBytes <= 0) {

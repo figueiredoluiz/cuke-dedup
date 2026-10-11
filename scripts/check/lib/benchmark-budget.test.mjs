@@ -53,6 +53,13 @@ test("benchmark budgets reject inventory, semantic, memory, and binary regressio
   assert.ok(failures.every((items) => items.length > 0));
 });
 
+test("benchmark budgets reject a missing result inventory clearly", () => {
+  assert.throws(
+    () => validateBenchmark({ ...report, results: undefined }, budgets),
+    /benchmark report has no results/,
+  );
+});
+
 test("full-profile budgets reject smoke reports and schema drift", () => {
   assert.throws(() => validateBenchmark({ ...report, smoke: true }, budgets));
   assert.throws(() => validateBenchmark({ ...report, schemaVersion: 4 }, budgets));
