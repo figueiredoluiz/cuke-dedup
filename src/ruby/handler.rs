@@ -52,6 +52,13 @@ pub(super) fn fingerprint(
         serde_json::to_string(&(tokens, captures))
     }
     .expect("string tokens serialize");
+    let handler_source = text(block, source);
+    let source_snippet = bounded_source_snippet(handler_source, MAX_HANDLER_SNIPPET_CHARS, true);
+    let legacy_snippet_bytes = handler_source
+        .chars()
+        .take(MAX_HANDLER_SNIPPET_CHARS)
+        .map(char::len_utf8)
+        .sum::<usize>();
     let exact_source = exact_source(block, source);
     let exact_key = if captures.is_empty() {
         serde_json::to_string(&exact_source)
@@ -59,10 +66,16 @@ pub(super) fn fingerprint(
         serde_json::to_string(&(exact_source, captures))
     }
     .expect("handler source serializes");
-    // Exact spelling selects equality but must not enlarge the established bounded comparison-work
-    // charge, which counted a second copy of the normalized representation before the tiers split.
+    // Exact spelling selects equality while the opaque representation absorbs any bytes removed
+    // by report-only snippet normalization. The combined comparison-work charge therefore remains
+    // the normalized identity twice plus the legacy raw snippet prefix.
     let exact_hash = crate::model::stable_fingerprint(&exact_key);
-    let exact: String = exact_hash.chars().cycle().take(normalized.len()).collect();
+    let exact_len = normalized
+        .len()
+        .checked_add(legacy_snippet_bytes)
+        .and_then(|total| total.checked_sub(source_snippet.len()))
+        .expect("bounded snippet fits the legacy comparison-work charge");
+    let exact: String = exact_hash.chars().cycle().take(exact_len).collect();
     // Literal abstraction needs the complete operation stream that configured assertion
     // evidence computes; ordinary handlers without it keep exact identity.
     let structural = parameterized_calls(block, source, &bindings)
@@ -115,11 +128,7 @@ pub(super) fn fingerprint(
         alpha: alpha_normalized,
         structural,
         events: behavior_signature,
-        source_snippet: bounded_source_snippet(
-            text(block, source),
-            MAX_HANDLER_SNIPPET_CHARS,
-            true,
-        ),
+        source_snippet,
         comparable,
         trivial,
     }

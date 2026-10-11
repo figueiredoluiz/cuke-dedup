@@ -2705,10 +2705,11 @@ fn ruby_normalized_handler_evidence_and_snippets_preserve_final_outcomes() {
     let comparison = &duplicate[0].2["comparison"];
     let left = comparison["leftHandler"].as_str().unwrap();
     let right = comparison["rightHandler"].as_str().unwrap();
-    assert_eq!(left.chars().count(), 2_000);
+    assert_eq!(left.chars().count(), 1_999);
     assert!(left.ends_with('…'));
     assert!(!left.contains('\r'));
     assert_eq!(right, "do\nwork()\nend");
+    assert_eq!(report["analysis"]["truncated"], false);
 }
 
 /// Duplicate-matcher findings over three same-matcher Ruby definitions keep one component of all

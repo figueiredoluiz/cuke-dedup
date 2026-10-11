@@ -39,30 +39,40 @@ impl HandlerSemantics {
 }
 
 /// Normalizes report snippets and truncates them at a Unicode-safe character boundary. Frontends
-/// whose work budgets predate the ellipsis can preserve the truncated prefix's UTF-8 byte charge.
+/// whose work budgets predate normalization can constrain the result to the raw prefix's UTF-8
+/// byte charge.
 pub(crate) fn bounded_source_snippet(
     source: &str,
     max_chars: usize,
     preserve_prefix_bytes: bool,
 ) -> String {
-    let normalized = source.trim().replace("\r\n", "\n").replace('\r', "\n");
     if max_chars == 0 {
         return String::new();
+    }
+    let normalized = source.trim().replace("\r\n", "\n").replace('\r', "\n");
+    if preserve_prefix_bytes {
+        let prefix_bytes = source
+            .chars()
+            .take(max_chars)
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if normalized.chars().count() <= max_chars && normalized.len() <= prefix_bytes {
+            return normalized;
+        }
+        let mut snippet: String = normalized.chars().take(max_chars).collect();
+        while snippet.len() + '…'.len_utf8() > prefix_bytes {
+            if snippet.pop().is_none() {
+                return String::new();
+            }
+        }
+        snippet.push('…');
+        return snippet;
     }
     if normalized.chars().count() <= max_chars {
         return normalized;
     }
     let mut snippet: String = normalized.chars().take(max_chars).collect();
-    let previous_bytes = snippet.len();
-    if preserve_prefix_bytes {
-        while snippet.len() + '…'.len_utf8() > previous_bytes {
-            if snippet.pop().is_none() {
-                return String::new();
-            }
-        }
-    } else {
-        snippet.pop();
-    }
+    snippet.pop();
     snippet.push('…');
     snippet
 }

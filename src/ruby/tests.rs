@@ -93,6 +93,22 @@ fn handler_fingerprints_preserve_superficial_value_and_callee_boundaries() {
         forged[0].handler.alpha_normalized,
         forged[1].handler.alpha_normalized
     );
+
+    let long = format!("{{\r\n# {}\r\nwork()\r\n}}", "#\r\n界".repeat(900));
+    for handler_source in ["{\r\n# note\r\nwork()\r\n}".to_owned(), long] {
+        let source = format!("Given('work') {handler_source}");
+        let definition = &extract(&source)[0];
+        let legacy_snippet_bytes = handler_source
+            .chars()
+            .take(2_000)
+            .map(char::len_utf8)
+            .sum::<usize>();
+        assert_eq!(
+            definition.handler.exact.len() + definition.handler.source_snippet.len(),
+            definition.handler.normalized.len() + legacy_snippet_bytes,
+            "{handler_source:?}"
+        );
+    }
 }
 
 #[test]
