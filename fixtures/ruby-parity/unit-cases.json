@@ -279,20 +279,32 @@
         },
         {
           "name": "reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `reassigned asymmetric matchers lose trust without changing outer factory` pins assertion trust by provenance (Ruby analogue: `namespace_trust_requires_unmutated_expect_lookups`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "Mutating a Ruby factory's `object_containing` or `not` matcher path through the factory or a shared alias removes matcher-based handler comparison, while the direct factory remains independently usable and an unrelated copied path retains its positive control.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "namespace_matcher_mutations_follow_computed_and_destructured_aliases",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `namespace matcher mutations follow computed and destructured aliases` pins alias and namespace mutation revoking trust (Ruby analogue: `matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "A Ruby `api[:expect]` lookup and aliases of the `api` hash share matcher authority: writing `object_containing` through the alias removes the duplicate-handler finding, while the unmodified static lookup retains it and a runtime-key lookup gains no authority.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "computed_destructuring_distinguishes_trust_from_possible_mutation",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `computed destructuring distinguishes trust from possible mutation` pins alias and namespace mutation revoking trust (Ruby analogue: `matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "Static Ruby `api[:expect]` access grants matcher trust only while its shared path is immutable; `api[runtime_key]` followed by mutation never grants trust, and an independent `dup` preserves the original only until a write reaches the shared nested matcher object.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -321,8 +333,12 @@
         },
         {
           "name": "destructured_negation_mutations_do_not_establish_handler_equivalence",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `destructured negation mutations do not establish handler equivalence` pins alias and namespace mutation revoking trust (Ruby analogue: `matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "A Ruby alias of `api[:expect].not` that mutates `object_containing` removes optional comparison; the immutable negated matcher control compares, and mutations of an independent outer copy do not revoke the original unless they reach the shared nested `not` path.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -365,8 +381,12 @@
         },
         {
           "name": "assertion_trust_requires_real_facades_and_unmodified_namespace_factories",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `assertion trust requires real facades and unmodified namespace factories` pins assertion trust by provenance (Ruby analogue: `namespace_trust_requires_unmutated_expect_lookups`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "namespace_trust_requires_unmutated_expect_lookups"
+          },
+          "rationale": "Only the configured Ruby namespace's unmodified direct `expect` path compares nested callback assertions; replacement writes, runtime selectors, wrong members, wrong arity, splats and unsupported direct values all withhold handler findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -391,8 +411,12 @@
         },
         {
           "name": "assertion_precision_keeps_untrusted_bindings_and_callbacks_separate",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `assertion precision keeps untrusted bindings and callbacks separate` pins assertion trust by provenance (Ruby analogue: `namespace_trust_requires_unmutated_expect_lookups`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "source_origin_lookup_and_escape_matrix"
+          },
+          "rationale": "Ruby lexical callback parameters named like a trusted factory do not revoke the outer binding, while replacing, escaping or dynamically dispatching through the actual trusted binding removes comparison; the unmodified literal lookup remains the positive control.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -415,8 +439,12 @@
         },
         {
           "name": "assertion_factories_are_trusted_by_provenance_across_runners",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `assertion factories are trusted by provenance across runners` pins assertion trust by provenance (Ruby analogue: `namespace_trust_requires_unmutated_expect_lookups`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "configured_ruby_provider_paths_preserve_literal_specifiers"
+          },
+          "rationale": "Ruby assertion authority follows the configured provider's resolved source identity across exact, suffix-bearing and dotted paths: equal deferred assertions compare, conflicting trusted assertions do not, and missing or mismatched provider paths retain only the untrusted callback behavior.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1037,8 +1065,12 @@
         },
         {
           "name": "flat_matcher_aliases_revoke_trust_only_for_matcher_paths",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `flat matcher aliases revoke trust only for matcher paths` pins alias propagation and trust (Ruby analogue: `matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "A flat Ruby alias of the configured API or factory propagates writes that reach `object_containing`, removing matcher comparison without granting or globally erasing unrelated factory trust; the immutable alias remains the positive control.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1049,8 +1081,12 @@
         },
         {
           "name": "dynamic_access_gains_no_assertion_trust_at_any_position",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `dynamic access gains no assertion trust at any position` pins assertion trust by provenance (Ruby analogue: `namespace_trust_requires_unmutated_expect_lookups`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "source_origin_lookup_and_escape_matrix"
+          },
+          "rationale": "Ruby runtime-key API lookup, wrong static members, reflective selector chains, replacement writes and escapes never produce handler comparison; static `values_at(:expect)`, parenthesized `public_method(:expect)` and unrelated module declarations retain positive controls.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1071,8 +1107,12 @@
         },
         {
           "name": "nested_destructuring_aliases_revoke_matcher_trust_like_flat_aliases",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `nested destructuring aliases revoke matcher trust like flat aliases` pins alias propagation and trust (Ruby analogue: `matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "Ruby aliases of the nested `not` matcher path propagate `object_containing` mutation exactly like flat factory aliases and remove comparison; the immutable nested path compares and an outer `dup` stays independent until a write reaches its shared nested object.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1083,8 +1123,12 @@
         },
         {
           "name": "object_rest_aliases_propagate_only_writes_that_reach_the_shared_object",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `object rest aliases propagate only writes that reach the shared object` pins alias propagation and trust (Ruby analogue: `matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "matcher_alias_mutations_preserve_controls_and_withdraw_optional_comparison"
+          },
+          "rationale": "A Ruby `dup` of the factory is an independent outer object: writing its own `not` slot does not revoke the original, while mutating `copy.not.object_containing` reaches the shared nested matcher and removes comparison; direct shared aliases also revoke.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1105,8 +1149,12 @@
         },
         {
           "name": "a_write_through_any_binding_of_one_module_revokes_factory_trust",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `a write through any binding of one module revokes factory trust` pins assertion trust by provenance (Ruby analogue: `namespace_trust_requires_unmutated_expect_lookups`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "cross_file_constant_aliases_cannot_hide_namespace_mutation"
+          },
+          "rationale": "Mutation or unknown escape through any Ruby constant alias of the configured provider revokes cross-file factory authority and marks the source incomplete; an unmodified provider retains findings and mutation of an unrelated module cannot revoke it.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
