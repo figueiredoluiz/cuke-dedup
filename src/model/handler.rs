@@ -46,6 +46,9 @@ pub(crate) fn bounded_source_snippet(
     preserve_prefix_bytes: bool,
 ) -> String {
     let normalized = source.trim().replace("\r\n", "\n").replace('\r', "\n");
+    if max_chars == 0 {
+        return String::new();
+    }
     if normalized.chars().count() <= max_chars {
         return normalized;
     }
@@ -53,7 +56,9 @@ pub(crate) fn bounded_source_snippet(
     let previous_bytes = snippet.len();
     if preserve_prefix_bytes {
         while snippet.len() + '…'.len_utf8() > previous_bytes {
-            snippet.pop();
+            if snippet.pop().is_none() {
+                return String::new();
+            }
         }
     } else {
         snippet.pop();

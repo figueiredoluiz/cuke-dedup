@@ -1118,6 +1118,26 @@ fn handler_source_snippets_are_normalized_and_bounded() {
     assert_eq!(snippet.chars().count(), MAX_HANDLER_SNIPPET_CHARS);
     assert!(snippet.ends_with('…'));
     assert!(!snippet.contains('\r'));
+
+    for (source, max_chars, preserve_prefix_bytes, expected) in [
+        ("", 0, false, ""),
+        ("abc", 0, false, ""),
+        ("abc", 1, false, "…"),
+        ("abc", 2, false, "a…"),
+        ("ab", 2, false, "ab"),
+        ("abc", 0, true, ""),
+        ("abc", 1, true, ""),
+        ("abc", 2, true, ""),
+        ("abcd", 3, true, "…"),
+        ("abcde", 4, true, "a…"),
+        ("界界", 1, true, "…"),
+    ] {
+        assert_eq!(
+            bounded_source_snippet(source, max_chars, preserve_prefix_bytes),
+            expected,
+            "source={source:?} max_chars={max_chars} preserve_prefix_bytes={preserve_prefix_bytes}"
+        );
+    }
 }
 
 #[test]
