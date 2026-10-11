@@ -4934,6 +4934,28 @@ fn ruby_native_regex_flag_order_is_not_identity() {
     }
 }
 
+/// Native Ruby flags remain part of duplicate-matcher outcomes even when a shared handler makes
+/// the pair a candidate through the handler path.
+#[test]
+fn ruby_native_regex_flags_preserve_duplicate_matcher_outcomes() {
+    for (left, right, duplicate) in [
+        ("/panel/u", "/panel/n", false),
+        ("/panel/n", "/panel/", false),
+        ("/panel/im", "/panel/mii", true),
+        ("/panel/", "/panel/", true),
+    ] {
+        let source = format!("Given({left}) {{ shared() }}; Then({right}) {{ shared() }}");
+        let (_, rows, _) = analyze(&source, &[]);
+        let rows = rows.as_array().unwrap();
+        assert_discovery(rows, 2, false, &source);
+        assert_eq!(
+            rows.iter().any(|row| row["rule"] == "duplicate-matcher"),
+            duplicate,
+            "{source}"
+        );
+    }
+}
+
 #[test]
 fn frontend_finalization_outcomes_preserve_cross_file_registry_authority() {
     for effect in [
@@ -5267,6 +5289,86 @@ fn ruby_assertion_proof_relevance_matches_the_load_contract() {
             } else {
                 1
             })
+        );
+    }
+}
+
+/// A configured project-relative assertion provider matches the resolved load target even when
+/// the source imports that provider by its shorter load-path request.
+#[test]
+fn ruby_assertion_module_paths_match_resolved_load_targets() {
+    for (load, configured, first, second, duplicate) in [
+        (
+            "require 'assertions'",
+            "lib/assertions",
+            "'ready'",
+            "'ready'",
+            true,
+        ),
+        (
+            "require 'assertions'",
+            "lib/assertions",
+            "'ready'",
+            "'waiting'",
+            false,
+        ),
+        (
+            "require 'assertions'",
+            "lib/assertions",
+            "UNKNOWN",
+            "UNKNOWN",
+            false,
+        ),
+        (
+            "require 'assertions'",
+            "lib/other",
+            "UNKNOWN",
+            "UNKNOWN",
+            true,
+        ),
+        (
+            "require 'assertions'",
+            "assertions",
+            "'ready'",
+            "'ready'",
+            true,
+        ),
+        (
+            "require_relative 'lib/assertions'",
+            "lib/assertions",
+            "'ready'",
+            "'ready'",
+            true,
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("lib")).unwrap();
+        fs::write(root.path().join("lib/assertions.rb"), ASSERTION_PROVIDER).unwrap();
+        fs::write(
+            root.path().join("lib/other.rb"),
+            "module Other; def self.expect(actual); actual; end; end",
+        )
+        .unwrap();
+        let source = format!(
+            "{load}\nGiven('one') {{ Assertions.expect(page).to_be({first}) }}; Then('two') {{ Assertions.expect(page).to_be({second}) }}"
+        );
+        fs::write(root.path().join("steps.rb"), &source).unwrap();
+        fs::write(
+            root.path().join(".cuke-dedup.json"),
+            serde_json::json!({
+                "rubyLoadPaths": ["lib"],
+                "assertionModules": [configured],
+                "rules": { "unused-definition": "off" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let rows = records(run_project(root.path(), "steps.rb", &[]).stdout);
+        assert_discovery(&rows, 2, false, &source);
+        assert_eq!(
+            rows.iter().any(|row| row["rule"] == "duplicate-handler"),
+            duplicate,
+            "configured={configured}: {source}"
         );
     }
 }
