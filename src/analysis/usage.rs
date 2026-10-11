@@ -357,6 +357,7 @@ fn analyze_feature_usage_in_windows(
         definitions,
         &summaries,
         &proven,
+        &matched_texts,
         config,
         suppressions,
         findings,
@@ -448,6 +449,7 @@ fn analyze_matcher_overlap(
     definitions: &[StepDefinition],
     summaries: &[MatcherSummary],
     proven: &ProvenAmbiguities,
+    matched_texts: &BTreeMap<&str, Vec<usize>>,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
@@ -512,13 +514,14 @@ fn analyze_matcher_overlap(
     let scan_truncated = witnesses.len() > affordable;
     witnesses.truncate(affordable);
 
-    let (proposals, overflow) = collect_overlap_proposals(
+    let (proposals, overflow, _source) = collect_overlap_proposals(
         definitions,
         summaries,
         &config.parameter_types,
         window,
         &witnesses,
         proposal_budget,
+        Some(matched_texts),
     );
 
     let mut considered = HashSet::new();
@@ -616,9 +619,15 @@ fn collect_overlap_proposals(
     window: usize,
     witnesses: &[(usize, String)],
     budget: usize,
-) -> (Vec<Vec<usize>>, bool) {
+    matched_texts: Option<&BTreeMap<&str, Vec<usize>>>,
+) -> (Vec<Vec<usize>>, bool, OverlapProposalSource) {
     if witnesses.is_empty() {
-        return (Vec::new(), false);
+        return (Vec::new(), false, OverlapProposalSource::FeatureCache);
+    }
+    if let Some(proposals) = matched_texts.and_then(|matched_texts| {
+        cached_overlap_proposals(definitions, summaries, witnesses, budget, matched_texts)
+    }) {
+        return (proposals, false, OverlapProposalSource::FeatureCache);
     }
     let mut proposals: Vec<Vec<usize>> = vec![Vec::new(); witnesses.len()];
     let mut stored = 0_usize;
@@ -664,7 +673,51 @@ fn collect_overlap_proposals(
             ControlFlow::Continue(())
         },
     );
-    (proposals, overflow)
+    (proposals, overflow, OverlapProposalSource::CompiledWindows)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum OverlapProposalSource {
+    FeatureCache,
+    CompiledWindows,
+}
+
+/// Reuses complete first-pass matches when every selected witness is an observed feature text.
+///
+/// Falling back on a missing text or the first proposal beyond `budget` preserves the window-major
+/// partial subset and truncation behavior of the compiled scan. A complete cached proposal stream
+/// is order-equivalent after each witness's definition indices are accumulated across all windows.
+fn cached_overlap_proposals(
+    definitions: &[StepDefinition],
+    summaries: &[MatcherSummary],
+    witnesses: &[(usize, String)],
+    budget: usize,
+    matched_texts: &BTreeMap<&str, Vec<usize>>,
+) -> Option<Vec<Vec<usize>>> {
+    let mut proposals = Vec::with_capacity(witnesses.len());
+    let mut stored = 0_usize;
+    for (left, witness) in witnesses {
+        let matches = matched_texts.get(witness.as_str())?;
+        let definition = &definitions[*left];
+        let mut accepted = Vec::new();
+        for right in matches.iter().copied() {
+            if right == *left || !summaries[right].authoritative {
+                continue;
+            }
+            if definition.matcher_kind == definitions[right].matcher_kind
+                && definition.normalized_matcher == definitions[right].normalized_matcher
+            {
+                continue;
+            }
+            if stored == budget {
+                return None;
+            }
+            accepted.push(right);
+            stored += 1;
+        }
+        proposals.push(accepted);
+    }
+    Some(proposals)
 }
 
 /// Builds one concrete step text a Cucumber Expression would accept, or `None` when unknown.

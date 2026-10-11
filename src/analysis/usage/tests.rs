@@ -34,6 +34,25 @@ fn config() -> (tempfile::TempDir, Config) {
     (directory, config)
 }
 
+type OverlapFixture = (
+    tempfile::TempDir,
+    Vec<StepDefinition>,
+    Config,
+    Vec<MatcherSummary>,
+    Vec<(usize, String)>,
+);
+
+fn overlap_fixture(source: &str) -> OverlapFixture {
+    let definitions = definitions(source);
+    let (directory, mut config) = config();
+    config
+        .parameter_types
+        .insert("colour".to_owned(), "red".to_owned());
+    let summaries = summaries(&definitions, &config);
+    let witnesses = vec![(0, "value red".to_owned())];
+    (directory, definitions, config, summaries, witnesses)
+}
+
 #[test]
 fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
     let matcher = ".".repeat(600_000);
@@ -136,6 +155,7 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
         &definitions,
         &summaries,
         &ProvenAmbiguities::new(definitions.len()),
+        &BTreeMap::new(),
         &config,
         &suppressions,
         &mut findings,
@@ -158,7 +178,7 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
 #[test]
 fn matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list() {
     // Six regexes accept the one witness `value red`: one match list of six against a budget of 4.
-    let definitions = definitions(
+    let (_directory, definitions, config, summaries, witnesses) = overlap_fixture(
         "Given('value {colour}', () => colour());\n\
          Given(/^value red$/, () => one());\n\
          Given(/^value r.*$/, () => two());\n\
@@ -167,12 +187,6 @@ fn matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list() {
          Given(/^v.*$/, () => five());\n\
          Given(/^.*red$/, () => six());",
     );
-    let (_directory, mut config) = config();
-    config
-        .parameter_types
-        .insert("colour".to_owned(), "red".to_owned());
-    let summaries = summaries(&definitions, &config);
-    let witnesses = vec![(0, "value red".to_owned())];
     let collect = |window, budget| {
         collect_overlap_proposals(
             &definitions,
@@ -181,15 +195,97 @@ fn matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list() {
             window,
             &witnesses,
             budget,
+            None,
         )
     };
     assert_eq!(
         collect(definitions.len(), 4),
-        (vec![vec![1, 2, 3, 4]], true)
+        (
+            vec![vec![1, 2, 3, 4]],
+            true,
+            OverlapProposalSource::CompiledWindows
+        )
     );
     assert_eq!(
         collect(definitions.len(), 6),
-        (vec![vec![1, 2, 3, 4, 5, 6]], false)
+        (
+            vec![vec![1, 2, 3, 4, 5, 6]],
+            false,
+            OverlapProposalSource::CompiledWindows
+        )
+    );
+}
+
+#[test]
+fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
+    let (_directory, definitions, config, summaries, witnesses) = overlap_fixture(
+        "Given('value {colour}', () => colour());\n\
+         Given(/^value red$/, () => regex());\n\
+         Given('value {colour}', () => duplicate());",
+    );
+    let complete = BTreeMap::from([("value red", vec![0, 1, 2])]);
+
+    assert_eq!(
+        cached_overlap_proposals(&definitions, &summaries, &witnesses, 1, &complete),
+        Some(vec![vec![1]])
+    );
+    let cached = collect_overlap_proposals(
+        &definitions,
+        &summaries,
+        &config.parameter_types,
+        1,
+        &witnesses,
+        1,
+        Some(&complete),
+    );
+    let compiled = collect_overlap_proposals(
+        &definitions,
+        &summaries,
+        &config.parameter_types,
+        1,
+        &witnesses,
+        1,
+        None,
+    );
+    assert_eq!(cached.0, compiled.0);
+    assert!(!cached.1 && !compiled.1);
+    assert_eq!(cached.2, OverlapProposalSource::FeatureCache);
+    assert_eq!(compiled.2, OverlapProposalSource::CompiledWindows);
+    assert_eq!(
+        cached_overlap_proposals(&definitions, &summaries, &witnesses, 0, &complete),
+        None,
+        "an over-budget cache must preserve the compiled path's partial ordering"
+    );
+    assert_eq!(
+        collect_overlap_proposals(
+            &definitions,
+            &summaries,
+            &config.parameter_types,
+            1,
+            &witnesses,
+            0,
+            Some(&complete),
+        )
+        .2,
+        OverlapProposalSource::CompiledWindows
+    );
+    assert_eq!(
+        cached_overlap_proposals(&definitions, &summaries, &witnesses, 1, &BTreeMap::new()),
+        None,
+        "an unobserved witness must still scan every matcher window"
+    );
+    assert_eq!(
+        collect_overlap_proposals(
+            &definitions,
+            &summaries,
+            &config.parameter_types,
+            1,
+            &witnesses,
+            1,
+            Some(&BTreeMap::new()),
+        )
+        .2,
+        OverlapProposalSource::CompiledWindows
     );
 }
 
