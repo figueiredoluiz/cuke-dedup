@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -170,6 +170,7 @@ try {
       {
         schemaVersion: 3,
         binary,
+        binaryBytes: statSync(binary).size,
         repeats,
         timeoutMs,
         smoke,

@@ -154,7 +154,7 @@ window size and exists so the corpus gate can force one definition per window, w
 definition pair cross-window and exercises the merge paths that a fixture-sized corpus would
 otherwise never reach. It changes memory and running time, never findings.
 
-Record the non-blocking scalability profiles with `npm run benchmark`. The benchmark measures wall-clock, discovery, parsing, analysis, peak resident memory where available, input counts, and findings. Set `CUKE_DEDUP_BENCH_REPEATS` to change the sample count, `CUKE_DEDUP_BENCH_SMOKE=1` to select the reduced validation profile used by local and CI checks, or `CUKE_DEDUP_BENCH_PROFILE=usage-scale` to isolate one profile.
+Record the scalability profiles with `npm run benchmark`. The benchmark measures wall-clock, discovery, parsing, analysis, peak resident memory where available, input counts, findings, deterministic comparison counters, and release binary size. The scheduled workflow runs `npm run benchmark:check` to enforce the full case inventory, deterministic outcomes, peak-memory ceilings, and binary-size ceiling; elapsed times remain advisory because hosted-runner timing is noisy. Set `CUKE_DEDUP_BENCH_REPEATS` to change the sample count, `CUKE_DEDUP_BENCH_SMOKE=1` to select the reduced validation profile used by local and CI checks, or `CUKE_DEDUP_BENCH_PROFILE=usage-scale` to isolate one profile.
 
 The scheduled mutation workflow holds the core similarity and evidence contracts to a 90% score. Its checked-in configuration keeps local execution bounded; run the same focused measurement with:
 
