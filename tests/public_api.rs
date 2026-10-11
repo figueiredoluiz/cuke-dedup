@@ -10,7 +10,7 @@ use cuke_dedup::reporters::{
 };
 use cuke_dedup::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapter,
-    SourceAdapterRegistration, SOURCE_ADAPTER_REGISTRY,
+    SourceAdapterRegistration, SourceParameterType, SOURCE_ADAPTER_REGISTRY,
 };
 use cuke_dedup::typescript;
 use std::collections::BTreeMap;
@@ -51,6 +51,22 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
         language: SourceLanguage::JavaScript,
     };
     let adapter: &dyn SourceAdapter = &ExternalAdapter;
+    assert!(adapter.discover_by_default());
+    assert!(!adapter.supports_indirect_usage());
+    assert_eq!(adapter.inspect_source(&file, &[]), None);
+    let configured = BTreeMap::from([("custom".to_owned(), "[a-z]+".to_owned())]);
+    assert_eq!(
+        adapter.resolve_parameter_types(Vec::new(), &configured),
+        (configured.clone(), Vec::new())
+    );
+    let declaration = SourceParameterType::new(
+        Some("custom".to_owned()),
+        Some(".+".to_owned()),
+        SourceLocation::new(PathBuf::from("steps.js"), 1, 1, 1, 2),
+    );
+    let (patterns, diagnostics) = adapter.resolve_parameter_types(vec![declaration], &configured);
+    assert!(patterns.is_empty());
+    assert!(!diagnostics.is_empty());
     for mut session in [
         SourceExtractionSession::default(),
         SourceExtractionSession::new(project.path()),
@@ -311,4 +327,125 @@ fn local_barrel_re_exporting_the_bdd_factory_resolves_through_require() {
         .unwrap()
         .definitions;
     assert_eq!(definitions.len(), 2);
+}
+
+#[test]
+fn adapters_can_classify_diagnostics_without_language_specific_messages() {
+    use cuke_dedup::source_adapter::ExtractionDiagnosticKind;
+    let diagnostic = ExtractionDiagnostic::with_kind(
+        ExtractionDiagnosticKind::Incomplete,
+        ExtractionDiagnosticLevel::Warning,
+        SourceLocation::new("steps.rb", 1, 1, 1, 1),
+        "external glue unavailable",
+    );
+    assert_eq!(diagnostic.kind, ExtractionDiagnosticKind::Incomplete);
+    assert_eq!(diagnostic.message, "external glue unavailable");
+}
+
+#[test]
+fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+    let file = SourceFile {
+        path: root.path().join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let extracted = registered_adapter(SourceLanguage::Ruby).extract(
+        "Given('target') { first() }; Then('unused') { second() }; def helper; step 'target'; end", &file).unwrap();
+    let features = cuke_dedup::gherkin::extract(
+        "Feature: usage\n Scenario: other\n  Given other\n",
+        &root.path().join("suite.feature"),
+    )
+    .unwrap();
+    let legacy =
+        analyze_with_diagnostics(extracted.definitions.clone(), features.clone(), &config).unwrap();
+    assert!(!legacy.incomplete.is_empty());
+    assert!(!legacy
+        .result
+        .findings
+        .iter()
+        .any(|f| f.rule == Rule::UnusedDefinition));
+    let mut usage = extracted.indirect_usage.unwrap();
+    let known = cuke_dedup::analysis::analyze_with_step_usage(
+        extracted.definitions.clone(),
+        features.clone(),
+        &config,
+        &usage,
+    )
+    .unwrap();
+    let unused: Vec<_> = known
+        .result
+        .findings
+        .iter()
+        .filter(|f| f.rule == Rule::UnusedDefinition)
+        .collect();
+    assert_eq!(unused.len(), 1);
+    assert!(unused[0].message.contains("`unused`"));
+    assert!(known.incomplete.is_empty());
+    usage.extend(None);
+    assert!(usage.unknown);
+}
+
+/// External callers over Ruby extraction: an over-limit Ruby regex yields a typed `Incomplete`
+/// diagnostic off line 1, the partial result keeps the neighbouring Ruby finding with the
+/// regex resource-limit diagnostic, strict `analyze` rejects it, and every public renderer
+/// takes the Ruby result through one report context.
+#[test]
+fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api() {
+    use cuke_dedup::source_adapter::ExtractionDiagnosticKind;
+    let root = tempfile::tempdir().unwrap();
+    let file = SourceFile {
+        path: root.path().join("steps.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let source = format!(
+        "Given('kept') {{ kept }}\nGiven('kept') {{ other }}\n\nGiven(/{}/) {{ work }}\n",
+        "a".repeat(1024 * 1024 + 1)
+    );
+    let extracted = registered_adapter(SourceLanguage::Ruby)
+        .extract(&source, &file)
+        .unwrap();
+    assert_eq!(extracted.definitions.len(), 3);
+    let diagnostic = extracted
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains("regular expression"))
+        .unwrap();
+    assert_eq!(diagnostic.kind, ExtractionDiagnosticKind::Incomplete);
+    assert_eq!(diagnostic.level, ExtractionDiagnosticLevel::Warning);
+    assert_eq!(
+        (diagnostic.location.line, diagnostic.location.column),
+        (4, 1)
+    );
+
+    let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+    let outcome =
+        analyze_with_diagnostics(extracted.definitions.clone(), Vec::new(), &config).unwrap();
+    assert_eq!(outcome.result.definitions.len(), 3);
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("steps.rb:4:1 exceeds")
+            && message.contains("regex resource limit")));
+    assert_eq!(outcome.result.findings.len(), 1);
+    assert_eq!(outcome.result.findings[0].rule, Rule::DuplicateMatcher);
+    let error = analyze(extracted.definitions, Vec::new(), &config).unwrap_err();
+    assert!(error.to_string().contains("regex resource limit"));
+
+    let context = ReportContext::new(&outcome.result, root.path(), 5.0);
+    assert!(render_json(&context)
+        .unwrap()
+        .contains("\"path\": \"steps.rb\""));
+    assert!(render_jsonl(&context)
+        .unwrap()
+        .contains("\"type\":\"summary\""));
+    assert!(render_html(&context).unwrap().contains("steps.rb:1:1"));
+    assert!(render_sarif(&context)
+        .unwrap()
+        .contains("\"uri\": \"steps.rb\""));
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(terminal.contains("Analyzed 3 definitions"));
+    assert!(terminal.contains("steps.rb:1:1"));
 }

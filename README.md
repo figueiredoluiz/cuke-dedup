@@ -9,7 +9,7 @@ either one.
 
 It supports:
 
-- JavaScript, JSX, TypeScript, and TSX step definitions.
+- JavaScript, JSX, TypeScript, and TSX step definitions; experimental, opt-in Cucumber-Ruby support.
 - Cucumber.js, Playwright-BDD, Cypress Cucumber, Jest-Cucumber, and Vitest Cucumber Plugin projects.
 - Classic `.feature` files and Gherkin Markdown `.feature.md` files.
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.
@@ -188,8 +188,7 @@ and is distributed independently from the Cargo and npm packages.
 ## Compatibility
 
 - Building from source requires Rust 1.90 or newer. Node.js 24 LTS is recommended for the npm launcher; Node.js 20 remains the minimum compatible version and is tested in CI.
-- Definition extraction currently supports JavaScript and TypeScript, including JSX and common
-  module variants.
+- Definition extraction supports JavaScript and TypeScript, including JSX and common module variants, plus an explicitly selected subset of Cucumber-Ruby. See [Ruby support](docs/discovery-and-frameworks.md#cucumber-ruby).
 - Static analysis cannot safely resolve every dynamic configuration, matcher, wrapper, or imported
   handler. CukeDedup reports incomplete analysis instead of treating missing evidence as clean.
 - Before version 1.0, configuration and machine-report schemas may change between minor releases.
@@ -210,8 +209,7 @@ or its maintainers.
 ## Releases
 
 Release archives include SHA-256 checksums, keyless Sigstore bundles, and GitHub build provenance.
-See [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases) and
-[CHANGELOG.md](CHANGELOG.md) for published versions and release notes.
+Published versions and release notes are maintained in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 
 ```sh
 gh attestation verify <archive> \

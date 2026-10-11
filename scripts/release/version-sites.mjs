@@ -4,6 +4,8 @@
 // prose are free-form, so a new guide can introduce one at any time. `bump-version.mjs` rewrites
 // whatever this finds and `check-release-version.mjs` verifies the same set, which keeps a pin in
 // a file neither script knew about from going stale unnoticed.
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -29,11 +31,26 @@ async function* searchableFiles(directory) {
   }
 }
 
+function projectFiles(root) {
+  const result = spawnSync("git", ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+    encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024 * 1024,
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))), LC_ALL: "C" },
+  });
+  if (result.status === 0) {
+    return result.stdout.split("\0").filter((path) =>
+      SEARCHED_EXTENSIONS.some((extension) => path.endsWith(extension))
+      && !path.split("/").some((part) => SKIPPED_DIRECTORIES.has(part) || (part.startsWith(".") && part !== ".github")),
+    ).map((path) => join(root, path)).filter(existsSync);
+  }
+  if (result.status === 128 && result.stderr.includes("not a git repository")) return searchableFiles(root);
+  throw result.error ?? new Error(`Git version-site discovery failed: ${result.stderr}`);
+}
+
 /// Returns every file carrying at least one Action pin, with the versions it pins, sorted by path
 /// so callers report deterministically.
 export async function findActionPins(root = ".") {
   const found = [];
-  for await (const path of searchableFiles(root)) {
+  for await (const path of projectFiles(root)) {
     const versions = [...(await readFile(path, "utf8")).matchAll(ACTION_PIN)].map(
       (match) => match[1],
     );

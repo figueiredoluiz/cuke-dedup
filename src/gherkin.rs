@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+mod table_escapes;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// Gherkin source syntax selected for a discovered feature file.
@@ -74,7 +76,10 @@ pub fn extract_with_format(
         FeatureFormat::Gherkin => source.to_owned(),
         FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source)?,
     };
-    let feature = Feature::parse(&parsed_source, GherkinEnv::default())
+    let (parsed_source, marker) = table_escapes::prepare(&parsed_source)?;
+    let mut feature = Feature::parse(&parsed_source, GherkinEnv::default())
+        .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
+    table_escapes::finish(&mut feature, &parsed_source, marker)
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     Ok(extract_feature(&feature, path))
 }
@@ -241,6 +246,7 @@ impl MarkdownProbeBudget {
                 MAX_GHERKIN_MARKDOWN_PROBES
             );
         }
+        let (source, _) = table_escapes::prepare(source)?;
         let parsed_bytes = self.parsed_bytes.saturating_add(source.len());
         if parsed_bytes > MAX_GHERKIN_MARKDOWN_PROBE_BYTES {
             bail!(
@@ -250,7 +256,8 @@ impl MarkdownProbeBudget {
         }
         self.parsed_bytes = parsed_bytes;
         self.probes += 1;
-        Ok(Feature::parse(source, GherkinEnv::default()).is_ok())
+        Ok(Feature::parse(&source, GherkinEnv::default())
+            .is_ok_and(|mut feature| table_escapes::finish(&mut feature, &source, None).is_ok()))
     }
 }
 

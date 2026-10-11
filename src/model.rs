@@ -1,6 +1,11 @@
 //! Shared intermediate representation and diagnostics.
 
+mod behavior;
+mod handler;
+pub(crate) use handler::HandlerSemantics;
 mod sha256;
+
+pub(crate) use behavior::{BehaviorEvent, BehaviorEventRef, ControlFlowOperation};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
@@ -69,6 +74,8 @@ pub enum MatcherKind {
 /// Step-definition framework inferred from a source file.
 #[non_exhaustive]
 pub enum Framework {
+    /// Direct Cucumber-Ruby block registrations.
+    CucumberRuby,
     /// Cucumber.js registration APIs.
     CucumberJs,
     /// Playwright BDD registration APIs.
@@ -119,14 +126,14 @@ pub struct InlineSuppression {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 /// A step definition extracted into the analyzer's shared representation.
 pub struct StepDefinition {
-    /// Original matcher text without JavaScript delimiters.
+    /// Original matcher text without language-specific delimiters.
     pub matcher: String,
     /// Canonical matcher used for equivalence checks.
     pub normalized_matcher: String,
     /// Matcher syntax.
     pub matcher_kind: MatcherKind,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    /// JavaScript regular-expression flags, or an empty string otherwise.
+    /// Source-language regular-expression flags, or an empty string otherwise.
     pub matcher_flags: String,
     /// Comparable handler representations.
     pub handler: HandlerFingerprint,

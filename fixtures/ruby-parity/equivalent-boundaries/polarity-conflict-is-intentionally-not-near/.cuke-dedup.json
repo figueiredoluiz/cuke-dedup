@@ -1,0 +1,7 @@
+{
+  "threshold": 100,
+  "rules": {
+    "duplicate-handler": "off",
+    "unused-definition": "off"
+  }
+}

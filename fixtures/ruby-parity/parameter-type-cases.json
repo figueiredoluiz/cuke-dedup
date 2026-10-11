@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "parameter-types-regex": {
+      "path": "parameter-types/regex",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    },
+    "parameter-types-array": {
+      "path": "parameter-types/array",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    },
+    "parameter-types-unresolved": {
+      "path": "parameter-types/unresolved",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ]
+    },
+    "parameter-types-collision": {
+      "path": "parameter-types/collision",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        },
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "ambiguous-step"
+        }
+      ]
+    }
+  },
+  "mappings": []
+}

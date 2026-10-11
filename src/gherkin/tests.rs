@@ -1,6 +1,111 @@
 use super::*;
 
 #[test]
+fn table_escape_matrix_preserves_outline_text_and_source_positions() {
+    for (cell, expected) in [
+        (r"C:\tmp\q", r"C:\tmp\q"),
+        (r"north\|south", "north|south"),
+        (r"north\nsouth", "north\nsouth"),
+        (r"north\\south", r"north\south"),
+        (r"north\\\qsouth", r"north\\qsouth"),
+        (r"\日本", r"\日本"),
+        ("\u{e000}\\q", "\u{e000}\\q"),
+    ] {
+        for markdown in [false, true] {
+            for newline in ["\n", "\r\n"] {
+                let source = format!(
+                    "{}Feature: escapes\n{}Scenario Outline: paths\n{}Given path <value>\n{}Examples:\n  | value |\n  | {cell} |",
+                    if markdown { "# " } else { "" },
+                    if markdown { "## " } else { "" },
+                    if markdown { "* " } else { "  " },
+                    if markdown { "### " } else { "" },
+                ).replace('\n', newline);
+                let format = if markdown {
+                    FeatureFormat::GherkinMarkdown
+                } else {
+                    FeatureFormat::Gherkin
+                };
+                let steps =
+                    extract_with_format(&source, Path::new("escapes.feature"), format).unwrap();
+                assert_eq!(steps.len(), 1, "{cell}");
+                assert_eq!(steps[0].text, format!("path {expected}"), "{cell}");
+                assert_eq!(steps[0].location.line, 3);
+                assert_eq!(steps[0].location.column, 3);
+            }
+        }
+    }
+}
+
+#[test]
+fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
+    let source = r#"Feature: escapes
+ Scenario Outline: header
+  Given path <val\ue>
+ Examples:
+  | val\ue |
+  | a\q |
+ Scenario: attachments
+  Given literal \q
+   """
+   | doc\q |
+   """
+  Then attachment
+   | data\q |
+  And after \q
+"#;
+    let steps = extract(source, Path::new("escapes.feature")).unwrap();
+    assert_eq!(
+        steps.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
+        [r"path a\q", r"literal \q", "attachment", r"after \q"]
+    );
+    assert_eq!(
+        steps.iter().map(|s| s.location.line).collect::<Vec<_>>(),
+        [3, 8, 12, 14]
+    );
+    for row in [r"| bad\q", r"| bad\|", r"| a\q | b |", "| a | b |"] {
+        let malformed = format!("Feature: invalid\n Scenario Outline: rows\n  Given <v>\n Examples:\n  | v |\n  {row}\n");
+        assert!(
+            extract(&malformed, Path::new("invalid.feature")).is_err(),
+            "{row}"
+        );
+    }
+}
+
+#[test]
+fn table_escape_adaptation_is_bounded_and_does_not_change_docstrings() {
+    let text = "Feature: fences\n Scenario: example\n  Given text\n   ```\n   | literal\\q |\n   ```\n  Then table\n   | table\\q |\n";
+    let (prepared, marker) = table_escapes::prepare(text).unwrap();
+    assert!(marker.is_some());
+    assert!(prepared.contains("| literal\\q |"));
+    assert!(!prepared.contains("| table\\q |"));
+    let alphabet: String = ('\u{e000}'..='\u{f8ff}').collect();
+    let exhausted = format!("Feature: {alphabet}\n Scenario: rows\n  Given table\n   | a\\q |\n");
+    assert!(extract(&exhausted, Path::new("exhausted.feature"))
+        .unwrap_err()
+        .to_string()
+        .contains("reserved-character budget"));
+    let mut budget = MarkdownProbeBudget {
+        probes: 0,
+        parsed_bytes: MAX_GHERKIN_MARKDOWN_PROBE_BYTES - text.len(),
+    };
+    assert!(budget
+        .parse(text)
+        .unwrap_err()
+        .to_string()
+        .contains("parser-probe budget"));
+}
+
+#[test]
+fn malformed_tables_under_rules_and_backgrounds_are_not_truncated() {
+    for source in [
+        "Feature: rows\n Background:\n  Given table\n   | one |\n   | a | b |\n Scenario: next\n  Then done\n",
+        "Feature: rows\n Rule: scoped\n  Scenario Outline: example\n   Given <v>\n  Examples:\n   | v |\n   | a | b |\n",
+    ] {
+        assert!(extract(source, Path::new("invalid.feature")).is_err());
+    }
+}
+
+#[test]
 fn extracts_steps_from_full_document_structure() {
     let source = r#"
 Feature: Checkout

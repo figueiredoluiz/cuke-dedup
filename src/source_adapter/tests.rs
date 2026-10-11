@@ -38,6 +38,10 @@ const IMPORTED_STEP: &str =
 
 #[test]
 fn session_state_initializes_once_per_backend_and_per_run() {
+    let ruby = SourceAdapterRegistration::with_session(".rb", &crate::ruby::RUBY_ADAPTER);
+    assert_eq!(ruby.adapter.language(), SourceLanguage::Ruby);
+    assert!(ruby.discover_dependencies.is_some());
+
     struct Counter(usize);
     impl AdapterSessionState for Counter {
         fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
@@ -80,7 +84,7 @@ fn session_mixed_languages_share_cache_and_preserve_findings_in_either_order() {
         let project = session_project();
         let root = project.path();
         let mut session = SourceExtractionSession::new(root);
-        assert_eq!(session.states.len(), 1);
+        assert_eq!(session.states.len(), 2);
         let mut definitions = Vec::new();
         for suffix in suffixes {
             let extracted = session_extract(&mut session, root, suffix, IMPORTED_STEP);
@@ -234,6 +238,7 @@ fn registry_routes_supported_suffixes() {
         ("steps.mts", SourceLanguage::TypeScript),
         ("steps.cts", SourceLanguage::TypeScript),
         ("steps.tsx", SourceLanguage::Tsx),
+        ("steps.rb", SourceLanguage::Ruby),
     ];
     for (path, expected) in cases {
         let adapter = adapter_for_path(Path::new(path)).expect(path);
@@ -252,6 +257,7 @@ fn source_languages_select_their_registered_tree_sitter_grammar() {
         (SourceLanguage::JavaScript, "const value = 1;"),
         (SourceLanguage::TypeScript, "const value: number = 1;"),
         (SourceLanguage::Tsx, "const value = <div />;"),
+        (SourceLanguage::Ruby, "Given('a') { work() }"),
     ];
 
     for (language, source) in cases {
@@ -280,7 +286,14 @@ fn every_registration_has_a_unique_suffix_and_produces_shared_ir() {
         };
         let extraction = registration
             .adapter
-            .extract("Given('a registered step', () => run())", &file)
+            .extract(
+                if file.language == SourceLanguage::Ruby {
+                    "Given('a registered step') { run() }"
+                } else {
+                    "Given('a registered step', () => run())"
+                },
+                &file,
+            )
             .unwrap();
         assert_eq!(extraction.definitions.len(), 1, "{}", registration.suffix);
         assert!(extraction.diagnostics.is_empty(), "{}", registration.suffix);
@@ -403,7 +416,149 @@ fn language_routed_and_suffix_routed_extraction_share_session_state() {
             assert!(extraction.diagnostics.is_empty(), "{suffix}");
             // Every registered adapter is TypeScript-backed today, so one shared backend
             // state must serve all of them; a second backend is allowed to change this.
-            assert_eq!(session.states.len(), 1, "{suffix}");
+            assert_eq!(session.states.len(), 2, "{suffix}");
         }
+    }
+}
+
+#[test]
+fn legacy_diagnostics_preserve_message_classification_and_mutation() {
+    for (message, incomplete, unparseable) in [
+        ("ordinary warning", false, false),
+        (UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX, true, false),
+        (UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX, true, true),
+    ] {
+        let mut diagnostic = ExtractionDiagnostic::new(
+            ExtractionDiagnosticLevel::Warning,
+            SourceLocation::new("steps.ts", 1, 1, 1, 1),
+            message,
+        );
+        assert_eq!(is_completeness_diagnostic(&diagnostic), incomplete);
+        assert_eq!(is_unparseable_diagnostic(&diagnostic), unparseable);
+        diagnostic.message = "ordinary warning".into();
+        assert!(!is_completeness_diagnostic(&diagnostic));
+        assert!(!is_unparseable_diagnostic(&diagnostic));
+    }
+}
+
+#[test]
+fn finalization_scopes_preserve_independent_final_findings() {
+    use crate::model::Rule;
+    use UncertaintyCause::{Handler, Registration, Source};
+    let project = session_project();
+    let root = project.path();
+    let mut session = SourceExtractionSession::new(root);
+    let mut definitions = session_extract(
+        &mut session,
+        root,
+        "ts",
+        "Given('unrelated control', () => check()); Given('unrelated control', () => check());",
+    )
+    .definitions;
+    definitions.extend(session_extract(&mut session, root, "js",
+        "Given('opens red panel', () => work()); Given('opens red panel', () => work()); Given('opens blue panel', () => work());").definitions);
+    let config = crate::config::Config::load(root, Default::default()).unwrap();
+    let definition = UncertaintyScope::Definition(definitions[4].location.clone());
+    let file = UncertaintyScope::File(root.join("steps.js"));
+    let registry = UncertaintyScope::Registry(SourceLanguage::JavaScript);
+    for (scope, cause, retained, matchers, handlers) in [
+        (definition.clone(), Registration, 4, 2, 0),
+        (file.clone(), Registration, 2, 1, 0),
+        (definition, Handler, 5, 2, 0),
+        (file, Handler, 5, 2, 0),
+        (registry, Source, 5, 2, 2),
+    ] {
+        let mut actual = definitions.clone();
+        let mut finalization = SourceFinalization::default();
+        finalization
+            .uncertainties
+            .push(SourceUncertainty::new(scope, cause, "test evidence"));
+        finalization.apply(&mut actual);
+        assert_eq!(actual.len(), retained, "{finalization:?}");
+        let result = crate::analysis::analyze(actual, vec![], &config).unwrap();
+        for (rule, expected) in [
+            (Rule::DuplicateMatcher, matchers),
+            (Rule::DuplicateHandler, handlers),
+        ] {
+            let actual = result.findings.iter().filter(|f| f.rule == rule).count();
+            assert_eq!(actual, expected, "{finalization:?}");
+        }
+    }
+}
+
+#[test]
+fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
+    use crate::model::Rule;
+    let project = session_project();
+    let root = project.path();
+    let mut session = SourceExtractionSession::new(root);
+    let mut definitions = Vec::new();
+    for suffix in ["js", "ts", "tsx", "rb"] {
+        let source = if suffix == "rb" {
+            "Given('shared step') { work() }; Given('shared step') { work() }"
+        } else {
+            IMPORTED_STEP
+        };
+        definitions.extend(session_extract(&mut session, root, suffix, source).definitions);
+    }
+    let config = crate::config::Config::load(root, Default::default()).unwrap();
+    for (language, retained, matcher_findings) in [
+        (SourceLanguage::JavaScript, 2, 1),
+        (SourceLanguage::TypeScript, 2, 1),
+        (SourceLanguage::Tsx, 2, 1),
+        (SourceLanguage::Ruby, 3, 2),
+    ] {
+        let mut actual = definitions.clone();
+        let mut finalization = SourceFinalization::default();
+        finalization.uncertainties.push(SourceUncertainty::new(
+            UncertaintyScope::Registry(language),
+            UncertaintyCause::Registration,
+            "registry effect",
+        ));
+        finalization.apply(&mut actual);
+        assert_eq!(actual.len(), retained, "{language:?}");
+        let result = crate::analysis::analyze_with_diagnostics(actual, vec![], &config)
+            .unwrap()
+            .result;
+        let rule = Rule::DuplicateMatcher;
+        let actual = result.findings.iter().filter(|f| f.rule == rule).count();
+        assert_eq!(actual, matcher_findings, "{language:?}");
+    }
+}
+
+#[test]
+fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
+    for mutation_first in [false, true] {
+        let project = session_project();
+        let root = project.path();
+        let mut session = SourceExtractionSession::new(root);
+        let files: Vec<_> = ["registrations.rb", "mutation.rb"]
+            .into_iter()
+            .map(|name| SourceFile {
+                path: root.join(name),
+                language: SourceLanguage::Ruby,
+            })
+            .collect();
+        let sources = [
+            "Given('shared') { work() }; Then('shared') { work() }",
+            "def Given(text); :replaced; end",
+        ];
+        let mut definitions = session_extract(&mut session, root, "ts", IMPORTED_STEP).definitions;
+        for index in if mutation_first { [1, 0] } else { [0, 1] } {
+            let extracted = adapter_for_language(SourceLanguage::Ruby)
+                .extract_with_session(sources[index], &files[index], &mut session)
+                .unwrap();
+            definitions.extend(extracted.definitions);
+        }
+        if !mutation_first {
+            assert_eq!(definitions.len(), 3);
+        }
+        let first = session.finalize(&files, &mut definitions).unwrap();
+        assert!(!first.uncertainties.is_empty());
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].location.path, root.join("steps.ts"));
+        let once = definitions.clone();
+        assert_eq!(session.finalize(&files, &mut definitions).unwrap(), first);
+        assert_eq!(definitions, once);
     }
 }

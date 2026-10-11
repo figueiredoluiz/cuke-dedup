@@ -179,9 +179,12 @@ struct Diagnostics {
 }
 
 struct ExtractedCorpus {
+    parameter_types: Vec<source_adapter::SourceParameterType>,
+    parameter_language: Option<source_adapter::SourceLanguage>,
+    indirect_usage: source_adapter::IndirectStepUsage,
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
-    excluded_sources: Vec<(PathBuf, crate::source_filter::ExcludedSource)>,
+    excluded_sources: Vec<(PathBuf, source_adapter::SourceExclusion)>,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
     feature_files_without_steps: usize,
@@ -335,6 +338,13 @@ fn discovery_diagnostics(
             .warnings
             .push(format!("definition pattern `{pattern}` matched no files"));
     }
+    if !files.skipped_definitions.is_empty()
+        && (!config.definitions.is_empty() || files.definitions.is_empty())
+    {
+        diagnostics
+            .warnings
+            .push(skipped_definitions_warning(&files.skipped_definitions));
+    }
     if files.definitions.is_empty() && config.definitions.is_empty() {
         diagnostics
             .warnings
@@ -360,6 +370,32 @@ fn discovery_diagnostics(
     diagnostics
 }
 
+fn skipped_definitions_warning(skipped: &[source_adapter::SourceFile]) -> String {
+    let registrations: Vec<_> = source_adapter::SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .filter(|entry| {
+            skipped
+                .iter()
+                .any(|file| entry.adapter.language() == file.language)
+        })
+        .collect();
+    let adapters: BTreeSet<_> = registrations
+        .iter()
+        .map(|entry| entry.adapter.name())
+        .collect();
+    let suffixes: Vec<_> = registrations
+        .iter()
+        .map(|entry| format!("`{}`", entry.suffix))
+        .collect();
+    format!(
+        "{} {} source file(s) were not analyzed: opt-in languages need a definition pattern that names their suffix ({}), such as `features/**/*{}`",
+        skipped.len(),
+        adapters.into_iter().collect::<Vec<_>>().join(", "),
+        suffixes.join(", "),
+        registrations.first().map_or("", |entry| entry.suffix),
+    )
+}
+
 fn extract_corpus(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -367,6 +403,9 @@ fn extract_corpus(
     diagnostics: &mut Diagnostics,
 ) -> ExtractedCorpus {
     let mut corpus = ExtractedCorpus {
+        parameter_types: Vec::new(),
+        parameter_language: files.definitions.first().map(|file| file.language),
+        indirect_usage: source_adapter::IndirectStepUsage::default(),
         definitions: Vec::new(),
         feature_steps: Vec::new(),
         excluded_sources: Vec::new(),
@@ -380,6 +419,7 @@ fn extract_corpus(
     corpus
 }
 
+/// Extracts definitions through one shared session that carries discovered edges and gaps.
 fn extract_definitions(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -387,16 +427,45 @@ fn extract_definitions(
     diagnostics: &mut Diagnostics,
     corpus: &mut ExtractedCorpus,
 ) {
+    if let Some(first) = files.definitions.first() {
+        let domain = first.language.comparison_domain();
+        if files
+            .definitions
+            .iter()
+            .any(|file| file.language.comparison_domain() != domain)
+        {
+            corpus.incomplete = true;
+            diagnostics.errors.push("Ruby and JS/TS sources require separate analysis runs with explicit definition and feature roots".to_owned());
+            return;
+        }
+    }
     let mut extraction_session = source_adapter::SourceExtractionSession::with_options(
         &config.root,
         &config.registrations,
         &config.assertion_modules,
-    );
+    )
+    .with_dependencies(&files.dependencies)
+    .with_dependency_gaps(&files.dependency_gaps);
+    let mut prepared = BTreeSet::new();
+    for file in &files.definitions {
+        let adapter = source_adapter::adapter_for_language(file.language);
+        if prepared.insert(adapter.name()) {
+            if let Err(error) = adapter.prepare_session(&files.definitions, &mut extraction_session)
+            {
+                corpus.incomplete = true;
+                diagnostics
+                    .errors
+                    .push(format!("failed to prepare source evidence: {error:#}"));
+                return;
+            }
+        }
+    }
     for file in &files.definitions {
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
         // before parsing rather than analyzed and discarded.
-        if let Some(excluded) = crate::source_filter::inspect(&file.path, &config.registrations) {
+        let adapter = source_adapter::adapter_for_language(file.language);
+        if let Some(excluded) = adapter.inspect_source(file, &config.registrations) {
             // Every one of these signals is a heuristic over file content, not a proof: a NUL
             // byte or an archive header can appear inside an authored comment or string, and
             // minified geometry cannot be told apart from one very long authored line. So the
@@ -406,12 +475,16 @@ fn extract_definitions(
             corpus.excluded_sources.push((file.path.clone(), excluded));
             continue;
         }
-        let adapter = source_adapter::adapter_for_language(file.language);
         match adapter
             .extract_file_with_session(file, &mut extraction_session)
             .with_context(|| format!("failed to analyze {}", file.path.display()))
         {
             Ok(extracted) => {
+                if adapter.supports_indirect_usage() {
+                    corpus.indirect_usage.extend(extracted.indirect_usage);
+                    corpus.incomplete |= corpus.indirect_usage.unknown;
+                }
+                corpus.parameter_types.extend(extracted.parameter_types);
                 if !extracted.definitions.is_empty() {
                     corpus.definition_files_with_definitions += 1;
                 }
@@ -428,9 +501,17 @@ fn extract_definitions(
             // Every discovered source contributes to cross-file definition comparisons, even
             // when changed mode later filters findings. Skipping an unreadable source could turn
             // an incomplete run into a false pass.
-            Err(error) => diagnostics.errors.push(format!("{error:#}")),
+            Err(error) => {
+                if adapter.supports_indirect_usage() {
+                    corpus.indirect_usage.unknown = true;
+                    corpus.incomplete = true;
+                }
+                diagnostics.errors.push(format!("{error:#}"));
+            }
         }
     }
+    let finalization = extraction_session.finalize(&files.definitions, &mut corpus.definitions);
+    collect_finalization(finalization, corpus, diagnostics);
     corpus.definitions.sort_by(|left, right| {
         left.location
             .path
@@ -457,6 +538,40 @@ fn extract_definitions(
     }
 }
 
+fn collect_finalization(
+    finalization: Result<source_adapter::SourceFinalization>,
+    corpus: &mut ExtractedCorpus,
+    diagnostics: &mut Diagnostics,
+) {
+    match finalization {
+        Ok(finalization) => {
+            if !finalization.uncertainties.is_empty() {
+                corpus.incomplete = true;
+                diagnostics.warnings.extend(
+                    finalization
+                        .uncertainties
+                        .into_iter()
+                        .map(|item| item.message),
+                );
+                corpus.definition_files_with_definitions = corpus
+                    .definitions
+                    .iter()
+                    .map(|definition| &definition.location.path)
+                    .collect::<BTreeSet<_>>()
+                    .len();
+            }
+        }
+        Err(error) => {
+            corpus.incomplete = true;
+            corpus.definitions.clear();
+            corpus.definition_files_with_definitions = 0;
+            diagnostics
+                .errors
+                .push(format!("failed to finalize source evidence: {error:#}"));
+        }
+    }
+}
+
 /// Maximum excluded paths named individually before the warning summarizes the remainder.
 const MAX_LISTED_EXCLUDED_SOURCES: usize = 10;
 
@@ -467,7 +582,7 @@ const MAX_LISTED_EXCLUDED_SOURCES: usize = 10;
 /// repository is ordinary and must not fail an otherwise clean run.
 fn report_excluded_sources(
     config: &Config,
-    excluded: &[(PathBuf, crate::source_filter::ExcludedSource)],
+    excluded: &[(PathBuf, source_adapter::SourceExclusion)],
     diagnostics: &mut Diagnostics,
 ) {
     if excluded.is_empty() {
@@ -568,7 +683,10 @@ fn extract_feature_steps(
                 }
             }
             // Changed definitions still depend on the full feature corpus for usage and ambiguity.
-            Err(error) => diagnostics.errors.push(format!("{error:#}")),
+            Err(error) => {
+                corpus.incomplete = true;
+                diagnostics.errors.push(format!("{error:#}"));
+            }
         }
     }
     if !files.features.is_empty() && corpus.parsed_feature_files < files.features.len() {
@@ -601,6 +719,9 @@ fn analyze_corpus(
     diagnostics: &mut Diagnostics,
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
+        parameter_types,
+        parameter_language,
+        indirect_usage,
         definitions,
         feature_steps,
         // Reported during extraction; analysis works only from what survived exclusion.
@@ -608,10 +729,20 @@ fn analyze_corpus(
         definition_files_with_definitions,
         parsed_feature_files,
         feature_files_without_steps,
-        incomplete: corpus_incomplete,
+        incomplete: mut corpus_incomplete,
     } = extracted;
+    let mut effective_config = config.clone();
+    let (patterns, type_diagnostics) = match parameter_language {
+        Some(language) => source_adapter::adapter_for_language(language)
+            .resolve_parameter_types(parameter_types, &config.parameter_types),
+        None => (config.parameter_types.clone(), Vec::new()),
+    };
+    effective_config.parameter_types = patterns;
+    corpus_incomplete |= !type_diagnostics.is_empty();
+    diagnostics.warnings.extend(type_diagnostics);
+    let config = &effective_config;
     let (analysis, census, unmatched_suppressions) =
-        analysis::analyze_for_cli(definitions, feature_steps, config)?;
+        analysis::analyze_for_cli(&indirect_usage, definitions, feature_steps, config)?;
     for index in unmatched_suppressions.indices {
         let suppression = &config.suppressions[index];
         diagnostics.warnings.push(format!(
@@ -674,6 +805,7 @@ fn apply_finding_modes(
     }
 }
 
+/// Subtracts the findings of a baseline (a Git revision or a baseline file) from the current run.
 fn apply_baseline_mode(
     config: &Config,
     options: &CheckOptions,
@@ -695,12 +827,30 @@ fn apply_baseline_mode(
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
         let extracted = extract_corpus(&base_config, &files, &None, &mut base_diagnostics);
         let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics)?;
-        // A baseline that produced a hard error, or that discovered definition files yet extracted
-        // no definitions, or that has no features to anchor usage, cannot be subtracted at all —
-        // those always bail. Soft incompleteness only bails under `--fail-on-incomplete`, which
-        // routes through `base_diagnostics.errors` above.
+        // A baseline that produced a hard error, or that has definitions but no features to anchor
+        // usage, cannot be subtracted at all — those always bail. A baseline that kept no
+        // definitions while the current tree has some cannot match any finding, so every current
+        // finding would appear new; that bails too, whatever emptied it. When both are empty there
+        // is nothing to compare and nothing can appear new, so the run follows the plain-run
+        // policy. Soft incompleteness only bails under `--fail-on-incomplete`, which routes through
+        // `base_diagnostics.errors` above.
+        if !files.definitions.is_empty()
+            && base.result.definitions.is_empty()
+            && !result.definitions.is_empty()
+        {
+            bail!(
+                "baseline revision `{revision}` is incomplete: it kept no step definitions while the current tree has {}, so no finding could be matched against it: {}",
+                result.definitions.len(),
+                base_diagnostics
+                    .errors
+                    .iter()
+                    .chain(&base_diagnostics.warnings)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
         if !base_diagnostics.errors.is_empty()
-            || (!files.definitions.is_empty() && base.result.definitions.is_empty())
             || (files.features.is_empty() && !base.result.definitions.is_empty())
         {
             bail!(
@@ -906,6 +1056,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn finalization_failure_discards_provisional_definitions_and_reports_incompleteness() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+        std::fs::write(root.path().join("steps.ts"), "import { Given, Then } from '@cucumber/cucumber'; Given('same', () => work()); Then('same', () => work());").unwrap();
+        let files = discovery::discover(&config).unwrap();
+        let mut diagnostics = discovery_diagnostics(&config, &files, &None);
+        let mut corpus = extract_corpus(&config, &files, &None, &mut diagnostics);
+        assert_eq!(corpus.definitions.len(), 2);
+        let before = corpus.definitions.clone();
+        collect_finalization(Ok(Default::default()), &mut corpus, &mut diagnostics);
+        assert_eq!(corpus.definitions, before);
+        collect_finalization(
+            Err(anyhow::anyhow!("adapter unavailable")),
+            &mut corpus,
+            &mut diagnostics,
+        );
+        assert!(corpus.incomplete);
+        assert!(corpus.definitions.is_empty());
+        assert_eq!(corpus.definition_files_with_definitions, 0);
+        assert!(diagnostics
+            .errors
+            .iter()
+            .any(|e| e == "failed to finalize source evidence: adapter unavailable"));
+        let analyzed = analyze_corpus(&config, corpus, &mut diagnostics).unwrap();
+        assert!(analyzed.run_incomplete);
+        assert!(analyzed.result.findings.is_empty());
+    }
+
+    #[test]
     fn terminal_color_requires_tty_and_allows_no_color_opt_out() {
         use std::ffi::OsStr;
 
@@ -1008,6 +1187,69 @@ mod tests {
         assert!(!incomplete);
         assert!(diagnostics.errors.is_empty());
         assert_eq!(diagnostics.warnings.len(), 1);
+    }
+
+    #[test]
+    fn typed_adapter_diagnostics_route_independently_of_language_and_wording() {
+        use crate::model::SourceLocation;
+        use crate::source_adapter::{
+            ExtractionDiagnostic, ExtractionDiagnosticKind as Kind, SourceFile, SourceLanguage,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let file = SourceFile {
+            path: directory.path().join("steps.ts"),
+            language: SourceLanguage::TypeScript,
+        };
+        let mut config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        for strict in [false, true] {
+            config.fail_on_unparseable = strict;
+            for (kind, message, incomplete, parse_error) in [
+                (Kind::Other, "adapter advisory", false, false),
+                (Kind::Incomplete, "external glue unavailable", true, false),
+                (Kind::Unparseable, "adapter syntax failure", true, true),
+                (
+                    Kind::Other,
+                    source_adapter::UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX,
+                    false,
+                    false,
+                ),
+                (
+                    Kind::Incomplete,
+                    source_adapter::UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX,
+                    true,
+                    false,
+                ),
+            ] {
+                for level in [
+                    ExtractionDiagnosticLevel::Warning,
+                    ExtractionDiagnosticLevel::Error,
+                ] {
+                    let mut diagnostics = Diagnostics {
+                        warnings: vec![],
+                        errors: vec![],
+                    };
+                    let mut actual_incomplete = false;
+                    collect_extraction_diagnostics(
+                        &config,
+                        &file,
+                        &None,
+                        vec![ExtractionDiagnostic::with_kind(
+                            kind,
+                            level,
+                            SourceLocation::new(&file.path, 1, 1, 1, 1),
+                            message,
+                        )],
+                        &mut diagnostics,
+                        &mut actual_incomplete,
+                    );
+                    assert_eq!(actual_incomplete, incomplete, "{kind:?} strict={strict}");
+                    let error =
+                        level == ExtractionDiagnosticLevel::Error || (strict && parse_error);
+                    assert_eq!(diagnostics.errors.len(), usize::from(error));
+                    assert_eq!(diagnostics.warnings.len(), usize::from(!error));
+                }
+            }
+        }
     }
 
     #[test]

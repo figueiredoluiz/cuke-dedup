@@ -1,14 +1,14 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::similarity::{
-    handler_runtime_compatible, handler_similarity_with_relationship, is_near_matcher,
-    is_parameterizable_matcher, matcher_similarity, round_score,
+    event_similarity_available, handler_runtime_compatible, handler_similarity_with_relationship,
+    is_near_matcher, is_parameterizable_matcher, matcher_similarity, round_score,
 };
 use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
 use crate::model::{
-    DefinitionCluster, Finding, FindingEvidence, MatcherKind, Rule, Severity, SourceLocation,
-    StepDefinition, Suppression,
+    BehaviorEventRef, DefinitionCluster, Finding, FindingEvidence, MatcherKind, Rule, Severity,
+    SourceLocation, StepDefinition, Suppression,
 };
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -143,6 +143,7 @@ pub(super) struct PairAnalysis {
     pub(super) incomplete: Option<String>,
 }
 
+/// Verifies candidate pairs under both adapter policies and bounded comparison work.
 pub(super) fn analyze_definition_pairs(
     definitions: &[StepDefinition],
     config: &Config,
@@ -170,8 +171,8 @@ pub(super) fn analyze_definition_pairs(
         let right_index = candidate.right;
         let left = &definitions[left_index];
         let right = &definitions[right_index];
-        let positional = left.framework == crate::model::Framework::JestCucumber
-            || right.framework == crate::model::Framework::JestCucumber;
+        let positional =
+            !left.analysis_profile().global_matchers || !right.analysis_profile().global_matchers;
         let relationships = classes.relationships(left_index, right_index);
         let exact_matcher = relationships.exact_matcher;
         let normalized_matcher = relationships.normalized_matcher && !positional;
@@ -215,7 +216,17 @@ pub(super) fn analyze_definition_pairs(
             && !(positional && exact_matcher)
             && same_structure
             && meaningful_handlers;
-        let near_handler = candidate.sources.can_feed_near_matcher()
+        let near_requires_same_handler = left.analysis_profile().near_requires_same_handler
+            || right.analysis_profile().near_requires_same_handler;
+        let near_handler = (!near_requires_same_handler || same_handler)
+            && !value_only_difference(
+                left,
+                right,
+                same_handler,
+                &behavior_events[left_index],
+                &behavior_events[right_index],
+            )
+            && candidate.sources.can_feed_near_matcher()
             && !(positional && same_handler)
             && relationships.same_deferred_assertions
             && !structural_handler
@@ -264,6 +275,7 @@ pub(super) fn analyze_definition_pairs(
             handler_similarity_with_relationship(
                 same_handler,
                 relationships.same_structure,
+                event_similarity_available(left, right),
                 &behavior_events[left_index],
                 &behavior_events[right_index],
             )
@@ -449,7 +461,9 @@ fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> 
             matrix_work(input.left_matcher_length, input.right_matcher_length)
         }
         PairSimilarityWork::Handler
-            if !input.relationships.same_handler && !input.relationships.same_structure =>
+            if !input.relationships.same_handler
+                && !input.relationships.same_structure
+                && event_similarity_available(input.left, input.right) =>
         {
             matrix_work(
                 input.left.handler.behavior_signature.len(),
@@ -516,7 +530,9 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 .handler
                 .behavior_signature
                 .iter()
-                .filter(|event| event.starts_with("deferred-assert:"))
+                .filter(|event| {
+                    BehaviorEventRef::from_legacy(event.as_str()).is_deferred_assertion()
+                })
                 .collect::<Vec<_>>(),
         ));
         classes.exact_matcher.push(intern_class(
@@ -529,7 +545,10 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 // change what a matcher accepts. Keying on the raw string classified `/x/` against
                 // `/x/g` as merely normalization-equivalent, which contradicted the documented
                 // contract.
-                crate::typescript::semantic_regex_flags(&definition.matcher_flags),
+                definition
+                    .analysis_profile()
+                    .dialect
+                    .identity_flags(&definition.matcher_flags),
             ),
         ));
         classes.normalized_matcher.push(intern_class(
@@ -558,16 +577,20 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
     classes
 }
 
-/// Positional Jest steps never belong to one global matcher class. Keeping their partitions
+/// Positional steps never belong to one global matcher class. Keeping their partitions
 /// distinct also lets equal-text handlers reach all three handler candidate sources.
-fn matcher_partition(
-    definition: &StepDefinition,
-    index: usize,
-) -> (MatcherKind, &str, Option<usize>) {
+type MatcherPartition<'a> = (MatcherKind, &'a str, Option<&'a str>, Option<usize>);
+
+fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartition<'_> {
     (
         definition.matcher_kind,
         &definition.normalized_matcher,
-        (definition.framework == crate::model::Framework::JestCucumber).then_some(index),
+        // Language-specific regex identity belongs in the key, never in comparison/report text.
+        definition
+            .analysis_profile()
+            .dialect
+            .normalized_flags(&definition.matcher_flags),
+        (!definition.analysis_profile().global_matchers).then_some(index),
     )
 }
 
@@ -585,8 +608,10 @@ fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
                 .handler
                 .behavior_signature
                 .iter()
-                .filter(|event| !event.starts_with("method:"))
-                .map(|event| intern_class(&mut events, event.as_str()))
+                .filter_map(|event| {
+                    let event = BehaviorEventRef::from_legacy(event);
+                    (!event.is_method()).then(|| intern_class(&mut events, event))
+                })
                 .collect()
         })
         .collect()
@@ -601,11 +626,15 @@ fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> 
                 .handler
                 .behavior_signature
                 .iter()
-                .filter_map(|event| {
+                .filter_map(|event| match BehaviorEventRef::from_legacy(event) {
                     // Deferred anchors retain their full value and execution-context identity.
-                    if event.starts_with("call:") || event.starts_with("deferred-assert:") {
+                    BehaviorEventRef::Call(_)
+                    | BehaviorEventRef::Assertion { deferred: true, .. } => {
                         Some(Cow::Borrowed(event.as_str()))
-                    } else if event.starts_with("assert:") {
+                    }
+                    BehaviorEventRef::Assertion {
+                        deferred: false, ..
+                    } => {
                         // Assertion values are semantic during final similarity verification, but
                         // candidate blocking only needs the assertion shape. Removing the final
                         // expected-arguments fingerprint lets potentially related assertions reach
@@ -613,9 +642,8 @@ fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> 
                         event
                             .rsplit_once(':')
                             .map(|(shape, _)| Cow::Owned(shape.to_owned()))
-                    } else {
-                        None
                     }
+                    _ => None,
                 })
                 .map(|event| intern_class(&mut events, event))
                 .collect::<Vec<_>>();
@@ -661,14 +689,14 @@ pub(super) fn definition_pair_candidates(
     let comparison_classes = comparison_classes(definitions);
     let behavior_events = behavior_event_ids(definitions);
     let behavior_anchor_events = behavior_anchor_event_ids(definitions);
-    let mut normalized_matchers: HashMap<(MatcherKind, &str), Vec<usize>> = HashMap::new();
+    let mut normalized_matchers: HashMap<MatcherPartition<'_>, Vec<usize>> = HashMap::new();
     let mut handlers: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
     let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
-        if definition.framework != crate::model::Framework::JestCucumber {
+        if definition.analysis_profile().global_matchers {
             normalized_matchers
-                .entry((definition.matcher_kind, &definition.normalized_matcher))
+                .entry(matcher_partition(definition, index))
                 .or_default()
                 .push(index);
         }
@@ -1082,6 +1110,20 @@ fn encode_matcher_characters(characters: &[char]) -> u64 {
         })
 }
 
+/// Identical event streams behind different handlers differ only in values the events omit.
+fn value_only_difference(
+    left: &StepDefinition,
+    right: &StepDefinition,
+    same_handler: bool,
+    left_events: &[usize],
+    right_events: &[usize],
+) -> bool {
+    (left.analysis_profile().near_requires_distinct_events
+        || right.analysis_profile().near_requires_distinct_events)
+        && !same_handler
+        && left_events == right_events
+}
+
 fn meaningful_handler(definition: &StepDefinition) -> bool {
     definition.handler.comparable && !definition.handler.trivial
 }
@@ -1147,6 +1189,7 @@ fn sorted_events_overlap(left: &[usize], right: &[usize]) -> bool {
     false
 }
 
+/// Proposes one matcher-blocking pair after the cheap rejections, charging proposal and event work.
 #[allow(clippy::too_many_arguments)]
 fn consider_matcher_blocking_pair(
     definitions: &[StepDefinition],
@@ -1180,8 +1223,17 @@ fn consider_matcher_blocking_pair(
     }
     // A shared wrapper call cannot outweigh differing deferred assertions. Interned sequences
     // preserve values, polarity and order, and reject these pairs before charging event work.
+    // An identical stream with a different handler can never become a near finding either, so
+    // it must not take a candidate slot from a pair that can.
     if !relationships.same_deferred_assertions
         || !handler_runtime_compatible(&definitions[left], &definitions[right])
+        || value_only_difference(
+            &definitions[left],
+            &definitions[right],
+            relationships.same_handler,
+            &behavior_events[left],
+            &behavior_events[right],
+        )
     {
         return true;
     }

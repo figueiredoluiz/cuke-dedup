@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::model::BehaviorEventRef;
 use crate::model::StepDefinition;
 
 // Short labels need a slightly stricter composite gate because one changed token occupies a
@@ -7,21 +9,20 @@ const SHORT_MATCHER_MAX_CHARS: usize = 12;
 const SHORT_SIMILARITY_GATE: f64 = 0.92;
 const LONG_SIMILARITY_GATE: f64 = 0.90;
 
+fn matcher_comparison_text(definition: &StepDefinition) -> &str {
+    &definition.normalized_matcher
+}
+
 pub(super) fn matcher_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
-    let max_length = left
-        .normalized_matcher
-        .chars()
-        .count()
-        .max(right.normalized_matcher.chars().count());
+    let left = matcher_comparison_text(left);
+    let right = matcher_comparison_text(right);
+    let max_length = left.chars().count().max(right.chars().count());
     if max_length == 0 {
         return 1.0;
     }
-    let distance = strsim::levenshtein(&left.normalized_matcher, &right.normalized_matcher);
+    let distance = strsim::levenshtein(left, right);
     let edit_similarity = 1.0 - distance as f64 / max_length as f64;
-    edit_similarity.max(strsim::jaro_winkler(
-        &left.normalized_matcher,
-        &right.normalized_matcher,
-    ))
+    edit_similarity.max(strsim::jaro_winkler(left, right))
 }
 
 pub(super) fn is_near_matcher(
@@ -32,11 +33,10 @@ pub(super) fn is_near_matcher(
     if !matchers_compatible(left, right) {
         return false;
     }
-    let length = left
-        .normalized_matcher
+    let length = matcher_comparison_text(left)
         .chars()
         .count()
-        .max(right.normalized_matcher.chars().count());
+        .max(matcher_comparison_text(right).chars().count());
     let similarity_gate = if length <= SHORT_MATCHER_MAX_CHARS {
         SHORT_SIMILARITY_GATE
     } else {
@@ -73,7 +73,14 @@ pub(super) fn is_parameterizable_matcher(
 /// two matchers as variants of one step.
 fn matchers_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
     left.matcher_kind == right.matcher_kind
-        && !has_polarity_conflict(&left.normalized_matcher, &right.normalized_matcher)
+        && left
+            .analysis_profile()
+            .dialect
+            .similarity_flags_match(&left.matcher_flags, &right.matcher_flags)
+        && !has_polarity_conflict(
+            matcher_comparison_text(left),
+            matcher_comparison_text(right),
+        )
 }
 
 /// The number of words that differ between two matchers after stripping their common leading and
@@ -144,7 +151,13 @@ fn words(value: &str) -> Vec<String> {
 }
 
 fn prefixed_opposites(positive: &str, negative: &str) -> bool {
-    positive.len() >= 4
+    matches!(
+        (positive, negative),
+        ("enable", "disable")
+            | ("enables", "disables")
+            | ("enabled", "disabled")
+            | ("enabling", "disabling")
+    ) || positive.len() >= 4
         && ["in", "un", "non", "dis", "il", "im", "ir"]
             .iter()
             .any(|prefix| negative.strip_prefix(prefix) == Some(positive))
@@ -161,47 +174,49 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
         left.handler.alpha_normalized == right.handler.alpha_normalized,
         left.handler.structural == right.handler.structural
             && left.handler.behavior_signature == right.handler.behavior_signature,
+        event_similarity_available(left, right),
         &left_events,
         &right_events,
     )
 }
 
+// Partial streams preserve identity checks but cannot measure whole-handler overlap.
+pub(super) fn event_similarity_available(left: &StepDefinition, right: &StepDefinition) -> bool {
+    left.analysis_profile().event_similarity && right.analysis_profile().event_similarity
+}
+
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
-    use crate::model::Framework::{JestCucumber, VitestCucumber};
-    if left.framework != right.framework
-        && (matches!(left.framework, JestCucumber | VitestCucumber)
-            || matches!(right.framework, JestCucumber | VitestCucumber))
+    use crate::source_adapter::semantics::CaptureContext;
+    if (left.capture_context() == CaptureContext::LexicalFile
+        || right.capture_context() == CaptureContext::LexicalFile)
+        && left.location.path != right.location.path
     {
         return false;
     }
-    match (method_semantics(left), method_semantics(right)) {
+    if left.analysis_profile().handler_domain != right.analysis_profile().handler_domain {
+        return false;
+    }
+    match (left.method_semantics(), right.method_semantics()) {
         (Some(left), Some(right)) => left == right,
         _ => true,
     }
 }
 
-fn method_semantics(definition: &StepDefinition) -> Option<&str> {
-    definition
-        .handler
-        .behavior_signature
-        .first()
-        .and_then(|event| event.strip_prefix("method:"))
-}
-
 #[cfg(test)]
-fn executable_behavior_events(definition: &StepDefinition) -> Vec<&str> {
+fn executable_behavior_events(definition: &StepDefinition) -> Vec<BehaviorEventRef<'_>> {
     definition
         .handler
         .behavior_signature
         .iter()
-        .filter(|event| !event.starts_with("method:"))
-        .map(String::as_str)
+        .map(|event| BehaviorEventRef::from_legacy(event))
+        .filter(|event| !event.is_method())
         .collect()
 }
 
 pub(super) fn handler_similarity_with_relationship<T: Eq>(
     same_alpha: bool,
     same_structural: bool,
+    event_similarity: bool,
     left_events: &[T],
     right_events: &[T],
 ) -> f64 {
@@ -210,6 +225,9 @@ pub(super) fn handler_similarity_with_relationship<T: Eq>(
     }
     if same_structural {
         return 0.95;
+    }
+    if !event_similarity {
+        return 0.0;
     }
     let max_len = left_events.len().max(right_events.len());
     if max_len == 0 {
@@ -286,17 +304,36 @@ mod tests {
         let empty = definition("", MatcherKind::CucumberExpression);
         assert_eq!(matcher_similarity(&empty, &empty), 1.0);
         assert_eq!(
-            handler_similarity_with_relationship::<u8>(true, false, &[], &[]),
+            handler_similarity_with_relationship::<u8>(true, false, true, &[], &[]),
             1.0
         );
         assert_eq!(
-            handler_similarity_with_relationship::<u8>(false, true, &[], &[]),
+            handler_similarity_with_relationship::<u8>(false, true, true, &[], &[]),
             0.95
         );
         assert_eq!(
-            handler_similarity_with_relationship::<u8>(false, false, &[], &[]),
+            handler_similarity_with_relationship::<u8>(false, false, true, &[], &[]),
             0.0
         );
+        for available in [false, true] {
+            for (alpha, structural, expected) in [
+                (true, false, 1.0),
+                (false, true, 0.95),
+                (false, false, if available { 0.5 } else { 0.0 }),
+            ] {
+                let right = if alpha { &[1, 2][..] } else { &[1, 3][..] };
+                assert_eq!(
+                    handler_similarity_with_relationship(
+                        alpha,
+                        structural,
+                        available,
+                        &[1, 2],
+                        right
+                    ),
+                    expected
+                );
+            }
+        }
         assert_eq!(ordered_common_subsequence_len(&[1, 2, 3], &[2, 3, 4]), 2);
         assert_eq!(round_score(0.123_6), 0.124);
     }

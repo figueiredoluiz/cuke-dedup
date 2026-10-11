@@ -5107,3 +5107,1874 @@ fn inert_receiver_only_project_passes_strict_mode() {
         .assert()
         .success();
 }
+
+struct RubyReleaseRun {
+    code: Option<i32>,
+    definitions: u64,
+    incomplete: bool,
+    active: Vec<String>,
+    suppressed: Vec<String>,
+    stderr: String,
+}
+
+/// Runs a Ruby project with an optional definition pattern.
+fn ruby_release_run(root: &Path, definitions: Option<&str>) -> RubyReleaseRun {
+    let selection: Vec<&str> = definitions
+        .map(|pattern| vec!["--definitions", pattern])
+        .unwrap_or_default();
+    ruby_run(root, &selection)
+}
+
+/// Runs the binary on a Ruby project with JSONL output and the given extra arguments.
+fn ruby_run(root: &Path, extra: &[&str]) -> RubyReleaseRun {
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(root)
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .args(extra)
+        .output()
+        .unwrap();
+    let rows: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let summary = rows.iter().find(|row| row["type"] == "summary").unwrap();
+    let rules = |active: bool| {
+        rows.iter()
+            .filter(|row| row["type"] == "finding" && row["active"] == active)
+            .map(|row| row["rule"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    RubyReleaseRun {
+        code: output.status.code(),
+        definitions: summary["summary"]["definitionsAnalyzed"].as_u64().unwrap(),
+        incomplete: summary["corpus"]["incomplete"].as_bool().unwrap(),
+        active: rules(true),
+        suppressed: rules(false),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+const RUBY_RELEASE_FEATURE: &str =
+    "Feature: release\n  Scenario: steps\n    Given same\n    Given other\n";
+const RUBY_RELEASE_STEPS: &str = "Given('same') { work(1) }\nGiven('other') { work(1) }\n";
+
+fn ruby_release_prelude_run(prelude: &str) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.rb",
+        &format!("{prelude}{RUBY_RELEASE_STEPS}"),
+    );
+    write(directory.path(), "a.feature", RUBY_RELEASE_FEATURE);
+    ruby_release_run(directory.path(), Some("*.rb"))
+}
+
+#[test]
+fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "features/support/steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('a user exists', () => createUser());\nGiven('a user exists', () => createUser());\n",
+    );
+    // A Ruby helper next to TypeScript steps was ignored before Ruby support existed.
+    write(
+        root,
+        "features/support/env.rb",
+        "Given('ruby step') { work(1) }\n",
+    );
+    write(
+        root,
+        "features/users.feature",
+        "Feature: users\n  Scenario: existing\n    Given a user exists\n",
+    );
+    for (pattern, definitions, skipped, mixed) in [
+        (Some("features/support/**"), 2, true, false),
+        (Some("features/**/*"), 2, true, false),
+        (None, 2, false, false),
+        (Some("features/**/*.rb"), 1, false, false),
+        (Some("features/**/env.rb,features/**/*.ts"), 0, false, true),
+    ] {
+        let run = ruby_release_run(root, pattern);
+        assert_eq!(run.definitions, definitions, "{pattern:?}");
+        assert_eq!(
+            run.stderr.contains("source file(s) were not analyzed"),
+            skipped,
+            "{pattern:?}: {}",
+            run.stderr
+        );
+        assert_eq!(
+            run.stderr.contains("separate analysis runs"),
+            mixed,
+            "{pattern:?}"
+        );
+        assert_eq!(run.code == Some(2), mixed, "{pattern:?}");
+        assert!(!run.stderr.contains("matched no files"), "{pattern:?}");
+    }
+
+    let ruby_only = tempfile::tempdir().unwrap();
+    write(ruby_only.path(), "features/steps.rb", RUBY_RELEASE_STEPS);
+    write(ruby_only.path(), "features/a.feature", RUBY_RELEASE_FEATURE);
+    for (pattern, definitions, skipped) in [
+        (Some("features/**/*"), 0, true),
+        (Some("features/**/*.rb"), 2, false),
+        (None, 0, true),
+    ] {
+        let run = ruby_release_run(ruby_only.path(), pattern);
+        assert_eq!(run.definitions, definitions, "{pattern:?}");
+        assert_eq!(
+            run.stderr
+                .contains("need a definition pattern that names their suffix (`.rb`)"),
+            skipped,
+            "{pattern:?}: {}",
+            run.stderr
+        );
+    }
+}
+
+#[test]
+fn regression_ruby_release_dialect_step_keywords_register_definitions() {
+    for (keywords, feature) in [
+        (
+            ["Angenommen", "Wenn"],
+            "# language: de\nFunktionalität: f\n  Szenario: s\n    Angenommen same\n    Wenn other\n",
+        ),
+        (
+            ["Dado", "Cuando"],
+            "# language: es\nCaracterística: f\n  Escenario: s\n    Dado same\n    Cuando other\n",
+        ),
+        (
+            ["wann", "dann"],
+            "# language: lu\nFunktionalitéit: f\n  Szenario: s\n    ugeholl same\n    wann other\n",
+        ),
+        (
+            ["Gangway!", "Blimey!"],
+            "# language: en-pirate\nAhoy matey!: f\n  Heave to: s\n    Gangway! same\n    Blimey! other\n",
+        ),
+        (
+            ["假如", "当"],
+            "# language: zh-CN\n功能: f\n  场景: s\n    假如same\n    当other\n",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps.rb",
+            &format!(
+                "{}('same') {{ work(1) }}\n{}('other') {{ work(1) }}\n",
+                keywords[0], keywords[1]
+            ),
+        );
+        write(directory.path(), "a.feature", feature);
+        let run = ruby_release_run(directory.path(), Some("*.rb"));
+        assert_eq!(run.definitions, 2, "{keywords:?}: {}", run.stderr);
+        assert!(!run.incomplete, "{keywords:?}");
+        assert_eq!(run.active, ["duplicate-handler"], "{keywords:?}");
+    }
+
+    // Not a step keyword in any dialect, so Cucumber-Ruby defines no such registrar.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.rb",
+        "Suppose('same') { work(1) }\nSuppose('other') { work(1) }\n",
+    );
+    write(directory.path(), "a.feature", RUBY_RELEASE_FEATURE);
+    assert_eq!(
+        ruby_release_run(directory.path(), Some("*.rb")).definitions,
+        0
+    );
+}
+
+#[test]
+fn regression_ruby_release_registrar_implementation_changes_revoke_trust() {
+    for (prelude, trusted) in [
+        // Cucumber::Glue implements registration; any change there can redirect it.
+        (
+            "module Cucumber\n  module Glue\n    module Dsl\n      def register_rb_step_definition(*args); end\n    end\n  end\nend\n",
+            false,
+        ),
+        ("class << Cucumber::Glue::Dsl\n  def rb_language; end\nend\n", false),
+        ("def (Cucumber::Glue::Dsl).rb_language; end\n", false),
+        (
+            "Cucumber::Glue::Dsl.define_singleton_method(:rb_language) { nil }\n",
+            false,
+        ),
+        (
+            "module Cucumber\n  Glue::Dsl.instance_variable_set(:@rb_language, nil)\nend\n",
+            false,
+        ),
+        (
+            "dsl = Cucumber::Glue::Dsl\ndsl.define_method(:register_rb_step_definition) { nil }\n",
+            false,
+        ),
+        ("class Object < BasicObject\n  def Given(*args); end\nend\n", false),
+        // Subclassing runs the superclass `inherited` hook, which unresolved code may define.
+        ("class Page < Base\n  def visit_home; end\nend\n", false),
+        // Controls: helpers that cannot shadow the DSL extended onto `main`.
+        ("def helper; end\n", true),
+        ("class Page\n  def visit_home; end\nend\n", true),
+        (
+            "module Pages\n  class Home\n    def open; end\n  end\nend\n",
+            true,
+        ),
+        (
+            "module Cucumber\n  module Formatter\n    class Mine\n      def emit; end\n    end\n  end\nend\n",
+            true,
+        ),
+        ("module Cucumber\n  module Glue\n  end\nend\n", true),
+        ("Cucumber.logger\n", true),
+        ("", true),
+    ] {
+        let run = ruby_release_prelude_run(prelude);
+        assert_eq!(run.definitions, if trusted { 2 } else { 0 }, "{prelude}");
+        assert_eq!(run.incomplete, !trusted, "{prelude}");
+        assert_eq!(run.active.is_empty(), !trusted, "{prelude}");
+    }
+}
+
+#[test]
+fn regression_ruby_release_ownership_diagnostic_points_at_its_cause() {
+    // `include` and subclassing run `included`/`inherited` hooks, which can modify any owner.
+    // An unresolved target keeps the suite untrusted; the diagnostic must name the cause.
+    for (prelude, line_column) in [
+        (
+            "module Helpers\n  include Capybara::DSL\nend\nWorld(Helpers)\n",
+            "steps.rb:2:3:",
+        ),
+        ("extend Navigation\n", "steps.rb:1:1:"),
+        ("class Page < Base\nend\n", "steps.rb:1:14:"),
+        // Each remaining invalidation path, with its cause off the first line so the old `1:1`
+        // fallback cannot pass: a built-in ParameterType redefinition, a repeated wrapper
+        // declaration, a wrapper mutation, dynamic method-table mutation, and a protected-name
+        // definition on an owner that is referenced elsewhere.
+        (
+            "x = 1\nParameterType(name: 'int', regexp: /\\d+/, transformer: ->(s) { s.to_i })\n",
+            "steps.rb:2:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\ndef w(t, &h)\n  Given(t, &h)\nend\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\nundef w\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\ndef w(t, &h)\n  Given(t, &h)\nend\nsend(:alias_method, name, :w)\n",
+            "steps.rb:5:1:",
+        ),
+        (
+            "x = 1\nmodule Helpers\n  def Given(*args); end\nend\nHelpers.foo\n",
+            "steps.rb:3:3:",
+        ),
+    ] {
+        let run = ruby_release_prelude_run(prelude);
+        assert_eq!(run.definitions, 0, "{prelude}");
+        assert!(run.incomplete);
+        assert!(
+            run.stderr.contains(&format!(
+                "{line_column} Ruby registration ownership or executable source effects are unresolved"
+            )),
+            "{prelude}: {}",
+            run.stderr
+        );
+    }
+}
+
+#[test]
+fn regression_ruby_release_inline_suppression_matches_typescript() {
+    for (file, comment, registrations) in [
+        (
+            "steps.ts",
+            "//",
+            "import { Given } from '@cucumber/cucumber';\nDIRECTIVE\nGiven('same', () => work(1));\nGiven('other', () => work(1));\n",
+        ),
+        (
+            "steps.rb",
+            "#",
+            "DIRECTIVE\nGiven('same') { work(1) }\nGiven('other') { work(1) }\n",
+        ),
+    ] {
+        for (directive, active, suppressed, code) in [
+            (
+                "cuke-dedup:ignore duplicate-handler -- legacy contract",
+                vec![],
+                vec!["duplicate-handler"],
+                Some(0),
+            ),
+            (
+                "cuke-dedup:ignore duplicate-matcher -- unrelated rule",
+                vec!["duplicate-handler"],
+                vec![],
+                Some(1),
+            ),
+            (
+                "cuke-dedup:ignore duplicate-handler",
+                vec!["duplicate-handler"],
+                vec![],
+                Some(2),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            write(
+                directory.path(),
+                file,
+                &registrations.replace("DIRECTIVE", &format!("{comment} {directive}")),
+            );
+            write(directory.path(), "a.feature", RUBY_RELEASE_FEATURE);
+            let pattern = format!("*{}", &file[5..]);
+            let run = ruby_release_run(directory.path(), Some(&pattern));
+            assert_eq!(run.active, active, "{file}: {directive}");
+            assert_eq!(run.suppressed, suppressed, "{file}: {directive}");
+            assert_eq!(run.code, code, "{file}: {directive}: {}", run.stderr);
+        }
+    }
+}
+
+const RUBY_HANDLER_VALUES_PROVIDER: &str = include_str!(
+    "../fixtures/ruby-parity/equivalent-handlers/precision-inline-local/providers/assertions.rb"
+);
+
+/// Runs Ruby files beside a configured synthetic assertion provider.
+fn ruby_handler_values_run(files: &[(&str, &str)]) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "provider.rb",
+        RUBY_HANDLER_VALUES_PROVIDER,
+    );
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"assertionModules":["provider"],"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#,
+    );
+    for (name, body) in files {
+        write(
+            directory.path(),
+            name,
+            &format!("require_relative 'provider'\n{body}\n"),
+        );
+    }
+    ruby_release_run(directory.path(), Some("*.rb"))
+}
+
+/// A block-local write beside a file-level capture must not make the sibling reader incomplete.
+#[test]
+fn regression_ruby_handler_values_block_local_write_keeps_capture_complete() {
+    // A `|; name|` block-local shadows the file-level capture; writing it inside the handler
+    // used to count as a capture write and made the sibling handler incomplete.
+    let pair = "Given('the omega brake holds a local stop') { |; shared| shared = 2; SyntheticAssertions.expect(brake()).to_be(shared) }\nGiven('the omega brake holds a module stop') { SyntheticAssertions.expect(brake()).to_be(shared) }";
+    let run = ruby_handler_values_run(&[("steps.rb", &format!("shared = 1\n{pair}"))]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, Vec::<String>::new());
+    // Without the block-local the write reaches the capture and both readers are uncertain.
+    let plain = pair.replace("|; shared| ", "");
+    let run = ruby_handler_values_run(&[("steps.rb", &format!("shared = 1\n{plain}"))]);
+    assert!(run.incomplete);
+    for location in ["steps.rb:3:45", "steps.rb:4:46"] {
+        assert!(run.stderr.contains(location), "{location}: {}", run.stderr);
+    }
+}
+
+/// Equal top-level constants collapse handlers; conflicting ones, declared after the handlers, keep them apart.
+#[test]
+fn regression_ruby_handler_values_top_level_constants_reach_the_fingerprint() {
+    let steps = "ALPHA_LIMIT = 1\nALPHA_BOUND = 1\nGiven('the alpha meter reaches its limit') { SyntheticAssertions.expect(meter()).to_be(ALPHA_LIMIT) }\nGiven('the alpha meter reaches its bound') { SyntheticAssertions.expect(meter()).to_be(ALPHA_BOUND) }\nGiven('the beta dial holds its first stop') { SyntheticAssertions.expect(dial()).to_be(BETA_FIRST) }\nGiven('the beta dial holds its second stop') { SyntheticAssertions.expect(dial()).to_be(BETA_SECOND) }\nBETA_FIRST = 1\nBETA_SECOND = 2";
+    let run = ruby_handler_values_run(&[("steps.rb", steps)]);
+    assert_eq!(run.definitions, 4);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["duplicate-handler", "near-duplicate-step"]);
+    let run = ruby_handler_values_run(&[(
+        "steps.rb",
+        &steps.replace("ALPHA_BOUND = 1", "ALPHA_BOUND = 2"),
+    )]);
+    assert_eq!(run.active, Vec::<String>::new());
+    assert!(!run.incomplete);
+}
+
+/// Called identical lambdas duplicate, called conflicting ones stay apart, uncalled ones only parameterize.
+#[test]
+fn regression_ruby_handler_values_declared_lambda_runs_only_where_invoked() {
+    let handler = |matcher: &str, subject: &str, value: u8, invocation: &str| {
+        format!("Given('{matcher}') do\n  check = -> {{ SyntheticAssertions.expect({subject}()).to_be({value}) }}\n  {invocation}\nend")
+    };
+    let steps = [
+        handler("the alpha meter settles evenly", "meter", 1, "check.call"),
+        handler("the alpha meter settles smoothly", "meter", 1, "check.call"),
+        handler("the beta dial resolves upward", "dial", 1, "check.call"),
+        handler("the beta dial resolves downward", "dial", 2, "check.call"),
+        handler("the crane idles at a first angle", "crane", 1, ""),
+        handler("the crane idles at a second angle", "crane", 2, ""),
+    ]
+    .join("\n");
+    let run = ruby_handler_values_run(&[("steps.rb", &steps)]);
+    assert_eq!(run.definitions, 6);
+    assert!(!run.incomplete, "{}", run.stderr);
+    let mut active = run.active.clone();
+    active.sort();
+    assert_eq!(
+        active,
+        vec![
+            "duplicate-handler",
+            "near-duplicate-step",
+            "parameterization-candidate"
+        ]
+    );
+}
+
+/// Conflicting trusted assertions are one differing event: near needs shared ordinary behaviour,
+/// a called declaration alone shares nothing, and a stored invocation result is not an event.
+#[test]
+fn regression_ruby_assertion_near_conflicting_values_are_one_differing_event() {
+    let handler = |matcher: &str, body: &str| format!("Given('{matcher}') do\n  {body}\nend");
+    let steps = [
+        handler(
+            "the alpha probe reads a first value",
+            "SyntheticAssertions.expect(alpha()).to_be(1); settle()",
+        ),
+        handler(
+            "the alpha probe reads a second value",
+            "SyntheticAssertions.expect(alpha()).to_be(2); settle()",
+        ),
+        handler(
+            "the beta gauge reads a first value",
+            "check = -> { SyntheticAssertions.expect(beta()).to_be(1) }; check.call",
+        ),
+        handler(
+            "the beta gauge reads a second value",
+            "check = -> { SyntheticAssertions.expect(beta()).to_be(2) }; check.call",
+        ),
+        handler(
+            "the gamma store reads a first value",
+            "act = -> { SyntheticAssertions.expect(gamma()).to_be(1) }; result = act.call",
+        ),
+        handler(
+            "the gamma store reads a second value",
+            "act = -> { SyntheticAssertions.expect(gamma()).to_be(2) }; result = act.call",
+        ),
+    ]
+    .join("\n");
+    let run = ruby_handler_values_run(&[("steps.rb", &steps)]);
+    assert_eq!(run.definitions, 6);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+}
+
+/// Resolved provider aliases compare across files; a same-named runtime lambda stays complete and untrusted.
+#[test]
+fn regression_ruby_handler_values_resolved_alias_captures_compare_across_files() {
+    let direct = "expect = SyntheticAssertions.method(:expect)\nThen('the parcel is ready') { |state| expect.call(state).to_be('ready') }";
+    let hash = "expect = SyntheticAssertions.api.fetch(:expect)\nThen('shipment readiness has been confirmed') { |state| expect.call(state).to_be('ready') }";
+    let run = ruby_handler_values_run(&[("direct.rb", direct), ("hash.rb", hash)]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["duplicate-handler"]);
+    // A same-named runtime lambda is a complete, untrusted file-local value.
+    let runtime = "expect = ->(value) { value }\nThen('the parcel status is now verified') { |state| expect.call(state).to_be('ready') }";
+    let run = ruby_handler_values_run(&[("direct.rb", direct), ("runtime.rb", runtime)]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, Vec::<String>::new());
+}
+
+/// Runs Ruby files with the near threshold the parity fixtures use and no assertion trust.
+fn ruby_action_run(files: &[(&str, &str)], extra: &[&str]) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"threshold":100,"nearDuplicateHandlerSimilarity":0.5,"rules":{"unused-definition":"off"}}"#,
+    );
+    for (name, body) in files {
+        write(directory.path(), name, body);
+    }
+    let mut args = vec!["--definitions", "*.rb"];
+    args.extend_from_slice(extra);
+    ruby_run(directory.path(), &args)
+}
+
+/// Direct and fluent actions share their root and method, so near wording is reported.
+#[test]
+fn regression_ruby_action_evidence_direct_and_fluent_actions_are_near() {
+    let run = ruby_action_run(&[("steps.rb", "When('I click the save button') { page.click('#save') }\nWhen('I click save button') { page.locator('#save').click() }\n")], &[]);
+    assert_eq!(run.definitions, 2);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    let run = ruby_action_run(&[("steps.rb", "When('I click the save button') { page.click('#save') }\nWhen('I click save button') { page.fill('#save') }\n")], &[]);
+    assert_eq!(run.active, Vec::<String>::new());
+}
+
+/// Writes an entry file that loads `helpers` dependency-only files, one indented
+/// `require_relative` per line (so a diagnostic column is 3, not 1), then an unused step.
+fn ruby_dependency_project(helpers: usize) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    let mut entry = String::new();
+    for index in 1..=helpers {
+        entry.push_str(&format!("  require_relative '../../lib/h{index}'\n"));
+        write(
+            directory.path(),
+            &format!("lib/h{index}.rb"),
+            &format!("H{index} = 1\n"),
+        );
+    }
+    entry.push_str("Given('unused step') { work(1) }\n");
+    write(
+        directory.path(),
+        "features/step_definitions/entry.rb",
+        &entry,
+    );
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given another step\n",
+    );
+    directory
+}
+
+/// More selected Ruby files than the graph limit, with no loads, is a complete run.
+#[test]
+fn regression_ruby_dependency_limits_do_not_charge_selected_entry_points() {
+    // More selected Ruby files than the 1,024-module graph limit, and no requires: nothing is
+    // expanded, so the run is complete. Before the fix the selection itself overflowed the limit
+    // and discovery failed the run with exit 2.
+    let directory = tempfile::tempdir().unwrap();
+    for index in 1..=1_100 {
+        write(
+            directory.path(),
+            &format!("features/step_definitions/s{index}.rb"),
+            &format!("Given('step {index}') {{ work({index}) }}\n"),
+        );
+    }
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given step 1\n",
+    );
+    let run = ruby_run(directory.path(), &["--definitions", "features/**/*.rb"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.definitions, 1_100);
+    assert!(
+        !run.stderr.contains("dependency discovery"),
+        "{}",
+        run.stderr
+    );
+    // No provider is involved, so exceeding the provider-proof budget costs nothing here.
+    assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+}
+
+/// A load past the Ruby load file limit is not followed and makes the run incomplete.
+#[test]
+fn regression_ruby_dependency_module_limit_marks_loads_incomplete() {
+    let selection = ["--definitions", "features/step_definitions/*.rb"];
+    // Control: 1,024 dependency-only helpers fit the graph, so the run is complete and the unused
+    // step is reported.
+    let fits = ruby_dependency_project(1_024);
+    let run = ruby_run(fits.path(), &selection);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert!(
+        run.active.contains(&"unused-definition".to_owned()),
+        "{:?}",
+        run.active
+    );
+    assert!(!run.stderr.contains("not followed"), "{}", run.stderr);
+
+    // The 1,025th helper exceeds the limit: its load is not followed, the diagnostic names the
+    // limit at that load (line 1,025, not line 1), the run is incomplete rather than failed, and
+    // unused-definition findings are withheld because a step may live behind the unfollowed load.
+    let over = ruby_dependency_project(1_025);
+    let run = ruby_run(over.path(), &selection);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(run.incomplete, "{}", run.stderr);
+    assert!(
+        run.stderr.contains(
+            "entry.rb:1025:3: Ruby source dependency was not followed: the source graph exceeds the 1,024-file limit"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("dependency discovery"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        !run.active.contains(&"unused-definition".to_owned()),
+        "{:?}",
+        run.active
+    );
+    let strict = ruby_run(
+        over.path(),
+        &[
+            "--definitions",
+            "features/step_definitions/*.rb",
+            "--fail-on-incomplete",
+        ],
+    );
+    assert_eq!(strict.code, Some(2), "{}", strict.stderr);
+}
+
+/// Cross-file provider registrations that need provider proofs: `(provider.rb, a.rb body)`.
+const RUBY_PROVIDER_SHAPES: [(&str, &str); 2] = [
+    // `method(:Given)` re-exported through a module constant.
+    (
+        "ROOT_GIVEN = method(:Given)\nmodule Provider\n  GIVEN = ::ROOT_GIVEN\nend\n",
+        "register = Provider::GIVEN\nregister.call('provided step') { work(1) }\nregister.call('provided step') { work(1) }\n",
+    ),
+    // A top-level constant alias called directly.
+    (
+        "MY_GIVEN = method(:Given)\n",
+        "MY_GIVEN.call('provided step') { work(1) }\nMY_GIVEN.call('provided step') { work(1) }\n",
+    ),
+];
+
+/// Writes provider `shape` from [`RUBY_PROVIDER_SHAPES`] beside `fillers` plain step files, all
+/// selected.
+fn ruby_provider_project(fillers: usize, (provider, steps): (&str, &str)) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "features/support/provider.rb", provider);
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        &format!("require_relative '../support/provider'\n{steps}"),
+    );
+    for index in 1..=fillers {
+        write(
+            directory.path(),
+            &format!("features/step_definitions/f{index}.rb"),
+            &format!("Given('filler {index}') {{ work({index}) }}\n"),
+        );
+    }
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given provided step\n",
+    );
+    directory
+}
+
+/// Provider proofs over a selection larger than their budget are unavailable; the suite-wide
+/// uncertainty names that budget instead of blaming metaprogramming alone.
+#[test]
+fn regression_ruby_provider_proof_limit_names_its_cause() {
+    let selection = ["--definitions", "features/step_definitions/*.rb"];
+    // Every cross-file provider registration rests on a capture such as `method(:Given)`. Without
+    // proofs that capture is unresolved, so registry trust is withdrawn and the run is incomplete:
+    // provider-backed registrations are never dropped silently.
+    for shape in RUBY_PROVIDER_SHAPES {
+        // Control: a small suite proves the provider and reports its duplicate registrations.
+        let small = ruby_provider_project(1, shape);
+        let run = ruby_run(small.path(), &selection);
+        assert!(!run.incomplete, "{}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{:?}",
+            run.active
+        );
+        assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+
+        // 1,100 selected files exceed the 1,024-file proof budget: the provider stays unproven,
+        // registry trust is withdrawn (fail closed) and the warning states why.
+        let large = ruby_provider_project(1_099, shape);
+        let run = ruby_run(large.path(), &selection);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(run.incomplete, "{}", run.stderr);
+        assert_eq!(run.definitions, 0);
+        assert!(
+            run.stderr.contains(
+                "metaprogramming prevents trusted registration extraction across the selected suite: provider proofs are unavailable because the selected and loaded Ruby files exceed the 1,024-file / 64 MiB proof limit"
+            ),
+            "{}",
+            run.stderr
+        );
+    }
+}
+
+/// Provider proofs missing for a reason other than the budget (an unreadable selected file) do
+/// not blame the proof limit.
+#[cfg(unix)]
+#[test]
+fn regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_limit() {
+    use std::os::unix::fs::PermissionsExt;
+    let project = ruby_provider_project(2, RUBY_PROVIDER_SHAPES[0]);
+    let locked = project.path().join("features/step_definitions/f2.rb");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root ignores file modes; there is no unreadable file to observe.
+    if fs::read(&locked).is_ok() {
+        return;
+    }
+    let run = ruby_run(
+        project.path(),
+        &["--definitions", "features/step_definitions/*.rb"],
+    );
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+        run.stderr.contains(
+            "metaprogramming prevents trusted registration extraction across the selected suite"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+}
+
+/// Commits a Ruby suite with support file `base_env` at HEAD~1, then switches it to `head_env`
+/// and appends a step at HEAD, and runs `--baseline-from-ref HEAD~1` with `extra` arguments;
+/// returns the exit code and stderr.
+fn ruby_baseline_run(
+    (base_env, head_env): (Option<&str>, Option<&str>),
+    steps: &str,
+    extra: &[&str],
+) -> (Option<i32>, String) {
+    let directory = tempfile::tempdir().unwrap();
+    let env = directory.path().join("features/support/env.rb");
+    if let Some(contents) = base_env {
+        write(directory.path(), "features/support/env.rb", contents);
+    }
+    write(directory.path(), "features/step_definitions/a.rb", steps);
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given same\n",
+    );
+    init_repository(directory.path());
+    match head_env {
+        Some(contents) => write(directory.path(), "features/support/env.rb", contents),
+        None => {
+            let _ = fs::remove_file(&env);
+        }
+    }
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        &format!("{steps}Given('other') {{ visit('/c') }}\n"),
+    );
+    for args in [vec!["add", "-A"], vec!["commit", "-qm", "head"]] {
+        assert!(fixture_git()
+            .args(args)
+            .current_dir(directory.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--definitions", "features/**/*.rb", "--no-metrics"])
+        .args(["--baseline-from-ref", "HEAD~1"])
+        .args(extra)
+        .output()
+        .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// A baseline is rejected for being empty only when the current tree has definitions to match;
+/// when both trees are empty (a Ruby registry withdrawn by an unresolved include in both) the run
+/// follows the plain-run incompleteness policy.
+#[test]
+fn regression_ruby_baseline_tolerates_definitions_withdrawn_by_finalization() {
+    let invalidated = Some("include Capybara::DSL\n");
+    let steps = "Given('same') { visit('/a') }\nGiven('same') { visit('/b') }\n";
+    let soft = "baseline revision `HEAD~1` is incomplete, so a finding it did not extract may appear as new";
+    let rejected = "baseline revision `HEAD~1` is incomplete:";
+    let unmatched =
+        "baseline revision `HEAD~1` is incomplete: it kept no step definitions while the current tree has";
+    // Both revisions invalidate the registry, so both are empty and nothing can appear new:
+    // tolerated and reported by default. Before the fix the baseline was rejected with exit 2.
+    let (code, stderr) = ruby_baseline_run((invalidated, invalidated), steps, &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stderr.contains(soft), "{stderr}");
+    assert!(
+        !stderr.contains(rejected) && !stderr.contains(unmatched),
+        "{stderr}"
+    );
+    // `--fail-on-incomplete` still rejects the incomplete baseline.
+    let (code, stderr) =
+        ruby_baseline_run((invalidated, invalidated), steps, &["--fail-on-incomplete"]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains(rejected), "{stderr}");
+    // The base is invalidated but HEAD is fixed: an empty base would report every current finding
+    // as new, so it is rejected and the message says why.
+    let (code, stderr) = ruby_baseline_run((invalidated, None), steps, &[]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains(&format!("{unmatched} 3")), "{stderr}");
+    // Control: a base that kept nothing for no reported reason is rejected the same way.
+    let (code, stderr) = ruby_baseline_run((None, None), "HELPER = 1\n", &[]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains(&format!("{unmatched} 1")), "{stderr}");
+}
+
+/// A dotted require such as `pages.v2` loads `pages.v2.rb`, as Ruby does, so the loaded file's
+/// steps join the analysis; a native-suffix request stays unresolved only when a native
+/// library could shadow it.
+#[test]
+fn regression_ruby_dotted_require_paths_load_the_ruby_file() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "features/support/pages.v2.rb",
+        "Given('same step') { visit('/a') }\n",
+    );
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        "\nrequire_relative '../support/pages.v2'\nGiven('same step') { visit('/b') }\n",
+    );
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given same step\n",
+    );
+    let selection = ["--definitions", "features/step_definitions/*.rb"];
+    // Before the fix the load stayed unresolved: the run was incomplete and `pages.v2.rb`, which
+    // only the require reaches, contributed no definition, so the duplicate went unseen.
+    let run = ruby_run(directory.path(), &selection);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.definitions, 2, "{}", run.stderr);
+    assert!(
+        run.active.contains(&"duplicate-matcher".to_owned()),
+        "{:?}",
+        run.active
+    );
+
+    // Control: written as `pages.so`, the load falls back to `pages.so.rb` like Ruby, but a native
+    // candidate (`pages.bundle`) would win on some platform, so the load stays unresolved and the
+    // diagnostic points at it (line 2, column 1).
+    write(
+        directory.path(),
+        "features/support/pages.so.rb",
+        "Given('same step') { visit('/a') }\n",
+    );
+    write(
+        directory.path(),
+        "features/support/pages.bundle",
+        "not a library\n",
+    );
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        "\nrequire_relative '../support/pages.so'\nGiven('same step') { visit('/b') }\n",
+    );
+    let run = ruby_run(directory.path(), &selection);
+    assert!(run.incomplete, "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("a.rb:2:1: Ruby source dependency is unresolved"),
+        "{}",
+        run.stderr
+    );
+    // Without the native candidate the same load resolves to `pages.so.rb`.
+    fs::remove_file(directory.path().join("features/support/pages.bundle")).unwrap();
+    let run = ruby_run(directory.path(), &selection);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.definitions, 2, "{}", run.stderr);
+}
+
+/// A Ruby file skipped by a suffix-agnostic pattern but loaded through `require_relative` is
+/// analyzed, so the skipped-files warning does not count it.
+#[test]
+fn regression_ruby_loaded_files_are_not_reported_as_skipped() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "features/step_definitions/a.rb",
+        "require_relative '../support/helpers'\nGiven('one') { help }\n",
+    );
+    write(
+        directory.path(),
+        "features/support/helpers.rb",
+        "Given('two') { help }\n",
+    );
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given one\n    Given two\n",
+    );
+    let selection = [
+        "--definitions",
+        "features/step_definitions/*.rb",
+        "--definitions",
+        "features/support/**",
+    ];
+    // The only file the suffix-agnostic pattern skipped is loaded and analyzed: both steps count
+    // and no warning claims it was not analyzed. Before the fix the warning reported 1 file.
+    let run = ruby_run(directory.path(), &selection);
+    assert_eq!(run.definitions, 2, "{}", run.stderr);
+    assert!(!run.stderr.contains("not analyzed"), "{}", run.stderr);
+    // Through a symlinked root, discovery records paths under the link while dependency
+    // resolution records canonical targets; the comparison must still match them.
+    #[cfg(unix)]
+    {
+        let links = tempfile::tempdir().unwrap();
+        let root = links.path().join("suite");
+        std::os::unix::fs::symlink(directory.path(), &root).unwrap();
+        let run = ruby_run(&root, &selection);
+        assert_eq!(run.definitions, 2, "{}", run.stderr);
+        assert!(!run.stderr.contains("not analyzed"), "{}", run.stderr);
+    }
+    // Control: a skipped file nothing loads is still reported, and only that one.
+    write(directory.path(), "features/support/unused.rb", "X = 1\n");
+    let run = ruby_run(directory.path(), &selection);
+    assert!(
+        run.stderr
+            .contains("warning: 1 cucumber-ruby source file(s) were not analyzed"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// The closed-load-phase suite: an entry with a duplicate pair (the positive control) that loads
+/// a helper class whose instance method dispatches dynamically.
+const CLOSED_ENTRY: &str =
+    "require_relative 'helper'\nGiven('same step') { work(1) }\nGiven('same step') { work(2) }\n";
+const CLOSED_HELPER: &str =
+    "class LocalFormattingHelper\n  def log(level, message)\n    logger.send(level, message)\n  end\nend\n";
+
+/// A matrix row: a label and the files it overrides or adds to the closed-load-phase suite.
+type LoadPhaseRow = (&'static str, Vec<(&'static str, String)>);
+/// A kept matrix row: a label, its files, and the exact definition count it keeps.
+type KeptLoadPhaseRow = (&'static str, Vec<(&'static str, String)>, u64);
+
+/// Runs the closed-load-phase suite with the given file overrides and extra files.
+fn closed_load_phase_run(files: &[(&str, &str)]) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "steps/entry.rb", CLOSED_ENTRY);
+    write(directory.path(), "steps/helper.rb", CLOSED_HELPER);
+    write(
+        directory.path(),
+        "features/a.feature",
+        "Feature: f\n  Scenario: s\n    Given same step\n",
+    );
+    for (path, contents) in files {
+        write(directory.path(), path, contents);
+    }
+    ruby_run(directory.path(), &["--definitions", "steps/*.rb"])
+}
+
+/// A dynamic dispatch inside an instance method of a suite class does not invalidate
+/// registrations when every load-time statement of the suite is a registration, a literal load or
+/// a plain class definition, and every load resolves; any other load-time statement anywhere in
+/// the suite restores the suite-wide invalidation.
+#[test]
+fn regression_ruby_contained_dispatch_needs_a_closed_load_phase() {
+    let helper = |body: &str| format!("class LocalFormattingHelper\n{body}\nend\n");
+    let dispatch = "  def log(level, message)\n    logger.send(level, message)\n  end";
+    let kept: [KeptLoadPhaseRow; 13] = [
+        ("closed suite", vec![], 2),
+        (
+            "helper used only inside a step handler",
+            vec![("steps/uses.rb", "Given('uses helper') { LocalFormattingHelper.new.log(:info, 'x') }\n".to_owned())],
+            3,
+        ),
+        (
+            "scenario hook and ParameterType with lambda transformers",
+            vec![("steps/hooks.rb", "# frozen_string_literal: true\nBefore('@tag') do\n  setup\nend\nParameterType(name: 'color', regexp: /red|blue/, transformer: ->(c) { c })\nParameterType(name: 'size', regexp: /big/, transformer: lambda { |s| s })\n".to_owned())],
+            2,
+        ),
+        (
+            "hook- and protocol-named instance methods",
+            vec![("steps/helper.rb", helper("  def initialize\n    logger.send(level, message)\n  end\n  def method_missing(*)\n    logger.send(level, message)\n  end\n  def to_s\n    logger.send(level, message)\n  end"))],
+            2,
+        ),
+        (
+            "nested and qualified declarations",
+            vec![("steps/helper.rb", format!("module Support\n  class LocalFormattingHelper\n{dispatch}\n  end\nend\nmodule Support::Formatting\n{dispatch}\nend\n"))],
+            2,
+        ),
+        (
+            "nested constant named like a core class",
+            vec![("steps/helper.rb", format!("module Support\n  class String\n{dispatch}\n  end\nend\n"))],
+            2,
+        ),
+        (
+            "dispatch nested in a block inside the instance method",
+            vec![("steps/helper.rb", helper("  def log(levels)\n    levels.each { |level| logger.send(level) }\n  end"))],
+            2,
+        ),
+        (
+            "transitive and repeated literal loads",
+            vec![
+                ("steps/entry.rb", format!("require_relative 'middle'\nrequire_relative 'middle'\n{}", CLOSED_ENTRY.lines().skip(1).collect::<Vec<_>>().join("\n"))),
+                ("steps/middle.rb", "require_relative 'helper'\n".to_owned()),
+            ],
+            2,
+        ),
+        (
+            "plain require through a load path",
+            vec![
+                (".cuke-dedup.json", r#"{"rubyLoadPaths":["lib"]}"#.to_owned()),
+                ("steps/entry.rb", CLOSED_ENTRY.replacen("require_relative 'helper'", "require 'helper'", 1)),
+                ("lib/helper.rb", CLOSED_HELPER.to_owned()),
+                ("steps/helper.rb", "# moved to lib\n".to_owned()),
+            ],
+            2,
+        ),
+        (
+            "eval and define_method inside an instance method",
+            vec![("steps/helper.rb", helper("  def install(code)\n    eval(code)\n    self.class.send(:define_method, :Given) { |*| nil }\n  end"))],
+            2,
+        ),
+        (
+            "unresolved require inside a step handler",
+            vec![("steps/uses.rb", "Given('loads json') { require 'json' }\n".to_owned())],
+            3,
+        ),
+        (
+            "unresolved require inside an instance method",
+            vec![("steps/helper.rb", helper(&format!("{dispatch}\n  def parse\n    require 'json'\n  end")))],
+            2,
+        ),
+        (
+            "comment-only file beside the suite",
+            vec![("steps/notes.rb", "# frozen_string_literal: true\n".to_owned())],
+            2,
+        ),
+    ];
+    for (label, files, definitions) in kept {
+        let files: Vec<_> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        let run = closed_load_phase_run(&files);
+        assert_eq!(run.definitions, definitions, "{label}: {}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{label}: {:?}",
+            run.active
+        );
+    }
+    let opened: [LoadPhaseRow; 14] = [
+        (
+            "constant assignment at top level",
+            vec![("steps/other.rb", "HELPER_LEVEL = 1\n".to_owned())],
+        ),
+        (
+            "World with a module",
+            vec![("steps/other.rb", "World(Support)\n".to_owned())],
+        ),
+        (
+            "instantiation in the class body",
+            vec![(
+                "steps/helper.rb",
+                helper(&format!("{dispatch}\n  new.log(:info, 'x')")),
+            )],
+        ),
+        (
+            "module_function in the class body",
+            vec![(
+                "steps/helper.rb",
+                format!("module LocalFormattingHelper\n{dispatch}\n  module_function :log\nend\n"),
+            )],
+        ),
+        (
+            "def inside class_exec",
+            vec![(
+                "steps/helper.rb",
+                helper(&format!("  Object.class_exec do\n  {dispatch}\n  end")),
+            )],
+        ),
+        (
+            "superclass",
+            vec![(
+                "steps/helper.rb",
+                format!("class LocalFormattingHelper < Struct\n{dispatch}\nend\n"),
+            )],
+        ),
+        (
+            "reopened core class",
+            vec![(
+                "steps/helper.rb",
+                format!("class String\n{dispatch}\nend\n"),
+            )],
+        ),
+        (
+            "Marshal.load at top level",
+            vec![(
+                "steps/other.rb",
+                "Marshal.load(File.binread('x'))\n".to_owned(),
+            )],
+        ),
+        (
+            "interpolated registration argument",
+            vec![(
+                "steps/other.rb",
+                "Given(\"#{PREFIX} step\") { work }\n".to_owned(),
+            )],
+        ),
+        (
+            "constant registration argument",
+            vec![("steps/other.rb", "Given(STEP_TEXT) { work }\n".to_owned())],
+        ),
+        (
+            "unresolved require",
+            vec![("steps/other.rb", "require 'capybara/cucumber'\n".to_owned())],
+        ),
+        (
+            "singleton method",
+            vec![(
+                "steps/helper.rb",
+                helper("  def self.log(level, message)\n    logger.send(level, message)\n  end"),
+            )],
+        ),
+        (
+            "open file sorted before the helper",
+            vec![("steps/a_open.rb", "puts 'loading'\n".to_owned())],
+        ),
+        (
+            "open file sorted after the helper",
+            vec![("steps/z_open.rb", "puts 'loading'\n".to_owned())],
+        ),
+    ];
+    for (label, files) in opened {
+        let files: Vec<_> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        let run = closed_load_phase_run(&files);
+        assert_eq!(run.definitions, 0, "{label}: {}", run.stderr);
+        assert!(run.incomplete, "{label}: {}", run.stderr);
+    }
+    // A prepared file that cannot be read is never extracted, yet the runner still loads it: the
+    // suite is open even though every file the analyzer saw is closed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "steps/entry.rb", CLOSED_ENTRY);
+        write(directory.path(), "steps/helper.rb", CLOSED_HELPER);
+        write(directory.path(), "steps/locked.rb", "# closed\n");
+        write(
+            directory.path(),
+            "features/a.feature",
+            "Feature: f\n  Scenario: s\n    Given same step\n",
+        );
+        let locked = directory.path().join("steps/locked.rb");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root ignores file modes, so the file stays readable and the suite stays closed.
+        let readable = fs::read(&locked).is_ok();
+        let run = ruby_run(directory.path(), &["--definitions", "steps/*.rb"]);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            run.definitions,
+            if readable { 2 } else { 0 },
+            "{}",
+            run.stderr
+        );
+    }
+    // When the suite opens, the warning names the contained dispatch call (helper.rb, line 3).
+    let run = closed_load_phase_run(&[("steps/other.rb", "HELPER_LEVEL = 1\n")]);
+    assert!(
+        run.stderr.contains("Ruby call at")
+            && run.stderr.contains("helper.rb:3:5 that may redefine the DSL or dispatch dynamically can run during load"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// A dynamic call inside a scenario hook block runs only during scenarios, like one inside a step
+/// handler, so it keeps registrations; hooks that can run around loading, or hook calls that are
+/// not top-level and receiverless, keep the suite-wide withdrawal.
+#[test]
+fn regression_ruby_scenario_hook_blocks_are_deferred_like_step_handlers() {
+    let run_with = |hooks: &str| {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps/entry.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\n",
+        );
+        write(directory.path(), "steps/hooks.rb", hooks);
+        write(
+            directory.path(),
+            "features/a.feature",
+            "Feature: f\n  Scenario: s\n    Given same step\n",
+        );
+        ruby_run(directory.path(), &["--definitions", "steps/*.rb"])
+    };
+    for hook in [
+        "Before do\n  helper.send(kind)\nend\n",
+        "Before('@tag') do |scenario|\n  helper.send(kind)\nend\n",
+        "After { helper.public_send(kind) }\n",
+        "Around do |scenario, block|\n  helper.send(kind)\n  block.call\nend\n",
+        "AfterStep { |result| eval(code) }\n",
+        "BeforeStep do\n  helper.__send__(kind)\nend\n",
+    ] {
+        let run = run_with(hook);
+        assert_eq!(run.definitions, 2, "{hook}: {}", run.stderr);
+        assert!(
+            run.active.contains(&"duplicate-matcher".to_owned()),
+            "{hook}: {:?}",
+            run.active
+        );
+    }
+    // Each withdrawal is located at the dynamic call itself, never at line 1, column 1.
+    for (hook, location) in [
+        ("BeforeAll do\n  helper.send(kind)\nend\n", "hooks.rb:2:3"),
+        ("AfterAll { helper.send(kind) }\n", "hooks.rb:1:12"),
+        (
+            "AfterConfiguration do |config|\n  helper.send(kind)\nend\n",
+            "hooks.rb:2:3",
+        ),
+        (
+            "InstallPlugin do |config, registry|\n  helper.send(kind)\nend\n",
+            "hooks.rb:2:3",
+        ),
+        ("self.Before do\n  helper.send(kind)\nend\n", "hooks.rb:2:3"),
+        (
+            "if ENV['CI']\n  Before do\n    helper.send(kind)\n  end\nend\n",
+            "hooks.rb:3:5",
+        ),
+        // A redefined hook may run its block at load (`def self.Before` on main precedes the
+        // extended DSL), so redefining one withdraws trust like redefining a step keyword.
+        (
+            "def self.Before(*)\n  yield\nend\nBefore do\n  helper.send(kind)\nend\n",
+            "hooks.rb:1:1",
+        ),
+        (
+            "define_singleton_method(:After) { |*a, &b| b.call }\nAfter { helper.send(kind) }\n",
+            "hooks.rb:1:1",
+        ),
+    ] {
+        let run = run_with(hook);
+        assert_eq!(run.definitions, 0, "{hook}: {}", run.stderr);
+        assert!(
+            run.stderr.contains(&format!(
+                "{location}: Ruby registration ownership or executable source effects are unresolved"
+            )),
+            "{hook}: {}",
+            run.stderr
+        );
+    }
+}
+
+/// A zero-operand `load()` is an ordinary call; identical callback bodies under different
+/// wrappers are near, different bodies under one wrapper are not.
+#[test]
+fn regression_ruby_action_evidence_callbacks_and_bare_load_calls() {
+    let steps = "When('the admin applies the discount rule') { with_transaction { load_cart(); apply_discount(); save() } }\nWhen('the admin applies the shipping rule') { with_transaction { load_order(); apply_shipping(); commit() } }\nThen('the invoice grid is refreshed') { alpha { load(); render(); assert_rows() } }\nThen('the invoice list is refreshed') { beta { load(); render(); assert_rows() } }\n";
+    let run = ruby_action_run(&[("steps.rb", steps)], &[]);
+    assert_eq!(run.definitions, 4);
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    let run = ruby_action_run(
+        &[("steps.rb", &steps.replace("load();", "load('rows.rb');"))],
+        &[],
+    );
+    assert!(run.incomplete);
+    assert!(run.stderr.contains("steps.rb:3:49"), "{}", run.stderr);
+}
+
+/// Identical event streams behind differing values are never near and never take a candidate
+/// slot from a pair that is.
+#[test]
+fn regression_ruby_action_evidence_identical_streams_are_not_near() {
+    let steps = "Given('shipment is ready') { write_status(:ready) }\nThen('shipment is now ready') { write_status(:ready) }\nGiven('shipment is rejected') { write_status(:rejected) }\nThen('shipment is now rejected') { write_status(:accepted) }\nGiven('the archive badge is visible') { page.goto('/login') }\nGiven('the archive badge is now visible') { page.goto('/login'); page.wait_for_load_state() }\n";
+    let run = ruby_action_run(&[("steps.rb", steps)], &[]);
+    let mut active = run.active.clone();
+    active.sort();
+    assert_eq!(
+        active,
+        vec![
+            "duplicate-handler",
+            "near-duplicate-step",
+            "near-duplicate-step"
+        ]
+    );
+    // With one comparison, the decoy pairs (identical streams, differing symbols) must not take
+    // the slot: the only near finding is the archive pair.
+    let decoys = "Given('shipment is rejected') { write_status(:rejected) }\nThen('shipment is now rejected') { write_status(:accepted) }\nGiven('the archive badge is visible') { page.goto('/login') }\nGiven('the archive badge is now visible') { page.goto('/login'); page.wait_for_load_state() }\n";
+    let run = ruby_action_run(
+        &[("steps.rb", decoys)],
+        &["--max-candidate-comparisons", "1"],
+    );
+    assert_eq!(run.active, vec!["near-duplicate-step"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+}
+
+/// Untrusted RSpec expectations keep the exact-handler policy: duplicates stay, polarity and
+/// value differences never become near or parameterization findings.
+#[test]
+fn regression_ruby_action_evidence_untrusted_expectations_keep_exact_policy() {
+    let steps = "Given('the exact assertion') { expect(exact_parcel).to eq('ready') }\nThen('another exact assertion') { expect(exact_parcel).to eq('ready') }\nGiven('the parcel is verified') { expect(parcel).to eq('ready') }\nThen('the parcel is now verified') { expect(parcel).not_to eq('ready') }\nGiven('the parcel is ready') { expect(shipment).to eq('ready') }\nGiven('the parcel is idle') { expect(shipment).to eq('idle') }\n";
+    let run = ruby_action_run(&[("steps.rb", steps)], &[]);
+    assert_eq!(run.definitions, 6);
+    assert!(!run.incomplete, "{}", run.stderr);
+    // The identical pair's wording is far apart, so only the duplicate is reported.
+    assert_eq!(run.active, vec!["duplicate-handler"]);
+}
+
+/// Ruby files reached only through `require_relative` or a `rubyLoadPaths` `require` report paths
+/// relative to the analysis root, in findings and in discovery output. On Windows a raw
+/// `canonicalize()` returns verbatim `\\?\C:\...` targets that do not strip against the root.
+#[test]
+fn regression_119_ruby_loaded_file_paths_stay_relative_to_the_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Each file's pair shares a body no other file has, so every finding stays within one file.
+    let handlers = |action: &str| {
+        format!("Given('the cart is empty') do\n  {action}(:all)\nend\n\nGiven('the basket has nothing') do\n  {action}(:all)\nend\n")
+    };
+    write(root, ".cuke-dedup.json", r#"{"rubyLoadPaths":["lib"]}"#);
+    write(
+        root,
+        "entry.rb",
+        "require_relative 'providers/steps'\nrequire 'shared/steps'\n",
+    );
+    write(root, "providers/steps.rb", &handlers("clear_cart"));
+    write(root, "lib/shared/steps.rb", &handlers("empty_basket"));
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(root)
+        .args([
+            "--reporters",
+            "jsonl",
+            "--no-metrics",
+            "--explain-discovery",
+        ])
+        .args(["--definitions", "entry.rb"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["type"] == "finding" && row["rule"] == "duplicate-handler")
+        .flat_map(|row| {
+            let related = row["related"].as_array().unwrap().clone();
+            std::iter::once(row["primary"].clone()).chain(related)
+        })
+        .map(|location| {
+            format!(
+                "{}:{}",
+                location["path"].as_str().unwrap(),
+                location["line"]
+            )
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        [
+            "lib/shared/steps.rb:1",
+            "lib/shared/steps.rb:5",
+            "providers/steps.rb:1",
+            "providers/steps.rb:5"
+        ],
+        "{stderr}"
+    );
+    for relative in ["providers/steps.rb", "lib/shared/steps.rb"] {
+        let shown = relative.replace('/', std::path::MAIN_SEPARATOR_STR);
+        assert!(
+            stderr.contains(&format!("cuke-dedup: definition {shown}\n")),
+            "{stderr}"
+        );
+    }
+}
+
+/// Ruby handlers that only mark their step pending are trivial, as in the TypeScript frontend: an
+/// empty body, or one `pending`/`todo`/`not_implemented` call, stub-label string, `nil`, bare
+/// `next`/`return` of one, or `raise`/`fail` with a stub label. Inline blocks, do-blocks, lambdas
+/// and `&method` handlers share the rule; real work, an unlabelled `raise NotImplementedError` (as
+/// TypeScript's `throw new NotImplementedError()`) and two statements stay duplicates.
+#[test]
+fn regression_ruby_pending_stub_handlers_are_not_duplicates() {
+    let inline = |body: &str| {
+        format!("Given('pending one') {{ {body} }}\nGiven('pending two') {{ {body} }}\n")
+    };
+    let named = |declaration: &str| {
+        format!("{declaration}\nGiven('pending one', &method(:stub))\nGiven('pending two', &method(:stub))\n")
+    };
+    let mut rows: Vec<(String, bool)> = [
+        "pending",
+        "pending('todo')",
+        "pending 'todo'",
+        "self.pending",
+        "(pending)",
+        "not_implemented",
+        "raise 'pending'",
+        "fail 'not implemented'",
+        "raise NotImplementedError, 'todo'",
+        "raise Cucumber::Pending",
+        "fail todo",
+        // TypeScript parity: `throw new Boom(audit('todo'))` and `pending(work())` are trivial.
+        "raise Boom, audit('todo')",
+        "pending(work())",
+        "next",
+        "next pending",
+        // Call-free parity rows: TypeScript stubs that the existing call-free rule already covers.
+        "next 'pending'",
+        "nil",
+        "'TODO'",
+    ]
+    .iter()
+    .map(|body| (inline(body), false))
+    .collect();
+    rows.extend([
+        // Both handlers carry the trailing comment: one stub alone already excludes the pair.
+        ("Given('pending one') do\n  pending\n  # waiting on the API\nend\nGiven('pending two') do\n  pending\n  # waiting on the API\nend\n".to_owned(), false),
+        ("Given('pending one', &-> { pending })\nGiven('pending two', &-> { pending })\n".to_owned(), false),
+        ("Given('pending one', &lambda { fail 'todo' })\nGiven('pending two', &lambda { fail 'todo' })\n".to_owned(), false),
+        (named("def stub = pending"), false),
+        (named("def stub; end"), false),
+        (named("def stub\n  return\nend"), false),
+        (named("def stub\n  return pending\nend"), false),
+        (inline("raise NotImplementedError"), true),
+        (inline("raise 'boom'"), true),
+        (inline("raise message"), true),
+        (inline("raise Boom, report.todo"), true),
+        (inline("work()"), true),
+        (inline("pending; work()"), true),
+        (inline("next work()"), true),
+        (named("def stub = work"), true),
+    ]);
+    for (steps, duplicate) in rows {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "steps.rb", &steps);
+        write(
+            directory.path(),
+            "pending.feature",
+            "Feature: pending\n  Scenario: steps\n    Given pending one\n    Given pending two\n",
+        );
+        let run = ruby_run(directory.path(), &["--definitions", "steps.rb"]);
+        assert_eq!(run.definitions, 2, "{steps}: {}", run.stderr);
+        assert!(!run.incomplete, "{steps}: {}", run.stderr);
+        let expected: &[&str] = if duplicate {
+            &["duplicate-handler", "near-duplicate-step"]
+        } else {
+            &[]
+        };
+        let mut active = run.active.clone();
+        active.sort();
+        assert_eq!(active, expected, "{steps}");
+    }
+    // Named handlers with different bodies in two files never duplicate. Ruby binds each
+    // registration to the definition current at the call; the adapter withdraws same-named
+    // handlers (incomplete), while distinct names are analyzed.
+    for (left, right, definitions) in [("handler", "handler", 0), ("alpha", "beta", 2)] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "a.rb",
+            &format!("def {left}; do_alpha(); end\nGiven('alpha step', &method(:{left}))\n"),
+        );
+        write(
+            directory.path(),
+            "b.rb",
+            &format!("def {right}; do_beta(); end\nGiven('bravo step', &method(:{right}))\n"),
+        );
+        write(
+            directory.path(),
+            "pending.feature",
+            "Feature: pending\n  Scenario: steps\n    Given alpha step\n",
+        );
+        let run = ruby_run(directory.path(), &["--definitions", "*.rb"]);
+        assert_eq!(
+            run.definitions, definitions,
+            "{left}/{right}: {}",
+            run.stderr
+        );
+        assert_eq!(run.incomplete, definitions == 0, "{left}/{right}");
+        assert!(
+            !run.active.iter().any(|rule| rule == "duplicate-handler"),
+            "{left}/{right}"
+        );
+    }
+}
+
+/// At a global comparison limit equal to the comparisons a corpus needs, analysis is complete in
+/// both languages: witnesses that propose nothing cost no comparison, so the matcher-overlap pass
+/// is not truncated. One comparison short of a real overlap still truncates and fails strict mode.
+#[test]
+fn regression_exact_global_limit_does_not_truncate_matcher_overlap() {
+    let ts = |body: &str| format!("import {{ Given }} from '@cucumber/cucumber';\n{body}");
+    let rows = [
+        (
+            "steps.ts",
+            ts("Given('same step', () => { work(1); });\nGiven('same step', () => { work(2); });\n"),
+            "1",
+            false,
+            0,
+        ),
+        (
+            "steps.ts",
+            ts("Given('operation one', () => perform(1));\nGiven('operation two', () => perform(2));\nGiven('operation three', () => perform(3));\n"),
+            "3",
+            false,
+            0,
+        ),
+        (
+            "steps.ts",
+            ts("Given('same step', () => { work(1); });\nGiven('same step', () => { work(2); });\nGiven(/red$/, () => { left(); });\nGiven('pick red', () => { right(); });\n"),
+            "2",
+            false,
+            1,
+        ),
+        (
+            "steps.ts",
+            ts("Given('same step', () => { work(1); });\nGiven('same step', () => { work(2); });\nGiven(/red$/, () => { left(); });\nGiven('pick red', () => { right(); });\n"),
+            "1",
+            true,
+            0,
+        ),
+        (
+            "steps.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\n".to_owned(),
+            "1",
+            false,
+            0,
+        ),
+        (
+            "steps.rb",
+            "Given('operation one') { page.perform(1) }\nGiven('operation two') { page.perform(2) }\nGiven('operation three') { page.perform(3) }\n".to_owned(),
+            "3",
+            false,
+            0,
+        ),
+        (
+            "steps.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\nGiven(/red$/) { left() }\nGiven('pick red') { right() }\n".to_owned(),
+            "2",
+            false,
+            1,
+        ),
+        (
+            "steps.rb",
+            "Given('same step') { work(1) }\nGiven('same step') { work(2) }\nGiven(/red$/) { left() }\nGiven('pick red') { right() }\n".to_owned(),
+            "1",
+            true,
+            0,
+        ),
+    ];
+    for (file, steps, limit, truncated, overlap) in rows {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), file, &steps);
+        write(
+            directory.path(),
+            "limits.feature",
+            "Feature: limits\n  Scenario: steps\n    Given same step\n",
+        );
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(directory.path())
+            .args([
+                "--definitions",
+                file,
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+            ])
+            .args(["--fail-on-incomplete", "--max-candidate-comparisons", limit])
+            .args(["--max-structural-class-comparisons", "3"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let row = format!("{file} limit {limit}: {steps}\n{stderr}");
+        let records: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect();
+        let summary = records
+            .iter()
+            .find(|record| record["type"] == "summary")
+            .unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record["rule"] == "overlapping-matcher")
+                .count(),
+            overlap,
+            "{row}"
+        );
+        let analysis = &summary["analysis"];
+        assert_eq!(analysis["truncated"], truncated, "{row}");
+        assert_eq!(
+            analysis["skippedCandidateComparisons"],
+            u64::from(truncated),
+            "{row}"
+        );
+        assert_eq!(
+            analysis["candidateSources"]["matcherOverlap"]["skipped"],
+            u64::from(truncated),
+            "{row}"
+        );
+        assert_eq!(
+            analysis["candidateSources"]["matcherOverlap"]["evaluated"], overlap as u64,
+            "{row}"
+        );
+        assert_eq!(
+            stderr.contains("static matcher-overlap analysis is incomplete"),
+            truncated,
+            "{row}"
+        );
+        if truncated {
+            assert_eq!(output.status.code(), Some(2), "{row}");
+        } else {
+            assert_ne!(output.status.code(), Some(2), "{row}");
+        }
+    }
+}
+
+/// A step keyword called through a receiver fails closed at the call whenever Cucumber-Ruby could
+/// register it, because any receiver may evaluate to main (`def me = self`, a local rebound through
+/// `binding` or `binding_of_caller`), including a local instance of a source class. The keywords
+/// take `(pattern, symbol = nil, options = {}, &proc)` with a String or Regexp pattern and
+/// `symbol || proc`: shapes Ruby rejects (no pattern, a non-pattern literal, a second argument that
+/// is neither Symbol nor Proc, no proc) stay complete, as Watir and Builder `a(...)` calls do.
+/// Known registrations keep their findings.
+#[test]
+fn regression_122_ruby_receiver_registrations_fail_closed() {
+    let unresolved =
+        "Ruby registration through a receiver is not resolved; definitions may be missing";
+    let foreign = "class Foreign; def Given(*) = nil; end; foreign = Foreign.new";
+    let namespace = "module Ns; def self.Given(text, &handler) = [text, handler]; end; ns = Ns";
+    for (prelude, call, location) in [
+        (
+            "def me = self",
+            "me.Given('hidden') { other() }",
+            Some("4:1"),
+        ),
+        (
+            "target = self",
+            "target.When('hidden') { other() }",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(target) = target.Then('hidden') { other() }",
+            "wrap(self)",
+            Some("3:20"),
+        ),
+        ("", "@browser.a('hidden') { other() }", Some("4:1")),
+        ("", "Steps.But('hidden') { other() }", Some("4:1")),
+        (
+            "handler = -> { other() }",
+            "router.Given('hidden', &handler)",
+            Some("4:1"),
+        ),
+        (
+            "handler = -> { other() }",
+            "router.Given('hidden', nil, &handler)",
+            Some("4:1"),
+        ),
+        ("", "router.Given('hidden', false) { other() }", Some("4:1")),
+        ("", "router.Given('hidden', :step_method)", Some("4:1")),
+        ("", "router.Given('hidden', :\"step_method\")", Some("4:1")),
+        ("", "router.Given((1)) { other() }", None),
+        (
+            "name = :step_method",
+            "router.Given('hidden', name)",
+            Some("4:1"),
+        ),
+        ("", "router.Given('hidden', -> { other() })", Some("4:1")),
+        (
+            "args = ['hidden', :step_method]",
+            "router.Given(*args)",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(...) = target.Given(...)",
+            "wrap('hidden') { other() }",
+            Some("3:17"),
+        ),
+        (foreign, "foreign.Given('hidden') { other() }", Some("4:1")),
+        (namespace, "ns.Given('hidden') { other() }", Some("4:1")),
+        (
+            foreign,
+            "foreign.Given(self).When('hidden') { other() }",
+            Some("4:1"),
+        ),
+        // Every String or Regexp pattern form registers with a block.
+        ("", "router.Given(/x/) { other() }", Some("4:1")),
+        ("", "router.Given(%r{x}) { other() }", Some("4:1")),
+        ("", "router.Given(%q(x)) { other() }", Some("4:1")),
+        ("", "router.Given(?x) { other() }", Some("4:1")),
+        ("", "router.Given('a' 'b') { other() }", Some("4:1")),
+        (
+            "",
+            "router.Given(<<~TEXT) { other() }\ntext\nTEXT",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(...) = target.Given('hidden', nil, ...)",
+            "wrap { other() }",
+            Some("3:17"),
+        ),
+        (
+            "def wrap(...) = target.Given('hidden', nil, {}, ...)",
+            "wrap { other() }",
+            Some("3:17"),
+        ),
+        (
+            "def wrap(...) = target.Given('hidden', false, ...)",
+            "wrap { other() }",
+            Some("3:17"),
+        ),
+        (
+            "def wrap(&) = target.Given('hidden', &)",
+            "wrap { other() }",
+            Some("3:15"),
+        ),
+        (
+            "opts = {}",
+            "router.Given('hidden', **opts) { other() }",
+            Some("4:1"),
+        ),
+        ("args = []", "router.Given(42, *args) { other() }", None),
+        // A sign written directly before a number is part of the literal; a spaced one is a call.
+        ("", "router.Given(-1) { other() }", None),
+        ("", "router.Given('hidden', -1) { other() }", None),
+        ("", "router.Given('hidden', - 1) { other() }", Some("4:1")),
+        // Arguments after a splat are fixed too.
+        (
+            "rest = []",
+            "router.Given('hidden', *rest, 1, 2, 3) { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given(*rest, 'hidden', 'b') { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given(*rest, 'hidden', :step_method)",
+            Some("4:1"),
+        ),
+        // `__LINE__` and `__ENCODING__` are never a pattern; `__FILE__` is a String.
+        ("", "router.Given(__LINE__) { other() }", None),
+        ("", "router.Given(__ENCODING__) { other() }", None),
+        ("", "router.Given('hidden', __FILE__)", None),
+        ("", "router.Given('hidden', __LINE__)", None),
+        // Hundreds of splats stay bounded: four fixed arguments always exceed the cap.
+        (
+            "rest = []",
+            &format!(
+                "router.Given({}1, 1, 1, 1) {{ other() }}",
+                "*rest, ".repeat(300)
+            ),
+            None,
+        ),
+        // Every splat or `...` supplies its own number of arguments.
+        (
+            "rest = []",
+            "router.Given('hidden', *rest, :step_method, *rest, {})",
+            Some("4:1"),
+        ),
+        (
+            "rest = []",
+            "router.Given(*rest, *rest, 'hidden', :step_method)",
+            Some("4:1"),
+        ),
+        (
+            "def wrap(...) = target.Given(*pre, 'hidden', :step_method, {}, ...)",
+            "wrap",
+            Some("3:17"),
+        ),
+        // `false.to_proc` and the backtick method can be redefined to return a Proc or Symbol.
+        ("", "router.Given('hidden', &false)", Some("4:1")),
+        ("", "router.Given('hidden', &(nil))", None),
+        ("", "router.Given('hidden', `true`)", Some("4:1")),
+        ("", "router.Given('hidden', <<~`CMD`)\nls\nCMD", Some("4:1")),
+        (
+            "",
+            "router.Given('hidden', nil, {}, key: 1) { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given('hidden', 'b', *rest) { other() }",
+            None,
+        ),
+        (
+            "rest = []",
+            "router.Given('hidden', nil, {}, 4, *rest) { other() }",
+            None,
+        ),
+        ("", "router.Given('hidden', ('second')) { other() }", None),
+        ("", "router.Given(-> { other() }) { other() }", None),
+        ("", "router.Given('hidden', nil, {}, 4) { other() }", None),
+        // Each literal that is neither a String nor a Regexp is rejected as a pattern.
+        ("", "router.Given(:\"x\") { other() }", None),
+        ("", "router.Given(1) { other() }", None),
+        ("", "router.Given(1.5) { other() }", None),
+        ("", "router.Given(1r) { other() }", None),
+        ("", "router.Given(1i) { other() }", None),
+        ("", "router.Given(nil) { other() }", None),
+        ("", "router.Given(true) { other() }", None),
+        ("", "router.Given(false) { other() }", None),
+        ("", "router.Given([]) { other() }", None),
+        ("", "router.Given(%w[a]) { other() }", None),
+        ("", "router.Given(%i[a]) { other() }", None),
+        ("", "router.Given({}) { other() }", None),
+        ("", "router.Given(1..2) { other() }", None),
+        // Shapes Ruby rejects: no proc (MissingProc), a pattern that is not a String or Regexp,
+        // no pattern at all, or a second argument that is neither Symbol nor Proc.
+        ("", "@browser.a(text: 'Go').click", None),
+        ("", "browser.a('Go')", None),
+        ("link = 'Go'", "browser.a(:text, link)", None),
+        ("", "browser.a(:text) { other() }", None),
+        (
+            "def page(xml) = xml.a(href: '/x') { xml.text('Go') }",
+            "page(nil)",
+            None,
+        ),
+        ("", "router.Given { other() }", None),
+        ("", "router.Given('hidden')", None),
+        ("", "router.Given('hidden', &nil)", None),
+        ("", "router.Given('hidden', 'second') { other() }", None),
+        ("", "router.Given('hidden', true) { other() }", None),
+        ("", "router.Given('hidden', key: 1) { other() }", None),
+        ("", "router.Given('hidden', <<~TEXT)\ntext\nTEXT", None),
+        ("opts = {}", "router.Given('hidden', **opts)", None),
+        // A literal non-empty `**hash` is always a Hash in the second slot, so no block is used.
+        ("", "router.Given('hidden', **{key: 1}) { other() }", None),
+        ("", "self.Given('hidden')", None),
+        // A second argument that is a literal neither Symbol nor Proc raises ArgumentError.
+        ("", "router.Given('hidden', 'a' 'b')", None),
+        ("", "router.Given('hidden', ?c)", None),
+        ("", "router.Given('hidden', 1)", None),
+        ("", "router.Given('hidden', 1.5)", None),
+        ("", "router.Given('hidden', 1r)", None),
+        ("", "router.Given('hidden', 1i)", None),
+        ("", "router.Given('hidden', /x/)", None),
+        ("", "router.Given('hidden', [])", None),
+        ("", "router.Given('hidden', %w[a])", None),
+        ("", "router.Given('hidden', %i[a])", None),
+        ("", "router.Given('hidden', {})", None),
+        ("", "router.Given('hidden', 1..2)", None),
+        ("", "router.Given('hidden', nil)", None),
+        ("", "router.Given('hidden', false)", None),
+        ("", "record.Given", None),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps.rb",
+            &format!("{RUBY_RELEASE_STEPS}{prelude}\n{call}\n"),
+        );
+        write(directory.path(), "release.feature", RUBY_RELEASE_FEATURE);
+        let run = ruby_run(
+            directory.path(),
+            &["--definitions", "steps.rb", "--fail-on-incomplete"],
+        );
+        let row = format!("{prelude} / {call}: {}", run.stderr);
+        assert_eq!(run.definitions, 2, "{row}");
+        assert_eq!(run.active, ["duplicate-handler"], "{row}");
+        assert_eq!(run.incomplete, location.is_some(), "{row}");
+        assert_eq!(
+            run.code,
+            Some(if location.is_some() { 2 } else { 1 }),
+            "{row}"
+        );
+        assert_eq!(run.stderr.contains(unresolved), location.is_some(), "{row}");
+        if let Some(location) = location {
+            assert!(
+                run.stderr
+                    .contains(&format!("steps.rb:{location}: {unresolved}")),
+                "{row}"
+            );
+        }
+    }
+}

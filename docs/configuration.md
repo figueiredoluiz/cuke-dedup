@@ -87,6 +87,12 @@ root-relative paths normalized with `/`.
 - Brace alternatives such as `{js,ts}` are supported.
 - Backslash escaping is supported.
 
+Opt-in languages, currently Ruby, are selected only by a `definitions` pattern that depends on
+their suffix, such as `features/**/*.rb`. A suffix-agnostic pattern such as `features/**` selects
+JS/TS sources and reports the Ruby files it skipped in a warning. A skipped Ruby file that
+dependency resolution follows a load to (a literal top-level `require` or `require_relative`,
+direct or through other loaded files, within the load budget) is analyzed and not reported.
+
 These patterns differ from `.gitignore` and `.cuke-dedupignore`, which use directory-scoped
 gitignore semantics.
 
@@ -140,14 +146,19 @@ take the matcher first and handler second.
 lowercase `given`/`when`/`then` used as globals. Without an entry here they are recognised only
 through a resolved import (see `safety-and-limitations.md`).
 
+`registrations` applies to JS/TS sources only. Every run still validates each entry as a JavaScript
+identifier, but the Ruby adapter does not read the names; Ruby forwarding helpers are inferred (see
+[Registrations and providers](discovery-and-frameworks.md#registrations-and-providers)).
+
 ## Trusted assertion modules
 
 `assertionModules` names module specifiers whose `expect` export is a real assertion factory.
 
-CukeDedup recognizes `@playwright/test`, `playwright/test`, `@jest/globals`, `expect`, `vitest`,
-`chai`, and `bun:test` without configuration, and it also trusts the ambient `expect` that Jest,
-Vitest, and Playwright inject. Chain recognition is shape-based, so Chai's `expect(x).to.equal(y)`
-is understood exactly as Jest's `expect(x).toBe(y)` is; only the origin of the factory is listed.
+For Ruby, trust requires a preceding resolved source load and a unique, closed assertion namespace. `require_relative`, configured `rubyLoadPaths`, immutable Method/hash/factory aliases and closed fixture re-exports are supported. Configuration may name the load specifier or a project-relative provider path. Source proofs check lookup and forwarding; names alone grant no authority. Reopening, replacement, unknown effects, escapes and shared mutations remove trust. Installed gems and unselected runtime sources are not analyzed.
+
+Supported terminals are `to_be`, `to_equal`, `equal_to`, `to_have_class`, `to_have_value` and `to_be_visible`, with `not`/`to` modifiers and literal dispatch. Expected values support scalar literals, regexes, arrays/hashes, supported source-bound matchers, and binding-sensitive local reads/member access. Unary expressions, ranges, rationals, character literals and mutable values remain unsupported and remove handler-comparison authority. Provider parse errors, relevant cycles and file/byte/read/work limits retain conservative incompleteness. TypeScript-only configuration does not affect unrelated Ruby loads. No project code executes.
+
+For JS/TS, CukeDedup recognizes `@playwright/test`, `playwright/test`, `@jest/globals`, `expect`, `vitest`, `chai`, and `bun:test` without configuration, and it also trusts the ambient `expect` that Jest, Vitest, and Playwright inject. Chain recognition is shape-based, so Chai's `expect(x).to.equal(y)` is understood exactly as Jest's `expect(x).toBe(y)` is; only the origin of the factory is listed.
 
 Declare a module when the factory reaches your steps another way:
 
@@ -164,14 +175,9 @@ A local module that re-exports `expect` is the common case:
 export { expect } from "@playwright/test";
 ```
 
-Without the declaration, `expect` is untrusted, because the analyzer does not follow a local
-re-export back to its origin. An untrusted factory is not an error: its expected values simply stop
-counting as behaviour, so two steps asserting genuinely different values can be offered as a
-`parameterization-candidate`. Declaring the module restores the distinction. Both `import` and
-`require` spellings honour the setting.
+Without configuration, JS/TS local re-exports remain untrusted: their expected values do not count as behavior, so conflicting assertions may produce a `parameterization-candidate`. Configuration restores that distinction for both `import` and `require`.
 
-Trust only modules that really do expose an assertion factory. Declaring an unrelated module makes
-its call arguments semantically load-bearing and can manufacture similarity evidence.
+Configure only actual assertion factories; trusting unrelated modules can manufacture similarity evidence.
 
 ## Custom parameter types
 
@@ -208,6 +214,13 @@ A source-local suppression can instead be placed immediately above a registratio
 Given("the legacy flow completes", legacyHandler);
 ```
 
+Ruby uses the same directive in a `#` comment:
+
+```ruby
+# cuke-dedup:ignore duplicate-handler -- retained for an external compatibility contract
+Given('the legacy flow completes') { legacy_flow }
+```
+
 Malformed directives and oversized reasons are operational errors. A directive applies only to
 findings involving its attached definition.
 
@@ -239,3 +252,15 @@ running discovery.
 
 See [Discovery and frameworks](discovery-and-frameworks.md) for framework-derived defaults and
 incomplete-corpus behavior, and [Rules](rules.md) for severity configuration.
+
+## Ruby dependency sources
+
+Ruby dependency paths are a configuration trust boundary: absolute paths and paths containing `..` may resolve outside the analysis root. Only analyze trusted path configuration; discovered registration bodies from those sources may appear in report snippets. Sources are read statically, never executed.
+
+`rubyLoadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
+
+```json
+{ "rubyLoadPaths": ["lib", "vendor/aruba/lib"] }
+```
+
+Resolved files can contribute definitions outside the entrypoint globs, but cannot escape the project or explicitly declared load-path roots. An unresolved dependency must not be interpreted as a clean complete corpus.

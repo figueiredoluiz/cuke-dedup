@@ -16,7 +16,7 @@ after(async () => {
 
 /// Builds the smallest tree the bumper understands: a dependency-free Cargo workspace so
 /// `cargo update --offline` needs no registry, plus every npm, workflow, and documentation site.
-async function fixture({ eol = "\n", unreleased = "\n### Fixed\n\n- Something.\n" } = {}) {
+async function fixture({ eol = "\n" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "cuke-dedup-bump-"));
   temporary.push(root);
   const write = async (relative, text) => {
@@ -83,11 +83,6 @@ async function fixture({ eol = "\n", unreleased = "\n### Fixed\n\n- Something.\n
   );
   await write("README.md", "# CukeDedup\n\n  - uses: figueiredoluiz/cuke-dedup@v0.2.0\n");
   await write("docs/ci-and-baselines.md", "  - uses: figueiredoluiz/cuke-dedup@v0.2.0\n");
-  await write(
-    "CHANGELOG.md",
-    `# Changelog\n\n## [Unreleased]\n${unreleased}\n## [0.2.0] - 2026-09-10\n\n### Added\n\n` +
-      "- Initial.\n\n[0.2.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.1.0...v0.2.0\n",
-  );
 
   for (const manifest of [".", "fuzz"]) {
     const locked = spawnSync("cargo", ["generate-lockfile", "--offline"], {
@@ -99,11 +94,11 @@ async function fixture({ eol = "\n", unreleased = "\n### Fixed\n\n- Something.\n
   return root;
 }
 
-function bump(root, version) {
+function bump(root, version, environment = {}) {
   return spawnSync(process.execPath, [script, version], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, RELEASE_DATE: "2026-09-13" },
+    env: { ...process.env, ...environment },
   });
 }
 
@@ -113,7 +108,7 @@ async function text(root, relative) {
 }
 
 describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable" }, () => {
-  test("rewrites every version site and promotes the changelog", async () => {
+  test("rewrites every version site without creating a changelog", async () => {
     const root = await fixture();
     const result = bump(root, "0.3.0");
     assert.equal(result.status, 0, result.stderr);
@@ -135,9 +130,33 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
       assert.ok((await text(root, relative)).includes(expected), `${relative} missing ${expected}`);
     }
 
-    const changelog = await text(root, "CHANGELOG.md");
-    assert.match(changelog, /## \[Unreleased\]\n\n## \[0\.3\.0\] - 2026-09-13\n/);
-    assert.ok(changelog.includes("[0.3.0]: https://github.com/figueiredoluiz/cuke-dedup/compare/v0.2.0...v0.3.0"));
+    await assert.rejects(readFile(join(root, "CHANGELOG.md")), { code: "ENOENT" });
+  });
+
+  test("updates project pins without rewriting ignored reference or history files", async () => {
+    const root = await fixture();
+    const gitEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+    assert.equal(spawnSync("git", ["init", "--quiet", root], { env: gitEnvironment }).status, 0);
+    assert.equal(spawnSync("git", ["add", "README.md"], { cwd: root, env: gitEnvironment }).status, 0);
+    await writeFile(join(root, ".git/info/exclude"), "references.local/\n*.local.md\n");
+    await mkdir(join(root, "references.local"));
+    const ignored = ["references.local/README.md", "journal.local.md"];
+    const note = "uses: figueiredoluiz/cuke-dedup@v0.1.0\n";
+    for (const path of ignored) await writeFile(join(root, path), note);
+    const foreignIndex = join(root, "foreign-index");
+    await writeFile(foreignIndex, "invalid index");
+    const result = bump(root, "0.3.0", { GIT_DIR: join(root, "foreign.git"), GIT_WORK_TREE: join(root, "foreign-tree"), GIT_INDEX_FILE: foreignIndex });
+    assert.equal(result.status, 0, result.stderr);
+    for (const path of ["README.md", "docs/ci-and-baselines.md"]) {
+      assert.ok((await text(root, path)).includes("@v0.3.0"), path);
+    }
+    for (const path of ignored) assert.equal(await text(root, path), note);
+    const index = join(root, ".git/index");
+    await writeFile(index, "invalid index");
+    const failed = bump(root, "0.4.0");
+    assert.equal(failed.status, 1);
+    assert.match(failed.stderr, /Git version-site discovery failed/);
+    assert.ok((await text(root, "Cargo.toml")).includes('version = "0.3.0"'));
   });
 
   test("keeps CRLF files on CRLF", async () => {
@@ -145,21 +164,12 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     const result = bump(root, "0.3.0");
     assert.equal(result.status, 0, result.stderr);
 
-    for (const relative of ["Cargo.toml", "package.json", "action.yml", "CHANGELOG.md", "README.md"]) {
+    for (const relative of ["Cargo.toml", "package.json", "action.yml", "README.md"]) {
       const raw = await readFile(join(root, relative), "utf8");
       assert.ok(raw.includes("\r\n"), `${relative} lost its CRLF endings`);
       assert.ok(!/[^\r]\n/.test(raw), `${relative} gained mixed line endings`);
       assert.ok(raw.replaceAll("\r\n", "\n").includes("0.3.0"), `${relative} was not bumped`);
     }
-  });
-
-  test("refuses an empty Unreleased section and writes nothing", async () => {
-    const root = await fixture({ unreleased: "\n" });
-    const before = await text(root, "Cargo.toml");
-    const result = bump(root, "0.3.0");
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Unreleased section is empty/);
-    assert.equal(await text(root, "Cargo.toml"), before);
   });
 
   test("refuses a drifted file and writes nothing", async () => {
@@ -168,14 +178,12 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     await writeFile(join(root, "action.yml"), "inputs:\n  version:\n    default: 0.2.0\n");
     const before = {
       cargo: await text(root, "Cargo.toml"),
-      changelog: await text(root, "CHANGELOG.md"),
       manifest: await text(root, "package.json"),
     };
     const result = bump(root, "0.3.0");
     assert.equal(result.status, 1);
     assert.match(result.stderr, /expected exactly one version site in action\.yml/);
     assert.equal(await text(root, "Cargo.toml"), before.cargo);
-    assert.equal(await text(root, "CHANGELOG.md"), before.changelog);
     assert.equal(await text(root, "package.json"), before.manifest);
   });
 
@@ -183,7 +191,6 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     const root = await fixture();
     const before = {
       cargo: await text(root, "Cargo.toml"),
-      changelog: await text(root, "CHANGELOG.md"),
       manifest: await text(root, "package.json"),
       lock: await text(root, "Cargo.lock"),
     };
@@ -195,7 +202,6 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     assert.equal(result.status, 1);
     assert.match(result.stderr, /bump failed and the tree was restored/);
     assert.equal(await text(root, "Cargo.toml"), before.cargo);
-    assert.equal(await text(root, "CHANGELOG.md"), before.changelog);
     assert.equal(await text(root, "package.json"), before.manifest);
     assert.equal(await text(root, "Cargo.lock"), before.lock);
   });

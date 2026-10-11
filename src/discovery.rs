@@ -25,10 +25,18 @@ pub struct FeatureFile {
 /// Deterministically ordered files discovered for one analysis run.
 #[non_exhaustive]
 pub struct DiscoveredFiles {
+    /// Resolved source-loading edges used by definition extraction.
+    pub dependencies: Vec<source_adapter::SourceDependency>,
+    /// Source-loading calls that dependency discovery refused to follow, with the reason.
+    pub dependency_gaps: Vec<source_adapter::DependencyGap>,
     /// Gherkin feature files and their selected parser formats.
     pub features: Vec<FeatureFile>,
-    /// JavaScript or TypeScript definition sources.
+    /// Definition sources selected through their registered frontend.
     pub definitions: Vec<SourceFile>,
+    /// Sources of opt-in languages that were not selected because automatic discovery or only
+    /// suffix-agnostic definition patterns matched them, less those that dependency resolution
+    /// then followed a load to and analyzed.
+    pub skipped_definitions: Vec<SourceFile>,
     /// Non-fatal filesystem traversal errors collected during discovery.
     pub errors: Vec<String>,
     /// Configured feature patterns that matched no files.
@@ -101,12 +109,25 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         }
 
         if let Some(language) = source_language(relative) {
-            if definition_globs
-                .as_ref()
-                .map(|globs| globs.iter().any(|(matcher, _)| matcher.is_match(relative)))
-                .unwrap_or(true)
-            {
-                files.definitions.push(SourceFile { path, language });
+            let opt_in = !source_adapter::adapter_for_language(language).discover_by_default();
+            let selection = match &definition_globs {
+                None => Some(!opt_in),
+                Some(globs) => {
+                    let mut matching = globs
+                        .iter()
+                        .filter(|(matcher, _)| matcher.is_match(relative))
+                        .peekable();
+                    matching.peek().is_some().then(|| {
+                        !opt_in || matching.any(|(matcher, _)| names_suffix(matcher, relative))
+                    })
+                }
+            };
+            match selection {
+                Some(true) => files.definitions.push(SourceFile { path, language }),
+                Some(false) => files
+                    .skipped_definitions
+                    .push(SourceFile { path, language }),
+                None => {}
             }
         }
     }
@@ -131,12 +152,17 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         .into_iter()
         .flatten()
         .filter(|(matcher, _)| {
-            !files.definitions.iter().any(|file| {
-                matcher.is_match(file.path.strip_prefix(&config.root).unwrap_or(&file.path))
-            })
+            !files
+                .definitions
+                .iter()
+                .chain(&files.skipped_definitions)
+                .any(|file| {
+                    matcher.is_match(file.path.strip_prefix(&config.root).unwrap_or(&file.path))
+                })
         })
         .map(|(_, pattern)| pattern.clone())
         .collect();
+    source_adapter::discover_dependencies(config, &excludes, &mut files);
     Ok(files)
 }
 
@@ -163,6 +189,12 @@ fn compile_globs(patterns: &[String], kind: &str) -> Result<GlobSet> {
     builder
         .build()
         .with_context(|| format!("failed to build {kind} glob set"))
+}
+
+/// Opt-in languages are selected only by a pattern that depends on their suffix, so a broad
+/// pattern such as `features/**` keeps selecting the same files it did before the language existed.
+fn names_suffix(matcher: &GlobMatcher, path: &Path) -> bool {
+    !matcher.is_match(path.with_extension("cuke-dedup-suffix-probe"))
 }
 
 fn source_language(path: &Path) -> Option<SourceLanguage> {

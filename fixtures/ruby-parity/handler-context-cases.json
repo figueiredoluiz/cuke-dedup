@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "handler-context-nested-exact": {
+      "path": "handler-context/nested-exact",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "a.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "b.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "first handler context",
+            "second handler context"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "handler-context-nested-conflict": {
+      "path": "handler-context/nested-conflict",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "a.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "b.rb",
+          "primaryLine": 1
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ]
+    },
+    "handler-context-captured-files": {
+      "path": "handler-context/captured-files",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "a.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "b.rb",
+          "primaryLine": 2
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        },
+        {
+          "rule": "near-duplicate-step"
+        },
+        {
+          "rule": "parameterization-candidate"
+        }
+      ]
+    },
+    "handler-context-shadowed-captures": {
+      "path": "handler-context/shadowed-captures",
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "a.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "b.rb",
+          "primaryLine": 2
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "first handler context",
+            "second handler context"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    }
+  },
+  "mappings": []
+}

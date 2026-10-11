@@ -77,8 +77,7 @@ cuke-dedup . --changed-since origin/main
 Paths remain correct from a repository subdirectory, and untracked files are included. Summary
 definition counts and the duplication-threshold denominator describe the complete corpus.
 
-An empty changed-file set produces a warning. Read, extraction, and feature-parse failures remain
-fatal even for unchanged files because they can affect findings involving changed definitions.
+An empty changed-file set warns. Changed-file filtering does not relax corpus validation: operational read, extraction and feature-parse errors remain fatal even in unchanged files. JS/TS and Ruby definition parse failures and unresolved static registrations remain incomplete warnings by default. Use `--fail-on-unparseable` for definition parse failures or `--fail-on-incomplete` for all incompleteness.
 
 ## Semantic baselines
 
@@ -108,7 +107,7 @@ Version `1` and `2` baselines can be replaced by running the version `3` tool wi
 Updates reject `--changed-since` and are skipped after incomplete analysis or an operational error,
 preventing a partial scan from erasing accepted findings.
 
-### Compare against a Git revision (next release)
+### Compare against a Git revision
 
 Instead of committing a baseline file, compare with a revision that is already fetched locally:
 
@@ -124,17 +123,19 @@ with:
   fail-on-new: "0"
 ```
 
-This requires an Action/binary version containing this feature; v0.2.1 does not include it.
-Use checkout with `fetch-depth: 0`, or explicitly fetch the desired revision before analysis.
-The tool does not fetch revisions, initialize submodules, install dependencies, or run project code.
+Use checkout with `fetch-depth: 0`, or fetch the revision before analysis. CukeDedup does not fetch revisions, initialize submodules, install dependencies, or run project code.
 
 The base is scanned in a temporary independent Git checkout using the **current effective
 CukeDedup configuration**, including rule overrides, patterns and suppressions. Historical
 project module metadata and ignore files remain historical inputs. The same repository-relative
 analysis directory must exist in both trees. Missing refs/directories, unsupported submodules,
-base extraction errors, unresolved registrations, zero extraction from discovered sources,
-definitions without a feature corpus, and truncated base comparisons fail with exit code `2`;
-none become an empty accepted baseline. A genuinely empty historical suite is allowed.
+base extraction errors, definitions without a feature corpus, and a base that kept no definitions
+while the current tree has some fail with exit code `2`; none become an empty accepted baseline.
+When neither tree has definitions (a genuinely empty historical suite, or a Ruby registry withdrawn
+by an unresolved `include` in both) there is nothing to compare. Any other incomplete base
+(unresolved registrations, truncated comparisons, definitions partly withdrawn) is used for the
+findings it extracted and reported with a warning, since a finding it missed may appear as new;
+`--fail-on-incomplete` rejects it with exit code `2`.
 Hooks and configured checkout filters are disabled, so Git LFS content is not hydrated.
 The full repository snapshot is limited to 512 MiB of tracked content and 100,000 files;
 larger repositories can use a committed baseline instead. Git submodules anywhere in that

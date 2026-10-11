@@ -185,27 +185,31 @@ fn terminal_report_uses_singular_finding_and_omits_optional_timing() {
     assert!(!no_timing.contains("Detection time:"));
 }
 
+/// A writer that fails with `BrokenPipe` once `remaining` bytes have been written.
+struct LimitedWriter {
+    remaining: usize,
+}
+
+impl std::io::Write for LimitedWriter {
+    /// Accepts at most `remaining` bytes, then fails every write with `BrokenPipe`.
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        let written = bytes.len().min(self.remaining);
+        self.remaining -= written;
+        Ok(written)
+    }
+
+    /// Buffers nothing, so flushing always succeeds.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A terminal write failure at the footer propagates to the caller instead of being dropped.
 #[test]
 fn terminal_report_propagates_footer_write_failures() {
-    struct LimitedWriter {
-        remaining: usize,
-    }
-
-    impl std::io::Write for LimitedWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if self.remaining == 0 {
-                return Err(std::io::ErrorKind::BrokenPipe.into());
-            }
-            let written = bytes.len().min(self.remaining);
-            self.remaining -= written;
-            Ok(written)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     let root = PathBuf::from("/repo");
     let analysis = result(&root);
     let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
@@ -826,4 +830,428 @@ fn public_report_writer_uses_one_context_for_every_configured_format() {
         .unwrap()
         .lines()
         .any(|line| line.contains("\"type\":\"summary\"")));
+}
+
+/// A Ruby suite analyzed through the Ruby adapter, keeping its temporary root alive.
+struct RubyAnalysis {
+    _directory: tempfile::TempDir,
+    config: Config,
+    result: AnalysisResult,
+}
+
+/// Extracts `source` as `steps/steps.rb` with the Ruby adapter and analyzes it, so every reporter
+/// renders findings the Ruby frontend produced (paths, handler text, fingerprints, rules).
+fn ruby_analysis(source: &str, overrides: ConfigOverrides) -> RubyAnalysis {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), overrides).unwrap();
+    let path = config.root.join("steps/steps.rb");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, source).unwrap();
+    let file = crate::source_adapter::SourceFile {
+        path,
+        language: crate::source_adapter::SourceLanguage::Ruby,
+    };
+    let extracted = crate::source_adapter::adapter_for_language(file.language)
+        .extract(source, &file)
+        .unwrap();
+    let result =
+        crate::analysis::analyze_with_diagnostics(extracted.definitions, Vec::new(), &config)
+            .unwrap()
+            .result;
+    RubyAnalysis {
+        _directory: directory,
+        config,
+        result,
+    }
+}
+
+/// Renders `context` through the public plain terminal writer.
+fn ruby_terminal(context: &ReportContext<'_>) -> String {
+    let mut bytes = Vec::new();
+    write_terminal(context, &mut bytes).unwrap();
+    String::from_utf8(bytes).unwrap()
+}
+
+/// Ruby source with an error, a warning, a suppressed duplicate and HTML-like handler text.
+const RUBY_REPORT_SOURCE: &str = "Given('the item is visible') do\n  render('</script><script>bad()</script>')\nend\nGiven('the item is visible') do\n  safe\nend\n# cuke-dedup:ignore duplicate-matcher -- accepted\nGiven('legacy step') { old(1) }\nGiven('legacy step') { old(2) }\nGiven('one item is listed') { list(1) }\nGiven('an item is listed') { list(1) }\n";
+
+/// Terminal output over Ruby findings: version header and spacing, colors that only wrap selected
+/// text, singular wording without timing, footer write failures, one group per rule, and
+/// stripped control and bidi characters from Ruby matcher text.
+#[test]
+fn ruby_findings_render_through_the_terminal_reporter() {
+    let analysis = ruby_analysis(RUBY_REPORT_SOURCE, ConfigOverrides::default());
+    let root = &analysis.config.root;
+    let timings = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
+    let context = ReportContext::with_metrics(&analysis.result, root, 100.0, &timings);
+    let plain = ruby_terminal(&context);
+    assert!(plain.starts_with(&format!("CukeDedup v{}\n\n", env!("CARGO_PKG_VERSION"))));
+    assert!(plain.contains(
+        "duplicate-matcher\n\n  [error] Two step definitions use the same effective matcher"
+    ));
+    assert!(plain.contains("    --> steps/steps.rb:1:1"));
+    assert!(plain.contains("\n\n  [warning] Matcher wording is very close"));
+    assert!(plain.ends_with("Found 3 findings.\nDetection time: 6.0 ms\n"));
+    assert_eq!(plain.matches("\nduplicate-matcher\n").count(), 1);
+    assert_eq!(plain.matches("\nnear-duplicate-step\n").count(), 1);
+
+    let mut colored_bytes = Vec::new();
+    super::terminal::write_terminal_with_color(&context, &mut colored_bytes, true).unwrap();
+    let colored = String::from_utf8(colored_bytes).unwrap();
+    assert!(colored.contains("    --> \u{1b}[94msteps/steps.rb:1:1\u{1b}[0m"));
+    let uncolored = [
+        "\u{1b}[31m",
+        "\u{1b}[33m",
+        "\u{1b}[1;36m",
+        "\u{1b}[94m",
+        "\u{1b}[90m",
+        "\u{1b}[0m",
+    ]
+    .into_iter()
+    .fold(colored, |text, code| text.replace(code, ""));
+    assert_eq!(uncolored, plain);
+
+    for marker in ["Found 3 findings.", "Detection time:"] {
+        let remaining = plain.find(marker).unwrap();
+        let error = write_terminal(&context, &mut LimitedWriter { remaining }).unwrap_err();
+        let kind = error
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind);
+        assert_eq!(kind, Some(std::io::ErrorKind::BrokenPipe), "{marker}");
+    }
+
+    let single = ruby_analysis(
+        "Given('same step') { first }\nGiven('same step') { second }\n",
+        ConfigOverrides::default(),
+    );
+    let no_timing = ruby_terminal(&ReportContext::new(
+        &single.result,
+        &single.config.root,
+        100.0,
+    ));
+    assert!(no_timing.ends_with("Found 1 finding.\n"));
+    assert!(!no_timing.contains("Detection time:"));
+
+    // Two duplicate-matcher findings with other rules' findings between them in source order:
+    // one heading per rule, not per finding.
+    let grouped = ruby_analysis(
+        "Given('alpha step') { a1 }\nGiven('alpha step') { a2 }\nGiven('one item is listed') { list(1) }\nGiven('an item is listed') { list(1) }\nGiven('omega step') { o1 }\nGiven('omega step') { o2 }\n",
+        ConfigOverrides::default(),
+    );
+    let grouped_terminal = ruby_terminal(&ReportContext::new(
+        &grouped.result,
+        &grouped.config.root,
+        0.0,
+    ));
+    assert_eq!(
+        grouped_terminal
+            .matches("[error] Two step definitions use the same effective matcher")
+            .count(),
+        2
+    );
+    for heading in [
+        "duplicate-matcher",
+        "duplicate-handler",
+        "near-duplicate-step",
+    ] {
+        assert_eq!(
+            grouped_terminal.matches(&format!("\n{heading}\n")).count(),
+            1,
+            "{heading}"
+        );
+    }
+
+    let spoofed = ruby_analysis(
+        "Given(\"safe \u{1b}[31m\u{202e}\u{e0001}spoof\") { first }\nGiven(\"safe \u{1b}[31m\u{202e}\u{e0001}spoof\") { second }\n",
+        ConfigOverrides::default(),
+    );
+    let terminal = ruby_terminal(&ReportContext::new(
+        &spoofed.result,
+        &spoofed.config.root,
+        0.0,
+    ));
+    assert!(terminal.contains("duplicate-matcher"));
+    let matcher = &spoofed.result.definitions[0].matcher;
+    for hidden in ['\u{1b}', '\u{202e}', '\u{e0001}'] {
+        assert!(matcher.contains(hidden), "{hidden:?}");
+        assert!(!terminal.contains(hidden), "{hidden:?}");
+    }
+}
+
+/// Machine formats over Ruby findings: versioned JSON with relative `.rb` paths and the strict
+/// default summary, self-contained JSONL records with truncation of an over-long Ruby matcher,
+/// active-only SARIF with stable locations and documented rules, escaped self-contained HTML,
+/// one finding count across formats, and the public writer for every configured format.
+#[test]
+fn ruby_findings_render_through_every_machine_reporter() {
+    let analysis = ruby_analysis(RUBY_REPORT_SOURCE, ConfigOverrides::default());
+    let root = &analysis.config.root;
+    let context = ReportContext::new(&analysis.result, root, 0.0);
+    let summary = Summary::from_result(&analysis.result);
+    assert_eq!(summary.findings, 3);
+    assert_eq!(summary.duplication.threshold, 0.0);
+    assert!(!summary.duplication.passed);
+
+    let json_text = render_json(&context).unwrap();
+    assert!(json_text.contains("\"schemaVersion\": \"3\""));
+    assert!(json_text.contains("\"path\": \"steps/steps.rb\""));
+    assert!(!json_text.contains(&root.display().to_string()));
+    let json: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+    assert_eq!(json["summary"]["suppressed"], 1);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 4);
+    assert!(json["findings"][0]["evidence"]
+        .get("matcherSimilarity")
+        .is_some());
+    assert_eq!(
+        json["findings"][0]["evidence"]["comparison"]["leftHandler"],
+        "do\n  render('</script><script>bad()</script>')\nend"
+    );
+
+    let jsonl = render_jsonl(&context).unwrap();
+    let records: Vec<serde_json::Value> = jsonl
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), analysis.result.findings.len() + 1);
+    assert!(records[..records.len() - 1].iter().all(|record| {
+        record["schemaVersion"] == JSONL_SCHEMA_VERSION
+            && record["type"] == "finding"
+            && record["primary"]["path"] == "steps/steps.rb"
+            && record["fingerprint"].as_str().unwrap().len() == 32
+    }));
+    assert!(records
+        .iter()
+        .any(|record| record["active"] == false && record["suppression"]["reason"] == "accepted"));
+    let last = records.last().unwrap();
+    assert_eq!(last["type"], "summary");
+    assert_eq!(last["summary"], json["summary"]);
+    assert_eq!(last["recordCount"], records.len());
+    assert_eq!(last["truncated"], false);
+
+    let long_matcher = "界".repeat(JSONL_TEXT_LIMIT_CHARS + 1);
+    let long = ruby_analysis(
+        &format!("Given('{long_matcher}') {{ first }}\nGiven('{long_matcher}') {{ second }}\n"),
+        ConfigOverrides::default(),
+    );
+    let long_jsonl =
+        render_jsonl(&ReportContext::new(&long.result, &long.config.root, 0.0)).unwrap();
+    let long_finding: serde_json::Value =
+        serde_json::from_str(long_jsonl.lines().next().unwrap()).unwrap();
+    assert_eq!(long_finding["rule"], "duplicate-matcher");
+    assert!(long_finding["truncatedFields"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("evidence.comparison.leftMatcher")));
+    assert_eq!(
+        long_finding["evidence"]["comparison"]["leftMatcher"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        JSONL_TEXT_LIMIT_CHARS
+    );
+
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    for result in results {
+        assert_eq!(
+            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "steps/steps.rb"
+        );
+        let fingerprint = result["partialFingerprints"]["cukeDedupFingerprint/v3"]
+            .as_str()
+            .unwrap();
+        assert_eq!(fingerprint.len(), 32);
+    }
+    let descriptors = sarif["runs"][0]["tool"]["driver"]["rules"]
+        .as_array()
+        .unwrap();
+    for rule in [
+        Rule::DuplicateMatcher,
+        Rule::DuplicateHandler,
+        Rule::NearDuplicateStep,
+    ] {
+        assert!(descriptors
+            .iter()
+            .any(|descriptor| descriptor["id"] == rule.as_str()
+                && descriptor["helpUri"] == rule.documentation_url()));
+    }
+
+    let html = render_html(&context).unwrap();
+    assert!(html.starts_with("<!doctype html>"));
+    assert!(html.contains("&lt;/script&gt;&lt;script&gt;bad()&lt;/script&gt;"));
+    assert!(!html.contains("</script><script>bad()"));
+    assert_eq!(html.matches("<article class=\"finding\"").count(), 3);
+    assert!(html.contains("2 errors · 1 warning · 1 suppressed"));
+    let embedded = html
+        .split_once(r#"<script type="application/json" id="report-data">"#)
+        .unwrap()
+        .1
+        .split_once("</script>")
+        .unwrap()
+        .0;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(embedded).unwrap(),
+        json
+    );
+
+    let terminal = ruby_terminal(&context);
+    assert!(terminal.contains("2 errors, 1 warning, 1 suppressed"));
+    assert_eq!(
+        terminal
+            .lines()
+            .filter(|line| line.starts_with("  ["))
+            .count(),
+        3
+    );
+
+    let writer = ruby_analysis(
+        RUBY_REPORT_SOURCE,
+        ConfigOverrides {
+            reporters: Some(
+                [
+                    ReporterKind::Terminal,
+                    ReporterKind::Json,
+                    ReporterKind::Html,
+                    ReporterKind::Sarif,
+                ]
+                .to_vec(),
+            ),
+            output: Some(PathBuf::from("reports")),
+            ..ConfigOverrides::default()
+        },
+    );
+    let writer_context = ReportContext::new(&writer.result, &writer.config.root, 0.0);
+    let mut writer_terminal = Vec::new();
+    let written = write_reports(&writer_context, &writer.config, &mut writer_terminal).unwrap();
+    assert_eq!(written.len(), 3);
+    for path in &written {
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("steps/steps.rb"));
+    }
+    assert!(String::from_utf8(writer_terminal)
+        .unwrap()
+        .contains("steps/steps.rb:1:1"));
+}
+
+/// Bounds over Ruby populations: a 300-member Ruby duplicate cluster is capped with an omission
+/// signal and keeps its cluster evidence, more than the buffered cap of Ruby findings is
+/// truncated with a notice, and the one error survives a full page of Ruby warnings.
+#[test]
+fn ruby_findings_respect_every_reporter_bound() {
+    let member_count = 300;
+    let cluster = ruby_analysis(
+        &(0..member_count)
+            .map(|index| format!("Given('same step') {{ work({index}) }}\n"))
+            .collect::<String>(),
+        ConfigOverrides::default(),
+    );
+    assert_eq!(cluster.result.findings.len(), 1);
+    let context = ReportContext::new(&cluster.result, &cluster.config.root, 100.0);
+    let json: serde_json::Value = serde_json::from_str(&render_json(&context).unwrap()).unwrap();
+    let finding = &json["findings"][0];
+    let reported_cap = super::shared::MAX_REPORTED_CLUSTER_MEMBERS;
+    assert_eq!(
+        finding["related"].as_array().unwrap().len(),
+        reported_cap - 1
+    );
+    assert_eq!(finding["relatedLocationsTruncated"], true);
+    let cluster_evidence = &finding["evidence"]["cluster"];
+    assert_eq!(cluster_evidence["memberCount"], member_count);
+    assert_eq!(cluster_evidence["membersTruncated"], true);
+    let fingerprints = cluster_evidence["definitionFingerprints"]
+        .as_array()
+        .unwrap();
+    assert_eq!(fingerprints.len(), reported_cap);
+    let jsonl: serde_json::Value =
+        serde_json::from_str(render_jsonl(&context).unwrap().lines().next().unwrap()).unwrap();
+    assert_eq!(jsonl["relatedLocationsTruncated"], true);
+    assert_eq!(jsonl["evidence"]["cluster"]["memberCount"], member_count);
+    assert_eq!(jsonl["evidence"]["cluster"]["membersTruncated"], true);
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    assert_eq!(
+        sarif["runs"][0]["results"][0]["properties"]["relatedLocationsTruncated"],
+        true
+    );
+    assert_eq!(
+        sarif["runs"][0]["results"][0]["properties"]["clusterMembersTruncated"],
+        true
+    );
+    for rendered in [render_html(&context).unwrap(), ruby_terminal(&context)] {
+        assert!(rendered.contains("more locations omitted"));
+    }
+
+    let cap = super::shared::MAX_BUFFERED_REPORT_FINDINGS;
+    let many = ruby_analysis(
+        &(0..=cap)
+            .map(|index| {
+                format!("Given('step {index}') {{ alpha_{index} }}\nGiven('step {index}') {{ beta_{index} }}\n")
+            })
+            .collect::<String>(),
+        ConfigOverrides::default(),
+    );
+    assert_eq!(many.result.findings.len(), cap + 1);
+    let many_context = ReportContext::new(&many.result, &many.config.root, 0.0);
+    let json: serde_json::Value =
+        serde_json::from_str(&render_json(&many_context).unwrap()).unwrap();
+    assert_eq!(json["findings"].as_array().unwrap().len(), cap);
+    assert_eq!(json["findingsTruncated"], 1);
+    let sarif: serde_json::Value =
+        serde_json::from_str(&render_sarif(&many_context).unwrap()).unwrap();
+    assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), cap);
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["findingsTruncated"],
+        1
+    );
+    let html = render_html(&many_context).unwrap();
+    assert_eq!(html.matches("<article class=\"finding\"").count(), cap);
+    assert!(html.contains("1 additional findings"));
+    assert!(ruby_terminal(&many_context).contains("1 additional active findings omitted"));
+    assert_eq!(
+        render_jsonl(&many_context).unwrap().lines().count(),
+        cap + 2
+    );
+
+    let mut warnings = (0..cap)
+        .map(|index| {
+            format!("Given('step {index}') {{ alpha_{index} }}\nGiven('step {index}') {{ beta_{index} }}\n")
+        })
+        .collect::<String>();
+    warnings.push_str("Given('release one') { blocking }\nGiven('release two') { blocking }\n");
+    let displaced = ruby_analysis(
+        &warnings,
+        ConfigOverrides {
+            rules: [
+                (Rule::DuplicateMatcher, Severity::Warning),
+                (Rule::NearDuplicateStep, Severity::Off),
+            ]
+            .into_iter()
+            .collect(),
+            ..ConfigOverrides::default()
+        },
+    );
+    let error_line = 2 * cap + 1;
+    let errors = displaced
+        .result
+        .findings
+        .iter()
+        .filter(|finding| finding.severity == Severity::Error)
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].primary.line, error_line);
+    assert!(displaced.result.findings.len() > cap);
+    let context = ReportContext::new(&displaced.result, &displaced.config.root, 0.0);
+    let expected = format!("steps/steps.rb:{error_line}:1");
+    let json = render_json(&context).unwrap();
+    assert!(json.contains(&format!("\"line\": {error_line},")));
+    assert!(render_html(&context).unwrap().contains(&expected));
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    assert!(sarif["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|result| result["level"] == "error"));
+    assert!(ruby_terminal(&context).contains(&expected));
 }

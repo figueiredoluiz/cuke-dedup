@@ -64,18 +64,33 @@ The dependency policy is maintained in `deny.toml`: known security advisories, u
 - Use conventional commit subjects such as `fix:`, `feat:`, `test:`, `docs:`, and `chore:`.
 - Do not edit generated release assets or commit build output.
 
+## Language adapters
+
+`SourceAdapter` owns default source selection, input filtering, indirect-usage policy and source parameter resolution. Its later hooks have defaults so existing implementations remain compatible. Dependency expansion uses private registry callbacks; it does not expose glob types or discovery mutation to public adapter implementations. An adapter that is not discovered by default is selected only by definition patterns that depend on its suffix. `rubyLoadPaths` keeps its flat JSON key, precedence and public getter while Ruby owns its storage.
+
+Ruby preparation reads and parses one bounded source snapshot for both registration and assertion proofs. A later source-byte mismatch withdraws its optional proof. File-count, aggregate-byte, per-source and proof-work limits retain conservative fallback; they do not make arbitrary runtime behavior statically knowable. Each proof collector has its own work budget; exhausting any of them withdraws all optional registration and handler proofs. Direct registrations remain subject to normal ownership checks.
+
+After `SourceExtractionSession::finalize`, embedders may inspect `SourceFinalization.advisories` for resolved configured assertion providers that the closed-factory proof rejected. Advisories explain trust decisions; they do not remove definitions or change completeness. Incomplete source evidence remains in `uncertainties`.
+
+Ruby step keywords come from the Gherkin dialect data pinned by `Cargo.lock`. After a `gherkin` update, regenerate them with `node scripts/check/check-ruby-step-keywords.mjs --write`; the check fails while the table is stale.
+
+Corpus conformance compares language-neutral counts, completeness, strict exits and finding ownership. Each language lane maps source names explicitly. Desired outcomes, known implementation gaps and justified language differences remain separate:
+
+- `check-ruby-parity.mjs --regression` and `check-language-parity.mjs --regression` block CI when an observed outcome changes. Closing a known gap also changes an outcome, so update the recorded digest in the same change.
+- `check-ruby-parity.mjs` without `--regression` is the completion command. It also checks the unit-test census, which pins every Rust test file. CI reports it without blocking; a green regression gate does not imply Ruby completion.
+
 The Python packaging utility intentionally uses only the standard library to create deterministic `tar.gz` and ZIP archives. Node.js owns npm manifest/version validation, while Rust owns the analyzer and CLI.
 
 ## Coverage floor and uncovered lines
 
-CI enforces a 97% Rust line-coverage floor. The lines left uncovered fall into two groups: lines with an external reason no in-process test can reach them, and reachable residual lines that simply have no test yet. The justified group is recorded below so the next coverage run can be interpreted without re-deriving each case. Regenerate the current list with:
+CI enforces 97% Rust line coverage. Reassess uncovered regions from the current artifact rather than treating this list as an inventory. Generate a fresh report with:
 
 ```sh
 cargo +stable llvm-cov --all-features --tests --locked --no-report
 cargo +stable llvm-cov report --show-missing-lines --fail-under-lines 97
 ```
 
-The listing enumerates each missed region; the summary's "Missed Lines" count also includes brace-only continuation lines inside those regions, so it reads slightly higher than the listing. An entry here must cite an external reason — an upstream contract, a platform invariant, a race window, a resource scale, compile-time evaluation, or failing I/O. Anything else is a missing test, not an entry. When a change makes a listed line reachable, write the test; when a change proves code unreachable with no defensive value, delete the code rather than adding it here.
+The summary includes brace-only continuation lines, so its missed-line count can exceed the region listing. The categories below explain defensive paths that may remain uncovered; each exemption needs an upstream, platform, race, resource or I/O reason. Other uncovered lines need tests. Test a path when it becomes reachable; remove unreachable code without defensive value.
 
 ### Excluded by an upstream guarantee
 
@@ -102,9 +117,8 @@ These fire only on inputs far beyond test-practical size:
 - `src/analysis/usage.rs`: the proposal and suppression work budgets and the regex byte cap.
 - `src/cli.rs`: the unmatched-suppression safety-limit warning.
 
-### Compile-time evaluation and test-only formatting
+### Test-only formatting
 
-- `src/source_adapter.rs` (`const fn with_session`): const-evaluated into `static SOURCE_ADAPTER_REGISTRY`, and const evaluation emits no runtime coverage counters.
 - `src/typescript/ast.rs` (assert-failure formatting): the format arguments of a passing `assert!` are never evaluated.
 
 ### Failing-I/O propagation
@@ -113,7 +127,7 @@ These fire only on inputs far beyond test-practical size:
 
 ### Reachable residual
 
-Everything the listing shows beyond the groups above — Gherkin Markdown edges, tree-sitter walk fall-throughs across the TypeScript adapters, decorated-handler diagnostic branches, and a few CLI paths such as an absolute config file or a severity-off finding — is reachable and awaiting a test, not justified.
+Uncovered regions outside the justified categories need tests. Inspect the current report: historical examples can become covered, as `SourceAdapterRegistration::with_session` did through runtime tests.
 
 ## Corpus and benchmarks
 
@@ -124,16 +138,7 @@ cargo build --release --locked
 npm run corpus:check
 ```
 
-Ratchet copy-paste duplication with `npm run duplication:check`. Two scopes — production and test
-sources — each pinned at the value measured today, not an aspirational one: a gate that is red on
-arrival gets ignored, which is worse than no gate. The gate fails both when a scope exceeds its
-ceiling **and** when it sits far enough below one that the ceiling has gone stale, so an improvement
-has to be recorded rather than left as slack a later regression can reclaim. Every Rust source in
-the repository must belong to exactly one scope; a new file in neither fails until it is classified. Each scope carries both a percentage ceiling and an absolute duplicated-line ceiling, because a
-percentage alone falls whenever unique code is added and so can hide copied code accumulating. The
-gate also names any non-trivial staged file jscpd did not analyse, because jscpd skips oversized
-files silently and a skipped file lowers the percentage — a measurement here once reported 0.71%
-where the real figure was 2.88% for that reason.
+`npm run duplication:check` ratchets production and test scopes against measured percentage and absolute duplicated-line ceilings. It rejects growth and stale slack, so record improvements. Every Rust source must belong to exactly one scope. Review warnings for staged files omitted by jscpd: oversized-file skips can understate duplication.
 
 Guard matcher-analysis memory with `npm run memory:check`. It compiles a deterministic corpus at
 two sizes and holds the **marginal** bytes per definition — the cost that scales with corpus size,
@@ -179,13 +184,7 @@ in `README.md` and `docs/ci-and-baselines.md`. Never edit those by hand. Bump th
 npm run bump:version -- 0.3.0
 ```
 
-The script reads the current version from `Cargo.toml`, rewrites every dependent site, promotes the
-accumulated `## [Unreleased]` changelog notes into a dated section with a compare link, and opens a
-fresh `Unreleased` heading. It refuses to run when a target file no longer matches its expected
-version site or when `Unreleased` is empty, and if a lockfile refresh fails after the manifests
-are written it restores every file it touched, so a failed bump always leaves the tree as it was
-found. Line endings are preserved, so a CRLF checkout stays on CRLF. Pass `RELEASE_DATE=YYYY-MM-DD`
-to override the changelog date.
+The script requires Git and updates all version sites and both Cargo lockfiles atomically. It rejects unexpected file shapes, restores changes if a lockfile refresh fails, and preserves line endings. Maintain release notes in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 
 Then confirm and commit:
 

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "regex-classes-ascii-word": {
+      "path": "regex-classes/ascii-word",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "suite.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    },
+    "regex-classes-nonascii-word": {
+      "path": "regex-classes/nonascii-word",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 2
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "ambiguous-step"
+        }
+      ]
+    },
+    "regex-classes-dotall": {
+      "path": "regex-classes/dotall",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "suite.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition"
+        }
+      ]
+    }
+  },
+  "mappings": []
+}

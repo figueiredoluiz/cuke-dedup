@@ -1,0 +1,524 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "equivalent-playwright-bdd-framework-discovery": {
+      "path": "equivalent-boundaries/playwright-bdd-framework-discovery",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": []
+    },
+    "equivalent-cypress-cucumber-framework-discovery": {
+      "path": "equivalent-boundaries/cypress-cucumber-framework-discovery",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 1,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": []
+    },
+    "equivalent-mixed-esm-and-cjs-registration-syntax": {
+      "path": "equivalent-boundaries/mixed-esm-and-cjs-registration-syntax",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "ambiguous-step",
+          "count": 1
+        },
+        {
+          "rule": "duplicate-matcher",
+          "count": 1
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-mixed-framework-detection-is-per-file": {
+      "path": "equivalent-boundaries/mixed-framework-detection-is-per-file",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "ambiguous-step",
+          "count": 1
+        },
+        {
+          "rule": "duplicate-matcher",
+          "count": 1
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-playwright-injected-fixture-handler-renames": {
+      "path": "equivalent-boundaries/playwright-injected-fixture-handler-renames",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "count": 1
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-playwright-decorator-handler-fingerprints": {
+      "path": "equivalent-boundaries/playwright-decorator-handler-fingerprints",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 2,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-handler",
+          "count": 1
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-legacy-cypress-steps-entrypoint": {
+      "path": "equivalent-boundaries/legacy-cypress-steps-entrypoint",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "legacy Cypress registration",
+            "legacy Cypress registration"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-playwright-bdd-decorator-registrations": {
+      "path": "equivalent-boundaries/playwright-bdd-decorator-registrations",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "decorated workspace registration",
+            "decorated workspace registration"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-precision-decorator-values": {
+      "path": "equivalent-boundaries/precision-decorator-values",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel status is verified",
+            "the parcel status is now verified"
+          ]
+        }
+      ]
+    },
+    "equivalent-vitest-cucumber-plugin-global-registrations": {
+      "path": "equivalent-boundaries/vitest-cucumber-plugin-global-registrations",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 4,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "shipment.feature",
+          "primaryLine": 3,
+          "relatedLocations": [
+            "steps.rb:1",
+            "steps.rb:2"
+          ]
+        },
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is ready"
+          ]
+        },
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "shipment is ready"
+          ]
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is ready"
+          ]
+        },
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
+          ]
+        },
+        {
+          "rule": "parameterization-candidate",
+          "matchers": [
+            "the parcel is ready",
+            "the parcel is idle"
+          ]
+        }
+      ]
+    },
+    "equivalent-exact-match-remains-detectable": {
+      "path": "equivalent-boundaries/exact-match-remains-detectable",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "matchers": [
+            "the account is active",
+            "the account is active"
+          ]
+        }
+      ],
+      "requiredAbsent": []
+    },
+    "equivalent-polarity-conflict-is-intentionally-not-near": {
+      "path": "equivalent-boundaries/polarity-conflict-is-intentionally-not-near",
+      "arguments": [
+        "--definitions",
+        "**/*.rb"
+      ],
+      "definitions": 2,
+      "featureSteps": 0,
+      "complete": true,
+      "expectedExit": 0,
+      "requiredFindings": [],
+      "requiredAbsent": [
+        {
+          "rule": "near-duplicate-step",
+          "matchers": [
+            "the account is enabled",
+            "the account is not enabled"
+          ]
+        }
+      ]
+    }
+  },
+  "mappings": [
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-bdd-framework-discovery",
+      "fixtureGroup": "equivalent-playwright-bdd-framework-discovery"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "cypress-cucumber-framework-discovery",
+      "fixtureGroup": "equivalent-cypress-cucumber-framework-discovery"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "mixed-esm-and-cjs-registration-syntax",
+      "fixtureGroup": "equivalent-mixed-esm-and-cjs-registration-syntax"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "mixed-framework-detection-is-per-file",
+      "fixtureGroup": "equivalent-mixed-framework-detection-is-per-file"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-injected-fixture-handler-renames",
+      "fixtureGroup": "equivalent-playwright-injected-fixture-handler-renames"
+    },
+    {
+      "source": "fixtures/corpus/manifest.json",
+      "case": "playwright-decorator-handler-fingerprints",
+      "fixtureGroup": "equivalent-playwright-decorator-handler-fingerprints"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "legacy-cypress-steps-entrypoint",
+      "fixtureGroup": "equivalent-legacy-cypress-steps-entrypoint"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "playwright-bdd-decorator-registrations",
+      "fixtureGroup": "equivalent-playwright-bdd-decorator-registrations"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "precision-decorator-values",
+      "fixtureGroup": "equivalent-precision-decorator-values"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "vitest-cucumber-plugin-global-registrations",
+      "fixtureGroup": "equivalent-vitest-cucumber-plugin-global-registrations"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "exact-match-remains-detectable",
+      "fixtureGroup": "equivalent-exact-match-remains-detectable"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "polarity-conflict-is-intentionally-not-near",
+      "fixtureGroup": "equivalent-polarity-conflict-is-intentionally-not-near"
+    }
+  ],
+  "semanticCoverage": {
+    "playwright-bdd-framework-discovery": {
+      "sourceDimensions": [
+        "framework-supplied feature glob",
+        "nonstandard extension",
+        "used native registration",
+        "no finding"
+      ],
+      "translation": [
+        "framework-supplied feature glob",
+        "nonstandard extension",
+        "used native registration",
+        "no finding"
+      ],
+      "exclusions": [
+        "Exact JavaScript framework package/configuration API has no Cucumber-Ruby counterpart; Ruby selection is explicitly opt-in."
+      ]
+    },
+    "cypress-cucumber-framework-discovery": {
+      "sourceDimensions": [
+        "framework-supplied feature glob",
+        "nonstandard extension",
+        "used native registration",
+        "no finding"
+      ],
+      "translation": [
+        "framework-supplied feature glob",
+        "nonstandard extension",
+        "used native registration",
+        "no finding"
+      ],
+      "exclusions": [
+        "Exact JavaScript framework package/configuration API has no Cucumber-Ruby counterpart; Ruby selection is explicitly opt-in."
+      ]
+    },
+    "mixed-esm-and-cjs-registration-syntax": {
+      "sourceDimensions": [
+        "two independent binding forms",
+        "cross-file duplicate matcher",
+        "concrete ambiguity"
+      ],
+      "translation": [
+        "two independent binding forms",
+        "cross-file duplicate matcher",
+        "concrete ambiguity"
+      ],
+      "exclusions": [
+        "ESM/CJS module syntax is JavaScript-specific; Ruby alias and Method capture are distinct native registration forms."
+      ]
+    },
+    "mixed-framework-detection-is-per-file": {
+      "sourceDimensions": [
+        "source-local registration identity",
+        "different handler argument conventions remain distinct",
+        "global matcher and ambiguity rules"
+      ],
+      "translation": [
+        "source-local registration identity",
+        "different handler argument conventions remain distinct",
+        "global matcher and ambiguity rules"
+      ],
+      "exclusions": [
+        "Attribution to two distinct JavaScript runner packages has no second Ruby adapter counterpart; this group asserts source-local provenance and shared global registry behavior only."
+      ]
+    },
+    "playwright-injected-fixture-handler-renames": {
+      "sourceDimensions": [
+        "same fixture property/World reader",
+        "renamed local receiver",
+        "duplicate-handler positive",
+        "two used distinct matchers"
+      ],
+      "translation": [
+        "same fixture property/World reader",
+        "renamed local receiver",
+        "duplicate-handler positive",
+        "two used distinct matchers"
+      ],
+      "exclusions": [
+        "Playwright injected object destructuring is framework-specific; Ruby obtains the same World page reader through renamed locals."
+      ]
+    },
+    "playwright-decorator-handler-fingerprints": {
+      "sourceDimensions": [
+        "named method handler bodies",
+        "renamed local receivers",
+        "duplicate-handler positive",
+        "distinct used matchers"
+      ],
+      "translation": [
+        "named method handler bodies",
+        "renamed local receivers",
+        "duplicate-handler positive",
+        "distinct used matchers"
+      ],
+      "exclusions": [
+        "Decorator annotations, async modifiers and timeout options are Playwright-specific. Method#to_proc preserves native named receiver-bound handler discovery."
+      ]
+    },
+    "legacy-cypress-steps-entrypoint": {
+      "sourceDimensions": [
+        "two trusted registrations",
+        "same global matcher",
+        "conflicting handler actions"
+      ],
+      "translation": [
+        "two trusted registrations",
+        "same global matcher",
+        "conflicting handler actions"
+      ],
+      "exclusions": [
+        "Exact JavaScript package entrypoint/decorator syntax is excluded; native alias or named-handler registration preserves the global matching contract."
+      ]
+    },
+    "playwright-bdd-decorator-registrations": {
+      "sourceDimensions": [
+        "two trusted registrations",
+        "same global matcher",
+        "conflicting handler actions"
+      ],
+      "translation": [
+        "two trusted registrations",
+        "same global matcher",
+        "conflicting handler actions"
+      ],
+      "exclusions": [
+        "Exact JavaScript package entrypoint/decorator syntax is excluded; native alias or named-handler registration preserves the global matching contract."
+      ]
+    },
+    "precision-decorator-values": {
+      "sourceDimensions": [
+        "named handlers",
+        "distinct local assertion values",
+        "no duplicate or near handlers"
+      ],
+      "translation": [
+        "named handlers",
+        "distinct local assertion values",
+        "no duplicate or near handlers"
+      ],
+      "exclusions": [
+        "Decorators and injected method arguments are JS framework-specific; receiver-bound Ruby methods retain lexical expected values."
+      ]
+    },
+    "vitest-cucumber-plugin-global-registrations": {
+      "sourceDimensions": [
+        "global duplicate matcher",
+        "concrete ambiguity",
+        "exact handler reuse with distinct wording",
+        "conflicting expected values do not imply parameterization"
+      ],
+      "translation": [
+        "global duplicate matcher",
+        "concrete ambiguity",
+        "exact handler reuse with distinct wording",
+        "conflicting expected values do not imply parameterization"
+      ],
+      "exclusions": [
+        "Vitest imports/namespaces are framework-specific; Cucumber-Ruby shares global registration and rule eligibility. Assertion positives here are exact reuse, not inferred assertion-provider trust."
+      ]
+    },
+    "exact-match-remains-detectable": {
+      "sourceDimensions": [
+        "same source matcher text",
+        "same rule configuration",
+        "same positive or negative finding contract"
+      ],
+      "translation": "Direct native Ruby registrations retain both original matcher texts and handler action identity.",
+      "exclusions": []
+    },
+    "polarity-conflict-is-intentionally-not-near": {
+      "sourceDimensions": [
+        "same source matcher text",
+        "same rule configuration",
+        "same positive or negative finding contract"
+      ],
+      "translation": "Direct native Ruby registrations retain both original matcher texts and handler action identity.",
+      "exclusions": []
+    }
+  }
+}

@@ -594,3 +594,170 @@ fn malformed_auto_config_warns_and_falls_through_to_package_config() {
     assert_eq!(config.threshold, 25.0);
     assert_eq!(config.config_warnings.len(), 1);
 }
+
+/// Plain forms of verbatim paths are built only when they name the same file; device names,
+/// trailing dots or spaces, `/`, `.`/`..`, unrooted and non-canonical paths keep the prefix.
+#[test]
+fn verbatim_paths_rebuild_to_plain_windows_paths() {
+    /// Splits `suffix` the way `Path::components` splits a verbatim path after its prefix.
+    fn plain(lead: &str, head: &[&str], suffix: &str) -> Option<String> {
+        let head: Vec<_> = head.iter().map(std::ffi::OsStr::new).collect();
+        let rest: Vec<_> = suffix
+            .split('\\')
+            .enumerate()
+            .filter_map(|(index, name)| match (index, name) {
+                (0, "") => Some(Component::RootDir),
+                (_, "") => None,
+                (_, ".") => Some(Component::CurDir),
+                (_, "..") => Some(Component::ParentDir),
+                _ => Some(Component::Normal(std::ffi::OsStr::new(name))),
+            })
+            .collect();
+        plain_verbatim_path(lead, &head, &rest, suffix.len())
+            .map(|path| path.into_os_string().into_string().unwrap())
+    }
+    /// `plain` for a path on drive `C:`.
+    fn disk(suffix: &str) -> Option<String> {
+        plain("", &["C:"], suffix)
+    }
+    let cases = [
+        (disk(r"\work\steps.rb"), Some(r"C:\work\steps.rb")),
+        (disk(r"\"), Some(r"C:\")),
+        (disk(r"\auxiliary.rb"), Some(r"C:\auxiliary.rb")),
+        (disk(r"\work\aux.rb"), None),
+        (disk(r"\work\Com1 .rb"), None),
+        (disk(r"\work\COM¹.rb"), None),
+        (disk(r"\work\lpt³"), None),
+        (disk(r"\work\com0.rb"), None),
+        (disk(r"\work\COM¹x.rb"), Some(r"C:\work\COM¹x.rb")),
+        (disk(r"\work\CONIN$.rb"), None),
+        (disk(r"\work\conout$"), None),
+        (disk(r"\work\CONIN$x.rb"), Some(r"C:\work\CONIN$x.rb")),
+        (disk(r"\work\CONIN$ .rb"), None),
+        (disk(r"\work\COM¹ .rb"), None),
+        (disk("\\work\\CON\t.rb"), None),
+        (disk(r"\work\a?b.rb"), None),
+        (disk(r"\work\a:b"), None),
+        (disk("\\work\\a\u{1f}b"), None),
+        (disk(r"\work\steps."), None),
+        (disk(r"\work\steps "), None),
+        (disk(r"\work/steps.rb"), None),
+        (disk(r"\work\..\steps.rb"), None),
+        (disk(r"\work\.\steps.rb"), None),
+        (disk(r"\work\\steps.rb"), None),
+        (disk(r"\work\"), None),
+        (disk(r"work\steps.rb"), None),
+        (disk(""), None),
+        (
+            plain(r"\\", &["server", "share"], r"\steps.rb"),
+            Some(r"\\server\share\steps.rb"),
+        ),
+        (plain(r"\\", &["server", "nul"], r"\steps.rb"), None),
+        (
+            plain(r"\\", &["server", "share"], ""),
+            Some(r"\\server\share"),
+        ),
+        (
+            plain(r"\\", &["server", "share"], r"\"),
+            Some(r"\\server\share\"),
+        ),
+        (plain(r"\\", &["server", "nul"], ""), None),
+    ];
+    for (index, (actual, expected)) in cases.into_iter().enumerate() {
+        assert_eq!(actual.as_deref(), expected, "case {index}");
+    }
+    // No length limit: std re-adds the verbatim prefix when it opens a long plain path.
+    let long = "a".repeat(300);
+    assert_eq!(disk(&format!(r"\{long}")), Some(format!(r"C:\{long}")));
+}
+
+/// On Windows the verbatim prefix is stripped from the path itself: a name holding an unpaired
+/// UTF-16 surrogate survives unchanged, and prefixes without a plain form are kept.
+#[cfg(windows)]
+#[test]
+fn verbatim_prefix_strip_keeps_non_unicode_windows_names() {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    /// `text` with an unpaired surrogate appended, as a wide-character path.
+    fn wide(text: &str) -> PathBuf {
+        let mut units: Vec<u16> = text.encode_utf16().collect();
+        units.extend([0xD800, u16::from(b'x')]);
+        PathBuf::from(OsString::from_wide(&units))
+    }
+    for (verbatim, plain) in [
+        (r"\\?\C:\work\steps", r"C:\work\steps"),
+        (r"\\?\UNC\server\share\steps", r"\\server\share\steps"),
+    ] {
+        let normalized = normalize_platform_path(wide(verbatim));
+        assert_eq!(normalized, wide(plain));
+        assert_eq!(
+            normalized.as_os_str().encode_wide().collect::<Vec<_>>(),
+            wide(plain).as_os_str().encode_wide().collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(
+        normalize_platform_path(wide(r"\\?\C:\work\NUL.")),
+        wide(r"\\?\C:\work\NUL.")
+    );
+    // `wide` appends an unpaired surrogate, so the name is not the device `CON`.
+    assert_eq!(
+        normalize_platform_path(wide(r"\\?\C:\work\CON")),
+        wide(r"C:\work\CON")
+    );
+    let multibyte = format!(r"C:\work\{}", "é".repeat(200));
+    assert_eq!(
+        normalize_platform_path(PathBuf::from(format!(r"\\?\{multibyte}"))),
+        Path::new(&multibyte)
+    );
+    for kept in [
+        r"\\?\C:\work\COM¹.rb",
+        r"\\?\C:\work\CONOUT$.rb",
+        r"\\?\C:\work\NUL",
+        r"C:\work\steps.rb",
+        r"\\server\share\steps.rb",
+        r"\\?\Volume{0b1c}\steps.rb",
+        r"\\?\GLOBALROOT\Device\steps.rb",
+        r"\\.\C:\steps.rb",
+        r"\\?\C:\work\aux.rb",
+        r"\\?\UNC\server\nul\steps.rb",
+    ] {
+        assert_eq!(
+            normalize_platform_path(PathBuf::from(kept)),
+            Path::new(kept)
+        );
+    }
+}
+
+/// A canonicalized file under the analysis root strips to its relative path against
+/// `Config::root`, which a raw `canonicalize()` does not on Windows.
+#[test]
+fn canonical_platform_paths_strip_against_the_config_root() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("providers")).unwrap();
+    fs::write(directory.path().join("providers/steps.rb"), "").unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let canonical = canonical_platform_path(&directory.path().join("providers/steps.rb")).unwrap();
+    assert_eq!(
+        canonical.strip_prefix(&config.root).unwrap(),
+        Path::new("providers").join("steps.rb")
+    );
+}
+
+/// On Windows a canonical path longer than `MAX_PATH` strips to plain form, stays under the plain
+/// root and stays readable, because std re-adds the verbatim prefix when it opens the file.
+#[cfg(windows)]
+#[test]
+fn long_canonical_windows_paths_stay_plain_under_the_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let nested = (0..8).fold(directory.path().to_path_buf(), |path, index| {
+        path.join(format!("{index}{}", "d".repeat(40)))
+    });
+    fs::create_dir_all(&nested).unwrap();
+    let file = nested.join("steps.rb");
+    fs::write(&file, "ok").unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    let canonical = canonical_platform_path(&file).unwrap();
+    assert!(canonical.as_os_str().len() > 260);
+    assert!(canonical.starts_with(&root), "{}", canonical.display());
+    assert_eq!(fs::read_to_string(&canonical).unwrap(), "ok");
+}

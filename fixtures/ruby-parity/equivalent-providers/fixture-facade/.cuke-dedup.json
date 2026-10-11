@@ -1,0 +1,5 @@
+{
+  "assertionModules": [
+    "./providers/assertions"
+  ]
+}

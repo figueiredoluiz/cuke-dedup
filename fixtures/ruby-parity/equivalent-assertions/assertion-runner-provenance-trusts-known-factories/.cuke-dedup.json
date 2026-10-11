@@ -1,0 +1,12 @@
+{
+  "threshold": 100,
+  "rules": {
+    "unused-definition": "off"
+  },
+  "assertionModules": [
+    "../providers/meter_provider",
+    "../providers/dial_provider",
+    "../providers/probe_provider",
+    "../providers/chain_provider"
+  ]
+}

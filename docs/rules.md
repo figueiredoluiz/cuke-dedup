@@ -47,6 +47,10 @@ rules are not repeated, and unsupported regular expressions are never reversed i
 The rule complements `ambiguous-step`: ambiguity is demonstrated by a discovered feature step,
 while overlap is demonstrated from definitions alone. Work shares `maxCandidateComparisons` with
 other pair rules and retains at most 10,000 findings. Reaching a limit marks analysis incomplete.
+Scanning definitions for witnesses evaluates no comparison, so a limit equal to the comparisons a
+corpus needs stays complete while its witness scans fit within four times the limit. The pass is
+incomplete when an overlap pair exceeds the remaining budget, witness scans exceed four times the
+limit, more than 10,000 findings would be retained, or suppression lookups exceed their work limit.
 
 ### duplicate-handler
 
@@ -100,6 +104,22 @@ No successfully parsed concrete feature step matches a definition. This rule is 
 feature corpus is absent or incomplete because the run cannot prove non-use. Remove the
 definition, add the missing scenario, or suppress it when external or generated features provide
 the usage.
+
+## Language support
+
+Rules run on the shared representation, but each source language supplies different evidence.
+Cucumber-Ruby support is experimental; its details are in
+[Cucumber-Ruby](discovery-and-frameworks.md#cucumber-ruby).
+
+| Rule | JavaScript/TypeScript | Cucumber-Ruby |
+| --- | --- | --- |
+| `duplicate-matcher` | Supported. | Supported for static strings and `/.../` or `%r{...}` regex literals. |
+| `normalized-matcher`, `ambiguous-step`, `overlapping-matcher` | Supported. | Supported for Cucumber Expressions and the translated Ruby regex subset. Other regexes are indeterminate: the run is incomplete and they produce no overlap or unused findings. |
+| `duplicate-handler` | Supported, with assertion evidence from recognized assertion packages. | Exact supported handler structure. Assertion evidence comes only from an explicitly configured provider; RSpec, Minitest and Capybara assertions are compared as ordinary calls. Unresolved captures, constants or receiver identity make the handler non-comparable and the run incomplete. |
+| `near-duplicate-step` | Wording similarity plus handler-behavior overlap. | Wording similarity plus handler-behavior overlap: action streams for ordinary handlers whose every construct is modeled, configured assertion streams otherwise; a conflicting assertion is one differing event, as in JavaScript. Handlers with an unmodeled construct or an untrusted receiverless `expect` chain must be exactly equal. |
+| `parameterization-candidate` | Handler structures that differ in literal values. | Straight-line handlers of explicit simple-receiver calls with static string or numeric arguments; with a configured assertion provider, any supported handler abstracts its literal values. |
+| `unused-definition` | Feature-file usage. | Feature-file usage and literal `step` calls; dynamic `step`/`steps` calls disable the rule. |
+| Inline suppressions | `// cuke-dedup:ignore RULE -- REASON` | `# cuke-dedup:ignore RULE -- REASON` |
 
 ## Exact groups and fuzzy pairs
 

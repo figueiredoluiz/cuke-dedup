@@ -38,16 +38,9 @@ count and bytes can reject a smaller candidate-heavy document. Exact default-Eng
 candidates receive one whole-document parser probe charged by its actual synthesized size. For
 dialect-dependent candidates, whole-document retry is used only when
 `synthesized bytes × candidate count` is at most 64 MiB; otherwise restoration uses bounded
-32-item batches. A directly discovered definition or feature file that cannot be read or parsed,
-a directly loaded configuration or baseline that exceeds its per-file byte limit, and an explicitly
-selected malformed CukeDedup configuration or baseline exit with code `2`; they are never silently
-skipped. A malformed auto-detected framework configuration warns and falls back when safe.
-Registration-module and static project-resolution failures—including their per-file and aggregate
-byte ceilings—and exhausted comparison budgets preserve already-proven findings, mark the run
-incomplete, and warn by default. Set `failOnIncomplete: true` or pass `--fail-on-incomplete` to make
-incomplete coverage exit with code `2`. Repository configuration may lower candidate budgets but
-cannot raise their immutable 2,000,000-pair and 250,000-structural-proposal ceilings. JSON parsing
-retains `serde_json`'s default recursion limit.
+32-item batches.
+
+Unreadable discovered definition or feature files, feature-parse errors, oversized directly loaded configuration or baselines, and malformed explicit CukeDedup configuration or baselines exit with code `2`; none are silently skipped. JS/TS and Ruby definition parse failures retain error-recovered definitions and warn as incomplete by default; `--fail-on-unparseable` makes them fatal. Malformed auto-detected framework configuration warns and falls back when safe. Registration-module and static project-resolution failures, including byte limits, and exhausted comparison budgets retain proven findings and warn as incomplete. Set `failOnIncomplete: true` or pass `--fail-on-incomplete` to reject incompleteness with code `2`. Repository configuration may lower candidate budgets but cannot raise their immutable 2,000,000-pair and 250,000-structural-proposal ceilings. JSON parsing retains `serde_json`'s default recursion limit.
 
 Definition and feature exclusions control discovery. An included definition can still cause
 an explicitly imported registration module to be read for static registration resolution;
