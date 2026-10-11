@@ -375,6 +375,8 @@ fn parameter_type_metadata_is_available_without_running_a_transformer() {
     assert!(!extraction.diagnostics.is_empty());
 }
 
+/// Ruby string literals decode only when complete and valid; truncated quotes and invalid escapes
+/// yield no value.
 #[test]
 fn malformed_ruby_literal_boundaries_preserve_valid_values() {
     for (raw, expected) in [
@@ -426,4 +428,184 @@ fn ruby_review_extraction_is_in_source_order() {
             .collect::<Vec<_>>(),
         [2, 4]
     );
+}
+
+/// Whether `router.Given(arguments)`, with an optional brace block and trailing source lines, may
+/// register, together with the tree-sitter kind of its first argument.
+fn receiver_call(arguments: &str, block: bool, tail: &str) -> (bool, String) {
+    let block = if block { " { }" } else { "" };
+    let source = format!("router.Given({arguments}){block}\n{tail}");
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_ruby::LANGUAGE.into())
+        .unwrap();
+    let tree = parser.parse(&source, None).unwrap();
+    let call = super::descendants(tree.root_node())
+        .into_iter()
+        .find(|node| {
+            node.kind() == "call"
+                && node
+                    .child_by_field_name("method")
+                    .is_some_and(|method| super::text(method, &source) == "Given")
+        })
+        .unwrap();
+    let first = call
+        .child_by_field_name("arguments")
+        .and_then(|arguments| {
+            super::bindings::semantic_children(arguments)
+                .first()
+                .copied()
+        })
+        .map_or_else(String::new, |node| node.kind().to_owned());
+    (super::may_register(call, &source), first)
+}
+
+/// Every expression kind tree-sitter-ruby allows in an argument list is classified by the value
+/// Ruby gives it. Each row states the kind its sample parses to and whether the call may register
+/// as the first argument with a block, the second argument without one, and the second with one.
+/// Rows with a fixed value class (pattern 100, handler 011, `nil`/`false` 001, other 000) were
+/// checked against a cucumber-ruby registrar stub; unknown values (111) fail closed.
+#[test]
+fn receiver_registration_follows_the_value_of_every_argument_kind() {
+    let rows: &[(&str, &str, &str, &str)] = &[
+        ("string", "'a'", "", "100"),
+        ("chained_string", "'a' 'b'", "", "100"),
+        ("character", "?a", "", "100"),
+        ("regex", "/a/", "", "100"),
+        ("heredoc_beginning", "<<~T", "x\nT\n", "100"),
+        ("heredoc_beginning", "<<~`T`", "ls\nT\n", "111"),
+        ("identifier", "__FILE__", "", "100"),
+        ("simple_symbol", ":a", "", "011"),
+        ("delimited_symbol", ":\"a\"", "", "011"),
+        ("lambda", "-> {}", "", "011"),
+        ("method", "def m1; end", "", "011"),
+        ("singleton_method", "def self.m2; end", "", "011"),
+        ("nil", "nil", "", "001"),
+        ("false", "false", "", "001"),
+        ("test_pattern", "1 in String", "", "001"),
+        ("true", "true", "", "000"),
+        ("integer", "1", "", "000"),
+        ("unary", "-1", "", "000"),
+        ("unary", "+1.5", "", "000"),
+        ("float", "1.5", "", "000"),
+        ("rational", "1r", "", "000"),
+        ("complex", "1i", "", "000"),
+        ("array", "[1]", "", "000"),
+        ("string_array", "%w[a]", "", "000"),
+        ("symbol_array", "%i[a]", "", "000"),
+        ("hash", "{}", "", "000"),
+        ("range", "1..2", "", "000"),
+        ("identifier", "__LINE__", "", "000"),
+        ("identifier", "__ENCODING__", "", "000"),
+        ("assignment", "y = :s", "", "011"),
+        ("parenthesized_statements", "(1; :s)", "", "011"),
+        ("parenthesized_statements", "()", "", "001"),
+        // A jump is a void value expression Ruby rejects as an argument, so the file never loads;
+        // tree-sitter parses it, and it stays unknown.
+        ("break", "break", "", "111"),
+        ("next", "next", "", "111"),
+        ("redo", "redo", "", "111"),
+        ("retry", "retry", "", "111"),
+        ("return", "return", "", "111"),
+        // Values only runtime decides.
+        ("unary", "- 1", "", "111"),
+        ("unary", "!x", "", "111"),
+        ("unary", "defined?(x)", "", "111"),
+        ("subshell", "`true`", "", "111"),
+        ("identifier", "x", "", "111"),
+        ("constant", "String", "", "111"),
+        ("scope_resolution", "Object::String", "", "111"),
+        ("self", "self", "", "111"),
+        ("instance_variable", "@i", "", "111"),
+        ("class_variable", "@@c", "", "111"),
+        ("global_variable", "$g", "", "111"),
+        ("call", "foo.to_s", "", "111"),
+        ("element_reference", "a[0]", "", "111"),
+        ("binary", "'a' + 'b'", "", "111"),
+        ("operator_assignment", "x += 'b'", "", "111"),
+        ("conditional", "true ? 'a' : 'b'", "", "111"),
+        ("if", "if true then 'a' end", "", "111"),
+        ("unless", "unless false then 'a' end", "", "111"),
+        ("case", "case 1 when 1 then 'a' end", "", "111"),
+        ("case_match", "case 1\nin 1 then 'a'\nend", "", "111"),
+        ("while", "while false do end", "", "111"),
+        ("until", "until true do end", "", "111"),
+        ("for", "for i in [] do end", "", "111"),
+        ("begin", "begin; 'a'; end", "", "111"),
+        ("class", "class C1; 'a'; end", "", "111"),
+        ("module", "module M1; 'a'; end", "", "111"),
+        ("singleton_class", "class << self; 'a'; end", "", "111"),
+        ("super", "super", "", "111"),
+        ("yield", "yield", "", "111"),
+        // `match_pattern` is reachable only in parentheses (bare `1 => q` is a hash pair) and is a
+        // void value expression Ruby rejects as an argument; it stays unknown.
+        ("parenthesized_statements", "(1 => q)", "", "111"),
+    ];
+    for (kind, expression, tail, expected) in rows {
+        let (first, parsed) = receiver_call(expression, true, tail);
+        let (second, _) = receiver_call(&format!("'x', {expression}"), false, tail);
+        let (second_block, _) = receiver_call(&format!("'x', {expression}"), true, tail);
+        assert_eq!(parsed, *kind, "{expression}");
+        let actual: String = [first, second, second_block]
+            .iter()
+            .map(|registers| if *registers { '1' } else { '0' })
+            .collect();
+        assert_eq!(actual, *expected, "{kind}: {expression}");
+    }
+}
+
+/// Keyword pairs and a non-empty `**hash` are one trailing Hash argument, a block argument other
+/// than `&nil` is a possible handler, and each splat or `...` supplies any number of arguments
+/// (a literal array splat supplies its elements). Every row was checked against a cucumber-ruby
+/// registrar stub; `*a` with an unknown array may register and fails closed.
+#[test]
+fn receiver_registration_counts_keywords_blocks_and_splats() {
+    for (arguments, block, expected) in [
+        ("'x', key: 1", true, false),
+        ("'x', :s, key: 1", false, true),
+        ("'x', nil, {}, key: 1", true, false),
+        ("'x', **{}", true, true),
+        ("'x', **{key: 1}", true, false),
+        ("'x', **opts", true, true),
+        ("'x', **nil", true, true),
+        ("'x', **({})", true, true),
+        ("'x', **({key: 1})", true, false),
+        ("'x', **{**{}}", true, true),
+        ("'x', **{**{key: 1}}", true, false),
+        ("'x', **{**h}", true, true),
+        ("*['x', key: 1]", true, false),
+        ("*['x', :s, key: 1]", false, true),
+        ("*['x', *a]", true, true),
+        ("*(['x', :s])", false, true),
+        ("*(['x', 1])", false, false),
+        ("*['x', **h]", true, true),
+        ("*['x', **h]", false, false),
+        ("*['x', **{key: 1}]", true, false),
+        // A pattern test is false at runtime when the value does not match, and the block registers.
+        ("'x', (x in Integer)", true, true),
+        ("'x', &nil", false, false),
+        ("'x', &(nil)", false, false),
+        ("'x', &()", false, false),
+        ("'x', &(1; nil)", false, false),
+        ("'x', &((nil))", false, false),
+        ("'x', &(1; false)", false, true),
+        ("'x', &false", false, true),
+        ("'x', &handler", false, true),
+        ("*nil", true, false),
+        ("*()", true, false),
+        ("*(1; nil)", true, false),
+        ("*[]", true, false),
+        ("*['x', :s]", false, true),
+        ("*['x', 1]", false, false),
+        ("*a", true, true),
+        ("'x', *a, 1, 2, 3", true, false),
+        ("*a, 'x', 'y'", true, false),
+        ("'x', *a, :s, *a, {}", false, true),
+    ] {
+        assert_eq!(
+            receiver_call(arguments, block, "").0,
+            expected,
+            "{arguments}"
+        );
+    }
 }

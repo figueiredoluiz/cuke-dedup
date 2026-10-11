@@ -6928,6 +6928,8 @@ fn regression_122_ruby_receiver_registrations_fail_closed() {
         ("", "router.Given('hidden', key: 1) { other() }", None),
         ("", "router.Given('hidden', <<~TEXT)\ntext\nTEXT", None),
         ("opts = {}", "router.Given('hidden', **opts)", None),
+        // A literal non-empty `**hash` is always a Hash in the second slot, so no block is used.
+        ("", "router.Given('hidden', **{key: 1}) { other() }", None),
         ("", "self.Given('hidden')", None),
         // A second argument that is a literal neither Symbol nor Proc raises ArgumentError.
         ("", "router.Given('hidden', 'a' 'b')", None),
