@@ -239,6 +239,25 @@ fn assertion_overlap_preserves_values_effects_and_callable_execution() {
         );
         assert_eq!(handler_findings(&rows), expected, "{first} / {second}");
     }
+
+    let generic = findings(
+        PROVIDER,
+        "check = SyntheticAssertions.api.fetch(:expect)",
+        "[1].each { |expect| expect.call(state).to_be('ready') }",
+        "[1].each { |expect| expect.call(state).to_be('ready') }",
+    );
+    assert!(handler_findings(&generic));
+
+    let nested = findings(
+        PROVIDER,
+        "check = SyntheticAssertions.api.fetch(:expect)",
+        "check.call(state).to_be('ready'); [1].each { |check| check.call(state).to_be('nested') }",
+        "check.call(state).to_be('idle'); [1].each { |check| check.call(state).to_be('nested') }",
+    );
+    assert_eq!(
+        common::active_handler_rules(&nested),
+        ["near-duplicate-step"]
+    );
 }
 
 /// Checks that malformed and shadowed factories never gain assertion trust.
@@ -647,6 +666,58 @@ fn expected_values_preserve_bindings_and_uncertainty() {
             &format!("check.call({second}).to_be('ok')"),
         );
         assert_eq!(handler_findings(&rows), expected, "{second}");
+    }
+}
+
+/// Final handler outcomes retain alpha-renamed assertion locals while rejecting subject, value,
+/// polarity, and delimiter-bearing dispatch conflicts. Equal trusted assertions are the positive
+/// control that prevents blanket comparison withdrawal.
+#[test]
+fn assertion_fingerprint_outcomes_preserve_identity_and_conflicts() {
+    for (first, second, expected) in [
+        (
+            "item = state; check.call(item).to_be('ready')",
+            "element = state; check.call(element).to_be('ready')",
+            true,
+        ),
+        (
+            "check.call(state.status).to_be('ready')",
+            "check.call(state.other).to_be('ready')",
+            false,
+        ),
+        (
+            "check.call(state).not.to_be('ready')",
+            "check.call(state).to_be('ready')",
+            false,
+        ),
+        (
+            "expected = 'ready'; check.call(state).to_be(expected)",
+            "wanted = 'ready'; check.call(state).to_be(wanted)",
+            true,
+        ),
+        (
+            "expected = 'ready'; check.call(state).to_be(expected)",
+            "expected = 'idle'; check.call(state).to_be(expected)",
+            false,
+        ),
+        (
+            "check.call(state).public_send(:'not.to_be', 'ready')",
+            "check.call(state).not.to_be('ready')",
+            false,
+        ),
+        (
+            "check.call(state).to_be('ready')",
+            "check.call(state).to_be('ready')",
+            true,
+        ),
+    ] {
+        let rows = findings(
+            PROVIDER,
+            "check = SyntheticAssertions.api.fetch(:expect)",
+            first,
+            second,
+        );
+        assert_eq!(handler_findings(&rows), expected, "{first} / {second}");
     }
 }
 

@@ -1,6 +1,9 @@
 //! Exact Ruby handler trees with explicit lexical capture identity.
 use super::{descendants, text};
-use crate::model::{BehaviorEvent, ControlFlowOperation, HandlerFingerprint, HandlerSemantics};
+use crate::model::{
+    bounded_source_snippet, BehaviorEvent, ControlFlowOperation, HandlerFingerprint,
+    HandlerSemantics,
+};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use tree_sitter::Node;
@@ -43,12 +46,36 @@ pub(super) fn fingerprint(
         });
     let (tokens, alpha) = syntax_tokens(block, source, &bindings);
     let captures = &bindings.captures;
-    let exact = if captures.is_empty() {
+    let normalized = if captures.is_empty() {
         serde_json::to_string(&tokens)
     } else {
         serde_json::to_string(&(tokens, captures))
     }
     .expect("string tokens serialize");
+    let handler_source = text(block, source);
+    let source_snippet = bounded_source_snippet(handler_source, MAX_HANDLER_SNIPPET_CHARS, true);
+    let legacy_snippet_bytes = handler_source
+        .chars()
+        .take(MAX_HANDLER_SNIPPET_CHARS)
+        .map(char::len_utf8)
+        .sum::<usize>();
+    let exact_source = exact_source(block, source);
+    let exact_key = if captures.is_empty() {
+        serde_json::to_string(&exact_source)
+    } else {
+        serde_json::to_string(&(exact_source, captures))
+    }
+    .expect("handler source serializes");
+    // Exact spelling selects equality while the opaque representation absorbs any bytes removed
+    // by report-only snippet normalization. The combined comparison-work charge therefore remains
+    // the normalized identity twice plus the legacy raw snippet prefix.
+    let exact_hash = crate::model::stable_fingerprint(&exact_key);
+    let exact_len = normalized
+        .len()
+        .checked_add(legacy_snippet_bytes)
+        .and_then(|total| total.checked_sub(source_snippet.len()))
+        .expect("bounded snippet fits the legacy comparison-work charge");
+    let exact: String = exact_hash.chars().cycle().take(exact_len).collect();
     // Literal abstraction needs the complete operation stream that configured assertion
     // evidence computes; ordinary handlers without it keep exact identity.
     let structural = parameterized_calls(block, source, &bindings)
@@ -96,17 +123,33 @@ pub(super) fn fingerprint(
     let alpha_normalized =
         serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
     HandlerSemantics {
-        exact: exact.clone(),
-        normalized: exact.clone(),
+        exact,
+        normalized,
         alpha: alpha_normalized,
         structural,
         events: behavior_signature,
-        source_snippet: text(block, source).chars().take(2000).collect(),
+        source_snippet,
         comparable,
         trivial,
     }
     .finish(str::to_owned)
 }
+
+/// Raw handler spelling without a named method's declaration name, which is registration plumbing.
+fn exact_source(block: Node<'_>, source: &str) -> String {
+    if block.kind() != "method" {
+        return text(block, source).to_owned();
+    }
+    let parameters = block
+        .child_by_field_name("parameters")
+        .map_or("", |parameters| text(parameters, source));
+    let body = block
+        .child_by_field_name("body")
+        .map_or("", |body| text(body, source));
+    format!("method\0{parameters}\0{body}")
+}
+
+const MAX_HANDLER_SNIPPET_CHARS: usize = 2_000;
 
 /// Abstract only whole straight-line handlers; any unmodeled effect preserves exact identity.
 pub(super) fn parameterized_calls(

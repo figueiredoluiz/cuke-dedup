@@ -2,7 +2,7 @@
 
 mod behavior;
 mod handler;
-pub(crate) use handler::HandlerSemantics;
+pub(crate) use handler::{bounded_source_snippet, HandlerSemantics};
 mod sha256;
 
 pub(crate) use behavior::{BehaviorEvent, BehaviorEventRef, ControlFlowOperation};

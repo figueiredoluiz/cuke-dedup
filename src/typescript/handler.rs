@@ -3,7 +3,8 @@ use super::ast::push_named_children_reverse;
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee};
 use crate::model::{
-    stable_fingerprint, BehaviorEvent, ControlFlowOperation, HandlerFingerprint, HandlerSemantics,
+    bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation,
+    HandlerFingerprint, HandlerSemantics,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -535,7 +536,7 @@ fn fingerprint_from_events(
         alpha,
         structural,
         events: signature,
-        source_snippet: bounded_source_snippet(&source_snippet),
+        source_snippet: bounded_source_snippet(&source_snippet, MAX_HANDLER_SNIPPET_CHARS, false),
         comparable: flags.comparable,
         trivial: flags.trivial,
     }
@@ -693,19 +694,6 @@ fn contains_explicit_stub_marker(node: Node<'_>, source: &[u8]) -> bool {
 }
 
 pub(super) const MAX_HANDLER_SNIPPET_CHARS: usize = 4_000;
-
-pub(super) fn bounded_source_snippet(source: &str) -> String {
-    let normalized = source.trim().replace("\r\n", "\n").replace('\r', "\n");
-    if normalized.chars().count() <= MAX_HANDLER_SNIPPET_CHARS {
-        return normalized;
-    }
-    let mut snippet: String = normalized
-        .chars()
-        .take(MAX_HANDLER_SNIPPET_CHARS - 1)
-        .collect();
-    snippet.push('…');
-    snippet
-}
 
 /// Returns the module's own top-level declarations, without descending into sibling handlers.
 fn module_declarations<'tree>(handler: Node<'tree>) -> Vec<Node<'tree>> {
