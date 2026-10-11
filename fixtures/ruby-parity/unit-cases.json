@@ -21,8 +21,12 @@
         },
         {
           "name": "pair_evidence_contract_includes_matchers_fingerprints_and_handler_classification",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence for the `normalized` handler classification: the Ruby adapter sets the normalized fingerprint equal to the exact one, so a comment- or formatting-only difference reports `Handlers have the same exact syntax fingerprint` where JS/TS reports `Handlers differ only in comments or formatting`. The exact, alpha, structural and different tiers, fingerprints and matcher difference are pinned by `ruby_pair_evidence_reports_similarity_paths_and_matcher_delta`.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_normalized_handler_evidence_and_snippets_preserve_final_outcomes"
+          },
+          "rationale": "A same-matcher Ruby pair whose bodies differ by a 4,100-character Unicode comment and `{}` versus `do...end` reports the normalized evidence tier with bounded comparison snippets. Exact, alpha, structural and different tiers remain pinned by `ruby_pair_evidence_reports_similarity_paths_and_matcher_delta`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -349,9 +353,13 @@
         },
         {
           "name": "reports_exact_normalized_and_duplicate_handlers_even_when_unused",
-          "requiredStatus": "partial",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_normalized_handler_evidence_and_snippets_preserve_final_outcomes"
+          },
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "The Ruby group has zero feature steps, requires duplicate-handler/duplicate-matcher findings, and requires unused-definition findings for the same definitions. This checks that a handler duplicate can still be reported when definitions are unused. Remaining: It does not provide the source test’s exact normalized-handler and all-rule combination; do not treat the entire unit test as covered."
+          "rationale": "Three unused Ruby definitions produce duplicate-matcher, normalized duplicate-handler, and all three unused-definition findings in one final report; the same comparison proves exact and normalized fingerprints remain distinct."
         },
         {
           "name": "exact_handlers_require_compatible_assertion_provenance_across_files",
@@ -3379,7 +3387,7 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "c2434eb2d2c11b2ae88328852d2206a9c95fa4436b8c405cb76928103066ebd4",
+      "sourceSha256": "35063c2337b5c88c500e9a3f1ecae1dd7436d22ece8f849c9f52f7721549beb2",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -3569,14 +3577,22 @@
         },
         {
           "name": "alpha_fingerprint_ignores_local_renames_but_not_opposite_assertions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby alpha fingerprints ignore local renames but not opposite assertion polarity; `polarity` pins findings, not the fingerprint pair. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_fingerprint_outcomes_preserve_identity_and_conflicts"
+          },
+          "rationale": "Renamed handler locals retain a handler finding, while opposite assertion polarity removes all handler-comparison findings; identical trusted assertions are the positive control.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "handler_source_snippets_are_normalized_and_bounded",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby handler source snippets are whitespace-normalized and bounded. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_normalized_handler_evidence_and_snippets_preserve_final_outcomes"
+          },
+          "rationale": "A reported Ruby comparison trims and normalizes CRLF, bounds a Unicode handler snippet to 2,000 characters, and marks truncation with an ellipsis.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3601,38 +3617,62 @@
         },
         {
           "name": "structural_fingerprint_masks_string_literal_contents",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby handler structural fingerprints mask string literal contents (`'#save'` vs `'#saves'`) while alpha fingerprints stay distinct. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "Two Ruby calls differing only in `'#save'` versus `'#saves'` have distinct alpha fingerprints and one structural fingerprint.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "behavior_signatures_canonicalize_calls_without_treating_await_as_behavior",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: behavior signatures canonicalize direct, fluent, factory-receiver and local-callback method calls on Ruby handlers; the `await` shapes are JS-only. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "Ruby direct, fluent, factory-receiver, and block-parameter callback handlers retain their canonical receiver and method operations; JavaScript `await` syntax is inapplicable.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "behavior_signatures_alpha_normalize_declared_receivers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: block parameters named differently (`|page|`, `|browser|`) alpha-normalize to one behavior signature. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "Ruby handler parameters declared in the same order but named differently produce equal alpha fingerprints and behavior signatures.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "behavior_signatures_preserve_assertion_subjects_and_polarity",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby behavior signatures keep assertion subjects and polarity; `assertion-and-polarity` pins findings, not the signature text. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_fingerprint_outcomes_preserve_identity_and_conflicts"
+          },
+          "rationale": "Distinct Ruby assertion subjects and opposite polarity each prohibit handler-comparison findings, while identical trusted assertions retain the positive handler finding.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "behavior_signatures_still_alpha_normalize_assertion_subject_locals",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby behavior signatures alpha-normalize locals used as assertion subjects. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_fingerprint_outcomes_preserve_identity_and_conflicts"
+          },
+          "rationale": "Equivalent Ruby assertion subjects reached through `item` and `element` locals retain the handler finding.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "assertion_values_resolve_safe_local_constant_initializers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: handler-local constant initializers resolve into assertion values; `top_level_constants_resolve_to_immutable_literal_values` pins top-level constants only. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_fingerprint_outcomes_preserve_identity_and_conflicts"
+          },
+          "rationale": "Renamed handler-local single-assignment values resolving to `'ready'` retain a finding, while `'ready'` versus `'idle'` produces none.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3685,14 +3725,22 @@
         },
         {
           "name": "handler_local_shadows_do_not_disable_assertions_in_other_handlers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a handler-local shadow of an assertion method disables provenance only in that handler. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_overlap_preserves_values_effects_and_callable_execution"
+          },
+          "rationale": "A block-local `expect` parameter is treated as a generic call without revoking the configured file-level assertion factory used by neighboring handler comparisons.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "nested_scope_shadows_do_not_disable_outer_assertions_in_the_same_handler",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a block-local shadow of an assertion method disables provenance only inside its block. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_overlap_preserves_values_effects_and_callable_execution"
+          },
+          "rationale": "A nested block-local `check` shadow remains generic while conflicting trusted outer assertions reduce the pair to the one expected near finding rather than an identical-handler result.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3727,8 +3775,12 @@
         },
         {
           "name": "shadowed_expect_calls_retain_generic_behavior_comparison",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a shadowed Ruby assertion method is compared as generic behavior. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_overlap_preserves_values_effects_and_callable_execution"
+          },
+          "rationale": "Two identical calls through a nested `expect` block parameter retain a handler finding as generic behavior without receiving configured assertion authority.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3751,8 +3803,12 @@
         },
         {
           "name": "alpha_fingerprints_assign_identifiers_by_declaration_order",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby alpha fingerprints number identifiers by declaration order. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "Two Ruby handlers with differently named parameters declared and used in the same order have equal alpha fingerprints and behavior signatures.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3823,8 +3879,12 @@
         },
         {
           "name": "structural_templates_preserve_substitution_behavior",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: structural fingerprints of Ruby handlers that differ only inside `#{}` interpolation expressions stay distinct. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "Ruby handlers interpolating `user.name` and `order.id` retain distinct structural fingerprints.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4051,14 +4111,22 @@
         },
         {
           "name": "calls_on_unnameable_receivers_keep_their_structural_callee",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: calls on literal receivers (`'value'.strip`) keep a structural callee that distinguishes methods. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "Ruby calls on the same literal receiver retain distinct behavior signatures for `strip` and `upcase`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "comments_do_not_change_normalized_handler_fingerprints",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: comments inside Ruby handler bodies do not change normalized fingerprints. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_normalized_handler_evidence_and_snippets_preserve_final_outcomes"
+          },
+          "rationale": "A Ruby handler with a large comment and an uncommented `do...end` handler retain one normalized fingerprint while their exact fingerprints select the normalized evidence tier.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4177,14 +4245,22 @@
         },
         {
           "name": "a_string_literal_does_not_forge_sibling_structure_into_an_equal_fingerprint",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby string literal shaped like sibling structure does not forge an equal alpha fingerprint. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_fingerprints_preserve_superficial_value_and_callee_boundaries"
+          },
+          "rationale": "A Ruby string shaped like sibling call arguments retains a different alpha fingerprint from two real arguments.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "assertion_event_components_escape_delimiters_so_computed_keys_do_not_forge_chains",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: Ruby assertion event components escape delimiters so dynamic sends cannot forge chains. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_fingerprint_outcomes_preserve_identity_and_conflicts"
+          },
+          "rationale": "A single Ruby `public_send(:'not.to_be', ...)` component cannot forge the trusted `.not.to_be(...)` chain and produces no handler-comparison finding against it.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

@@ -1114,7 +1114,7 @@ fn alpha_fingerprint_ignores_local_renames_but_not_opposite_assertions() {
 #[test]
 fn handler_source_snippets_are_normalized_and_bounded() {
     let source = format!("  {}\r\n", "界".repeat(MAX_HANDLER_SNIPPET_CHARS + 1));
-    let snippet = bounded_source_snippet(&source);
+    let snippet = bounded_source_snippet(&source, MAX_HANDLER_SNIPPET_CHARS, false);
     assert_eq!(snippet.chars().count(), MAX_HANDLER_SNIPPET_CHARS);
     assert!(snippet.ends_with('…'));
     assert!(!snippet.contains('\r'));

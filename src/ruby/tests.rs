@@ -1,6 +1,101 @@
 use super::regex_expression;
 
 #[test]
+fn handler_fingerprints_preserve_superficial_value_and_callee_boundaries() {
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    let file = SourceFile {
+        path: "steps.rb".into(),
+        language: SourceLanguage::Ruby,
+    };
+    let extract = |source: &str| {
+        super::RUBY_ADAPTER
+            .extract(source, &file)
+            .unwrap()
+            .definitions
+    };
+
+    let definitions = extract(
+        "Given('commented') { # note\n work() }\nGiven('plain') { work() }\nGiven('delimited') do work() end",
+    );
+    assert!(definitions
+        .iter()
+        .all(|definition| definition.handler.exact.len() == definition.handler.normalized.len()));
+    assert_ne!(definitions[0].handler.exact, definitions[1].handler.exact);
+    assert_eq!(
+        definitions[0].handler.normalized,
+        definitions[1].handler.normalized
+    );
+    assert_ne!(definitions[1].handler.exact, definitions[2].handler.exact);
+    assert_eq!(
+        definitions[1].handler.normalized,
+        definitions[2].handler.normalized
+    );
+
+    let renamed =
+        extract("Given('first') { |z, a| z.goto(a) }\nGiven('second') { |b, y| b.goto(y) }");
+    assert_eq!(
+        renamed[0].handler.alpha_normalized,
+        renamed[1].handler.alpha_normalized
+    );
+    assert_eq!(
+        renamed[0].handler.behavior_signature,
+        renamed[1].handler.behavior_signature
+    );
+
+    let literals = extract(
+        "Given('save') { page.locator('#save') }\nGiven('saves') { page.locator('#saves') }",
+    );
+    assert_ne!(
+        literals[0].handler.alpha_normalized,
+        literals[1].handler.alpha_normalized
+    );
+    assert_eq!(
+        literals[0].handler.structural,
+        literals[1].handler.structural
+    );
+
+    let calls = extract(
+        "Given('direct') { page.click('#save') }\nGiven('fluent') { page.locator('#save').click }\nGiven('factory') { browser().click('#save') }\nGiven('callback') { |perform| perform.call }",
+    );
+    for (definition, expected) in calls.iter().zip([
+        "page.#click",
+        "page.#click",
+        "browser.#click",
+        "local:0.#call",
+    ]) {
+        assert!(
+            definition
+                .handler
+                .behavior_signature
+                .iter()
+                .any(|event| event.contains(expected)),
+            "{expected}: {:?}",
+            definition.handler.behavior_signature
+        );
+    }
+
+    let structural = extract(
+        "Given('strip') { 'value'.strip }\nGiven('upcase') { 'value'.upcase }\nGiven('user') { render(\"#{user.name}\") }\nGiven('order') { render(\"#{order.id}\") }",
+    );
+    assert_ne!(
+        structural[0].handler.behavior_signature,
+        structural[1].handler.behavior_signature
+    );
+    assert_ne!(
+        structural[2].handler.structural,
+        structural[3].handler.structural
+    );
+
+    let forged = extract(
+        "Given('two') { combine('m', 'n') }\nGiven('one') { combine(\"m') }, (string n\") }",
+    );
+    assert_ne!(
+        forged[0].handler.alpha_normalized,
+        forged[1].handler.alpha_normalized
+    );
+}
+
+#[test]
 fn local_registration_aliases_preserve_final_findings_without_granting_unknown_trust() {
     use crate::model::Rule;
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};

@@ -2668,6 +2668,49 @@ Given('full') { Assertions.expect(page).to_be('dark'); page.goto('/'); page.wait
     );
 }
 
+/// Superficial handler spelling selects the normalized evidence tier without hiding either the
+/// handler finding or the independent unused-definition findings. The same report carries bounded,
+/// newline-normalized Unicode snippets.
+#[test]
+fn ruby_normalized_handler_evidence_and_snippets_preserve_final_outcomes() {
+    let comment = "界".repeat(4_100);
+    let source = format!(
+        "Given('same') {{\r\n# {comment}\r\nwork()\r\n}}\r\nGiven('same') do\r\nwork()\r\nend\r\nGiven('other') do\r\nwork()\r\nend\r\n"
+    );
+    let (_, report, _) = ruby_pair_report(
+        &[
+            ("steps.rb", &source),
+            ("features/empty.feature", "Feature: empty"),
+        ],
+        "*.rb",
+        &[],
+    );
+    let duplicate = ruby_pair_findings(&report, "duplicate-matcher");
+    assert_eq!(duplicate.len(), 1);
+    assert_eq!(
+        duplicate[0].2["handlerEvidence"],
+        "Handlers differ only in comments or formatting"
+    );
+    assert_eq!(ruby_pair_findings(&report, "duplicate-handler").len(), 2);
+    assert_eq!(
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["rule"] == "unused-definition")
+            .count(),
+        3
+    );
+
+    let comparison = &duplicate[0].2["comparison"];
+    let left = comparison["leftHandler"].as_str().unwrap();
+    let right = comparison["rightHandler"].as_str().unwrap();
+    assert_eq!(left.chars().count(), 2_000);
+    assert!(left.ends_with('…'));
+    assert!(!left.contains('\r'));
+    assert_eq!(right, "do\nwork()\nend");
+}
+
 /// Duplicate-matcher findings over three same-matcher Ruby definitions keep one component of all
 /// three handlers in two findings, whatever the definitions' source order.
 #[test]

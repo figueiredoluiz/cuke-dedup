@@ -1,6 +1,9 @@
 //! Exact Ruby handler trees with explicit lexical capture identity.
 use super::{descendants, text};
-use crate::model::{BehaviorEvent, ControlFlowOperation, HandlerFingerprint, HandlerSemantics};
+use crate::model::{
+    bounded_source_snippet, BehaviorEvent, ControlFlowOperation, HandlerFingerprint,
+    HandlerSemantics,
+};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use tree_sitter::Node;
@@ -43,12 +46,23 @@ pub(super) fn fingerprint(
         });
     let (tokens, alpha) = syntax_tokens(block, source, &bindings);
     let captures = &bindings.captures;
-    let exact = if captures.is_empty() {
+    let normalized = if captures.is_empty() {
         serde_json::to_string(&tokens)
     } else {
         serde_json::to_string(&(tokens, captures))
     }
     .expect("string tokens serialize");
+    let exact_source = exact_source(block, source);
+    let exact_key = if captures.is_empty() {
+        serde_json::to_string(&exact_source)
+    } else {
+        serde_json::to_string(&(exact_source, captures))
+    }
+    .expect("handler source serializes");
+    // Exact spelling selects equality but must not enlarge the established bounded comparison-work
+    // charge, which counted a second copy of the normalized representation before the tiers split.
+    let exact_hash = crate::model::stable_fingerprint(&exact_key);
+    let exact: String = exact_hash.chars().cycle().take(normalized.len()).collect();
     // Literal abstraction needs the complete operation stream that configured assertion
     // evidence computes; ordinary handlers without it keep exact identity.
     let structural = parameterized_calls(block, source, &bindings)
@@ -96,17 +110,37 @@ pub(super) fn fingerprint(
     let alpha_normalized =
         serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
     HandlerSemantics {
-        exact: exact.clone(),
-        normalized: exact.clone(),
+        exact,
+        normalized,
         alpha: alpha_normalized,
         structural,
         events: behavior_signature,
-        source_snippet: text(block, source).chars().take(2000).collect(),
+        source_snippet: bounded_source_snippet(
+            text(block, source),
+            MAX_HANDLER_SNIPPET_CHARS,
+            true,
+        ),
         comparable,
         trivial,
     }
     .finish(str::to_owned)
 }
+
+/// Raw handler spelling without a named method's declaration name, which is registration plumbing.
+fn exact_source(block: Node<'_>, source: &str) -> String {
+    if block.kind() != "method" {
+        return text(block, source).to_owned();
+    }
+    let parameters = block
+        .child_by_field_name("parameters")
+        .map_or("", |parameters| text(parameters, source));
+    let body = block
+        .child_by_field_name("body")
+        .map_or("", |body| text(body, source));
+    format!("method\0{parameters}\0{body}")
+}
+
+const MAX_HANDLER_SNIPPET_CHARS: usize = 2_000;
 
 /// Abstract only whole straight-line handlers; any unmodeled effect preserves exact identity.
 pub(super) fn parameterized_calls(

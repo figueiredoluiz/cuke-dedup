@@ -14,12 +14,12 @@ mod registrations;
 mod source_filter;
 
 use self::assertions::AssertionBindings;
+#[cfg(test)]
+use self::handler::MAX_HANDLER_SNIPPET_CHARS;
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding,
 };
-#[cfg(test)]
-use self::handler::{bounded_source_snippet, MAX_HANDLER_SNIPPET_CHARS};
 pub use self::matcher::normalize_matcher;
 #[cfg(test)]
 use self::matcher::normalize_regular_expression;
@@ -31,6 +31,8 @@ use self::registrations::{
     decorator_registration_name, detect_framework, detect_registrations, registration_callee,
     registration_name, unresolved_registration_module, RegistrationCallee, RegistrationNames,
 };
+#[cfg(test)]
+use crate::model::bounded_source_snippet;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::suppression::inline_suppressions;
 use crate::source_adapter::{

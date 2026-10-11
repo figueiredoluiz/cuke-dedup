@@ -37,3 +37,27 @@ impl HandlerSemantics {
         }
     }
 }
+
+/// Normalizes report snippets and truncates them at a Unicode-safe character boundary. Frontends
+/// whose work budgets predate the ellipsis can preserve the truncated prefix's UTF-8 byte charge.
+pub(crate) fn bounded_source_snippet(
+    source: &str,
+    max_chars: usize,
+    preserve_prefix_bytes: bool,
+) -> String {
+    let normalized = source.trim().replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let mut snippet: String = normalized.chars().take(max_chars).collect();
+    let previous_bytes = snippet.len();
+    if preserve_prefix_bytes {
+        while snippet.len() + '…'.len_utf8() > previous_bytes {
+            snippet.pop();
+        }
+    } else {
+        snippet.pop();
+    }
+    snippet.push('…');
+    snippet
+}
