@@ -20,6 +20,8 @@ esac
 project_root="$(git rev-parse --show-toplevel)"
 cd "$project_root"
 
+scripts/check/preflight.sh
+
 check_actions="${CUKE_DEDUP_CHECK_ACTIONS:-}"
 if [[ -z "$check_actions" ]]; then
   check_actions=0
@@ -46,8 +48,6 @@ if [[ "$check_dependencies" != "0" && "$check_dependencies" != "1" ]]; then
   exit 2
 fi
 
-cargo +stable fmt --all -- --check
-cargo +stable fmt --manifest-path fuzz/Cargo.toml -- --check
 cargo +stable clippy --all-targets --all-features --locked -- -D warnings
 cargo +stable test --all-targets --all-features --locked
 
@@ -61,7 +61,6 @@ if [[ "$mode" == "full" ]]; then
   # pair cross-window and exercises the merge paths — notably that a proven ambiguity split across
   # windows still withholds the overlap finding that `ambiguous-step` owns.
   CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
-  node scripts/check/check-ruby-step-keywords.mjs
   node scripts/check/check-ruby-parity.mjs --regression target/release/cuke-dedup
   parity_report="$(mktemp)"
   trap 'rm -f "$parity_report"' EXIT
@@ -73,21 +72,16 @@ if [[ "$mode" == "full" ]]; then
 fi
 
 npm test
-npm run check:test
-npm run check:boundaries
 npm run skills:check
 npm run check:versions
-npm run docs:check
 
 if [[ "$mode" == "full" ]]; then
+  node --test scripts/check/preflight.test.mjs
   npm run pack:check
   node scripts/release/prepare-npm-packages.mjs --check
 fi
 
 python3 -m unittest discover -s scripts/release -p 'test_*.py'
-
-git diff --check
-git diff --cached --check
 
 if [[ "$check_actions" == "1" ]]; then
   if ! command -v actionlint >/dev/null 2>&1; then
