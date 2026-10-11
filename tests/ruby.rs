@@ -9543,10 +9543,11 @@ fn ruby_exclude_layers_and_config_escape_hatches_select_ruby_sources() {
     }
 }
 
-/// Ruby loads cannot leave their root: `require_relative` through `..` and an explicit `./..`
-/// require are refused against the analysis root, and a load-path require through `..` is refused
-/// against its declared load path, each with a located unresolved-dependency warning and the
-/// outside definition unanalyzed, while the same load form inside its root is followed.
+/// Ruby loads cannot leave their root: `require_relative` through `..`, including into a sibling
+/// whose name shares the root's textual prefix, and an explicit `./..` require are refused against
+/// the analysis root. A load-path require through `..` is refused against its declared load path.
+/// Each refusal has a located unresolved-dependency warning and leaves the outside definition
+/// unanalyzed, while the same load form inside its root is followed.
 #[test]
 fn ruby_source_loads_cannot_escape_the_analysis_root() {
     let sandbox = tempfile::tempdir().unwrap();
@@ -9557,6 +9558,11 @@ fn ruby_source_loads_cannot_escape_the_analysis_root() {
         sandbox.path(),
         "outside/world.rb",
         "Given('outside step') { outside() }\n",
+    );
+    ruby_write(
+        sandbox.path(),
+        "root-secrets/world.rb",
+        "Given('prefix sibling step') { outside() }\n",
     );
     ruby_write(
         &load_path,
@@ -9606,6 +9612,11 @@ fn ruby_source_loads_cannot_escape_the_analysis_root() {
         ),
         (
             "require_relative '../outside/world'",
+            false,
+            refused.clone(),
+        ),
+        (
+            "require_relative '../root-secrets/world'",
             false,
             refused.clone(),
         ),
