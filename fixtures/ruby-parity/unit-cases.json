@@ -3387,7 +3387,7 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "35063c2337b5c88c500e9a3f1ecae1dd7436d22ece8f849c9f52f7721549beb2",
+      "sourceSha256": "dad3d2f3b85823e552b9e5a53cf8f9d2f9393b4ae9ae76ba8a3d92a8e7fcd6c6",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -3843,8 +3843,12 @@
         },
         {
           "name": "resolves_named_handlers_to_bodies_without_cross_file_name_collisions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: `method(:name)` handlers resolve to their own file's body without cross-file name collisions; `handler-context-captured-files` pins captures, not named-handler resolution. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_pending_stub_handlers_are_not_duplicates"
+          },
+          "rationale": "Ruby named handlers are bound to the declaration current at registration: distinct method names in separate files retain two definitions with different bodies, while same-named top-level methods conservatively withdraw because load order can redefine them; neither path creates a cross-file duplicate-handler finding.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3861,20 +3865,32 @@
         },
         {
           "name": "unresolved_handler_references_are_not_comparable",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an unresolved Ruby handler reference is not comparable and produces no findings. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_named_handler_discovery_preserves_callable_identity_and_capture_timing"
+          },
+          "rationale": "Unknown, late, mutated, escaped, dynamically named, redefined and receiver-unknown Ruby handler references yield no definitions or handler findings; inline, immutable local callable and proven `method(:name)` controls retain both definitions and findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "recognizes_resolved_and_inline_stub_handler_shapes",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: resolved and inline Ruby stub handlers (`pending`) are recognized; owned with `named_handlers_with_different_bodies_and_stub_handlers_do_not_duplicate`. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_pending_stub_handlers_are_not_duplicates"
+          },
+          "rationale": "Inline blocks, do-blocks, lambdas and resolved `&method` handlers covering empty, pending, todo, not-implemented, return/next and labelled raise/fail shapes retain definitions but produce no handler findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "real_handlers_with_stub_like_text_remain_comparable",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby handler whose text resembles a stub but performs work stays comparable. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_pending_stub_handlers_are_not_duplicates"
+          },
+          "rationale": "Real-work controls containing an unlabelled `raise NotImplementedError`, non-stub raise values, `work()`, `pending; work()` or `next work()` remain comparable and produce duplicate-handler and near-duplicate findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3913,8 +3929,12 @@
         },
         {
           "name": "runtime_absent_and_shadowed_registrations_are_ignored",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: shadowed Ruby registrations are ignored; `registration-shadowing` pins the finding set, not the ignored-registration count. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_registration_owner_matrix_preserves_findings_without_granting_alias_trust"
+          },
+          "rationale": "The Ruby ownership matrix retains three definitions and one duplicate-handler finding only for proven registration owners; shadowing, replacement, mutation, escape and unrelated namespace controls yield zero definitions and no handler findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3931,14 +3951,22 @@
         },
         {
           "name": "reports_unsupported_regexes_and_malformed_string_matchers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: unsupported Ruby regex matchers and malformed string matchers are reported with locations; `malformed-matcher-keeps-valid-definitions` pins the surviving definitions, not the diagnostic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unsupported_matchers_mark_partial_extraction_incomplete"
+          },
+          "rationale": "Unsupported lookahead regexes and an out-of-range Unicode string escape emit one located matcher diagnostic, mark reports incomplete and retain neighbouring valid definitions and their duplicate-matcher finding; supported string and regex controls remain complete.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "supported_regexes_remain_authoritative_under_resource_limits",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: supported Ruby regex matchers remain authoritative when regex resource limits are hit. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_regex_resource_limit_is_reported_and_keeps_the_definition"
+          },
+          "rationale": "A supported Ruby regex whose compiled program exceeds the one-MiB limit emits one located actionable diagnostic, remains in JSON analysis and fails strict mode; the small-repeat control is complete.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3949,14 +3977,22 @@
         },
         {
           "name": "deeply_nested_handlers_do_not_use_the_process_stack",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: deeply nested Ruby handler bodies are extracted without recursing on the process stack. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_deep_handlers_and_unicode_locations_reach_final_analysis"
+          },
+          "rationale": "A Ruby handler containing 2,000 nested arrays completes in the built CLI and reaches the final summary as one complete definition, exercising iterative frontend traversal without process-stack recursion.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "source_locations_count_unicode_code_points",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby definition column after a multibyte prefix is counted in code points. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_deep_handlers_and_unicode_locations_reach_final_analysis"
+          },
+          "rationale": "A registration after the multibyte prefix `日本語` starts at column 17 in the extracted definition and in the final duplicate-matcher finding, proving code-point rather than UTF-8-byte columns.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3967,14 +4003,22 @@
         },
         {
           "name": "dynamic_matchers_and_handlers_emit_diagnostics_instead_of_disappearing",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: dynamic Ruby matchers and handlers emit located diagnostics instead of disappearing; `registration-uncertain-dynamic` pins completeness, not the diagnostic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unsupported_matchers_mark_partial_extraction_incomplete"
+          },
+          "rationale": "Dynamic call matchers, interpolated strings, non-string values and unresolved `&handler` references emit the exact located registration diagnostic, mark every machine report incomplete and retain neighbouring valid findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unresolved_registration_shaped_calls_are_visible_without_flagging_helpers",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: unresolved registration-shaped Ruby calls stay visible in diagnostics without flagging helper methods. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_inert_receiver_only_project_passes_strict_mode"
+          },
+          "rationale": "Registration-shaped sends on main or uncertain receivers fail strict mode as incomplete, while the proven local receiver send yields zero definitions and only the ordinary empty-extraction notice; unrelated helper controls are also pinned by the matcher diagnostic matrix.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3985,14 +4029,22 @@
         },
         {
           "name": "resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a resolved Ruby registration with an unsupported matcher is diagnosed as unsupported, not unresolved. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unsupported_matchers_mark_partial_extraction_incomplete"
+          },
+          "rationale": "Resolved Ruby keywords with unsupported matchers emit exactly the located static-matcher or unsupported-regex diagnostic and no generic unresolved-registration diagnostic; supported controls remain complete.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "unresolved_calls_remain_visible_when_the_same_file_yields_definitions",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an unresolved registration module leaves a completeness diagnostic beside the definitions the same Ruby file yields; `registration-uncertain-dynamic` pins findings, not the diagnostic line. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_unsupported_matchers_mark_partial_extraction_incomplete"
+          },
+          "rationale": "Each uncertain registration row shares a file with two valid registrations: the located completeness diagnostic remains visible, both valid definitions stay analyzed and their duplicate-matcher finding remains in JSON and SARIF output.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4075,8 +4127,12 @@
         },
         {
           "name": "language_adapters_reject_sources_from_another_language",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the Ruby adapter rejects a source labelled another language and names the adapter, language and path. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_adapter_rejects_mislabeled_sources_with_context"
+          },
+          "rationale": "The public cucumber-ruby adapter rejects a JavaScript-labelled source before parsing and its error names `cucumber-ruby`, `JavaScript` and `features/steps/example.js`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

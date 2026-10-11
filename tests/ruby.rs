@@ -5816,6 +5816,45 @@ fn ruby_named_handler_discovery_preserves_callable_identity_and_capture_timing()
     assert_handler_finding(&rows, false, "conflicting methods");
 }
 
+/// Deep Ruby handler syntax reaches the final analyzer without using the process stack, and a
+/// multibyte prefix contributes one source column per Unicode scalar rather than one per byte.
+#[test]
+fn ruby_deep_handlers_and_unicode_locations_reach_final_analysis() {
+    let depth = 2_000;
+    let source = format!(
+        "Given('deep step') {{ consume({}value{}) }}",
+        "[".repeat(depth),
+        "]".repeat(depth)
+    );
+    let (_, rows, stderr) = analyze(&source, &[]);
+    assert_discovery(rows.as_array().unwrap(), 1, false, &stderr);
+
+    use cuke_dedup::model::Rule;
+    use cuke_dedup::source_adapter::{adapter_for_language, SourceFile, SourceLanguage};
+    let directory = tempfile::tempdir().unwrap();
+    let file = SourceFile {
+        path: directory.path().join("features/steps/unicode.rb"),
+        language: SourceLanguage::Ruby,
+    };
+    let source = "prefix = '日本語'; Given('same') { first() }\nThen('same') { second() }";
+    let extraction = adapter_for_language(SourceLanguage::Ruby)
+        .extract(source, &file)
+        .unwrap();
+    assert_eq!(extraction.definitions.len(), 2);
+    assert_eq!(extraction.definitions[0].location.column, 17);
+    let config = cuke_dedup::config::Config::load(directory.path(), Default::default()).unwrap();
+    let analyzed =
+        cuke_dedup::analysis::analyze_with_diagnostics(extraction.definitions, vec![], &config)
+            .unwrap();
+    let finding = analyzed
+        .result
+        .findings
+        .iter()
+        .find(|finding| finding.rule == Rule::DuplicateMatcher)
+        .unwrap();
+    assert_eq!((finding.primary.line, finding.primary.column), (1, 17));
+}
+
 /// Checks bound-handler discovery while preserving allocation and receiver identity.
 #[test]
 fn ruby_bound_instance_handlers_are_discovered_without_erasing_receiver_state() {
@@ -10724,6 +10763,25 @@ fn ruby_unsupported_matchers_mark_partial_extraction_incomplete() {
             );
         }
     }
+
+    // Keep malformed literal syntax beside valid definitions: the registration-specific warning
+    // stays visible while the valid pair still reaches the final duplicate-matcher outcome. Ruby
+    // itself rejecting this escape as a syntax error is tracked as a separate release blocker;
+    // this slice pins the precise matcher diagnostic the frontend currently owns.
+    let malformed = r#"When('known') { open() }
+When('known') { close() }
+Given("\u{110000}") { work() }
+"#;
+    let (rows, stderr) = ruby_records_run(&[("steps.rb", malformed)], None, &[]);
+    assert!(
+        stderr.contains(&format!("steps.rb:3:1: {dynamic}")),
+        "{stderr}"
+    );
+    assert_discovery(&rows, 2, true, malformed);
+    assert_eq!(
+        ruby_rule_locations(&rows, "duplicate-matcher"),
+        ["steps.rb:1 steps.rb:2"]
+    );
 }
 
 /// A Ruby project whose only registration-shaped calls are sends on a local non-provider receiver
@@ -10736,6 +10794,7 @@ fn ruby_inert_receiver_only_project_passes_strict_mode() {
     let helpers = "class LocalRouter\n  def Given(_matcher, &_handler)\n    :local\n  end\n\n  def perform\n    :local\n  end\nend\n";
     for (call, inert) in [
         ("router.send(:Given, 'inert') { router.perform() }", true),
+        ("helper('ordinary call') { router.perform() }", true),
         ("router.Given('inert') { router.perform() }", false),
         ("send(:Given, 'inert') { router.perform() }", false),
     ] {
@@ -10850,6 +10909,27 @@ fn ruby_session_extract(
     adapter
         .extract_with_session(source, &file, session)
         .unwrap()
+}
+
+/// The public Ruby adapter refuses a source labelled for another frontend and names every piece
+/// of routing context needed to diagnose the caller error.
+#[test]
+fn ruby_adapter_rejects_mislabeled_sources_with_context() {
+    use cuke_dedup::source_adapter::{adapter_for_language, SourceFile, SourceLanguage};
+    let file = SourceFile {
+        path: "features/steps/example.js".into(),
+        language: SourceLanguage::JavaScript,
+    };
+    let error = adapter_for_language(SourceLanguage::Ruby)
+        .extract("Given('a step') { work() }", &file)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cucumber-ruby adapter cannot parse")
+            && error.contains("JavaScript")
+            && error.contains("features/steps/example.js"),
+        "{error}"
+    );
 }
 
 /// Library routing and sessions with Ruby: `.rb` and `SourceLanguage::Ruby` select the registry's
