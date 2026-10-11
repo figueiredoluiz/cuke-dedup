@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -43,6 +44,26 @@ const wrapper = [
   "",
 ].join("\n");
 
+/** Locate Bash directly on Windows, where Git Bash is installed but is not necessarily on PATH. */
+function bashExecutable() {
+  if (process.platform !== "win32") return "bash";
+  const lookup = spawnSync("where.exe", ["git"], { encoding: "utf8" });
+  for (const git of lookup.stdout?.split(/\r?\n/).filter(Boolean) ?? []) {
+    const candidate = path.resolve(path.dirname(git), "..", "bin", "bash.exe");
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`Git Bash was not found from the installed Git paths: ${lookup.stderr}`);
+}
+
+/** Convert a native path to the drive-prefixed form understood inside Git Bash. */
+function bashPath(value, platform = process.platform) {
+  if (platform !== "win32") return value;
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.length < 2 || normalized[1] !== ":") return normalized;
+  return `/${normalized[0].toLowerCase()}${normalized.slice(2)}`;
+}
+
+/** Create isolated command stubs and a trace location for one preflight execution. */
 async function fixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "cuke-dedup-preflight-"));
   const bin = path.join(directory, "bin");
@@ -56,6 +77,7 @@ async function fixture() {
   return { bin, directory, trace };
 }
 
+/** Read the executed steps, treating an absent trace as no executed command. */
 async function readTrace(trace) {
   try {
     return (await readFile(trace, "utf8")).trim().split("\n").filter(Boolean);
@@ -65,18 +87,20 @@ async function readTrace(trace) {
   }
 }
 
+/** Execute preflight with command stubs, optionally failing one named step. */
 async function run(failStep = "") {
   const { bin, directory, trace } = await fixture();
   try {
-    const result = spawnSync("bash", [preflight], {
+    const result = spawnSync(bashExecutable(), ["-c", 'export PATH="$PREFLIGHT_TEST_BIN:/usr/bin:/bin"; exec bash "$PREFLIGHT_SCRIPT"'], {
       cwd: path.join(projectRoot, "scripts"),
       encoding: "utf8",
       env: {
         ...process.env,
-        PATH: `${bin}:/usr/bin:/bin`,
         PREFLIGHT_FAIL_STEP: failStep,
-        PREFLIGHT_PROJECT_ROOT: projectRoot,
-        PREFLIGHT_TRACE: trace,
+        PREFLIGHT_PROJECT_ROOT: bashPath(projectRoot),
+        PREFLIGHT_SCRIPT: bashPath(preflight),
+        PREFLIGHT_TEST_BIN: bashPath(bin),
+        PREFLIGHT_TRACE: bashPath(trace),
       },
     });
     const observed = await readTrace(trace);
@@ -85,6 +109,10 @@ async function run(failStep = "") {
     await rm(directory, { recursive: true });
   }
 }
+
+test("native Windows paths are converted for Git Bash", () => {
+  assert.equal(bashPath("D:\\a\\cuke-dedup\\scripts", "win32"), "/d/a/cuke-dedup/scripts");
+});
 
 test("a failure before the first command produces an empty trace", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "cuke-dedup-missing-trace-"));
@@ -97,14 +125,14 @@ test("a failure before the first command produces an empty trace", async () => {
 
 test("preflight executes every inexpensive check in order", async () => {
   const { observed, result } = await run();
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, result.error?.stack ?? result.stderr);
   assert.deepEqual(observed, steps);
 });
 
 for (const [index, step] of steps.entries()) {
   test(`preflight stops after ${step} fails`, async () => {
     const { observed, result } = await run(step);
-    assert.equal(result.status, 23, result.stderr);
+    assert.equal(result.status, 23, result.error?.stack ?? result.stderr);
     assert.deepEqual(observed, steps.slice(0, index + 1));
   });
 }
