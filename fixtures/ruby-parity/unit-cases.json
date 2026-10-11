@@ -237,14 +237,22 @@
         },
         {
           "name": "equivalent_assertion_factory_syntax_preserves_conflicting_values",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `equivalent assertion factory syntax preserves conflicting values` pins assertion value precision (Ruby analogue: `expected_values_preserve_bindings_and_uncertainty`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes"
+          },
+          "rationale": "Configured Ruby factories reached through `method(:expect)`, `api.fetch(:expect)` and a static `api[:expect]` alias retain the equal visibility finding while opposing literal values produce no parameterization; the same spellings without provider authority retain ordinary parameterization instead of gaining assertion trust.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "future_local_declarations_do_not_expose_outer_assertion_values",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `future local declarations do not expose outer assertion values` pins declaration order and visibility of assertion values (Ruby analogue: `top_level_constants_resolve_to_immutable_literal_values`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "top_level_constants_resolve_to_immutable_literal_values"
+          },
+          "rationale": "Ruby constants declared after registrations resolve only to their final immutable literal identity: equal later values retain duplicate-handler, conflicting later values do not, while a second, nested, operator, destructured or reflective write removes that authority.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -261,8 +269,12 @@
         },
         {
           "name": "unresolved_subject_shadows_do_not_collapse_to_empty_values",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `unresolved subject shadows do not collapse to empty values` pins lexical shadowing of assertion bindings (Ruby analogue: `enclosing_scope_bindings_shadow_file_locals_with_scope_identity`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "enclosing_scope_bindings_shadow_file_locals_with_scope_identity"
+          },
+          "rationale": "A Ruby block parameter named like a file local remains the unresolved inner expected-value binding and produces no handler finding; a direct equal-literal control retains duplicate and near findings, and existing parameter/block-local rows distinguish stable shadowing from writes that make the source incomplete.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -285,8 +297,12 @@
         },
         {
           "name": "parameterized_inline_calls_keep_execution_context_without_handler_findings",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: outline ambiguity and usage witnesses (`parameterized inline calls keep execution context without handler findings`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "declared_local_callables_execute_only_at_proven_invocations"
+          },
+          "rationale": "A parameterized Ruby lambda invoked with different arguments yields no duplicate, near or parameterization finding because substitution is unproven; parameterless direct, assigned, argument and block invocations retain their executed assertion outcomes, with equal-value positive controls and conflicting-value negatives.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -323,8 +339,12 @@
         },
         {
           "name": "exact_handlers_require_compatible_assertion_provenance_across_files",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `exact handlers require compatible assertion provenance across files` pins assertion provenance across files and runners (Ruby analogue: `source_origin_lookup_and_escape_matrix`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "lambda_captures_and_resolved_aliases_keep_file_identity_rules"
+          },
+          "rationale": "Two Ruby files resolving different aliases of the same configured provider produce duplicate-handler, while an alias from an unrelated provider and an untrusted runtime lambda do not compare; same-named lexical captures in separate files also remain source-scoped.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -351,14 +371,22 @@
         },
         {
           "name": "shorthand_assertions_preserve_property_keys_and_local_values",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `shorthand assertions preserve property keys and local values` pins assertion value precision (Ruby analogue: `expected_values_preserve_bindings_and_uncertainty`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "expected_values_preserve_bindings_and_uncertainty"
+          },
+          "rationale": "Ruby `object_containing` hashes with the same static key/value retain comparison, a different key does not, equal nested false/nil values stay comparable, and external, multiply assigned or branch-assigned locals never establish handler equivalence.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "assertion_precision_covers_member_require_iifes_and_factory_options",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `assertion precision covers member require iifes and factory options` pins assertion factory recognition (Ruby analogue: `closed_assertion_origins_preserve_opposing_and_equivalent_outcomes`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_overlap_preserves_values_effects_and_callable_execution"
+          },
+          "rationale": "A configured Ruby factory obtained through the static API member participates in direct and proven immediate/deferred callable assertions: equal values retain comparison, opposing values and polarity do not, and parameterized or unproven callable execution cannot gain equivalence.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -369,9 +397,13 @@
         },
         {
           "name": "nested_argument_callbacks_preserve_behavior_and_scope_boundaries",
-          "requiredStatus": "partial",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "assertion_overlap_preserves_values_effects_and_callable_execution"
+          },
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: a Ruby control for the scope boundary of nested argument callbacks; the group pins only that callbacks carry behaviour. Owned by the completion follow-up."
+          "rationale": "Ruby lambdas and procs nested in argument containers retain equal configured assertions across different wrappers, while conflicting values, polarity and parameterized nested callables produce no handler finding; a never-invoked callable versus an immediate invocation remains distinct."
         },
         {
           "name": "callback_calls_retain_discriminating_behavior_without_assertion_promotion",
@@ -405,8 +437,12 @@
         },
         {
           "name": "a_constant_does_not_resolve_into_a_same_named_member_property",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the pinned engine outcome (`a constant does not resolve into a same named member property`) observed on a Ruby corpus sized to the boundary the test pins. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "expected_values_preserve_bindings_and_uncertainty"
+          },
+          "rationale": "Equal top-level Ruby constants named `READY` and `IDLE` do not substitute into the same-named receiver methods: `state.READY` matches itself but remains distinct from `state.IDLE`; the same matrix separately pins distinct ordinary receiver methods.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -991,8 +1027,12 @@
         },
         {
           "name": "dotted_assertion_events_distinguish_subject_modifier_and_value",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `dotted assertion events distinguish subject modifier and value` pins assertion value precision (Ruby analogue: `expected_values_preserve_bindings_and_uncertainty`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "expected_values_preserve_bindings_and_uncertainty"
+          },
+          "rationale": "The Ruby final-output matrix retains equal subject/value assertions and rejects a different receiver method, negation modifier or expected literal; static nested values remain comparable while external and dynamically dispatched values do not gain equivalence.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1015,9 +1055,13 @@
         },
         {
           "name": "modifier_chains_are_ordered_and_semantic",
-          "requiredStatus": "partial",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "negated_factory_dispatch_retains_assertions_and_polarity"
+          },
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence: a Ruby control that modifier order is significant; the group pins only that different modifiers are not near. Owned by the completion follow-up."
+          "rationale": "Ruby factory-level `not`, expectation-level `not`, `soft` dispatch and literal `public_send(:not)` preserve their supported semantic positions: equivalent negated forms compare, ordered `.not.to` versus `.to.not` does not, and removing polarity or changing the expected value produces no handler finding."
         },
         {
           "name": "computed_modifier_access_matches_dot_access_semantics",
@@ -1051,8 +1095,12 @@
         },
         {
           "name": "loop_head_bindings_shadow_an_outer_handler_constant",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `loop head bindings shadow an outer handler constant` pins lexical shadowing of assertion bindings (Ruby analogue: `enclosing_scope_bindings_shadow_file_locals_with_scope_identity`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "enclosing_scope_bindings_shadow_file_locals_with_scope_identity"
+          },
+          "rationale": "A Ruby iteration block parameter shadows the same-named file local in nested assertion evidence and produces no handler finding; the equal direct-literal control compares, while existing rebinding and plain-write rows prove only the binding-owning scope withdraws or preserves authority.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1063,8 +1111,12 @@
         },
         {
           "name": "a_computed_require_property_is_an_assertion_factory",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: the JS/TS test `a computed require property is an assertion factory` pins assertion factory recognition (Ruby analogue: `closed_assertion_origins_preserve_opposing_and_equivalent_outcomes`); the Ruby analogue must be mapped to this claim per clause, not by topic. Owned by the completion follow-up.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby_assertion_provenance.rs",
+            "name": "closed_assertion_origins_preserve_opposing_and_equivalent_outcomes"
+          },
+          "rationale": "A Ruby provider loaded from the configured source grants the same factory identity through `method(:expect)`, `api.fetch(:expect)` and the static computed lookup `api[:expect]`; equal assertions compare, conflicting values do not, and the unconfigured control retains ordinary parameterization instead of assertion trust.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
