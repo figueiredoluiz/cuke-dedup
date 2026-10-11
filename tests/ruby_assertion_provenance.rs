@@ -33,9 +33,19 @@ fn closed_assertion_origins_preserve_opposing_and_equivalent_outcomes() {
             false,
         ),
         (
+            "api = SyntheticAssertions.api; check = api[:expect]",
+            false,
+            true,
+        ),
+        (
             "first = SyntheticAssertions.api[:expect]; check = first",
             true,
             false,
+        ),
+        (
+            "first = SyntheticAssertions.api[:expect]; check = first",
+            false,
+            true,
         ),
     ] {
         let root = project(PROVIDER);
@@ -600,6 +610,26 @@ fn expected_values_preserve_bindings_and_uncertainty() {
             "check.call(state).to_equal(check.not.object_containing(types: [false, nil]))",
             true,
         ),
+        (
+            "check.call(state.status).to_be('ready')",
+            "check.call(state.other).to_be('ready')",
+            false,
+        ),
+        (
+            "check.call(state).not.to_be('ready')",
+            "check.call(state).to_be('ready')",
+            false,
+        ),
+        (
+            "check.call(state).to_equal(check.object_containing(status: 'ready'))",
+            "check.call(state).to_equal(check.object_containing(status: 'ready'))",
+            true,
+        ),
+        (
+            "check.call(state).to_equal(check.object_containing(status: 'ready'))",
+            "check.call(state).to_equal(check.object_containing(state: 'ready'))",
+            false,
+        ),
     ] {
         let rows = findings(
             PROVIDER,
@@ -608,6 +638,15 @@ fn expected_values_preserve_bindings_and_uncertainty() {
             second,
         );
         assert_eq!(handler_findings(&rows), expected, "{first} / {second}");
+    }
+    for (second, expected) in [("state.READY", true), ("state.IDLE", false)] {
+        let rows = findings(
+            PROVIDER,
+            "READY = 1; IDLE = 1; check = SyntheticAssertions.api.fetch(:expect)",
+            "check.call(state.READY).to_be('ok')",
+            &format!("check.call({second}).to_be('ok')"),
+        );
+        assert_eq!(handler_findings(&rows), expected, "{second}");
     }
 }
 
@@ -766,6 +805,11 @@ fn negated_factory_dispatch_retains_assertions_and_polarity() {
             "check.not.call(state).to_be('ready')",
             "check.call(state).not.to_be('ready')",
             true,
+        ),
+        (
+            "check.call(state).not.to.to_be('ready')",
+            "check.call(state).to.not.to_be('ready')",
+            false,
         ),
         (
             "check.not.soft(state).to_be('ready')",
@@ -1349,6 +1393,31 @@ fn enclosing_scope_bindings_shadow_file_locals_with_scope_identity() {
                 "near-duplicate-step".to_owned()
             ],
             true
+        )
+    );
+
+    // A block parameter is the expected-value binding inside the block; it cannot inherit the
+    // same-named file local and invent assertion equivalence. The direct literal positive control
+    // proves the assertion comparison remains enabled.
+    let scoped = format!(
+        "{LOAD}expected = :ready\nThen('the parcel status is verified') {{ |state| [:idle].each {{ |expected| SyntheticAssertions.expect(state).to_be(expected) }} }}\nThen('the parcel status is now verified') {{ |state| [:idle].each {{ |expected| SyntheticAssertions.expect(state).to_be(expected) }} }}"
+    );
+    assert_eq!(handler_rules(&[("steps.rb", &scoped)]), (vec![], false));
+    let direct = format!(
+        "{LOAD}{}",
+        step_pair(
+            "SyntheticAssertions.expect(state).to_be(:ready)",
+            "SyntheticAssertions.expect(state).to_be(:ready)"
+        )
+    );
+    assert_eq!(
+        handler_rules(&[("steps.rb", &direct)]),
+        (
+            vec![
+                "duplicate-handler".to_owned(),
+                "near-duplicate-step".to_owned()
+            ],
+            false
         )
     );
 }
