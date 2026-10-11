@@ -96,7 +96,7 @@ export function validateOracle(oracle) {
 export const UNIT_CLASSES = ["ruby-behavior", "shared-engine-invariant", "language-specific-api"];
 export const UNIT_STATUSES = ["unmapped", "covered", "partial", "language-inapplicable", "engine-invariant", "rust-evidence"];
 export const ENGINE_STAGES = ["sha256", "bounded-io", "regex-compiler", "gherkin-parser", "cli-parsing",
-  "config-decoding", "model-codec", "lcs-math", "matcher-text", "api-shape", "session-plumbing"];
+  "config-decoding", "model-codec", "lcs-math", "matcher-text", "bounded-analysis", "api-shape", "session-plumbing"];
 const ALLOWED_STATUSES = {
   "ruby-behavior": ["unmapped", "covered", "partial", "rust-evidence"],
   "shared-engine-invariant": ["unmapped", "covered", "partial", "engine-invariant", "rust-evidence"],
