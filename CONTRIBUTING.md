@@ -32,6 +32,8 @@ scripts/check/check.sh --quick
 scripts/check/check.sh
 ```
 
+Both gates start with `scripts/check/preflight.sh`, which checks whitespace, Rust formatting, Ruby keyword metadata, checker unit tests, language boundaries, and documentation parity before compilation. Run it directly for the fastest deterministic feedback.
+
 Coverage is measured separately because it rebuilds the test suite with instrumentation:
 
 ```sh
