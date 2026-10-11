@@ -3934,7 +3934,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_registration_owner_matrix_preserves_findings_without_granting_alias_trust"
           },
-          "rationale": "The Ruby ownership matrix retains three definitions and both matcher and handler findings only for proven registration owners; shadowing, replacement, mutation, escape and unrelated namespace controls yield zero definitions and no findings.",
+          "rationale": "The Ruby ownership matrix retains three definitions and one duplicate-handler finding only for proven registration owners; shadowing, replacement, mutation, escape and unrelated namespace controls yield zero definitions and no handler findings.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
