@@ -288,7 +288,11 @@ fn extract_with_proof(
     finalized: bool,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
     if file.language != SourceLanguage::Ruby {
-        bail!("Ruby adapter requires Ruby source");
+        bail!(
+            "cucumber-ruby adapter cannot parse {:?} source {}",
+            file.language,
+            file.path.display()
+        );
     }
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
