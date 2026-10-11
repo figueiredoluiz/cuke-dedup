@@ -33,9 +33,19 @@ fn closed_assertion_origins_preserve_opposing_and_equivalent_outcomes() {
             false,
         ),
         (
+            "api = SyntheticAssertions.api; check = api[:expect]",
+            false,
+            true,
+        ),
+        (
             "first = SyntheticAssertions.api[:expect]; check = first",
             true,
             false,
+        ),
+        (
+            "first = SyntheticAssertions.api[:expect]; check = first",
+            false,
+            true,
         ),
     ] {
         let root = project(PROVIDER);
