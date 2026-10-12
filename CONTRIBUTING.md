@@ -207,3 +207,5 @@ and `npm` environment on npmjs.com, with direct `npm publish` allowed. The workf
 clients older than the trusted-publishing minimum.
 
 The project maintainer has final responsibility for scope, compatibility, and release decisions.
+
+Experimental Ruby releases require the ordinary project and packaging checks and the Ruby regression gate to pass. The separate Ruby completion census tracks work toward broader support; pending evidence or design entries do not by themselves block an experimental release. Keep known limitations documented and assess serious regressions and security exposure before publication.

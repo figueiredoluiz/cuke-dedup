@@ -15,6 +15,8 @@ It supports:
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.
 - Thresholds, baselines, changed-file analysis, suppressions, and ignore files.
 
+Ruby support is experimental. Select a single Ruby suite explicitly with `--definitions 'features/**/*.rb' --features 'features/**/*.feature'`, include its support files, and review findings before acting on them. See the [supported subset and known limitations](docs/discovery-and-frameworks.md#cucumber-ruby).
+
 ## Install
 
 With Cargo:
@@ -138,7 +140,7 @@ steps:
     with:
       fetch-depth: 0
       persist-credentials: false
-  - uses: figueiredoluiz/cuke-dedup@v0.10.1
+  - uses: figueiredoluiz/cuke-dedup@v0.11.0
     with:
       path: .
       threshold: 5
