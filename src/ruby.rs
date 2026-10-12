@@ -112,7 +112,7 @@ impl SourceAdapter for RubyAdapter {
         let (units, exceeded) = match providers::load_proof_sources(files, source_budget)? {
             providers::ProofSources::Loaded(units) => (Some(units), false),
             providers::ProofSources::OverBudget => (None, true),
-            providers::ProofSources::Unreadable => (None, false),
+            providers::ProofSources::Untrusted => (None, false),
         };
         let edges = session.dependency_edges();
         let state = session.state::<RubySession>()?;
@@ -1066,22 +1066,20 @@ fn syntax_error<'a>(root: Node<'a>, source: &str) -> Option<Node<'a>> {
         .iter()
         .copied()
         .filter(|node| {
-            (node.kind() == "identifier" && text(*node, source) == "end")
+            (node.kind() == "identifier"
+                && node.parent() == Some(root)
+                && text(*node, source) == "end")
                 || (node.kind() == "escape_sequence" && invalid_unicode_escape(text(*node, source)))
         })
         .collect();
     nodes
         .into_iter()
-        .filter(|node| {
-            (node.is_error() || node.is_missing())
-                && !supplemental.iter().any(|cause| {
-                    node.start_byte() <= cause.start_byte() && cause.end_byte() <= node.end_byte()
-                })
-        })
+        .filter(|node| node.is_error() || node.is_missing())
         .chain(supplemental.iter().copied())
         .min_by_key(|node| (node.start_byte(), node.end_byte()))
 }
 
+/// Rejects Unicode escapes whose contents are not Ruby Unicode scalar values.
 fn invalid_unicode_escape(raw: &str) -> bool {
     let Some(raw) = raw.strip_prefix("\\u") else {
         return false;

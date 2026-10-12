@@ -4071,7 +4071,6 @@ fn ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust() {
             fs::write(dir.path().join("provider.rb"), "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end").unwrap();
             fs::write(dir.path().join("steps.rb"), format!("require_relative 'provider'\nGiven('control') {{ first() }}; Given('control') {{ second() }}\n{before} register = {origin}; {after}")).unwrap();
             let rows = project_records(dir.path());
-            let expected = if origin == "Provider::GIVEN" && after.ends_with("value = )") { 2 } else { expected };
             assert_discovery(&rows, expected, expected != 4, &format!("{origin}: {before} / {after}"));
             assert_eq!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"), expected > 0);
             if expected == 2 { assert_eq!(rows[0]["evidence"]["comparison"]["leftMatcher"], "control"); }
@@ -4417,6 +4416,7 @@ fn ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes() 
         r#"Given('literal') { value = '\u{110000}'; work(value) }"#,
         r#"Given('literal') { value = %q{\u{110000}}; work(value) }"#,
         r#"Given('literal') { value = "\\u{110000}"; work(value) }"#,
+        r#"Given('receiver end') { (1..2).end }"#,
     ] {
         for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
             let (exit, rows, stderr) = analyze(source, &[flag]);
@@ -4473,6 +4473,38 @@ fn ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes() 
         stderr.contains("entry.rb:2:1: Ruby source contains syntax errors"),
         "{stderr}"
     );
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("provider.rb"),
+        "ROOT_GIVEN = method(:Given)\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("entry.rb"),
+        "require_relative 'provider'\nROOT_GIVEN.call('first') { work() }\nROOT_GIVEN.call('second') { work() }\n",
+    )
+    .unwrap();
+    let output = run_project(directory.path(), "*.rb", &["--fail-on-incomplete"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert_discovery(&rows, 2, false, &stderr);
+    assert_handler_finding(&Value::Array(rows), true, &stderr);
+
+    fs::write(directory.path().join("invalid.rb"), "end\n").unwrap();
+    for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
+        let output = run_project(directory.path(), "*.rb", &[flag]);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let rows = records(output.stdout);
+        assert_eq!(output.status.code(), Some(2), "{flag}: {stderr}");
+        assert_discovery(&rows, 0, true, &stderr);
+        assert!(
+            stderr.contains("invalid.rb:1:1: Ruby source contains syntax errors"),
+            "{flag}: {stderr}"
+        );
+        assert_handler_finding(&Value::Array(rows), false, &stderr);
+    }
 }
 
 /// Case folding must change usage without erasing the matcher flag boundary.
