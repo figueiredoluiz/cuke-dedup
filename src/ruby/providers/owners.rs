@@ -380,8 +380,8 @@ impl Graph<'_> {
     }
 }
 
-/// Direct program-level access to the lexical Binding can rebind a local without
-/// creating an identifier reference to it. Deferred syntax and nested scopes are excluded.
+/// Direct program-level access to a Binding can rebind a local without creating
+/// an identifier reference to it. Deferred syntax and nested scopes are excluded.
 fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> BTreeSet<usize> {
     let bindings = super::super::bindings::Bindings::collect(root, root, source);
     nodes
@@ -389,14 +389,18 @@ fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> 
         .copied()
         .filter(|node| direct_program_expression(*node, root))
         .filter(|node| match node.kind() {
-            "identifier" => text(*node, source) == "binding" && bindings.calls.contains(&node.id()),
+            "identifier" => {
+                matches!(text(*node, source), "binding" | "binding_of_caller")
+                    && bindings.calls.contains(&node.id())
+            }
             "constant" => text(*node, source) == "TOPLEVEL_BINDING",
             "call" => {
                 let receiver = node.child_by_field_name("receiver");
                 let method = node
                     .child_by_field_name("method")
                     .map(|method| text(method, source));
-                (method == Some("binding") && top_level_receiver(receiver, source))
+                (method.is_some_and(|method| matches!(method, "binding" | "binding_of_caller"))
+                    && top_level_receiver(receiver, source))
                     || (method.is_some_and(|method| {
                         matches!(method, "send" | "public_send" | "__send__")
                     }) && top_level_receiver(receiver, source)
@@ -404,7 +408,9 @@ fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> 
                             .child_by_field_name("arguments")
                             .and_then(|arguments| arguments.named_child(0))
                             .and_then(|target| static_method_name(target, source))
-                            .is_some_and(|target| target == "binding"))
+                            .is_some_and(|target| {
+                                matches!(target.as_str(), "binding" | "binding_of_caller")
+                            }))
             }
             _ => false, // fail-closed: unsupported syntax cannot establish Binding access
         })
