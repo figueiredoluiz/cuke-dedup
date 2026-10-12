@@ -3864,7 +3864,7 @@ fn ruby_closed_instance_dispatch_preserves_unrelated_registrations() {
 }
 
 #[test]
-/// Covers equivalent acquisition forms, source ordering, shadowing, and deferred controls.
+/// Covers direct and caller Binding acquisition, source ordering, shadowing, and deferred controls.
 fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
     let class = "class Router; def Given(text, &block); @value = text; end; end";
     let binding_accesses = [
@@ -3875,6 +3875,14 @@ fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
         "TOPLEVEL_BINDING.local_variable_set(:router, self)",
         "send(:binding).local_variable_set(:router, self)",
         "::Kernel.public_send(:binding).local_variable_set(:router, self)",
+        "binding_of_caller.local_variable_set(:router, self)",
+        "binding_of_caller().local_variable_set(:router, self)",
+        "self.binding_of_caller.local_variable_set(:router, self)",
+        "Kernel.binding_of_caller.local_variable_set(:router, self)",
+        "send(:binding_of_caller).local_variable_set(:router, self)",
+        "Kernel.public_send(:binding_of_caller).local_variable_set(:router, self)",
+        "self.__send__(:binding_of_caller).local_variable_set(:router, self)",
+        "binding.of_caller.local_variable_set(:router, self)",
         "1.times { binding.local_variable_set(:router, self) }",
         "def at_exit; yield; end; at_exit { binding.local_variable_set(:router, self) }",
         "def proc; yield; end; proc { binding.local_variable_set(:router, self) }",
@@ -3899,6 +3907,13 @@ fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
                 "binding = Object.new",
                 "binding.local_variable_set(:router, self)",
             ),
+            ("binding_of_caller = Object.new", "binding_of_caller"),
+            ("other = Object.new", "other.binding_of_caller"),
+            ("def binding_of_caller; TOPLEVEL_BINDING; end", ""),
+            (
+                "deferred = -> { binding_of_caller.local_variable_set(:router, self) }; deferred",
+                "",
+            ),
             (
                 "def deferred; binding.local_variable_set(:router, self); end",
                 "",
@@ -3909,6 +3924,7 @@ fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
             ),
             ("END { binding.local_variable_set(:router, self) }", ""),
             ("", "binding.local_variable_set(:router, self)"),
+            ("", "binding_of_caller.local_variable_set(:router, self)"),
         ] {
             let source = format!(
                 "{class}\nrouter = Router.new\n{before}\nrouter.{dispatch}(:Given, 'local') {{}}\n{after}\nGiven('control') {{ work() }}"
