@@ -3864,6 +3864,58 @@ fn ruby_closed_instance_dispatch_preserves_unrelated_registrations() {
 }
 
 #[test]
+/// Covers equivalent acquisition forms, source ordering, shadowing, and deferred controls.
+fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
+    let class = "class Router; def Given(text, &block); @value = text; end; end";
+    let binding_accesses = [
+        "binding.local_variable_set(:router, self)",
+        "binding().local_variable_set(:router, self)",
+        "Kernel.binding.local_variable_set(:router, self)",
+        "::Kernel.binding.local_variable_set(:router, self)",
+        "TOPLEVEL_BINDING.local_variable_set(:router, self)",
+        "send(:binding).local_variable_set(:router, self)",
+        "::Kernel.public_send(:binding).local_variable_set(:router, self)",
+        "1.times { binding.local_variable_set(:router, self) }",
+    ];
+    for access in binding_accesses {
+        for dispatch in ["send", "public_send", "__send__"] {
+            let source = format!(
+                "{class}\nrouter = Router.new\n{access}\nrouter.{dispatch}(:Given, 'local') {{}}\nGiven('control') {{ work() }}"
+            );
+            let (exit, rows, _) = analyze(&source, &["--fail-on-incomplete"]);
+            assert_eq!(exit, 2, "{source}");
+            assert_discovery(rows.as_array().unwrap(), 0, true, &source);
+        }
+    }
+
+    for dispatch in ["send", "public_send", "__send__"] {
+        for (before, after) in [
+            ("", ""),
+            (
+                "binding = Object.new",
+                "binding.local_variable_set(:router, self)",
+            ),
+            (
+                "def deferred; binding.local_variable_set(:router, self); end",
+                "",
+            ),
+            (
+                "deferred = proc { binding.local_variable_set(:router, self) }",
+                "",
+            ),
+            ("", "binding.local_variable_set(:router, self)"),
+        ] {
+            let source = format!(
+                "{class}\nrouter = Router.new\n{before}\nrouter.{dispatch}(:Given, 'local') {{}}\n{after}\nGiven('control') {{ work() }}"
+            );
+            let (exit, rows, _) = analyze(&source, &["--fail-on-incomplete"]);
+            assert_eq!(exit, 0, "{source}");
+            assert_discovery(rows.as_array().unwrap(), 1, false, &source);
+        }
+    }
+}
+
+#[test]
 fn ruby_provider_cycles_and_lexical_constant_shadowing_do_not_gain_trust() {
     for (provider_prefix, barrel, entry) in [
         ("require_relative 'entry'", "", "require_relative 'provider'; register = Provider::GIVEN; register.call('same') { first() }; register.call('same') { second() }"),
