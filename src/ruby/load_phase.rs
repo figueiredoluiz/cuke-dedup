@@ -11,7 +11,7 @@
 //! Assumption: a suite class whose name is not a Ruby core constant is not also defined and used
 //! during load by the runner or its dependencies.
 
-use super::{registration, text};
+use super::{registration, syntax_error, text};
 use tree_sitter::Node;
 
 /// Constants that exist before suite files load, so a suite declaration of one reopens it: the
@@ -188,7 +188,7 @@ pub(super) fn scenario_hook(name: &str) -> bool {
 /// Whether every load-phase statement of `program` is an allowed shape. A file with syntax errors
 /// is never closed.
 pub(super) fn closed(program: Node<'_>, source: &str) -> bool {
-    !program.has_error() && statements_allowed(program, source, false)
+    syntax_error(program, source).is_none() && statements_allowed(program, source, false)
 }
 
 /// The class or module declaration whose body directly holds the instance-method definition

@@ -95,6 +95,13 @@ impl AssertionProviders {
         work_budget: usize,
         registrations: Option<&super::providers::Providers>,
     ) -> Self {
+        if loaded.iter().any(|unit| !unit.syntax_valid) {
+            return if configured.is_empty() {
+                Self::default()
+            } else {
+                Self::unavailable()
+            };
+        }
         let Some(mut origins) =
             origins::Origins::collect(loaded, edges, configured, registrations, work_budget)
         else {

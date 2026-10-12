@@ -34,6 +34,7 @@ pub(super) struct Unit {
     pub(super) canonical_path: PathBuf,
     pub(super) source: String,
     pub(super) tree: Tree,
+    pub(super) syntax_valid: bool,
 }
 
 mod execution;
@@ -121,6 +122,10 @@ pub(super) fn load_proof_sources(
         let tree = parser
             .parse(&source, None)
             .context("Ruby provider parser returned no tree")?;
+        let syntax_valid = super::syntax_error(tree.root_node(), &source).is_none();
+        if !syntax_valid {
+            continue;
+        }
         let Ok(canonical_path) = crate::config::canonical_platform_path(&file.path) else {
             return Ok(ProofSources::Unreadable);
         };
@@ -129,6 +134,7 @@ pub(super) fn load_proof_sources(
             canonical_path,
             source,
             tree,
+            syntax_valid,
         });
     }
     Ok(ProofSources::Loaded(units))
@@ -188,6 +194,9 @@ impl Providers {
                 ),
             )
         };
+        if units.iter().any(|unit| !unit.syntax_valid) {
+            return without_registration_proof(Self::default());
+        }
         for (unit, input) in units.iter().enumerate() {
             graph
                 .unit_ids
@@ -901,6 +910,7 @@ fn test_unit(source: &str) -> Unit {
     parser
         .set_language(&tree_sitter_ruby::LANGUAGE.into())
         .unwrap();
+    let tree = parser.parse(source, None).unwrap();
     Unit {
         file: SourceFile {
             path: PathBuf::from("steps.rb"),
@@ -908,7 +918,8 @@ fn test_unit(source: &str) -> Unit {
         },
         canonical_path: PathBuf::from("steps.rb"),
         source: source.to_owned(),
-        tree: parser.parse(source, None).unwrap(),
+        syntax_valid: super::syntax_error(tree.root_node(), source).is_none(),
+        tree,
     }
 }
 
