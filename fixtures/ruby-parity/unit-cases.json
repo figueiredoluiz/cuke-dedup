@@ -5304,9 +5304,13 @@
         },
         {
           "name": "unsupported_matchers_mark_partial_extraction_incomplete",
-          "requiredStatus": "partial",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+          },
           "behaviorClass": "shared-engine-invariant",
-          "rationale": "Needs Ruby evidence for the invalid-escape row: Ruby rejects `\"\\u{110000}\"` as a SyntaxError, but the adapter only warns that the registration requires a static matcher and exits 0 even under `--fail-on-unparseable`, where JS/TS treats the invalid escape as an error. Unsupported Ruby matchers and uncertain wrapper forms otherwise mark extraction incomplete at their exact locations while neighbouring definitions stay analyzed (`ruby_unsupported_matchers_mark_partial_extraction_incomplete`)."
+          "rationale": "Ruby out-of-range Unicode scalar escapes emit a located syntax diagnostic, preserve valid neighbouring findings, keep the corpus incomplete and exit 2 under both strict modes; valid Unicode escapes and literal escape text remain accepted (`ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes`). Unsupported matchers and uncertain wrapper forms retain their exact incomplete diagnostics beside analysed neighbours (`ruby_unsupported_matchers_mark_partial_extraction_incomplete`)."
         },
         {
           "name": "inert_local_members_do_not_make_registration_discovery_incomplete",
