@@ -8,11 +8,22 @@ impl Graph<'_> {
             return;
         }
         let mut classes = BTreeMap::<String, Vec<(usize, Node<'_>, BTreeSet<&str>)>>::new();
+        let mut binding_accesses = Vec::with_capacity(self.units.len());
         for (unit, input) in self.units.iter().enumerate() {
             let nodes = descendants(input.tree.root_node());
             if self.charge_proof_work(nodes.len()) {
                 return;
             }
+            let accesses =
+                if input.source.contains("binding") || input.source.contains("TOPLEVEL_BINDING") {
+                    if self.charge_proof_work(nodes.len()) {
+                        return;
+                    }
+                    direct_binding_accesses(&nodes, input.tree.root_node(), &input.source)
+                } else {
+                    BTreeSet::new()
+                };
+            binding_accesses.push(accesses);
             for node in nodes {
                 // Inventory every declaration before considering constructor eligibility.
                 if node.kind() == "class" {
@@ -135,6 +146,7 @@ impl Graph<'_> {
                     true
                 });
                 if closed {
+                    calls.retain(|call| !binding_accesses[unit].iter().any(|access| access < call));
                     let proof = result.0.entry(input.file.path.clone()).or_default();
                     proof.isolated_constants.insert(receiver.start_byte());
                     proof.isolated_calls.extend(calls);
@@ -366,4 +378,61 @@ impl Graph<'_> {
             }
         }
     }
+}
+
+/// Direct program-level access to the lexical Binding can rebind a local without
+/// creating an identifier reference to it. Deferred syntax and nested scopes are excluded.
+fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> BTreeSet<usize> {
+    let bindings = super::super::bindings::Bindings::collect(root, root, source);
+    nodes
+        .iter()
+        .copied()
+        .filter(|node| direct_program_expression(*node, root))
+        .filter(|node| match node.kind() {
+            "identifier" => text(*node, source) == "binding" && bindings.calls.contains(&node.id()),
+            "constant" => text(*node, source) == "TOPLEVEL_BINDING",
+            "call" => {
+                let receiver = node.child_by_field_name("receiver");
+                let method = node
+                    .child_by_field_name("method")
+                    .map(|method| text(method, source));
+                (method == Some("binding") && top_level_receiver(receiver, source))
+                    || (method.is_some_and(|method| {
+                        matches!(method, "send" | "public_send" | "__send__")
+                    }) && top_level_receiver(receiver, source)
+                        && node
+                            .child_by_field_name("arguments")
+                            .and_then(|arguments| arguments.named_child(0))
+                            .and_then(|target| static_method_name(target, source))
+                            .is_some_and(|target| target == "binding"))
+            }
+            _ => false, // fail-closed: unsupported syntax cannot establish Binding access
+        })
+        .map(|node| node.start_byte())
+        .collect()
+}
+
+/// Keeps direct syntax and possibly synchronous call blocks in the program execution path.
+fn direct_program_expression(node: Node<'_>, root: Node<'_>) -> bool {
+    std::iter::successors(node.parent(), |parent| parent.parent())
+        .take_while(|parent| *parent != root)
+        .all(|parent| {
+            !matches!(
+                parent.kind(),
+                "method"
+                    | "singleton_method"
+                    | "class"
+                    | "module"
+                    | "singleton_class"
+                    | "lambda"
+                    | "end_block"
+            )
+        })
+}
+
+/// Restricts Binding method dispatch to the implicit top-level receiver and Kernel.
+fn top_level_receiver(receiver: Option<Node<'_>>, source: &str) -> bool {
+    receiver.is_none_or(|receiver| {
+        receiver.kind() == "self" || constant(receiver, source).is_some_and(|name| name == "Kernel")
+    })
 }

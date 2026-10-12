@@ -1125,8 +1125,9 @@ mod tests {
     }
 
     #[test]
+    /// Exercises every optional collector at both exhausted and completed work limits.
     fn optional_proof_collectors_fail_closed_at_each_work_boundary() {
-        let source = "def handler; work(); end; callable = proc { work() }; Given('one', &method(:handler)); Then('two', &callable); register = method(:Given); register.call('three') { work() }; module Local; def self.safe; end; end; Local.safe; factory = -> { Given('four') { work() }; Then('five') { work() } }; factory.call; class LocalInstance; def safe; end; end; instance = LocalInstance.new; instance.safe";
+        let source = "def handler; work(); end; callable = proc { work() }; Given('one', &method(:handler)); Then('two', &callable); register = method(:Given); register.call('three') { work() }; module Local; def self.safe; end; end; Local.safe; factory = -> { Given('four') { work() }; Then('five') { work() } }; factory.call; class LocalInstance; def safe; end; end; instance = LocalInstance.new; instance.safe # binding";
         let units = [test_unit(source)];
         let nodes = descendants(units[0].tree.root_node());
         let references = identifier_references(&nodes, source);
