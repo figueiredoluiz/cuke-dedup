@@ -1,6 +1,6 @@
 //! Bounded source-only resolution. No Ruby, gem metadata or installation hooks are executed.
 
-use super::{descendants, literal_string, location, text};
+use super::{descendants, literal_string, location, syntax_error, text};
 use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::resource_limits::{
@@ -145,7 +145,7 @@ fn resolve_graph(
             .parse(&source, None)
             .ok_or_else(|| anyhow::anyhow!("Ruby parser produced no dependency tree"))?;
         let program = tree.root_node();
-        if program.has_error() {
+        if syntax_error(program, &source).is_some() {
             continue;
         }
         // Top-level statements come in source order, so the first loads are admitted and a gap

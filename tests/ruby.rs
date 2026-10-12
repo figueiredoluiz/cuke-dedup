@@ -4071,7 +4071,6 @@ fn ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust() {
             fs::write(dir.path().join("provider.rb"), "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end").unwrap();
             fs::write(dir.path().join("steps.rb"), format!("require_relative 'provider'\nGiven('control') {{ first() }}; Given('control') {{ second() }}\n{before} register = {origin}; {after}")).unwrap();
             let rows = project_records(dir.path());
-            let expected = if origin == "Provider::GIVEN" && after.ends_with("value = )") { 2 } else { expected };
             assert_discovery(&rows, expected, expected != 4, &format!("{origin}: {before} / {after}"));
             assert_eq!(rows.iter().any(|r| r["rule"] == "duplicate-matcher"), expected > 0);
             if expected == 2 { assert_eq!(rows[0]["evidence"]["comparison"]["leftMatcher"], "control"); }
@@ -4349,6 +4348,162 @@ fn ruby_unicode_escape_matcher_outcomes() {
             .unwrap()
             .iter()
             .any(|r| r["rule"] == "normalized-matcher" || r["rule"] == "duplicate-matcher"));
+    }
+}
+
+#[test]
+fn ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes() {
+    let invalid = [
+        (
+            "Given('same') { first() }; Then('same') { second() }\nend",
+            "steps.rb:2:1: Ruby source contains syntax errors",
+            2,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven(\"\\u{110000}\") { work() }",
+            "steps.rb:2:8: Ruby source contains syntax errors",
+            2,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven('other') { value = \"\\uD800\"; work(value) }",
+            "steps.rb:2:27: Ruby source contains syntax errors",
+            3,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven('other') { value = /\\u{0000041}/; work(value) }",
+            "steps.rb:2:27: Ruby source contains syntax errors",
+            3,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven('other') { value = %Q{\\u{zz}}; work(value) }",
+            "steps.rb:2:26: Ruby source contains syntax errors",
+            2,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven('other') { value = :\"\\u{110000}\"; work(value) }",
+            "steps.rb:2:28: Ruby source contains syntax errors",
+            3,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nvalue = (",
+            "steps.rb:2:10: Ruby source contains syntax errors",
+            2,
+        ),
+    ];
+    for (source, diagnostic, definitions) in invalid {
+        for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
+            let (exit, rows, stderr) = analyze(source, &[flag]);
+            assert_eq!(exit, 2, "{flag}: {source}: {stderr}");
+            assert_discovery(rows.as_array().unwrap(), definitions, true, source);
+            assert!(stderr.contains(diagnostic), "{source}: {stderr}");
+            assert_eq!(
+                rows.as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| row["rule"] == "duplicate-matcher")
+                    .count(),
+                1,
+                "{source}"
+            );
+        }
+    }
+
+    for source in [
+        r#"Given("\u0041") { work() }"#,
+        r#"Given("\u{41 1f600}") { work() }"#,
+        r#"Given("\u{ 41 }") { work() }"#,
+        r#"Given("\u{10ffff}") { work() }"#,
+        r#"Given('literal') { value = '\u{110000}'; work(value) }"#,
+        r#"Given('literal') { value = %q{\u{110000}}; work(value) }"#,
+        r#"Given('literal') { value = "\\u{110000}"; work(value) }"#,
+        r#"Given('receiver end') { (1..2).end }"#,
+    ] {
+        for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
+            let (exit, rows, stderr) = analyze(source, &[flag]);
+            assert_eq!(exit, 0, "{flag}: {source}: {stderr}");
+            assert_discovery(rows.as_array().unwrap(), 1, false, source);
+            assert!(!stderr.contains("Ruby source contains syntax errors"));
+        }
+    }
+
+    for (invalid, diagnostic) in [
+        ("end", "provider.rb:2:1: Ruby source contains syntax errors"),
+        (
+            r#"value = "\u{110000}""#,
+            "provider.rb:2:10: Ruby source contains syntax errors",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("provider.rb"),
+            format!("ROOT_GIVEN = method(:Given)\n{invalid}\n"),
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("entry.rb"),
+            "require_relative 'provider'\nROOT_GIVEN.call('same') { work() }\nROOT_GIVEN.call('other') { work() }\n",
+        )
+        .unwrap();
+        let output = run_project(directory.path(), "entry.rb", &["--fail-on-unparseable"]);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let rows = records(output.stdout);
+        assert_eq!(output.status.code(), Some(2), "{invalid}: {stderr}");
+        assert_discovery(&rows, 0, true, invalid);
+        assert!(stderr.contains(diagnostic), "{invalid}: {stderr}");
+        assert_handler_finding(&Value::Array(rows), false, invalid);
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("provider.rb"),
+        "Given('same') { first() }\nThen('same') { second() }\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("entry.rb"),
+        "require_relative 'provider'\nend\n",
+    )
+    .unwrap();
+    let output = run_project(directory.path(), "entry.rb", &["--fail-on-unparseable"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_discovery(&rows, 0, true, &stderr);
+    assert!(
+        stderr.contains("entry.rb:2:1: Ruby source contains syntax errors"),
+        "{stderr}"
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("provider.rb"),
+        "ROOT_GIVEN = method(:Given)\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("entry.rb"),
+        "require_relative 'provider'\nROOT_GIVEN.call('first') { work() }\nROOT_GIVEN.call('second') { work() }\n",
+    )
+    .unwrap();
+    let output = run_project(directory.path(), "*.rb", &["--fail-on-incomplete"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let rows = records(output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert_discovery(&rows, 2, false, &stderr);
+    assert_handler_finding(&Value::Array(rows), true, &stderr);
+
+    fs::write(directory.path().join("invalid.rb"), "end\n").unwrap();
+    for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
+        let output = run_project(directory.path(), "*.rb", &[flag]);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let rows = records(output.stdout);
+        assert_eq!(output.status.code(), Some(2), "{flag}: {stderr}");
+        assert_discovery(&rows, 0, true, &stderr);
+        assert!(
+            stderr.contains("invalid.rb:1:1: Ruby source contains syntax errors"),
+            "{flag}: {stderr}"
+        );
+        assert_handler_finding(&Value::Array(rows), false, &stderr);
     }
 }
 

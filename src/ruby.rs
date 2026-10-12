@@ -112,7 +112,7 @@ impl SourceAdapter for RubyAdapter {
         let (units, exceeded) = match providers::load_proof_sources(files, source_budget)? {
             providers::ProofSources::Loaded(units) => (Some(units), false),
             providers::ProofSources::OverBudget => (None, true),
-            providers::ProofSources::Unreadable => (None, false),
+            providers::ProofSources::Untrusted => (None, false),
         };
         let edges = session.dependency_edges();
         let state = session.state::<RubySession>()?;
@@ -300,22 +300,33 @@ fn extract_with_proof(
         .parse(source, None)
         .context("Ruby parser produced no tree")?;
     let root = tree.root_node();
-    let proof = proof.filter(|_| !root.has_error());
+    let syntax_error = syntax_error(root, source);
+    let syntax_valid = syntax_error.is_none();
+    let proof = proof.filter(|_| syntax_valid);
+    let assertions = assertions.filter(|_| syntax_valid);
     let nodes = descendants(root);
     let lines: Vec<_> = source.lines().collect();
-    let mut aliases = registration_aliases::RegistrationAliases::collect(root, source);
+    let mut aliases = if syntax_valid {
+        registration_aliases::RegistrationAliases::collect(root, source)
+    } else {
+        Default::default()
+    };
     if let Some(proof) = proof {
         aliases.extend_provider(root, proof);
     }
-    let wrappers = registration_wrappers::RegistrationWrappers::collect(root, source, &aliases);
+    let wrappers = if syntax_valid {
+        registration_wrappers::RegistrationWrappers::collect(root, source, &aliases)
+    } else {
+        Default::default()
+    };
     let mut result = Extraction {
         indirect_usage: Some(indirect_usage(&nodes, source, &aliases, proof)),
         ..Extraction::default()
     };
-    if root.has_error() {
+    if let Some(cause) = syntax_error {
         result.diagnostics.push(diagnostic(
             file,
-            root,
+            cause,
             source,
             Kind::Unparseable,
             "Ruby source contains syntax errors; extraction is incomplete",
@@ -1040,6 +1051,41 @@ fn descendants(root: Node<'_>) -> Vec<Node<'_>> {
         pending.extend(node.named_children(&mut cursor));
     }
     result
+}
+
+/// Returns the first syntax boundary Ruby rejects but tree-sitter may recover through.
+fn syntax_error<'a>(root: Node<'a>, source: &str) -> Option<Node<'a>> {
+    let mut nodes = Vec::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        nodes.push(node);
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+    }
+    let supplemental: Vec<_> = nodes
+        .iter()
+        .copied()
+        .filter(|node| {
+            (node.kind() == "identifier"
+                && node.parent() == Some(root)
+                && text(*node, source) == "end")
+                || (node.kind() == "escape_sequence" && invalid_unicode_escape(text(*node, source)))
+        })
+        .collect();
+    nodes
+        .into_iter()
+        .filter(|node| node.is_error() || node.is_missing())
+        .chain(supplemental.iter().copied())
+        .min_by_key(|node| (node.start_byte(), node.end_byte()))
+}
+
+/// Rejects Unicode escapes whose contents are not Ruby Unicode scalar values.
+fn invalid_unicode_escape(raw: &str) -> bool {
+    let Some(raw) = raw.strip_prefix("\\u") else {
+        return false;
+    };
+    let mut chars = raw.chars().peekable();
+    unicode_escape(&mut chars).is_none() || chars.next().is_some()
 }
 
 fn registration_parts<'a>(

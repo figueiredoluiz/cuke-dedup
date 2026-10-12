@@ -78,8 +78,9 @@ pub(super) enum ProofSources {
     Loaded(Vec<Unit>),
     /// The selection exceeds the `(files, bytes)` proof budget.
     OverBudget,
-    /// A selected file could not be read or canonicalized; extraction reports it.
-    Unreadable,
+    /// A selected file could not be read, parsed without syntax errors, or canonicalized;
+    /// extraction reports it.
+    Untrusted,
 }
 
 /// Test entry point over [`load_proof_sources`] that keeps only the loaded units.
@@ -90,7 +91,7 @@ pub(super) fn load_units(
 ) -> Result<Option<Vec<Unit>>> {
     Ok(match load_proof_sources(files, budget)? {
         ProofSources::Loaded(units) => Some(units),
-        ProofSources::OverBudget | ProofSources::Unreadable => None,
+        ProofSources::OverBudget | ProofSources::Untrusted => None,
     })
 }
 
@@ -112,7 +113,7 @@ pub(super) fn load_proof_sources(
         let Ok(source) = read_utf8(&file.path, "Ruby provider source", MAX_PROJECT_INPUT_BYTES)
         else {
             // Extraction reports per-file failures and preserves trustworthy neighbors.
-            return Ok(ProofSources::Unreadable);
+            return Ok(ProofSources::Untrusted);
         };
         bytes += source.len();
         if bytes > budget.1 {
@@ -121,8 +122,12 @@ pub(super) fn load_proof_sources(
         let tree = parser
             .parse(&source, None)
             .context("Ruby provider parser returned no tree")?;
+        if super::syntax_error(tree.root_node(), &source).is_some() {
+            // A file Ruby rejects can still bind names its recovered tree hides.
+            return Ok(ProofSources::Untrusted);
+        }
         let Ok(canonical_path) = crate::config::canonical_platform_path(&file.path) else {
-            return Ok(ProofSources::Unreadable);
+            return Ok(ProofSources::Untrusted);
         };
         units.push(Unit {
             file: file.clone(),
