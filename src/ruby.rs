@@ -1023,7 +1023,8 @@ fn deferring_dsl_method(name: &str) -> bool {
 }
 
 fn registration(name: &str) -> bool {
-    step_keywords::STEP_KEYWORDS.binary_search(&name).is_ok()
+    name == "register_rb_step_definition"
+        || step_keywords::STEP_KEYWORDS.binary_search(&name).is_ok()
 }
 
 fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {

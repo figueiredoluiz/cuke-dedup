@@ -5618,6 +5618,69 @@ fn ruby_registration_aliases_use_valid_main_method_captures() {
 }
 
 #[test]
+fn ruby_core_registrar_preserves_findings_and_fails_closed() {
+    for (source, definitions, matcher_finding, handler_finding) in [
+        (
+            "register_rb_step_definition('same') { work() }; register_rb_step_definition('same') { work() }; register_rb_step_definition('other') { work() }",
+            3,
+            true,
+            true,
+        ),
+        (
+            "register_rb_step_definition('same') { alpha() }; register_rb_step_definition('same') { beta() }",
+            2,
+            true,
+            false,
+        ),
+        (
+            "setup = method(:register_rb_step_definition); setup.call('same') { work() }; setup.call('other') { work() }",
+            2,
+            false,
+            true,
+        ),
+        (
+            "def setup(text, &handler) = register_rb_step_definition(text, &handler); setup('same') { work() }; setup('other') { work() }",
+            2,
+            false,
+            true,
+        ),
+        (
+            "register_rb_step_definition('same') { Object.define_method(:Given) {} }; register_rb_step_definition('other') { Object.define_method(:Given) {} }",
+            2,
+            false,
+            true,
+        ),
+    ] {
+        let (exit, rows, _) = analyze(source, &["--fail-on-incomplete"]);
+        assert_eq!(exit, 1, "{source}");
+        assert_discovery(rows.as_array().unwrap(), definitions, false, source);
+        assert_handler_finding(&rows, handler_finding, source);
+        assert_eq!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["rule"] == "duplicate-matcher"),
+            matcher_finding,
+            "{source}"
+        );
+    }
+
+    for source in [
+        "def register_rb_step_definition(*) = nil; register_rb_step_definition('same') { work() }",
+        "Object.define_method(:register_rb_step_definition) {}; register_rb_step_definition('same') { work() }",
+        "self.register_rb_step_definition('same') { work() }",
+        "foreign.register_rb_step_definition('same') { work() }",
+        "Cucumber::Glue::Dsl.register_rb_step_definition('same', proc { work() })",
+        "register_rb_step_definition('same', :handler)",
+    ] {
+        let (exit, rows, _) = analyze(source, &["--fail-on-incomplete"]);
+        assert_eq!(exit, 2, "{source}");
+        assert_discovery(rows.as_array().unwrap(), 0, true, source);
+        assert_handler_finding(&rows, false, source);
+    }
+}
+
+#[test]
 fn ruby_unresolved_mutable_capture_never_gains_handler_trust_from_discovery() {
     for (capture, expected) in [
         ("captured = :fixed", true),
