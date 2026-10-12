@@ -3876,6 +3876,10 @@ fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
         "send(:binding).local_variable_set(:router, self)",
         "::Kernel.public_send(:binding).local_variable_set(:router, self)",
         "1.times { binding.local_variable_set(:router, self) }",
+        "def at_exit; yield; end; at_exit { binding.local_variable_set(:router, self) }",
+        "def proc; yield; end; proc { binding.local_variable_set(:router, self) }",
+        "def Given(*); yield; end; Given('ignored') { binding.local_variable_set(:router, self) }",
+        "proc { binding.local_variable_set(:router, self) }",
     ];
     for access in binding_accesses {
         for dispatch in ["send", "public_send", "__send__"] {
@@ -3900,9 +3904,10 @@ fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
                 "",
             ),
             (
-                "deferred = proc { binding.local_variable_set(:router, self) }",
+                "deferred = -> { binding.local_variable_set(:router, self) }",
                 "",
             ),
+            ("END { binding.local_variable_set(:router, self) }", ""),
             ("", "binding.local_variable_set(:router, self)"),
         ] {
             let source = format!(

@@ -381,13 +381,13 @@ impl Graph<'_> {
 }
 
 /// Direct program-level access to the lexical Binding can rebind a local without
-/// creating an identifier reference to it. Deferred and nested scopes are excluded.
+/// creating an identifier reference to it. Deferred syntax and nested scopes are excluded.
 fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> BTreeSet<usize> {
     let bindings = super::super::bindings::Bindings::collect(root, root, source);
     nodes
         .iter()
         .copied()
-        .filter(|node| direct_program_expression(*node, root, source))
+        .filter(|node| direct_program_expression(*node, root))
         .filter(|node| match node.kind() {
             "identifier" => text(*node, source) == "binding" && bindings.calls.contains(&node.id()),
             "constant" => text(*node, source) == "TOPLEVEL_BINDING",
@@ -413,27 +413,21 @@ fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> 
 }
 
 /// Keeps direct syntax and possibly synchronous call blocks in the program execution path.
-fn direct_program_expression(node: Node<'_>, root: Node<'_>, source: &str) -> bool {
+fn direct_program_expression(node: Node<'_>, root: Node<'_>) -> bool {
     std::iter::successors(node.parent(), |parent| parent.parent())
         .take_while(|parent| *parent != root)
-        .all(|parent| match parent.kind() {
-            "method" | "singleton_method" | "class" | "module" | "singleton_class" | "lambda" => {
-                false
-            }
-            "block" | "do_block" => !known_deferred_block(parent, source),
-            _ => true,
+        .all(|parent| {
+            !matches!(
+                parent.kind(),
+                "method"
+                    | "singleton_method"
+                    | "class"
+                    | "module"
+                    | "singleton_class"
+                    | "lambda"
+                    | "end_block"
+            )
         })
-}
-
-/// Recognizes syntax whose block body does not execute during the containing statement.
-fn known_deferred_block(block: Node<'_>, source: &str) -> bool {
-    block.parent().is_some_and(|call| {
-        super::super::bindings::callable_literal(call, source).is_some()
-            || call.child_by_field_name("method").is_some_and(|method| {
-                let name = text(method, source);
-                name == "at_exit" || registration(name)
-            })
-    })
 }
 
 /// Restricts Binding method dispatch to the implicit top-level receiver and Kernel.
