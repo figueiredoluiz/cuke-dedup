@@ -76,9 +76,13 @@ pub(super) fn fingerprint(
         .and_then(|total| total.checked_sub(source_snippet.len()))
         .expect("bounded snippet fits the legacy comparison-work charge");
     let exact: String = exact_hash.chars().cycle().take(exact_len).collect();
+    // An untrusted receiverless assertion factory must retain exact structural identity too.
+    let exact_policy = untrusted_expect(&nodes, source, &bindings);
     // Literal abstraction needs the complete operation stream that configured assertion
     // evidence computes; ordinary handlers without it keep exact identity.
-    let structural = parameterized_calls(block, source, &bindings)
+    let structural = (!exact_policy)
+        .then(|| parameterized_calls(block, source, &bindings))
+        .flatten()
         .or_else(|| {
             assertions
                 .and_then(|assertions| assertions.ordinary_structural(block, source, &bindings))
@@ -98,7 +102,6 @@ pub(super) fn fingerprint(
     });
     // An untrusted `expect` chain anywhere in the handler keeps the exact-handler policy under
     // either regime: duplicates by alpha identity stay, near and action similarity are withdrawn.
-    let exact_policy = untrusted_expect(&nodes, source, &bindings);
     if assertion_evidence {
         // Configured assertion evidence keeps the complete-syntax stream bound to its values.
         behavior_signature.extend(events.unwrap_or_default());
@@ -168,13 +171,25 @@ pub(super) fn parameterized_calls(
         if call.kind() != "call" || call.child_by_field_name("block").is_some() {
             return None;
         }
-        let receiver = call.child_by_field_name("receiver")?;
-        if !matches!(
-            receiver.kind(),
-            "identifier" | "self" | "instance_variable" | "global_variable" | "constant"
-        ) {
-            return None;
-        }
+        let (receiver_kind, receiver_name, operator) = match call.child_by_field_name("receiver") {
+            Some(receiver) => {
+                if !matches!(
+                    receiver.kind(),
+                    "identifier" | "self" | "instance_variable" | "global_variable" | "constant"
+                ) {
+                    return None;
+                }
+                (
+                    receiver.kind(),
+                    bindings
+                        .names
+                        .get(&receiver.id())
+                        .map_or(text(receiver, source), String::as_str),
+                    text(call.child_by_field_name("operator")?, source),
+                )
+            }
+            None => ("implicit_self", "", ""),
+        };
         let mut arguments = Vec::new();
         if let Some(args) = call.child_by_field_name("arguments") {
             let mut cursor = args.walk();
@@ -191,12 +206,9 @@ pub(super) fn parameterized_calls(
             }
         }
         calls.push((
-            receiver.kind(),
-            bindings
-                .names
-                .get(&receiver.id())
-                .map_or(text(receiver, source), String::as_str),
-            text(call.child_by_field_name("operator")?, source),
+            receiver_kind,
+            receiver_name,
+            operator,
             text(call.child_by_field_name("method")?, source),
             arguments,
         ));
