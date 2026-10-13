@@ -4,7 +4,8 @@ use super::{descendants, literal_string, location, syntax_error, text};
 use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::resource_limits::{
-    read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
+    known_input_limit_exceeded, read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES,
+    MAX_REGISTRATION_MODULE_BYTES,
 };
 use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile, SourceLanguage};
 use globset::GlobSet;
@@ -205,6 +206,16 @@ fn resolve_graph(
                 continue;
             }
             if !known.contains(&target) {
+                if let Some(reason) = known_input_limit_exceeded(
+                    &target,
+                    "Ruby dependency source",
+                    MAX_PROJECT_INPUT_BYTES,
+                ) {
+                    files
+                        .dependency_gaps
+                        .push(DependencyGap::new(location(&file, node, &source), reason));
+                    continue;
+                }
                 if let Some(reason) = expansion.admit(&target, budget) {
                     files
                         .dependency_gaps

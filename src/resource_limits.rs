@@ -94,6 +94,23 @@ pub(crate) fn is_input_limit_error(error: &anyhow::Error) -> bool {
         .any(|cause| cause.downcast_ref::<InputLimitExceeded>().is_some())
 }
 
+/// Returns the standard input-limit diagnostic when metadata already proves a file is too large.
+/// Metadata failures and files that can still grow are left to the bounded reader.
+pub(crate) fn known_input_limit_exceeded(
+    path: &Path,
+    kind: &'static str,
+    limit: u64,
+) -> Option<String> {
+    (std::fs::metadata(path).ok()?.len() > limit).then(|| {
+        InputLimitExceeded {
+            path: path.to_owned(),
+            kind,
+            limit,
+        }
+        .to_string()
+    })
+}
+
 pub(crate) fn compile_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
     compile_regex_with_limits(pattern, REGEX_SIZE_LIMIT_BYTES, REGEX_DFA_SIZE_LIMIT_BYTES)
 }
@@ -136,6 +153,19 @@ mod tests {
         let error = read_utf8(&path, "source", 4).unwrap_err();
         assert!(!is_input_limit_error(&error));
         assert!(error.to_string().contains("not valid UTF-8"));
+    }
+
+    #[test]
+    fn known_input_limit_only_rejects_metadata_above_the_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dependency.rb");
+        fs::write(&path, "1234").unwrap();
+        assert_eq!(known_input_limit_exceeded(&path, "source", 4), None);
+
+        fs::write(&path, "12345").unwrap();
+        let diagnostic = known_input_limit_exceeded(&path, "source", 4).unwrap();
+        assert!(diagnostic.contains("dependency.rb"));
+        assert!(diagnostic.contains("4-byte input limit"));
     }
 
     #[cfg(unix)]
