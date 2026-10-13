@@ -3436,12 +3436,13 @@ fn ruby_proposal_budget_rows() -> Vec<RubyBudgetRow> {
 fn ruby_pair_verification_fails_closed_at_the_total_similarity_budget() {
     // 32 near matchers over one handler: 496 pairs, each charged evidence work for its
     // duplicate-handler and near-duplicate-step findings. One more literal character pushes the
-    // last pair past the limit; identical handlers charge no handler matrix.
-    for (length, truncated) in [(58_527, 0), (58_528, 1)] {
+    // last pair past the limit; the unmodeled array argument keeps the exact-handler policy, and
+    // identical handlers charge no handler matrix.
+    for (length, truncated) in [(58_484, 0), (58_485, 1)] {
         let literal = "x".repeat(length);
         let definition = |index| {
             let source = format!(
-                "Given('the account record {index:02} is enabled') {{ open('{literal}') }}\n"
+                "Given('the account record {index:02} is enabled') {{ open(['{literal}']) }}\n"
             );
             (format!("s{index:02}.rb"), source)
         };
@@ -4723,7 +4724,7 @@ fn ruby_parameterization_final_outcome_matrix() {
             "page.theme(compute('light'))",
             false,
         ),
-        ("theme('dark')", "theme('light')", false),
+        ("theme('dark')", "theme('light')", true),
         (
             "expect(page.theme).to eq('dark')",
             "expect(page.theme).to eq('light')",
@@ -6847,6 +6848,95 @@ const DUP: &[&str] = &["duplicate-handler", "near-duplicate-step"];
 const NEAR: &[&str] = &["near-duplicate-step"];
 const PARAM: &[&str] = &["parameterization-candidate"];
 const NONE: &[&str] = &[];
+
+/// Receiverless literal calls form structural classes only when the complete call sequence is
+/// modeled; dynamic arguments and conflicting effects retain their existing final outcomes.
+#[test]
+fn receiverless_literal_calls_form_only_closed_structural_classes() {
+    for (label, first, second, expected) in [
+        ("parenthesized literals", "perform(1)", "perform(2)", PARAM),
+        ("command-call syntax", "perform(1)", "perform 2", PARAM),
+        (
+            "literal sequence",
+            "prepare(1); perform('a')",
+            "prepare(2); perform('b')",
+            PARAM,
+        ),
+        (
+            "explicit receiver control",
+            "page.perform(1)",
+            "page.perform(2)",
+            PARAM,
+        ),
+        ("different methods", "perform(1)", "other(2)", NONE),
+        (
+            "implicit and explicit self",
+            "perform(1)",
+            "self.perform(2)",
+            NONE,
+        ),
+        (
+            "different literal kinds",
+            "perform('one')",
+            "perform(2)",
+            NONE,
+        ),
+        ("different arity", "perform(1)", "perform(2, 3)", NONE),
+        (
+            "different call order",
+            "prepare(1); perform(2)",
+            "perform(3); prepare(4)",
+            NEAR,
+        ),
+        ("extra effect", "perform(1)", "perform(2); audit()", NEAR),
+        (
+            "dynamic arguments",
+            "perform(value)",
+            "perform(other)",
+            NEAR,
+        ),
+        (
+            "nested calls",
+            "perform(build(1))",
+            "perform(build(2))",
+            NONE,
+        ),
+        (
+            "attached blocks",
+            "perform(1) { audit() }",
+            "perform(2) { audit() }",
+            NONE,
+        ),
+        (
+            "untrusted assertion factory",
+            "expect(1)",
+            "expect(2)",
+            NONE,
+        ),
+    ] {
+        check_action_pair(label, first, second, expected);
+    }
+
+    let parameterized = "Given('the parcel status is verified') { |value| perform(1) }\nGiven('the parcel status is now verified') { |value| perform(2) }\n";
+    let (rules, incomplete, _) = action_rows(parameterized, &[]);
+    assert_eq!(rules, NONE, "handler parameters");
+    assert!(!incomplete, "handler parameters");
+}
+
+/// Brace, `do...end` and named-method handlers preserve the same receiverless-call outcome.
+#[test]
+fn receiverless_literal_calls_preserve_sibling_handler_forms() {
+    let sources = [
+        action_pair("perform(1)", "perform(2)"),
+        "Given('the parcel status is verified') do perform(1) end\nGiven('the parcel status is now verified') do perform(2) end\n".to_owned(),
+        "def first_handler; perform(1); end\ndef second_handler; perform(2); end\nGiven('the parcel status is verified', &method(:first_handler))\nGiven('the parcel status is now verified', &method(:second_handler))\n".to_owned(),
+    ];
+    for source in sources {
+        let (rules, incomplete, _) = action_rows(&source, &[]);
+        assert_eq!(rules, PARAM, "{source}");
+        assert!(!incomplete, "{source}");
+    }
+}
 
 /// Action events name the receiver-chain root and method; wording findings need ordered event
 /// overlap and at least one differing event.
