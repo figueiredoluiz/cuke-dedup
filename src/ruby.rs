@@ -1453,7 +1453,7 @@ fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexCo
         result = rewritten;
     }
     result.push(')');
-    match regex::Regex::new(&result) {
+    match crate::resource_limits::compile_regex(&result) {
         Ok(_) => Ok(result),
         Err(regex::Error::CompiledTooBig(_)) => Err(RegexConversionError::CompiledTooBig),
         Err(_) => Err(RegexConversionError::Unsupported),

@@ -12411,10 +12411,11 @@ fn ruby_exclusions_and_discovery_flags_define_the_analysis_corpus() {
     }
 }
 
-/// A valid Ruby regexp whose compiled program exceeds the 1 MiB regex limit is named with the
-/// actionable fix, keeps its definition in the reports, and fails under `--fail-on-incomplete`.
+/// A valid Ruby regexp that fits the crate default but exceeds the project limit is diagnosed
+/// during extraction, keeps its definition in reports, and fails under `--fail-on-incomplete`.
 #[test]
 fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
+    assert!(regex::Regex::new("a{100000}").is_ok());
     // Ruby rejects the original `a{1000000}` (Onigmo caps a repeat at 100,000), so this uses the
     // largest repeat Ruby accepts, which still exceeds the compiled-program limit.
     let directory = tempfile::tempdir().unwrap();
@@ -12422,7 +12423,7 @@ fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
     // The regexp sits on line 3 so a `1:1` location fallback cannot satisfy `limit`.
     let oversized = "# Oversized repeat.\n\nGiven(/a{100000}/) { work() }\n";
     ruby_write(root, "steps.rb", oversized);
-    let limit = "steps.rb:3:1 exceeds the 1048576-byte regex resource limit; simplify the matcher";
+    let limit = "steps.rb:3:1: Ruby regular expression exceeds the regex resource limit";
     for strict in [false, true] {
         let mut extra = vec!["--threshold", "100"];
         if strict {
@@ -12436,6 +12437,11 @@ fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
             "{stderr}"
         );
         assert!(stderr.contains(limit), "{stderr}");
+        assert!(!stderr.contains("step matcher at "), "{stderr}");
+        assert!(
+            !stderr.contains("outside the supported static matching subset"),
+            "{stderr}"
+        );
         assert_eq!(summary["summary"]["definitionsAnalyzed"], 1);
     }
     // Control: a small repeat compiles, so the run carries no resource diagnostic.
