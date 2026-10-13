@@ -5,7 +5,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, parityDeficits, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, testSummary, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
+import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, parityDeficits, partitionEvidenceTargets, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, testSummary, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
@@ -175,10 +175,14 @@ const failed = observations.filter((item) => item.deficits.length > 0).length;
 // Evidence runs last, after every oracle and fixture is validated, and builds into its own
 // target directory so the analyzed binary is never rewritten by cargo's test profile.
 let evidenceExecuted = false;
+let platformDeferred = [];
 if (executesEvidence({ regression, inventoryOnly, blocked: blockers.length > 0 || failed > 0, forced: forceEvidence })) {
   evidenceExecuted = true;
   const env = { ...process.env, CARGO_TARGET_DIR: EVIDENCE_TARGET_DIR };
-  for (const batch of evidenceBatches(evidenceTargets(units))) {
+  const partition = partitionEvidenceTargets(evidenceTargets(units), process.platform);
+  platformDeferred = partition.deferred.map((target) => ({ file: target.file, name: target.name, platforms: target.platforms, referencedBy: target.referencedBy }));
+  for (const target of platformDeferred) console.log(`PLATFORM-DEFERRED ${target.file}:${target.name} (requires ${target.platforms.join(", ")})`);
+  for (const batch of evidenceBatches(partition.applicable)) {
     const run = spawnSync("cargo", batch.args, { cwd: resolve("."), env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 1_800_000 });
     const failures = evidenceFailures(run, batch);
     if (failures.length === 0) continue;
@@ -196,7 +200,7 @@ console.log(`${mappings.length} corpus cases mapped; `
 if (process.env.CUKE_DEDUP_RUBY_PARITY_REPORT) {
   const binarySha256 = inventoryOnly ? null : createHash("sha256").update(await readFile(binary)).digest("hex");
   await writeFile(process.env.CUKE_DEDUP_RUBY_PARITY_REPORT,
-    `${JSON.stringify({ binarySha256, evidenceExecuted, evidenceTargetDir: EVIDENCE_TARGET_DIR, mappings: mappings.length, unitContracts, observations, blockers }, null, 2)}\n`);
+    `${JSON.stringify({ binarySha256, evidenceExecuted, platformDeferred, evidenceTargetDir: EVIDENCE_TARGET_DIR, mappings: mappings.length, unitContracts, observations, blockers }, null, 2)}\n`);
 }
 // Inventory validation is useful during implementation; it is explicitly NOT release acceptance.
 // The normal command fails until all desired outcomes and all missing-case dispositions close.

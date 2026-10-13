@@ -209,6 +209,8 @@ impl SourceAdapter for RubyAdapter {
         file: &SourceFile,
         session: &mut SourceExtractionSession,
     ) -> Result<Extraction> {
+        let prepared = prepare_nuls(source);
+        let source = prepared.as_ref();
         let assertions = session
             .state::<RubySession>()?
             .assertions
@@ -276,7 +278,50 @@ fn extract(
     file: &SourceFile,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
     // Without a session nothing finalizes the suite, so no call can be contained.
-    extract_with_proof(source, file, None, None, false)
+    let prepared = prepare_nuls(source);
+    extract_with_proof(prepared.as_ref(), file, None, None, false)
+}
+
+/// Match Ruby's lexical NUL boundary without executing the source. NUL inside a Ruby comment is
+/// ignored; NUL inside a string or regexp is data; elsewhere Ruby stops reading the source.
+fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
+    if !source.contains('\0') {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    // A space has the same byte width and lets tree-sitter classify comments and quoted data
+    // without its special NUL error recovery changing the enclosing lexical node.
+    let probe = source.replace('\0', " ");
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_ruby::LANGUAGE.into())
+        .is_err()
+    {
+        return std::borrow::Cow::Owned(source.split('\0').next().unwrap_or("").to_owned());
+    }
+    let Some(tree) = parser.parse(&probe, None) else {
+        return std::borrow::Cow::Owned(source.split('\0').next().unwrap_or("").to_owned());
+    };
+    let mut prepared = source.to_owned();
+    for (byte, _) in source.match_indices('\0') {
+        let mut node = tree.root_node().descendant_for_byte_range(byte, byte + 1);
+        let mut kind = None;
+        while let Some(current) = node {
+            if matches!(current.kind(), "comment" | "string" | "regex") {
+                kind = Some(current.kind());
+                break;
+            }
+            node = current.parent();
+        }
+        match kind {
+            Some("comment") => prepared.replace_range(byte..byte + 1, " "),
+            Some("string" | "regex") => {}
+            _ => {
+                prepared.truncate(byte);
+                break;
+            }
+        }
+    }
+    std::borrow::Cow::Owned(prepared)
 }
 
 /// Extracts registrations using source-owned provider and assertion evidence.
@@ -438,6 +483,16 @@ fn extract_with_proof(
         if !registration(name) {
             continue;
         }
+        if node
+            .parent()
+            .is_some_and(|parent| parent.kind() != "program")
+            && !may_register(node, source)
+            && node.child_by_field_name("block").is_none()
+        {
+            // A call without a possible handler cannot add a step. An attached block still
+            // indicates an attempted registration with potentially unsupported arguments.
+            continue;
+        }
         if replaced
             || (node
                 .parent()
@@ -467,18 +522,35 @@ fn extract_with_proof(
             ));
             continue;
         };
-        let translated_regex = (matcher_kind == MatcherKind::RegularExpression)
-            .then(|| regex_expression(&matcher, &flags))
-            .flatten();
-        if matcher_kind == MatcherKind::RegularExpression && translated_regex.is_none() {
-            result.diagnostics.push(diagnostic(
-                file,
-                node,
-                source,
-                Kind::Incomplete,
-                "Ruby regular expression is outside the supported static matching subset",
-            ));
-        }
+        let translated_regex = if matcher_kind == MatcherKind::RegularExpression {
+            match regex_expression_result(&matcher, &flags) {
+                Ok(expression) => Some(expression),
+                Err(RegexConversionError::Unsupported) => {
+                    result.diagnostics.push(diagnostic(
+                        file,
+                        node,
+                        source,
+                        Kind::Incomplete,
+                        "Ruby regular expression is outside the supported static matching subset",
+                    ));
+                    None
+                }
+                Err(RegexConversionError::CompiledTooBig) => {
+                    result.diagnostics.push(diagnostic(
+                        file,
+                        node,
+                        source,
+                        Kind::Incomplete,
+                        "Ruby regular expression exceeds the regex resource limit",
+                    ));
+                    None
+                }
+                // Shared matcher compilation reports the raw-pattern limit at its location.
+                Err(RegexConversionError::PatternTooLong) => None,
+            }
+        } else {
+            None
+        };
         let handler = proof
             .and_then(|p| p.handlers.get(&node.start_byte()))
             .cloned()
@@ -1228,10 +1300,23 @@ fn compatible_ignorecase_literal(pattern: &str) -> bool {
 
 /// Ruby line anchors are multiline by default; unsupported constructs never reach JS conversion.
 pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
-    if pattern.len() > crate::resource_limits::MAX_REGEX_PATTERN_BYTES
-        || flags
-            .chars()
-            .any(|flag| !matches!(flag, 'm' | 'i' | 'u' | 'n'))
+    regex_expression_result(pattern, flags).ok()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RegexConversionError {
+    PatternTooLong,
+    CompiledTooBig,
+    Unsupported,
+}
+
+fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexConversionError> {
+    if pattern.len() > crate::resource_limits::MAX_REGEX_PATTERN_BYTES {
+        return Err(RegexConversionError::PatternTooLong);
+    }
+    if flags
+        .chars()
+        .any(|flag| !matches!(flag, 'm' | 'i' | 'u' | 'n'))
         || (flags.contains('n') && (!pattern.is_ascii() || flags.contains('u')))
         || (flags.contains('i') && !compatible_ignorecase_literal(pattern))
         || pattern.contains("[[:")
@@ -1240,7 +1325,7 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
             .iter()
             .any(|operator| pattern.contains(operator))
     {
-        return None;
+        return Err(RegexConversionError::Unsupported);
     }
     let mut result = String::from(if flags.contains('m') { "(?ms:" } else { "(?m:" });
     if flags.contains('i') {
@@ -1255,7 +1340,9 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
     while let Some(ch) = chars.next() {
         let in_class = class_depth > 0;
         if ch == '{' && !in_class {
-            if let Some(bound) = repetition_bound(&mut chars)? {
+            if let Some(bound) =
+                repetition_bound(&mut chars).ok_or(RegexConversionError::Unsupported)?
+            {
                 result.push('{');
                 result.push_str(&bound);
                 result.push('}');
@@ -1287,13 +1374,14 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
                 ordinary_captures.push(result.len() + 1);
             } else {
                 chars.next();
-                match chars.next()? {
+                match chars.next().ok_or(RegexConversionError::Unsupported)? {
                     ':' => result.push_str("(?:"),
+                    'm' if chars.next() == Some(':') => result.push_str("(?s:"),
                     delimiter @ ('<' | '\'') => {
                         let end = if delimiter == '<' { '>' } else { '\'' };
                         let mut name = String::new();
                         loop {
-                            let member = chars.next()?;
+                            let member = chars.next().ok_or(RegexConversionError::Unsupported)?;
                             if member == end {
                                 break;
                             }
@@ -1301,16 +1389,16 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
                                 || member == '_'
                                 || (!name.is_empty() && member.is_ascii_digit()))
                             {
-                                return None;
+                                return Err(RegexConversionError::Unsupported);
                             }
                             name.push(member);
                         }
                         if name.is_empty() || !capture_names.insert(name) {
-                            return None;
+                            return Err(RegexConversionError::Unsupported);
                         }
                         result.push('(');
                     }
-                    _ => return None,
+                    _ => return Err(RegexConversionError::Unsupported),
                 }
                 continue;
             }
@@ -1319,7 +1407,7 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
             result.push(ch);
             continue;
         }
-        let escaped = chars.next()?;
+        let escaped = chars.next().ok_or(RegexConversionError::Unsupported)?;
         match escaped {
             'd' => result.push_str("[0-9]"),
             'D' => result.push_str("[^0-9]"),
@@ -1335,7 +1423,7 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
             c if c.is_ascii_punctuation() || c == ' ' => {
                 result.push_str(&regex::escape(&c.to_string()));
             }
-            _ => return None,
+            _ => return Err(RegexConversionError::Unsupported),
         }
     }
     // Ruby suppresses ordinary captures whenever the expression has a named capture.
@@ -1352,8 +1440,11 @@ pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
         result = rewritten;
     }
     result.push(')');
-    regex::Regex::new(&result).ok()?;
-    Some(result)
+    match regex::Regex::new(&result) {
+        Ok(_) => Ok(result),
+        Err(regex::Error::CompiledTooBig(_)) => Err(RegexConversionError::CompiledTooBig),
+        Err(_) => Err(RegexConversionError::Unsupported),
+    }
 }
 
 // Consume only Ruby repetition syntax. Other braces are literal; excessively long numeric

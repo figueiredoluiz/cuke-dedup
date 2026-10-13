@@ -119,6 +119,7 @@ pub(super) fn load_proof_sources(
         if bytes > budget.1 {
             return Ok(ProofSources::OverBudget);
         }
+        let source = super::prepare_nuls(&source).into_owned();
         let tree = parser
             .parse(&source, None)
             .context("Ruby provider parser returned no tree")?;

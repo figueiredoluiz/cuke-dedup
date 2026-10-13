@@ -142,6 +142,7 @@ fn resolve_graph(
         ) else {
             continue;
         };
+        let source = super::prepare_nuls(&source).into_owned();
         let tree = parser
             .parse(&source, None)
             .ok_or_else(|| anyhow::anyhow!("Ruby parser produced no dependency tree"))?;

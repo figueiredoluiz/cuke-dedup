@@ -3,6 +3,49 @@ use anyhow::{bail, Context, Result};
 use gherkin::{Feature, Table};
 use std::borrow::Cow;
 
+/// Locate a table row whose last visible pipe is escaped or absent. This is diagnostic context
+/// for an existing parser failure, never a replacement for the parser's acceptance decision.
+pub(super) fn first_unterminated_row(source: &str) -> Option<usize> {
+    let mut fence = None;
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start().trim_end();
+        if let Some(delimiter) = fence {
+            if trimmed.starts_with(delimiter) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("\"\"\"") {
+            fence = Some("\"\"\"");
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            fence = Some("```");
+            continue;
+        }
+        if !trimmed.starts_with('|') {
+            continue;
+        }
+        let mut escaped = false;
+        let mut ends_with_delimiter = false;
+        for character in trimmed.chars() {
+            if escaped {
+                escaped = false;
+                ends_with_delimiter = false;
+            } else if character == '\\' {
+                escaped = true;
+                ends_with_delimiter = false;
+            } else {
+                ends_with_delimiter = character == '|';
+            }
+        }
+        if !ends_with_delimiter {
+            return Some(index + 1);
+        }
+    }
+    None
+}
+
 pub(super) fn prepare(source: &str) -> Result<(Cow<'_, str>, Option<char>)> {
     let mut output = None;
     let mut marker = None;

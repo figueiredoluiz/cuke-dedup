@@ -80,6 +80,15 @@ pub fn extract_with_format(
     let (parsed_source, marker) = table_escapes::prepare(&parsed_source)
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     let mut feature = Feature::parse(&parsed_source, GherkinEnv::default())
+        .map_err(|error| {
+            let error = anyhow::Error::new(error);
+            match table_escapes::first_unterminated_row(&parsed_source) {
+                Some(line) => {
+                    error.context(format!("unterminated Gherkin table row at line {line}"))
+                }
+                None => error,
+            }
+        })
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     table_escapes::finish(&mut feature, &parsed_source, marker)
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;

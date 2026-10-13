@@ -266,6 +266,7 @@ export function validateUnitEntry(file, item, groups, census) {
       const evidence = item.evidenceTest;
       assert.ok(evidence && typeof evidence.file === "string" && typeof evidence.name === "string",
         `${label}: evidenceTest needs file and name`);
+      if (evidence.platforms !== undefined) validateEvidencePlatforms(evidence.platforms, label);
       assert.ok(cargoTestArgs(evidence), `${label}: evidence test ${evidence.file} cannot be addressed by cargo`);
       const target = census.get(`${evidence.file}::${evidence.name}`);
       assert.ok(target, `${label}: evidence test ${evidence.file}:${evidence.name} is not in the census`);
@@ -321,12 +322,32 @@ export function evidenceTargets(units) {
     for (const item of inventory.tests) {
       if (item.requiredStatus !== "rust-evidence") continue;
       const key = `${item.evidenceTest.file}::${item.evidenceTest.name}`;
-      const target = targets.get(key) ?? { file: item.evidenceTest.file, name: item.evidenceTest.name, referencedBy: [] };
+      const platforms = item.evidenceTest.platforms ?? null;
+      if (platforms !== null) validateEvidencePlatforms(platforms, `${file}:${item.name}`);
+      const target = targets.get(key) ?? { file: item.evidenceTest.file, name: item.evidenceTest.name, platforms, referencedBy: [] };
+      assert.deepEqual(target.platforms, platforms, `${key}: conflicting evidence platforms`);
       target.referencedBy.push(`${file}:${item.name}`);
       targets.set(key, target);
     }
   }
   return [...targets.values()];
+}
+
+function validateEvidencePlatforms(platforms, label) {
+  assert.ok(Array.isArray(platforms) && platforms.length > 0, `${label}: evidence platforms must be nonempty`);
+  assert.deepEqual(platforms, [...new Set(platforms)].sort(), `${label}: evidence platforms must be sorted and unique`);
+  assert.ok(platforms.every((platform) => ["darwin", "linux", "win32"].includes(platform)),
+    `${label}: unknown evidence platform`);
+}
+
+/** A platform-gated test remains mandatory where it can execute and visible elsewhere. */
+export function partitionEvidenceTargets(targets, platform) {
+  const applicable = [];
+  const deferred = [];
+  for (const target of targets) {
+    (target.platforms === null || target.platforms.includes(platform) ? applicable : deferred).push(target);
+  }
+  return { applicable, deferred };
 }
 
 /** Where evidence test binaries build, so the analyzed binary under `target/` is never rewritten. */

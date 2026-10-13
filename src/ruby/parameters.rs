@@ -112,9 +112,8 @@ fn pattern(node: Node<'_>, source: &str) -> Option<String> {
         "string" => regex_expression(&string(node, source)?, ""),
         "regex" => {
             let (pattern, flags) = regex_literal(text(node, source))?;
-            flags
-                .is_empty()
-                .then(|| regex_expression(&pattern, ""))
+            matches!(flags.as_str(), "" | "m")
+                .then(|| regex_expression(&pattern, &flags))
                 .flatten()
         }
         "array" => {

@@ -176,10 +176,43 @@ impl Graph<'_> {
                             (&assignments, &references),
                         )
                     } else {
-                        methods
-                            .get(name.as_str())
-                            .filter(|v| v.len() == 1)
-                            .map(|v| v[0])
+                        methods.get(name.as_str()).and_then(|candidates| {
+                            let mut owners = BTreeSet::new();
+                            if !candidates.iter().all(|(owner, _)| owners.insert(*owner)) {
+                                return None;
+                            }
+                            let capture = self.position(unit, value, false);
+                            let available = candidates
+                                .iter()
+                                .copied()
+                                .filter(|(owner, method)| {
+                                    self.available(
+                                        capture,
+                                        self.position(*owner, *method, true),
+                                        &mut BTreeSet::new(),
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            if self
+                                .charge_proof_work(available.len().saturating_mul(available.len()))
+                            {
+                                return None;
+                            }
+                            // Same-file redefinitions retain the existing conservative
+                            // contract. Across files, prove the captured Method is later
+                            // than every other available definition.
+                            available.iter().copied().find(|(owner, method)| {
+                                available.iter().all(|(prior_owner, prior_method)| {
+                                    (*owner == *prior_owner && *method == *prior_method)
+                                        || (*owner != *prior_owner
+                                            && self.available(
+                                                self.position(*owner, *method, false),
+                                                self.position(*prior_owner, *prior_method, true),
+                                                &mut BTreeSet::new(),
+                                            ))
+                                })
+                            })
+                        })
                     };
                     let Some((body_unit, body)) = resolved else {
                         continue;

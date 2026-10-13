@@ -64,11 +64,41 @@ fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
     );
     for row in [r"| bad\q", r"| bad\|", r"| a\q | b |", "| a | b |"] {
         let malformed = format!("Feature: invalid\n Scenario Outline: rows\n  Given <v>\n Examples:\n  | v |\n  {row}\n");
-        assert!(
-            extract(&malformed, Path::new("invalid.feature")).is_err(),
-            "{row}"
+        let error = format!(
+            "{:#}",
+            extract(&malformed, Path::new("invalid.feature")).unwrap_err()
+        );
+        assert!(error.contains("invalid.feature"), "{row}: {error}");
+        assert_eq!(
+            error.contains("unterminated Gherkin table row at line 6"),
+            matches!(row, r"| bad\q" | r"| bad\|"),
+            "{row}: {error}"
         );
     }
+    let after = "Feature: invalid\n Scenario Outline: rows\n  Given <v>\n Examples:\n  | v |\n  | bad\\q\n Scenario: later\n  Then done\n";
+    let error = format!(
+        "{:#}",
+        extract(after, Path::new("later.feature")).unwrap_err()
+    );
+    assert!(
+        error.contains("unterminated Gherkin table row at line 6"),
+        "{error}"
+    );
+    let markdown = "# Feature: invalid\n## Scenario Outline: rows\n* Given <v>\n### Examples:\n  | v |\n  | bad\\q\n## Scenario: later\n* Then done\n";
+    let error = format!(
+        "{:#}",
+        extract_with_format(
+            markdown,
+            Path::new("later.feature.md"),
+            FeatureFormat::GherkinMarkdown
+        )
+        .unwrap_err()
+    );
+    assert!(error.contains("later.feature.md"), "{error}");
+    assert!(
+        error.contains("unterminated Gherkin table row at line 6"),
+        "{error}"
+    );
 }
 
 #[test]
