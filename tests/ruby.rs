@@ -834,6 +834,115 @@ fn ruby_static_dependency_graph_final_outcomes() {
     }
 }
 
+/// Configured canonical load roots admit external providers once; escapes retain local findings and fail strict completeness.
+#[test]
+fn ruby_configured_external_load_roots_preserve_containment_and_findings() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join("project");
+    let trusted = sandbox.path().join("trusted");
+    ruby_write(&trusted, "provider.rb", "Given('provider') { third() }\n");
+    fs::create_dir(trusted.join("sub")).unwrap();
+    ruby_write(
+        sandbox.path(),
+        "untrusted/provider.rb",
+        "Given('outside') { fourth() }\n",
+    );
+    ruby_write(
+        &root,
+        "suite.feature",
+        "Feature: roots\n Scenario: usage\n  Given local\n  Then provider\n",
+    );
+    let mut cases = vec![
+        (vec![trusted.clone()], "require 'provider'", true),
+        (vec!["../trusted".into()], "require 'provider'", true),
+        (vec![], "require_relative '../untrusted/provider'", false),
+        (
+            vec![trusted.clone()],
+            "require '../untrusted/provider'",
+            false,
+        ),
+        (
+            vec![trusted.clone()],
+            "require './../untrusted/provider'",
+            false,
+        ),
+        (
+            vec![trusted.clone()],
+            "require 'sub/../../untrusted/provider'",
+            false,
+        ),
+    ];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&trusted, root.join("linked")).unwrap();
+        std::os::unix::fs::symlink(sandbox.path().join("untrusted"), trusted.join("escape"))
+            .unwrap();
+        cases.extend([
+            (vec!["linked".into()], "require 'provider'", true),
+            (
+                vec![trusted.clone(), "linked".into()],
+                "require 'provider'\nrequire_relative 'linked/provider'",
+                true,
+            ),
+            (vec!["linked".into()], "require 'escape/provider'", false),
+            (vec![], "require_relative 'linked/provider'", false),
+        ]);
+    }
+    for (paths, request, admitted) in cases.drain(..) {
+        ruby_write(
+            &root,
+            ".cuke-dedup.json",
+            &serde_json::json!({"rubyLoadPaths": paths}).to_string(),
+        );
+        ruby_write(
+            &root,
+            "entry.rb",
+            &format!("{request}\nGiven('local') {{ first() }}\nThen('local') {{ second() }}\n"),
+        );
+        let output = run_project(
+            &root,
+            "entry.rb",
+            &["--features", "*.feature", "--fail-on-incomplete"],
+        );
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(if admitted { 1 } else { 2 }),
+            "{paths:?}: {request}: {stderr}"
+        );
+        let rows = records(output.stdout);
+        ruby_assert_pointers(
+            rows.last().unwrap(),
+            &[
+                (
+                    "/summary/definitionsAnalyzed",
+                    if admitted { 3 } else { 2 }.into(),
+                ),
+                ("/summary/featureStepsAnalyzed", 2.into()),
+                ("/corpus/incomplete", (!admitted).into()),
+            ],
+        );
+        for rule in ["duplicate-matcher", "ambiguous-step"] {
+            assert_eq!(
+                rows.iter().filter(|row| row["rule"] == rule).count(),
+                1,
+                "{paths:?}: {request}: {rows:?}"
+            );
+        }
+        if admitted {
+            assert!(
+                !rows.iter().any(|row| row["rule"] == "unused-definition"),
+                "{paths:?}: {request}: {rows:?}"
+            );
+        }
+        assert_eq!(
+            stderr.contains("Ruby source dependency is unresolved"),
+            !admitted,
+            "{paths:?}: {request}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn ruby_dependency_cycles_load_order_and_exclusions_preserve_outcomes() {
     let dir = tempfile::tempdir().unwrap();
