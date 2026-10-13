@@ -305,7 +305,15 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
         while let Some(current) = node {
             if matches!(
                 current.kind(),
-                "comment" | "string" | "regex" | "heredoc_body" | "interpolation"
+                "comment"
+                    | "string"
+                    | "bare_string"
+                    | "bare_symbol"
+                    | "string_array"
+                    | "symbol_array"
+                    | "regex"
+                    | "heredoc_body"
+                    | "interpolation"
             ) {
                 kind = Some(current.kind());
                 break;
@@ -314,6 +322,11 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
         }
         match kind {
             Some("comment") => prepared.replace_range(byte..byte + 1, " "),
+            // tree-sitter rejects NUL inside bare array elements. Keep their one-byte extent and
+            // token boundary; array values are opaque to registration extraction.
+            Some("bare_string" | "bare_symbol" | "string_array" | "symbol_array") => {
+                prepared.replace_range(byte..byte + 1, "x");
+            }
             Some("string" | "regex" | "heredoc_body") => {}
             _ => {
                 prepared.truncate(byte);
