@@ -386,10 +386,11 @@ fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
     assert!(usage.unknown);
 }
 
-/// External callers over Ruby extraction: an over-limit Ruby regex yields a typed `Incomplete`
-/// diagnostic off line 1, the partial result keeps the neighbouring Ruby finding with the
-/// regex resource-limit diagnostic, strict `analyze` rejects it, and every public renderer
-/// takes the Ruby result through one report context.
+/// External callers over Ruby extraction: an over-limit Ruby regex remains in the extracted
+/// definitions without a misleading syntax diagnostic. Analysis keeps the neighbouring finding
+/// with the regex resource-limit diagnostic, while an unsupported syntax control retains a typed
+/// extraction diagnostic. Strict `analyze` rejects the limit, and every public renderer takes the
+/// Ruby result through one report context.
 #[test]
 fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api() {
     use cuke_dedup::source_adapter::ExtractionDiagnosticKind;
@@ -406,17 +407,20 @@ fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api()
         .extract(&source, &file)
         .unwrap();
     assert_eq!(extracted.definitions.len(), 3);
-    let diagnostic = extracted
-        .diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.message.contains("regular expression"))
+    assert!(extracted.diagnostics.is_empty());
+    let unsupported = registered_adapter(SourceLanguage::Ruby)
+        .extract("Given(/^a++$/) { work }\n", &file)
         .unwrap();
+    let diagnostic = unsupported.diagnostics.first().unwrap();
     assert_eq!(diagnostic.kind, ExtractionDiagnosticKind::Incomplete);
     assert_eq!(diagnostic.level, ExtractionDiagnosticLevel::Warning);
     assert_eq!(
         (diagnostic.location.line, diagnostic.location.column),
-        (4, 1)
+        (1, 1)
     );
+    assert!(diagnostic
+        .message
+        .contains("supported static matching subset"));
 
     let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
     let outcome =

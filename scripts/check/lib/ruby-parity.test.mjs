@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TEST_FN_PATTERN, cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, functionBody, isRubySuite, oracleClauseResolves, parityDeficits, evidenceFailures, residueResolves, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, testSummary, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
+import { TEST_FN_PATTERN, cargoTestArgs, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, functionBody, isRubySuite, oracleClauseResolves, parityDeficits, evidenceFailures, partitionEvidenceTargets, residueResolves, rubySuiteEvidence, testBodyMentionsRuby, testOutcomes, testSummary, validateOracle, validateUnitEntry } from "./ruby-parity.mjs";
 
 const oracle = {
   path: "example", definitions: 2, featureSteps: 0, complete: true, expectedExit: 0,
@@ -212,6 +212,24 @@ test("only an otherwise unblocked completion run executes Rust evidence, unless 
   assert.equal(executesEvidence({ regression: false, inventoryOnly: false, blocked: true }), false);
   assert.equal(executesEvidence({ regression: false, inventoryOnly: false, blocked: true, forced: true }), true);
   assert.equal(executesEvidence({ regression: true, inventoryOnly: false, forced: true }), false);
+});
+
+test("platform-gated evidence is explicit, consistent, and still required on its platform", () => {
+  const linux = { file: "tests/ruby.rs", name: "linux_names", platforms: ["linux"] };
+  const units = { files: {
+    "a.rs": { tests: [
+      { name: "x", requiredStatus: "rust-evidence", evidenceTest: linux },
+      { name: "y", requiredStatus: "rust-evidence", evidenceTest: { file: "tests/ruby.rs", name: "portable" } },
+    ] },
+    "b.rs": { tests: [{ name: "z", requiredStatus: "rust-evidence", evidenceTest: linux }] },
+  } };
+  const targets = evidenceTargets(units);
+  assert.deepEqual(partitionEvidenceTargets(targets, "darwin").applicable.map((target) => target.name), ["portable"]);
+  assert.deepEqual(partitionEvidenceTargets(targets, "darwin").deferred.map((target) => target.name), ["linux_names"]);
+  assert.deepEqual(partitionEvidenceTargets(targets, "linux").deferred, []);
+  assert.deepEqual(partitionEvidenceTargets(targets, "linux").applicable.map((target) => target.name), ["linux_names", "portable"]);
+  units.files["b.rs"].tests[0].evidenceTest = { file: "tests/ruby.rs", name: "linux_names" };
+  assert.throws(() => evidenceTargets(units), /conflicting evidence platforms/);
 });
 
 /** Builds a language-specific entry whose rationale is the given text. */

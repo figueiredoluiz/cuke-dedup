@@ -64,10 +64,80 @@ fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
     );
     for row in [r"| bad\q", r"| bad\|", r"| a\q | b |", "| a | b |"] {
         let malformed = format!("Feature: invalid\n Scenario Outline: rows\n  Given <v>\n Examples:\n  | v |\n  {row}\n");
-        assert!(
-            extract(&malformed, Path::new("invalid.feature")).is_err(),
-            "{row}"
+        let error = format!(
+            "{:#}",
+            extract(&malformed, Path::new("invalid.feature")).unwrap_err()
         );
+        assert!(error.contains("invalid.feature"), "{row}: {error}");
+        assert_eq!(
+            error.contains("unterminated Gherkin table row at line 6"),
+            matches!(row, r"| bad\q" | r"| bad\|"),
+            "{row}: {error}"
+        );
+    }
+    let after = "Feature: invalid\n Scenario Outline: rows\n  Given <v>\n Examples:\n  | v |\n  | bad\\q\n Scenario: later\n  Then done\n";
+    let error = format!(
+        "{:#}",
+        extract(after, Path::new("later.feature")).unwrap_err()
+    );
+    assert!(
+        error.contains("unterminated Gherkin table row at line 6"),
+        "{error}"
+    );
+    let markdown = "# Feature: invalid\n## Scenario Outline: rows\n* Given <v>\n### Examples:\n  | v |\n  | bad\\q\n## Scenario: later\n* Then done\n";
+    let error = format!(
+        "{:#}",
+        extract_with_format(
+            markdown,
+            Path::new("later.feature.md"),
+            FeatureFormat::GherkinMarkdown
+        )
+        .unwrap_err()
+    );
+    assert!(error.contains("later.feature.md"), "{error}");
+    assert!(
+        error.contains("unterminated Gherkin table row at line 6"),
+        "{error}"
+    );
+    for delimiter in ["\"\"\"", "```"] {
+        let docstring = format!(
+            "Feature: invalid\n Scenario: doc\n  Given text\n   {delimiter}\n   | not a table\\q\n   {delimiter}\n  Not a keyword\n"
+        );
+        let error = format!(
+            "{:#}",
+            extract(&docstring, Path::new("docstring.feature")).unwrap_err()
+        );
+        assert!(
+            !error.contains("unterminated Gherkin table row"),
+            "{delimiter}: {error}"
+        );
+        let table = docstring.replace("  Not a keyword\n", "  Then table\n   | bad\\q\n");
+        let error = format!(
+            "{:#}",
+            extract(&table, Path::new("table.feature")).unwrap_err()
+        );
+        assert!(
+            error.contains("unterminated Gherkin table row at line 8"),
+            "{delimiter}: {error}"
+        );
+    }
+    let stray_before_feature = "| prose\nFeature: invalid\n Scenario: later\n  Not a keyword\n";
+    let error = format!(
+        "{:#}",
+        extract(stray_before_feature, Path::new("unrelated.feature")).unwrap_err()
+    );
+    assert!(!error.contains("unterminated Gherkin table row"), "{error}");
+    for source in [
+        "Feature: invalid\n Scenario: rows\n  | prose\n  Not a keyword\n",
+        "Feature: invalid\n Scenario: rows\n  Given table\n   | bad\\q\n  Not a keyword\n",
+    ] {
+        if let Err(error) = extract(source, Path::new("unrelated.feature")) {
+            let error = format!("{error:#}");
+            assert!(
+                !error.contains("unterminated Gherkin table row"),
+                "{source:?}: {error}"
+            );
+        }
     }
 }
 

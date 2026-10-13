@@ -33,12 +33,32 @@ pub(crate) trait RegexDialect: Sync {
     fn parameter_sample(&self, pattern: &str) -> Option<String> {
         // Preserve the existing witness subset, including translated scoped patterns.
         // The resulting witness must still match both compiled definitions.
+        if let Some(array) = pattern
+            .strip_prefix("(?:(?m:")
+            .or_else(|| pattern.strip_prefix("(?:(?ms:"))
+            .and_then(|value| value.strip_suffix("))"))
+        {
+            let end = [")|(?m:", ")|(?ms:"]
+                .into_iter()
+                .filter_map(|delimiter| array.find(delimiter))
+                .min()
+                .unwrap_or(array.len());
+            let first = &array[..end];
+            if !first.is_empty()
+                && first
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
+            {
+                return Some(first.to_owned());
+            }
+        }
         let mut trimmed = pattern.trim();
         loop {
             let inner = trimmed
                 .strip_prefix("(?:")
                 .or_else(|| trimmed.strip_prefix("(?m:"))
                 .or_else(|| trimmed.strip_prefix("(?ms:"))
+                .or_else(|| trimmed.strip_prefix("(?s:"))
                 .or_else(|| trimmed.strip_prefix('('));
             let Some(inner) = inner else { break };
             trimmed = inner.strip_suffix(')')?;

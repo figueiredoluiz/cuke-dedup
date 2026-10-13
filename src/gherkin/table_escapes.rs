@@ -1,7 +1,60 @@
 //! Preserve Cucumber's unknown table escapes across the stricter gherkin crate grammar.
 use anyhow::{bail, Context, Result};
-use gherkin::{Feature, Table};
+use gherkin::{Feature, GherkinEnv, Table};
 use std::borrow::Cow;
+
+/// Locate a table row whose last visible pipe is escaped or absent only when adding that pipe
+/// repairs the parse. This is diagnostic context, never a replacement for parser acceptance.
+pub(super) fn first_unterminated_row(source: &str) -> Option<usize> {
+    let mut fence = None;
+    let mut offset = 0;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        let start = offset;
+        offset += line.len();
+        let trimmed = line.trim_start().trim_end();
+        if let Some(delimiter) = fence {
+            if trimmed.starts_with(delimiter) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("\"\"\"") {
+            fence = Some("\"\"\"");
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            fence = Some("```");
+            continue;
+        }
+        if !trimmed.starts_with('|') {
+            continue;
+        }
+        let mut escaped = false;
+        let mut ends_with_delimiter = false;
+        for character in trimmed.chars() {
+            if escaped {
+                escaped = false;
+                ends_with_delimiter = false;
+            } else if character == '\\' {
+                escaped = true;
+                ends_with_delimiter = false;
+            } else {
+                ends_with_delimiter = character == '|';
+            }
+        }
+        if !ends_with_delimiter {
+            let insert = start + line.trim_end().len();
+            let mut repaired = String::with_capacity(source.len() + 1);
+            repaired.push_str(&source[..insert]);
+            repaired.push('|');
+            repaired.push_str(&source[insert..]);
+            return Feature::parse(&repaired, GherkinEnv::default())
+                .ok()
+                .map(|_| index + 1);
+        }
+    }
+    None
+}
 
 pub(super) fn prepare(source: &str) -> Result<(Cow<'_, str>, Option<char>)> {
     let mut output = None;

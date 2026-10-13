@@ -63,8 +63,9 @@
         },
         {
           "name": "candidate_source_flags_preserve_independent_rule_inputs",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence for multi-source candidates: Ruby pins each candidate source feeding its own rule (`ruby_candidate_sources_feed_their_rules_with_computed_evidence`), but a pair carrying two source flags, and the normalized-only and structural near-feed bits, has no adapter producer because candidate sources never propose the same pair twice. Decide whether the flag merge is reachable or engine-only.",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: candidate generation proposes normalized pairs within matcher partitions, identical-handler pairs across matcher partitions, structural pairs across both matcher and handler partitions, and matcher-blocking pairs only after rejecting prior owners. Thus no adapter can produce the combined-source bitset exercised by this defensive unit test. `ruby_candidate_sources_feed_their_rules_with_computed_evidence` separately pins each reachable source and its final rules.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -93,8 +94,9 @@
         },
         {
           "name": "handler_prefilters_are_safe_upper_bounds_for_the_near_rule",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence for `covered_by_structural_source`: value-only rejection refuses the same pairs, so no Ruby run distinguishes the structural-coverage check (three `{red|green|blue}` definitions at structural limit 1 report matcherBlocking 0 either way). `ruby_matcher_blocking_prefilters_are_safe_upper_bounds` pins the similarity gate and the equal-structure shortcut (same-structure trusted assertions with conflicting values are not admitted; a shared-action control is).",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: `covered_by_structural_source` avoids re-proposing a same-structure pair through matcher blocking; Ruby structural-only pairs with differing trusted values are already refused by `value_only_difference`, so that guard has no separable Ruby final outcome. `ruby_matcher_blocking_prefilters_are_safe_upper_bounds` retains conflicting-value non-findings, the shared-action positive control and the observable similarity gate.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -136,14 +138,16 @@
         },
         {
           "name": "disabled_parameterization_skips_unreachable_structural_matcher_work",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence that structural pairs cannot feed the near rule. `ruby_unneeded_similarity_stages_do_not_spend_pair_work` pins the disabled-rule half (with parameterization-candidate off, a structural `page.theme(1)`/`page.theme(2)` pair with 10,002-character matchers spends no matcher matrix work). No Ruby shape yields a structural pair that is otherwise near-eligible: action streams reject value-only differences, complete-event streams record every literal, and other streams require the same handler (about 20 trusted shapes tried).",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the structural-to-near branch cannot be isolated with a Ruby adapter producer: action streams refuse value-only differences, complete-event streams retain literal effects, and remaining streams require the same handler. `ruby_unneeded_similarity_stages_do_not_spend_pair_work` pins the reachable disabled-rule boundary with a structural pair and a 10,002-character matcher, plus retained final outcomes.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "work_accounting_contract_charges_similarity_stages_and_enforces_boundaries",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence for the masked partial-stream case and the `u64` overflow guard, which no input reaches. The 1e9 total similarity budget and evidence-stage charging are pinned exactly by `ruby_pair_verification_fails_closed_at_the_total_similarity_budget` (32 identical-handler definitions with a 58,527- versus 58,528-character literal flip truncation); matcher-blocking budgets by `ruby_matcher_blocking_fails_closed_at_every_work_budget`.",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: `charge_work` checks `u64` overflow on already bounded counts, and the hand-built masked partial stream is not emitted by a Ruby adapter; neither has a reachable Ruby input. `ruby_pair_verification_fails_closed_at_the_total_similarity_budget` pins the production 1e9 boundary and evidence charging with final outcomes, while `ruby_matcher_blocking_fails_closed_at_every_work_budget` pins matcher-blocking budgets.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1008,7 +1012,7 @@
             "file": "tests/cli.rs",
             "name": "regression_ruby_pending_stub_handlers_are_not_duplicates"
           },
-          "rationale": "`regression_ruby_pending_stub_handlers_are_not_duplicates` runs Ruby pending stubs (`pending`, `raise Cucumber::Pending`, `fail 'todo'`, empty `def` through `&method`) through the built binary without duplicate-handler, with real-work controls that stay duplicates, and same-named top-level `def handler` bodies in two files that never duplicate (the adapter withdraws them, a recall difference from JS/TS).",
+          "rationale": "`regression_ruby_pending_stub_handlers_are_not_duplicates` runs Ruby pending stubs (`pending`, `raise Cucumber::Pending`, `fail 'todo'`, empty `def` through `&method`) through the built binary without duplicate-handler, with real-work controls that stay duplicates, and same-named top-level `def handler` bodies in two selected files that retain both definitions without a cross-file duplicate.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1316,8 +1320,9 @@
         },
         {
           "name": "matcher_index_falls_back_when_even_one_combined_pattern_is_rejected",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence for the combined-index fallback: no Ruby or JS/TS input is known to reach `MatcherIndex::fallback_definitions` (a one-pattern RegexSet rejected after its Regex compiled); only the unit test reaches it with a hand-built expression. Decide whether the branch is reachable or dead code to delete.",
+          "requiredStatus": "engine-invariant",
+          "stage": "regex-compiler",
+          "rationale": "Adapter-independent stage `regex-compiler`: `MatcherIndex` receives only compiled normalized expressions; whether a singleton `RegexSet` rejects an expression whose individual `Regex` compiled depends on shared compiler limits, not Ruby syntax. The unit test forces that safety branch with a reduced set limit; the branch must remain fail-safe even though no production Ruby or JS/TS input is known to trigger it. `ruby_split_matcher_index_keeps_each_step_on_its_own_definition` pins the reachable combined-set split and final matches.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1367,8 +1372,12 @@
         },
         {
           "name": "witness_generation_covers_builtins_declared_literals_and_unknowns",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence for unknown placeholders: an undeclared parameter makes the matcher non-authoritative, so overlap skips it before witness generation and no run observes the `None` witness. Builtin and declared-literal witnesses are pinned by `ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns`. The array form `regexp: [/red/, /green/]` yields no witness and misses an overlap Cucumber reports.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns"
+          },
+          "rationale": "The Ruby final-outcome matrix retains built-in and declared literal witnesses, adds enumerable regexp arrays and both literal `/m` and inline `(?m:...)` forms, and rejects disjoint or non-enumerable alternatives. Unknown placeholders remain non-authoritative and produce no overlap; the internal `None` witness is skipped before witness generation, so it has no distinct final outcome.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1383,8 +1392,12 @@
         },
         {
           "name": "matcher_compilation_reports_limits_but_not_unsupported_syntax",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a Ruby regex that compiles too big is reported as \"outside the supported static matching subset\" (alone, or beside the resource limit) where JS/TS reports only the resource limit, and the unsupported-syntax arm of `compile_definition_regex` is unreachable from Ruby because dialect translation validates first. The resource-limit diagnostics themselves are pinned by `ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax`.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax"
+          },
+          "rationale": "The Ruby binary reports raw-pattern and compiled-program resource limits separately from unsupported possessive syntax, while independent duplicate-matcher findings survive. Ruby dialect translation validates expressions before shared `compile_definition_regex`, so its residual unsupported-syntax arm is a fail-closed shared API guard without a distinct Ruby source producer.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1905,7 +1918,7 @@
       ]
     },
     "src/gherkin/tests.rs": {
-      "sourceSha256": "ba7abcf494c7e3f3f3e27ecb2088c826082589d094b8530a64477eead7c54743",
+      "sourceSha256": "334ceb25e0744aafba50bcf3a1d39588f8d2e11928ca8cb776e36cf06a36b369",
       "tests": [
         {
           "name": "table_escape_matrix_preserves_outline_text_and_source_positions",
@@ -2329,7 +2342,8 @@
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
             "file": "tests/ruby.rs",
-            "name": "ruby_changed_since_preserves_non_utf8_linux_names"
+            "name": "ruby_changed_since_preserves_non_utf8_linux_names",
+            "platforms": ["linux"]
           },
           "rationale": "The changed-mode run decodes non-UTF-8 Git path bytes for tracked and untracked .rb files into findings; gated to Linux because macOS filesystems reject non-UTF-8 names.",
           "behaviorClass": "shared-engine-invariant"
@@ -2339,7 +2353,8 @@
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
             "file": "tests/ruby.rs",
-            "name": "ruby_changed_since_preserves_non_utf8_linux_names"
+            "name": "ruby_changed_since_preserves_non_utf8_linux_names",
+            "platforms": ["linux"]
           },
           "rationale": "A tracked steps/tracked-\\xfe.rb modified after commit contributes a finding in changed mode (2 active total) after a no-change control (Linux-gated).",
           "behaviorClass": "shared-engine-invariant"
@@ -2641,8 +2656,12 @@
         },
         {
           "name": "release_resource_limits_match_the_documented_policy",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: every documented release limit over Ruby input. The 1,024-file load budget is pinned by `ruby_load_budget_is_shared_across_selected_definition_files`; the 64 MiB Ruby load byte budget has no Ruby run (nine 8 MiB loads take about 13 s in a debug build).",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_load_bytes_budget_preserves_findings_and_marks_the_cut_incomplete"
+          },
+          "rationale": "Eight near-8 MiB Ruby providers remain within the shared 64 MiB graph budget and a ninth crosses it: strict exit 2 and incomplete corpus replace a clean run while independent local duplicate-matcher survives. `ruby_load_budget_is_shared_across_selected_definition_files` independently pins the 1,024-file boundary; the Rust unit test checks the remaining documented release constants.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -3857,7 +3876,7 @@
             "file": "tests/cli.rs",
             "name": "regression_ruby_pending_stub_handlers_are_not_duplicates"
           },
-          "rationale": "Ruby named handlers are bound to the declaration current at registration: distinct method names in separate files retain two definitions with different bodies, while same-named top-level methods conservatively withdraw because load order can redefine them; neither path creates a cross-file duplicate-handler finding.",
+          "rationale": "Ruby named handlers are bound to the declaration current at registration: distinct and same-named methods in separate selected files retain two definitions with different bodies; neither path creates a cross-file duplicate-handler finding. Proven ordered-load cases and uncertain-load controls are pinned by `ruby_named_handlers_follow_proven_cross_file_load_order`.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -4355,7 +4374,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "96bcdbaae75c1e6cee5c8508f4e1f3cc382db0d992fc87b1e86564f788698cf7",
+      "sourceSha256": "7e3c935677f566c4e2416ed9e2fa51a185139f46777370237cac25c727859958",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5018,7 +5037,8 @@
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
             "file": "tests/ruby.rs",
-            "name": "ruby_changed_since_preserves_non_utf8_linux_names"
+            "name": "ruby_changed_since_preserves_non_utf8_linux_names",
+            "platforms": ["linux"]
           },
           "rationale": "An untracked steps/non-utf8-\\xff.rb duplicate is reported with exit 1 (Linux-gated as the original; compiled locally, runs only on Linux CI).",
           "behaviorClass": "shared-engine-invariant"
@@ -5201,8 +5221,12 @@
         },
         {
           "name": "a_binary_exclusion_also_makes_the_corpus_incomplete",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: a NUL-bearing source is not proof of no definitions, so the corpus must not be reported complete. The Ruby adapter excludes nothing by content and parses such files, but a NUL inside a comment (valid Ruby) is reported as a syntax error at 1:1, and code after a top-level NUL (which ends a Ruby script) is still extracted. Map after Ruby NUL handling matches Ruby.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_nul_lexical_context_preserves_only_executed_registrations"
+          },
+          "rationale": "Ruby does not use the JS/TS binary-source exclusion: literal NUL in comments, strings and regexps is valid Ruby and retains complete neighboring definitions and duplicate findings. A top-level NUL ends executable Ruby source, so later registrations are absent rather than inferred from tree-sitter recovery; `ruby_nul_loaded_provider_respects_execution_boundary` pins the same rule across followed dependencies. This is an explicit execution-semantics difference from excluding an opaque binary file, not a clean report after excluding unknown definitions.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -5781,7 +5805,7 @@
       ]
     },
     "tests/public_api.rs": {
-      "sourceSha256": "5af75402e1603979466b8f3cf1f7533db1e87f05f42e7441863b0738c78eb1aa",
+      "sourceSha256": "4eae964d30d25f1ccc7215aad331ee7e3978e8d3f60b7bdf02756c0c3fbce5cb",
       "tests": [
         {
           "name": "extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults",
@@ -5868,7 +5892,7 @@
             "file": "tests/public_api.rs",
             "name": "ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api"
           },
-          "rationale": "Ruby public-API evidence: typed Ruby diagnostic, partial result with operational diagnostics, and rendering through the report context.",
+          "rationale": "Ruby public-API evidence: unsupported syntax yields a typed extraction diagnostic, while an oversized matcher produces one analysis-phase resource diagnostic with the neighbouring finding retained; rendering uses the report context.",
           "behaviorClass": "ruby-behavior"
         }
       ]

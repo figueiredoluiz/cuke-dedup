@@ -1104,8 +1104,8 @@ fn ruby_dependency_usage_requires_a_complete_source_graph() {
             "require_relative 'support/provider'",
             b"\0".as_slice(),
             false,
-            0,
-            true,
+            2,
+            false,
         ),
         (
             "require_relative 'support/provider'",
@@ -1604,6 +1604,18 @@ fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
         r"-;-;x a\\(b) c/d;^x a.*$;x a(b) c",
         "-;-;open(unclosed;^open.*$;open(unclosed",
         "red|green;-;pick {colour};^pick .*$;pick red",
+        "[/red/, /green/];-;pick {colour};^pick .*$;pick red",
+        "[/red/];-;pick {colour};^pick .*$;pick red",
+        "[/r.d/, /green/];-;pick {colour};^pick .*$;",
+        "[/red/m, /green/m];-;pick {colour};^pick .*$;pick red",
+        "[/red/, /green/m];-;pick {colour};^pick .*$;pick red",
+        "[/red/m, /green/];-;pick {colour};^pick .*$;pick red",
+        "[/red/, /green/m, /blue/];-;pick {colour};^pick .*$;pick red",
+        "[/r.d/m, /green/];-;pick {colour};^pick .*$;",
+        "/red|green/m;-;pick {colour};^pick .*$;pick red",
+        "/(?m:red|green)/;-;pick {colour};^pick .*$;pick red",
+        "[/red/, /green/];-;pick {colour};^pick blue$;",
+        "[/red/m, /green/m];-;pick {colour};^pick blue$;",
         "(red|green);-;pick {colour};^pick .*$;pick red",
         "(?:red|green);-;pick {colour};^pick .*$;pick red",
         "((red|green));-;pick {colour};^pick .*$;pick red",
@@ -1618,6 +1630,9 @@ fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
             <[&str; 5]>::try_from(row.split(';').collect::<Vec<_>>()).unwrap();
         let declared = match declared {
             "-" => String::new(),
+            pattern if pattern.starts_with('[') || pattern.starts_with('/') => format!(
+                "ParameterType(name: 'colour', regexp: {pattern}, transformer: ->(s) {{ s }})\n"
+            ),
             pattern => ruby_parameter_type("colour", pattern),
         };
         let config = format!(r#"{{"parameterTypes":{{"colour":"{configured}"}}}}"#);
@@ -1685,23 +1700,26 @@ fn ruby_fallback_expressions_keep_optional_alternative_and_declared_text_exact()
     }
 }
 
-/// Regex and Cucumber Expression matchers over the 1 MiB pattern limit each report the regex
-/// resource limit at their own location; a matcher outside the supported regex subset reports
-/// its subset diagnostic, never the limit.
+/// Oversized Ruby regex programs and patterns report resource limits, while unsupported syntax
+/// retains its distinct warning and independent local findings survive the incomplete matchers.
 #[test]
 fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
     let oversized = "x".repeat(1024 * 1024 + 1);
-    let source = format!("# limits\nGiven(/{oversized}/) {{ long_regex() }}\nGiven(/^a++$/) {{ possessive() }}\nGiven('{oversized}') {{ long_expression() }}\nGiven('fine') {{ fine() }}\n");
+    let source = format!("# limits\nGiven(/{oversized}/) {{ long_regex() }}\nGiven(/x{{1048566}}/) {{ compiled_big() }}\nGiven(/^a++$/) {{ possessive() }}\nGiven('{oversized}') {{ long_expression() }}\nGiven('same') {{ first() }}\nThen('same') {{ second() }}\n");
     let arguments = ["--rule", "unused-definition=off"];
-    let (_, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
-    // The resource-limit diagnostic names the absolute temporary path, so each line is pinned by
-    // its fixed prefix and its located suffix, joined by the platform path separator.
+    let (rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+    assert_eq!(
+        ruby_rule_locations(&rows, "duplicate-matcher"),
+        ruby_locations("6 7")
+    );
+    // Analysis-phase limits name absolute paths; the extraction-phase compiled-program limit
+    // names the source-relative location. Both retain their distinct causes.
     let limits: Vec<_> = stderr
         .lines()
         .filter(|line| line.contains("resource limit"))
         .collect();
-    assert_eq!(limits.len(), 2, "{stderr}");
-    for (limit, line) in limits.iter().zip([2, 4]) {
+    assert_eq!(limits.len(), 3, "{stderr}");
+    for (limit, line) in [limits[1], limits[2]].into_iter().zip([2, 5]) {
         let suffix = format!("{}steps.rb:{line}:1 exceeds the 1048576-byte regex resource limit; simplify the matcher or remove its source from definition discovery", std::path::MAIN_SEPARATOR);
         assert!(
             limit.starts_with("cuke-dedup: warning: step matcher at "),
@@ -1709,13 +1727,340 @@ fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
         );
         assert!(limit.ends_with(&suffix), "{limit}");
     }
+    assert_eq!(
+        limits[0],
+        "cuke-dedup: warning: steps.rb:3:1: Ruby regular expression exceeds the regex resource limit"
+    );
     let subset = "Ruby regular expression is outside the supported static matching subset";
     assert!(
         stderr
             .lines()
-            .any(|line| line == format!("cuke-dedup: warning: steps.rb:3:1: {subset}")),
+            .any(|line| line == format!("cuke-dedup: warning: steps.rb:4:1: {subset}")),
         "{stderr}"
     );
+}
+
+/// Ruby accepts literal NUL inside comments, strings and regexps, but a top-level NUL ends the
+/// source it executes; recovered syntax after that boundary must not become a registration.
+#[test]
+fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
+    let rows = [
+        ("comment", "# note \0\n", true, false, "1 3"),
+        ("string", "value = 'inside\0string'\n", true, false, "1 3"),
+        ("regexp", "value = /inside\0regexp/\n", true, false, "1 3"),
+        (
+            "word array",
+            "value = %w[inside\0word]\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "interpolated word array literal",
+            "value = %W[inside\0word]\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "symbol array",
+            "value = %i[inside\0symbol]\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "interpolated symbol array literal",
+            "value = %I[inside\0symbol]\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "heredoc",
+            "value = <<DOC\ninside\0body\nDOC\n",
+            true,
+            false,
+            "1 5",
+        ),
+        (
+            "nested-string-in-interpolation",
+            "value = \"#{'inside\0string'}\"\n",
+            true,
+            false,
+            "1 3",
+        ),
+        ("top-level", "\0\n", false, false, ""),
+        ("hash-in-string", "value = '# text'\n\0\n", false, false, ""),
+        (
+            "string interpolation",
+            "value = \"#{1\0+2}\"\n",
+            false,
+            true,
+            "",
+        ),
+        (
+            "regexp interpolation",
+            "value = /a#{1\0+2}/\n",
+            false,
+            true,
+            "",
+        ),
+        (
+            "word array interpolation",
+            "value = %W[a#{1\0+2}]\n",
+            false,
+            true,
+            "",
+        ),
+        (
+            "symbol array interpolation",
+            "value = %I[a#{1\0+2}]\n",
+            false,
+            true,
+            "",
+        ),
+        (
+            "heredoc interpolation",
+            "value = <<DOC\n#{1\0+2}\nDOC\n",
+            false,
+            true,
+            "",
+        ),
+    ];
+    for (label, middle, second_seen, incomplete, duplicate_lines) in rows {
+        let source =
+            format!("Given('local') {{ first() }}\n{middle}Then('local') {{ second() }}\n");
+        let (records, stderr) = ruby_usage_run(
+            &source,
+            "  Scenario: local\n    Given local\n",
+            &["--rule", "unused-definition=off"],
+        );
+        let summary = records.last().unwrap();
+        assert_eq!(
+            summary["corpus"]["definitionsExtracted"],
+            if second_seen { 2 } else { 1 },
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            summary["corpus"]["incomplete"], incomplete,
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            ruby_rule_locations(&records, "duplicate-matcher"),
+            ruby_locations(duplicate_lines),
+            "{label}: {stderr}"
+        );
+    }
+}
+
+/// Loaded providers use the same lexical NUL boundary as selected Ruby files, so their valid
+/// registrations remain available without trusting a recovered call after a top-level NUL.
+#[test]
+fn ruby_nul_loaded_provider_respects_execution_boundary() {
+    let entry = "require_relative 'support/provider'\nGiven('local') { first() }\nThen('local') { second() }\n";
+    let feature = "Feature: NUL provider\n  Scenario: local\n    Given local\n";
+    for (label, middle, provider_seen, incomplete) in [
+        ("comment", "# note \0\n", true, false),
+        (
+            "nested literal",
+            "value = \"#{'inside\0string'}\"\n",
+            true,
+            false,
+        ),
+        ("top-level", "\0\n", false, false),
+        ("interpolation", "value = \"#{1\0+2}\"\n", false, true),
+    ] {
+        let provider =
+            format!("Given('provider') {{ source() }}\n{middle}Then('provider') {{ target() }}\n");
+        let (records, stderr) = ruby_records_run(
+            &[
+                ("entry.rb", entry),
+                ("support/provider.rb", &provider),
+                ("usage.feature", feature),
+            ],
+            None,
+            &[
+                "--features",
+                "usage.feature",
+                "--rule",
+                "unused-definition=off",
+            ],
+        );
+        let summary = records.last().unwrap();
+        assert_eq!(
+            summary["corpus"]["definitionsExtracted"],
+            if provider_seen { 4 } else { 3 },
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            summary["corpus"]["incomplete"], incomplete,
+            "{label}: {stderr}"
+        );
+        let duplicates = records
+            .iter()
+            .filter(|row| row["rule"] == "duplicate-matcher")
+            .count();
+        assert_eq!(
+            duplicates,
+            if provider_seen { 2 } else { 1 },
+            "{label}: {stderr}"
+        );
+    }
+}
+
+/// A receiverless dialect keyword only threatens registration when its operands can satisfy the
+/// Ruby registrar; real top-level and possible nested registrations retain their outcomes.
+#[test]
+fn ruby_keyword_calls_without_registration_operands_do_not_warn() {
+    for (label, first, extra, definitions, incomplete) in [
+        ("no operands", "a()", "", 2, false),
+        ("no handler", "a('nested')", "", 2, false),
+        ("possible nested", "a('nested') { work() }", "", 2, true),
+        ("top-level", "first()", "a('actual') { work() }\n", 3, false),
+    ] {
+        let source = format!("Given('local') {{ {first} }}\nThen('local') {{ second() }}\n{extra}");
+        let (records, stderr) = ruby_usage_run(
+            &source,
+            "  Scenario: local\n    Given local\n",
+            &["--rule", "unused-definition=off"],
+        );
+        let summary = records.last().unwrap();
+        assert_eq!(
+            summary["corpus"]["definitionsExtracted"], definitions,
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            summary["corpus"]["incomplete"], incomplete,
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            stderr.contains("Ruby registration is redefined or not a direct top-level call"),
+            incomplete,
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|row| row["rule"] == "duplicate-matcher")
+                .count(),
+            1
+        );
+    }
+}
+
+/// A Ruby Method captures the definition current at its own registration; independent selected
+/// files can therefore use the same top-level name without withdrawing both handlers.
+fn assert_two_complete_ruby_definitions(records: &[Value], stderr: &str, label: &str) {
+    let summary = records.last().unwrap();
+    assert_eq!(
+        summary["corpus"]["definitionsExtracted"], 2,
+        "{label}: {stderr}"
+    );
+    assert_eq!(summary["corpus"]["incomplete"], false, "{label}: {stderr}");
+}
+
+#[test]
+fn ruby_named_handlers_bind_to_their_own_selected_file() {
+    let feature = "Feature: Methods\n  Scenario: shared\n    Given shared\n";
+    for (second_body, matcher, duplicate_matcher, duplicate_handler) in [
+        ("alpha()", "other", false, true),
+        ("beta()", "other", false, false),
+        ("beta()", "shared", true, false),
+    ] {
+        let first = "def handler; alpha(); end\nGiven('shared', &method(:handler))\n";
+        let second =
+            format!("def handler; {second_body}; end\nThen('{matcher}', &method(:handler))\n");
+        let (records, stderr) = ruby_records_run(
+            &[
+                ("a.rb", first),
+                ("b.rb", &second),
+                ("usage.feature", feature),
+            ],
+            None,
+            &[
+                "--features",
+                "usage.feature",
+                "--rule",
+                "unused-definition=off",
+            ],
+        );
+        assert_two_complete_ruby_definitions(&records, &stderr, second_body);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|row| row["rule"] == "duplicate-matcher")
+                .count(),
+            usize::from(duplicate_matcher)
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|row| row["rule"] == "duplicate-handler")
+                .count(),
+            usize::from(duplicate_handler)
+        );
+    }
+}
+
+/// A later proven load can redefine a top-level Ruby method without changing the Method already
+/// captured at an earlier registration in the entry file.
+#[test]
+fn ruby_named_handlers_follow_proven_cross_file_load_order() {
+    let feature = "Feature: Methods\n  Scenario: order\n    Given first\n    Then second\n";
+    for (second_body, duplicate_handler) in [("alpha()", true), ("beta()", false)] {
+        let entry = "require_relative 'support/first'\nGiven('first', &method(:handler))\nrequire_relative 'support/second'\nThen('second', &method(:handler))\n";
+        let second = format!("def handler; {second_body}; end\n");
+        let directory = ruby_project(&[
+            ("entry.rb", entry),
+            ("support/first.rb", "def handler; alpha(); end\n"),
+            ("support/second.rb", &second),
+            ("usage.feature", feature),
+        ]);
+        let output = ruby_cli(directory.path(), "entry.rb")
+            .args([
+                "--features",
+                "usage.feature",
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+                "--rule",
+                "unused-definition=off",
+            ])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let records = records(output.stdout);
+        assert_two_complete_ruby_definitions(&records, &stderr, second_body);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|row| row["rule"] == "duplicate-handler")
+                .count(),
+            usize::from(duplicate_handler),
+            "{second_body}: {stderr}"
+        );
+    }
+    let selected = ruby_project(&[
+        ("entry.rb", "require_relative 'support/first'\nGiven('first', &method(:handler))\nrequire_relative 'support/second'\nThen('second', &method(:handler))\n"),
+        ("support/first.rb", "def handler; alpha(); end\n"),
+        ("support/second.rb", "def handler; beta(); end\n"),
+        ("usage.feature", feature),
+    ]);
+    let output = ruby_cli(selected.path(), "**/*.rb")
+        .args([
+            "--features",
+            "usage.feature",
+            "--reporters",
+            "jsonl",
+            "--no-metrics",
+            "--fail-on-incomplete",
+        ])
+        .output()
+        .unwrap();
+    let rows = records(output.stdout);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], true);
 }
 
 /// Matcher windows of one, two and wider than the corpus produce identical records and stderr on
@@ -2866,7 +3211,7 @@ fn ruby_parameter_types_are_static_and_suite_scoped() {
         ("'stdout|stderr'", true, true),
         ("[/stderr/, 'stdout']", true, true),
         ("/stderr/", false, true),
-        ("/stdout/m", false, false),
+        ("/stdout/m", true, true),
         ("/stdout/i", false, false),
         ("/stdout/x", false, false),
         ("pattern", false, false),
@@ -10565,11 +10910,10 @@ fn ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings() {
             vec![path_ambiguity],
             vec![],
         ),
-        // Unterminated row: only file-level rejection is pinned; the parser reports the position
-        // after the row, which moves with the content that follows it.
+        // Unterminated row: retain rejection and report the row that caused it.
         (
             Some(outline(r"| bad\q")),
-            Some("broken.feature: Error at"),
+            Some("broken.feature: unterminated Gherkin table row at line 6"),
             1,
             vec![path_ambiguity],
             vec![],
@@ -11822,6 +12166,55 @@ fn ruby_load_budget_is_shared_across_selected_definition_files() {
     assert_eq!(strict, 2);
 }
 
+/// Eight near-limit Ruby providers stay within the 64 MiB graph budget; one more provider crosses
+/// the aggregate byte boundary without hiding independent local matcher findings.
+#[test]
+fn ruby_load_bytes_budget_preserves_findings_and_marks_the_cut_incomplete() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let large = format!("#{}\n", " ".repeat(8 * 1024 * 1024 - 4098));
+    for index in 0..8 {
+        ruby_write(root, &format!("support/large-{index}.rb"), &large);
+    }
+    ruby_write(
+        root,
+        "support/extra.rb",
+        &format!("#{}\n", " ".repeat(64 * 1024)),
+    );
+    for (entry, include_extra) in [("within.rb", false), ("over.rb", true)] {
+        let mut source = String::new();
+        for index in 0..8 {
+            source.push_str(&format!("require_relative 'support/large-{index}'\n"));
+        }
+        if include_extra {
+            source.push_str("require_relative 'support/extra'\n");
+        }
+        source.push_str("Given('local') { first() }\nThen('local') { second() }\n");
+        ruby_write(root, entry, &source);
+    }
+    ruby_write(
+        root,
+        "budget.feature",
+        "Feature: Budget\n  Scenario: Local\n    Given local\n",
+    );
+    for (entry, code, incomplete, refused) in
+        [("within.rb", 1, false, false), ("over.rb", 2, true, true)]
+    {
+        let (actual, summary, stderr) = ruby_summary_run(root, entry, &["--fail-on-incomplete"]);
+        assert_eq!(actual, code, "{entry}: {stderr}");
+        assert_eq!(
+            summary["corpus"]["incomplete"], incomplete,
+            "{entry}: {stderr}"
+        );
+        assert_eq!(summary["summary"]["byRule"]["duplicate-matcher"], 1);
+        assert_eq!(
+            stderr.contains("source graph exceeds the 64 MiB limit"),
+            refused,
+            "{entry}: {stderr}"
+        );
+    }
+}
+
 /// The matcher-overlap candidate limit over Ruby Cucumber Expressions is visible in the report and
 /// fails closed under `--fail-on-incomplete`; candidate-limit flags accept only positive integers.
 #[test]
@@ -12018,10 +12411,11 @@ fn ruby_exclusions_and_discovery_flags_define_the_analysis_corpus() {
     }
 }
 
-/// A valid Ruby regexp whose compiled program exceeds the 1 MiB regex limit is named with the
-/// actionable fix, keeps its definition in the reports, and fails under `--fail-on-incomplete`.
+/// A valid Ruby regexp that fits the crate default but exceeds the project limit is diagnosed
+/// during extraction, keeps its definition in reports, and fails under `--fail-on-incomplete`.
 #[test]
 fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
+    assert!(regex::Regex::new("a{100000}").is_ok());
     // Ruby rejects the original `a{1000000}` (Onigmo caps a repeat at 100,000), so this uses the
     // largest repeat Ruby accepts, which still exceeds the compiled-program limit.
     let directory = tempfile::tempdir().unwrap();
@@ -12029,7 +12423,7 @@ fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
     // The regexp sits on line 3 so a `1:1` location fallback cannot satisfy `limit`.
     let oversized = "# Oversized repeat.\n\nGiven(/a{100000}/) { work() }\n";
     ruby_write(root, "steps.rb", oversized);
-    let limit = "steps.rb:3:1 exceeds the 1048576-byte regex resource limit; simplify the matcher";
+    let limit = "steps.rb:3:1: Ruby regular expression exceeds the regex resource limit";
     for strict in [false, true] {
         let mut extra = vec!["--threshold", "100"];
         if strict {
@@ -12043,6 +12437,11 @@ fn ruby_regex_resource_limit_is_reported_and_keeps_the_definition() {
             "{stderr}"
         );
         assert!(stderr.contains(limit), "{stderr}");
+        assert!(!stderr.contains("step matcher at "), "{stderr}");
+        assert!(
+            !stderr.contains("outside the supported static matching subset"),
+            "{stderr}"
+        );
         assert_eq!(summary["summary"]["definitionsAnalyzed"], 1);
     }
     // Control: a small repeat compiles, so the run carries no resource diagnostic.

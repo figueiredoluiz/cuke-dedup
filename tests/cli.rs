@@ -1756,6 +1756,22 @@ fn project_config_extends_cycles_and_excessive_depth_never_resolve() {
         ));
 }
 
+fn assert_path_alias_escape_is_incomplete(root: &Path) {
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(root)
+        .args([".", "--definitions", "steps.ts"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "resolves outside package or analysis root",
+        ))
+        .stderr(predicate::str::contains("warning: steps.ts:"))
+        .stderr(predicate::str::contains(
+            "definition extraction produced 0 definitions",
+        ));
+}
+
 #[test]
 fn path_alias_targets_cannot_escape_the_analysis_root() {
     let sandbox = tempfile::tempdir().unwrap();
@@ -1776,19 +1792,7 @@ fn path_alias_targets_cannot_escape_the_analysis_root() {
         "export { Given } from '@cucumber/cucumber';\n",
     );
 
-    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
-    command
-        .current_dir(&root)
-        .args([".", "--definitions", "steps.ts"])
-        .assert()
-        .code(0)
-        .stderr(predicate::str::contains(
-            "resolves outside package or analysis root",
-        ))
-        .stderr(predicate::str::contains("warning: steps.ts:"))
-        .stderr(predicate::str::contains(
-            "definition extraction produced 0 definitions",
-        ));
+    assert_path_alias_escape_is_incomplete(&root);
 }
 
 #[cfg(unix)]
@@ -1817,19 +1821,7 @@ fn symlinked_path_alias_targets_cannot_escape_the_analysis_root() {
     );
     symlink(&outside, root.join("escape")).unwrap();
 
-    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
-    command
-        .current_dir(&root)
-        .args([".", "--definitions", "steps.ts"])
-        .assert()
-        .code(0)
-        .stderr(predicate::str::contains(
-            "resolves outside package or analysis root",
-        ))
-        .stderr(predicate::str::contains("warning: steps.ts:"))
-        .stderr(predicate::str::contains(
-            "definition extraction produced 0 definitions",
-        ));
+    assert_path_alias_escape_is_incomplete(&root);
 }
 
 #[test]
@@ -2456,17 +2448,17 @@ fn oversized_config_and_baseline_inputs_are_fatal() {
     }
 }
 
+fn oversized_unchanged_feature_repository(root: &Path) {
+    write_sized(root, "features/example.feature", 8 * 1024 * 1024 + 1);
+    init_repository(root);
+    write(root, "changed.txt", "changed\n");
+}
+
 #[test]
 fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
     let directory = tempfile::tempdir().unwrap();
     write_sized(directory.path(), "steps.ts", 8 * 1024 * 1024 + 1);
-    write_sized(
-        directory.path(),
-        "features/example.feature",
-        8 * 1024 * 1024 + 1,
-    );
-    init_repository(directory.path());
-    write(directory.path(), "changed.txt", "changed\n");
+    oversized_unchanged_feature_repository(directory.path());
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
@@ -2481,13 +2473,7 @@ fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
 #[test]
 fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
     let directory = tempfile::tempdir().unwrap();
-    write_sized(
-        directory.path(),
-        "features/example.feature",
-        8 * 1024 * 1024 + 1,
-    );
-    init_repository(directory.path());
-    write(directory.path(), "changed.txt", "changed\n");
+    oversized_unchanged_feature_repository(directory.path());
 
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
@@ -6550,10 +6536,9 @@ fn regression_ruby_pending_stub_handlers_are_not_duplicates() {
         active.sort();
         assert_eq!(active, expected, "{steps}");
     }
-    // Named handlers with different bodies in two files never duplicate. Ruby binds each
-    // registration to the definition current at the call; the adapter withdraws same-named
-    // handlers (incomplete), while distinct names are analyzed.
-    for (left, right, definitions) in [("handler", "handler", 0), ("alpha", "beta", 2)] {
+    // Named handlers with different bodies in two files never duplicate. Each registration
+    // captures the definition current in its selected file, including when names coincide.
+    for (left, right) in [("handler", "handler"), ("alpha", "beta")] {
         let directory = tempfile::tempdir().unwrap();
         write(
             directory.path(),
@@ -6571,12 +6556,8 @@ fn regression_ruby_pending_stub_handlers_are_not_duplicates() {
             "Feature: pending\n  Scenario: steps\n    Given alpha step\n",
         );
         let run = ruby_run(directory.path(), &["--definitions", "*.rb"]);
-        assert_eq!(
-            run.definitions, definitions,
-            "{left}/{right}: {}",
-            run.stderr
-        );
-        assert_eq!(run.incomplete, definitions == 0, "{left}/{right}");
+        assert_eq!(run.definitions, 2, "{left}/{right}: {}", run.stderr);
+        assert!(!run.incomplete, "{left}/{right}");
         assert!(
             !run.active.iter().any(|rule| rule == "duplicate-handler"),
             "{left}/{right}"
