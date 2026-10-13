@@ -307,6 +307,7 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
                 current.kind(),
                 "comment"
                     | "string"
+                    | "delimited_symbol"
                     | "bare_string"
                     | "bare_symbol"
                     | "string_array"
@@ -327,7 +328,7 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
             Some("bare_string" | "bare_symbol" | "string_array" | "symbol_array") => {
                 prepared.replace_range(byte..byte + 1, "x");
             }
-            Some("string" | "regex" | "heredoc_body") => {}
+            Some("string" | "delimited_symbol" | "regex" | "heredoc_body") => {}
             _ => {
                 prepared.truncate(byte);
                 break;
