@@ -11515,6 +11515,47 @@ fn ruby_diagnostic_count(stderr: &str) -> usize {
         .count()
 }
 
+/// An oversized dependency-only provider is an explicit incomplete load, not an operational failure. Independently selected registrations and a later admissible provider still contribute final findings; strict mode remains the control that rejects the incomplete corpus.
+#[test]
+fn oversized_dependency_only_ruby_sources_preserve_independent_outcomes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    ruby_write(root, ".cuke-dedup.json", r#"{"threshold":100}"#);
+    ruby_write_sized(root, "oversized.rb", 8 * 1024 * 1024 + 1);
+    ruby_write(
+        root,
+        "provider.rb",
+        "Given('provider control') { provider_work() }\n",
+    );
+    ruby_write(
+        root,
+        "entry.rb",
+        "require_relative 'oversized'\nrequire_relative 'provider'\nGiven('first retained step') { retained_work() }\nGiven('second retained step') { retained_work() }\n",
+    );
+
+    let (code, summary, stderr) = ruby_summary_run(root, "entry.rb", &[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("entry.rb:1:1: Ruby source dependency was not followed:"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("oversized.rb"), "{stderr}");
+    assert!(stderr.contains("8388608-byte input limit"), "{stderr}");
+    assert!(!stderr.contains("failed to analyze"), "{stderr}");
+    ruby_assert_pointers(
+        &summary,
+        &[
+            ("/corpus/definitionFiles", 2.into()),
+            ("/corpus/incomplete", true.into()),
+            ("/summary/definitionsAnalyzed", 3.into()),
+        ],
+    );
+    assert_eq!(summary["summary"]["byRule"]["duplicate-handler"], 1);
+
+    let (strict, _, strict_stderr) = ruby_summary_run(root, "entry.rb", &["--fail-on-incomplete"]);
+    assert_eq!(strict, 2, "{strict_stderr}");
+}
+
 /// The Ruby load budget of 1,024 dependency-only files is one budget across every selected
 /// definition file: each file's 520 loads fit alone, and together the loads past 1,024 are not
 /// followed and mark the run incomplete.
