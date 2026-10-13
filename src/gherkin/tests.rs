@@ -455,7 +455,9 @@ fn gherkin_markdown_rejects_candidate_storms_before_repeated_parsing() {
         FeatureFormat::GherkinMarkdown,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("candidate conversion limit"));
+    let error = format!("{error:#}");
+    assert!(error.contains("failed to parse Gherkin feature candidate-storm.feature.md"));
+    assert!(error.contains("candidate conversion limit"));
 }
 
 #[test]
@@ -470,7 +472,9 @@ fn gherkin_markdown_counts_heading_and_step_candidates_together() {
         FeatureFormat::GherkinMarkdown,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("candidate conversion limit"));
+    let error = format!("{error:#}");
+    assert!(error.contains("failed to parse Gherkin feature mixed-candidate-storm.feature.md"));
+    assert!(error.contains("candidate conversion limit"));
 }
 
 #[test]
@@ -642,7 +646,7 @@ fn gherkin_markdown_bounds_ambiguous_parser_probe_work() {
         FeatureFormat::GherkinMarkdown,
     )
     .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("Gherkin Markdown conversion exceeds"));
+    let error = format!("{error:#}");
+    assert!(error.contains("failed to parse Gherkin feature probe-budget.feature.md"));
+    assert!(error.contains("Gherkin Markdown conversion exceeds"));
 }

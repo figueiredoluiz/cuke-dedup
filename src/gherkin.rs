@@ -74,7 +74,8 @@ pub fn extract_with_format(
 ) -> Result<Vec<FeatureStep>> {
     let parsed_source = match format {
         FeatureFormat::Gherkin => source.to_owned(),
-        FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source)?,
+        FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source)
+            .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?,
     };
     let (parsed_source, marker) = table_escapes::prepare(&parsed_source)
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
