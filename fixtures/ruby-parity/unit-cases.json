@@ -2600,7 +2600,7 @@
       ]
     },
     "src/resource_limits.rs": {
-      "sourceSha256": "14cb4d033e8fd886de9d5758ee9b6bdcffdbd032432000a6c469aae114491065",
+      "sourceSha256": "5250cb960f6f1bbd89c204d06532ab47623123b3adebf58e8d942937d5f8d356",
       "tests": [
         {
           "name": "bounded_reader_accepts_exact_limit_and_rejects_next_byte",

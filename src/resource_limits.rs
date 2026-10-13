@@ -155,6 +155,7 @@ mod tests {
         assert!(error.to_string().contains("not valid UTF-8"));
     }
 
+    /// Accepts metadata at the exact boundary and reuses the standard diagnostic above it.
     #[test]
     fn known_input_limit_only_rejects_metadata_above_the_boundary() {
         let directory = tempfile::tempdir().unwrap();
