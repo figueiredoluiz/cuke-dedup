@@ -1607,9 +1607,15 @@ fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
         "[/red/, /green/];-;pick {colour};^pick .*$;pick red",
         "[/red/];-;pick {colour};^pick .*$;pick red",
         "[/r.d/, /green/];-;pick {colour};^pick .*$;",
+        "[/red/m, /green/m];-;pick {colour};^pick .*$;pick red",
+        "[/red/, /green/m];-;pick {colour};^pick .*$;pick red",
+        "[/red/m, /green/];-;pick {colour};^pick .*$;pick red",
+        "[/red/, /green/m, /blue/];-;pick {colour};^pick .*$;pick red",
+        "[/r.d/m, /green/];-;pick {colour};^pick .*$;",
         "/red|green/m;-;pick {colour};^pick .*$;pick red",
         "/(?m:red|green)/;-;pick {colour};^pick .*$;pick red",
         "[/red/, /green/];-;pick {colour};^pick blue$;",
+        "[/red/m, /green/m];-;pick {colour};^pick blue$;",
         "(red|green);-;pick {colour};^pick .*$;pick red",
         "(?:red|green);-;pick {colour};^pick .*$;pick red",
         "((red|green));-;pick {colour};^pick .*$;pick red",
@@ -1749,8 +1755,36 @@ fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
             false,
             "1 5",
         ),
+        (
+            "nested-string-in-interpolation",
+            "value = \"#{'inside\0string'}\"\n",
+            true,
+            false,
+            "1 3",
+        ),
         ("top-level", "\0\n", false, false, ""),
         ("hash-in-string", "value = '# text'\n\0\n", false, false, ""),
+        (
+            "string interpolation",
+            "value = \"#{1\0+2}\"\n",
+            false,
+            true,
+            "",
+        ),
+        (
+            "regexp interpolation",
+            "value = /a#{1\0+2}/\n",
+            false,
+            true,
+            "",
+        ),
+        (
+            "heredoc interpolation",
+            "value = <<DOC\n#{1\0+2}\nDOC\n",
+            false,
+            true,
+            "",
+        ),
     ];
     for (label, middle, second_seen, incomplete, duplicate_lines) in rows {
         let source =
@@ -1776,19 +1810,6 @@ fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
             "{label}: {stderr}"
         );
     }
-    // A NUL in interpolation is executable Ruby syntax, not string data. Ruby rejects the
-    // source; the analyzer must not present the recovered tree as a complete clean scan.
-    let source = "Given('local') { first() }\nvalue = \"#{1\0+2}\"\nThen('local') { second() }\n";
-    let (records, stderr) = ruby_usage_run(
-        source,
-        "  Scenario: local\n    Given local\n",
-        &["--rule", "unused-definition=off"],
-    );
-    assert_eq!(
-        records.last().unwrap()["corpus"]["incomplete"],
-        true,
-        "{stderr}"
-    );
 }
 
 /// Loaded providers use the same lexical NUL boundary as selected Ruby files, so their valid
@@ -1797,9 +1818,16 @@ fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
 fn ruby_nul_loaded_provider_respects_execution_boundary() {
     let entry = "require_relative 'support/provider'\nGiven('local') { first() }\nThen('local') { second() }\n";
     let feature = "Feature: NUL provider\n  Scenario: local\n    Given local\n";
-    for (label, middle, provider_seen) in [
-        ("comment", "# note \0\n", true),
-        ("top-level", "\0\n", false),
+    for (label, middle, provider_seen, incomplete) in [
+        ("comment", "# note \0\n", true, false),
+        (
+            "nested literal",
+            "value = \"#{'inside\0string'}\"\n",
+            true,
+            false,
+        ),
+        ("top-level", "\0\n", false, false),
+        ("interpolation", "value = \"#{1\0+2}\"\n", false, true),
     ] {
         let provider =
             format!("Given('provider') {{ source() }}\n{middle}Then('provider') {{ target() }}\n");
@@ -1823,7 +1851,10 @@ fn ruby_nul_loaded_provider_respects_execution_boundary() {
             if provider_seen { 4 } else { 3 },
             "{label}: {stderr}"
         );
-        assert_eq!(summary["corpus"]["incomplete"], false, "{label}: {stderr}");
+        assert_eq!(
+            summary["corpus"]["incomplete"], incomplete,
+            "{label}: {stderr}"
+        );
         let duplicates = records
             .iter()
             .filter(|row| row["rule"] == "duplicate-matcher")

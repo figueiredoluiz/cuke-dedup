@@ -1,13 +1,16 @@
 //! Preserve Cucumber's unknown table escapes across the stricter gherkin crate grammar.
 use anyhow::{bail, Context, Result};
-use gherkin::{Feature, Table};
+use gherkin::{Feature, GherkinEnv, Table};
 use std::borrow::Cow;
 
-/// Locate a table row whose last visible pipe is escaped or absent. This is diagnostic context
-/// for an existing parser failure, never a replacement for the parser's acceptance decision.
+/// Locate a table row whose last visible pipe is escaped or absent only when adding that pipe
+/// repairs the parse. This is diagnostic context, never a replacement for parser acceptance.
 pub(super) fn first_unterminated_row(source: &str) -> Option<usize> {
     let mut fence = None;
-    for (index, line) in source.lines().enumerate() {
+    let mut offset = 0;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        let start = offset;
+        offset += line.len();
         let trimmed = line.trim_start().trim_end();
         if let Some(delimiter) = fence {
             if trimmed.starts_with(delimiter) {
@@ -40,7 +43,14 @@ pub(super) fn first_unterminated_row(source: &str) -> Option<usize> {
             }
         }
         if !ends_with_delimiter {
-            return Some(index + 1);
+            let insert = start + line.trim_end().len();
+            let mut repaired = String::with_capacity(source.len() + 1);
+            repaired.push_str(&source[..insert]);
+            repaired.push('|');
+            repaired.push_str(&source[insert..]);
+            return Feature::parse(&repaired, GherkinEnv::default())
+                .ok()
+                .map(|_| index + 1);
         }
     }
     None

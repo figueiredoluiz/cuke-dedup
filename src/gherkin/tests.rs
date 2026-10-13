@@ -121,6 +121,24 @@ fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
             "{delimiter}: {error}"
         );
     }
+    let stray_before_feature = "| prose\nFeature: invalid\n Scenario: later\n  Not a keyword\n";
+    let error = format!(
+        "{:#}",
+        extract(stray_before_feature, Path::new("unrelated.feature")).unwrap_err()
+    );
+    assert!(!error.contains("unterminated Gherkin table row"), "{error}");
+    for source in [
+        "Feature: invalid\n Scenario: rows\n  | prose\n  Not a keyword\n",
+        "Feature: invalid\n Scenario: rows\n  Given table\n   | bad\\q\n  Not a keyword\n",
+    ] {
+        if let Err(error) = extract(source, Path::new("unrelated.feature")) {
+            let error = format!("{error:#}");
+            assert!(
+                !error.contains("unterminated Gherkin table row"),
+                "{source:?}: {error}"
+            );
+        }
+    }
 }
 
 #[test]

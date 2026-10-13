@@ -1918,7 +1918,7 @@
       ]
     },
     "src/gherkin/tests.rs": {
-      "sourceSha256": "38e63d5aaa823d4296f40375d91a692d1f60993e667fd39c30656057cb096fec",
+      "sourceSha256": "334ceb25e0744aafba50bcf3a1d39588f8d2e11928ca8cb776e36cf06a36b369",
       "tests": [
         {
           "name": "table_escape_matrix_preserves_outline_text_and_source_positions",

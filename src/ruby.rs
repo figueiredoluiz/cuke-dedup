@@ -283,7 +283,7 @@ fn extract(
 }
 
 /// Match Ruby's lexical NUL boundary without executing the source. NUL inside a Ruby comment is
-/// ignored; NUL inside a string, regexp or heredoc body is data; elsewhere Ruby stops reading.
+/// ignored; NUL inside literal data is retained; executable interpolation stops the source.
 fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
     if !source.contains('\0') {
         return std::borrow::Cow::Borrowed(source);
@@ -305,7 +305,7 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
         while let Some(current) = node {
             if matches!(
                 current.kind(),
-                "comment" | "string" | "regex" | "heredoc_body"
+                "comment" | "string" | "regex" | "heredoc_body" | "interpolation"
             ) {
                 kind = Some(current.kind());
                 break;

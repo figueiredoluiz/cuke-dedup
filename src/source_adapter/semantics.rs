@@ -35,9 +35,15 @@ pub(crate) trait RegexDialect: Sync {
         // The resulting witness must still match both compiled definitions.
         if let Some(array) = pattern
             .strip_prefix("(?:(?m:")
+            .or_else(|| pattern.strip_prefix("(?:(?ms:"))
             .and_then(|value| value.strip_suffix("))"))
         {
-            let first = array.split_once(")|(?m:").map_or(array, |(first, _)| first);
+            let end = [")|(?m:", ")|(?ms:"]
+                .into_iter()
+                .filter_map(|delimiter| array.find(delimiter))
+                .min()
+                .unwrap_or(array.len());
+            let first = &array[..end];
             if !first.is_empty()
                 && first
                     .chars()
