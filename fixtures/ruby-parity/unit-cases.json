@@ -4654,14 +4654,22 @@
         },
         {
           "name": "path_alias_targets_cannot_escape_the_analysis_root",
-          "requiredStatus": "partial",
-          "rationale": "Needs a decision and Ruby evidence: `rubyLoadPaths` is the Ruby counterpart of tsconfig `paths`, but a configured load path may resolve outside the analysis root by documented configuration, where JS/TS refuses alias targets outside the root. Unconfigured escapes (`require_relative '../outside/world'`, `require './../outside/world'`) and climbs out of a declared load-path root are refused (`ruby_source_loads_cannot_escape_the_analysis_root`).",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_external_load_roots_preserve_containment_and_findings"
+          },
+          "rationale": "Accepted documented difference: Ruby explicitly trusts canonical configured load roots outside the analysis root, unlike JS/TS aliases. Absolute and parent-relative roots admit one provider (3 definitions, complete, exit 1); unconfigured loads and traversal outside configured roots retain only the 2 local definitions (incomplete, strict exit 2). Every row retains local duplicate-matcher and ambiguous-step findings; admitted providers are used by the feature corpus.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "symlinked_path_alias_targets_cannot_escape_the_analysis_root",
-          "requiredStatus": "partial",
-          "rationale": "Needs a decision and Ruby evidence: a relative `rubyLoadPaths` entry through an in-root symlink to an outside directory is followed and its source analyzed, where the JS/TS symlinked alias target is refused; docs/configuration.md names only absolute and `..` load paths as able to leave the root.",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_configured_external_load_roots_preserve_containment_and_findings"
+          },
+          "rationale": "Accepted documented difference: configured Ruby symlink directories explicitly trust their canonical targets. Unix controls admit an external provider via a configured symlink and deduplicate two aliases (3 definitions, complete, exit 1); an unconfigured symlink and a symlink escaping the trusted root retain only local findings (2 definitions, incomplete, strict exit 2). Portable absolute/relative and traversal controls exercise the same canonical-root contract on every platform; symlink-specific evidence is Unix-only.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
