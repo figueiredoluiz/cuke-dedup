@@ -277,7 +277,7 @@ for resolution and input bounds.
 
 Ruby support is experimental and opt-in. It requires explicit definition and feature roots for one Cucumber suite. Include support files that register steps.
 
-This release does not claim complete Ruby semantics or feature parity with the JavaScript/TypeScript adapters. Reflective local rebinding through called methods, returned Binding values or other files, and indirect DSL mutation can escape static tracking and affect finding accuracy. NUL-bearing sources are outside the supported subset; extraction may misread them. Array-form `ParameterType` regexps can miss overlap findings. Oversized loaded providers can fail the run, and oversized regexes can produce an unsupported-syntax warning instead of a resource-limit diagnostic. Review Ruby findings against source; a clean run, including one with `--fail-on-incomplete`, cannot certify behavior outside the supported subset.
+This release does not claim complete Ruby semantics or feature parity with the JavaScript/TypeScript adapters. Reflective local rebinding through called methods, returned Binding values or other files, and indirect DSL mutation can escape static tracking and affect finding accuracy. Ruby sources are not excluded as binary: NUL inside comments, strings and regexps is valid Ruby, and a top-level NUL ends the executed source, so registrations after it are not extracted. An oversized loaded provider is an incomplete load, not a run failure; `--fail-on-incomplete` rejects it. Review Ruby findings against source; a clean run, including one with `--fail-on-incomplete`, cannot certify behavior outside the supported subset.
 
 Start with an exploratory run. It reports findings from the supported subset and lists what it could not resolve:
 
