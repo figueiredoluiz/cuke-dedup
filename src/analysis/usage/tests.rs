@@ -292,11 +292,26 @@ fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
 /// A `Break` from the visitor ends the window walk: no later window is compiled or visited.
 #[test]
 fn scan_windows_stop_at_a_break() {
-    let definitions = definitions(
-        "Given('one', () => one());\n\
-         Given('two', () => two());\n\
-         Given('three', () => three());",
-    );
+    let definitions = ["one", "two", "three"].map(|matcher| StepDefinition {
+        matcher: matcher.to_owned(),
+        normalized_matcher: matcher.to_owned(),
+        matcher_kind: MatcherKind::CucumberExpression,
+        matcher_flags: String::new(),
+        handler: crate::model::HandlerFingerprint {
+            exact: String::new(),
+            normalized: String::new(),
+            alpha_normalized: String::new(),
+            structural: String::new(),
+            behavior_signature: Vec::new(),
+            source_snippet: String::new(),
+            comparable: false,
+            trivial: true,
+        },
+        framework: crate::model::Framework::Unknown,
+        registration: "Given".to_owned(),
+        location: crate::model::SourceLocation::new("synthetic", 1, 1, 1, 1),
+        inline_suppressions: Vec::new(),
+    });
     let (_directory, config) = config();
     let mut visited = Vec::new();
     let work = scan_windows(

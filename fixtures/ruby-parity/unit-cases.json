@@ -1224,7 +1224,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "5cfac5850b3fa395ed670415e02f4af6090aa8654def35358ac347d2e068f0d2",
+      "sourceSha256": "08f7ab8a70a3135cbec569f9a865a54821b4cc3f182c83bea45f7cef760d1b35",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1281,7 +1281,7 @@
           "name": "scan_windows_stop_at_a_break",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
-          "rationale": "Adapter-independent stage `bounded-analysis`: the test pins avoided window compilation after the overlap cap is reached. Skipped windows store nothing and cannot change findings, census, truncation, or diagnostics for any adapter; Ruby outcome parity remains covered by the windowing and overlap-budget suites.",
+          "rationale": "Adapter-independent stage `bounded-analysis`: directly constructed model inputs pin the visitor's early break and avoided window compilation, with a full-walk control. No adapter output enters this test; Ruby outcome parity remains covered by the windowing and overlap-budget suites.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
