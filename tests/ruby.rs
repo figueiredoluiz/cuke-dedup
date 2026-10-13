@@ -10425,10 +10425,7 @@ type RubyTableCase<'a> = (
     Vec<&'a str>,
 );
 
-/// Malformed feature tables beside an escaped-path feature, under `--fail-on-incomplete`: a ragged
-/// outline row, a ragged Background table and a ragged table under a Rule reject only their file
-/// at its line, and an unterminated outline row rejects its file; the escaped neighbour keeps its
-/// ambiguity and the run keeps its duplicate-matcher; well-formed controls contribute their steps.
+/// Malformed feature tables and exhausted table-escape marker budgets reject only their file beside retained escaped-path findings; well-formed controls contribute their steps.
 #[test]
 fn ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings() {
     let steps = "Given('path {word}') { first() }\nThen('path {word}') { second() }\nGiven('table') { third() }\nThen('done') { fourth() }\nGiven('a') { fifth() }\n";
@@ -10443,6 +10440,7 @@ fn ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings() {
         format!("Feature: rows\n Rule: scoped\n  Scenario Outline: example\n   Given <v>\n  Examples:\n   | v |\n   {row}\n")
     };
     let path_ambiguity = "valid.feature:3 steps.rb:1 steps.rb:2";
+    let alphabet: String = ('\u{e000}'..='\u{f8ff}').collect();
     let cases: Vec<RubyTableCase> = vec![
         (
             None,
@@ -10494,6 +10492,17 @@ fn ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings() {
             2,
             vec![path_ambiguity],
             vec!["steps.rb:3", "steps.rb:4"],
+        ),
+        (
+            Some(format!(
+                "Feature: {alphabet}\n Scenario: exhausted\n  Given table\n   | a\\q |\n"
+            )),
+            Some(
+                "broken.feature: Gherkin table escape compatibility exhausted its reserved-character budget",
+            ),
+            1,
+            vec![path_ambiguity],
+            vec![],
         ),
     ];
     for (broken, diagnostic, feature_steps, ambiguous, unused) in cases {

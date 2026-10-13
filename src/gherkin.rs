@@ -76,7 +76,8 @@ pub fn extract_with_format(
         FeatureFormat::Gherkin => source.to_owned(),
         FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source)?,
     };
-    let (parsed_source, marker) = table_escapes::prepare(&parsed_source)?;
+    let (parsed_source, marker) = table_escapes::prepare(&parsed_source)
+        .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     let mut feature = Feature::parse(&parsed_source, GherkinEnv::default())
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     table_escapes::finish(&mut feature, &parsed_source, marker)
