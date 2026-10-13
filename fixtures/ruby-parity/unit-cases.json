@@ -1224,7 +1224,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "08f7ab8a70a3135cbec569f9a865a54821b4cc3f182c83bea45f7cef760d1b35",
+      "sourceSha256": "7ae59ada648e4376d2744742dbe88c3a9596b037b04458aa57b75a73dc8da6ae",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
