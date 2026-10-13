@@ -1749,6 +1749,34 @@ fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
         ("string", "value = 'inside\0string'\n", true, false, "1 3"),
         ("regexp", "value = /inside\0regexp/\n", true, false, "1 3"),
         (
+            "single-quoted symbol",
+            "value = :'inside\0symbol'\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "double-quoted symbol",
+            "value = :\"inside\0symbol\"\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "percent symbol",
+            "value = %s[inside\0symbol]\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
+            "nested symbol in interpolation",
+            "value = \"#{:\"inside\0symbol\"}\"\n",
+            true,
+            false,
+            "1 3",
+        ),
+        (
             "word array",
             "value = %w[inside\0word]\n",
             true,
@@ -1791,6 +1819,20 @@ fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
             "1 3",
         ),
         ("top-level", "\0\n", false, false, ""),
+        (
+            "unquoted symbol",
+            "value = :inside\0symbol\n",
+            false,
+            false,
+            "",
+        ),
+        (
+            "symbol interpolation",
+            "value = :\"#{1\0+2}\"\n",
+            false,
+            true,
+            "",
+        ),
         ("hash-in-string", "value = '# text'\n\0\n", false, false, ""),
         (
             "string interpolation",
@@ -1862,6 +1904,18 @@ fn ruby_nul_loaded_provider_respects_execution_boundary() {
     let feature = "Feature: NUL provider\n  Scenario: local\n    Given local\n";
     for (label, middle, provider_seen, incomplete) in [
         ("comment", "# note \0\n", true, false),
+        (
+            "quoted symbol",
+            "value = :\"inside\0symbol\"\n",
+            true,
+            false,
+        ),
+        (
+            "symbol interpolation",
+            "value = :\"#{1\0+2}\"\n",
+            false,
+            true,
+        ),
         (
             "nested literal",
             "value = \"#{'inside\0string'}\"\n",
