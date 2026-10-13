@@ -1224,7 +1224,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "5cfac5850b3fa395ed670415e02f4af6090aa8654def35358ac347d2e068f0d2",
+      "sourceSha256": "7ae59ada648e4376d2744742dbe88c3a9596b037b04458aa57b75a73dc8da6ae",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1242,8 +1242,9 @@
         },
         {
           "name": "broad_ambiguity_groups_use_linear_membership_storage",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an observable for the linear ambiguity-membership layout (for example a work charge or limit tied to membership size). Today a quadratic layout yields identical findings and census for any adapter.",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the test pins the internal linear ambiguity-membership layout. A quadratic layout yields identical findings, census, truncation, and diagnostics for every adapter; Ruby outcome parity remains covered by the ambiguity and overlap-budget suites.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1278,8 +1279,9 @@
         },
         {
           "name": "scan_windows_stop_at_a_break",
-          "requiredStatus": "partial",
-          "rationale": "Needs Ruby evidence: an observable for skipped window compilation after the overlap cap is reached. The skipped windows store nothing, so findings and census are identical for any adapter; same class as broad_ambiguity_groups_use_linear_membership_storage.",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: directly constructed model inputs pin the visitor's early break and avoided window compilation, with a full-walk control. No adapter output enters this test; Ruby outcome parity remains covered by the windowing and overlap-budget suites.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1903,7 +1905,7 @@
       ]
     },
     "src/gherkin/tests.rs": {
-      "sourceSha256": "e9d6d118f4b66e91d93c8dc6327f0ae87266a89f23600ad9b779b7545c1b0b33",
+      "sourceSha256": "ba7abcf494c7e3f3f3e27ecb2088c826082589d094b8530a64477eead7c54743",
       "tests": [
         {
           "name": "table_escape_matrix_preserves_outline_text_and_source_positions",
@@ -1925,7 +1927,7 @@
           "name": "table_escape_adaptation_is_bounded_and_does_not_change_docstrings",
           "requiredStatus": "engine-invariant",
           "stage": "gherkin-parser",
-          "rationale": "Adapter-independent stage `gherkin-parser`: the reserved-character budget of table-escape adaptation is a per-feature-file parser bound computed before any adapter runs, from feature text alone. Leaving doc-string contents unadapted is the same parser stage; the `doc string before escaped table` row of `ruby_feature_structure_decides_definition_usage_and_ambiguity_locations` shows only that an escaped-looking doc-string line before an escaped table still parses and drives usage, not the doc-string text.",
+          "rationale": "Adapter-independent stage `gherkin-parser`: the reserved-character budget and failing-path context of table-escape adaptation are per-feature-file parser behavior computed before any adapter runs, from feature text alone. The Ruby CLI regression `ruby_malformed_feature_tables_fail_closed_beside_escaped_table_findings` verifies the same failure beside retained findings. Leaving doc-string contents unadapted is the same parser stage; the `doc string before escaped table` row of `ruby_feature_structure_decides_definition_usage_and_ambiguity_locations` shows only that an escaped-looking doc-string line before an escaped table still parses and drives usage, not the doc-string text.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
