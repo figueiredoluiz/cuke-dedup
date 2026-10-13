@@ -363,6 +363,8 @@ fn ruby_regex_subset_preserves_line_anchors_and_ascii_digits() {
         ("value.*", "i"),
         ("value", "x"),
         ("(?=value)", ""),
+        ("(?<bad!>value)", ""),
+        ("(", ""),
         ("[[:alpha:]]", ""),
         (r"(x)\1", ""),
     ] {
