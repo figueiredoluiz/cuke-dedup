@@ -99,6 +99,28 @@ fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
         error.contains("unterminated Gherkin table row at line 6"),
         "{error}"
     );
+    for delimiter in ["\"\"\"", "```"] {
+        let docstring = format!(
+            "Feature: invalid\n Scenario: doc\n  Given text\n   {delimiter}\n   | not a table\\q\n   {delimiter}\n  Not a keyword\n"
+        );
+        let error = format!(
+            "{:#}",
+            extract(&docstring, Path::new("docstring.feature")).unwrap_err()
+        );
+        assert!(
+            !error.contains("unterminated Gherkin table row"),
+            "{delimiter}: {error}"
+        );
+        let table = docstring.replace("  Not a keyword\n", "  Then table\n   | bad\\q\n");
+        let error = format!(
+            "{:#}",
+            extract(&table, Path::new("table.feature")).unwrap_err()
+        );
+        assert!(
+            error.contains("unterminated Gherkin table row at line 8"),
+            "{delimiter}: {error}"
+        );
+    }
 }
 
 #[test]

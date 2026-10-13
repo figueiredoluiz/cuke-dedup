@@ -1605,6 +1605,8 @@ fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
         "-;-;open(unclosed;^open.*$;open(unclosed",
         "red|green;-;pick {colour};^pick .*$;pick red",
         "[/red/, /green/];-;pick {colour};^pick .*$;pick red",
+        "[/red/];-;pick {colour};^pick .*$;pick red",
+        "[/r.d/, /green/];-;pick {colour};^pick .*$;",
         "/red|green/m;-;pick {colour};^pick .*$;pick red",
         "/(?m:red|green)/;-;pick {colour};^pick .*$;pick red",
         "[/red/, /green/];-;pick {colour};^pick blue$;",
@@ -1737,13 +1739,20 @@ fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
 #[test]
 fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
     let rows = [
-        ("comment", "# note \0\n", true, false),
-        ("string", "value = 'inside\0string'\n", true, false),
-        ("regexp", "value = /inside\0regexp/\n", true, false),
-        ("top-level", "\0\n", false, false),
-        ("hash-in-string", "value = '# text'\n\0\n", false, false),
+        ("comment", "# note \0\n", true, false, "1 3"),
+        ("string", "value = 'inside\0string'\n", true, false, "1 3"),
+        ("regexp", "value = /inside\0regexp/\n", true, false, "1 3"),
+        (
+            "heredoc",
+            "value = <<DOC\ninside\0body\nDOC\n",
+            true,
+            false,
+            "1 5",
+        ),
+        ("top-level", "\0\n", false, false, ""),
+        ("hash-in-string", "value = '# text'\n\0\n", false, false, ""),
     ];
-    for (label, middle, second_seen, incomplete) in rows {
+    for (label, middle, second_seen, incomplete, duplicate_lines) in rows {
         let source =
             format!("Given('local') {{ first() }}\n{middle}Then('local') {{ second() }}\n");
         let (records, stderr) = ruby_usage_run(
@@ -1763,7 +1772,7 @@ fn ruby_nul_lexical_context_preserves_only_executed_registrations() {
         );
         assert_eq!(
             ruby_rule_locations(&records, "duplicate-matcher"),
-            ruby_locations(if second_seen { "1 3" } else { "" }),
+            ruby_locations(duplicate_lines),
             "{label}: {stderr}"
         );
     }

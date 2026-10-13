@@ -37,14 +37,13 @@ pub(crate) trait RegexDialect: Sync {
             .strip_prefix("(?:(?m:")
             .and_then(|value| value.strip_suffix("))"))
         {
-            if let Some(first) = array.split(")|(?m:").next() {
-                if !first.is_empty()
-                    && first
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
-                {
-                    return Some(first.to_owned());
-                }
+            let first = array.split_once(")|(?m:").map_or(array, |(first, _)| first);
+            if !first.is_empty()
+                && first
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
+            {
+                return Some(first.to_owned());
             }
         }
         let mut trimmed = pattern.trim();

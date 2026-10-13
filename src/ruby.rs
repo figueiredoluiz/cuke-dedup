@@ -283,7 +283,7 @@ fn extract(
 }
 
 /// Match Ruby's lexical NUL boundary without executing the source. NUL inside a Ruby comment is
-/// ignored; NUL inside a string or regexp is data; elsewhere Ruby stops reading the source.
+/// ignored; NUL inside a string, regexp or heredoc body is data; elsewhere Ruby stops reading.
 fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
     if !source.contains('\0') {
         return std::borrow::Cow::Borrowed(source);
@@ -292,21 +292,21 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
     // without its special NUL error recovery changing the enclosing lexical node.
     let probe = source.replace('\0', " ");
     let mut parser = tree_sitter::Parser::new();
-    if parser
+    parser
         .set_language(&tree_sitter_ruby::LANGUAGE.into())
-        .is_err()
-    {
-        return std::borrow::Cow::Owned(source.split('\0').next().unwrap_or("").to_owned());
-    }
-    let Some(tree) = parser.parse(&probe, None) else {
-        return std::borrow::Cow::Owned(source.split('\0').next().unwrap_or("").to_owned());
-    };
+        .expect("statically linked Ruby grammar is compatible with tree-sitter");
+    let tree = parser
+        .parse(&probe, None)
+        .expect("Ruby parser with no timeout or cancellation returns a tree");
     let mut prepared = source.to_owned();
     for (byte, _) in source.match_indices('\0') {
         let mut node = tree.root_node().descendant_for_byte_range(byte, byte + 1);
         let mut kind = None;
         while let Some(current) = node {
-            if matches!(current.kind(), "comment" | "string" | "regex") {
+            if matches!(
+                current.kind(),
+                "comment" | "string" | "regex" | "heredoc_body"
+            ) {
                 kind = Some(current.kind());
                 break;
             }
@@ -314,7 +314,7 @@ fn prepare_nuls(source: &str) -> std::borrow::Cow<'_, str> {
         }
         match kind {
             Some("comment") => prepared.replace_range(byte..byte + 1, " "),
-            Some("string" | "regex") => {}
+            Some("string" | "regex" | "heredoc_body") => {}
             _ => {
                 prepared.truncate(byte);
                 break;
