@@ -1,7 +1,7 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
 // (timing, the scratch output directory, the version string) and what must not (everything else).
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
 const TERMINAL_TIMING = /Detection time: \d+(?:\.\d+)? ms/g;
@@ -36,7 +36,7 @@ export function normalize(text, replacements = []) {
   return normalized;
 }
 
-/** Sorted relative paths of every file below `root`, or an empty list when it does not exist. */
+/** Sorted `/`-separated relative paths of every file below `root`, or an empty list when it does not exist. */
 export function listFiles(root) {
   const files = [];
   /** Appends every file below `directory` to `files`. */
@@ -51,7 +51,8 @@ export function listFiles(root) {
     for (const entry of entries) {
       const full = join(directory, entry.name);
       if (entry.isDirectory()) walk(full);
-      else files.push(relative(root, full));
+      // One spelling on every platform, so report names compare equal across runs and hosts.
+      else files.push(relative(root, full).split(sep).join("/"));
     }
   };
   walk(root);

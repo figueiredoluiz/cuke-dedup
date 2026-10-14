@@ -13,7 +13,7 @@
 //
 // Usage: node scripts/check/check-output-equivalence.mjs [--ref REF] [--suites a,b] [CANDIDATE]
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -27,6 +27,10 @@ const SUITES = {
   benchmark: ["node", ["scripts/benchmark/benchmark-analysis.mjs", "{shim}"], { CUKE_DEDUP_BENCH_REPEATS: "1", CUKE_DEDUP_BENCH_TIMEOUT_MS: "1800000" }],
 };
 
+// The shim is a POSIX shell script and the binary path has no `.exe`; fail clearly rather than
+// partway through a suite.
+assert.notEqual(process.platform, "win32", "check:equivalence runs on macOS and Linux only");
+
 const args = process.argv.slice(2);
 let ref = null;
 let selected = Object.keys(SUITES);
@@ -38,13 +42,13 @@ for (let index = 0; index < args.length; index += 1) {
 }
 for (const suite of selected) assert.ok(SUITES[suite], `unknown suite ${suite}; known: ${Object.keys(SUITES).join(", ")}`);
 candidate = resolve(candidate);
-// The previous release is the behavior every change is held to, so default to the newest version
-// tag reachable from HEAD rather than a pinned one that goes stale after each release.
+// The previous release is the behavior every change is held to, so default to the newest release
+// reachable from HEAD rather than a pinned one that goes stale after each release.
 if (ref === null) {
-  const described = spawnSync("git", ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "HEAD"], { encoding: "utf8" });
-  assert.equal(described.status, 0,
-    "no release tag is reachable from HEAD; pass --ref REF, or fetch tags with `git fetch --tags --unshallow`");
-  ref = described.stdout.trim();
+  // Highest version among tags reachable from HEAD; `git describe` would pick the nearest instead.
+  const tags = spawnSync("git", ["tag", "--merged", "HEAD", "--list", "v[0-9]*", "--sort=-v:refname"], { encoding: "utf8" });
+  ref = tags.status === 0 ? tags.stdout.split("\n")[0].trim() : "";
+  assert.ok(ref, "no release tag is reachable from HEAD; pass --ref REF, or fetch tags with `git fetch --tags --unshallow`");
 }
 assert.ok(existsSync(candidate), `${candidate} is missing; run \`cargo build --release --locked\``);
 
@@ -61,18 +65,27 @@ function baselineBinary(revision) {
   const root = resolve("target/equivalence");
   const binary = join(root, commit, "cuke-dedup");
   if (existsSync(binary)) return binary;
-  const source = join(root, commit, "src");
-  rmSync(source, { recursive: true, force: true });
-  mkdirSync(source, { recursive: true });
-  const archive = spawnSync("git", ["archive", commit], { maxBuffer: 1024 * 1024 * 1024 });
-  assert.equal(archive.status, 0, `git archive ${commit}: ${archive.stderr}`);
-  run("tar", ["-x", "-C", source], { input: archive.stdout });
-  process.stderr.write(`building baseline ${revision} (${commit.slice(0, 12)})\n`);
-  run("cargo", ["build", "--release", "--locked", "--manifest-path", join(source, "Cargo.toml"),
-    "--target-dir", join(root, "target")], { stdio: ["ignore", "inherit", "inherit"] });
-  writeFileSync(binary, readFileSync(join(root, "target", "release", "cuke-dedup")));
-  chmodSync(binary, 0o755);
-  rmSync(source, { recursive: true, force: true });
+  // Source and Cargo output are private to this process, so concurrent runs, for the same or
+  // different refs, never delete or copy each other's build.
+  const build = join(root, commit, `build-${process.pid}`);
+  const source = join(build, "src");
+  const target = join(build, "target");
+  try {
+    mkdirSync(source, { recursive: true });
+    const archive = spawnSync("git", ["archive", commit], { maxBuffer: 1024 * 1024 * 1024 });
+    assert.equal(archive.status, 0, `git archive ${commit}: ${archive.stderr}`);
+    run("tar", ["-x", "-C", source], { input: archive.stdout });
+    process.stderr.write(`building baseline ${revision} (${commit.slice(0, 12)})\n`);
+    run("cargo", ["build", "--release", "--locked", "--manifest-path", join(source, "Cargo.toml"),
+      "--target-dir", target], { stdio: ["ignore", "inherit", "inherit"] });
+    // Stage under a private name and rename into place, so a reader never sees a partial binary.
+    const staged = join(build, "cuke-dedup");
+    copyFileSync(join(target, "release", "cuke-dedup"), staged);
+    chmodSync(staged, 0o755);
+    renameSync(staged, binary);
+  } finally {
+    rmSync(build, { recursive: true, force: true });
+  }
   return binary;
 }
 
@@ -83,7 +96,9 @@ const versions = [[version(candidate), version(baseline)]].filter(([from, to]) =
 const scratch = mkdtempSync(join(tmpdir(), "cuke-output-equivalence-"));
 try {
   const shim = join(scratch, "cuke-dedup");
-  writeFileSync(shim, `#!/bin/sh\nexec node ${JSON.stringify(resolve("scripts/check/lib/equivalence-shim.mjs"))} "$@"\n`);
+  // POSIX single quotes: nothing inside them expands, whatever the checkout path contains.
+  const shimScript = `'${resolve("scripts/check/lib/equivalence-shim.mjs").replaceAll("'", "'\\''")}'`;
+  writeFileSync(shim, `#!/bin/sh\nexec node ${shimScript} "$@"\n`);
   chmodSync(shim, 0o755);
   const log = join(scratch, "equivalence.jsonl");
   writeFileSync(log, "");
