@@ -156,6 +156,8 @@ otherwise never reach. It changes memory and running time, never findings.
 
 Record the scalability profiles with `npm run benchmark`. The benchmark measures wall-clock, discovery, parsing, analysis, peak resident memory where available, input counts, findings, deterministic comparison counters, and release binary size. The scheduled workflow runs `npm run benchmark:check` to enforce the full case inventory, deterministic outcomes, peak-memory ceilings, and binary-size ceiling; elapsed times remain advisory because hosted-runner timing is noisy. Set `CUKE_DEDUP_BENCH_REPEATS` to change the sample count, `CUKE_DEDUP_BENCH_SMOKE=1` to select the reduced validation profile used by local and CI checks, or `CUKE_DEDUP_BENCH_PROFILE=usage-scale` to isolate one profile.
 
+Refactoring and performance changes must not change analyzer output. `npm run check:equivalence` builds the analyzer at a baseline ref (`--ref`, default the newest `v*` tag reachable from `HEAD`), caches it under `target/equivalence`, and runs the corpus, matcher-window corpus, Ruby regression, language-parity and benchmark checkers with a shim in place of `target/release/cuke-dedup`. Every invocation runs both binaries and compares exit status, stdout, stderr and written reports after removing timing metrics, output-directory paths and the version string. A difference, or a suite that makes no analyzer invocation, fails the check; a failing checker oracle is reported separately. `--suites corpus,ruby` selects suites. Build the candidate first with `cargo build --release --locked`.
+
 The scheduled mutation workflow holds the core similarity and evidence contracts to a 90% score. Its checked-in configuration keeps local execution bounded; run the same focused measurement with:
 
 ```sh
