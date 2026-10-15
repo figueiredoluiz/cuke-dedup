@@ -38,7 +38,7 @@ const allProfiles = smoke
       { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
     ]
   : [
-      { name: "unrelated", sizes: [250, 500, 1000, 2000], sharedStructure: false },
+      { name: "unrelated", sizes: [250, 500, 1000, 2000, 8000], sharedStructure: false },
       { name: "shared-structure", sizes: [250, 500], sharedStructure: true },
       { name: "homogeneous-handler", sizes: [1000, 2000], sharedHandler: true },
       {

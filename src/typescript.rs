@@ -18,7 +18,7 @@ use self::assertions::AssertionBindings;
 use self::handler::MAX_HANDLER_SNIPPET_CHARS;
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
-    resolve_handler, HandlerBinding,
+    resolve_handler, HandlerBinding, ModuleScope,
 };
 pub use self::matcher::normalize_matcher;
 #[cfg(test)]
@@ -157,6 +157,7 @@ struct AdapterContext<'source, 'tree> {
     framework_calls: &'source framework_callbacks::FrameworkCalls,
     assertions: &'source AssertionBindings,
     handler_bindings: &'source BTreeMap<String, Vec<HandlerBinding<'tree>>>,
+    module_scope: &'source ModuleScope<'tree>,
 }
 
 #[derive(Default)]
@@ -209,6 +210,7 @@ pub fn extract_detailed(source: &str, file: &SourceFile) -> Result<Extraction> {
     adapter_for_language(file.language).extract(source, file)
 }
 
+/// Extracts one file with the session's resolver state, returning definitions and diagnostics.
 fn extract_detailed_impl(
     source: &str,
     file: &SourceFile,
@@ -250,6 +252,7 @@ fn extract_detailed_impl(
     );
     let mut handler_bindings = BTreeMap::new();
     collect_handler_bindings(root, source_bytes, &mut handler_bindings);
+    let module_scope = ModuleScope::new(root);
     let context = AdapterContext {
         source: source_bytes,
         source_lines: &source_lines,
@@ -259,6 +262,7 @@ fn extract_detailed_impl(
         framework_calls: &framework_calls,
         assertions: &assertions,
         handler_bindings: &handler_bindings,
+        module_scope: &module_scope,
     };
     let mut definitions = Vec::new();
     let mut diagnostics = Vec::new();
@@ -598,6 +602,7 @@ fn unresolved_registration_call<'a>(
     looks_like_registration.then_some(UnresolvedRegistration::Generic)
 }
 
+/// Extracts the step definition registered by `call`, or records why it cannot.
 fn extract_call<'tree>(
     call: Node<'tree>,
     context: &AdapterContext<'_, 'tree>,
@@ -668,10 +673,12 @@ fn extract_call<'tree>(
             source,
             comparable,
             context.assertions,
+            context.module_scope,
         ),
     ))
 }
 
+/// Extracts the step definition a decorator `call` registers on its class method.
 fn extract_decorator<'tree>(
     call: Node<'tree>,
     context: &AdapterContext<'_, 'tree>,
@@ -694,7 +701,9 @@ fn extract_decorator<'tree>(
         diagnostics.push(unsupported_handler_diagnostic(context, call));
         return None;
     };
-    let Some(handler) = fingerprint_method_handler(method, source, context.assertions) else {
+    let Some(handler) =
+        fingerprint_method_handler(method, source, context.assertions, context.module_scope)
+    else {
         diagnostics.push(unsupported_handler_diagnostic(context, method));
         return None;
     };

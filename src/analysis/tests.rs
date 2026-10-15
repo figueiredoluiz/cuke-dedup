@@ -1855,6 +1855,7 @@ fn assertion_factories_are_trusted_by_provenance_across_runners() {
     ));
 }
 
+/// Module constants substitute into handler fingerprints only where no nearer binding shadows them.
 #[test]
 fn module_scoped_constants_reach_the_handler_fingerprint() {
     let (_directory, config) = config();
@@ -1962,6 +1963,12 @@ fn module_scoped_constants_reach_the_handler_fingerprint() {
             "loop head",
             "for (const SHARED of [7]) { Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
             "for (const SHARED of [8]) { Then('the beta gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
+        ),
+        // An `export` inside a namespace body declares in that enclosing scope, not the module's.
+        (
+            "namespace export",
+            "namespace One { export const SHARED = 7; Then('the alpha gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
+            "namespace Two { export const SHARED = 8; Then('the beta gauge is settled', () => expect(gauge()).toBe(SHARED)); }",
         ),
     ] {
         let captured = definitions(&format!("const SHARED = 1;\n{first}\n{second}"));

@@ -161,12 +161,14 @@ pub(super) fn bind_arguments<'tree>(handler: Node<'tree>, source: &[u8]) -> Opti
     handler.child_by_field_name("arguments")
 }
 
-pub(super) fn fingerprint_handler(
-    handler: Node<'_>,
-    bound_arguments: Option<Node<'_>>,
+/// Fingerprints a registration handler, reading module constants from the file's `module` index.
+pub(super) fn fingerprint_handler<'tree>(
+    handler: Node<'tree>,
+    bound_arguments: Option<Node<'tree>>,
     source: &[u8],
     comparable: bool,
     assertions: &AssertionBindings,
+    module: &ModuleScope<'tree>,
 ) -> HandlerFingerprint {
     let declared = declared_identifiers(handler, source);
     fingerprint_node(
@@ -176,6 +178,7 @@ pub(super) fn fingerprint_handler(
         comparable,
         &declared,
         assertions,
+        module,
     )
 }
 
@@ -184,10 +187,11 @@ pub(super) fn fingerprint_handler(
 /// Parameters and runtime modifiers remain part of the fingerprint: default initializers execute
 /// at call time, and `async`/generator/static/accessor methods can behave differently even when
 /// their bodies are textually identical.
-pub(super) fn fingerprint_method_handler(
-    method: Node<'_>,
+pub(super) fn fingerprint_method_handler<'tree>(
+    method: Node<'tree>,
     source: &[u8],
     assertions: &AssertionBindings,
+    module: &ModuleScope<'tree>,
 ) -> Option<HandlerFingerprint> {
     debug_assert_eq!(method.kind(), "method_definition");
     let name = method.child_by_field_name("name")?;
@@ -245,7 +249,7 @@ pub(super) fn fingerprint_method_handler(
         &declared,
         AstMode::Structural,
     );
-    let local_constants = LocalConstants::collect(method, source, &declared);
+    let local_constants = LocalConstants::collect(method, source, &declared, module);
     // Preserve invocation semantics for compatibility checks. Similarity removes this metadata
     // before measuring executed behavior so two one-assertion methods do not gain artificial
     // 50% overlap merely because both are methods.
@@ -453,13 +457,15 @@ fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut 
     }
 }
 
-fn fingerprint_node(
-    handler: Node<'_>,
-    bound_arguments: Option<Node<'_>>,
+/// Builds every fingerprint form of `handler`, with `bound_arguments` appended as call context.
+fn fingerprint_node<'tree>(
+    handler: Node<'tree>,
+    bound_arguments: Option<Node<'tree>>,
     source: &[u8],
     comparable: bool,
     declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
+    module: &ModuleScope<'tree>,
 ) -> HandlerFingerprint {
     let raw = node_text(handler, source);
     let mut exact = raw.to_owned();
@@ -468,7 +474,7 @@ fn fingerprint_node(
     // equal. Handler-local names keep their alpha renaming instead: two handlers each declaring one
     // constant already align through `v0`, and substituting there would make the alpha fingerprint
     // value-sensitive and hide the parameterization signal it exists to expose.
-    let module_constants = LocalConstants::collect_module_scope(handler, source, declared);
+    let module_constants = LocalConstants::collect_module_scope(handler, source, declared, module);
     // Substituting through the identifier map keeps literal handling untouched: passing the
     // constants to the serializer would also route every literal through the value-fingerprint
     // branch, which is a far wider change than reading a module constant.
@@ -478,7 +484,7 @@ fn fingerprint_node(
     let mut normalized = serialize_ast(handler, source, declared, AstMode::Normalized);
     let mut alpha = serialize_ast(handler, source, &alpha_declared, AstMode::Alpha);
     let mut structural = serialize_ast(handler, source, &structural_declared, AstMode::Structural);
-    let local_constants = LocalConstants::collect(handler, source, declared);
+    let local_constants = LocalConstants::collect(handler, source, declared, module);
     let mut signature = behavior_signature(handler, source, declared, assertions, &local_constants);
     let mut source_snippet = raw.to_owned();
     if let Some(arguments) = bound_arguments {
@@ -695,31 +701,52 @@ fn contains_explicit_stub_marker(node: Node<'_>, source: &[u8]) -> bool {
 
 pub(super) const MAX_HANDLER_SNIPPET_CHARS: usize = 4_000;
 
-/// Returns the module's own top-level declarations, without descending into sibling handlers.
-fn module_declarations<'tree>(handler: Node<'tree>) -> Vec<Node<'tree>> {
-    let mut root = handler;
-    while let Some(parent) = root.parent() {
-        root = parent;
-    }
-    // The root of a parsed file is always `program`. Filtering the children below is what selects
-    // declarations, so no separate guard on the root kind is needed.
-    let mut cursor = root.walk();
-    let children: Vec<Node<'tree>> = root.named_children(&mut cursor).collect();
-    let mut declarations = Vec::new();
-    for child in children {
-        match child.kind() {
-            "lexical_declaration" | "variable_declaration" => declarations.push(child),
-            "export_statement" => {
-                let mut inner = child.walk();
-                let exported: Vec<Node<'tree>> = child.named_children(&mut inner).collect();
-                declarations.extend(exported.into_iter().filter(|node| {
-                    matches!(node.kind(), "lexical_declaration" | "variable_declaration")
-                }));
+/// Top-level declarations of one parsed file, computed once and shared by every handler in it.
+///
+/// Rescanning the `program` node for each handler made extraction quadratic in the number of
+/// top-level statements; the lists below hold exactly what those scans selected.
+pub(super) struct ModuleScope<'tree> {
+    root: Node<'tree>,
+    /// Every top-level declaration, including each one an `export` statement wraps.
+    declarations: Vec<Node<'tree>>,
+    /// What an enclosing-scope scan reads from each top-level statement: the declaration itself,
+    /// or the first declaration an `export` statement wraps.
+    shadows: Vec<Node<'tree>>,
+}
+
+impl<'tree> ModuleScope<'tree> {
+    /// Indexes the top-level declarations of `root`, the `program` node of a parsed file.
+    pub(super) fn new(root: Node<'tree>) -> Self {
+        let mut cursor = root.walk();
+        let children: Vec<Node<'tree>> = root.named_children(&mut cursor).collect();
+        let mut declarations = Vec::new();
+        let mut shadows = Vec::new();
+        for child in children {
+            match child.kind() {
+                "lexical_declaration" | "variable_declaration" => {
+                    declarations.push(child);
+                    shadows.push(child);
+                }
+                "export_statement" => {
+                    let mut inner = child.walk();
+                    let exported: Vec<Node<'tree>> = child
+                        .named_children(&mut inner)
+                        .filter(|node| {
+                            matches!(node.kind(), "lexical_declaration" | "variable_declaration")
+                        })
+                        .collect();
+                    shadows.extend(exported.first().copied());
+                    declarations.extend(exported);
+                }
+                _ => {} // fail-closed: other top-level statements declare no binding read here.
             }
-            _ => {}
+        }
+        Self {
+            root,
+            declarations,
+            shadows,
         }
     }
-    declarations
 }
 
 fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
@@ -815,12 +842,19 @@ impl LocalConstants {
     /// Collects only the module's own constants, for fingerprints that must not substitute a
     /// handler-local value. The declarations are walked with the handler as the scope anchor so
     /// registration and containment behave exactly as in `collect`.
-    fn collect_module_scope(
-        handler: Node<'_>,
+    fn collect_module_scope<'tree>(
+        handler: Node<'tree>,
         source: &[u8],
         declared: &BTreeMap<String, String>,
+        module: &ModuleScope<'tree>,
     ) -> Self {
-        Self::collect_from(module_declarations(handler), handler, source, declared)
+        Self::collect_from(
+            module.declarations.clone(),
+            handler,
+            source,
+            declared,
+            module,
+        )
     }
 
     /// Collects the constants a handler body can resolve, including the module's own declarations.
@@ -834,17 +868,24 @@ impl LocalConstants {
     /// and the cause was passing the constants to the serializer, which also routes every literal
     /// through the value-fingerprint branch. `collect_module_scope` is the narrower path that
     /// substitutes module values into a fingerprint without touching literal handling.
-    fn collect(handler: Node<'_>, source: &[u8], declared: &BTreeMap<String, String>) -> Self {
-        let mut seeds = vec![handler];
-        seeds.extend(module_declarations(handler));
-        Self::collect_from(seeds, handler, source, declared)
-    }
-
-    fn collect_from(
-        seeds: Vec<Node<'_>>,
-        handler: Node<'_>,
+    fn collect<'tree>(
+        handler: Node<'tree>,
         source: &[u8],
         declared: &BTreeMap<String, String>,
+        module: &ModuleScope<'tree>,
+    ) -> Self {
+        let mut seeds = vec![handler];
+        seeds.extend(module.declarations.iter().copied());
+        Self::collect_from(seeds, handler, source, declared, module)
+    }
+
+    /// Records the bindings reachable from `seeds` and the shadows of every scope enclosing `handler`.
+    fn collect_from<'tree>(
+        seeds: Vec<Node<'tree>>,
+        handler: Node<'tree>,
+        source: &[u8],
+        declared: &BTreeMap<String, String>,
+        module: &ModuleScope<'tree>,
     ) -> Self {
         let mut constants = Self {
             handler_span: (handler.start_byte(), handler.end_byte()),
@@ -896,23 +937,12 @@ impl LocalConstants {
                     false,
                 );
             }
-            let mut cursor = node.walk();
-            let children: Vec<Node<'_>> = node.named_children(&mut cursor).collect();
-            for child in children {
-                let declaration = match child.kind() {
-                    "lexical_declaration" | "variable_declaration" => Some(child),
-                    "export_statement" => {
-                        let mut inner = child.walk();
-                        let exported: Vec<Node<'_>> = child.named_children(&mut inner).collect();
-                        exported.into_iter().find(|node| {
-                            matches!(node.kind(), "lexical_declaration" | "variable_declaration")
-                        })
-                    }
-                    _ => None,
-                };
-                let Some(declaration) = declaration else {
-                    continue;
-                };
+            let declarations = if node == module.root {
+                module.shadows.clone()
+            } else {
+                scope_declarations(node)
+            };
+            for declaration in declarations {
                 let mut declarators = declaration.walk();
                 let names: Vec<Node<'_>> = declaration
                     .named_children(&mut declarators)
@@ -1218,6 +1248,27 @@ impl LocalConstants {
                 encloses_handler || binding.declaration_start <= use_site.start_byte()
             })
     }
+}
+
+/// The declaration an enclosing-scope scan reads from each child of `scope`: a declaration child
+/// itself, or the first declaration an `export` statement wraps.
+fn scope_declarations(scope: Node<'_>) -> Vec<Node<'_>> {
+    let mut cursor = scope.walk();
+    let children: Vec<Node<'_>> = scope.named_children(&mut cursor).collect();
+    children
+        .into_iter()
+        .filter_map(|child| match child.kind() {
+            "lexical_declaration" | "variable_declaration" => Some(child),
+            "export_statement" => {
+                let mut inner = child.walk();
+                let exported: Vec<Node<'_>> = child.named_children(&mut inner).collect();
+                exported.into_iter().find(|node| {
+                    matches!(node.kind(), "lexical_declaration" | "variable_declaration")
+                })
+            }
+            _ => None, // fail-closed: other statements declare nothing a scope scan reads.
+        })
+        .collect()
 }
 
 fn is_function_like(node: Node<'_>) -> bool {
