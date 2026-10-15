@@ -26,6 +26,9 @@ pub(super) struct SuppressionIndex<'a> {
 }
 
 impl<'a> SuppressionIndex<'a> {
+    /// Indexes config suppressions by rule in config order and keeps each definition's first inline
+    /// reason per rule. Paths are made root-relative (left whole when outside the root) with `/`
+    /// separators; an invalid path glob compiles to no matcher.
     pub(super) fn new(config: &'a Config, definitions: &'a [StepDefinition]) -> Self {
         let relative_paths = definitions
             .iter()
@@ -72,6 +75,8 @@ impl<'a> SuppressionIndex<'a> {
         }
     }
 
+    /// The reason of the first config suppression for `rule` that matches the group, else the first
+    /// inline reason for `rule` in `definition_indices` order; truncated to the reason char limit.
     pub(super) fn find_reason(&self, rule: Rule, definition_indices: &[usize]) -> Option<&'a str> {
         self.by_rule
             .get(&rule)
@@ -91,6 +96,8 @@ impl<'a> SuppressionIndex<'a> {
             })
     }
 
+    /// Saturating work estimate for `find_reason`: config suppressions for `rule` times one plus
+    /// the group's selection work, doubled. Inline suppressions are not charged.
     pub(super) fn lookup_work(&self, rule: Rule, definition_indices: &[usize]) -> u64 {
         let suppression_count = self.by_rule.get(&rule).map_or(0, Vec::len);
         let input_bytes = definition_indices.iter().fold(1_u64, |total, &index| {
@@ -104,6 +111,9 @@ impl<'a> SuppressionIndex<'a> {
             .saturating_mul(2)
     }
 
+    /// Indices of config suppressions that select no single definition. Work is charged per
+    /// definition checked; past `MAX_UNMATCHED_SUPPRESSION_WORK` it returns the indices found so
+    /// far with `truncated` set. A suppression with an invalid path glob is always unmatched.
     pub(super) fn unmatched(&self) -> UnmatchedSuppressionOutcome {
         let mut outcome = UnmatchedSuppressionOutcome::default();
         let mut work = 0_u64;
@@ -128,6 +138,7 @@ impl<'a> SuppressionIndex<'a> {
         outcome
     }
 
+    /// Number of config suppressions that declare a path, whether or not its glob compiled.
     #[cfg(test)]
     pub(super) fn compiled_path_count(&self) -> usize {
         self.compiled
@@ -136,6 +147,7 @@ impl<'a> SuppressionIndex<'a> {
             .count()
     }
 
+    /// Saturating cost of selecting one definition: 1 plus its relative path and raw matcher bytes.
     fn selection_work(&self, definition_index: usize) -> u64 {
         let path_bytes =
             u64::try_from(self.relative_paths[definition_index].len()).unwrap_or(u64::MAX);
@@ -147,6 +159,9 @@ impl<'a> SuppressionIndex<'a> {
     }
 }
 
+/// Whether a suppression covers a definition group. With a path, the glob must compile and select
+/// every definition; then at least one definition must pass both matcher and path selectors. An
+/// empty group never matches.
 fn suppression_matches(
     suppression: &CompiledSuppression<'_>,
     definition_indices: &[usize],
@@ -168,6 +183,8 @@ fn suppression_matches(
     })
 }
 
+/// Whether a suppression selects one definition by path and matcher; false when its path glob is
+/// invalid.
 fn suppression_selects(
     suppression: &CompiledSuppression<'_>,
     definition_index: usize,
@@ -180,6 +197,8 @@ fn suppression_selects(
         && matcher_selects(suppression.config, &index.definitions[definition_index])
 }
 
+/// Whether the compiled path glob matches the definition's relative path. True when there is no
+/// compiled glob, including an invalid one; callers reject invalid globs first.
 fn path_selects(
     suppression: &CompiledSuppression<'_>,
     definition_index: usize,
@@ -191,6 +210,7 @@ fn path_selects(
         .is_none_or(|matcher| matcher.is_match(&index.relative_paths[definition_index]))
 }
 
+/// Whether the configured matcher equals the definition's raw matcher exactly; true when unset.
 fn matcher_selects(suppression: &SuppressionConfig, definition: &StepDefinition) -> bool {
     suppression
         .matcher
@@ -198,6 +218,8 @@ fn matcher_selects(suppression: &SuppressionConfig, definition: &StepDefinition)
         .is_none_or(|matcher| definition.matcher == *matcher)
 }
 
+/// Compiles the path glob with globset defaults, appending `**` to a trailing `/`. None when no
+/// path is set or the glob is invalid.
 fn compile_path_matcher(suppression: &SuppressionConfig) -> Option<GlobMatcher> {
     suppression.path.as_ref().and_then(|pattern| {
         let pattern = if pattern.ends_with('/') {
@@ -209,6 +231,7 @@ fn compile_path_matcher(suppression: &SuppressionConfig) -> Option<GlobMatcher> 
     })
 }
 
+/// The reason cut to its first `MAX_SUPPRESSION_REASON_CHARS` chars on a char boundary.
 fn bounded_reason(reason: &str) -> &str {
     reason
         .char_indices()

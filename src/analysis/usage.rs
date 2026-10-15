@@ -40,6 +40,8 @@ struct MatcherSet {
 }
 
 impl MatcherIndex {
+    /// Indexes the matchers that kept a compiled expression, under the shared regex size and DFA
+    /// limits.
     fn build(compiled: &[CompiledMatcher]) -> Self {
         Self::build_with_limits(
             compiled,
@@ -48,6 +50,9 @@ impl MatcherIndex {
         )
     }
 
+    /// Indexes matchers that kept a compiled expression into `RegexSet`s under the given limits;
+    /// matchers without one are not indexed. Sets are ordered by first definition index and
+    /// fallback definitions ascending.
     fn build_with_limits(
         compiled: &[CompiledMatcher],
         size_limit: usize,
@@ -69,6 +74,8 @@ impl MatcherIndex {
         index
     }
 
+    /// Builds one set for `entries`; on a build error the range is halved and each half retried,
+    /// and a single entry that still fails goes to `fallback_definitions`. Empty input is a no-op.
     fn build_range(&mut self, entries: &[(usize, &str)], size_limit: usize, dfa_limit: usize) {
         if entries.is_empty() {
             return;
@@ -95,6 +102,8 @@ impl MatcherIndex {
         }
     }
 
+    /// Replaces `output` with the sorted local indices of every matcher accepting `text`; fallback
+    /// definitions are tested one by one with their own regex.
     fn matches(&self, compiled: &[CompiledMatcher], text: &str, output: &mut Vec<usize>) {
         output.clear();
         for indexed in &self.sets {
@@ -216,6 +225,7 @@ struct ProvenAmbiguities {
 }
 
 impl ProvenAmbiguities {
+    /// Creates an index with no groups and an empty membership list per definition.
     fn new(definition_count: usize) -> Self {
         Self {
             groups: HashMap::new(),
@@ -223,6 +233,8 @@ impl ProvenAmbiguities {
         }
     }
 
+    /// Registers the matched definitions as one group unless the same set is already recorded;
+    /// group identifiers only increase, so every membership list stays sorted.
     fn record(&mut self, matched: &BTreeSet<usize>) {
         let group = matched.iter().copied().collect::<Vec<_>>();
         let identifier = self.groups.len();
@@ -237,6 +249,7 @@ impl ProvenAmbiguities {
         }
     }
 
+    /// Reports whether two definitions share a recorded group by merging their sorted memberships.
     fn contains(&self, left: usize, right: usize) -> bool {
         let left = &self.memberships[left];
         let right = &self.memberships[right];
@@ -252,6 +265,10 @@ impl ProvenAmbiguities {
     }
 }
 
+/// Matches each distinct feature step text against every definition, reports `ambiguous-step` for
+/// steps with more than one authoritative match, and runs static overlap within `overlap_budget`;
+/// each rule is skipped when its severity is off. Definitions without an authoritative compiled
+/// matcher count as used. The window size comes from `CUKE_DEDUP_MATCHER_WINDOW`, default 250.
 pub(super) fn analyze_feature_usage(
     definitions: &[StepDefinition],
     steps: &[FeatureStep],
@@ -848,6 +865,8 @@ pub(super) fn apply_indirect_usage(
     );
 }
 
+/// Reports `unused-definition` for each definition not in `used`; does nothing when the rule is
+/// off, and skips definitions whose matchers are not global (Jest-Cucumber).
 pub(super) fn analyze_unused(
     definitions: &[StepDefinition],
     used: &BTreeSet<usize>,
@@ -890,6 +909,12 @@ pub(super) fn analyze_unused(
     }
 }
 
+/// Compiles a definition's matcher, returning a diagnostic only for resource limits.
+/// Non-global and literal matchers get no regex and are non-authoritative, as is a regex the
+/// dialect cannot translate. Oversized matchers, and translated patterns that fail to compile for
+/// another reason, are authoritative with no regex; only the oversized case returns a diagnostic.
+/// A Cucumber Expression the library cannot expand uses the permissive fallback, authoritative
+/// only when every placeholder resolved. `expression` is kept only when the regex compiled.
 fn compile_matcher(
     definition: &StepDefinition,
     parameter_types: &BTreeMap<String, String>,
@@ -984,6 +1009,8 @@ fn compile_matcher(
     }
 }
 
+/// Expands a Cucumber Expression to regex source: `Unsupported` when parsing or expansion fails,
+/// `ResourceLimit` when the matcher or the expansion exceeds `MAX_REGEX_PATTERN_BYTES`.
 fn cucumber_regex_expression(matcher: &str) -> CucumberRegexExpression {
     if matcher.len() > MAX_REGEX_PATTERN_BYTES {
         return CucumberRegexExpression::ResourceLimit;
@@ -1004,6 +1031,8 @@ fn cucumber_regex_expression(matcher: &str) -> CucumberRegexExpression {
     CucumberRegexExpression::Compiled(expanded)
 }
 
+/// Compiles under the shared regex limits. An oversized expression or `CompiledTooBig` yields a
+/// resource-limit diagnostic; any other compile error yields `(None, None)`.
 fn compile_definition_regex(
     expression: &str,
     definition: &StepDefinition,
@@ -1018,6 +1047,7 @@ fn compile_definition_regex(
     }
 }
 
+/// Formats the resource-limit diagnostic with the definition's path, line and column.
 fn regex_limit_message(definition: &StepDefinition) -> String {
     format!(
         "step matcher at {}:{}:{} exceeds the {}-byte regex resource limit; simplify the matcher or remove its source from definition discovery",
@@ -1034,6 +1064,9 @@ struct FallbackExpression {
     exact: bool,
 }
 
+/// Builds an anchored approximation of a Cucumber Expression: `{int}`, `{float}`, `{word}` and
+/// `{string}` map to fixed patterns, other declared names to their configured pattern, and the rest
+/// to `.+`, which clears `exact`. `{}` is not a placeholder here and stays literal text.
 fn fallback_cucumber_expression_regex(
     expression: &str,
     parameter_types: &BTreeMap<String, String>,
@@ -1075,6 +1108,8 @@ fn fallback_cucumber_expression_regex(
     }
 }
 
+/// Translates literal text between placeholders: whitespace runs are escaped verbatim and other
+/// tokens go through `fallback_cucumber_token_regex`. Backslash escapes are not interpreted.
 fn fallback_cucumber_literal_regex(literal: &str) -> String {
     let mut output = String::new();
     let characters: Vec<_> = literal.chars().collect();
@@ -1101,6 +1136,8 @@ fn fallback_cucumber_literal_regex(literal: &str) -> String {
     output
 }
 
+/// Translates one whitespace-free token: `/` splits alternatives before anything else, `(x)`
+/// becomes an optional group, an unclosed `(` is literal, and other text is escaped.
 fn fallback_cucumber_token_regex(token: &str) -> String {
     let alternatives: Vec<_> = token.split('/').collect();
     if alternatives.len() > 1 {
