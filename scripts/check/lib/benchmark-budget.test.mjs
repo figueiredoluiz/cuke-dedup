@@ -47,6 +47,7 @@ const report = {
   results: [result, { ...result, definitions: 80, parsingMedianMs: 300 }],
 };
 
+/** Deterministic outcomes pass, and an extreme absolute time alone is not a failure. */
 test("benchmark budgets accept deterministic outcomes while treating time as advisory", () => {
   assert.deepEqual(validateBenchmark(report, budgets).failures, []);
   assert.deepEqual(
@@ -104,6 +105,7 @@ const growthReport = (smallMs, largeMs) => ({
   ],
 });
 
+/** Growth at or under the ceiling passes; growth above it fails, compared before rounding. */
 test("scaling budgets accept growth at or under the ratio and reject growth above it", () => {
   assert.deepEqual(validateBenchmark(growthReport(200, 1600), growthBudgets).failures, []);
   assert.deepEqual(validateBenchmark(growthReport(200, 800), growthBudgets).failures, []);
@@ -116,6 +118,7 @@ test("scaling budgets accept growth at or under the ratio and reject growth abov
   assert.match(unrounded[0], /grows 8\.00x from 10 to 40 definitions, above 8x/);
 });
 
+/** Each malformed rule field fails with the field named instead of disabling the check. */
 test("malformed scaling rules fail instead of passing silently", () => {
   const rule = growthBudgets.scaling.growth;
   for (const [field, value, message] of [
@@ -131,6 +134,7 @@ test("malformed scaling rules fail instead of passing silently", () => {
   }
 });
 
+/** A base under the floor, a missing case or a missing metric fails rather than passes. */
 test("scaling budgets fail closed on a base too fast to measure, a missing case or metric", () => {
   assert.match(validateBenchmark(growthReport(49, 100), growthBudgets).failures.join(), /too small to gate growth/);
   assert.deepEqual(validateBenchmark(growthReport(50, 100), growthBudgets).failures, []);
@@ -139,10 +143,12 @@ test("scaling budgets fail closed on a base too fast to measure, a missing case 
   assert.match(validateBenchmark(growthReport(200, undefined), growthBudgets).failures.join(), /was not measured/);
 });
 
+/** Schema-1 budgets, which had no scaling rules, are rejected. */
 test("budgets of the previous schema are rejected", () => {
   assert.throws(() => validateBenchmark(report, { ...budgets, schemaVersion: 1 }), /unsupported benchmark-budget schema/);
 });
 
+/** An absent or empty scaling map, or a rule naming an unbudgeted case, fails. */
 test("budgets without scaling rules, or with a rule outside the case inventory, are rejected", () => {
   for (const scaling of [undefined, {}]) {
     assert.match(validateBenchmark(report, { ...budgets, scaling }).failures.join(), /define no scaling rules/);
