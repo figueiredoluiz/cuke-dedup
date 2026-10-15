@@ -9,6 +9,9 @@ const deterministicFields = [
   "truncatedStructuralClasses",
 ];
 
+/** Median timings a scaling rule may compare. */
+const scalingMetrics = ["medianMs", "discoveryMedianMs", "parsingMedianMs", "analysisMedianMs"];
+
 /** Smallest median, in milliseconds, that a scaling ratio may divide by; faster cases are noise. */
 export const MIN_SCALING_BASE_MS = 50;
 
@@ -60,6 +63,12 @@ export function validateBenchmark(report, budgets) {
   const scalingRules = Object.entries(budgets.scaling ?? {});
   if (scalingRules.length === 0) failures.push("benchmark budgets define no scaling rules");
   for (const [profile, scaling] of scalingRules) {
+    // A malformed rule would otherwise compare against undefined or NaN and pass silently.
+    const malformed = scalingRuleErrors(scaling);
+    if (malformed.length > 0) {
+      failures.push(...malformed.map((error) => `${profile}: ${error}`));
+      continue;
+    }
     for (const size of [scaling.small, scaling.large]) {
       if (!(`${profile}:${size}` in budgets.cases)) failures.push(`${profile}:${size}: scaling case has no budget`);
     }
@@ -76,12 +85,30 @@ export function validateBenchmark(report, budgets) {
     } else if (base < MIN_SCALING_BASE_MS) {
       failures.push(`${profile}:${scaling.small} ${scaling.metric} ${base} ms is too small to gate growth (minimum ${MIN_SCALING_BASE_MS} ms)`);
     } else {
-      const ratio = Number((top / base).toFixed(2));
+      // Compare the exact ratio; round only for display, so 6.004 cannot pass a 6x ceiling.
+      const ratio = top / base;
+      const shown = ratio.toFixed(2);
       if (ratio > scaling.maxRatio) {
-        failures.push(`${profile}: ${scaling.metric} grows ${ratio}x from ${scaling.small} to ${scaling.large} definitions, above ${scaling.maxRatio}x`);
+        failures.push(`${profile}: ${scaling.metric} grows ${shown}x from ${scaling.small} to ${scaling.large} definitions, above ${scaling.maxRatio}x`);
       }
-      advisories.push(`${profile} ${scaling.small}->${scaling.large} ${ratio}x (limit ${scaling.maxRatio}x)`);
+      advisories.push(`${profile} ${scaling.small}->${scaling.large} ${shown}x (limit ${scaling.maxRatio}x)`);
     }
   }
   return { advisories, failures };
+}
+
+/** Problems with a scaling rule's own fields: sizes, metric and ceiling. */
+function scalingRuleErrors(scaling) {
+  const errors = [];
+  const { small, large, metric, maxRatio } = scaling ?? {};
+  if (!Number.isInteger(small) || !Number.isInteger(large) || small <= 0 || large <= small) {
+    errors.push(`small and large must be positive integers with small < large (got ${small} and ${large})`);
+  }
+  if (!scalingMetrics.includes(metric)) {
+    errors.push(`metric must be one of ${scalingMetrics.join(", ")} (got ${metric})`);
+  }
+  if (!Number.isFinite(maxRatio) || maxRatio <= 1) {
+    errors.push(`maxRatio must be a finite number above 1 (got ${maxRatio})`);
+  }
+  return errors;
 }

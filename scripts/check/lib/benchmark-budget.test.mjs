@@ -5,9 +5,18 @@ import { validateBenchmark } from "./benchmark-budget.mjs";
 const budgets = {
   schemaVersion: 2,
   binaryBytes: 100,
-  scaling: { "usage-scale": { small: 20, large: 20, metric: "parsingMedianMs", maxRatio: 8 } },
+  scaling: { "usage-scale": { small: 20, large: 80, metric: "parsingMedianMs", maxRatio: 8 } },
   cases: {
     "usage-scale:20": {
+      peakMemoryBytes: 200,
+      findingCount: 0,
+      analysisComplete: true,
+      analysisTruncated: false,
+      candidateComparisonsEvaluated: 0,
+      skippedCandidateComparisons: 0,
+      truncatedStructuralClasses: 0,
+    },
+    "usage-scale:80": {
       peakMemoryBytes: 200,
       findingCount: 0,
       analysisComplete: true,
@@ -31,12 +40,17 @@ const result = {
   peakMemoryBytes: 150,
   analysisMedianMs: 10,
 };
-const report = { schemaVersion: 3, smoke: false, binaryBytes: 90, results: [result] };
+const report = {
+  schemaVersion: 3,
+  smoke: false,
+  binaryBytes: 90,
+  results: [result, { ...result, definitions: 80, parsingMedianMs: 300 }],
+};
 
 test("benchmark budgets accept deterministic outcomes while treating time as advisory", () => {
   assert.deepEqual(validateBenchmark(report, budgets).failures, []);
   assert.deepEqual(
-    validateBenchmark({ ...report, results: [{ ...result, analysisMedianMs: 1_000_000 }] }, budgets).failures,
+    validateBenchmark({ ...report, results: [{ ...result, analysisMedianMs: 1_000_000 }, report.results[1]] }, budgets).failures,
     [],
   );
 });
@@ -96,6 +110,25 @@ test("scaling budgets accept growth at or under the ratio and reject growth abov
   const failures = validateBenchmark(growthReport(200, 1602), growthBudgets).failures;
   assert.equal(failures.length, 1);
   assert.match(failures[0], /grows 8\.01x from 10 to 40 definitions, above 8x/);
+  // Rounding happens only for display: 8.004x shows as 8.00x and still fails an 8x ceiling.
+  const unrounded = validateBenchmark(growthReport(1000, 8004), growthBudgets).failures;
+  assert.equal(unrounded.length, 1);
+  assert.match(unrounded[0], /grows 8\.00x from 10 to 40 definitions, above 8x/);
+});
+
+test("malformed scaling rules fail instead of passing silently", () => {
+  const rule = growthBudgets.scaling.growth;
+  for (const [field, value, message] of [
+    ["maxRatio", undefined, /maxRatio must be a finite number above 1/],
+    ["maxRatio", "6", /maxRatio must be a finite number above 1/],
+    ["maxRatio", 1, /maxRatio must be a finite number above 1/],
+    ["metric", "parseMs", /metric must be one of/],
+    ["small", 40, /small and large must be positive integers with small < large/],
+    ["large", 2.5, /small and large must be positive integers with small < large/],
+  ]) {
+    const budgetsWithRule = { ...growthBudgets, scaling: { growth: { ...rule, [field]: value } } };
+    assert.match(validateBenchmark(growthReport(200, 400), budgetsWithRule).failures.join(), message, `${field}=${value}`);
+  }
 });
 
 test("scaling budgets fail closed on a base too fast to measure, a missing case or metric", () => {
@@ -114,6 +147,6 @@ test("budgets without scaling rules, or with a rule outside the case inventory, 
   for (const scaling of [undefined, {}]) {
     assert.match(validateBenchmark(report, { ...budgets, scaling }).failures.join(), /define no scaling rules/);
   }
-  const orphan = { ...budgets, scaling: { "usage-scale": { small: 20, large: 80, metric: "parsingMedianMs", maxRatio: 8 } } };
-  assert.match(validateBenchmark(report, orphan).failures.join(), /usage-scale:80: scaling case has no budget/);
+  const orphan = { ...budgets, scaling: { "usage-scale": { small: 20, large: 160, metric: "parsingMedianMs", maxRatio: 8 } } };
+  assert.match(validateBenchmark(report, orphan).failures.join(), /usage-scale:160: scaling case has no budget/);
 });
