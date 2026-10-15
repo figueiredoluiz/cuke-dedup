@@ -9,6 +9,8 @@ pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Re
     write_terminal_with_color(context, writer, false)
 }
 
+/// Writes up to `MAX_BUFFERED_REPORT_FINDINGS` active findings grouped by rule, then the summary
+/// and, when metrics are present, the detection time; `color` enables ANSI escapes.
 pub(super) fn write_terminal_with_color(
     context: &ReportContext<'_>,
     writer: &mut dyn Write,
@@ -161,6 +163,7 @@ pub(super) fn write_terminal_with_color(
     Ok(())
 }
 
+/// Wraps `text` in the ANSI SGR `code` and a reset when `enabled`; otherwise returns it unchanged.
 fn colorize(text: String, code: &str, enabled: bool) -> String {
     if enabled {
         format!("\u{1b}[{code}m{text}\u{1b}[0m")

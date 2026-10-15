@@ -178,6 +178,8 @@ fn compile_pattern_matchers(patterns: &[String], kind: &str) -> Result<Vec<(Glob
         .collect()
 }
 
+/// Builds one `GlobSet` from `patterns`; an empty list matches nothing. Errors name the first
+/// invalid pattern and its `kind`.
 fn compile_globs(patterns: &[String], kind: &str) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
@@ -197,6 +199,8 @@ fn names_suffix(matcher: &GlobMatcher, path: &Path) -> bool {
     !matcher.is_match(path.with_extension("cuke-dedup-suffix-probe"))
 }
 
+/// Returns the registered frontend language for `path`'s extension; `None` for unregistered
+/// extensions, `.map` files and TypeScript declaration files.
 fn source_language(path: &Path) -> Option<SourceLanguage> {
     source_adapter::language_for_path(path)
 }
@@ -207,6 +211,8 @@ mod tests {
     use crate::config::ConfigOverrides;
     use std::fs;
 
+    /// Default discovery finds one feature and one definition, skipping a source in a
+    /// `.gitignore`d directory.
     #[test]
     fn discovers_sources_and_features_but_uses_gitignore() {
         let directory = tempfile::tempdir().unwrap();
@@ -235,6 +241,8 @@ mod tests {
         assert_eq!(files.definitions.len(), 1);
     }
 
+    /// `.cuke-dedupignore` excludes by directory and glob, `!` re-includes, and a nested file's
+    /// rules apply only below its own directory.
     #[test]
     fn cuke_dedup_ignore_supports_scoped_gitignore_rules_and_negation() {
         let directory = tempfile::tempdir().unwrap();
@@ -287,6 +295,8 @@ mod tests {
         );
     }
 
+    /// `.feature` and `.feature.md` files are discovered with their respective formats, and no
+    /// feature pattern is reported unmatched.
     #[test]
     fn discovers_classic_and_markdown_features_with_parser_metadata() {
         let directory = tempfile::tempdir().unwrap();
@@ -306,6 +316,7 @@ mod tests {
         assert!(files.unmatched_feature_patterns.is_empty());
     }
 
+    /// A file matched by two feature patterns leaves neither reported as unmatched.
     #[test]
     fn overlapping_feature_patterns_are_both_counted_as_matched() {
         let directory = tempfile::tempdir().unwrap();
@@ -327,6 +338,8 @@ mod tests {
         assert!(files.unmatched_feature_patterns.is_empty());
     }
 
+    /// A configured definition glob selects only the source it matches and is not reported
+    /// unmatched.
     #[test]
     fn configured_definition_globs_narrow_source_files() {
         let directory = tempfile::tempdir().unwrap();
@@ -345,6 +358,8 @@ mod tests {
         assert!(files.unmatched_definition_patterns.is_empty());
     }
 
+    /// Compiled globs let `*` cross path separators and expand `{a,b}` braces, and still reject a
+    /// path whose name matches no alternative.
     #[test]
     fn configured_globs_use_documented_cross_separator_and_brace_semantics() {
         let globs = compile_globs(
@@ -360,6 +375,8 @@ mod tests {
         assert!(!globs.is_match(Path::new("features/example.md")));
     }
 
+    /// A definition glob that matches no file selects no definitions and is reported unmatched by
+    /// its original text.
     #[test]
     fn reports_each_unmatched_definition_glob() {
         let directory = tempfile::tempdir().unwrap();
@@ -382,6 +399,7 @@ mod tests {
         assert_eq!(files.unmatched_definition_patterns, ["stpes/**/*.ts"]);
     }
 
+    /// `.d.ts`, `.d.mts`, `.d.cts` and `.js.map` paths map to no source language.
     #[test]
     fn declaration_and_source_map_files_are_not_definition_sources() {
         for path in ["types.d.ts", "types.d.mts", "types.d.cts", "code.js.map"] {
@@ -389,6 +407,8 @@ mod tests {
         }
     }
 
+    /// A source under `node_modules` is excluded by default and selected once default excludes are
+    /// disabled and a definition glob names it.
     #[test]
     fn built_in_excludes_prune_sources_unless_explicitly_disabled() {
         let directory = tempfile::tempdir().unwrap();
@@ -415,6 +435,8 @@ mod tests {
         assert_eq!(files.definitions.len(), 1);
     }
 
+    /// A source in a hidden directory is skipped by default and found with `include_hidden` and a
+    /// matching definition glob.
     #[test]
     fn hidden_sources_require_the_include_hidden_option() {
         let directory = tempfile::tempdir().unwrap();
@@ -439,6 +461,8 @@ mod tests {
         assert_eq!(discover(&visible_config).unwrap().definitions.len(), 1);
     }
 
+    /// An unreadable directory records a traversal error while the readable source is still
+    /// discovered. Unix only.
     #[cfg(unix)]
     #[test]
     fn traversal_errors_are_collected_without_discarding_other_files() {
@@ -463,6 +487,8 @@ mod tests {
         assert!(!files.errors.is_empty());
     }
 
+    /// An unreadable directory under excluded `node_modules` is never entered, so discovery records
+    /// no traversal error. Unix only.
     #[cfg(unix)]
     #[test]
     fn excluded_directories_are_pruned_before_traversal() {

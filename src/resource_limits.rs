@@ -41,6 +41,7 @@ struct InputLimitExceeded {
 }
 
 impl fmt::Display for InputLimitExceeded {
+    /// Writes the kind, path and byte limit with a hint to shrink the file.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
@@ -54,6 +55,8 @@ impl fmt::Display for InputLimitExceeded {
 
 impl Error for InputLimitExceeded {}
 
+/// Reads `path` as UTF-8, failing with `InputLimitExceeded` when metadata or the bytes read exceed
+/// `limit`; open, metadata and read failures and invalid UTF-8 return other contextual errors.
 pub(crate) fn read_utf8(path: &Path, kind: &'static str, limit: u64) -> Result<String> {
     let file =
         File::open(path).with_context(|| format!("failed to read {kind} {}", path.display()))?;
@@ -88,6 +91,7 @@ pub(crate) fn read_utf8(path: &Path, kind: &'static str, limit: u64) -> Result<S
         .with_context(|| format!("{kind} {} is not valid UTF-8", path.display()))
 }
 
+/// Reports whether any cause in `error`'s chain is an `InputLimitExceeded`.
 pub(crate) fn is_input_limit_error(error: &anyhow::Error) -> bool {
     error
         .chain()
@@ -111,10 +115,12 @@ pub(crate) fn known_input_limit_exceeded(
     })
 }
 
+/// Compiles `pattern` with the release program and lazy-DFA size limits.
 pub(crate) fn compile_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
     compile_regex_with_limits(pattern, REGEX_SIZE_LIMIT_BYTES, REGEX_DFA_SIZE_LIMIT_BYTES)
 }
 
+/// Compiles `pattern` with the given program size limit and lazy-DFA cache limit.
 fn compile_regex_with_limits(
     pattern: &str,
     size_limit: usize,
@@ -131,6 +137,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Reads a file of exactly `limit` bytes and rejects one byte more as an input-limit error.
     #[test]
     fn bounded_reader_accepts_exact_limit_and_rejects_next_byte() {
         let directory = tempfile::tempdir().unwrap();
@@ -144,6 +151,7 @@ mod tests {
         assert!(error.to_string().contains("4-byte input limit"));
     }
 
+    /// Invalid UTF-8 under the limit fails with a UTF-8 error not classified as an input limit.
     #[test]
     fn bounded_reader_rejects_invalid_utf8_without_misclassifying_it_as_a_limit() {
         let directory = tempfile::tempdir().unwrap();
@@ -169,6 +177,7 @@ mod tests {
         assert!(diagnostic.contains("4-byte input limit"));
     }
 
+    /// `/dev/zero`, which metadata does not size, is cut off at the limit by the bounded read.
     #[cfg(unix)]
     #[test]
     fn bounded_reader_limits_special_files_without_reliable_metadata_lengths() {
@@ -177,6 +186,7 @@ mod tests {
         assert!(error.to_string().contains("4-byte input limit"));
     }
 
+    /// A 1,000-way alternation exceeds a 128-byte program limit with `CompiledTooBig(128)`.
     #[test]
     fn regex_builder_enforces_the_configured_program_limit() {
         let pattern = (0..1_000)
@@ -187,6 +197,7 @@ mod tests {
         assert!(matches!(error, regex::Error::CompiledTooBig(128)));
     }
 
+    /// Pins each release limit constant except `MAX_ASSERTION_RESOLUTION_WORK` to its value.
     #[test]
     fn release_resource_limits_match_the_documented_policy() {
         assert_eq!(MAX_PROJECT_INPUT_BYTES, 8 * 1024 * 1024);

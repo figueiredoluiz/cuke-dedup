@@ -107,6 +107,8 @@ pub fn render_jsonl(context: &ReportContext<'_>) -> Result<String> {
     render_jsonl_context(context)
 }
 
+/// Streams one record per finding, active or not, then a summary record to `writer` through a
+/// buffer; the summary carries corpus and analysis censuses when `metadata` is given.
 pub(super) fn write_jsonl_context(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,
@@ -137,6 +139,8 @@ pub(super) fn write_jsonl_context(
     Ok(())
 }
 
+/// Renders the finding and summary records into a string; the summary has no corpus or analysis
+/// census.
 fn render_jsonl_context(context: &ReportContext<'_>) -> Result<String> {
     let mut output = String::new();
     for finding in &context.result.findings {
@@ -162,6 +166,10 @@ fn render_jsonl_context(context: &ReportContext<'_>) -> Result<String> {
     Ok(output)
 }
 
+/// Converts a finding to a JSONL record with free text capped by `bounded_jsonl_text`.
+///
+/// Keeps up to `MAX_REPORTED_CLUSTER_MEMBERS` cluster fingerprints and one fewer related
+/// locations, flagging either cut; comparison and cluster fingerprints are copied unsanitized.
 fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding {
     let mut truncated_fields = Vec::new();
     let message = bounded_jsonl_text(&finding.message, "message", &mut truncated_fields);
@@ -291,6 +299,8 @@ fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding
     }
 }
 
+/// Sanitizes `value` with `report_safe` and caps it at `JSONL_TEXT_LIMIT_CHARS` characters; a cut
+/// value ends with `…` and adds `field` to `truncated_fields`.
 fn bounded_jsonl_text(
     value: &str,
     field: &'static str,

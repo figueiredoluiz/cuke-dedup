@@ -1413,7 +1413,7 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "37617a7326daac72583f329ef2a2353cda1e954eecc2e67e1d968c6d5d09723b",
+      "sourceSha256": "3769c315b9bd0b5d30246a20be1076faa7467053b43635d9b1ab58ed748e3deb",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1692,7 +1692,7 @@
       ]
     },
     "src/discovery.rs": {
-      "sourceSha256": "07bd3501936fc6bd13ff0cad4bcec97e4d1b1c3a5d7346cc8e71f5867b4483d8",
+      "sourceSha256": "1b8a11fc9079cd590f58abf8f9e5dc2187d27c9ca791d1aaafdc58d5ebd058f1",
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -2617,7 +2617,7 @@
       ]
     },
     "src/resource_limits.rs": {
-      "sourceSha256": "5250cb960f6f1bbd89c204d06532ab47623123b3adebf58e8d942937d5f8d356",
+      "sourceSha256": "19609dfb8a029e82a643715a71c277786af7847d4571bc7c0438f0aef1b6fc97",
       "tests": [
         {
           "name": "bounded_reader_accepts_exact_limit_and_rejects_next_byte",

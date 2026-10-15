@@ -11,6 +11,11 @@ pub fn render_sarif(context: &ReportContext<'_>) -> Result<String> {
     render_sarif_context_with_metadata(context, None)
 }
 
+/// Renders a SARIF 2.1.0 log of up to `MAX_BUFFERED_REPORT_FINDINGS` active findings.
+///
+/// Rule descriptors cover the rules of all active findings, including truncated ones. With
+/// `metadata`, `executionSuccessful` comes from it and the corpus and analysis censuses are added;
+/// without it, `executionSuccessful` is true.
 pub(super) fn render_sarif_context_with_metadata(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,
@@ -119,6 +124,7 @@ pub(super) fn render_sarif_context_with_metadata(
     serde_json::to_string_pretty(&sarif).context("failed to serialize SARIF report")
 }
 
+/// Builds a SARIF location with a root-relative URI and region; sets `id` only when one is given.
 fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> serde_json::Value {
     let converted = convert_location(location, root);
     let mut value = serde_json::json!({

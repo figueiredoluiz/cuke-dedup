@@ -40,6 +40,7 @@ pub enum ReporterKind {
 impl FromStr for ReporterKind {
     type Err = String;
 
+    /// Parses a lowercase reporter name; any other text is an `unknown reporter` error.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "terminal" => Ok(Self::Terminal),
@@ -240,6 +241,8 @@ impl Config {
         Self::load_internal(root, overrides, CliConfigOverrides::default())
     }
 
+    /// Like [`Config::load`], also applying CLI-only overrides after `overrides` and before
+    /// validation.
     pub(crate) fn load_for_cli(
         root: &Path,
         overrides: ConfigOverrides,
@@ -372,6 +375,8 @@ impl Config {
         Ok(config)
     }
 
+    /// Built-in configuration for `root`: terminal reporter, default excludes, zero threshold, and
+    /// the default severity for each rule.
     fn defaults(root: PathBuf) -> Self {
         let rules = [
             (Rule::DuplicateMatcher, Severity::Error),
@@ -417,6 +422,8 @@ impl Config {
         }
     }
 
+    /// Replaces each field `raw` sets and merges its rule severities into the current map; fails on
+    /// an unknown rule name. A set `output` is marked for project-output containment checks.
     fn apply_raw(&mut self, raw: RawConfig) -> Result<()> {
         if let Some(paths) = raw.ruby_load_paths {
             self.frontend.set_ruby_load_paths(paths);
@@ -492,6 +499,8 @@ impl Config {
         Ok(())
     }
 
+    /// Replaces each field `overrides` sets and merges its rule severities; an `output` override
+    /// clears the project-output containment check. `config_file` is not read here.
     fn apply_overrides(&mut self, overrides: ConfigOverrides) {
         if let Some(value) = overrides.definitions {
             self.definitions = value;
@@ -528,6 +537,7 @@ impl Config {
         self.rules.extend(overrides.rules);
     }
 
+    /// Recomputes `exclude` as the default globs, when enabled, followed by the custom globs.
     fn rebuild_excludes(&mut self) {
         self.exclude.clear();
         if self.exclude_defaults {
@@ -537,6 +547,9 @@ impl Config {
         self.exclude.extend(self.custom_exclude.iter().cloned());
     }
 
+    /// Rejects invalid settings: no reporter, terminal with jsonl, out-of-range threshold or
+    /// similarity, bad parameter types, assertion modules, registrations or analysis limits, a
+    /// project-config output outside the root, and suppressions without a valid selector or reason.
     fn validate(&self) -> Result<()> {
         if self.reporters.is_empty() {
             bail!("at least one reporter must be configured");
@@ -615,6 +628,7 @@ impl Config {
         Ok(())
     }
 
+    /// Requires both comparison budgets to be nonzero and within their hard safety limits.
     pub(crate) fn validate_analysis_limits(&self) -> Result<()> {
         if self.max_candidate_comparisons == 0 {
             bail!("maxCandidateComparisons must be greater than zero");
@@ -650,6 +664,8 @@ impl Config {
     }
 }
 
+/// Rejects a project-config `output` that is absolute, has a root, prefix or `..` component, or
+/// whose nearest existing ancestor canonicalizes outside `root`.
 fn validate_project_output(root: &Path, output: &Path) -> Result<()> {
     if output.is_absolute()
         || output.components().any(|component| {
@@ -849,6 +865,7 @@ pub(crate) fn canonical_platform_path(path: &Path) -> std::io::Result<PathBuf> {
     path.canonicalize().map(normalize_platform_path)
 }
 
+/// Reads and parses a standalone config file within the config byte limit; unknown keys fail.
 fn read_raw_config(path: &Path) -> Result<RawConfig> {
     let text = read_utf8(path, "CukeDedup configuration", MAX_CONFIG_INPUT_BYTES)?;
     // serde_json's default recursion limit remains enabled for untrusted config input.
@@ -856,6 +873,8 @@ fn read_raw_config(path: &Path) -> Result<RawConfig> {
         .with_context(|| format!("failed to parse {}", path.display()))
 }
 
+/// Returns the first candidate config file under `root` that parses. A parse or read failure is
+/// pushed to `warnings` and the next candidate is tried, except input-limit errors, which return.
 fn discover_config_file(
     root: &Path,
     warnings: &mut Vec<String>,
@@ -883,6 +902,7 @@ fn discover_config_file(
     Ok((None, None))
 }
 
+/// `path` relative to `root` when beneath it, otherwise as given, with `\` replaced by `/`.
 fn config_source_name(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+/// Runs the CLI and exits with its code; a broken pipe exits 0 and other errors print and exit 2.
 fn main() {
     match cuke_dedup::cli::run_cli() {
         Ok(code) => std::process::exit(code),

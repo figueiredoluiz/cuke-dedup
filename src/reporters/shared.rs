@@ -62,6 +62,11 @@ pub(super) struct BoundedFindings<'a> {
     pub(super) truncated: usize,
 }
 
+/// Selects up to `MAX_BUFFERED_REPORT_FINDINGS` findings by `finding_priority`, keeping input
+/// order within each priority.
+///
+/// `active_only` excludes inactive findings first; `truncated` counts the eligible findings left
+/// out.
 pub(super) fn bounded_findings(result: &AnalysisResult, active_only: bool) -> BoundedFindings<'_> {
     let eligible = |finding: &&Finding| !active_only || finding.is_active();
     let total = result.findings.iter().filter(eligible).count();
@@ -85,6 +90,7 @@ pub(super) fn bounded_findings(result: &AnalysisResult, active_only: bool) -> Bo
     }
 }
 
+/// Ranks a finding for report order: 0 active error, 1 other active, 2 inactive error, 3 other.
 fn finding_priority(finding: &Finding) -> u8 {
     match (finding.is_active(), finding.severity) {
         (true, Severity::Error) => 0,
@@ -94,10 +100,13 @@ fn finding_priority(finding: &Finding) -> u8 {
     }
 }
 
+/// Builds the JSON report value without corpus or analysis censuses.
 pub(super) fn report_value<'a>(context: &ReportContext<'a>) -> JsonReport<'a> {
     report_value_with_metadata(context, None)
 }
 
+/// Builds the JSON report value from up to `MAX_BUFFERED_REPORT_FINDINGS` findings, active before
+/// inactive, adding corpus and analysis censuses when `metadata` is given.
 pub(super) fn report_value_with_metadata<'a>(
     context: &ReportContext<'a>,
     metadata: Option<&CliReportMetadata<'_>>,
@@ -118,6 +127,10 @@ pub(super) fn report_value_with_metadata<'a>(
     }
 }
 
+/// Converts a finding for structured reports, sanitizing text with `report_safe`.
+///
+/// Keeps up to `MAX_REPORTED_CLUSTER_MEMBERS` cluster fingerprints and one fewer related
+/// locations, flagging either cut; comparison and cluster fingerprints are copied unsanitized.
 fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
     let mut comparison = finding.evidence.comparison.clone();
     if let Some(comparison) = comparison.as_mut() {
@@ -174,6 +187,8 @@ fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
     }
 }
 
+/// Converts a location with its path made relative to `root` when under it, `/`-separated, and
+/// sanitized with `report_safe`.
 pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> ReportLocation {
     let relative_path = location
         .path
@@ -190,6 +205,7 @@ pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> Report
     }
 }
 
+/// Creates the parent directories of `path`; does nothing when `path` has no parent.
 pub(super) fn ensure_parent(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -198,6 +214,7 @@ pub(super) fn ensure_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Formats `count` and `singular`, appending `s` unless `count` is 1.
 pub(super) fn count_label(count: usize, singular: &str) -> String {
     let suffix = if count == 1 { "" } else { "s" };
     format!("{count} {singular}{suffix}")
