@@ -212,6 +212,8 @@ pub fn run_cli() -> Result<i32> {
     execute(Cli::parse())
 }
 
+/// Runs discovery, extraction, analysis, finding modes and baseline, writes reports and stderr
+/// diagnostics, then returns the exit code; `--print-config` prints the config and returns 0.
 fn execute(cli: Cli) -> Result<i32> {
     let invocation = resolve_invocation(cli)?;
     let config = &invocation.config;
@@ -271,6 +273,8 @@ fn execute(cli: Cli) -> Result<i32> {
     )
 }
 
+/// Selects the root from `check <PATH>` or the bare path and loads the config with CLI overrides;
+/// a non-default path before `check` is an error. Boolean flags override only when set.
 fn resolve_invocation(cli: Cli) -> Result<Invocation> {
     if cli.command.is_some() && cli.path.as_path() != Path::new(".") {
         bail!("do not place a path before `check`; use `cuke-dedup check <PATH>`");
@@ -307,6 +311,9 @@ fn resolve_invocation(cli: Cli) -> Result<Invocation> {
     Ok(Invocation { config, options })
 }
 
+/// Files added, copied, modified or renamed since `changed_since`, plus untracked files Git does
+/// not ignore, or `None` when the flag is absent. Deleted files are excluded. Fails when the root
+/// is not trackable by Git or the changed-file query fails.
 fn resolve_changed_files(
     config: &Config,
     changed_since: Option<&str>,
@@ -318,6 +325,10 @@ fn resolve_changed_files(
     Ok(Some(modes::git_changed_files(&config.root, base)?))
 }
 
+/// Seeds diagnostics with config warnings and discovery errors, then warns on unmatched patterns,
+/// skipped opt-in sources (when definition globs are set or nothing else was found), automatic
+/// discovery finding no sources, and an empty changed set. No feature files is an error under
+/// `require_features`, a warning when definitions exist, and silent otherwise.
 fn discovery_diagnostics(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -370,6 +381,7 @@ fn discovery_diagnostics(
     diagnostics
 }
 
+/// Warning naming the count, adapters and suffixes of opt-in sources that were not analyzed.
 fn skipped_definitions_warning(skipped: &[source_adapter::SourceFile]) -> String {
     let registrations: Vec<_> = source_adapter::SOURCE_ADAPTER_REGISTRY
         .iter()
@@ -396,6 +408,8 @@ fn skipped_definitions_warning(skipped: &[source_adapter::SourceFile]) -> String
     )
 }
 
+/// Extracts definitions, then feature steps, into a corpus whose parameter-type language is that
+/// of the first discovered definition file.
 fn extract_corpus(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -538,6 +552,9 @@ fn extract_definitions(
     }
 }
 
+/// Applies the session finalization: uncertainties mark the corpus incomplete, become warnings and
+/// recount files with definitions; an error clears every definition, marks the corpus incomplete
+/// and is recorded as an error.
 fn collect_finalization(
     finalization: Result<source_adapter::SourceFinalization>,
     corpus: &mut ExtractedCorpus,
@@ -613,6 +630,10 @@ fn report_excluded_sources(
     ));
 }
 
+/// Routes one file's extraction diagnostics. Completeness kinds mark the corpus incomplete;
+/// error-level diagnostics are errors; unparseable warnings become errors under
+/// `fail_on_unparseable`; other warnings from unchanged files in changed mode are dropped unless
+/// they affect completeness.
 fn collect_extraction_diagnostics(
     config: &Config,
     file: &source_adapter::SourceFile,
@@ -654,6 +675,9 @@ fn collect_extraction_diagnostics(
     }
 }
 
+/// Parses each feature file; a parse failure is an error and marks the corpus incomplete, as does
+/// a Gherkin Markdown file with no steps (a warning). Unparsed files add an error under
+/// `require_features`, else a warning when definitions exist. Steps are sorted by location.
 fn extract_feature_steps(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -713,6 +737,10 @@ fn extract_feature_steps(
     });
 }
 
+/// Resolves parameter types with the first definition language's adapter (their diagnostics mark
+/// the corpus incomplete), analyzes the corpus and warns on unmatched suppressions. Under
+/// `fail_on_incomplete`, analysis gaps and an incomplete corpus are errors; otherwise analysis
+/// gaps are warnings. Analysis failures are returned.
 fn analyze_corpus(
     config: &Config,
     extracted: ExtractedCorpus,
@@ -782,6 +810,9 @@ fn analyze_corpus(
     })
 }
 
+/// Drops unused-definition findings when a feature file failed to parse, a Gherkin Markdown file
+/// yielded no steps, or no feature file was found; then keeps only changed-file findings in
+/// changed mode.
 fn apply_finding_modes(
     result: &mut crate::model::AnalysisResult,
     files: &discovery::DiscoveredFiles,
@@ -915,6 +946,8 @@ fn apply_baseline_mode(
     Ok(Some(outcome))
 }
 
+/// Writes the selected reports with corpus census and, unless `no_metrics`, timing metrics; the
+/// run counts as successful for SARIF only with no errors and a complete run.
 fn write_reports(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -960,10 +993,13 @@ fn write_reports(
     Ok(())
 }
 
+/// Whether terminal output uses color: stdout is a TTY and `NO_COLOR` is unset or empty.
 fn terminal_color_enabled(is_terminal: bool, no_color: Option<&std::ffi::OsStr>) -> bool {
     is_terminal && !no_color.is_some_and(|value| !value.is_empty())
 }
 
+/// Writes `--explain-discovery` output, then warnings and errors, to stderr; writes nothing when
+/// none apply.
 fn write_diagnostics(
     config: &Config,
     options: &CheckOptions,
@@ -1008,6 +1044,8 @@ fn write_diagnostics(
     Ok(())
 }
 
+/// 2 when any diagnostic error exists; 1 when an active error finding outside the duplication
+/// threshold exists, the threshold fails, or new findings exceed `--fail-on-new`; otherwise 0.
 fn determine_exit_code(
     config: &Config,
     options: &CheckOptions,
@@ -1032,10 +1070,12 @@ fn determine_exit_code(
     ))
 }
 
+/// Milliseconds elapsed since `started`, with fractional precision.
 fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1_000.0
 }
 
+/// Parses `RULE=SEVERITY` at the first `=`; a missing `=`, unknown rule or unknown severity fails.
 fn parse_rule_override(value: &str) -> std::result::Result<(Rule, Severity), String> {
     let (rule, severity) = value
         .split_once('=')
@@ -1043,6 +1083,7 @@ fn parse_rule_override(value: &str) -> std::result::Result<(Rule, Severity), Str
     Ok((rule.parse()?, severity.parse()?))
 }
 
+/// Parses an integer greater than zero; zero, negative and non-numeric input are rejected.
 fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
     value
         .parse::<usize>()
@@ -1055,6 +1096,8 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
 mod tests {
     use super::*;
 
+    /// A clean finalization keeps definitions; a failed one clears them, zeroes the file count,
+    /// records the error, and leaves an incomplete run with no findings.
     #[test]
     fn finalization_failure_discards_provisional_definitions_and_reports_incompleteness() {
         let root = tempfile::tempdir().unwrap();
@@ -1084,6 +1127,7 @@ mod tests {
         assert!(analyzed.result.findings.is_empty());
     }
 
+    /// Color requires a TTY and is disabled by a non-empty `NO_COLOR`, but not by an empty one.
     #[test]
     fn terminal_color_requires_tty_and_allows_no_color_opt_out() {
         use std::ffi::OsStr;
@@ -1095,6 +1139,7 @@ mod tests {
         assert!(!terminal_color_enabled(false, Some(OsStr::new(""))));
     }
 
+    /// A known rule and severity parse; an unknown rule name is rejected.
     #[test]
     fn parses_rule_override() {
         assert_eq!(
@@ -1104,6 +1149,7 @@ mod tests {
         assert!(parse_rule_override("unknown=error").is_err());
     }
 
+    /// Accepts a positive integer and rejects zero, a negative number and non-numeric text.
     #[test]
     fn candidate_limit_cli_values_must_be_positive() {
         assert_eq!(parse_positive_usize("7"), Ok(7));
@@ -1112,6 +1158,8 @@ mod tests {
         assert!(parse_positive_usize("many").is_err());
     }
 
+    /// An unparseable warning is an incomplete warning by default and an error under the flag; a
+    /// dynamic-matcher warning stays an incomplete warning, and an unrelated one stays complete.
     #[test]
     fn unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag() {
         use crate::discovery::SourceLanguage;
@@ -1189,6 +1237,9 @@ mod tests {
         assert_eq!(diagnostics.warnings.len(), 1);
     }
 
+    /// Routing follows the diagnostic kind, not its text: Incomplete and Unparseable kinds mark the
+    /// corpus incomplete, Error level always errors, and Unparseable warnings error only in strict
+    /// mode.
     #[test]
     fn typed_adapter_diagnostics_route_independently_of_language_and_wording() {
         use crate::model::SourceLocation;
@@ -1252,6 +1303,7 @@ mod tests {
         }
     }
 
+    /// Both `cuke-dedup PATH` and `cuke-dedup check PATH` parse; `check` without a path fails.
     #[test]
     fn supports_implicit_and_explicit_check_forms() {
         let implicit = Cli::try_parse_from(["cuke-dedup", ".", "--reporters", "json"])

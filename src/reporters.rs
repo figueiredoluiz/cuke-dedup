@@ -38,6 +38,8 @@ pub fn write_reports(
     write_reports_context(context, config, None, terminal, false)
 }
 
+/// Builds a report context from `result`, with `metrics` when given, and writes the configured
+/// reports with CLI metadata and optional terminal color; returns the file-report paths.
 pub(crate) fn write_cli_reports(
     result: &AnalysisResult,
     config: &Config,
@@ -53,6 +55,11 @@ pub(crate) fn write_cli_reports(
     write_reports_context(&context, config, Some(metadata), terminal, terminal_color)
 }
 
+/// Writes each configured reporter in order and returns the file-report paths.
+///
+/// Terminal and JSONL output go to `terminal`; JSON, HTML and SARIF go to `config.output_path`.
+/// File paths are listed on `terminal` only when no terminal or JSONL reporter is configured.
+/// Stops at the first error; reports already written stay on disk.
 fn write_reports_context(
     context: &ReportContext<'_>,
     config: &Config,

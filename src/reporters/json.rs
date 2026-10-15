@@ -8,6 +8,8 @@ pub fn render_json(context: &ReportContext<'_>) -> Result<String> {
     serde_json::to_string_pretty(&report).context("failed to serialize JSON report")
 }
 
+/// Renders the pretty-printed JSON report, adding corpus and analysis censuses when `metadata` is
+/// given.
 pub(super) fn render_json_context_with_metadata(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,

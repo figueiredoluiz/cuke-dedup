@@ -95,6 +95,15 @@ pub fn extract_with_format(
     Ok(extract_feature(&feature, path))
 }
 
+/// Converts Gherkin Markdown to classic Gherkin with one output line per source line, so parser
+/// positions match the Markdown source. Keeps keyword headings without `#`, `# language:` lines,
+/// backticked tag lines (with the backticks removed), fenced doc strings after a step, and `|`
+/// rows indented 2-5 columns after a step or `Examples` heading; blanks the rest. The first
+/// non-blank line becomes the `Feature:` line unless it is a keyword heading, tag or language
+/// line. Unknown colon headings and list items are restored only where a parser probe accepts
+/// them; in the default dialect, list items without an English step keyword are dropped first.
+/// Errors when the candidate limit or probe budget is exceeded, or when table-escape preparation
+/// fails.
 fn markdown_to_gherkin(source: &str) -> Result<String> {
     let mut output = Vec::new();
     let mut dialect_heading_candidates = Vec::new();
@@ -233,6 +242,8 @@ fn markdown_to_gherkin(source: &str) -> Result<String> {
     )
 }
 
+/// Errors when `current` candidates already reach `MAX_GHERKIN_MARKDOWN_CANDIDATES`, so another
+/// one may not be added.
 fn ensure_markdown_candidate_capacity(current: usize) -> Result<()> {
     if current >= MAX_GHERKIN_MARKDOWN_CANDIDATES {
         bail!(
@@ -250,6 +261,9 @@ struct MarkdownProbeBudget {
 }
 
 impl MarkdownProbeBudget {
+    /// Reports whether `source` parses and passes the table-width check, charging one probe and
+    /// the prepared byte length. A parse failure is `Ok(false)`. Errors without charging when the
+    /// probe count or cumulative byte budget would be exceeded, or when escape preparation fails.
     fn parse(&mut self, source: &str) -> Result<bool> {
         if self.probes >= MAX_GHERKIN_MARKDOWN_PROBES {
             bail!(
@@ -272,10 +286,15 @@ impl MarkdownProbeBudget {
     }
 }
 
+/// Whether parsing a `probe_bytes` document once per candidate would fit the probe byte budget;
+/// gates the speculative whole-document parse.
 fn whole_document_retry_is_bounded(probe_bytes: usize, candidates: usize) -> bool {
     probe_bytes.saturating_mul(candidates) <= MAX_GHERKIN_MARKDOWN_PROBE_BYTES
 }
 
+/// Applies the group's replacements and keeps them when the rendered document parses; otherwise
+/// reverts and recurses into each half until single candidates are rejected. Candidates whose
+/// line is out of range are ignored, and a group with none in range costs no probe.
 fn restore_candidate_group<F>(
     lines: &mut [String],
     candidates: &[(usize, String)],
@@ -311,6 +330,8 @@ where
     restore_candidate_group(lines, &candidates[midpoint..], render, probe_budget)
 }
 
+/// Runs `restore_candidate_group` over consecutive `GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE` chunks,
+/// so each chunk is probed with the replacements accepted from earlier chunks.
 fn restore_candidate_batches<F>(
     lines: &mut [String],
     candidates: &[(usize, String)],
@@ -326,6 +347,10 @@ where
     Ok(())
 }
 
+/// Restores list-item step candidates into `source`. In the default dialect, candidates without
+/// an English step keyword are dropped first; `source` is returned unchanged when none remain.
+/// Tries all candidates in one parse (for other dialects only when its projected cost fits the
+/// byte budget), then falls back to batched group probes.
 fn restore_markdown_steps(
     source: String,
     candidates: &[(usize, String)],
@@ -383,12 +408,17 @@ fn restore_markdown_steps(
     Ok(render(&lines))
 }
 
+/// Whether `step` starts with a case-sensitive English step keyword or `*` followed by a space.
 fn is_default_dialect_step(step: &str) -> bool {
     ["Given ", "When ", "Then ", "And ", "But ", "* "]
         .into_iter()
         .any(|keyword| step.starts_with(keyword))
 }
 
+/// Renders `base` with the unknown colon headings the parser accepts. Returns `base` without
+/// trying any candidate when it already parses; otherwise tries all candidates at once when the
+/// projected cost fits the byte budget, then batched group probes, and falls back to `base` when
+/// the batched result still does not parse.
 fn restore_dialect_headings(
     base: Vec<String>,
     candidates: &[(usize, String)],
@@ -432,12 +462,16 @@ fn restore_dialect_headings(
     Ok(base_source)
 }
 
+/// Returns the text after one or more leading `#` and one space, right-trimmed; `None` when the
+/// line does not start with `#` or the hashes are not followed by a space.
 fn markdown_heading(line: &str) -> Option<&str> {
     let heading = line.strip_prefix('#')?;
     let heading = heading.trim_start_matches('#');
     heading.strip_prefix(' ').map(str::trim_end)
 }
 
+/// Whether `keyword` is an English Gherkin structural keyword, ignoring surrounding whitespace
+/// and ASCII case.
 fn is_gherkin_heading_keyword(keyword: &str) -> bool {
     matches!(
         keyword.trim().to_ascii_lowercase().as_str(),
@@ -455,6 +489,9 @@ fn is_gherkin_heading_keyword(keyword: &str) -> bool {
     )
 }
 
+/// Returns the right-trimmed text of a `*`, `-`, `+` or `N.` list item, unwrapping a leading
+/// `**bold**` keyword and joining it to the rest with one space. `None` for other lines and for
+/// an unclosed `**`.
 fn markdown_list_item(line: &str) -> Option<String> {
     let rest = line
         .strip_prefix("* ")
@@ -478,6 +515,8 @@ fn markdown_list_item(line: &str) -> Option<String> {
     Some(rest.to_owned())
 }
 
+/// Whether the line has at least one token and every whitespace-separated token is a backticked
+/// tag such as `` `@smoke` ``.
 fn is_markdown_tag_line(line: &str) -> bool {
     let mut found = false;
     for token in line.split_whitespace() {
@@ -489,6 +528,8 @@ fn is_markdown_tag_line(line: &str) -> bool {
     found
 }
 
+/// Whether the line is a Markdown table delimiter row: it starts and ends with `|` and every cell
+/// is one or more `-`, optionally wrapped in `:` alignment markers.
 fn is_table_separator(line: &str) -> bool {
     if !line.starts_with('|') || !line.ends_with('|') {
         return false;
@@ -505,6 +546,9 @@ fn is_table_separator(line: &str) -> bool {
     found
 }
 
+/// Collects steps from the feature's and each rule's background and scenarios, then stable-sorts
+/// them by line and column. Background steps appear once; outline expansions of one step share a
+/// position and keep their example-row order.
 fn extract_feature(feature: &Feature, path: &Path) -> Vec<FeatureStep> {
     let mut steps = Vec::new();
     if let Some(background) = &feature.background {
@@ -530,10 +574,14 @@ fn extract_feature(feature: &Feature, path: &Path) -> Vec<FeatureStep> {
     steps
 }
 
+/// Appends the background's steps with their source text.
 fn collect_background(background: &Background, path: &Path, output: &mut Vec<FeatureStep>) {
     output.extend(background.steps.iter().map(|step| convert_step(step, path)));
 }
 
+/// Appends a scenario's steps, once per example data row with `<placeholders>` substituted.
+/// Examples without a table or header row are skipped; when no data row exists at all, the steps
+/// are appended once unsubstituted.
 fn collect_scenario(scenario: &Scenario, path: &Path, output: &mut Vec<FeatureStep>) {
     if scenario.examples.is_empty() {
         output.extend(scenario.steps.iter().map(|step| convert_step(step, path)));
@@ -565,6 +613,8 @@ fn collect_scenario(scenario: &Scenario, path: &Path, output: &mut Vec<FeatureSt
     }
 }
 
+/// Replaces each `<name>` with its example value, where the name runs from `<` to the next `>`.
+/// Unknown names and an unclosed `<` stay verbatim; substituted values are not rescanned.
 fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> String {
     let mut output = String::with_capacity(text.len());
     let mut remaining = text;
@@ -588,10 +638,13 @@ fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> Strin
     output
 }
 
+/// Converts a step, keeping its source text.
 fn convert_step(step: &Step, path: &Path) -> FeatureStep {
     convert_step_with_text(step, path, step.value.clone())
 }
 
+/// Builds a `FeatureStep` with `text` and a one-line location whose end column counts the
+/// trimmed keyword, one space and the source `step.value`, not `text`.
 fn convert_step_with_text(step: &Step, path: &Path, text: String) -> FeatureStep {
     let keyword = step.keyword.trim().to_owned();
     let end_column = step.position.col + keyword.chars().count() + 1 + step.value.chars().count();

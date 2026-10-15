@@ -56,6 +56,10 @@ pub(super) fn first_unterminated_row(source: &str) -> Option<usize> {
     None
 }
 
+/// Replaces each backslash in a table row that does not start a `\n`, `\|` or `\\` escape with
+/// one private-use marker absent from `source`, so the gherkin crate accepts Cucumber's unknown
+/// escapes. Doc-string blocks are skipped. Returns the borrowed source and `None` when nothing
+/// was replaced; errors when no marker is free.
 pub(super) fn prepare(source: &str) -> Result<(Cow<'_, str>, Option<char>)> {
     let mut output = None;
     let mut marker = None;
@@ -113,6 +117,8 @@ pub(super) fn prepare(source: &str) -> Result<(Cow<'_, str>, Option<char>)> {
     ))
 }
 
+/// Returns the lowest BMP private-use character (U+E000..=U+F8FF) absent from `source`; errors
+/// when all 6,400 occur.
 fn unused_marker(source: &str) -> Result<char> {
     // Fixed occupancy storage and one scan avoid a source scan for every candidate marker.
     let mut used = [false; 0x1900];
@@ -127,6 +133,9 @@ fn unused_marker(source: &str) -> Result<char> {
     bail!("Gherkin table escape compatibility exhausted its reserved-character budget")
 }
 
+/// Rejects a `|` row in any step or Examples table whose unescaped delimiter count differs from
+/// the table's row width plus one, then maps `marker` back to `\` in the parsed cells. Errors name
+/// the offending line, or report a table span outside `source`.
 pub(super) fn finish(feature: &mut Feature, source: &str, marker: Option<char>) -> Result<()> {
     let restore_table = |table: &mut Option<Table>| -> Result<()> {
         if let Some(table) = table {

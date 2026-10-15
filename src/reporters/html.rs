@@ -13,6 +13,11 @@ pub fn render_html(context: &ReportContext<'_>) -> Result<String> {
     render_html_context_with_metadata(context, None)
 }
 
+/// Renders the HTML report: cards for up to `MAX_BUFFERED_REPORT_FINDINGS` active findings in
+/// priority order, plus embedded report JSON that also includes inactive findings.
+///
+/// Adds a notice when cards are truncated and, with `metadata`, when analysis was truncated or
+/// the corpus is incomplete. Errors only when the embedded JSON fails to serialize.
 pub(super) fn render_html_context_with_metadata(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,
@@ -196,6 +201,8 @@ pub(super) fn render_html_context_with_metadata(
     ))
 }
 
+/// Replaces placeholders in one left-to-right pass; inserted values are not rescanned, so a
+/// placeholder inside a value stays literal. On a tie, the earlier `replacements` entry wins.
 fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
     let mut rendered = String::with_capacity(template.len());
     let mut remaining = template;
@@ -216,6 +223,7 @@ fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
     rendered
 }
 
+/// Renders the primary and related definitions side by side: highlighted matcher, escaped handler.
 fn render_comparison(comparison: &DefinitionComparison) -> String {
     format!(
         r#"<div class="comparison"><section><h3>Primary definition</h3><code class="matcher">{}</code><pre><code>{}</code></pre></section><section><h3>Related definition</h3><code class="matcher">{}</code><pre><code>{}</code></pre></section></div>"#,
@@ -226,6 +234,8 @@ fn render_comparison(comparison: &DefinitionComparison) -> String {
     )
 }
 
+/// Renders one matcher as escaped prefix, change, and suffix, wrapping a non-empty change in
+/// `<mark>`; `left` selects the left change, otherwise the right.
 fn render_matcher_side(diff: &MatcherDiff, left: bool) -> String {
     let change = if left {
         &diff.left_change
@@ -245,6 +255,7 @@ fn render_matcher_side(diff: &MatcherDiff, left: bool) -> String {
     )
 }
 
+/// Sanitizes with `report_safe`, then escapes `&`, `<`, `>`, `"` and `'` for text and attributes.
 fn html_escape(value: &str) -> String {
     report_safe(value)
         .replace('&', "&amp;")
@@ -254,6 +265,8 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Escapes `<`, `>`, `&` and bidirectional formatting characters as `\uXXXX` so serialized JSON
+/// can sit inside a `<script>` element; other characters pass through unchanged.
 fn json_for_html(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for character in value.chars() {

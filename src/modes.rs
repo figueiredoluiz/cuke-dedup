@@ -67,6 +67,10 @@ fn git_at(root: &Path) -> Command {
     command
 }
 
+/// Peels `base` to a commit and returns its object id.
+///
+/// Rejects a blank or `-`-prefixed `base` before running Git; errors when `rev-parse` fails or
+/// prints anything other than a hex object id.
 fn resolve_commit(root: &Path, base: &str) -> Result<String> {
     if base.trim().is_empty() || base.starts_with('-') {
         bail!("invalid --changed-since revision `{base}`");
@@ -280,6 +284,9 @@ pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
     }
 }
 
+/// Runs `git <arguments>` in `root` with `core.quotePath=false` and splits stdout on NUL into
+/// paths as Git printed them, skipping empty entries. A non-zero exit errors as
+/// `{failure}: {stderr}`.
 fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathBuf>> {
     let output = git_at(root)
         .args(["-c", "core.quotePath=false"])
@@ -298,6 +305,7 @@ fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathB
         .collect()
 }
 
+/// Converts a raw Git path to a `PathBuf` byte for byte; never fails on Unix.
 #[cfg(unix)]
 fn path_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
     use std::ffi::OsStr;
@@ -306,6 +314,7 @@ fn path_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
     Ok(PathBuf::from(OsStr::from_bytes(bytes)))
 }
 
+/// Converts a Git path to a `PathBuf` on non-Unix targets; errors when the bytes are not UTF-8.
 #[cfg(not(unix))]
 fn path_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
     Ok(PathBuf::from(
@@ -347,12 +356,14 @@ impl BaselineFile {
         }
     }
 
+    /// Returns a baseline with no fingerprints at the current schema version.
     fn empty() -> Self {
         Self::new(BTreeMap::new())
     }
 }
 
 impl Default for BaselineFile {
+    /// Returns a baseline with no fingerprints at the current schema version.
     fn default() -> Self {
         Self::new(BTreeMap::new())
     }
@@ -381,6 +392,10 @@ pub fn apply_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<
     apply_loaded_baseline(findings, baseline_path, &baseline)
 }
 
+/// Suppresses `findings` against a baseline built from the active findings in `accepted`.
+///
+/// `revision` stands in for the baseline path, so suppression reasons read
+/// `present in baseline <revision>`.
 pub(crate) fn apply_reference_baseline(
     findings: &mut [Finding],
     accepted: &[Finding],
@@ -406,6 +421,7 @@ pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result
     Ok(outcome)
 }
 
+/// Parses a baseline to apply; errors unless its schema version equals `BASELINE_SCHEMA_VERSION`.
 fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
     let baseline = parse_baseline(baseline_path)?;
     if baseline.schema_version != BASELINE_SCHEMA_VERSION {
@@ -418,6 +434,8 @@ fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
     Ok(baseline)
 }
 
+/// Parses a baseline that is about to be replaced; accepts older schema versions and errors on a
+/// newer one.
 fn load_baseline_for_update(baseline_path: &Path) -> Result<BaselineFile> {
     let baseline = parse_baseline(baseline_path)?;
     if baseline.schema_version > BASELINE_SCHEMA_VERSION {
@@ -430,6 +448,9 @@ fn load_baseline_for_update(baseline_path: &Path) -> Result<BaselineFile> {
     Ok(baseline)
 }
 
+/// Reads and deserializes a baseline without checking its schema version.
+///
+/// Errors on I/O failure, input over `MAX_BASELINE_INPUT_BYTES`, invalid UTF-8, or invalid JSON.
 fn parse_baseline(baseline_path: &Path) -> Result<BaselineFile> {
     let text = read_utf8(baseline_path, "baseline", MAX_BASELINE_INPUT_BYTES)?;
     // serde_json's default recursion limit remains enabled for untrusted baseline input.
@@ -437,6 +458,8 @@ fn parse_baseline(baseline_path: &Path) -> Result<BaselineFile> {
         .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))
 }
 
+/// Writes `baseline` as pretty JSON with a trailing newline, creating parent directories; the
+/// existing file is overwritten in place, not atomically.
 fn save_baseline(path: &Path, baseline: &BaselineFile) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -447,6 +470,7 @@ fn save_baseline(path: &Path, baseline: &BaselineFile) -> Result<()> {
         .with_context(|| format!("failed to write baseline {}", path.display()))
 }
 
+/// Counts active findings per `finding_fingerprint`; suppressed and `Off` findings are left out.
 fn build_baseline(findings: &[Finding]) -> BaselineFile {
     let mut baseline = BaselineFile::empty();
     for finding in findings.iter().filter(|finding| finding.is_active()) {
@@ -458,6 +482,10 @@ fn build_baseline(findings: &[Finding]) -> BaselineFile {
     baseline
 }
 
+/// Suppresses each active finding whose fingerprint has multiplicity left in `baseline`,
+/// consuming one per match in finding order; unmatched active findings count as new.
+///
+/// Inactive findings are skipped. Never returns `Err`.
 fn apply_loaded_baseline(
     findings: &mut [Finding],
     baseline_path: &Path,
@@ -521,6 +549,8 @@ pub fn finding_fingerprint(finding: &Finding) -> String {
     ])
 }
 
+/// Sums, per fingerprint, the instances `current` has beyond `previous`; fingerprints present
+/// only in `previous` contribute nothing.
 fn count_added(previous: &BTreeMap<String, usize>, current: &BTreeMap<String, usize>) -> usize {
     current
         .iter()
