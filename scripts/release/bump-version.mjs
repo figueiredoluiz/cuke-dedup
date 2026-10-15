@@ -49,7 +49,7 @@ function plan(path, text, crlf) {
 }
 
 /**
- * Rewrites the single site matching `pattern` and returns the original text.
+ * Rewrites the single site matching `pattern` and returns the file's pre-edit text, LF-normalized.
  *
  * More or fewer matches means the file no longer has the shape this script understands, which must
  * fail loudly rather than be guessed at.
