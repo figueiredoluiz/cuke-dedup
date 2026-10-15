@@ -161,6 +161,8 @@ impl ExtractionDiagnostic {
     }
 }
 
+/// Whether `diagnostic` signals possibly missed definitions: kinds `Incomplete`, `Unparseable` and
+/// `Dependency`. A `LegacyMessage` diagnostic is classified by its message text.
 pub(crate) fn is_completeness_diagnostic(diagnostic: &ExtractionDiagnostic) -> bool {
     match diagnostic.kind {
         ExtractionDiagnosticKind::Incomplete
@@ -336,6 +338,9 @@ pub struct SourceExtractionSession {
 pub(crate) trait AdapterSessionState:
     Any + Send + Sync + UnwindSafe + RefUnwindSafe
 {
+    /// Builds the backend's per-run state from the session root (`None` for a default session),
+    /// configured registrations and assertion modules. Infallible; called at most once per state
+    /// type per session, at construction for a rooted session and on first access otherwise.
     fn initialize(
         root: Option<&Path>,
         registrations: &[String],
@@ -346,6 +351,9 @@ pub(crate) trait AdapterSessionState:
 /// Internal stateful registrations must explicitly select their backend state.
 pub(crate) trait StatefulSourceAdapter: SourceAdapter {
     type State: AdapterSessionState;
+    /// Adds loaded sources, resolved edges and refused-load gaps to `files`, without executing them.
+    /// Called once per adapter name when a selected definition has its language; whole-graph
+    /// failures go into `files.errors`. The default does nothing.
     fn discover_dependencies(
         _config: &crate::config::Config,
         _excludes: &globset::GlobSet,
@@ -415,11 +423,14 @@ impl SourceExtractionSession {
             .map(String::as_str)
     }
 
+    /// Whether discovery supplied a resolved edge for the loading call at `location`, matched by
+    /// path, start line and start column only.
     pub(crate) fn dependency_resolved(&self, location: &SourceLocation) -> bool {
         self.dependencies
             .contains_key(&(location.path.clone(), location.line, location.column))
     }
 
+    /// Clones of the resolved loading edges, ordered by call path, line and column.
     pub(crate) fn dependency_edges(&self) -> Vec<SourceDependency> {
         self.dependencies.values().cloned().collect()
     }
@@ -462,6 +473,7 @@ impl SourceExtractionSession {
         session
     }
 
+    /// Creates the `T` state for this session unless one already exists for that type.
     pub(crate) fn initialize<T: AdapterSessionState>(&mut self) {
         self.states.entry(TypeId::of::<T>()).or_insert_with(|| {
             Box::new(T::initialize(
@@ -472,6 +484,9 @@ impl SourceExtractionSession {
         });
     }
 
+    /// Returns this session's `T` state. A session without a root creates it on first access; a
+    /// rooted session errors when `T` was not initialized at construction. Also errors when the
+    /// stored value is not a `T`.
     pub(crate) fn state<T: AdapterSessionState>(&mut self) -> Result<&mut T> {
         // Explicit-root sessions must never establish a boundary later than construction.
         if self.root.is_none() {
@@ -608,6 +623,8 @@ impl SourceAdapterRegistration {
         }
     }
 
+    /// Creates a registration for `adapter` carrying its session-state initializer and its
+    /// `discover_dependencies` hook, which may be the no-op default.
     const fn with_session<A: StatefulSourceAdapter>(
         suffix: &'static str,
         adapter: &'static A,
@@ -664,6 +681,8 @@ pub fn adapter_for_path(path: &Path) -> Option<&'static dyn SourceAdapter> {
         .map(|registration| registration.adapter)
 }
 
+/// Whether `path` is a TypeScript declaration file: extension `ts`, `mts` or `cts` and a stem that
+/// is `.d` or ends in `.d`. Comparisons are case-sensitive.
 fn is_declaration_file(path: &Path, extension: &str) -> bool {
     matches!(extension, "ts" | "mts" | "cts")
         && path.file_stem().is_some_and(|stem| {

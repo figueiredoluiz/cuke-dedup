@@ -54,6 +54,8 @@ impl SourceUncertainty {
         }
     }
 
+    /// Whether `definition` falls in this scope: an equal full location span, an equal file path,
+    /// or the comparison domain of the registry language.
     fn affects(&self, definition: &StepDefinition) -> bool {
         match &self.scope {
             UncertaintyScope::Definition(location) => &definition.location == location,

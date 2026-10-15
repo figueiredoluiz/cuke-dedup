@@ -70,6 +70,8 @@ pub(crate) fn inline_suppressions(
     suppressions
 }
 
+/// Builds an `Error`-level, `Other`-kind diagnostic as an empty span at column 1 of one-based line
+/// `zero_based_line + 1`; it does not mark extraction incomplete.
 fn inline_suppression_diagnostic(
     file: &SourceFile,
     zero_based_line: usize,

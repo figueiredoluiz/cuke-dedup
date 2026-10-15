@@ -5913,7 +5913,7 @@
       ]
     },
     "src/model/behavior.rs": {
-      "sourceSha256": "2fafe30bbdb0f7992579916abe9374176a40c8ad266f5d7487a1fe95ed53bf6c",
+      "sourceSha256": "1dced0699c13eaacfa087353ecd88fd7bc7eeb1cae2fcf0f74fb6efe1d9cadc3",
       "tests": [
         {
           "name": "legacy_signatures_round_trip_known_and_unknown_events",

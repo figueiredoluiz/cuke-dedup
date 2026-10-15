@@ -9,9 +9,11 @@ pub(crate) struct FrontendConfig {
 }
 
 impl FrontendConfig {
+    /// Configured `rubyLoadPaths` entries as written, before resolution against the project root.
     pub(crate) fn ruby_load_paths(&self) -> &[PathBuf] {
         &self.ruby.load_paths
     }
+    /// Replaces the configured `rubyLoadPaths` entries without validating them.
     pub(crate) fn set_ruby_load_paths(&mut self, paths: Vec<PathBuf>) {
         self.ruby.load_paths = paths;
     }
