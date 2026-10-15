@@ -14,7 +14,8 @@ pub fn render_html(context: &ReportContext<'_>) -> Result<String> {
 }
 
 /// Renders the HTML report: cards for up to `MAX_BUFFERED_REPORT_FINDINGS` active findings in
-/// priority order, plus embedded report JSON that also includes inactive findings.
+/// priority order, plus embedded report JSON under the same cap, where inactive findings fill only
+/// the slots active findings leave.
 ///
 /// Adds a notice when cards are truncated and, with `metadata`, when analysis was truncated or
 /// the corpus is incomplete. Errors only when the embedded JSON fails to serialize.

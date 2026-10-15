@@ -105,8 +105,8 @@ pub(super) fn report_value<'a>(context: &ReportContext<'a>) -> JsonReport<'a> {
     report_value_with_metadata(context, None)
 }
 
-/// Builds the JSON report value from bounded findings, active or not, adding corpus and analysis
-/// censuses when `metadata` is given.
+/// Builds the JSON report value from up to `MAX_BUFFERED_REPORT_FINDINGS` findings, active before
+/// inactive, adding corpus and analysis censuses when `metadata` is given.
 pub(super) fn report_value_with_metadata<'a>(
     context: &ReportContext<'a>,
     metadata: Option<&CliReportMetadata<'_>>,
