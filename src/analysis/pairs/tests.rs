@@ -2,6 +2,7 @@ use super::*;
 use crate::discovery::{SourceFile, SourceLanguage};
 use std::path::PathBuf;
 
+/// First TypeScript definition extracted from `Given('abc', ...)` with a three-call handler.
 fn definition() -> StepDefinition {
     crate::typescript::extract(
         "Given('abc', () => { open(); fill(); save(); });",
@@ -14,6 +15,7 @@ fn definition() -> StepDefinition {
     .remove(0)
 }
 
+/// Error pair finding from `left` to `right`: 0.75 similarities, comparison evidence, no cluster.
 fn pair_finding(
     rule: Rule,
     left: &StepDefinition,
@@ -41,6 +43,7 @@ fn pair_finding(
     }
 }
 
+/// `count` copies of `definition()` at `steps/{i}.ts` with matcher and normalized `step {i}`.
 fn located_definitions(count: usize) -> Vec<StepDefinition> {
     (0..count)
         .map(|index| {
@@ -53,6 +56,7 @@ fn located_definitions(count: usize) -> Vec<StepDefinition> {
         .collect()
 }
 
+/// Four near-duplicate pair findings stay separate, each keeping comparison and no cluster.
 #[test]
 fn fuzzy_pair_evidence_is_never_collapsed_into_clusters() {
     let definitions = located_definitions(5);
@@ -69,6 +73,8 @@ fn fuzzy_pair_evidence_is_never_collapsed_into_clusters() {
     }));
 }
 
+/// A suppressed duplicate-handler pair stays a pair; four chained active pairs form one
+/// five-member cluster.
 #[test]
 fn cluster_reporting_does_not_cross_suppression_partitions() {
     let definitions = located_definitions(6);
@@ -101,6 +107,7 @@ fn cluster_reporting_does_not_cross_suppression_partitions() {
     assert_eq!(active.evidence.cluster.as_ref().unwrap().member_count, 5);
 }
 
+/// Derives classes, event and anchor ids for `definitions`; runs matcher blocking into `builder`.
 fn insert_blocking_candidates(definitions: &[StepDefinition], builder: &mut CandidateBuilder) {
     let classes = comparison_classes(definitions);
     let events = behavior_event_ids(definitions);
@@ -108,6 +115,7 @@ fn insert_blocking_candidates(definitions: &[StepDefinition], builder: &mut Cand
     insert_matcher_blocking_candidates(definitions, &classes, &events, &anchor_events, builder);
 }
 
+/// Inserting a source sets only its own flag; a normalized-matcher-only set cannot feed near.
 #[test]
 fn candidate_source_flags_preserve_independent_rule_inputs() {
     let mut sources = CandidateSources::default();
@@ -122,6 +130,8 @@ fn candidate_source_flags_preserve_independent_rule_inputs() {
     assert!(!normalized_only.can_feed_near_matcher());
 }
 
+/// Trigram keys are lowercased, char-based (CJK), deduplicated, with digit runs collapsed to `0`;
+/// short matchers yield one key and empty yields none.
 #[test]
 fn matcher_shingle_keys_are_case_folded_unicode_safe_and_deduplicated() {
     let keys = |values: &[&str]| {
@@ -146,6 +156,7 @@ fn matcher_shingle_keys_are_case_folded_unicode_safe_and_deduplicated() {
     );
 }
 
+/// A 1M repeated-char matcher yields one key; distinct trigrams past the cap yield `None`.
 #[test]
 fn matcher_shingle_keys_bound_allocation_for_large_inputs() {
     assert_eq!(
@@ -160,6 +171,7 @@ fn matcher_shingle_keys_bound_allocation_for_large_inputs() {
     assert!(matcher_shingle_keys(&diverse).is_none());
 }
 
+/// Exceeding the shingle cap, event-work or proposal budget adds no candidate and records one skip.
 #[test]
 fn matcher_blocking_fails_closed_when_a_work_budget_is_exceeded() {
     let mut oversized = definition();
@@ -248,6 +260,8 @@ fn matcher_blocking_fails_closed_when_a_work_budget_is_exceeded() {
     );
 }
 
+/// Checks `meaningful_handler`, structural-source ownership and the handler-gate prefilter cases;
+/// a sync/async method pair is never evaluated by matcher blocking.
 #[test]
 fn handler_prefilters_are_safe_upper_bounds_for_the_near_rule() {
     let base = definition();
@@ -399,6 +413,8 @@ fn handler_prefilters_are_safe_upper_bounds_for_the_near_rule() {
     );
 }
 
+/// Repeated long behaviour events intern to one id per distinct event, and disjoint event lists
+/// score 0.0 handler similarity.
 #[test]
 fn behavior_events_are_interned_before_pairwise_sequence_comparison() {
     let prefix = "x".repeat(4_096);
@@ -419,6 +435,8 @@ fn behavior_events_are_interned_before_pairwise_sequence_comparison() {
     );
 }
 
+/// A matcher-blocking pair that fails the near-wording gate is evaluated once without charging
+/// handler LCS work, so the census is neither truncated nor skipped.
 #[test]
 fn matcher_blocking_rejections_do_not_spend_handler_lcs_work() {
     let mut left = definition();
@@ -446,6 +464,8 @@ fn matcher_blocking_rejections_do_not_spend_handler_lcs_work() {
     assert!(!is_near_matcher(
         &definitions[0],
         &definitions[1],
+        &matcher_words(&definitions[0]),
+        &matcher_words(&definitions[1]),
         matcher_similarity(&definitions[0], &definitions[1])
     ));
 

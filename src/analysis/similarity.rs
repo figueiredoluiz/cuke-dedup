@@ -1,3 +1,4 @@
+use super::string_metrics::matcher_text_similarity;
 #[cfg(test)]
 use crate::model::BehaviorEventRef;
 use crate::model::StepDefinition;
@@ -17,25 +18,29 @@ fn matcher_comparison_text(definition: &StepDefinition) -> &str {
 /// The larger of Levenshtein similarity (normalized by the longer char count) and Jaro-Winkler
 /// over the normalized matchers; two empty matchers score 1.0.
 pub(super) fn matcher_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
-    let left = matcher_comparison_text(left);
-    let right = matcher_comparison_text(right);
-    let max_length = left.chars().count().max(right.chars().count());
-    if max_length == 0 {
-        return 1.0;
-    }
-    let distance = strsim::levenshtein(left, right);
-    let edit_similarity = 1.0 - distance as f64 / max_length as f64;
-    edit_similarity.max(strsim::jaro_winkler(left, right))
+    matcher_text_similarity(
+        matcher_comparison_text(left),
+        matcher_comparison_text(right),
+    )
+}
+
+/// Lowercased words of the normalized matcher, computed once per definition per analysis and
+/// passed to the word-based helpers below.
+pub(super) fn matcher_words(definition: &StepDefinition) -> Vec<String> {
+    words(matcher_comparison_text(definition))
 }
 
 /// Whether compatible matchers reach the wording gate: 0.92 when the longer normalized matcher has
-/// at most 12 chars, 0.90 otherwise. `similarity` is taken as given, not recomputed.
+/// at most 12 chars, 0.90 otherwise. `similarity` is taken as given, not recomputed; the word
+/// slices are each definition's [`matcher_words`].
 pub(super) fn is_near_matcher(
     left: &StepDefinition,
     right: &StepDefinition,
+    left_words: &[String],
+    right_words: &[String],
     similarity: f64,
 ) -> bool {
-    if !matchers_compatible(left, right) {
+    if !matchers_compatible(left, right, left_words, right_words) {
         return false;
     }
     let length = matcher_comparison_text(left)
@@ -62,37 +67,40 @@ const PARAMETERIZATION_SIMILARITY_GATE: f64 = 0.6;
 const MAX_PARAMETERIZED_CHANGE_WORDS: usize = 3;
 
 /// Whether two matchers may describe the same step parameterized by a value: same kind, no polarity
-/// conflict, similar enough, and differing only in a bounded value-like region.
+/// conflict, similar enough, and differing only in a bounded value-like region. The word slices
+/// are each definition's [`matcher_words`].
 pub(super) fn is_parameterizable_matcher(
     left: &StepDefinition,
     right: &StepDefinition,
+    left_words: &[String],
+    right_words: &[String],
     similarity: f64,
 ) -> bool {
-    matchers_compatible(left, right)
+    matchers_compatible(left, right, left_words, right_words)
         && similarity >= PARAMETERIZATION_SIMILARITY_GATE
-        && matcher_change_word_span(&left.normalized_matcher, &right.normalized_matcher)
-            <= MAX_PARAMETERIZED_CHANGE_WORDS
+        && matcher_change_word_span(left_words, right_words) <= MAX_PARAMETERIZED_CHANGE_WORDS
 }
 
-/// Same matcher syntax and no negation/opposite-word conflict — the shared prerequisite for treating
-/// two matchers as variants of one step.
-fn matchers_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
+/// Same matcher syntax and no negation/opposite-word conflict between the matchers' words — the
+/// shared prerequisite for treating two matchers as variants of one step.
+fn matchers_compatible(
+    left: &StepDefinition,
+    right: &StepDefinition,
+    left_words: &[String],
+    right_words: &[String],
+) -> bool {
     left.matcher_kind == right.matcher_kind
         && left
             .analysis_profile()
             .dialect
             .similarity_flags_match(&left.matcher_flags, &right.matcher_flags)
-        && !has_polarity_conflict(
-            matcher_comparison_text(left),
-            matcher_comparison_text(right),
-        )
+        && !has_polarity_conflict(left_words, right_words)
 }
 
-/// The number of words that differ between two matchers after stripping their common leading and
-/// trailing words — the size of the region a single parameter would have to stand in for.
-fn matcher_change_word_span(left: &str, right: &str) -> usize {
-    let left = words(left);
-    let right = words(right);
+/// The number of words that differ between two matchers' word lists after stripping their common
+/// leading and trailing words — the size of the region a single parameter would have to stand in
+/// for.
+fn matcher_change_word_span(left: &[String], right: &[String]) -> usize {
     let min = left.len().min(right.len());
     let mut prefix = 0;
     while prefix < min && left[prefix] == right[prefix] {
@@ -129,11 +137,9 @@ fn splits_into_separate_changes(left: &[String], right: &[String]) -> bool {
         .any(|word| right.contains(word) && (flanked(left, word) || flanked(right, word)))
 }
 
-/// Whether exactly one side contains a negation word, or any word pair is a prefixed opposite.
-/// Negation on both sides is not a conflict by itself; a prefixed opposite still is.
-fn has_polarity_conflict(left: &str, right: &str) -> bool {
-    let left = words(left);
-    let right = words(right);
+/// Whether exactly one word list contains a negation word, or any word pair is a prefixed
+/// opposite. Negation on both sides is not a conflict by itself; a prefixed opposite still is.
+fn has_polarity_conflict(left: &[String], right: &[String]) -> bool {
     const NEGATIONS: [&str; 8] = [
         "not", "no", "never", "cannot", "cant", "without", "unable", "neither",
     ];
@@ -309,21 +315,105 @@ mod tests {
         }
     }
 
+    /// `is_near_matcher` over each definition's own cached words.
+    fn near(left: &StepDefinition, right: &StepDefinition, similarity: f64) -> bool {
+        is_near_matcher(
+            left,
+            right,
+            &matcher_words(left),
+            &matcher_words(right),
+            similarity,
+        )
+    }
+
     /// Similarity 1.0 still fails the near gate across matcher kinds, prefixed opposites and
     /// one-sided negation.
     #[test]
     fn matcher_gate_rejects_mixed_syntax_and_polarity_conflicts() {
         let expression = definition("account is active", MatcherKind::CucumberExpression);
         let regex = definition("account is active", MatcherKind::RegularExpression);
-        assert!(!is_near_matcher(&expression, &regex, 1.0));
+        assert!(!near(&expression, &regex, 1.0));
 
         let inactive = definition("account is inactive", MatcherKind::CucumberExpression);
-        assert!(!is_near_matcher(&expression, &inactive, 1.0));
+        assert!(!near(&expression, &inactive, 1.0));
 
         let not_active = definition("account is not active", MatcherKind::CucumberExpression);
-        assert!(!is_near_matcher(&expression, &not_active, 1.0));
+        assert!(!near(&expression, &not_active, 1.0));
     }
 
+    /// The word helpers fed cached word lists return the answers the uncached string API returned
+    /// before the cache existed (values recorded from that API), identically in both argument
+    /// orders: punctuation-only, mixed case, negation on either side or both, prefixed opposites,
+    /// a short word that is no prefixed opposite, two separate edits and one shifted value.
+    #[test]
+    fn cached_word_helpers_keep_pre_cache_answers() {
+        // (polarity conflict, change span, compatible, near, parameterizable)
+        let answers = |left: &str, right: &str| {
+            let ordered = |left: &str, right: &str| {
+                let left = definition(left, MatcherKind::CucumberExpression);
+                let right = definition(right, MatcherKind::CucumberExpression);
+                let (left_words, right_words) = (matcher_words(&left), matcher_words(&right));
+                let similarity = matcher_similarity(&left, &right);
+                (
+                    has_polarity_conflict(&left_words, &right_words),
+                    matcher_change_word_span(&left_words, &right_words),
+                    matchers_compatible(&left, &right, &left_words, &right_words),
+                    is_near_matcher(&left, &right, &left_words, &right_words, similarity),
+                    is_parameterizable_matcher(
+                        &left,
+                        &right,
+                        &left_words,
+                        &right_words,
+                        similarity,
+                    ),
+                )
+            };
+            let forward = ordered(left, right);
+            assert_eq!(forward, ordered(right, left), "{left:?} / {right:?}");
+            forward
+        };
+        assert_eq!(answers("!!! ---", "..."), (false, 0, true, false, false));
+        assert_eq!(
+            answers("Account Is ACTIVE", "account is active"),
+            (false, 0, true, false, true)
+        );
+        assert_eq!(
+            answers("the user can not log in", "the user can log in"),
+            (true, 1, false, false, false)
+        );
+        assert_eq!(
+            answers("the user can log in", "the user CANNOT log in"),
+            (true, 1, false, false, false)
+        );
+        assert_eq!(
+            answers("user is not active", "user is never active"),
+            (false, 1, true, true, true)
+        );
+        assert_eq!(
+            answers("account is active", "account is Inactive"),
+            (true, 1, false, false, false)
+        );
+        assert_eq!(
+            answers("feature is Disabled", "feature is enabled"),
+            (true, 1, false, false, false)
+        );
+        assert_eq!(
+            answers("the log is on", "the log is non"),
+            (false, 1, true, true, true)
+        );
+        assert_eq!(
+            answers("red button shown", "blue button hidden"),
+            (false, usize::MAX, true, false, false)
+        );
+        assert_eq!(
+            answers("New York", "York City"),
+            (false, 2, true, false, false)
+        );
+        assert_eq!(
+            answers("switches to dark theme", "switches to light theme"),
+            (false, 1, true, true, true)
+        );
+    }
     /// Empty matchers score 1.0; same alpha with equal events scores 1.0 and same structure 0.95
     /// with or without event similarity; otherwise LCS overlap only when available, 0.0 for empty
     /// streams; LCS length; three-decimal rounding.

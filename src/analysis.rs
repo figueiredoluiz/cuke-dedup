@@ -3,6 +3,7 @@
 mod evidence;
 mod pairs;
 mod similarity;
+mod string_metrics;
 mod suppression;
 mod usage;
 
