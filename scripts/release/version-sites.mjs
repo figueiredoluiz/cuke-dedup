@@ -33,8 +33,8 @@ async function* searchableFiles(directory) {
 }
 
 /**
- * Markdown and YAML files Git tracks or would track under `root`; outside a repository, a
- * directory walk instead.
+ * Markdown and YAML files Git tracks or would track under `root`. Outside a repository it falls
+ * back to a directory walk; any other Git failure throws.
  */
 function projectFiles(root) {
   const result = spawnSync("git", ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {

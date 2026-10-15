@@ -29,11 +29,12 @@ const planned = new Map();
 const original = new Map();
 
 /**
- * Reads `path` as LF text and records the original bytes and whether they used CRLF.
+ * Reads `path` as LF text and records the original bytes and whether it contains any CRLF.
  *
  * A Windows checkout has no `.gitattributes` forcing LF, so a file can arrive with CRLF. The
- * patterns below are written against LF: normalize before matching and restore the original
- * endings before writing, so a bump never rewrites a file's line endings as a side effect.
+ * patterns below are written against LF: CRLF is normalized before matching, and a file that
+ * contained any CRLF is written back with CRLF on every line. A uniformly LF or CRLF file keeps
+ * its endings; mixed endings become all CRLF.
  */
 async function read(path) {
   const raw = await readFile(path, "utf8");
@@ -42,7 +43,7 @@ async function read(path) {
   return { text: crlf ? raw.replaceAll("\r\n", "\n") : raw, crlf };
 }
 
-/** Queues `text` for `path`, restoring CRLF endings when the file had them. */
+/** Queues `text` for `path`, converting every line ending to CRLF when `crlf` is set. */
 function plan(path, text, crlf) {
   planned.set(path, crlf ? text.replaceAll("\n", "\r\n") : text);
 }
