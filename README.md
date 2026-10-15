@@ -140,7 +140,7 @@ steps:
     with:
       fetch-depth: 0
       persist-credentials: false
-  - uses: figueiredoluiz/cuke-dedup@v0.12.1
+  - uses: figueiredoluiz/cuke-dedup@v0.12.2
     with:
       path: .
       threshold: 5
