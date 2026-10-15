@@ -17,12 +17,14 @@ LEGAL_FILES = [PROJECT_ROOT / "LICENSE"]
 
 
 def archive_entries(binary: Path, binary_name: str) -> list[tuple[str, bytes, int]]:
+    """Return the archive members: the binary as executable, then the legal files."""
     entries = [(binary_name, binary.read_bytes(), 0o755)]
     entries.extend((path.name, path.read_bytes(), 0o644) for path in LEGAL_FILES)
     return entries
 
 
 def package_release(binary: Path, target: str, version: str, output: Path) -> tuple[Path, Path]:
+    """Write a reproducible archive for `target` and its SHA-256 file; return both paths."""
     output.mkdir(parents=True, exist_ok=True)
     version = version.removeprefix("v")
     stem = f"cuke-dedup-v{version}-{target}"
@@ -63,6 +65,7 @@ def package_release(binary: Path, target: str, version: str, output: Path) -> tu
 
 
 def main() -> None:
+    """Package one release binary from command-line arguments and print the written paths."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--target", required=True)

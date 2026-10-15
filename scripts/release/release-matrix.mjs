@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 
 import { TARGETS } from "../../npm/lib/targets.mjs";
 
+/** Builds the release workflow's build matrix, one entry per prebuilt target. */
 export function releaseMatrix(targets = TARGETS) {
   return {
     include: Object.values(targets).map((target) => ({

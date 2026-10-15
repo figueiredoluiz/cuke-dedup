@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 export const MINIMUM_TRUSTED_PUBLISHING_NPM = "11.5.1";
 
+/** Whether npm `version` is at least the minimum that supports OIDC trusted publishing. */
 export function supportsTrustedPublishing(version) {
   const parsed = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
   if (!parsed) {
@@ -18,6 +19,7 @@ export function supportsTrustedPublishing(version) {
   return true;
 }
 
+/** Returns the installed npm version, failing when npm is missing or too old to publish. */
 export function installedNpmVersion(run = spawnSync) {
   const result = run("npm", ["--version"], {
     encoding: "utf8",

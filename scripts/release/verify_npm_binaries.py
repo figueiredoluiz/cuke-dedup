@@ -68,6 +68,7 @@ def validated_targets(
 
 
 def verify_npm_binaries(binaries: Path, archives: Path) -> None:
+    """Fail unless every npm binary matches the binary in its checksummed release archive."""
     for rust_target, binary_name in validated_targets():
         binary = binaries / f"binary-{rust_target}" / binary_name
         archive_directory = archives / f"release-{rust_target}"
@@ -91,6 +92,7 @@ def verify_npm_binaries(binaries: Path, archives: Path) -> None:
 
 
 def main() -> None:
+    """Verify the npm binary artifacts against the release archives named on the command line."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--binaries", type=Path, required=True)
     parser.add_argument("--archives", type=Path, required=True)

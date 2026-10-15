@@ -12,9 +12,10 @@ import { join } from "node:path";
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "target", "dist", ".git", "corpus"]);
 const SEARCHED_EXTENSIONS = [".md", ".markdown", ".yml", ".yaml"];
 
-/// Matches a pinned use of this repository's own Action, the form documented for consumers.
+/** Matches a pinned use of this repository's own Action, the form documented for consumers. */
 export const ACTION_PIN = /figueiredoluiz\/cuke-dedup@v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g;
 
+/** Yields Markdown and YAML files below `directory`, skipping hidden and build directories. */
 async function* searchableFiles(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.name.startsWith(".") && entry.name !== ".github") {
@@ -31,6 +32,10 @@ async function* searchableFiles(directory) {
   }
 }
 
+/**
+ * Markdown and YAML files Git tracks or would track under `root`; outside a repository, a
+ * directory walk instead.
+ */
 function projectFiles(root) {
   const result = spawnSync("git", ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
     encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024 * 1024,
@@ -46,8 +51,10 @@ function projectFiles(root) {
   throw result.error ?? new Error(`Git version-site discovery failed: ${result.stderr}`);
 }
 
-/// Returns every file carrying at least one Action pin, with the versions it pins, sorted by path
-/// so callers report deterministically.
+/**
+ * Returns every file carrying at least one Action pin, with the versions it pins, sorted by path
+ * so callers report deterministically.
+ */
 export async function findActionPins(root = ".") {
   const found = [];
   for await (const path of projectFiles(root)) {

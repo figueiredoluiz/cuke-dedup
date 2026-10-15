@@ -16,6 +16,7 @@ from verify_npm_binaries import validated_targets, verify_npm_binaries
 
 class PackageReleaseTests(unittest.TestCase):
     def test_unix_archive_and_checksum_are_reproducible(self) -> None:
+        """Packaging the same binary twice yields byte-identical tar archives and checksums."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             binary = root / "binary"
@@ -36,6 +37,7 @@ class PackageReleaseTests(unittest.TestCase):
                 )
 
     def test_windows_archive_has_a_deterministic_executable(self) -> None:
+        """Windows ZIP archives are reproducible and mark the binary executable."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             binary = root / "binary.exe"
@@ -52,6 +54,7 @@ class PackageReleaseTests(unittest.TestCase):
                 )
 
     def test_verifier_checks_checksum_and_extracts_only_expected_binary(self) -> None:
+        """The verifier accepts a valid archive and extracts only the expected binary."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "binary"
@@ -66,6 +69,7 @@ class PackageReleaseTests(unittest.TestCase):
             self.assertEqual(archive_in(root / "dist"), archive)
 
     def test_verifier_rejects_a_checksum_for_another_archive(self) -> None:
+        """A checksum record naming another archive is rejected."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "binary"
@@ -79,6 +83,7 @@ class PackageReleaseTests(unittest.TestCase):
                 verify_and_extract(archive, checksum, root / "extracted")
 
     def test_npm_binary_must_match_the_checksummed_release_archive(self) -> None:
+        """An npm binary that differs from its release archive is rejected."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             binaries = root / "binaries"
@@ -108,6 +113,7 @@ class PackageReleaseTests(unittest.TestCase):
                 verify_npm_binaries(binaries, archives)
 
     def test_npm_binary_verifier_rejects_unvalidated_target_output(self) -> None:
+        """Failed, malformed or unsafe target-validator output stops verification."""
         cases = (
             Mock(returncode=1, stdout="", stderr="validation failed"),
             Mock(returncode=0, stdout="not json", stderr=""),
