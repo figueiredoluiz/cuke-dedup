@@ -39,7 +39,7 @@
       ]
     },
     "src/analysis/pairs/tests.rs": {
-      "sourceSha256": "0b9c48582b18769ae611a1396747b0da7350858369e5a5d54c1f21adf3b9176b",
+      "sourceSha256": "3ac52c246aa1a5ec12aaee0d3aa876cf3d227908b18bab5c9f80331d21f5befc",
       "tests": [
         {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
@@ -203,7 +203,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "6b7b39e78e5148dd18b8d79bddfd10d68f6c1d662c6e7c63c4d257ad96e6166e",
+      "sourceSha256": "1e3d95b52d61e34d12ec59a566ccf4c0600b6568a2a630854188d47f518f427c",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
@@ -230,11 +230,37 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: decorated-method runtime metadata (async/static/generator/getter) exists only for JS/TS class-method handlers. Semantic residue: none; Ruby registers blocks and methods without such modifiers.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "cached_word_helpers_keep_pre_cache_answers",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: polarity, change span, compatibility and gate answers over constructed matcher text are unchanged by caching word lists; Ruby wording outcomes stay pinned by `ruby_near_wording_rejects_mixed_syntax_and_opposite_words`.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/analysis/string_metrics.rs": {
+      "sourceSha256": "d11694d8c3a6bd251beef5b0f8421a2d37a7d765dde96675e04cc285b56b0e7f",
+      "tests": [
+        {
+          "name": "edge_cases_equal_strsim_and_take_the_expected_path",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: edit distance, Jaro-Winkler and the combined score over constructed strings equal strsim bit for bit at the fast-path and fallback boundaries.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "seeded_pairs_equal_strsim",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: seeded random ASCII and non-ASCII string pairs score exactly as strsim; pure string math.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "6b1557a42e7692e236c0c45a4109ee3cc3415714c0cf2b8ed63f58876e92254f",
+      "sourceSha256": "af6afc77948b4c615b3a52408ddadded513aff97bc753efee944890e27df4853",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",

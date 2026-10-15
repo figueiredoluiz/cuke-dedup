@@ -1,7 +1,7 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::similarity::{
     event_similarity_available, handler_runtime_compatible, handler_similarity_with_relationship,
-    is_near_matcher, is_parameterizable_matcher, matcher_similarity, round_score,
+    is_near_matcher, is_parameterizable_matcher, matcher_similarity, matcher_words, round_score,
 };
 use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
@@ -11,6 +11,7 @@ use crate::model::{
     SourceLocation, StepDefinition, Suppression,
 };
 use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
@@ -162,6 +163,12 @@ pub(super) fn analyze_definition_pairs(
         .iter()
         .map(|definition| definition.normalized_matcher.chars().count())
         .collect::<Vec<_>>();
+    // A definition takes part in many pairs; splitting its matcher once keeps word checks linear,
+    // and splitting it lazily spares definitions whose pairs never reach a word-based gate.
+    let word_cache = definitions
+        .iter()
+        .map(|_| OnceCell::new())
+        .collect::<Vec<_>>();
     let comparison_bytes = definitions
         .iter()
         .map(definition_comparison_bytes)
@@ -259,12 +266,25 @@ pub(super) fn analyze_definition_pairs(
         } else {
             0.0
         };
-        let parameterization_candidate =
-            structural_handler && is_parameterizable_matcher(left, right, matcher_similarity);
+        let words = |index| cached_words(&word_cache, definitions, index);
+        let parameterization_candidate = structural_handler
+            && is_parameterizable_matcher(
+                left,
+                right,
+                words(left_index),
+                words(right_index),
+                matcher_similarity,
+            );
         let near_duplicate_candidate = !parameterization_candidate
             && near_handler
             && matcher_is_needed
-            && is_near_matcher(left, right, matcher_similarity);
+            && is_near_matcher(
+                left,
+                right,
+                words(left_index),
+                words(right_index),
+                matcher_similarity,
+            );
         let handler_is_needed = normalized_rule.is_some_and(rule_is_active)
             || (duplicate_handler && rule_is_active(Rule::DuplicateHandler))
             || (parameterization_candidate && rule_is_active(Rule::ParameterizationCandidate))
@@ -459,6 +479,15 @@ pub(super) fn analyze_definition_pairs(
         census: generated.census,
         incomplete,
     }
+}
+
+/// The lowercase word list of `definitions[index]`, split on first use and reused afterwards.
+fn cached_words<'a>(
+    cache: &'a [OnceCell<Vec<String>>],
+    definitions: &[StepDefinition],
+    index: usize,
+) -> &'a [String] {
+    cache[index].get_or_init(|| matcher_words(&definitions[index]))
 }
 
 /// Estimated cost of one similarity stage for a pair. Matcher: a matrix over normalized-matcher

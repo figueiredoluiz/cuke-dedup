@@ -1,6 +1,7 @@
 use super::pairs::{analyze_definition_pairs, definition_pair_candidates};
 use super::similarity::{
-    handler_similarity, is_near_matcher, matcher_similarity, ordered_common_subsequence_len,
+    handler_similarity, is_near_matcher, matcher_similarity, matcher_words,
+    ordered_common_subsequence_len,
 };
 use super::*;
 use crate::config::{ConfigOverrides, SuppressionConfig};
@@ -2084,6 +2085,8 @@ fn a_constant_does_not_resolve_into_a_same_named_member_property() {
     );
 }
 
+/// A called local function's assertions count as handler behaviour, matching the direct spelling.
+/// Expansion is one level, covers `(check)()`, and declines uncalled, shadowed or nested names.
 #[test]
 fn called_local_functions_contribute_their_assertions_to_the_handler() {
     let (_directory, config) = config();
@@ -2244,6 +2247,7 @@ fn called_local_functions_contribute_their_assertions_to_the_handler() {
     );
 }
 
+/// 100 unrelated definitions yield no candidate pairs; three same-matcher definitions yield two.
 #[test]
 fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     let mut unrelated_source = String::new();
@@ -2262,6 +2266,8 @@ fn candidate_buckets_skip_unrelated_pairs_and_keep_exact_groups() {
     assert_eq!(definition_pair_candidates(&exact, &config).len(), 2);
 }
 
+/// Past the structural class limit, candidates truncate with skips under `structuralHandler`;
+/// CLI analysis keeps findings and reports one partial-results diagnostic.
 #[test]
 fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
     let mut source = String::new();
@@ -2300,6 +2306,8 @@ fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
     assert_eq!(census, expected_census);
 }
 
+/// Over-budget matcher lengths or behaviour signatures skip the pair unevaluated and mark analysis
+/// incomplete; the long-matcher pair yields no duplicate-handler or near-duplicate finding.
 #[test]
 fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     let mut long_matchers = definitions(
@@ -2366,6 +2374,8 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     assert!(pair_analysis.incomplete.is_some());
 }
 
+/// 1,000 path globs compile once across lookups; unmatched detection and pair analysis over 700
+/// deep-path definitions both truncate at their work budgets.
 #[test]
 fn suppression_globs_compile_once_and_pair_lookups_share_the_work_budget() {
     let base = definitions("Given('base', () => sharedImplementation());").remove(0);
@@ -2415,6 +2425,8 @@ fn suppression_globs_compile_once_and_pair_lookups_share_the_work_budget() {
         .is_some_and(|error| error.contains("after safety limits")));
 }
 
+/// Suppression lookup returns a borrowed reason capped at `MAX_SUPPRESSION_REASON_CHARS`; the
+/// retained finding carries the same capped reason.
 #[test]
 fn suppression_lookup_borrows_and_bounds_large_reasons_until_a_finding_is_retained() {
     let definitions = definitions("Given('left', () => work()); Given('right', () => work());");
@@ -2451,6 +2463,7 @@ fn suppression_lookup_borrows_and_bounds_large_reasons_until_a_finding_is_retain
     );
 }
 
+/// With a class limit of 2, both 6-member structural classes truncate and each keeps candidates.
 #[test]
 fn structural_class_limit_preserves_work_from_later_classes() {
     let mut source = String::new();
@@ -2476,6 +2489,8 @@ fn structural_class_limit_preserves_work_from_later_classes() {
     assert!((6..12).any(|left| (left + 1..12).any(|right| generated.contains_pair(left, right))));
 }
 
+/// At a global limit of 2, five same-matcher definitions yield two candidates, two skips under
+/// `normalizedMatcher`, and per-source evaluated counts summing to the candidate count.
 #[test]
 fn global_candidate_limit_reports_the_source_that_was_truncated() {
     let definitions = definitions(
@@ -2503,6 +2518,7 @@ fn global_candidate_limit_reports_the_source_that_was_truncated() {
     );
 }
 
+/// Work exactly at the limit (3 structural pairs, 2 same-matcher pairs) is not truncated.
 #[test]
 fn candidate_limits_are_inclusive_at_the_exact_boundary() {
     let structural = definitions(
@@ -2528,6 +2544,8 @@ fn candidate_limits_are_inclusive_at_the_exact_boundary() {
     assert_eq!(exact.census.skipped_candidate_comparisons, 0);
 }
 
+/// At a global limit of 1, same-matcher definitions charge their skip to `normalizedMatcher`;
+/// their structural pairs record no skip.
 #[test]
 fn candidate_limits_do_not_count_structural_pairs_that_cannot_reach_a_rule() {
     let definitions = definitions(
@@ -2551,6 +2569,8 @@ fn candidate_limits_do_not_count_structural_pairs_that_cannot_reach_a_rule() {
     );
 }
 
+/// Under a structural class limit of 1, three same-matcher definitions yield two
+/// `normalizedMatcher` candidates, no truncation and no structural evaluation.
 #[test]
 fn same_normalized_pairs_do_not_consume_the_structural_limit() {
     let definitions = definitions(
@@ -2575,6 +2595,8 @@ fn same_normalized_pairs_do_not_consume_the_structural_limit() {
     );
 }
 
+/// Four same-matcher definitions under a structural class limit of 1 report no truncation; all
+/// three spanning pairs come from `normalizedMatcher`.
 #[test]
 fn same_normalized_class_does_not_report_false_structural_truncation() {
     let definitions = definitions(
@@ -2597,6 +2619,8 @@ fn same_normalized_class_does_not_report_false_structural_truncation() {
     );
 }
 
+/// A same-handler pair inside a structural class is not counted as skipped work: with a class
+/// limit of 1, four definitions skip 4 structural pairs, not 5.
 #[test]
 fn structural_overlap_ignores_existing_pairs_within_one_handler_group() {
     let definitions = definitions(
@@ -2615,6 +2639,7 @@ fn structural_overlap_ignores_existing_pairs_within_one_handler_group() {
     );
 }
 
+/// Empty and imported-reference handlers produce no candidate pairs and no evaluated comparisons.
 #[test]
 fn trivial_and_unresolved_handlers_do_not_consume_candidate_budgets() {
     for definitions in [
@@ -2629,6 +2654,8 @@ fn trivial_and_unresolved_handlers_do_not_consume_candidate_budgets() {
     }
 }
 
+/// The truncation diagnostic lists three class locations then "and N more"; one truncated class
+/// gets no "and 0 more" suffix.
 #[test]
 fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     let mut source = String::new();
@@ -2669,6 +2696,8 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     assert!(!outcome.incomplete[0].contains("and 0 more"));
 }
 
+/// An over-limit regex fails `analyze` with a resource error; `analyze_with_diagnostics` keeps the
+/// definition and records one incomplete entry.
 #[test]
 fn regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers() {
     let definitions = definitions("Given(/a{1000000}/, () => work());");
@@ -2682,6 +2711,7 @@ fn regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers() {
     assert_eq!(outcome.incomplete.len(), 1);
 }
 
+/// Four same-matcher definitions yield 3 duplicate-matcher findings (a spanning set), not 6.
 #[test]
 fn equivalence_classes_report_a_spanning_set_instead_of_every_pair() {
     let definitions = definitions(
@@ -2699,6 +2729,8 @@ fn equivalence_classes_report_a_spanning_set_instead_of_every_pair() {
     );
 }
 
+/// Five same-matcher definitions yield one duplicate-matcher cluster finding covering all members;
+/// its fingerprint is unchanged when input order is reversed.
 #[test]
 fn large_equivalence_classes_report_one_stable_cluster() {
     let definitions = definitions(
@@ -2740,6 +2772,7 @@ fn large_equivalence_classes_report_one_stable_cluster() {
     );
 }
 
+/// An inline `cuke-dedup:ignore duplicate-matcher` comment attaches its reason to the pair finding.
 #[test]
 fn inline_suppression_applies_to_pair_findings() {
     let definitions = definitions(
@@ -2765,6 +2798,7 @@ Given('same step', () => second());
     );
 }
 
+/// Singular/plural wording over identical handlers reports near-duplicate and duplicate-handler.
 #[test]
 fn wording_drift_with_same_handler_is_near_duplicate() {
     let definitions = definitions(
@@ -2785,6 +2819,8 @@ Then('the items are visible', async () => { await expect(item).toBeVisible(); })
         .any(|finding| finding.rule == Rule::DuplicateHandler));
 }
 
+/// Near wording over structurally different handlers (similarity >= 0.6) is paired by
+/// `matcherBlocking` and reported as a near-duplicate at a 0.5 floor.
 #[test]
 fn matcher_blocking_finds_near_wording_across_related_handler_shapes() {
     let definitions = definitions(
@@ -2820,6 +2856,7 @@ Given("I am on the login page", async function () {
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Near wording over unrelated handlers yields no candidate pair and no near-duplicate finding.
 #[test]
 fn matcher_blocking_rejects_similar_wording_without_handler_agreement() {
     let definitions = definitions(
@@ -2843,6 +2880,8 @@ Given("I am on the login page", async function () {
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Each handler pair pins its exact handler similarity and whether a near-duplicate fires at a
+/// 0.5 floor.
 #[test]
 fn matcher_blocking_semantic_boundary_is_table_driven() {
     struct Case {
@@ -2930,6 +2969,8 @@ fn matcher_blocking_semantic_boundary_is_table_driven() {
     }
 }
 
+/// In a three-member identical-handler group, the near-worded pair is still a `matcherBlocking`
+/// candidate and the near-duplicate finding names those two matchers.
 #[test]
 fn matcher_blocking_finds_near_members_outside_an_identical_handler_spanning_tree() {
     let definitions = definitions(
@@ -2960,6 +3001,8 @@ Given('the accounts are enabled', () => sharedImplementation());
     );
 }
 
+/// Comparable, non-trivial handlers with empty behaviour signatures still get a `matcherBlocking`
+/// candidate for near wording and a near-duplicate finding.
 #[test]
 fn matcher_blocking_keeps_alpha_identical_handlers_with_empty_behavior_signatures() {
     let definitions = definitions(
@@ -2988,6 +3031,7 @@ Given('the accounts are enabled', () => world.value);
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// At a global limit of 2, `matcherBlocking` evaluates two pairs, records one skip and truncates.
 #[test]
 fn matcher_blocking_respects_the_global_candidate_limit() {
     let mut definitions = definitions(
@@ -3019,6 +3063,7 @@ Given('account operation four', () => fourth());
     );
 }
 
+/// 2,000 definitions sharing one handler produce at most 2n candidate pairs.
 #[test]
 fn homogeneous_handler_groups_generate_linear_candidates() {
     let mut source = String::new();
@@ -3032,6 +3077,8 @@ fn homogeneous_handler_groups_generate_linear_candidates() {
     assert!(definition_pair_candidates(&definitions, &config).len() <= definitions.len() * 2);
 }
 
+/// Structurally equal handlers are a parameterization candidate only when the matchers differ in
+/// one value region; multi-word, polarity and disjoint changes do not fire.
 #[test]
 fn parameterization_requires_a_bounded_value_like_matcher_difference() {
     // The handlers are structurally identical (both `locator(<string>).toBeVisible()`), differing
@@ -3097,6 +3144,8 @@ fn parameterization_requires_a_bounded_value_like_matcher_difference() {
     ));
 }
 
+/// A pair at 0.5 handler similarity is suppressed by the default 0.70 floor and reported when the
+/// configured floor is 0.5.
 #[test]
 fn near_duplicate_handler_similarity_floor_is_configurable() {
     // Similarly-worded steps whose handlers share only half their behavior (handler similarity 0.5:
@@ -3127,6 +3176,8 @@ When('I am on the login page', async ({ page }) => { await page.goto('/login'); 
     assert!(fires(Some(0.5)), "lowering the floor to 0.5 restores it");
 }
 
+/// Handlers differing only in literals, with matchers that pass the near-wording gate, yield a
+/// parameterization candidate and no near-duplicate finding.
 #[test]
 fn literal_handler_differences_prefer_parameterization_over_near_wording() {
     let definitions = definitions(
@@ -3149,6 +3200,8 @@ When('停止ボタンを押す', async ({ page }) => { await page.click('#stop')
     assert!(is_near_matcher(
         &definitions[0],
         &definitions[1],
+        &matcher_words(&definitions[0]),
+        &matcher_words(&definitions[1]),
         similarity
     ));
     let (_directory, config) = config();
@@ -3163,6 +3216,8 @@ When('停止ボタンを押す', async ({ page }) => { await page.click('#stop')
         .any(|finding| finding.rule == Rule::ParameterizationCandidate));
 }
 
+/// Empty handlers with `{int}`/`{string}` matchers analyze without error and report no
+/// duplicate-handler or normalized-matcher finding.
 #[test]
 fn empty_handlers_and_disjoint_placeholder_types_do_not_fail_analysis() {
     let definitions = definitions(
@@ -3180,6 +3235,8 @@ Given('another empty step', () => {});
     )));
 }
 
+/// Distinct regex captures, `{int}` vs `{INT}`, and an `/i` regex vs a literal ending in ` /i`
+/// yield no normalized-matcher finding.
 #[test]
 fn semantically_distinct_matchers_do_not_become_error_equivalent() {
     let definitions = definitions(
@@ -3200,6 +3257,7 @@ Given('literal collision /i', () => sixth());
         .any(|finding| finding.rule == Rule::NormalizedMatcher));
 }
 
+/// Registrations sharing one awaited `pending()` stub produce no duplicate-handler findings.
 #[test]
 fn awaited_stub_handlers_do_not_create_duplicate_handler_storms() {
     let definitions = definitions(
@@ -3219,6 +3277,7 @@ Given('stub four', notImplemented);
         .any(|finding| finding.rule == Rule::DuplicateHandler));
 }
 
+/// A prefixed opposite (`active`/`inactive`) or a one-sided negation fails the near-wording gate.
 #[test]
 fn similarity_rejects_opposite_or_different_actions() {
     for (left, right) in [
@@ -3232,11 +3291,15 @@ fn similarity_rejects_opposite_or_different_actions() {
         assert!(!is_near_matcher(
             &definitions[0],
             &definitions[1],
+            &matcher_words(&definitions[0]),
+            &matcher_words(&definitions[1]),
             similarity
         ));
     }
 }
 
+/// The gate accepts 0.92 and rejects 0.919 at 12 chars, accepts 0.90 and rejects 0.899 at 13, and
+/// rejects a negation conflict at 0.99.
 #[test]
 fn matcher_similarity_gates_are_pinned_at_short_and_long_boundaries() {
     struct Case {
@@ -3289,7 +3352,13 @@ fn matcher_similarity_gates_are_pinned_at_short_and_long_boundaries() {
             case.left, case.right
         ));
         assert_eq!(
-            is_near_matcher(&definitions[0], &definitions[1], case.similarity),
+            is_near_matcher(
+                &definitions[0],
+                &definitions[1],
+                &matcher_words(&definitions[0]),
+                &matcher_words(&definitions[1]),
+                case.similarity
+            ),
             case.expected,
             "{}",
             case.name
