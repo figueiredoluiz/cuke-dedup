@@ -16,6 +16,7 @@ LEGAL_FILES = ["LICENSE"]
 
 
 def verify_and_extract(archive: Path, checksum: Path, destination: Path) -> Path:
+    """Check the archive against its checksum record and exact member list, then extract the binary."""
     fields = checksum.read_text(encoding="utf-8").strip().split()
     if len(fields) != 2 or fields[1] != archive.name:
         raise ValueError(f"invalid checksum record in {checksum}")
@@ -56,6 +57,7 @@ def verify_and_extract(archive: Path, checksum: Path, destination: Path) -> Path
 
 
 def archive_in(directory: Path) -> Path:
+    """Return the only release archive in `directory`; zero or several is an error."""
     archives = sorted([*directory.glob("*.tar.gz"), *directory.glob("*.zip")])
     if len(archives) != 1:
         raise ValueError(f"expected one release archive in {directory}, found {len(archives)}")
@@ -63,6 +65,7 @@ def archive_in(directory: Path) -> Path:
 
 
 def main() -> None:
+    """Verify one release archive and check that its binary reports the expected version."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--version", required=True)

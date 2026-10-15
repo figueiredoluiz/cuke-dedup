@@ -28,9 +28,14 @@ const planned = new Map();
 /// Bytes as found, keyed by path, so a failed bump can put them back.
 const original = new Map();
 
-// A Windows checkout has no `.gitattributes` forcing LF, so a file can arrive with CRLF. The
-// patterns below are written against LF: normalize before matching and restore the original
-// endings before writing, so a bump never rewrites a file's line endings as a side effect.
+/**
+ * Reads `path` as LF text and records the original bytes and whether it contains any CRLF.
+ *
+ * A Windows checkout has no `.gitattributes` forcing LF, so a file can arrive with CRLF. The
+ * patterns below are written against LF: CRLF is normalized before matching, and a file that
+ * contained any CRLF is written back with CRLF on every line. A uniformly LF or CRLF file keeps
+ * its endings; mixed endings become all CRLF.
+ */
 async function read(path) {
   const raw = await readFile(path, "utf8");
   original.set(path, raw);
@@ -38,12 +43,17 @@ async function read(path) {
   return { text: crlf ? raw.replaceAll("\r\n", "\n") : raw, crlf };
 }
 
+/** Queues `text` for `path`, converting every line ending to CRLF when `crlf` is set. */
 function plan(path, text, crlf) {
   planned.set(path, crlf ? text.replaceAll("\n", "\r\n") : text);
 }
 
-// Rewrites the single site matching `pattern`. More or fewer matches means the file no longer has
-// the shape this script understands, which must fail loudly rather than be guessed at.
+/**
+ * Rewrites the single site matching `pattern` and returns the file's pre-edit text, LF-normalized.
+ *
+ * More or fewer matches means the file no longer has the shape this script understands, which must
+ * fail loudly rather than be guessed at.
+ */
 async function planEdit(path, pattern, replacement) {
   const { text, crlf } = await read(path);
   const found = text.match(new RegExp(pattern.source, `${pattern.flags}g`))?.length ?? 0;
@@ -54,7 +64,11 @@ async function planEdit(path, pattern, replacement) {
   return text;
 }
 
-// Only for files npm itself writes: `JSON.stringify(…, 2)` reproduces their formatting exactly.
+/**
+ * Applies `transform` to a JSON file and queues the result.
+ *
+ * Only for files npm itself writes: `JSON.stringify(…, 2)` reproduces their formatting exactly.
+ */
 async function planJson(path, transform) {
   const { text, crlf } = await read(path);
   const document = JSON.parse(text);

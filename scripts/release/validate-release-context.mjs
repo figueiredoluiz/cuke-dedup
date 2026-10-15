@@ -1,5 +1,9 @@
 import { pathToFileURL } from "node:url";
 
+/**
+ * Throws unless the release commit resolved, and, when publishing, the workflow was dispatched
+ * from `release_tag` and that tag resolves to the release commit.
+ */
 export function validateReleaseContext({
   publishRelease,
   releaseTag,

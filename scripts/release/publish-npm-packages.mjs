@@ -7,6 +7,10 @@ import { TARGETS } from "../../npm/lib/targets.mjs";
 
 const defaultRoot = fileURLToPath(new URL("../../", import.meta.url));
 
+/**
+ * Classifies an `npm view` result as `published` or `missing`; any other outcome throws, so
+ * publishing never proceeds on an unreliable registry check.
+ */
 export function registryVersionState(result, expectedVersion) {
   if (result.error) {
     throw result.error;
@@ -39,11 +43,13 @@ export function registryVersionState(result, expectedVersion) {
   );
 }
 
+/** Arguments for `npm publish` of one package directory, with public access and provenance. */
 export function npmPublishArguments(packageDirectory) {
   const location = packageDirectory === "." ? ["--workspaces=false"] : [packageDirectory];
   return ["publish", ...location, "--access", "public", "--provenance"];
 }
 
+/** Publishes every platform package, then the launcher, skipping versions already published. */
 export async function publishNpmPackages({ root = defaultRoot, runNpm = runNpmCommand } = {}) {
   const packageDirectories = Object.values(TARGETS).map(
     ({ packageDirectory }) => `npm/platforms/${packageDirectory}`,
@@ -79,6 +85,7 @@ export async function publishNpmPackages({ root = defaultRoot, runNpm = runNpmCo
   }
 }
 
+/** Runs npm in `root`, capturing output when `capture` is set and inheriting it otherwise. */
 export function runNpmCommand(arguments_, { capture, root }) {
   const { executable, prefixArguments } = npmInvocation();
   return spawnSync(executable, [...prefixArguments, ...arguments_], {
@@ -88,6 +95,7 @@ export function runNpmCommand(arguments_, { capture, root }) {
   });
 }
 
+/** How to launch npm on this platform: directly, or through Node and `npm-cli.js` on Windows. */
 export function npmInvocation({
   platform = process.platform,
   nodeExecutable = process.execPath,

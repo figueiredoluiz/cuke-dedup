@@ -1,3 +1,4 @@
+/** Renders the README of a platform package, pointing users to the main `cuke-dedup` package. */
 export function renderPlatformReadme({ name, description }) {
   return `# ${name}
 
