@@ -22,14 +22,27 @@ pub(crate) enum CaptureContext {
 }
 
 pub(crate) trait RegexDialect: Sync {
+    /// Translates a regex matcher and its flags into a Rust `regex` expression with this dialect's
+    /// semantics, or `None` when no faithful translation exists; usage analysis then treats the
+    /// matcher as non-authoritative.
     fn expression(&self, matcher: &str, flags: &str) -> Option<String>;
+    /// Flags that partition normalized-matcher classes, or `None` when flags never separate them.
+    /// Ruby returns the raw flags; JavaScript returns `None`.
     fn normalized_flags<'a>(&self, flags: &'a str) -> Option<&'a str>;
+    /// Whether two matchers' flags allow treating them as wording variants of one step. Ruby
+    /// requires equal flag strings; JavaScript accepts any pair.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool;
 
+    /// Projects flags onto those that count toward exact-duplicate identity; the default applies
+    /// [`legacy_identity_flags`].
     fn identity_flags(&self, flags: &str) -> String {
         legacy_identity_flags(flags)
     }
 
+    /// One text that parameter-type `pattern` matches, used as a usage witness, or `None`. The
+    /// default takes the first `|` alternative after stripping enclosing groups, accepted only when
+    /// non-empty and made of alphanumerics, space, `_` or `-`; a translated scoped array tries its
+    /// first element first. A group opener without a trailing `)` yields `None`.
     fn parameter_sample(&self, pattern: &str) -> Option<String> {
         // Preserve the existing witness subset, including translated scoped patterns.
         // The resulting witness must still match both compiled definitions.
@@ -77,6 +90,7 @@ pub(crate) trait RegexDialect: Sync {
 
 // This is the existing exact-identity protocol, including its projection for legacy Ruby
 // inputs. Dialect-specific corrections must be a separately contracted behavior change.
+/// Keeps the flags `i`, `m`, `s`, `u` and `v` present in `flags`, in that order; drops any other.
 pub(crate) fn legacy_identity_flags(flags: &str) -> String {
     ['i', 'm', 's', 'u', 'v']
         .into_iter()
@@ -112,16 +126,23 @@ impl StepDefinition {
         }
     }
 
+    /// Capture context from the language profile: Ruby reports `LexicalFile` when the first event's
+    /// method semantics is `ruby:lexical-file` or starts with `ruby:lexical-file:`; JavaScript and
+    /// TypeScript report `Unrestricted`.
     pub(crate) fn capture_context(&self) -> CaptureContext {
         (self.analysis_profile().capture_context)(self)
     }
 
+    /// Payload of the first behaviour event when it is a `method:` event; `None` otherwise,
+    /// including for an empty signature.
     pub(crate) fn method_semantics(&self) -> Option<&str> {
         BehaviorEventRef::from_legacy(self.handler.behavior_signature.first()?).method_semantics()
     }
 }
 
 impl super::SourceLanguage {
+    /// Comparison domain of this language's definitions: Ruby alone, or ECMAScript shared by
+    /// JavaScript, TypeScript and TSX.
     pub(crate) fn comparison_domain(self) -> ComparisonDomain {
         match self {
             Self::Ruby => ComparisonDomain::Ruby,

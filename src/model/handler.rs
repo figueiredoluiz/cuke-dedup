@@ -16,6 +16,8 @@ pub(crate) struct HandlerSemantics {
 impl HandlerSemantics {
     // Frontends retain syntax/value proofs and legacy identity encoding. The shared boundary
     // owns uncertainty removal and the lossless event protocol; it cannot manufacture provenance.
+    /// Encodes the four representations with `encode` and the events as legacy signatures; the
+    /// result is comparable only if the input is and no event is an unresolved assertion.
     pub(crate) fn finish(self, encode: fn(&str) -> String) -> HandlerFingerprint {
         HandlerFingerprint {
             exact: encode(&self.exact),

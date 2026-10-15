@@ -233,6 +233,7 @@ impl Rule {
 }
 
 impl fmt::Display for Rule {
+    /// Writes the kebab-case rule name returned by `as_str`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -241,6 +242,8 @@ impl fmt::Display for Rule {
 impl FromStr for Rule {
     type Err = String;
 
+    /// Parses an exact, case-sensitive kebab-case rule name; other input yields an `unknown rule`
+    /// error.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "duplicate-matcher" => Ok(Self::DuplicateMatcher),
@@ -270,6 +273,7 @@ pub enum Severity {
 }
 
 impl fmt::Display for Severity {
+    /// Writes `off`, `warning`, or `error`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Severity::Off => f.write_str("off"),
@@ -282,6 +286,8 @@ impl fmt::Display for Severity {
 impl FromStr for Severity {
     type Err = String;
 
+    /// Parses `off`, `warn` or `warning`, and `error` (case-sensitive); other input yields an
+    /// `invalid severity` error.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "off" => Ok(Severity::Off),
@@ -508,6 +514,8 @@ pub fn stable_fingerprint(value: &str) -> String {
     truncated_sha256(hasher)
 }
 
+/// Computes a truncated SHA-256 fingerprint over length-prefixed parts, so part boundaries
+/// change the result; uses a domain distinct from `stable_fingerprint`.
 pub(crate) fn stable_fingerprint_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
     let mut hasher = Sha256::new();
     hasher.update(MULTIPART_FINGERPRINT_DOMAIN);
@@ -520,6 +528,7 @@ pub(crate) fn stable_fingerprint_parts<'a>(parts: impl IntoIterator<Item = &'a s
     truncated_sha256(hasher)
 }
 
+/// Finalizes the hasher and returns the first 16 digest bytes as 32 lowercase hex characters.
 fn truncated_sha256(hasher: Sha256) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut fingerprint = String::with_capacity(32);

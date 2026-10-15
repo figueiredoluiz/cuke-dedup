@@ -22,6 +22,8 @@ pub(crate) enum ControlFlowOperation {
 }
 
 impl ControlFlowOperation {
+    /// Maps a tree-sitter statement kind such as `if_statement` to its operation; `None` for any
+    /// other string.
     fn from_legacy(value: &str) -> Option<Self> {
         Some(match value {
             "if_statement" => Self::If,
@@ -36,6 +38,7 @@ impl ControlFlowOperation {
         })
     }
 
+    /// Returns the tree-sitter statement kind used in legacy signatures; inverse of `from_legacy`.
     fn as_legacy(self) -> &'static str {
         match self {
             Self::If => "if_statement",
@@ -51,6 +54,8 @@ impl ControlFlowOperation {
 }
 
 impl BehaviorEvent {
+    /// Builds a non-deferred assertion whose payload is `qualifier#matcher:` followed by the
+    /// fingerprints of `subject` and `expected`, colon-separated.
     pub(crate) fn assertion(qualifier: &str, matcher: &str, subject: &str, expected: &str) -> Self {
         Self::Assertion {
             deferred: false,
@@ -62,6 +67,8 @@ impl BehaviorEvent {
         }
     }
 
+    /// Builds an assertion with the `unresolved` payload, which makes the handler not comparable
+    /// in `HandlerSemantics::finish`.
     pub(crate) fn unresolved_assertion(deferred: bool) -> Self {
         Self::Assertion {
             deferred,
@@ -69,6 +76,7 @@ impl BehaviorEvent {
         }
     }
 
+    /// Marks an assertion as deferred, keeping its payload; other events are returned unchanged.
     pub(crate) fn deferred(self) -> Self {
         match self {
             Self::Assertion { payload, .. } => Self::Assertion {
@@ -79,10 +87,13 @@ impl BehaviorEvent {
         }
     }
 
+    /// Returns whether this is an assertion with the `unresolved` payload, deferred or not.
     pub(crate) fn is_unresolved_assertion(&self) -> bool {
         matches!(self, Self::Assertion { payload, .. } if payload == "unresolved")
     }
 
+    /// Encodes the event as its legacy signature string: `method:`, `call:`, `assert:` or
+    /// `deferred-assert:` prefixes, the bare statement kind, or the `Legacy` text verbatim.
     pub(crate) fn into_legacy(self) -> String {
         match self {
             Self::Method(payload) => format!("method:{payload}"),
@@ -113,6 +124,8 @@ pub(crate) enum BehaviorEventRef<'a> {
 }
 
 impl<'a> BehaviorEventRef<'a> {
+    /// Classifies a legacy signature by prefix, then by statement kind; anything else, including
+    /// the empty string, becomes `Legacy` with the input unchanged.
     pub(crate) fn from_legacy(value: &'a str) -> Self {
         if let Some(payload) = value.strip_prefix("method:") {
             return Self::Method(payload);
@@ -137,6 +150,7 @@ impl<'a> BehaviorEventRef<'a> {
             .unwrap_or(Self::Legacy(value))
     }
 
+    /// Returns the payload of a `Method` event; `None` for other events.
     pub(crate) fn method_semantics(self) -> Option<&'a str> {
         match self {
             Self::Method(payload) => Some(payload),
@@ -144,14 +158,17 @@ impl<'a> BehaviorEventRef<'a> {
         }
     }
 
+    /// Returns whether the event is a `Method` event, including one with an empty payload.
     pub(crate) fn is_method(self) -> bool {
         matches!(self, Self::Method(_))
     }
 
+    /// Returns whether the event is an assertion marked deferred.
     pub(crate) fn is_deferred_assertion(self) -> bool {
         matches!(self, Self::Assertion { deferred: true, .. })
     }
 
+    /// Encodes the borrowed event like `BehaviorEvent::into_legacy`; test-only.
     #[cfg(test)]
     fn into_legacy(self) -> String {
         match self {
@@ -176,6 +193,7 @@ mod tests {
     use super::{BehaviorEvent, BehaviorEventRef, ControlFlowOperation};
     use crate::model::HandlerFingerprint;
 
+    /// Parsing then re-encoding returns each signature unchanged, including unknown and empty ones.
     #[test]
     fn legacy_signatures_round_trip_known_and_unknown_events() {
         let signatures = [
@@ -203,6 +221,9 @@ mod tests {
         }
     }
 
+    /// Prefixed signatures classify as method, call, assertion or control flow, with deferral
+    /// read from the prefix; `method` without a colon is not a method, and an unknown statement
+    /// kind stays `Legacy`.
     #[test]
     fn typed_classification_keeps_method_execution_and_assertion_anchors_distinct() {
         assert_eq!(
@@ -234,6 +255,8 @@ mod tests {
         );
     }
 
+    /// Deferring an assertion changes only its prefix, and `unresolved_assertion` is detected as
+    /// unresolved whether deferred or not.
     #[test]
     fn deferring_and_unresolved_markers_preserve_assertion_payloads() {
         for signature in [
@@ -260,6 +283,8 @@ mod tests {
         assert!(BehaviorEvent::unresolved_assertion(true).is_unresolved_assertion());
     }
 
+    /// `HandlerFingerprint` serializes `behavior_signature` as a JSON string array with fixed
+    /// field names and order, and deserializes back to an equal value.
     #[test]
     fn handler_fingerprint_keeps_the_public_string_array_shape() {
         let fingerprint = HandlerFingerprint {

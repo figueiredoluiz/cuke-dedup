@@ -21,6 +21,7 @@ pub(super) struct Sha256 {
 }
 
 impl Sha256 {
+    /// Creates a hasher with the SHA-256 initial state and no buffered input.
     pub(super) fn new() -> Self {
         Self {
             state: INITIAL_STATE,
@@ -30,6 +31,8 @@ impl Sha256 {
         }
     }
 
+    /// Absorbs `input`, compressing each full 64-byte block and buffering the remainder.
+    /// Panics if the total input length overflows `u64`.
     pub(super) fn update(&mut self, mut input: &[u8]) {
         self.input_len = self
             .input_len
@@ -57,6 +60,7 @@ impl Sha256 {
         self.buffer_len = remainder.len();
     }
 
+    /// Applies SHA-256 padding with the bit length and returns the 32-byte big-endian digest.
     pub(super) fn finalize(mut self) -> [u8; 32] {
         let bit_len = self.input_len.wrapping_mul(8);
         self.buffer[self.buffer_len] = 0x80;
@@ -79,6 +83,7 @@ impl Sha256 {
     }
 }
 
+/// Runs the 64 SHA-256 rounds over one 64-byte block and adds the result into `state`.
 fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut schedule = [0_u32; 64];
     for (word, bytes) in schedule.iter_mut().zip(block.as_chunks::<4>().0) {
