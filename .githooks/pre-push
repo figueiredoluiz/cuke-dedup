@@ -61,6 +61,8 @@ if [[ -n "$(git -C "$project_root" status --porcelain --untracked-files=normal)"
   exit 1
 fi
 
+node "$project_root/scripts/check/check-docstrings.mjs" --base refs/remotes/origin/main
+
 CUKE_DEDUP_CHECK_ACTIONS="$check_actions" \
 CUKE_DEDUP_CHECK_DEPENDENCIES="$check_dependencies" \
   exec "$project_root/scripts/check/check.sh" --full

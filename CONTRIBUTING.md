@@ -25,7 +25,7 @@ Enable the repository's pre-commit hook:
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook scans the staged patch for secrets and runs the quick development gate. The pre-push hook requires a clean checkout at the pushed commit, derives conditional checks from the outgoing changes, and runs the complete release-grade gate. This keeps iterative commits fast without testing a different tree from the one leaving the clone. Run either gate directly at any time:
+The pre-commit hook scans the staged patch for secrets and runs the quick development gate. The pre-push hook requires a clean checkout at the pushed commit, derives conditional checks from the outgoing changes, and runs the complete release-grade gate. This keeps iterative commits fast without testing a different tree from the one leaving the clone. Before the full gate, pre-push requires documentation for 100% of locally detected touched named functions and test callbacks in the cumulative diff against `origin/main`, including three context lines. Fetch `origin main` before pushing. Rust doc comments, JavaScript/TypeScript JSDoc and Python docstrings count; tests and fixtures are included. Python sources require Python 3 (`python` on Windows, `python3` elsewhere). JavaScript/TypeScript and Python ranges come from syntax trees; Rust uses declaration matching after masking comments and literals. This guard does not guarantee agreement with CodeRabbit’s independent metric. Run `node scripts/check/check-docstrings.mjs --base origin/main` to check the committed branch directly. A missing base or an unreadable supported source fails validation. Install the check tools with `npm ci --prefix scripts/check/tools` before running either gate. Run either gate directly at any time:
 
 ```sh
 scripts/check/check.sh --quick
@@ -41,7 +41,7 @@ cargo +stable llvm-cov --all-features --tests --locked --no-report
 cargo +stable llvm-cov report --summary-only --fail-under-lines 97
 ```
 
-The npm launcher currently has no third-party development dependencies, so contributor and CI checks run directly without an install step. The one analysis tool that needs installing, `jscpd`, lives in `scripts/check/tools/` with its own manifest and lockfile — install it with `npm ci --prefix scripts/check/tools` — so its whole dependency graph is pinned by integrity hash without the root manifest gaining dependencies. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 97% Rust line-coverage floor.
+The npm launcher’s own checks have no third-party development dependencies. The check tools, `jscpd` and the pinned TypeScript parser, live in `scripts/check/tools/` with a dedicated manifest and lockfile — install it with `npm ci --prefix scripts/check/tools` — so its whole dependency graph is pinned by integrity hash without the root manifest gaining dependencies. This avoids forcing npm to install local workspace packages intended for other operating systems and CPU architectures. CI enforces a 97% Rust line-coverage floor.
 
 The full local gate always runs `actionlint`, `cargo-audit`, `cargo-deny`, and `cargo-shear`. The quick gate runs them only when the staged patch changes or deletes the corresponding Action, manifest, lock, or policy files. The dependency commands are:
 
