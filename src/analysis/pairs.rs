@@ -68,6 +68,7 @@ impl CandidateSource {
         Self::MatcherBlocking,
     ];
 
+    /// Key under which this source's counts appear in the census `candidate_sources` map.
     fn as_str(self) -> &'static str {
         match self {
             Self::NormalizedMatcher => "normalizedMatcher",
@@ -82,14 +83,18 @@ impl CandidateSource {
 struct CandidateSources(u8);
 
 impl CandidateSources {
+    /// Records `source` in the bit set.
     fn insert(&mut self, source: CandidateSource) {
         self.0 |= 1 << source as u8;
     }
 
+    /// Reports whether `source` proposed this pair.
     fn contains(self, source: CandidateSource) -> bool {
         self.0 & (1 << source as u8) != 0
     }
 
+    /// True when any source other than `NormalizedMatcher` proposed the pair; only those feed
+    /// near-duplicate verification.
     fn can_feed_near_matcher(self) -> bool {
         self.contains(CandidateSource::IdenticalHandler)
             || self.contains(CandidateSource::StructuralHandler)
@@ -125,6 +130,7 @@ struct ComparisonClasses {
 }
 
 impl ComparisonClasses {
+    /// Compares the two definitions' class ids on each comparison axis.
     fn relationships(&self, left: usize, right: usize) -> PairRelationships {
         PairRelationships {
             exact_matcher: self.exact_matcher[left] == self.exact_matcher[right],
@@ -455,6 +461,12 @@ pub(super) fn analyze_definition_pairs(
     }
 }
 
+/// Estimated cost of one similarity stage for a pair. Matcher: a matrix over normalized-matcher
+/// character counts, zero for normalization-equal matchers. Handler: a matrix over
+/// behaviour-signature lengths, only when the pair shares neither its alpha-form class nor its
+/// structure class (each including the behaviour signature) and both sides support event
+/// similarity, zero otherwise. Evidence: combined comparison bytes times the linear-scan
+/// multiplier.
 fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> u64 {
     match work {
         PairSimilarityWork::Matcher if !input.relationships.normalized_matcher => {
@@ -478,6 +490,7 @@ fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> 
     }
 }
 
+/// Sums suppression lookup work for each rule the pair would report; `None` entries cost nothing.
 fn candidate_suppression_work(
     rules: &[Option<Rule>],
     candidate: &CandidatePair,
@@ -489,10 +502,13 @@ fn candidate_suppression_work(
     })
 }
 
+/// Charges `work` against the run-wide pair-similarity budget; see [`charge_work`].
 fn charge_similarity_work(total: &mut u64, work: u64) -> bool {
     charge_work(total, work, MAX_TOTAL_PAIR_SIMILARITY_WORK)
 }
 
+/// Adds `work` to `total` and returns true when the sum stays within `limit`; on overflow or excess
+/// returns false and leaves `total` unchanged.
 fn charge_work(total: &mut u64, work: u64, limit: u64) -> bool {
     let Some(next) = total.checked_add(work) else {
         return false;
@@ -504,10 +520,15 @@ fn charge_work(total: &mut u64, work: u64, limit: u64) -> bool {
     true
 }
 
+/// Refuses a single matrix above the per-pair ceiling without charging it; otherwise charges the
+/// run-wide similarity budget.
 fn charge_matrix_work(total: &mut u64, work: u64) -> bool {
     work <= MAX_PAIR_MATRIX_WORK && charge_similarity_work(total, work)
 }
 
+/// Assigns each definition a class id per comparison axis: deferred-assertion events, exact matcher
+/// (kind, source text, effective identity flags), normalized-matcher partition, alpha-normalized
+/// handler with behaviour signature, structural handler, and structure with behaviour signature.
 fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
     let mut exact_matchers = HashMap::new();
     let mut normalized_matchers = HashMap::new();
@@ -581,6 +602,8 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
 /// distinct also lets equal-text handlers reach all three handler candidate sources.
 type MatcherPartition<'a> = (MatcherKind, &'a str, Option<&'a str>, Option<usize>);
 
+/// Normalized-matcher key: kind, normalized text and dialect-normalized flags. Definitions without
+/// global matchers also carry their index, so each forms its own partition.
 fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartition<'_> {
     (
         definition.matcher_kind,
@@ -594,11 +617,14 @@ fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartit
     )
 }
 
+/// Returns the id already assigned to `key`, or assigns the next sequential id.
 fn intern_class<K: Eq + Hash>(classes: &mut HashMap<K, usize>, key: K) -> usize {
     let next = classes.len();
     *classes.entry(key).or_insert(next)
 }
 
+/// Interns each definition's behaviour events in order, with ids shared across definitions. Method
+/// events are omitted; repeated events are kept.
 fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
     let mut events = HashMap::new();
     definitions
@@ -617,6 +643,9 @@ fn behavior_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
         .collect()
 }
 
+/// Interns each definition's blocking anchors as a sorted, deduplicated id set: calls and deferred
+/// assertions verbatim, immediate assertions with the text after their last `:` removed. Other
+/// events are dropped.
 fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> {
     let mut events = HashMap::new();
     definitions
@@ -654,6 +683,8 @@ fn behavior_anchor_event_ids(definitions: &[StepDefinition]) -> Vec<Vec<usize>> 
         .collect()
 }
 
+/// Saturating byte size of the matcher and handler text a pair comparison scans, plus each
+/// behaviour event's length and one unit per event.
 fn definition_comparison_bytes(definition: &StepDefinition) -> u64 {
     let fixed = [
         definition.matcher.len(),
@@ -674,6 +705,7 @@ fn definition_comparison_bytes(definition: &StepDefinition) -> u64 {
     u64::try_from(fixed.saturating_add(events)).unwrap_or(u64::MAX)
 }
 
+/// Saturating `left * right + left + right` cost of one edit-distance or LCS matrix.
 fn matrix_work(left: usize, right: usize) -> u64 {
     let left = u64::try_from(left).unwrap_or(u64::MAX);
     let right = u64::try_from(right).unwrap_or(u64::MAX);
@@ -682,6 +714,11 @@ fn matrix_work(left: usize, right: usize) -> u64 {
         .saturating_add(right)
 }
 
+/// Builds the bounded candidate set from four sources in order: global-matcher normalized
+/// partitions (exact-text subgroups chained, then spanned), identical handlers spanned across
+/// matcher partitions, structural classes enumerated across matcher groups with differing alpha
+/// handlers up to the per-class limit, then matcher blocking. Only comparable, non-trivial handlers
+/// feed the handler sources. Skips and truncated structural classes go to the census.
 pub(super) fn definition_pair_candidates(
     definitions: &[StepDefinition],
     config: &Config,
@@ -888,18 +925,23 @@ struct StructuralClass {
     matcher_groups: Vec<Vec<usize>>,
 }
 
+/// Drops the keys and orders groups by their first index; an empty group sorts last.
 fn sorted_groups<K>(groups: HashMap<K, Vec<usize>>) -> Vec<Vec<usize>> {
     let mut groups: Vec<_> = groups.into_values().collect();
     groups.sort_by_key(|group| group.first().copied().unwrap_or(usize::MAX));
     groups
 }
 
+/// Proposes each consecutive pair of `group`, connecting it as a chain.
 fn insert_spanning(group: &[usize], source: CandidateSource, builder: &mut CandidateBuilder) {
     for pair in group.windows(2) {
         builder.insert(source, pair[0], pair[1]);
     }
 }
 
+/// Connects groups with cross-group pairs only: the first group's anchor to every member of later
+/// groups, and the second group's anchor to the first group's other members. No-op for fewer than
+/// two groups.
 fn insert_multipartite_spanning(
     groups: &[Vec<usize>],
     source: CandidateSource,
@@ -920,6 +962,11 @@ fn insert_multipartite_spanning(
     }
 }
 
+/// Considers pairs of meaningful handlers whose normalized matchers share a shingle of the same
+/// matcher kind, and proposes those that pass the cheap rejections and can reach the handler
+/// similarity gate. Postings above the size cap are sampled as adjacent pairs in lexical order. A
+/// definition over the per-definition shingle cap, or a corpus over the total cap, records one skip
+/// and abandons the source; it also stops when a pair consideration reports exhaustion.
 fn insert_matcher_blocking_candidates(
     definitions: &[StepDefinition],
     classes: &ComparisonClasses,
@@ -1050,11 +1097,15 @@ struct MatcherPosting {
 }
 
 impl MatcherPosting {
+    /// Appends a definition index to the posting.
     fn insert(&mut self, index: usize) {
         self.indices.push(index);
     }
 }
 
+/// Sorted distinct trigram keys of the lowercased matcher, each run of numeric characters collapsed
+/// to one `0`. A matcher shorter than three characters yields one key for what it has; an empty
+/// matcher yields none. Returns `None` past the per-definition shingle cap.
 fn matcher_shingle_keys(matcher: &str) -> Option<Vec<u64>> {
     let mut window = ['\0'; MATCHER_SHINGLE_WIDTH];
     let mut length = 0_usize;
@@ -1083,6 +1134,7 @@ fn matcher_shingle_keys(matcher: &str) -> Option<Vec<u64>> {
     Some(keys)
 }
 
+/// Slides `character` into the trigram window and records the window's key once it is full.
 fn push_matcher_character(
     character: char,
     window: &mut [char; MATCHER_SHINGLE_WIDTH],
@@ -1101,6 +1153,8 @@ fn push_matcher_character(
     }
 }
 
+/// Packs up to three characters into a key, 21 bits each, offset by one so a shorter window never
+/// collides with a longer one.
 fn encode_matcher_characters(characters: &[char]) -> u64 {
     characters
         .iter()
@@ -1124,14 +1178,21 @@ fn value_only_difference(
         && left_events == right_events
 }
 
+/// True when the handler is comparable and not trivial.
 fn meaningful_handler(definition: &StepDefinition) -> bool {
     definition.handler.comparable && !definition.handler.trivial
 }
 
+/// True for pairs the structural-handler source owns: same structure and behaviour signature,
+/// different alpha-normalized handler.
 fn covered_by_structural_source(relationships: PairRelationships) -> bool {
     !relationships.same_handler && relationships.same_structure
 }
 
+/// Cheap test for whether a pair can reach the handler similarity gate. True at once for the same
+/// handler structure with identical ordered events. Otherwise false when both event lists are empty
+/// or the anchor sets share nothing; else true when the sorted-event multiset overlap reaches
+/// `HANDLER_SIMILARITY_GATE` of the longer list.
 fn can_reach_handler_similarity_gate(
     relationships: PairRelationships,
     left_ordered_events: &[usize],
@@ -1172,6 +1233,7 @@ fn can_reach_handler_similarity_gate(
     overlap as f64 / longest as f64 >= HANDLER_SIMILARITY_GATE
 }
 
+/// Reports whether two ascending slices share any element.
 fn sorted_events_overlap(left: &[usize], right: &[usize]) -> bool {
     let mut left = left.iter().peekable();
     let mut right = right.iter().peekable();
@@ -1258,6 +1320,10 @@ struct BehaviorEventViews<'a> {
     anchors: &'a [Vec<usize>],
 }
 
+/// Charges event work and inserts the pair when it can reach the handler similarity gate; a pair
+/// below the gate is dropped and returns true. Returns false, recording one skip, when the
+/// candidate limit is reached or the cumulative event work exceeds its budget; that work stays
+/// charged.
 fn try_insert_matcher_blocking_candidate(
     relationships: PairRelationships,
     events: BehaviorEventViews<'_>,
@@ -1298,6 +1364,7 @@ fn try_insert_matcher_blocking_candidate(
     true
 }
 
+/// Number of pairs whose members lie in different groups.
 fn multipartite_pair_count(groups: &[Vec<usize>]) -> u64 {
     multipartite_count_sizes(
         groups
@@ -1306,6 +1373,7 @@ fn multipartite_pair_count(groups: &[Vec<usize>]) -> u64 {
     )
 }
 
+/// Saturating count of pairs whose members lie in different groups of the given sizes.
 fn multipartite_count_sizes(sizes: impl IntoIterator<Item = u64>) -> u64 {
     let mut prior = 0_u64;
     let mut total = 0_u64;
@@ -1331,6 +1399,7 @@ struct CandidateBuilder {
 }
 
 impl CandidateBuilder {
+    /// Empty builder capped at `limit` candidates, with a zeroed census entry for every source.
     fn new(limit: usize) -> Self {
         Self {
             candidates: BTreeMap::new(),
@@ -1343,6 +1412,10 @@ impl CandidateBuilder {
         }
     }
 
+    /// Proposes a pair. A repeat proposal adds `source` to the stored candidate, if any, and
+    /// returns `Existing` without a skip. A new proposal at the limit records one skip for `source`
+    /// and returns `Limit`; otherwise the pair is stored with `source` as owner and counted as
+    /// evaluated.
     fn insert(&mut self, source: CandidateSource, left: usize, right: usize) -> InsertOutcome {
         let pair = candidate_pair(left, right);
         if !self.proposals.insert(pair) {
@@ -1370,11 +1443,13 @@ impl CandidateBuilder {
         InsertOutcome::Inserted
     }
 
+    /// Adds `count` skipped comparisons to `source`, saturating.
     fn skip(&mut self, source: CandidateSource, count: u64) {
         let metrics = self.sources.entry(source).or_default();
         metrics.skipped = metrics.skipped.saturating_add(count);
     }
 
+    /// Census of the generated candidates; truncated when any source skipped a comparison.
     fn census(&self, truncated_structural_classes: usize) -> AnalysisCensus {
         let skipped_candidate_comparisons = self
             .sources
@@ -1394,6 +1469,7 @@ impl CandidateBuilder {
     }
 }
 
+/// Orders a pair as `(min, max)` so both orientations share one key.
 fn candidate_pair(left: usize, right: usize) -> (usize, usize) {
     (left.min(right), left.max(right))
 }
@@ -1408,20 +1484,25 @@ pub(super) struct CandidateGeneration {
 
 #[cfg(test)]
 impl CandidateGeneration {
+    /// Number of candidate pairs.
     pub(super) fn len(&self) -> usize {
         self.candidates.len()
     }
 
+    /// True when no candidate pair was generated.
     pub(super) fn is_empty(&self) -> bool {
         self.candidates.is_empty()
     }
 
+    /// Reports whether the pair is a candidate, in either orientation.
     pub(super) fn contains_pair(&self, left: usize, right: usize) -> bool {
         self.candidates.contains_key(&candidate_pair(left, right))
     }
 }
 
 impl CandidateGeneration {
+    /// Moves candidates after the first `evaluated` in key order from evaluated to skipped, per
+    /// owner source and in the totals, and marks the census truncated.
     fn mark_verification_truncated(&mut self, evaluated: usize) {
         let skipped = self.candidates.len().saturating_sub(evaluated);
         for candidate in self.candidates.values().skip(evaluated) {
@@ -1442,6 +1523,8 @@ impl CandidateGeneration {
         self.census.truncated = true;
     }
 
+    /// Incompleteness message when the census is truncated, naming up to three truncated structural
+    /// classes and the count of the rest; `None` otherwise.
     fn incompleteness(&self, config: &Config) -> Option<String> {
         self.census.truncated.then(|| {
             let mut affected = self
@@ -1476,6 +1559,7 @@ struct FindingForests {
 }
 
 impl FindingForests {
+    /// Empty forest set; a forest is created per rule and suppression state on first use.
     fn new(definition_count: usize) -> Self {
         Self {
             definition_count,
@@ -1483,6 +1567,8 @@ impl FindingForests {
         }
     }
 
+    /// Joins the pair in the forest for `rule` and suppression state. Returns false when they are
+    /// already connected, so the caller drops the redundant finding.
     fn retain_edge(&mut self, rule: Rule, suppressed: bool, left: usize, right: usize) -> bool {
         self.forests
             .entry((rule, suppressed))
@@ -1497,6 +1583,7 @@ struct DisjointSet {
 }
 
 impl DisjointSet {
+    /// `size` singleton sets.
     fn new(size: usize) -> Self {
         Self {
             parent: (0..size).collect(),
@@ -1504,6 +1591,7 @@ impl DisjointSet {
         }
     }
 
+    /// Root of `node`'s set, compressing the path.
     fn find(&mut self, mut node: usize) -> usize {
         let mut root = node;
         while self.parent[root] != root {
@@ -1517,6 +1605,7 @@ impl DisjointSet {
         root
     }
 
+    /// Merges two sets by rank; false when they already share a root.
     fn union(&mut self, left: usize, right: usize) -> bool {
         let mut left_root = self.find(left);
         let mut right_root = self.find(right);
@@ -1548,6 +1637,8 @@ struct PairFindingDescriptor<'a> {
     suggested_action: &'static str,
 }
 
+/// Appends a pair finding unless its rule is off or the pair is already connected in the forest for
+/// its rule and suppression state. Attaches a matching suppression reason; scores are rounded.
 fn push_pair_finding(
     findings: &mut Vec<Finding>,
     forests: &mut FindingForests,
@@ -1591,6 +1682,10 @@ fn push_pair_finding(
     });
 }
 
+/// Replaces each connected component of pair findings that spans at least `MIN_CLUSTER_DEFINITIONS`
+/// definitions with one cluster finding. Only findings from `first_pair_finding` on, with a
+/// cluster-capable rule, comparison evidence and one related location, are grouped, per rule and
+/// suppression reason. Remaining pair findings keep their order; clusters follow them.
 fn collapse_large_pair_findings(findings: &mut Vec<Finding>, first_pair_finding: usize) {
     let pair_findings = findings.drain(first_pair_finding..).collect::<Vec<_>>();
     let mut groups: BTreeMap<(Rule, Option<String>), Vec<usize>> = BTreeMap::new();
@@ -1631,6 +1726,8 @@ fn collapse_large_pair_findings(findings: &mut Vec<Finding>, first_pair_finding:
     findings.extend(cluster_findings);
 }
 
+/// Rules whose pair findings may collapse into clusters: duplicate matcher, normalized matcher and
+/// duplicate handler.
 fn supports_cluster_reporting(rule: Rule) -> bool {
     matches!(
         rule,
@@ -1638,6 +1735,8 @@ fn supports_cluster_reporting(rule: Rule) -> bool {
     )
 }
 
+/// Splits one group's findings into location-connected components and replaces each component that
+/// yields a cluster, marking its findings collapsed.
 fn collapse_group_components(
     findings: &[Finding],
     edge_indices: &[usize],
@@ -1677,6 +1776,10 @@ fn collapse_group_components(
     }
 }
 
+/// Cluster finding for one component, or `None` when an edge lacks comparison evidence or fewer
+/// than `MIN_CLUSTER_DEFINITIONS` locations take part. Members are sorted by location with the
+/// first as primary; each location's fingerprint comes from the first edge naming it, and
+/// fingerprints are sorted on their own. Severity, action and suppression come from the first edge.
 fn build_cluster_finding(findings: &[Finding], edge_indices: &[usize]) -> Option<Finding> {
     let mut fingerprints = HashMap::<SourceLocation, String>::new();
     for &edge_index in edge_indices {
@@ -1730,6 +1833,7 @@ fn build_cluster_finding(findings: &[Finding], edge_indices: &[usize]) -> Option
     })
 }
 
+/// Orders locations by path, start line and column, then end line and column.
 fn compare_locations(left: &SourceLocation, right: &SourceLocation) -> Ordering {
     left.path
         .cmp(&right.path)

@@ -9,10 +9,13 @@ const SHORT_MATCHER_MAX_CHARS: usize = 12;
 const SHORT_SIMILARITY_GATE: f64 = 0.92;
 const LONG_SIMILARITY_GATE: f64 = 0.90;
 
+/// The normalized matcher text that every matcher comparison in this module reads.
 fn matcher_comparison_text(definition: &StepDefinition) -> &str {
     &definition.normalized_matcher
 }
 
+/// The larger of Levenshtein similarity (normalized by the longer char count) and Jaro-Winkler
+/// over the normalized matchers; two empty matchers score 1.0.
 pub(super) fn matcher_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
     let left = matcher_comparison_text(left);
     let right = matcher_comparison_text(right);
@@ -25,6 +28,8 @@ pub(super) fn matcher_similarity(left: &StepDefinition, right: &StepDefinition) 
     edit_similarity.max(strsim::jaro_winkler(left, right))
 }
 
+/// Whether compatible matchers reach the wording gate: 0.92 when the longer normalized matcher has
+/// at most 12 chars, 0.90 otherwise. `similarity` is taken as given, not recomputed.
 pub(super) fn is_near_matcher(
     left: &StepDefinition,
     right: &StepDefinition,
@@ -124,6 +129,8 @@ fn splits_into_separate_changes(left: &[String], right: &[String]) -> bool {
         .any(|word| right.contains(word) && (flanked(left, word) || flanked(right, word)))
 }
 
+/// Whether exactly one side contains a negation word, or any word pair is a prefixed opposite.
+/// Negation on both sides is not a conflict by itself; a prefixed opposite still is.
 fn has_polarity_conflict(left: &str, right: &str) -> bool {
     let left = words(left);
     let right = words(right);
@@ -142,6 +149,7 @@ fn has_polarity_conflict(left: &str, right: &str) -> bool {
     })
 }
 
+/// Lowercased runs of alphanumeric chars; every other char separates words.
 fn words(value: &str) -> Vec<String> {
     value
         .split(|character: char| !character.is_alphanumeric())
@@ -150,6 +158,8 @@ fn words(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `negative` is an enable/disable inflection of `positive`, or `positive` (4+ bytes)
+/// prefixed by `in`, `un`, `non`, `dis`, `il`, `im` or `ir`. Direction matters; callers check both.
 fn prefixed_opposites(positive: &str, negative: &str) -> bool {
     matches!(
         (positive, negative),
@@ -163,6 +173,8 @@ fn prefixed_opposites(positive: &str, negative: &str) -> bool {
             .any(|prefix| negative.strip_prefix(prefix) == Some(positive))
 }
 
+/// Handler similarity of two definitions: 0.0 when runtime-incompatible, else the relationship
+/// score over their behaviour events with method events removed.
 #[cfg(test)]
 pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) -> f64 {
     if !handler_runtime_compatible(left, right) {
@@ -181,10 +193,14 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
 }
 
 // Partial streams preserve identity checks but cannot measure whole-handler overlap.
+/// Whether both definitions' profiles allow event-overlap scoring.
 pub(super) fn event_similarity_available(left: &StepDefinition, right: &StepDefinition) -> bool {
     left.analysis_profile().event_similarity && right.analysis_profile().event_similarity
 }
 
+/// Whether two handlers can run in the same runtime context. Rejects differing paths when either
+/// captures lexical file context, differing handler domains, and differing method semantics when
+/// both signatures start with a method event; otherwise method semantics do not gate.
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
     use crate::source_adapter::semantics::CaptureContext;
     if (left.capture_context() == CaptureContext::LexicalFile
@@ -202,6 +218,7 @@ pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefi
     }
 }
 
+/// The handler's behaviour events parsed from the legacy signature, without method events.
 #[cfg(test)]
 fn executable_behavior_events(definition: &StepDefinition) -> Vec<BehaviorEventRef<'_>> {
     definition
@@ -213,6 +230,9 @@ fn executable_behavior_events(definition: &StepDefinition) -> Vec<BehaviorEventR
         .collect()
 }
 
+/// 1.0 for same alpha form with equal events, else 0.95 for same structure, else 0.0 when event
+/// similarity is unavailable or both streams are empty, else ordered event overlap over the longer
+/// stream. Same alpha form with differing events falls through to the later checks.
 pub(super) fn handler_similarity_with_relationship<T: Eq>(
     same_alpha: bool,
     same_structural: bool,
@@ -236,6 +256,7 @@ pub(super) fn handler_similarity_with_relationship<T: Eq>(
     ordered_common_subsequence_len(left_events, right_events) as f64 / max_len as f64
 }
 
+/// Length of the longest common subsequence of the two slices.
 pub(super) fn ordered_common_subsequence_len<T: Eq>(left: &[T], right: &[T]) -> usize {
     let mut previous = vec![0; right.len() + 1];
     for left_event in left {
@@ -252,6 +273,7 @@ pub(super) fn ordered_common_subsequence_len<T: Eq>(left: &[T], right: &[T]) -> 
     previous[right.len()]
 }
 
+/// Rounds to three decimals, halves away from zero.
 pub(super) fn round_score(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
 }
@@ -263,6 +285,7 @@ mod tests {
         Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition,
     };
 
+    /// An `Unknown`-framework definition using `matcher` as raw and normalized text, empty handler.
     fn definition(matcher: &str, kind: MatcherKind) -> StepDefinition {
         StepDefinition {
             matcher: matcher.to_owned(),
@@ -286,6 +309,8 @@ mod tests {
         }
     }
 
+    /// Similarity 1.0 still fails the near gate across matcher kinds, prefixed opposites and
+    /// one-sided negation.
     #[test]
     fn matcher_gate_rejects_mixed_syntax_and_polarity_conflicts() {
         let expression = definition("account is active", MatcherKind::CucumberExpression);
@@ -299,6 +324,9 @@ mod tests {
         assert!(!is_near_matcher(&expression, &not_active, 1.0));
     }
 
+    /// Empty matchers score 1.0; same alpha with equal events scores 1.0 and same structure 0.95
+    /// with or without event similarity; otherwise LCS overlap only when available, 0.0 for empty
+    /// streams; LCS length; three-decimal rounding.
     #[test]
     fn similarity_helpers_cover_empty_exact_structural_and_lcs_paths() {
         let empty = definition("", MatcherKind::CucumberExpression);
@@ -338,6 +366,8 @@ mod tests {
         assert_eq!(round_score(0.123_6), 0.124);
     }
 
+    /// Differing method events score 0.0; shared method events add no overlap; a handler without a
+    /// method event scores 1.0 against one with it when the remaining events match.
     #[test]
     fn method_metadata_is_a_compatibility_gate_not_similarity_evidence() {
         let mut left = definition("left", MatcherKind::CucumberExpression);

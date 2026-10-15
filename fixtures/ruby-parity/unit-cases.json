@@ -3,7 +3,7 @@
   "purpose": "Superset census of existing non-Ruby Rust tests. Unmapped is pending behavioral classification, not proof of a missing capability. Several tests may map to one Ruby fixture; shared contracts need an explicit rationale.",
   "files": {
     "src/analysis/evidence.rs": {
-      "sourceSha256": "4aac9c217c5aeb7e744a9e700c2229d944bd51820ac52f1438d431900bd8b580",
+      "sourceSha256": "b7a9a960b5ebd3c71ed43e2d9b37c14916e6f0babc91dc243a13b3cbbbc1253d",
       "tests": [
         {
           "name": "matcher_diffs_cover_empty_identical_disjoint_and_unicode_inputs",
@@ -203,7 +203,7 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "81b39d1faf7ca2de29fd5884ce26882f619aa9ffd85201a1e9e9ab86965819b7",
+      "sourceSha256": "6b7b39e78e5148dd18b8d79bddfd10d68f6c1d662c6e7c63c4d257ad96e6166e",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",

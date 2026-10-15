@@ -83,6 +83,8 @@ pub fn analyze_with_step_usage(
     Ok(analyze_internal(definitions, feature_steps, config, false, Some(usage))?.0)
 }
 
+/// CLI entry point: analysis with indirect usage that also returns the candidate census and the
+/// config suppressions that select no definition, a list cut short past its work limit.
 pub(crate) fn analyze_for_cli(
     indirect_usage: &crate::source_adapter::IndirectStepUsage,
     definitions: Vec<StepDefinition>,
@@ -102,6 +104,11 @@ pub(crate) fn analyze_for_cli(
     )
 }
 
+/// Shared pipeline: pair rules, then feature usage and static overlap on the comparison budget the
+/// pair stage left, indirect usage, and unused definitions; findings are sorted by primary path,
+/// line, column and rule. Fails on invalid analysis limits or definitions from more than one
+/// comparison domain. Unmatched suppressions are collected only when
+/// `include_unmatched_suppressions` is set.
 fn analyze_internal(
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,

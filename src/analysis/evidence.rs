@@ -2,10 +2,13 @@ use crate::model::{
     stable_fingerprint_parts, DefinitionComparison, MatcherDiff, MatcherKind, StepDefinition,
 };
 
+/// Renders the two raw matchers as `` `left` ↔ `right` `` for finding evidence.
 pub(super) fn matcher_difference(left: &StepDefinition, right: &StepDefinition) -> String {
     format!("`{}` ↔ `{}`", left.matcher, right.matcher)
 }
 
+/// Builds the pair comparison: raw matchers, handler source snippets, semantic fingerprints and
+/// the character-level matcher diff.
 pub(super) fn definition_comparison(
     left: &StepDefinition,
     right: &StepDefinition,
@@ -21,6 +24,8 @@ pub(super) fn definition_comparison(
     }
 }
 
+/// Hashes matcher kind, normalized matcher, matcher flags and alpha-normalized handler into a
+/// 32-hex-digit fingerprint; parts are length-prefixed, so bytes cannot shift between components.
 fn definition_semantic_fingerprint(definition: &StepDefinition) -> String {
     let matcher_kind = match definition.matcher_kind {
         MatcherKind::Literal => "literal",
@@ -36,6 +41,8 @@ fn definition_semantic_fingerprint(definition: &StepDefinition) -> String {
     ])
 }
 
+/// Splits two matchers by Unicode scalar into a common prefix, the two differing middles and a
+/// common suffix; the suffix never overlaps the prefix, so identical inputs yield an empty suffix.
 fn matcher_diff(left: &str, right: &str) -> MatcherDiff {
     let left_chars: Vec<_> = left.chars().collect();
     let right_chars: Vec<_> = right.chars().collect();
@@ -68,6 +75,8 @@ fn matcher_diff(left: &str, right: &str) -> MatcherDiff {
     }
 }
 
+/// Names the strictest handler fingerprint the pair shares, checked in order exact, normalized,
+/// alpha-normalized, structural; when none match, reports that behaviour signatures differ.
 pub(super) fn handler_evidence(left: &StepDefinition, right: &StepDefinition) -> String {
     if left.handler.exact == right.handler.exact {
         "Handlers have the same exact syntax fingerprint".to_owned()
@@ -88,6 +97,7 @@ mod tests {
     use crate::discovery::{SourceFile, SourceLanguage};
     use std::path::PathBuf;
 
+    /// Extracts TypeScript definitions from `source` as `steps.ts`; panics if extraction fails.
     fn definitions(source: &str) -> Vec<StepDefinition> {
         crate::typescript::extract(
             source,
@@ -99,6 +109,8 @@ mod tests {
         .unwrap()
     }
 
+    /// Pins prefix, change and suffix splits for empty, identical, disjoint, shared-suffix and
+    /// multi-byte Unicode matchers.
     #[test]
     fn matcher_diffs_cover_empty_identical_disjoint_and_unicode_inputs() {
         let cases = [
@@ -134,6 +146,8 @@ mod tests {
         }
     }
 
+    /// Pins that a clone keeps its fingerprint while moving bytes from the normalized matcher into
+    /// the flags changes it, so a NUL inside a component cannot forge a boundary.
     #[test]
     fn semantic_fingerprints_preserve_component_boundaries() {
         let mut accepted = definitions("Given('accepted', () => action());").remove(0);
@@ -153,6 +167,8 @@ mod tests {
         );
     }
 
+    /// Pins the `matcher_difference` rendering, the comparison's matchers, distinct 32-hex
+    /// fingerprints for different handlers, and every `handler_evidence` tier.
     #[test]
     fn pair_evidence_contract_includes_matchers_fingerprints_and_handler_classification() {
         let definitions = definitions(
@@ -253,6 +269,8 @@ mod tests {
         }
     }
 
+    /// Pins that a string and a regex matcher with equal normalized text and identical handlers get
+    /// different fingerprints.
     #[test]
     fn semantic_fingerprint_distinguishes_matcher_syntax() {
         let mut pair = definitions(
