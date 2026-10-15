@@ -234,7 +234,7 @@
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "437896b7149bff26f7ac79e4540b450f7e4df2c515480d10fb28e3c226edbc42",
+      "sourceSha256": "6b1557a42e7692e236c0c45a4109ee3cc3415714c0cf2b8ed63f58876e92254f",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",

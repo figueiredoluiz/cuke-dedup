@@ -1,11 +1,12 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "binaryBytes": 14680064,
   "cases": {
     "unrelated:250": { "peakMemoryBytes": 16777216, "findingCount": 250, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "unrelated:500": { "peakMemoryBytes": 20971520, "findingCount": 500, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "unrelated:1000": { "peakMemoryBytes": 29360128, "findingCount": 1000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "unrelated:2000": { "peakMemoryBytes": 41943040, "findingCount": 2000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
+    "unrelated:8000": { "peakMemoryBytes": 104857600, "findingCount": 8000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "shared-structure:250": { "peakMemoryBytes": 20971520, "findingCount": 499, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 31125, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "shared-structure:500": { "peakMemoryBytes": 37748736, "findingCount": 999, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 124750, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "homogeneous-handler:1000": { "peakMemoryBytes": 33554432, "findingCount": 1001, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 1997, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
@@ -16,5 +17,8 @@
     "repository-scale:2000": { "peakMemoryBytes": 50331648, "findingCount": 21, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 19, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "usage-scale:2000": { "peakMemoryBytes": 41943040, "findingCount": 0, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "candidate-limit:10000": { "peakMemoryBytes": 157286400, "findingCount": 1000, "analysisComplete": false, "analysisTruncated": true, "candidateComparisonsEvaluated": 1000, "skippedCandidateComparisons": 49994000, "truncatedStructuralClasses": 1 }
+  },
+  "scaling": {
+    "unrelated": { "small": 2000, "large": 8000, "metric": "parsingMedianMs", "maxRatio": 6 }
   }
 }
