@@ -7,6 +7,7 @@ const codeqlWorkflow = ".github/workflows/codeql.yml";
 const legacyConfig = ".github/codeql-config.yml";
 const malformedFixture = "fixtures/corpus/malformed-matcher/steps.js";
 
+/** Verify CodeQL uses the advanced configuration, excludes the malformed fixture, and avoids floating action tags. */
 test("CodeQL advanced setup excludes the intentionally malformed fixture", () => {
   assert.equal(existsSync(codeqlConfig), true);
   assert.equal(existsSync(codeqlWorkflow), true);

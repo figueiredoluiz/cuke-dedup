@@ -12,10 +12,12 @@ const valid = {
   releaseSha: tagSha,
 };
 
+/** Verify publishing accepts matching dispatched tags and immutable checkout commits. */
 test("release context accepts an immutable checkout of the dispatched tag", () => {
   assert.doesNotThrow(() => validateReleaseContext(valid));
 });
 
+/** Verify missing tags, branch dispatches, mismatched commits, and malformed commit IDs reject publication. */
 test("release context rejects every mismatch that can split provenance", () => {
   for (const [override, message] of [
     [{ releaseTag: "" }, /release_tag is required/],
@@ -27,6 +29,7 @@ test("release context rejects every mismatch that can split provenance", () => {
   }
 });
 
+/** Verify non-publishing builds accept an immutable commit without a release tag or tag ref. */
 test("non-publishing builds require only an immutable resolved commit", () => {
   assert.doesNotThrow(() => validateReleaseContext({
     ...valid,

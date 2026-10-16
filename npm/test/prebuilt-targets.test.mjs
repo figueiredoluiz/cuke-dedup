@@ -12,6 +12,7 @@ const prebuilt = JSON.parse(
   await readFile(new URL("../prebuilt-targets.json", import.meta.url), "utf8"),
 );
 
+/** Verify all eight targets agree across metadata, optional dependencies, package manifests, and generated README content. */
 test("prebuilt manifest, platform packages, and optional dependencies do not drift", async () => {
   assert.equal(validateTargets(prebuilt.targets), prebuilt.targets);
   assert.deepEqual(TARGETS, prebuilt.targets);
@@ -51,6 +52,7 @@ test("prebuilt manifest, platform packages, and optional dependencies do not dri
   }
 });
 
+/** Verify altered target metadata and unknown target keys are rejected. */
 test("prebuilt target validation rejects changed fields and target sets", () => {
   assert.throws(
     () => validateTarget("linux-x64-gnu", {

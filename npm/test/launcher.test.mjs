@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { detectLibc, resolveBinary, run, targetFor } from "../lib/launcher.mjs";
 
+/** Verify every supported platform and libc maps to the expected native package or binary name. */
 test("maps every supported platform to its native package", () => {
   assert.equal(
     targetFor("linux", "x64", "gnu").packageName,
@@ -45,6 +46,7 @@ test("maps every supported platform to its native package", () => {
   );
 });
 
+/** Verify unsupported platforms report their identity and supported alternatives. */
 test("rejects unsupported platforms clearly", () => {
   assert.throws(
     () => targetFor("freebsd", "x64"),
@@ -52,6 +54,7 @@ test("rejects unsupported platforms clearly", () => {
   );
 });
 
+/** Verify glibc reports select GNU and missing or failed runtime reports fall back to musl. */
 test("detects GNU and musl Linux runtimes", () => {
   assert.equal(
     detectLibc({ getReport: () => ({ header: { glibcVersionRuntime: "2.39" } }) }),
@@ -64,6 +67,7 @@ test("detects GNU and musl Linux runtimes", () => {
   );
 });
 
+/** Verify missing optional packages produce an actionable native-package diagnostic. */
 test("reports a missing optional native package", () => {
   assert.throws(
     () =>
@@ -80,6 +84,7 @@ test("reports a missing optional native package", () => {
   );
 });
 
+/** Verify an existing executable override is returned as the resolved binary. */
 test("accepts an explicit executable override", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-dedup-launcher-"));
   const binary = join(directory, "custom-cuke-dedup");
@@ -91,6 +96,7 @@ test("accepts an explicit executable override", async () => {
   );
 });
 
+/** Verify package resolution requests the correct manifest and finds its executable under bin. */
 test("resolves the executable from a platform package layout", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-dedup-platform-"));
   const manifest = join(directory, "package.json");
@@ -114,6 +120,7 @@ test("resolves the executable from a platform package layout", async () => {
   );
 });
 
+/** Verify launcher arguments and inherited stdio reach the child and its exit code is returned. */
 test("forwards arguments and the native exit code", () => {
   let invocation;
   const exitCode = run(["check", ".", "--reporters", "json"], {
@@ -131,6 +138,7 @@ test("forwards arguments and the native exit code", () => {
   assert.equal(exitCode, 17);
 });
 
+/** Verify child launch errors produce exit code two and an error diagnostic. */
 test("uses operational exit code 2 for launch failures", () => {
   let diagnostic = "";
   const exitCode = run([], {
@@ -144,6 +152,7 @@ test("uses operational exit code 2 for launch failures", () => {
   assert.match(diagnostic, /failed to start.*permission denied/);
 });
 
+/** Verify a child SIGINT produces exit code 130 and names the terminating signal. */
 test("preserves conventional exit status for child signals", () => {
   let diagnostic = "";
   const exitCode = run([], {

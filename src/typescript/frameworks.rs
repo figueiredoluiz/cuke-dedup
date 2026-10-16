@@ -233,6 +233,7 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
 mod tests {
     use super::*;
 
+    /// Verify registered entrypoints expose the expected call, decorator, and factory names with attribution.
     #[test]
     fn framework_entrypoints_preserve_export_kinds() {
         for module in FRAMEWORK_REGISTRY
@@ -279,6 +280,7 @@ mod tests {
         }
     }
 
+    /// Verify framework entrypoints are unique and reject unsupported paths and similar prefixes.
     #[test]
     fn framework_entrypoints_are_unique_and_have_exact_attribution() {
         let expected = [
@@ -328,6 +330,7 @@ mod tests {
         }
     }
 
+    /// Verify ambient registration defaults exclude lowercase aliases and decorator-only `Step`.
     #[test]
     fn default_registrations_are_a_subset_of_every_known_registration() {
         for name in DEFAULT_REGISTRATIONS {

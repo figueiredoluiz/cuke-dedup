@@ -44,12 +44,14 @@ fn init_repository(root: &Path) {
     }
 }
 
+/// Writes a fixture file beneath the root, creating its parent directories.
 fn write(root: &Path, relative: &str, contents: &str) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, contents).unwrap();
 }
 
+/// Checks historical comparison uses current policy, gates new findings, and preserves checkout and Git state.
 #[test]
 fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
     let sandbox = tempfile::tempdir().unwrap();
@@ -269,6 +271,7 @@ fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
     }
 }
 
+/// Checks strict historical comparison rejects an incomplete base despite a valid current corpus.
 #[test]
 fn baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_valid() {
     let valid_feature = "Feature: Example\n  Scenario: Example\n    Given shared\n";
@@ -328,6 +331,7 @@ fn baseline_from_ref_rejects_incomplete_history_even_when_current_files_are_vali
     }
 }
 
+/// Checks incomplete historical extraction warns by default and fails when completeness is required.
 #[test]
 fn baseline_from_ref_tolerates_incomplete_history_by_default_and_reports_it() {
     let valid_feature = "Feature: Example\n  Scenario: Example\n    Given shared\n";
@@ -366,6 +370,7 @@ fn baseline_from_ref_tolerates_incomplete_history_by_default_and_reports_it() {
         .stderr(predicate::str::contains("incomplete"));
 }
 
+/// Checks strict comparison rejects truncated history and snapshot submodules regardless of Git replacements.
 #[test]
 fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
     let root = tempfile::tempdir().unwrap();
@@ -477,6 +482,7 @@ fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
     }
 }
 
+/// Checks snapshot metadata limits, concurrent stderr draining, environment isolation, and Git child cleanup.
 #[cfg(unix)]
 #[test]
 fn baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped() {
@@ -643,6 +649,7 @@ fn write_sized(root: &Path, relative: &str, bytes: u64) {
     writer.flush().unwrap();
 }
 
+/// Recursively copies a fixture directory into an isolated destination.
 fn copy_tree(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).unwrap();
     for entry in fs::read_dir(source).unwrap() {
@@ -656,6 +663,7 @@ fn copy_tree(source: &Path, destination: &Path) {
     }
 }
 
+/// Checks copied corpus cases match manifest exit codes, diagnostics, rule counts, and duplication summaries.
 #[test]
 fn fixture_corpus_matches_the_versioned_manifest() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/corpus");
@@ -729,6 +737,7 @@ fn fixture_corpus_matches_the_versioned_manifest() {
     }
 }
 
+/// Checks a passing duplication threshold still fails on an ambiguous feature step.
 #[test]
 fn threshold_does_not_tolerate_non_duplication_errors() {
     let directory = tempfile::tempdir().unwrap();
@@ -753,6 +762,7 @@ fn threshold_does_not_tolerate_non_duplication_errors() {
         .stdout(predicate::str::contains("ambiguous-step"));
 }
 
+/// Checks non-finite and out-of-range thresholds return an actionable configuration error.
 #[test]
 fn invalid_thresholds_are_configuration_errors() {
     let directory = tempfile::tempdir().unwrap();
@@ -769,6 +779,7 @@ fn invalid_thresholds_are_configuration_errors() {
     }
 }
 
+/// Checks an invalid exclusion glob returns exit code 2 with the offending pattern.
 #[test]
 fn invalid_exclusion_patterns_are_operational_errors() {
     let directory = tempfile::tempdir().unwrap();
@@ -781,6 +792,7 @@ fn invalid_exclusion_patterns_are_operational_errors() {
         .stderr(predicate::str::contains("invalid exclude glob pattern `[`"));
 }
 
+/// Checks valid inline suppression permits success and a missing reason produces an operational error.
 #[test]
 fn inline_suppressions_require_a_rule_and_reason_and_affect_exit_status() {
     let directory = tempfile::tempdir().unwrap();
@@ -811,6 +823,7 @@ fn inline_suppressions_require_a_rule_and_reason_and_affect_exit_status() {
         .stderr(predicate::str::contains("cuke-dedup:ignore RULE -- REASON"));
 }
 
+/// Checks printed configuration combines project settings with CLI overrides without discovery diagnostics.
 #[test]
 fn print_config_reports_merged_values_without_running_discovery() {
     let directory = tempfile::tempdir().unwrap();
@@ -852,6 +865,7 @@ fn print_config_reports_merged_values_without_running_discovery() {
         .any(|pattern| pattern == "generated/**"));
 }
 
+/// Checks configuration and CLI candidate limits reject values above the ceilings and accept the ceilings.
 #[test]
 fn candidate_limits_cannot_exceed_hard_safety_ceilings_from_config_or_cli() {
     let directory = tempfile::tempdir().unwrap();
@@ -918,6 +932,7 @@ fn candidate_limits_cannot_exceed_hard_safety_ceilings_from_config_or_cli() {
     assert_eq!(config["maxStructuralClassComparisons"], 250_000);
 }
 
+/// Checks implicit analysis reports duplicate and ambiguous steps with consistent machine-report census data.
 #[test]
 fn zero_config_implicit_check_reports_duplicates_and_writes_machine_reports() {
     let directory = tempfile::tempdir().unwrap();
@@ -987,6 +1002,7 @@ Then('the receipt is visible', async () => { await expect(otherReceipt).toBeVisi
     );
 }
 
+/// Checks JSON and JSONL omit metrics while retaining definition census data.
 #[test]
 fn no_metrics_produces_reproducible_machine_report_content() {
     let directory = tempfile::tempdir().unwrap();
@@ -1030,6 +1046,7 @@ fn no_metrics_produces_reproducible_machine_report_content() {
     assert_eq!(summary["corpus"]["definitionsExtracted"], 1);
 }
 
+/// Checks project configuration disables JSON metrics without removing the corpus census.
 #[test]
 fn project_config_can_disable_metrics() {
     let directory = tempfile::tempdir().unwrap();
@@ -1053,6 +1070,7 @@ fn project_config_can_disable_metrics() {
     assert_eq!(report["corpus"]["definitionsExtracted"], 1);
 }
 
+/// Checks missing definition sources warn by default and fail when definitions are required.
 #[test]
 fn empty_default_definition_discovery_is_visible() {
     let directory = tempfile::tempdir().unwrap();
@@ -1082,6 +1100,7 @@ fn empty_default_definition_discovery_is_visible() {
         ));
 }
 
+/// Checks unresolved calls report their location and preserve extracted-file and feature census counts.
 #[test]
 fn unresolved_registration_calls_warn_and_expose_the_corpus_census() {
     let directory = tempfile::tempdir().unwrap();
@@ -1121,6 +1140,7 @@ fn unresolved_registration_calls_warn_and_expose_the_corpus_census() {
     assert_eq!(report["corpus"]["featureFilesWithoutSteps"], 0);
 }
 
+/// Checks empty Markdown conversion suppresses unused findings, marks reports incomplete, and fails strict mode.
 #[test]
 fn empty_converted_gherkin_markdown_marks_the_corpus_incomplete() {
     let directory = tempfile::tempdir().unwrap();
@@ -1194,6 +1214,7 @@ fn empty_converted_gherkin_markdown_marks_the_corpus_incomplete() {
         ));
 }
 
+/// Checks an empty classic feature leaves the corpus complete and retains unused findings from valid feature usage.
 #[test]
 fn valid_empty_classic_feature_does_not_hide_unused_definitions() {
     let directory = tempfile::tempdir().unwrap();
@@ -1230,6 +1251,7 @@ fn valid_empty_classic_feature_does_not_hide_unused_definitions() {
     assert_eq!(report["corpus"]["incomplete"], false);
 }
 
+/// Checks partially resolved source files report unresolved calls and the actual extraction census.
 #[test]
 fn partial_definition_extraction_is_visible_in_the_corpus_census() {
     let directory = tempfile::tempdir().unwrap();
@@ -1262,6 +1284,7 @@ fn partial_definition_extraction_is_visible_in_the_corpus_census() {
     assert_eq!(report["corpus"]["definitionsExtracted"], 1);
 }
 
+/// Checks changed mode still warns about unresolved registrations in unchanged corpus files.
 #[test]
 fn unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files() {
     let directory = tempfile::tempdir().unwrap();
@@ -1284,6 +1307,7 @@ fn unresolved_registration_warnings_are_not_hidden_for_unchanged_corpus_files() 
         ));
 }
 
+/// Checks required definitions fail on empty extraction while CLI and configured JSON reports are still written.
 #[test]
 fn empty_definition_extraction_can_be_required_and_still_writes_reports() {
     let directory = tempfile::tempdir().unwrap();
@@ -1333,6 +1357,7 @@ fn empty_definition_extraction_can_be_required_and_still_writes_reports() {
         .is_file());
 }
 
+/// Checks candidate truncation retains findings and report evidence, prevents baseline updates, and fails only under strict gating.
 #[test]
 fn candidate_limits_warn_and_still_report_without_failing_the_run() {
     let directory = tempfile::tempdir().unwrap();
@@ -1451,6 +1476,7 @@ fn candidate_limits_warn_and_still_report_without_failing_the_run() {
         ));
 }
 
+/// Checks a CLI severity override makes duplicate matchers warnings and permits success.
 #[test]
 fn explicit_check_honors_cli_rule_severity_for_exit_status() {
     let directory = tempfile::tempdir().unwrap();
@@ -1469,6 +1495,7 @@ fn explicit_check_honors_cli_rule_severity_for_exit_status() {
         .stdout(predicate::str::contains("[warning]"));
 }
 
+/// Checks static Playwright-BDD discovery analyzes a definition and its feature without framework execution.
 #[test]
 fn zero_config_analyzes_playwright_bdd_without_loading_playwright() {
     let directory = tempfile::tempdir().unwrap();
@@ -1499,6 +1526,7 @@ Setup('the home page is open', async ({ page }) => { await page.goto('/'); });
         .stdout(predicate::str::contains("0 errors, 0 warnings"));
 }
 
+/// Checks invalid Gherkin returns exit code 2 with a parse diagnostic.
 #[test]
 fn invalid_gherkin_is_an_operational_error() {
     let directory = tempfile::tempdir().unwrap();
@@ -1517,6 +1545,7 @@ fn invalid_gherkin_is_an_operational_error() {
         .stderr(predicate::str::contains("failed to parse Gherkin feature"));
 }
 
+/// Checks default discovery parses Markdown feature steps and explains their source format.
 #[test]
 fn default_discovery_parses_gherkin_markdown() {
     let directory = tempfile::tempdir().unwrap();
@@ -1545,6 +1574,7 @@ fn default_discovery_parses_gherkin_markdown() {
         ));
 }
 
+/// Checks an explicit feature pattern permits Gherkin files with a nonstandard extension.
 #[test]
 fn custom_patterns_allow_nonstandard_gherkin_extensions() {
     let directory = tempfile::tempdir().unwrap();
@@ -1570,6 +1600,7 @@ fn custom_patterns_allow_nonstandard_gherkin_extensions() {
         ));
 }
 
+/// Checks framework feature defaults apply until project configuration supplies an overriding pattern.
 #[test]
 fn framework_feature_paths_are_defaults_and_own_config_overrides_them() {
     let directory = tempfile::tempdir().unwrap();
@@ -1618,6 +1649,7 @@ fn framework_feature_paths_are_defaults_and_own_config_overrides_them() {
         .stderr(predicate::str::contains("specs/example.feature").not());
 }
 
+/// Checks local ESM registration re-exports retain definitions and duplicate-matcher findings.
 #[test]
 fn local_barrel_reexports_are_recognized_as_registration_sources() {
     let directory = tempfile::tempdir().unwrap();
@@ -1642,6 +1674,7 @@ fn local_barrel_reexports_are_recognized_as_registration_sources() {
         .stdout(predicate::str::contains("Analyzed 2 definitions"));
 }
 
+/// Checks an aliased CommonJS registration from a local barrel retains duplicate-matcher detection.
 #[test]
 fn commonjs_require_of_a_local_barrel_resolves_registrations() {
     let directory = tempfile::tempdir().unwrap();
@@ -1668,6 +1701,7 @@ fn commonjs_require_of_a_local_barrel_resolves_registrations() {
         .stdout(predicate::str::contains("Analyzed 2 definitions"));
 }
 
+/// Checks requiring an ordinary helper module does not invent step definitions.
 #[test]
 fn commonjs_require_of_a_local_non_registration_module_registers_nothing() {
     let directory = tempfile::tempdir().unwrap();
@@ -1692,6 +1726,7 @@ fn commonjs_require_of_a_local_non_registration_module_registers_nothing() {
         .stdout(predicate::str::contains("Analyzed 0 definitions"));
 }
 
+/// Checks cyclic and over-depth project configurations warn and cannot supply registration aliases.
 #[test]
 fn project_config_extends_cycles_and_excessive_depth_never_resolve() {
     let cycle = tempfile::tempdir().unwrap();
@@ -1756,6 +1791,7 @@ fn project_config_extends_cycles_and_excessive_depth_never_resolve() {
         ));
 }
 
+/// Asserts an escaping path alias warns and extracts no definitions without aborting the default run.
 fn assert_path_alias_escape_is_incomplete(root: &Path) {
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
@@ -1772,6 +1808,7 @@ fn assert_path_alias_escape_is_incomplete(root: &Path) {
         ));
 }
 
+/// Checks a traversing path alias cannot resolve registrations outside the analysis root.
 #[test]
 fn path_alias_targets_cannot_escape_the_analysis_root() {
     let sandbox = tempfile::tempdir().unwrap();
@@ -1795,6 +1832,7 @@ fn path_alias_targets_cannot_escape_the_analysis_root() {
     assert_path_alias_escape_is_incomplete(&root);
 }
 
+/// Checks symlink resolution cannot bypass the registration alias containment boundary.
 #[cfg(unix)]
 #[test]
 fn symlinked_path_alias_targets_cannot_escape_the_analysis_root() {
@@ -1824,6 +1862,7 @@ fn symlinked_path_alias_targets_cannot_escape_the_analysis_root() {
     assert_path_alias_escape_is_incomplete(&root);
 }
 
+/// Checks changed mode reports unsupported executable configuration for every reporter without executing it.
 #[test]
 fn static_project_config_errors_survive_changed_mode_and_every_reporter() {
     let directory = tempfile::tempdir().unwrap();
@@ -1870,6 +1909,7 @@ fn static_project_config_errors_survive_changed_mode_and_every_reporter() {
     assert!(!directory.path().join("executed.txt").exists());
 }
 
+/// Checks an oversized registration module emits its input-limit warning and empty-extraction diagnostic.
 #[test]
 fn oversized_registration_modules_cannot_silently_remove_definitions() {
     let directory = tempfile::tempdir().unwrap();
@@ -1898,6 +1938,7 @@ fn oversized_registration_modules_cannot_silently_remove_definitions() {
         ));
 }
 
+/// Checks ambiguity membership and locations follow selected definitions and features across package boundaries.
 #[test]
 fn ambiguous_steps_follow_the_selected_corpus_not_package_boundaries() {
     for local_conflict in [false, true] {
@@ -2029,6 +2070,7 @@ fn ambiguous_steps_follow_the_selected_corpus_not_package_boundaries() {
     }
 }
 
+/// Checks witnessed matcher overlap is reported without features and yields to proven feature ambiguity.
 #[test]
 fn matcher_overlap_is_reported_without_a_feature_corpus() {
     let directory = tempfile::tempdir().unwrap();
@@ -2072,6 +2114,7 @@ When('I close the cart', async () => { await d(); });\n",
         .stdout(predicate::str::contains("overlapping-matcher").not());
 }
 
+/// Checks overlap truncation exposes evaluated and skipped work and fails when completeness is required.
 #[test]
 fn matcher_overlap_limit_is_machine_visible_and_can_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
@@ -2133,6 +2176,7 @@ fn matcher_overlap_limit_is_machine_visible_and_can_fail_closed() {
         ));
 }
 
+/// Checks declared parameter patterns enable exact unused and overlap findings and reject invalid regexes.
 #[test]
 fn declared_parameter_types_make_usage_analysis_exact() {
     let directory = tempfile::tempdir().unwrap();
@@ -2194,6 +2238,7 @@ Given(/^the (red|green) light is on$/, async () => { await b(); });\n",
         ));
 }
 
+/// Checks unresolved imports mark reports incomplete, prevent baseline updates, and fail explicit completeness gates.
 #[test]
 fn an_unresolved_registration_import_marks_the_whole_run_incomplete() {
     let directory = tempfile::tempdir().unwrap();
@@ -2283,6 +2328,7 @@ fn an_unresolved_registration_import_marks_the_whole_run_incomplete() {
         ));
 }
 
+/// Checks a filesystem-denied registration module remains a fatal read error.
 #[cfg(unix)]
 #[test]
 fn unreadable_registration_modules_remain_operational_failures() {
@@ -2322,6 +2368,7 @@ fn unreadable_registration_modules_remain_operational_failures() {
         .stderr(predicate::str::contains("support/world.ts"));
 }
 
+/// Checks registration graph limits accumulate across multiple selected definition files.
 #[test]
 fn registration_module_budget_is_shared_across_definition_files() {
     let directory = tempfile::tempdir().unwrap();
@@ -2359,6 +2406,7 @@ fn registration_module_budget_is_shared_across_definition_files() {
         ));
 }
 
+/// Checks erased exports and over-depth barrels cannot create runtime step definitions.
 #[test]
 fn type_only_and_over_depth_barrels_do_not_create_runtime_registrations() {
     for setup in ["type-only", "over-depth"] {
@@ -2404,6 +2452,7 @@ fn type_only_and_over_depth_barrels_do_not_create_runtime_registrations() {
     }
 }
 
+/// Checks configuration and baseline input-size limits produce fatal, source-specific diagnostics.
 #[test]
 fn oversized_config_and_baseline_inputs_are_fatal() {
     let cases = [
@@ -2448,12 +2497,14 @@ fn oversized_config_and_baseline_inputs_are_fatal() {
     }
 }
 
+/// Commits an oversized feature fixture and adds an unrelated change for changed-mode checks.
 fn oversized_unchanged_feature_repository(root: &Path) {
     write_sized(root, "features/example.feature", 8 * 1024 * 1024 + 1);
     init_repository(root);
     write(root, "changed.txt", "changed\n");
 }
 
+/// Checks changed analysis rejects oversized unchanged definitions and features together.
 #[test]
 fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
     let directory = tempfile::tempdir().unwrap();
@@ -2470,6 +2521,7 @@ fn oversized_unchanged_sources_and_features_fail_changed_analysis_closed() {
         .stderr(predicate::str::contains("feature file"));
 }
 
+/// Checks an oversized unchanged feature remains a fatal input error in changed mode.
 #[test]
 fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
     let directory = tempfile::tempdir().unwrap();
@@ -2485,6 +2537,7 @@ fn an_oversized_unchanged_feature_alone_fails_changed_analysis_closed() {
         .stderr(predicate::str::contains("input limit"));
 }
 
+/// Checks invalid UTF-8 in an unchanged definition source still fails changed analysis.
 #[test]
 fn an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass() {
     let directory = tempfile::tempdir().unwrap();
@@ -2501,6 +2554,7 @@ fn an_unreadable_unchanged_definition_cannot_make_changed_analysis_pass() {
         .stderr(predicate::str::contains("not valid UTF-8"));
 }
 
+/// Checks unchanged syntax errors warn in changed mode and become fatal under the unparseable-source gate.
 #[test]
 fn a_malformed_unchanged_definition_is_reported_in_changed_mode_and_gated_by_the_flag() {
     let directory = tempfile::tempdir().unwrap();
@@ -2537,6 +2591,7 @@ fn a_malformed_unchanged_definition_is_reported_in_changed_mode_and_gated_by_the
         ));
 }
 
+/// Checks parse failures retain valid sibling findings by default and fail either strict source or completeness gating.
 #[test]
 fn an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags() {
     let directory = tempfile::tempdir().unwrap();
@@ -2580,6 +2635,7 @@ fn an_unparseable_file_is_tolerated_and_reported_by_default_and_gated_by_flags()
         .stderr(predicate::str::contains("incomplete"));
 }
 
+/// Checks valid sources stay free of syntax warnings and pass the unparseable-source gate.
 #[test]
 fn a_corpus_of_only_parseable_files_reports_no_syntax_incompleteness() {
     // Opposite-answer control for the tolerance case above: with no unparseable file the run is
@@ -2597,6 +2653,7 @@ fn a_corpus_of_only_parseable_files_reports_no_syntax_incompleteness() {
     analyze_root_with(directory.path(), &["--fail-on-unparseable"]).success();
 }
 
+/// Checks unchanged unsupported matchers do not emit definition-scoped usage warnings in changed mode.
 #[test]
 fn changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions() {
     let directory = tempfile::tempdir().unwrap();
@@ -2617,6 +2674,7 @@ fn changed_mode_keeps_non_fatal_warnings_scoped_to_changed_definitions() {
         .stderr(predicate::str::contains("unsupported by static usage analysis").not());
 }
 
+/// Checks oversized definition inputs fail consistently for every reporter.
 #[test]
 fn oversized_source_exit_behavior_is_reporter_independent() {
     let directory = tempfile::tempdir().unwrap();
@@ -2636,6 +2694,7 @@ fn oversized_source_exit_behavior_is_reporter_independent() {
     }
 }
 
+/// Checks explicit exclusion removes oversized sources before input-limit enforcement.
 #[test]
 fn explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus() {
     let directory = tempfile::tempdir().unwrap();
@@ -2665,6 +2724,7 @@ fn explicitly_excluded_oversized_inputs_are_outside_the_analysis_corpus() {
         .stderr(predicate::str::contains("input limit").not());
 }
 
+/// Checks regex resource and Gherkin errors are both reported while extracted definitions remain in JSON output.
 #[test]
 fn pathological_matcher_programs_fail_with_an_actionable_resource_error() {
     let directory = tempfile::tempdir().unwrap();
@@ -2696,6 +2756,7 @@ fn pathological_matcher_programs_fail_with_an_actionable_resource_error() {
     assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
 }
 
+/// Checks an oversized expression warns about regex resources and retains its definition in the default report.
 #[test]
 fn oversized_cucumber_expression_fails_closed_and_still_writes_a_report() {
     let directory = tempfile::tempdir().unwrap();
@@ -2721,6 +2782,7 @@ fn oversized_cucumber_expression_fails_closed_and_still_writes_a_report() {
     assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
 }
 
+/// Checks a local function named Given is not promoted into a framework registration.
 #[test]
 fn local_domain_functions_are_not_mistaken_for_registration_barrels() {
     let directory = tempfile::tempdir().unwrap();
@@ -2744,6 +2806,7 @@ fn local_domain_functions_are_not_mistaken_for_registration_barrels() {
         .stdout(predicate::str::contains("Analyzed 0 definitions"));
 }
 
+/// Checks chained registration re-exports retain renamed and namespace access forms.
 #[test]
 fn chained_local_barrel_reexports_preserve_aliases_and_namespaces() {
     let directory = tempfile::tempdir().unwrap();
@@ -2772,6 +2835,7 @@ fn chained_local_barrel_reexports_preserve_aliases_and_namespaces() {
         .stdout(predicate::str::contains("Analyzed 2 definitions"));
 }
 
+/// Checks an explicit config supplies threshold and feature settings ahead of autodiscovered configuration.
 #[test]
 fn explicit_config_flag_overrides_auto_discovery() {
     let directory = tempfile::tempdir().unwrap();
@@ -2805,6 +2869,7 @@ fn explicit_config_flag_overrides_auto_discovery() {
         .stdout(predicate::str::contains("threshold 100.00% — PASS"));
 }
 
+/// Checks static Cypress configuration supplies a feature pattern and discovery explanation.
 #[test]
 fn cypress_project_config_supplies_feature_discovery() {
     let directory = tempfile::tempdir().unwrap();
@@ -2841,6 +2906,7 @@ fn cypress_project_config_supplies_feature_discovery() {
         .stderr(predicate::str::contains("Cypress Cucumber configuration"));
 }
 
+/// Checks missing features disable unused findings by default and fail when features are required.
 #[test]
 fn missing_feature_corpus_is_safe_by_default_and_can_be_required() {
     let directory = tempfile::tempdir().unwrap();
@@ -2869,6 +2935,7 @@ fn missing_feature_corpus_is_safe_by_default_and_can_be_required() {
         .stderr(predicate::str::contains("no feature files matched"));
 }
 
+/// Checks requiring features reports the count of unparseable discovered feature files.
 #[test]
 fn partial_feature_parse_failure_is_summarized_when_features_are_required() {
     let directory = tempfile::tempdir().unwrap();
@@ -2895,6 +2962,7 @@ fn partial_feature_parse_failure_is_summarized_when_features_are_required() {
         ));
 }
 
+/// Checks unmatched definition patterns and suppressions both emit diagnostics.
 #[test]
 fn unmatched_definition_patterns_and_suppressions_are_visible() {
     let directory = tempfile::tempdir().unwrap();
@@ -2925,6 +2993,7 @@ fn unmatched_definition_patterns_and_suppressions_are_visible() {
         ));
 }
 
+/// Checks baseline fingerprints survive file relocation and fail the new-finding gate after a new duplicate appears.
 #[test]
 fn semantic_baseline_can_be_updated_moved_and_gated_by_new_findings() {
     let directory = tempfile::tempdir().unwrap();
@@ -3002,6 +3071,7 @@ fn semantic_baseline_can_be_updated_moved_and_gated_by_new_findings() {
         .code(1);
 }
 
+/// Checks baseline updates migrate supported older schemas and reject future schema versions.
 #[test]
 fn baseline_update_replaces_older_versions_but_refuses_unknown_future_schemas() {
     let directory = tempfile::tempdir().unwrap();
@@ -3040,6 +3110,7 @@ fn baseline_update_replaces_older_versions_but_refuses_unknown_future_schemas() 
         .stderr(predicate::str::contains("newer than supported"));
 }
 
+/// Checks missing baseline arguments and changed-mode baseline updates are rejected.
 #[test]
 fn baseline_workflow_rejects_unsafe_or_incomplete_flag_combinations() {
     let directory = tempfile::tempdir().unwrap();
@@ -3064,6 +3135,7 @@ fn baseline_workflow_rejects_unsafe_or_incomplete_flag_combinations() {
     }
 }
 
+/// Checks a reporter flag before the target preserves argument parsing and announces the written report.
 #[test]
 fn reporter_flag_does_not_swallow_the_target_and_announces_file_output() {
     let directory = tempfile::tempdir().unwrap();
@@ -3082,6 +3154,7 @@ fn reporter_flag_does_not_swallow_the_target_and_announces_file_output() {
         .stdout(predicate::str::contains("cuke-dedup.json"));
 }
 
+/// Checks a Unicode changed path is compared with unchanged definitions and honors duplication thresholds.
 #[test]
 fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
     let directory = tempfile::tempdir().unwrap();
@@ -3123,6 +3196,7 @@ fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
         ));
 }
 
+/// Checks option-like changed revisions are rejected before they can alter Git filtering.
 #[test]
 fn changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate() {
     let directory = tempfile::tempdir().unwrap();
@@ -3143,6 +3217,7 @@ fn changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate() {
         .stderr(predicate::str::contains("invalid --changed-since revision"));
 }
 
+/// Checks changed analysis finds Unicode untracked definitions beneath an analysis subdirectory.
 #[test]
 fn changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory() {
     let directory = tempfile::tempdir().unwrap();
@@ -3168,6 +3243,7 @@ fn changed_since_handles_a_unicode_untracked_file_from_a_repo_subdirectory() {
         .stdout(predicate::str::contains("steps/café step.ts"));
 }
 
+/// Checks newline-containing untracked paths participate in changed-mode duplicate detection.
 #[cfg(unix)]
 #[test]
 fn changed_since_handles_an_untracked_file_with_a_newline() {
@@ -3193,6 +3269,7 @@ fn changed_since_handles_an_untracked_file_with_a_newline() {
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
+/// Checks Linux non-UTF-8 untracked paths participate in changed-mode duplicate detection.
 #[cfg(target_os = "linux")]
 #[test]
 fn changed_since_handles_an_untracked_non_utf8_file() {
@@ -3221,6 +3298,7 @@ fn changed_since_handles_an_untracked_non_utf8_file() {
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
+/// Checks changed analysis rejects a root ignored by Git.
 #[test]
 fn changed_since_rejects_a_gitignored_analysis_root() {
     let directory = tempfile::tempdir().unwrap();
@@ -3254,6 +3332,7 @@ fn changed_since_rejects_a_gitignored_analysis_root() {
         .stderr(predicate::str::contains("ignored by Git"));
 }
 
+/// Checks changed mode disables unused findings but still fails when no discovered feature parses.
 #[test]
 fn changed_since_disables_unused_findings_but_fails_when_no_feature_parses() {
     let directory = tempfile::tempdir().unwrap();
@@ -3288,6 +3367,7 @@ fn changed_since_disables_unused_findings_but_fails_when_no_feature_parses() {
         .stderr(predicate::str::contains("failed to parse Gherkin feature"));
 }
 
+/// Checks an early-closing JSONL pipe terminates successfully under shell pipefail.
 #[cfg(unix)]
 #[test]
 fn closed_jsonl_consumer_is_a_clean_termination() {
@@ -3316,6 +3396,7 @@ fn closed_jsonl_consumer_is_a_clean_termination() {
     );
 }
 
+/// Checks large handler classes emit bounded findings with complete cluster membership and no report truncation.
 #[test]
 fn large_equivalence_class_emits_a_bounded_spanning_finding_set() {
     const PAIR_RULE_COUNT: usize = 5;
@@ -3375,6 +3456,7 @@ fn large_equivalence_class_emits_a_bounded_spanning_finding_set() {
     assert_eq!(report["findingsTruncated"], 0);
 }
 
+/// Checks package configuration controls discovery, output, disabled rules, and reported suppression reasons.
 #[test]
 fn package_json_configuration_and_suppression_apply_end_to_end() {
     let directory = tempfile::tempdir().unwrap();
@@ -3428,6 +3510,7 @@ fn package_json_configuration_and_suppression_apply_end_to_end() {
     );
 }
 
+/// Checks explicit discovery flags include hidden sources and normally excluded dependency directories.
 #[test]
 fn discovery_flags_can_include_hidden_and_default_excluded_sources() {
     let directory = tempfile::tempdir().unwrap();
@@ -3457,6 +3540,7 @@ fn discovery_flags_can_include_hidden_and_default_excluded_sources() {
         .stdout(predicate::str::contains("Analyzed 2 definitions"));
 }
 
+/// Checks JSON output is written beneath the default report directory.
 #[test]
 fn json_report_uses_the_documented_default_output_directory() {
     let directory = tempfile::tempdir().unwrap();
@@ -3477,6 +3561,7 @@ fn json_report_uses_the_documented_default_output_directory() {
         .is_file());
 }
 
+/// Checks JSONL stdout contains finding records followed by a summary, without terminal output announcements.
 #[test]
 fn jsonl_report_streams_only_machine_records_to_stdout() {
     let directory = tempfile::tempdir().unwrap();
@@ -3520,6 +3605,7 @@ fn jsonl_report_streams_only_machine_records_to_stdout() {
     assert!(!stdout.contains("Reports written to:"));
 }
 
+/// Checks an empty changed selection does not hide fatal unchanged-feature parse errors.
 #[test]
 fn changed_since_fails_closed_on_unchanged_feature_parse_errors() {
     let directory = tempfile::tempdir().unwrap();
@@ -3542,6 +3628,7 @@ fn changed_since_fails_closed_on_unchanged_feature_parse_errors() {
         .stderr(predicate::str::contains("failed to parse Gherkin feature"));
 }
 
+/// Checks the explicit check subcommand rejects a missing target path.
 #[test]
 fn bare_check_subcommand_requires_an_explicit_path() {
     let directory = tempfile::tempdir().unwrap();
@@ -3556,6 +3643,7 @@ fn bare_check_subcommand_requires_an_explicit_path() {
         ));
 }
 
+/// Checks unsupported matcher and invalid escape diagnostics retain independently extracted definitions.
 #[test]
 fn source_diagnostics_are_visible_without_discarding_valid_definitions() {
     let directory = tempfile::tempdir().unwrap();
@@ -3587,6 +3675,7 @@ Given('valid step', () => valid());
         .stderr(predicate::str::contains("invalid JavaScript escape"));
 }
 
+/// Checks JSX extension guidance survives tolerant and strict parsing and renaming to TSX restores extraction.
 #[test]
 fn malformed_definition_sources_are_reported_with_actionable_extension_guidance() {
     let directory = tempfile::tempdir().unwrap();
@@ -3630,6 +3719,7 @@ fn malformed_definition_sources_are_reported_with_actionable_extension_guidance(
         .stdout(predicate::str::contains("Analyzed 1 definition"));
 }
 
+/// Checks misplaced check arguments are rejected and explicit discovery filters select the intended corpus.
 #[test]
 fn path_before_check_is_rejected_and_discovery_flags_are_applied() {
     let directory = tempfile::tempdir().unwrap();
@@ -3799,6 +3889,7 @@ fn analyze_root_with(root: &Path, arguments: &[&str]) -> assert_cmd::assert::Ass
     command.current_dir(root).arg(".").args(arguments).assert()
 }
 
+/// Checks minified and binary exclusions are named while remaining authored definitions are analyzed.
 #[test]
 fn generated_bundles_are_excluded_and_reported_without_failing_the_run() {
     let directory = tempfile::tempdir().unwrap();
@@ -3825,6 +3916,7 @@ fn generated_bundles_are_excluded_and_reported_without_failing_the_run() {
         .stderr(predicate::str::contains("produced 0 definitions").not());
 }
 
+/// Checks bounded bundle classification excludes minified input before whole-file size enforcement.
 #[test]
 fn an_oversized_bundle_is_excluded_rather_than_failing_the_input_limit() {
     // Classification reads a bounded prefix precisely so that a bundle larger than the input
@@ -3849,6 +3941,7 @@ fn an_oversized_bundle_is_excluded_rather_than_failing_the_input_limit() {
         .stderr(predicate::str::contains("input limit").not());
 }
 
+/// Checks recognizable step registrations prevent minified-source exclusion.
 #[test]
 fn a_bundle_that_registers_steps_is_analyzed_rather_than_excluded() {
     // The opposite-answer control for exclusion: identical geometry to the bundle above, but it
@@ -3866,6 +3959,7 @@ fn a_bundle_that_registers_steps_is_analyzed_rather_than_excluded() {
     analyze_root(directory.path()).stderr(predicate::str::contains("bundled.js (minified)").not());
 }
 
+/// Checks heuristic minified exclusion marks the corpus incomplete and fails strict gating.
 #[test]
 fn a_minified_exclusion_makes_the_corpus_incomplete_so_strict_gates_fail_closed() {
     // A minified exclusion is a heuristic decision, so it must never let a gate pass while a
@@ -3891,6 +3985,7 @@ fn a_minified_exclusion_makes_the_corpus_incomplete_so_strict_gates_fail_closed(
         .stderr(predicate::str::contains("corpus is incomplete"));
 }
 
+/// Checks an authored corpus without exclusions passes strict completeness without exclusion warnings.
 #[test]
 fn a_run_with_nothing_excluded_stays_complete() {
     // The opposite-answer control for the case above. Every content signal is a heuristic, so any
@@ -3914,6 +4009,7 @@ fn a_run_with_nothing_excluded_stays_complete() {
         .stderr(predicate::str::contains("corpus is incomplete").not());
 }
 
+/// Checks binary exclusion remains incomplete even when a NUL appears only in a source comment.
 #[test]
 fn a_binary_exclusion_also_makes_the_corpus_incomplete() {
     // A NUL byte is not proof that a file holds no definitions: JavaScript permits one inside a
@@ -3936,6 +4032,7 @@ fn a_binary_exclusion_also_makes_the_corpus_incomplete() {
         .stderr(predicate::str::contains("corpus is incomplete"));
 }
 
+/// Checks exclusion diagnostics bound the listed paths and count the remaining entries.
 #[test]
 fn a_long_exclusion_list_is_summarized_rather_than_printed_in_full() {
     // A repository can vendor more generated files than a diagnostic should name, so the list is
@@ -3971,6 +4068,7 @@ fn a_long_exclusion_list_is_summarized_rather_than_printed_in_full() {
 // as part of fixing the finding, and confirm it fails before the fix and passes after.
 // ===========================================================================================
 
+/// Checks ambient, configured, aliased, and forwarded registrations preserve complete handler findings across frameworks.
 #[test]
 fn regression_framework_review_fallback_registrations_preserve_outcomes() {
     for package in ["jest-cucumber", "vitest-cucumber-plugin"] {
@@ -3996,6 +4094,7 @@ fn regression_framework_review_fallback_registrations_preserve_outcomes() {
     }
 }
 
+/// Checks configured registration imports preserve assertion provenance and distinguish ordinary literal variation from trusted conflicts.
 #[test]
 fn regression_framework_review_configured_import_does_not_trust_custom_assertions() {
     for module in ["./helpers", "@jest/globals"] {
@@ -4028,6 +4127,7 @@ fn regression_framework_review_configured_import_does_not_trust_custom_assertion
     }
 }
 
+/// Checks transparent callee syntax preserves forwarding identity without accepting reversed operands or conflicting assertions.
 #[test]
 fn regression_framework_review_wrapped_callees_keep_registration_identity() {
     for callee in [
@@ -4110,6 +4210,7 @@ fn regression_framework_review_wrapped_callees_keep_registration_identity() {
     }
 }
 
+/// Checks local CommonJS registration re-exports retain both definitions and their duplicate-matcher finding.
 #[test]
 fn regression_pr56_cjs_barrel_require_resolves_registrations_end_to_end() {
     // PR #55/#56: a project-local CommonJS barrel that re-exports a registration, imported by
@@ -4135,6 +4236,7 @@ fn regression_pr56_cjs_barrel_require_resolves_registrations_end_to_end() {
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
+/// Checks unmodeled CommonJS exports warn by default and fail strict completeness.
 #[test]
 fn regression_pr55_unmodeled_cjs_export_fails_closed_end_to_end() {
     // PR #55: a CommonJS barrel whose export form the analyzer cannot model (here a call result)
@@ -4165,6 +4267,7 @@ fn regression_pr55_unmodeled_cjs_export_fails_closed_end_to_end() {
         .stderr(predicate::str::contains("corpus is incomplete"));
 }
 
+/// Checks unavailable package config bases do not erase locally declared registration path aliases.
 #[test]
 fn regression_corpus_tsconfig_package_extends_keeps_path_aliases() {
     // Real-repo corpus: 11 projects' tsconfigs extend a package base (`@tsconfig/recommended/…`,
@@ -4196,6 +4299,7 @@ fn regression_corpus_tsconfig_package_extends_keeps_path_aliases() {
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
+/// Checks workspace tsconfig fields resolve a suffixless JSON base and its registration aliases.
 #[test]
 fn regression_pr62_workspace_tsconfig_field_names_a_suffixless_base() {
     // Review finding: a workspace package's `tsconfig` field names its base the way `extends` does,
@@ -4240,6 +4344,7 @@ fn regression_pr62_workspace_tsconfig_field_names_a_suffixless_base() {
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
+/// Checks workspace config subpaths cannot escape their package to import unrelated aliases.
 #[test]
 fn regression_pr62_workspace_package_base_stays_inside_its_package() {
     // Security review finding: a known workspace package named by `extends` could reach any JSON in
@@ -4285,6 +4390,7 @@ fn regression_pr62_workspace_package_base_stays_inside_its_package() {
         ));
 }
 
+/// Checks runtime default imports shadow ambient registrations while erased type-only imports do not.
 #[test]
 fn regression_corpus_default_import_does_not_become_an_ambient_registration() {
     // A default import binds its own local name, so `Given` here is the helper module's default
@@ -4314,6 +4420,7 @@ fn regression_corpus_default_import_does_not_become_an_ambient_registration() {
     }
 }
 
+/// Checks inert CommonJS helpers stay quiet while escaped or registration-capable exports warn.
 #[test]
 fn regression_corpus_inert_commonjs_export_is_not_an_incomplete_barrel() {
     // Real-repo corpus: 27 projects required local helpers written as `module.exports = async
@@ -4369,6 +4476,7 @@ fn regression_corpus_inert_commonjs_export_is_not_an_incomplete_barrel() {
     }
 }
 
+/// Checks passing registrations into helpers warns without confusing unrelated fixture parameters.
 #[test]
 fn regression_pr63_registration_passed_to_a_helper_is_reported() {
     // Review finding: a helper that calls a function it receives is inert on the export side, so
@@ -4408,6 +4516,7 @@ fn regression_pr63_registration_passed_to_a_helper_is_reported() {
     }
 }
 
+/// Runs selected TypeScript registrations and returns the final JSONL summary, rejecting operational failures.
 fn registration_jsonl_report(root: &Path) -> Value {
     let output = Command::cargo_bin("cuke-dedup")
         .unwrap()
@@ -4432,6 +4541,7 @@ fn registration_jsonl_report(root: &Path) -> Value {
     report
 }
 
+/// Checks loader shadowing and mutation remove registration trust while unrelated and erased bindings preserve it.
 #[test]
 fn registration_loader_provenance_respects_runtime_scopes() {
     let body = "('first operation', () => { start(); finish(); }); step('second operation', () => { start(); finish(); });";
@@ -4485,6 +4595,7 @@ fn registration_loader_provenance_respects_runtime_scopes() {
     }
 }
 
+/// Checks nested registration aliases retain lexical binding identity and do not invent sibling definitions.
 #[test]
 fn registration_aliases_follow_the_nearest_runtime_binding() {
     let cases = [
@@ -4588,6 +4699,7 @@ fn registration_aliases_follow_the_nearest_runtime_binding() {
     }
 }
 
+/// Checks configured registration names retain explicit global matching while escaped values mark discovery incomplete.
 #[test]
 fn configured_registration_name_keeps_its_explicit_global_policy() {
     for configured in [false, true] {
@@ -4614,6 +4726,7 @@ fn configured_registration_name_keeps_its_explicit_global_policy() {
     }
 }
 
+/// Checks CommonJS barrel export forms require an unshadowed loader to retain registrations and completeness.
 #[test]
 fn registration_barrels_cannot_reexport_a_shadowed_loader() {
     for export in [
@@ -4641,6 +4754,7 @@ fn registration_barrels_cannot_reexport_a_shadowed_loader() {
     }
 }
 
+/// Checks uncertainty follows exported shadowed-loader values without tainting unrelated helper exports.
 #[test]
 fn shadowed_loader_barrel_completeness_follows_exported_local_values() {
     for (barrel, incomplete) in [
@@ -4661,6 +4775,7 @@ fn shadowed_loader_barrel_completeness_follows_exported_local_values() {
     }
 }
 
+/// Checks loader-based imports respect shadowing and all import forms reject conflicting assertion handler findings.
 #[test]
 fn registration_loader_import_forms_preserve_conflicting_assertions() {
     for (binding, callee, uses_loader) in [
@@ -4894,6 +5009,7 @@ fn unsupported_matchers_mark_partial_extraction_incomplete() {
     }
 }
 
+/// Checks dynamic matchers fail completeness gates and prevent baseline creation while default analysis continues.
 #[test]
 fn dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline() {
     let directory = tempfile::tempdir().unwrap();
@@ -4943,6 +5059,7 @@ fn dynamic_matcher_cannot_pass_strict_mode_or_create_a_baseline() {
         .code(2);
 }
 
+/// Checks proven inert members stay complete while mutation, escape, and unknown receivers preserve discovery uncertainty.
 #[test]
 fn inert_local_members_do_not_make_registration_discovery_incomplete() {
     let cases = [
@@ -5072,6 +5189,7 @@ fn inert_local_members_do_not_make_registration_discovery_incomplete() {
     }
 }
 
+/// Checks a project containing only a proven inert local receiver passes strict completeness.
 #[test]
 fn inert_receiver_only_project_passes_strict_mode() {
     let directory = tempfile::tempdir().unwrap();
@@ -5145,6 +5263,7 @@ const RUBY_RELEASE_FEATURE: &str =
     "Feature: release\n  Scenario: steps\n    Given same\n    Given other\n";
 const RUBY_RELEASE_STEPS: &str = "Given('same') { work(1) }\nGiven('other') { work(1) }\n";
 
+/// Runs fixed Ruby registration and feature fixtures preceded by the supplied ownership prelude.
 fn ruby_release_prelude_run(prelude: &str) -> RubyReleaseRun {
     let directory = tempfile::tempdir().unwrap();
     write(
@@ -5156,6 +5275,7 @@ fn ruby_release_prelude_run(prelude: &str) -> RubyReleaseRun {
     ruby_release_run(directory.path(), Some("*.rb"))
 }
 
+/// Checks broad patterns preserve TypeScript selection, Ruby requires suffix opt-in, and mixed explicit selections fail.
 #[test]
 fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
     let directory = tempfile::tempdir().unwrap();
@@ -5220,6 +5340,7 @@ fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
     }
 }
 
+/// Checks supported dialect keywords retain complete Ruby handler findings and unknown keywords register nothing.
 #[test]
 fn regression_ruby_release_dialect_step_keywords_register_definitions() {
     for (keywords, feature) in [
@@ -5274,6 +5395,7 @@ fn regression_ruby_release_dialect_step_keywords_register_definitions() {
     );
 }
 
+/// Checks registrar implementation changes revoke discovery trust while unrelated helpers preserve it.
 #[test]
 fn regression_ruby_release_registrar_implementation_changes_revoke_trust() {
     for (prelude, trusted) in [
@@ -5321,6 +5443,7 @@ fn regression_ruby_release_registrar_implementation_changes_revoke_trust() {
     }
 }
 
+/// Checks Ruby ownership diagnostics identify the location of each invalidating executable effect.
 #[test]
 fn regression_ruby_release_ownership_diagnostic_points_at_its_cause() {
     // `include` and subclassing run `included`/`inherited` hooks, which can modify any owner.
@@ -5370,6 +5493,7 @@ fn regression_ruby_release_ownership_diagnostic_points_at_its_cause() {
     }
 }
 
+/// Checks Ruby and TypeScript inline suppressions agree on active findings, suppressed rules, and malformed-directive exits.
 #[test]
 fn regression_ruby_release_inline_suppression_matches_typescript() {
     for (file, comment, registrations) in [

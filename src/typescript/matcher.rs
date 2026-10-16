@@ -390,6 +390,7 @@ mod tests {
         assert_eq!(rust_regex_expression("[a&&b]", "v"), None);
     }
 
+    /// Verify JavaScript string decoding accepts supported escapes and rejects malformed literals.
     #[test]
     fn javascript_string_decoding_covers_escape_forms_and_rejections() {
         assert_eq!(
@@ -417,6 +418,7 @@ mod tests {
         }
     }
 
+    /// Verify regex normalization retains semantic flags and syntax while canonicalizing supported equivalent forms.
     #[test]
     fn regex_normalization_preserves_semantics_while_canonicalizing_equivalence() {
         assert_eq!(

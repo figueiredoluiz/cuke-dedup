@@ -2841,7 +2841,7 @@
       ]
     },
     "src/typescript/source_filter/tests.rs": {
-      "sourceSha256": "2ec63dff2af41fa5380d53d4c7e8955b3d8d175d60721e5e627f8b51084c5359",
+      "sourceSha256": "918654966ad4aecc3caae5a16685e98b51a029cd580661d67e615ec05927e537",
       "tests": [
         {
           "name": "classifies_every_content_kind_discovery_can_deliver",
@@ -3014,7 +3014,7 @@
       ]
     },
     "src/typescript/ast.rs": {
-      "sourceSha256": "7c1c0039a5f766635b4cd765e99b19c7703dd949b87046634b44711312caf9b9",
+      "sourceSha256": "191bad6c1d3a2b5736fc6f3c22c8e78203056cf742af3113715768957e7ef1db",
       "tests": [
         {
           "name": "relative_specifiers_are_distinguished_from_packages_and_aliases",
@@ -3037,7 +3037,7 @@
       ]
     },
     "src/typescript/frameworks.rs": {
-      "sourceSha256": "d1381a4290cf3cbb0493649180e5fc7fc4d428f1fabc5b373bdb4dd8236f99e1",
+      "sourceSha256": "c46d605771e0942c70f8685f1e81ef4e406f0667fea35f4eba6cb1ed7120c202",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_export_kinds",
@@ -3060,7 +3060,7 @@
       ]
     },
     "src/typescript/matcher.rs": {
-      "sourceSha256": "fdbaf86eaf8e368ef9eb27727894c004cf767590804a95e275de24af5d8f7b55",
+      "sourceSha256": "c80eb95379d3bfc9d3e3e71a38d101c371db8dc2ab5f595745fcec424da9408c",
       "tests": [
         {
           "name": "unicode_sets_flag_belongs_to_matcher_identity",
@@ -3083,7 +3083,7 @@
       ]
     },
     "src/typescript/module_resolver/tests.rs": {
-      "sourceSha256": "4cec69962f348e7b8057f445bac6b0fd7e9398efaf9c3c3bc1eb00c3de4808f8",
+      "sourceSha256": "15dc5e794379fec39216597b65e087a3be509e38ac78ba3ac990ab6783cb5082",
       "tests": [
         {
           "name": "project_resolution_supports_relative_modules_and_rejects_escapes",
@@ -3256,7 +3256,7 @@
       ]
     },
     "src/typescript/project_resolution/tests.rs": {
-      "sourceSha256": "0a2520788c8b3505addae67fe8c086c6a206dfa18aad93856d53b8ab599145d9",
+      "sourceSha256": "c22c998564b53c930fe3383a494d97aa1f8f3c642d33976cb34163b6a0f1e3bf",
       "tests": [
         {
           "name": "jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas",
@@ -3441,7 +3441,7 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "dad3d2f3b85823e552b9e5a53cf8f9d2f9393b4ae9ae76ba8a3d92a8e7fcd6c6",
+      "sourceSha256": "e3a32199cb1c37152b9e33a4db4c98decf68e09dcc0ef9d3f3c15ef0d0fb523f",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -4400,7 +4400,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "7e3c935677f566c4e2416ed9e2fa51a185139f46777370237cac25c727859958",
+      "sourceSha256": "12f5b2ecca100fe71f21ad7611c47b7bf6186a038a77e57592b58da7de68d53a",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5672,7 +5672,7 @@
       ]
     },
     "tests/framework_callbacks.rs": {
-      "sourceSha256": "db33a88c3a81f1efd58d6bfc009763e9edc93b9df82c39bad707a4c5b59b7c95",
+      "sourceSha256": "581069d627a69c61c6f799e9f2d3e54f0eda061f6e342f30f065d688b61c8deb",
       "tests": [
         {
           "name": "positional_regex_steps_do_not_enter_global_usage_but_plugin_steps_do",

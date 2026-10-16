@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { releaseMatrix } from "../../scripts/release/release-matrix.mjs";
 
+/** Verify the release matrix contains eight complete targets using only the expected hosted runners. */
 test("release matrix contains only the eight validated GitHub-hosted targets", () => {
   const matrix = releaseMatrix();
   assert.equal(matrix.include.length, 8);

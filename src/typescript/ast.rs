@@ -203,6 +203,7 @@ pub(super) fn import_requires_loader(node: Node<'_>) -> bool {
 mod tests {
     use super::*;
 
+    /// Parse a TypeScript fixture and require a syntax-error-free tree.
     fn parse_typescript(source: &str) -> tree_sitter::Tree {
         let mut parser = tree_sitter::Parser::new();
         parser
@@ -215,6 +216,7 @@ mod tests {
         tree
     }
 
+    /// Verify relative module specifiers exclude packages, aliases, and dot-prefixed names.
     #[test]
     fn relative_specifiers_are_distinguished_from_packages_and_aliases() {
         for module in [".", "..", "./world", "../support/world"] {
@@ -225,6 +227,7 @@ mod tests {
         }
     }
 
+    /// Verify AST tokens distinguish erased declarations, runtime bindings, and plain star exports despite comments.
     #[test]
     fn type_only_and_star_forms_use_ast_tokens_instead_of_source_prefixes() {
         let tree = parse_typescript(
@@ -278,6 +281,7 @@ export * as runtime from "runtime";
         assert!(!is_type_only_specifier(specifiers[1]));
     }
 
+    /// Pin parser node shapes for runtime namespaces, modules, and ambient declarations.
     #[test]
     fn typescript_namespace_parse_shapes_are_pinned() {
         for (source, expected_shape) in [

@@ -912,6 +912,7 @@ fn transparent_body(call: Node<'_>, source: &str) -> bool {
         })
 }
 
+/// Parse a Ruby source fixture into a provider unit using the standard step-file path.
 #[cfg(test)]
 fn test_unit(source: &str) -> Unit {
     let mut parser = tree_sitter::Parser::new();
@@ -933,6 +934,7 @@ fn test_unit(source: &str) -> Unit {
 mod tests {
     use super::*;
 
+    /// Verify isolated constructor proofs require a closed class owner and non-escaping ordinary method use.
     #[test]
     fn isolated_owner_shapes_retain_only_closed_constructor_proofs() {
         for (declaration, use_site, expected) in [
@@ -972,6 +974,7 @@ mod tests {
         }
     }
 
+    /// Verify ambiguous or protected namespaces cannot supply forwarding proofs.
     #[test]
     fn forwarders_reject_ambiguous_and_protected_namespace_inventories() {
         let units = [test_unit("module Forward; def self.register(pattern, &handler); REGISTER.call(pattern, &handler); end; end")];
@@ -990,6 +993,7 @@ mod tests {
         }
     }
 
+    /// Verify dynamically named namespaces cannot supply forwarding proofs.
     #[test]
     fn forwarders_reject_dynamic_namespace_names() {
         let units = [test_unit("module self::Forward; def self.register(pattern, &handler); REGISTER.call(pattern, &handler); end; end")];
@@ -999,6 +1003,7 @@ mod tests {
         assert!(graph.forwarders.is_empty());
     }
 
+    /// Verify shorthand registration-alias dispatch does not gain exported provider trust.
     #[test]
     fn registration_alias_shorthand_dispatch_does_not_gain_export_trust() {
         let source = "register = method(:Given); register.('pattern') { work() }";
@@ -1017,6 +1022,7 @@ mod tests {
         assert!(result.0.is_empty());
     }
 
+    /// Verify exhausted optional proof budgets withdraw indirect definitions while preserving direct findings and reporting uncertainty.
     #[test]
     fn exhausted_optional_budget_withdraws_proofs_and_retains_direct_findings() {
         use crate::model::Rule;
@@ -1063,6 +1069,7 @@ mod tests {
         }
     }
 
+    /// Verify closed execution stops at prior or partial exhaustion and completes both callbacks when budget permits.
     #[test]
     fn closed_execution_stops_after_prior_or_partial_budget_exhaustion() {
         let source = "first = -> { Given('first') { work() } }; first.call; second = -> { Then('second') { work() } }; second.call";
@@ -1103,6 +1110,7 @@ mod tests {
         );
     }
 
+    /// Verify proof passes retain exhaustion and load-work accounting while refusing optional proofs.
     #[test]
     fn optional_passes_share_exhaustion_without_resetting_load_work() {
         let source = "module Local; def self.safe; end; end; register = method(:Given); register.call('step') { work() }";
@@ -1126,6 +1134,7 @@ mod tests {
         assert!(result.0.is_empty());
     }
 
+    /// Verify constructors used before class initialization do not gain isolated-instance proofs.
     #[test]
     fn isolated_constructor_requires_preceding_class_initialization() {
         let units = [test_unit(
@@ -1191,6 +1200,7 @@ mod tests {
         assert_eq!(completed, [true; 5]);
     }
 
+    /// Verify load-proof exhaustion leaves no cached authority and dependency-only targets require explicit marking.
     #[test]
     fn load_proof_work_exhaustion_withdraws_optional_trust() {
         let graph = Graph::new(&[], &[]);
@@ -1212,6 +1222,7 @@ mod tests {
         assert!(edge.with_dependency_only_target(true).dependency_only);
     }
 
+    /// Verify exhausted load proofs report session uncertainty without losing direct definitions unless later effects invalidate them.
     #[test]
     fn exhausted_load_proof_reports_incompleteness_without_losing_direct_definitions() {
         use crate::source_adapter::{SourceAdapter, SourceExtractionSession};
@@ -1315,6 +1326,7 @@ mod tests {
         }
     }
 
+    /// Verify a provider unlinked during reading withdraws optional proofs rather than retaining an unusable snapshot.
     #[cfg(unix)]
     #[test]
     fn provider_path_disappearing_during_read_withdraws_optional_proofs() {

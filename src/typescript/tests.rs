@@ -3,6 +3,7 @@ use crate::model::Rule;
 use std::fs;
 use std::path::PathBuf;
 
+/// Verify TypeScript control-flow kinds map to typed events and unknown kinds retain legacy spellings.
 #[test]
 fn control_flow_behavior_events_map_typescript_node_kinds_only() {
     use crate::model::{BehaviorEvent, ControlFlowOperation};
@@ -32,10 +33,12 @@ fn control_flow_behavior_events_map_typescript_node_kinds_only() {
     assert_eq!(unknown.into_legacy(), "custom_statement");
 }
 
+/// Extract definitions from a TypeScript fixture using the standard test file.
 fn extract_ts(source: &str) -> Vec<crate::model::StepDefinition> {
     extract(source, &file(SourceLanguage::TypeScript)).unwrap()
 }
 
+/// Build the standard step-file descriptor for the requested source language.
 fn file(language: SourceLanguage) -> SourceFile {
     SourceFile {
         path: PathBuf::from("features/steps/example.ts"),
@@ -43,6 +46,7 @@ fn file(language: SourceLanguage) -> SourceFile {
     }
 }
 
+/// Verify supported framework entrypoints preserve duplicate-matcher findings and attribution while unsupported paths yield none.
 #[test]
 fn framework_entrypoints_preserve_duplicate_findings_and_attribution() {
     let directory = tempfile::tempdir().unwrap();
@@ -108,6 +112,7 @@ fn framework_entrypoints_preserve_duplicate_findings_and_attribution() {
     }
 }
 
+/// Verify aliased Cucumber imports and regex registrations retain canonical names and matcher data.
 #[test]
 fn extracts_cucumber_import_alias_and_regex() {
     let source = r#"
@@ -125,6 +130,7 @@ Then(/^the user exists$/, function () { expect(this.user).toBeTruthy(); });
     assert_eq!(definitions[1].matcher, "^the user exists$");
 }
 
+/// Verify destructured Playwright factory aliases retain registration and framework provenance.
 #[test]
 fn extracts_playwright_bdd_destructuring_alias() {
     let source = r#"
@@ -138,6 +144,7 @@ Setup(`a loaded page`, async ({ page }) => { await page.goto('/'); });
     assert_eq!(definitions[0].registration, "Given");
 }
 
+/// Verify Cypress Cucumber imports attribute extracted definitions to the Cypress framework.
 #[test]
 fn extracts_cypress_cucumber_preprocessor_definitions() {
     let source = r#"
@@ -152,6 +159,7 @@ Then('the page is visible', () => cy.get('main').should('be.visible'));
         .all(|definition| definition.framework == Framework::CypressCucumber));
 }
 
+/// Verify supported legacy registration modules work through both ESM aliases and CommonJS namespaces.
 #[test]
 fn extracts_supported_legacy_cucumber_registration_modules_in_esm_and_cjs() {
     for (module, expected_framework) in [
@@ -184,6 +192,7 @@ fn extracts_supported_legacy_cucumber_registration_modules_in_esm_and_cjs() {
     }
 }
 
+/// Verify the legacy Cypress root and similar unsupported subpaths do not supply registrations.
 #[test]
 fn legacy_cypress_preprocessor_root_and_similar_prefixes_are_not_registration_modules() {
     for module in [
@@ -197,6 +206,7 @@ fn legacy_cypress_preprocessor_root_and_similar_prefixes_are_not_registration_mo
     }
 }
 
+/// Verify decorator-only `Step` and fixture exports are not invented as ordinary registration APIs.
 #[test]
 fn playwright_step_decorator_name_is_not_invented_for_other_framework_modules() {
     for source in [
@@ -212,6 +222,7 @@ fn playwright_step_decorator_name_is_not_invented_for_other_framework_modules() 
     .is_empty());
 }
 
+/// Verify aliased Playwright decorators retain matchers, metadata, and equivalent renamed method fingerprints.
 #[test]
 fn extracts_playwright_bdd_method_decorators_with_aliases_and_options() {
     let source = r#"
@@ -252,6 +263,7 @@ export class TodoSteps {
     assert!(!definitions[0].handler.source_snippet.contains("prepare"));
 }
 
+/// Verify CommonJS decorator namespaces retain Playwright registration provenance.
 #[test]
 fn extracts_playwright_bdd_method_decorators_from_cjs_namespaces() {
     let source = r#"
@@ -269,6 +281,7 @@ class WorkspaceSteps {
     assert_eq!(definitions[0].framework, Framework::PlaywrightBdd);
 }
 
+/// Verify Playwright method decorators extract without diagnostics under both JavaScript file extensions.
 #[test]
 fn extracts_playwright_bdd_method_decorators_with_javascript_grammar() {
     let source = r#"
@@ -291,6 +304,7 @@ class JavaScriptSteps {
     }
 }
 
+/// Verify unsupported CommonJS exports shadow ambient registration names rather than creating definitions.
 #[test]
 fn unsupported_cjs_destructured_exports_shadow_ambient_registration_names() {
     for source in [
@@ -307,6 +321,7 @@ Given('not a legacy Cypress registration', () => work());
     }
 }
 
+/// Verify call and decorator APIs are not interchangeable and factory results do not invent `Step`.
 #[test]
 fn call_and_decorator_registration_apis_are_not_interchangeable() {
     let decorator_as_call = r#"
@@ -342,6 +357,7 @@ Step('not exported by createBdd', () => work());
     assert!(extract_ts(unsupported_create_bdd_export).is_empty());
 }
 
+/// Verify local re-exports retain Playwright decorator registration provenance.
 #[test]
 fn project_reexports_preserve_playwright_decorator_registration_provenance() {
     let source = r#"
@@ -364,6 +380,7 @@ class WorkspaceSteps {
     assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
 }
 
+/// Verify dynamic decorator matchers warn without creating definitions.
 #[test]
 fn dynamic_playwright_bdd_decorator_matchers_warn_without_inventing_definitions() {
     let source = r#"
@@ -382,6 +399,7 @@ class DynamicSteps {
         .contains("dynamic or unsupported step matcher")));
 }
 
+/// Verify decorated pending and unimplemented methods remain trivial handlers.
 #[test]
 fn decorated_stub_methods_keep_the_existing_trivial_handler_guard() {
     let source = r#"
@@ -401,6 +419,7 @@ class PendingSteps {
         .all(|definition| definition.handler.trivial));
 }
 
+/// Verify method fingerprints preserve async, static, generator, and default-initializer semantics while tolerating parameter renames.
 #[test]
 fn decorated_method_fingerprints_include_runtime_declaration_semantics() {
     let source = r#"
@@ -464,6 +483,7 @@ class RuntimeSemantics {
     );
 }
 
+/// Verify comments between method modifiers and names do not erase async or static identity.
 #[test]
 fn decorated_method_modifiers_are_detected_across_comments() {
     let source = r#"
@@ -494,6 +514,7 @@ class CommentedModifiers {
     );
 }
 
+/// Verify missing matchers and decorators on non-method members warn without creating definitions.
 #[test]
 fn malformed_decorator_registrations_warn_without_crossing_class_members() {
     let source = r#"
@@ -516,6 +537,7 @@ class InvalidSteps {
         .contains("dynamic or unsupported step handler")));
 }
 
+/// Verify project imports and workspace exports propagate the resolved framework to definitions.
 #[test]
 fn project_resolved_registrations_propagate_framework_metadata() {
     let directory = tempfile::tempdir().unwrap();
@@ -564,6 +586,7 @@ fn project_resolved_registrations_propagate_framework_metadata() {
     }
 }
 
+/// Verify a shared extraction session keeps framework attribution local to each source file.
 #[test]
 fn mixed_framework_detection_is_scoped_to_each_source_file() {
     let directory = tempfile::tempdir().unwrap();
@@ -599,6 +622,7 @@ fn mixed_framework_detection_is_scoped_to_each_source_file() {
     }
 }
 
+/// Verify Playwright factory aliases require supported import evidence and reject same-named local factories.
 #[test]
 fn playwright_bdd_factory_requires_import_evidence_and_supports_aliases() {
     for source in [
@@ -621,6 +645,7 @@ fn playwright_bdd_factory_requires_import_evidence_and_supports_aliases() {
     assert!(unrelated.is_empty());
 }
 
+/// Verify mixed framework imports retain per-registration attribution regardless of import order.
 #[test]
 fn mixed_framework_bindings_keep_per_registration_provenance_in_any_import_order() {
     for imports in [
@@ -666,6 +691,7 @@ class MixedSteps {{
     }
 }
 
+/// Verify project path aliases resolve factory-created and renamed Playwright registrations exported by local fixtures.
 #[test]
 fn project_resolves_playwright_bdd_registrations_created_and_exported_by_local_fixture() {
     let directory = tempfile::tempdir().unwrap();
@@ -717,6 +743,7 @@ Then('the result is visible', () => verify());
         .all(|definition| definition.framework == Framework::PlaywrightBdd));
 }
 
+/// Verify resolved framework facades trust direct assertion imports across equivalent specifiers while rejecting namespace and unrelated assertions.
 #[test]
 fn resolved_framework_facades_provide_expect_import_provenance() {
     let directory = tempfile::tempdir().unwrap();
@@ -801,6 +828,7 @@ Given('an unrelated module is not assertion provenance', ({ state }) => localChe
     }
 }
 
+/// Verify CommonJS Playwright factory aliases remain trusted when their created registrations are exported locally.
 #[test]
 fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
     for (name, fixture) in [
@@ -839,6 +867,7 @@ fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
     }
 }
 
+/// Verify imported ESM and CommonJS registration aliases retain provenance through explicit local exports.
 #[test]
 fn project_resolves_reexported_runtime_registration_imports() {
     for source in [
@@ -870,6 +899,7 @@ fn project_resolves_reexported_runtime_registration_imports() {
     }
 }
 
+/// Verify chained registration and factory re-exports preserve their separate framework identities.
 #[test]
 fn project_resolves_chained_import_then_export_provenance() {
     let directory = tempfile::tempdir().unwrap();
@@ -921,6 +951,7 @@ PlaywrightGiven('through a factory chain', () => act());
     assert_eq!(extracted.definitions[1].framework, Framework::PlaywrightBdd);
 }
 
+/// Verify a recoverable module parse failure does not prevent later resolution after the source is repaired.
 #[test]
 fn module_resolution_clears_active_paths_after_recoverable_errors() {
     let directory = tempfile::tempdir().unwrap();
@@ -963,6 +994,7 @@ fn module_resolution_clears_active_paths_after_recoverable_errors() {
     assert_eq!(second.definitions[0].framework, Framework::CucumberJs);
 }
 
+/// Verify explicit trusted factory-result exports resolve while local `createBdd` lookalikes remain untrusted.
 #[test]
 fn project_resolves_explicit_exports_but_rejects_untrusted_create_bdd_lookalikes() {
     let directory = tempfile::tempdir().unwrap();
@@ -1009,6 +1041,7 @@ export const { Given } = createBdd();
     }
 }
 
+/// Verify transparent wrappers around factory results preserve registration provenance through star exports.
 #[test]
 fn project_resolves_wrapped_create_bdd_results_through_star_exports() {
     let directory = tempfile::tempdir().unwrap();
@@ -1047,6 +1080,7 @@ export const { Given } = (createBdd(test) as ReturnType<typeof createBdd>)!;
     assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
 }
 
+/// Verify type-only factory imports cannot supply runtime registrations and produce unresolved diagnostics.
 #[test]
 fn project_does_not_trust_type_only_create_bdd_imports() {
     let directory = tempfile::tempdir().unwrap();
@@ -1081,6 +1115,7 @@ export const { Given } = Factory(test);
         .contains("could not be resolved"));
 }
 
+/// Verify alpha fingerprints tolerate local renames while preserving opposite assertion polarity.
 #[test]
 fn alpha_fingerprint_ignores_local_renames_but_not_opposite_assertions() {
     let first = extract(
@@ -1111,6 +1146,7 @@ fn alpha_fingerprint_ignores_local_renames_but_not_opposite_assertions() {
     );
 }
 
+/// Verify source snippets normalize line endings and obey character and byte-preserving truncation boundaries.
 #[test]
 fn handler_source_snippets_are_normalized_and_bounded() {
     let source = format!("  {}\r\n", "界".repeat(MAX_HANDLER_SNIPPET_CHARS + 1));
@@ -1140,6 +1176,7 @@ fn handler_source_snippets_are_normalized_and_bounded() {
     }
 }
 
+/// Verify valid inline suppressions retain rule scope and malformed directives report specific errors.
 #[test]
 fn extracts_rule_scoped_inline_suppressions_and_rejects_malformed_directives() {
     let extracted = extract_detailed(
@@ -1177,6 +1214,7 @@ When('empty reason', () => finalAction());
         .contains("reason must not be empty"));
 }
 
+/// Verify oversized suppression reasons are rejected with the configured length diagnostic.
 #[test]
 fn rejects_oversized_inline_suppression_reasons() {
     let reason = "x".repeat(crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS + 1);
@@ -1194,6 +1232,7 @@ fn rejects_oversized_inline_suppression_reasons() {
         .contains("512-character limit"));
 }
 
+/// Verify structural fingerprints mask string values while alpha fingerprints retain them.
 #[test]
 fn structural_fingerprint_masks_string_literal_contents() {
     let first = extract(
@@ -1215,6 +1254,7 @@ fn structural_fingerprint_masks_string_literal_contents() {
     assert_eq!(first.handler.structural, second.handler.structural);
 }
 
+/// Verify behavior signatures canonicalize call receivers without adding `await` events.
 #[test]
 fn behavior_signatures_canonicalize_calls_without_treating_await_as_behavior() {
     struct Case {
@@ -1268,6 +1308,7 @@ fn behavior_signatures_canonicalize_calls_without_treating_await_as_behavior() {
     }
 }
 
+/// Verify parameter renames preserve alpha fingerprints and canonical receiver-call signatures.
 #[test]
 fn behavior_signatures_alpha_normalize_declared_receivers() {
     let definitions = extract_ts(
@@ -1293,6 +1334,7 @@ fn behavior_signatures_alpha_normalize_declared_receivers() {
     assert_eq!(definitions[2].handler.behavior_signature, ["call:v0#goto"]);
 }
 
+/// Verify assertion events retain subject identity, polarity, and expected-value differences.
 #[test]
 fn behavior_signatures_preserve_assertion_subjects_and_polarity() {
     let definitions = extract_ts(
@@ -1338,6 +1380,7 @@ Then('status inactive', async ({ page }) => {
     assert!(definitions[3].handler.behavior_signature[0].contains(".not#toHaveClass"));
 }
 
+/// Verify equivalent local assertion-subject renames preserve behavior signatures.
 #[test]
 fn behavior_signatures_still_alpha_normalize_assertion_subject_locals() {
     let definitions = extract_ts(
@@ -1360,6 +1403,7 @@ Then('second assertion', async ({ page }) => {
     );
 }
 
+/// Verify safe local constants resolve assertion subjects and expected values without erasing meaningful differences.
 #[test]
 fn assertion_values_resolve_safe_local_constant_initializers() {
     let definitions = extract_ts(
@@ -1416,6 +1460,7 @@ Then('chained idle constant', ({ state }) => {
     );
 }
 
+/// Verify supported TypeScript expression wrappers preserve assertion-chain recognition.
 #[test]
 fn assertion_chains_unwrap_typescript_expression_wrappers() {
     for source in [
@@ -1435,6 +1480,7 @@ fn assertion_chains_unwrap_typescript_expression_wrappers() {
     }
 }
 
+/// Verify assertion trust and constant resolution respect nested, namespace, module, and property-name scope boundaries.
 #[test]
 fn assertion_review_scope_boundaries() {
     for body in [
@@ -1493,6 +1539,7 @@ fn assertion_review_scope_boundaries() {
     }
 }
 
+/// Verify soft and polled assertions retain typed events while incomplete chains fall back to call events.
 #[test]
 fn behavior_signatures_cover_supported_expect_variants_and_incomplete_chains() {
     let definitions = extract_ts(
@@ -1531,6 +1578,7 @@ Then('missing assertion subject', () => {
     assert!(!definition.handler.behavior_signature.is_empty());
 }
 
+/// Verify trusted ESM and CommonJS assertion imports canonicalize aliases and namespaces.
 #[test]
 fn behavior_signatures_resolve_trusted_expect_imports_and_requires() {
     let cases = [
@@ -1572,6 +1620,7 @@ Then('default assertion import', ({ state }) => check(state).toBe('ready'));
     }
 }
 
+/// Verify assertion aliases imported from unrelated modules retain generic call events.
 #[test]
 fn behavior_signatures_do_not_trust_expect_aliases_from_unrelated_modules() {
     let definition = extract_ts(
@@ -1588,6 +1637,7 @@ Then('unrelated assertion alias', ({ state }) => check(state).toBe('ready'));
     );
 }
 
+/// Verify runtime declarations, assignments, parameters, and lexical bindings withdraw ambient assertion trust.
 #[test]
 fn runtime_expect_bindings_shadow_the_ambient_assertion_factory() {
     let cases = [
@@ -1707,6 +1757,7 @@ Then('shadowed by runtime enum', ({ state }) => expect(state).toBe('ready'));
     }
 }
 
+/// Verify runtime namespaces shadow assertion factories while ambient declarations leave runtime trust intact.
 #[test]
 fn typescript_runtime_and_erased_declarations_have_distinct_assertion_shadowing() {
     let cases = [
@@ -1756,6 +1807,7 @@ Then('declared constant is erased', ({ state }) => expect(state).toBe('ready'));
     }
 }
 
+/// Verify namespaces named `expect` shadow the ambient callable while retaining trusted `.expect` properties.
 #[test]
 fn assertion_namespaces_named_expect_do_not_restore_the_callable_ambient() {
     for source in [
@@ -1793,6 +1845,7 @@ Then('CJS namespace property remains trusted', ({ state }) => expect.expect(stat
     }
 }
 
+/// Verify helper-local shadows leave assertion provenance intact in other handlers.
 #[test]
 fn handler_local_shadows_do_not_disable_assertions_in_other_handlers() {
     let cases = [
@@ -1836,6 +1889,7 @@ Then('ambient assertion remains trusted elsewhere', ({ state }) => expect(state)
     }
 }
 
+/// Verify a nested helper parameter cannot suppress an outer assertion in the same handler.
 #[test]
 fn nested_scope_shadows_do_not_disable_outer_assertions_in_the_same_handler() {
     let definition = extract_ts(
@@ -1859,6 +1913,7 @@ Then('outer assertion remains trusted', ({ state }) => {
     );
 }
 
+/// Verify property writes and local assignments preserve assertion provenance while unresolved outer mutations withdraw it.
 #[test]
 fn property_and_lexically_resolved_assignments_preserve_assertion_provenance() {
     let cases = [
@@ -1921,6 +1976,7 @@ Then('unresolved outer mutation is conservative', ({ state }) => expect(state).t
         .all(|event| !event.starts_with("assert:")));
 }
 
+/// Verify JavaScript `using` loop bindings shadow the ambient assertion factory.
 #[test]
 fn javascript_using_loop_bindings_shadow_ambient_expect() {
     let source = r#"
@@ -1937,6 +1993,7 @@ Then('using loop binding', ({ state, resources }) => {
         .all(|event| !event.starts_with("assert:")));
 }
 
+/// Verify class names shadow assertions within methods and only named class expressions preserve the outer ambient factory.
 #[test]
 fn runtime_class_names_shadow_ambient_expect_only_inside_the_class() {
     for class in [
@@ -1979,6 +2036,7 @@ Given('ambient remains trusted outside the class', ({{ state }}) => expect(state
     }
 }
 
+/// Verify block declarations and class-static bindings do not leak assertion shadowing into outer scopes.
 #[test]
 fn block_and_class_static_bindings_stay_within_their_lexical_scopes() {
     let cases = [
@@ -2015,6 +2073,7 @@ Then('class static var stays local', ({ state }) => {
     }
 }
 
+/// Verify method names do not create lexical bindings that shadow assertion factories in their bodies.
 #[test]
 fn method_names_do_not_shadow_assertion_bindings_inside_their_bodies() {
     let definitions = extract_ts(
@@ -2035,6 +2094,7 @@ class Assertions {
         .any(|event| event.starts_with("assert:")));
 }
 
+/// Verify untrusted `expect` calls retain generic signatures even when expected literals differ.
 #[test]
 fn shadowed_expect_calls_retain_generic_behavior_comparison() {
     let definitions = extract_ts(
@@ -2057,6 +2117,7 @@ Then('the local state shows the final condition', ({ state }) => expect(state).t
         .all(|event| !event.starts_with("assert:")));
 }
 
+/// Verify trusted runtime assertion imports and erased type-only imports preserve assertion semantics.
 #[test]
 fn trusted_and_type_only_expect_imports_preserve_assertion_semantics() {
     for source in [
@@ -2096,6 +2157,7 @@ Then('TypeScript import require binding', ({ state }) => check(state).toBe('read
     }
 }
 
+/// Verify ambient `expect` and `require` declarations do not replace runtime assertion provenance.
 #[test]
 fn ambient_variable_declarations_do_not_shadow_runtime_assertion_provenance() {
     for source in [
@@ -2119,6 +2181,7 @@ Then('CommonJS expect remains available', ({ state }) => expect(state).toBe('rea
     }
 }
 
+/// Verify decorated method events include method metadata and preserve conflicting assertion values.
 #[test]
 fn decorated_method_metadata_does_not_inflate_executable_behavior_similarity() {
     let definitions = extract_ts(
@@ -2147,6 +2210,7 @@ class StatusSteps {
     );
 }
 
+/// Verify declaration order, rather than identifier spelling, determines alpha-normalized parameter identity.
 #[test]
 fn alpha_fingerprints_assign_identifiers_by_declaration_order() {
     let definitions = extract_ts(
@@ -2165,6 +2229,7 @@ fn alpha_fingerprints_assign_identifiers_by_declaration_order() {
     );
 }
 
+/// Verify defaulted destructured parameter renames preserve initializer calls and nontrivial behavior.
 #[test]
 fn defaulted_destructured_parameters_preserve_initializer_behavior() {
     let definitions = extract_ts(
@@ -2185,6 +2250,7 @@ fn defaulted_destructured_parameters_preserve_initializer_behavior() {
         .all(|definition| !definition.handler.trivial));
 }
 
+/// Verify dynamic computed callees retain structural call-event fallback.
 #[test]
 fn computed_callees_keep_the_structural_fallback() {
     let definition = extract(
@@ -2197,6 +2263,7 @@ fn computed_callees_keep_the_structural_fallback() {
     assert!(definition.handler.behavior_signature[0].starts_with("call:(subscript_expression"));
 }
 
+/// Verify unrelated member calls and destructured imports do not create step definitions.
 #[test]
 fn ignores_unrelated_member_calls_and_destructuring_aliases() {
     let source = r#"
@@ -2209,6 +2276,7 @@ G('also not a step', () => {});
         .is_empty());
 }
 
+/// Verify extraction retains regex flags and decodes JavaScript hexadecimal and Unicode matcher escapes.
 #[test]
 fn retains_regex_flags_and_decodes_javascript_hex_escapes() {
     let definitions = extract(
@@ -2221,6 +2289,7 @@ fn retains_regex_flags_and_decodes_javascript_hex_escapes() {
     assert_eq!(definitions[1].matcher, "letter A and 😀");
 }
 
+/// Verify raw regex flags are retained while matcher identity includes only canonical semantic flags.
 #[test]
 fn preserves_all_flags_but_normalizes_only_semantic_regex_flags() {
     let definition = extract(
@@ -2233,6 +2302,7 @@ fn preserves_all_flags_but_normalizes_only_semantic_regex_flags() {
     assert_eq!(definition.normalized_matcher, "[regex-flags:msu] ^VALUE$");
 }
 
+/// Verify same-named handlers in separate files resolve to their own comparable bodies.
 #[test]
 fn resolves_named_handlers_to_bodies_without_cross_file_name_collisions() {
     let first = extract(
@@ -2263,6 +2333,7 @@ fn resolves_named_handlers_to_bodies_without_cross_file_name_collisions() {
     );
 }
 
+/// Verify binding a resolved named handler preserves its comparable body and definition.
 #[test]
 fn resolves_bound_named_handlers_without_dropping_the_definition() {
     let definition = extract(
@@ -2275,6 +2346,7 @@ fn resolves_bound_named_handlers_without_dropping_the_definition() {
     assert!(definition.handler.source_snippet.contains("doWork"));
 }
 
+/// Verify bound arguments affect handler identity while equal bindings preserve it and appear in snippets.
 #[test]
 fn bound_arguments_are_part_of_handler_identity() {
     let definitions = extract(
@@ -2302,6 +2374,7 @@ Given('another one', handler.bind(null, 1));
         .contains("bound with (null, 1)"));
 }
 
+/// Verify imported unresolved handlers remain non-comparable and nontrivial.
 #[test]
 fn unresolved_handler_references_are_not_comparable() {
     let definition = extract(
@@ -2314,6 +2387,7 @@ fn unresolved_handler_references_are_not_comparable() {
     assert!(!definition.handler.trivial);
 }
 
+/// Verify named and inline pending, return, await, promise, and void stubs are trivial while real work is not.
 #[test]
 fn recognizes_resolved_and_inline_stub_handler_shapes() {
     let definitions = extract(
@@ -2348,6 +2422,7 @@ Given('real handler', () => doWork());
     assert!(!definitions[8].handler.trivial);
 }
 
+/// Verify ordinary work, domain errors, and non-pending return values are not marked trivial by text similarity.
 #[test]
 fn real_handlers_with_stub_like_text_remain_comparable() {
     let definitions = extract(
@@ -2366,6 +2441,7 @@ Given('domain error', () => { throw new DomainError(order.id); });
         .all(|definition| !definition.handler.trivial));
 }
 
+/// Verify structural template fingerprints preserve differences in interpolation behavior.
 #[test]
 fn structural_templates_preserve_substitution_behavior() {
     let definitions = extract(
@@ -2382,6 +2458,7 @@ Given('order total', () => render(`${order.subtotal + order.tax}`));
     );
 }
 
+/// Verify lowercase registrations require supported runtime import evidence rather than names in comments or strings.
 #[test]
 fn lowercase_registrations_require_supported_import_evidence() {
     let unrelated = extract(
@@ -2412,6 +2489,7 @@ given('a real step', () => work());
     }
 }
 
+/// Verify regex normalization preserves anchors, alternatives, backreferences, classes, and meaningful group structure.
 #[test]
 fn regular_expression_normalization_preserves_matching_semantics() {
     assert_eq!(
@@ -2445,6 +2523,7 @@ fn regular_expression_normalization_preserves_matching_semantics() {
     assert_eq!(normalize_regular_expression(r"[\s+]"), r"[\s+]");
 }
 
+/// Verify regex flag encoding cannot collide with literal Cucumber matcher text.
 #[test]
 fn regex_flag_encoding_cannot_collide_with_literal_matcher_text() {
     let definitions = extract(
@@ -2461,6 +2540,7 @@ Given('a step here /i', () => second());
     );
 }
 
+/// Verify supported registration import forms, destructuring, and alias chains yield definitions.
 #[test]
 fn resolves_supported_registration_import_shapes_and_alias_chains() {
     for source in [
@@ -2474,6 +2554,7 @@ fn resolves_supported_registration_import_shapes_and_alias_chains() {
     }
 }
 
+/// Verify erased or shadowed registration bindings do not yield phantom definitions.
 #[test]
 fn runtime_absent_and_shadowed_registrations_are_ignored() {
     for source in [
@@ -2490,6 +2571,7 @@ fn runtime_absent_and_shadowed_registrations_are_ignored() {
     }
 }
 
+/// Verify type-only imports avoid module resolution and leave ambient runtime registrations available.
 #[test]
 fn type_only_imports_neither_resolve_modules_nor_shadow_runtime_globals() {
     let directory = tempfile::tempdir().unwrap();
@@ -2526,6 +2608,7 @@ Given('ambient runtime registration', () => work());
     assert_eq!(extracted.definitions[0].framework, Framework::Unknown);
 }
 
+/// Verify side-effect framework imports supply framework metadata to ambient registrations.
 #[test]
 fn side_effect_framework_imports_preserve_runtime_framework_metadata() {
     for (module, expected) in [
@@ -2543,6 +2626,7 @@ fn side_effect_framework_imports_preserve_runtime_framework_metadata() {
     }
 }
 
+/// Verify unsupported regexes and malformed string matchers report distinct diagnostics while retaining extractable definitions.
 #[test]
 fn reports_unsupported_regexes_and_malformed_string_matchers() {
     let extracted = extract_detailed(
@@ -2574,6 +2658,7 @@ Given('valid step', () => valid());
     }));
 }
 
+/// Verify supported regex patterns and flags remain statically supported under resource limits.
 #[test]
 fn supported_regexes_remain_authoritative_under_resource_limits() {
     for (matcher, flags) in [
@@ -2591,6 +2676,7 @@ fn supported_regexes_remain_authoritative_under_resource_limits() {
 
 // Canary for valid constructs outside the pinned grammars. When an upgrade accepts a row, move its
 // expectation to the parseable controls rather than deleting coverage. Every case is synthetic.
+/// Verify known grammar limitations emit one incompleteness warning while supported control syntax stays clean.
 #[test]
 fn grammar_limitations_stay_incomplete() {
     let controls = [
@@ -2657,6 +2743,7 @@ fn grammar_limitations_stay_incomplete() {
     }
 }
 
+/// Verify deeply nested handler expressions still extract a definition without stack failure.
 #[test]
 fn deeply_nested_handlers_do_not_use_the_process_stack() {
     let depth = 8_000;
@@ -2669,6 +2756,7 @@ fn deeply_nested_handlers_do_not_use_the_process_stack() {
     assert_eq!(extracted.definitions.len(), 1);
 }
 
+/// Verify source columns count Unicode code points rather than UTF-8 bytes.
 #[test]
 fn source_locations_count_unicode_code_points() {
     let definition = extract(
@@ -2680,6 +2768,7 @@ fn source_locations_count_unicode_code_points() {
     assert_eq!(definition.location.column, 23);
 }
 
+/// Verify generator handlers extract as comparable definitions.
 #[test]
 fn generator_handlers_are_extracted_and_comparable() {
     let definitions = extract(
@@ -2691,6 +2780,7 @@ fn generator_handlers_are_extracted_and_comparable() {
     assert!(definitions[0].handler.comparable);
 }
 
+/// Verify dynamic matchers and unsupported handlers remain visible through diagnostics and non-comparable definitions where retained.
 #[test]
 fn dynamic_matchers_and_handlers_emit_diagnostics_instead_of_disappearing() {
     let extracted = extract_detailed(
@@ -2710,6 +2800,7 @@ fn dynamic_matchers_and_handlers_emit_diagnostics_instead_of_disappearing() {
         .any(|diagnostic| diagnostic.message.contains("step handler")));
 }
 
+/// Verify unresolved registration-shaped calls report incompleteness without flagging ordinary helpers or promise continuations.
 #[test]
 fn unresolved_registration_shaped_calls_are_visible_without_flagging_helpers() {
     let cases = [
@@ -2752,6 +2843,7 @@ fn unresolved_registration_shaped_calls_are_visible_without_flagging_helpers() {
     }
 }
 
+/// Verify unresolved registration diagnostics identify the imported module for direct and namespace calls.
 #[test]
 fn unresolved_registration_imports_name_the_module_in_diagnostics() {
     for source in [
@@ -2775,6 +2867,7 @@ fn unresolved_registration_imports_name_the_module_in_diagnostics() {
     }
 }
 
+/// Verify an unsupported matcher on a resolved registration reports matcher incompleteness rather than unresolved provenance.
 #[test]
 fn resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved() {
     let extracted = extract_detailed(
@@ -2797,6 +2890,7 @@ fn resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved() 
         .starts_with(UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX)));
 }
 
+/// Verify unresolved calls retain completeness diagnostics beside successfully extracted definitions.
 #[test]
 fn unresolved_calls_remain_visible_when_the_same_file_yields_definitions() {
     let extracted = extract_detailed(
@@ -2821,6 +2915,7 @@ Then('invisible step', () => invisible());
     assert!(completeness[0].message.contains("1 call(s)"));
 }
 
+/// Verify transparent callee wrappers and decoded static subscripts extract registrations without completeness warnings.
 #[test]
 fn extracts_registrations_through_transparent_wrappers_and_static_subscripts() {
     let extracted = extract_detailed(
@@ -2857,6 +2952,7 @@ bdd['Th\u0065n']('escaped subscript', () => eighth());
         .any(crate::source_adapter::is_completeness_diagnostic));
 }
 
+/// Verify unresolved static-subscript registrations contribute completeness diagnostics beside valid definitions.
 #[test]
 fn static_subscript_registrations_are_included_in_completeness_diagnostics() {
     let extracted = extract_detailed(
@@ -2880,6 +2976,7 @@ custom['Then']('invisible step', () => invisible());
     assert_eq!(completeness[0].location.line, 5);
 }
 
+/// Verify dynamic subscripts and lowercase promise-style calls do not establish registration evidence.
 #[test]
 fn computed_subscripts_and_lowercase_then_calls_are_not_registration_evidence() {
     let extracted = extract_detailed(
@@ -2895,6 +2992,7 @@ fn computed_subscripts_and_lowercase_then_calls_are_not_registration_evidence() 
         .any(crate::source_adapter::is_completeness_diagnostic));
 }
 
+/// Verify deeply parenthesized registration callees still extract the expected matcher.
 #[test]
 fn deeply_parenthesized_registration_callees_are_unwrapped_iteratively() {
     let depth = 1_000;
@@ -2909,6 +3007,7 @@ fn deeply_parenthesized_registration_callees_are_unwrapped_iteratively() {
     assert_eq!(extracted.definitions[0].matcher, "deep");
 }
 
+/// Verify simple positional wrappers retain registrations while reordered, rewritten, deferred, conditional, and scoped forms are not inferred.
 #[test]
 fn positional_registration_wrappers_are_inferred_but_reordering_ones_are_not() {
     let inferred = extract_ts(
@@ -2980,6 +3079,7 @@ step("wrapped step", () => work());"#,
     }
 }
 
+/// Verify wrapper chains resolve to registrations while self-recursive lookalikes remain unresolved.
 #[test]
 fn wrapper_inference_follows_chains_without_looping_on_self_reference() {
     let chained = extract_ts(
@@ -3000,6 +3100,7 @@ step("looping step", () => work());"#,
     .is_empty());
 }
 
+/// Verify reverse-declared wrapper chains resolve at both small and large depths.
 #[test]
 fn wrapper_inference_resolves_long_chains_without_quadratic_work() {
     // Wrappers form a forward graph. Walking it from the known registrations visits each wrapper
@@ -3022,6 +3123,7 @@ fn wrapper_inference_resolves_long_chains_without_quadratic_work() {
     assert_eq!(extract_ts(&chain(4000)).len(), 1);
 }
 
+/// Verify runtime aliases and positional wrappers retain registrations while erased bindings and untrusted factories do not.
 #[test]
 fn registration_discovery_covers_static_alias_and_shadowing_forms() {
     let source = r#"
@@ -3080,6 +3182,7 @@ ExportedSpecifierTypeThen('exported specifier type only', () => work());
     assert!(untrusted_create_bdd.is_empty());
 }
 
+/// Verify configured assertion modules grant trust to direct and namespace imports that remain untrusted by default.
 #[test]
 fn configured_assertion_modules_are_trusted_in_every_import_form() {
     let configured = vec!["./fixtures".to_owned()];
@@ -3119,6 +3222,7 @@ fn configured_assertion_modules_are_trusted_in_every_import_form() {
     }
 }
 
+/// Verify configured registration names recognize otherwise uninferred wrapper calls once.
 #[test]
 fn configured_registration_names_override_inference_without_duplicating_known_aliases() {
     let configured = vec!["step".to_owned(), "Given".to_owned()];

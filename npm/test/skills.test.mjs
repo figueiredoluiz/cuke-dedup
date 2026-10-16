@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+/** Verify a skill with CRLF frontmatter and prose passes validation and is counted. */
 test("skill validation accepts Windows CRLF line endings", async () => {
   const skillsRoot = await mkdtemp(join(tmpdir(), "cuke-dedup-skills-"));
   const skillRoot = join(skillsRoot, "example-skill");

@@ -7,6 +7,7 @@ import {
   supportsTrustedPublishing,
 } from "../../scripts/release/check-npm-trusted-publishing.mjs";
 
+/** Verify npm versions at or above the trusted-publishing minimum pass and older or malformed versions fail. */
 test("trusted publishing enforces npm's documented minimum", () => {
   for (const version of ["11.5.1", "11.6.0", "12.0.0", "12.0.2-beta.1"]) {
     assert.equal(supportsTrustedPublishing(version), true, version);
@@ -17,6 +18,7 @@ test("trusted publishing enforces npm's documented minimum", () => {
   assert.equal(MINIMUM_TRUSTED_PUBLISHING_NPM, "11.5.1");
 });
 
+/** Verify installed npm validation returns supported versions and propagates unsupported-version, command, and spawn failures. */
 test("installed npm validation fails closed on command and version errors", () => {
   assert.equal(
     installedNpmVersion(() => ({ status: 0, stdout: "11.5.1\n", stderr: "" })),
