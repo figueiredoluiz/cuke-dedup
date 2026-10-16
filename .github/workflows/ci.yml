@@ -316,6 +316,10 @@ jobs:
         run: CUKE_DEDUP_MATCHER_WINDOW=1 node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
       - name: Check Ruby step keywords against the Gherkin dialect data
         run: node scripts/check/check-ruby-step-keywords.mjs
+      # Blocking, so a Rust test added or renamed without a Ruby decision fails its own PR instead
+      # of the next one.
+      - name: Check the Rust test census
+        run: node scripts/check/check-ruby-parity.mjs --inventory-only
       - name: Guard Ruby corpus regressions
         env:
           CUKE_DEDUP_RUBY_PARITY_REPORT: ${{ runner.temp }}/ruby-parity.json

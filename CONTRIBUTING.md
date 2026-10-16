@@ -79,7 +79,7 @@ Ruby step keywords come from the Gherkin dialect data pinned by `Cargo.lock`. Af
 Corpus conformance compares language-neutral counts, completeness, strict exits and finding ownership. Each language lane maps source names explicitly. Desired outcomes, known implementation gaps and justified language differences remain separate:
 
 - `check-ruby-parity.mjs --regression` and `check-language-parity.mjs --regression` block CI when an observed outcome changes. Closing a known gap also changes an outcome, so update the recorded digest in the same change.
-- `check-ruby-parity.mjs` without `--regression` is the completion command. It also checks the unit-test census, which pins every Rust test file. CI reports it without blocking; a green regression gate does not imply Ruby completion.
+- `check-ruby-parity.mjs` without `--regression` is the completion command. CI reports it without blocking; a green regression gate does not imply Ruby completion. Its unit-test census (`--inventory-only`) blocks CI: every Rust test name needs a Ruby mapping in the change that adds or renames it.
 
 The Python packaging utility intentionally uses only the standard library to create deterministic `tar.gz` and ZIP archives. Node.js owns npm manifest/version validation, while Rust owns the analyzer and CLI.
 
