@@ -53,15 +53,18 @@ pub(super) struct AssertionBindings {
 }
 
 impl AssertionProviders {
+    /// Create an incomplete assertion-provider snapshot without granting provider trust.
     pub(super) fn unavailable() -> Self {
         Self {
             incomplete: true,
             ..Self::default()
         }
     }
+    /// Report whether configured assertion-provider resolution was incomplete.
     pub fn incomplete(&self) -> bool {
         self.incomplete
     }
+    /// Load configured assertion providers with test-supplied limits, returning incomplete when loading exceeds its budget.
     #[cfg(test)]
     fn collect_with_budget(
         files: &[SourceFile],
@@ -78,6 +81,7 @@ impl AssertionProviders {
         Ok(Self::from_units(&loaded, edges, configured, budget.2))
     }
 
+    /// Collect configured assertion proofs with the supplied work budget and no registration proofs.
     pub(super) fn from_units(
         loaded: &[super::providers::Unit],
         edges: &[SourceDependency],
@@ -292,6 +296,7 @@ impl AssertionProviders {
         result
     }
 
+    /// Borrow the advisory diagnostics produced while resolving assertion providers.
     pub(super) fn advisories(&self) -> &[SourceAdvisory] {
         &self.advisories
     }
@@ -331,6 +336,7 @@ fn configured_load(node: Node<'_>, source: &str, configured: &[String]) -> bool 
             })
 }
 
+/// Recognize DSL replacement and reflective method operations that prevent a closed assertion proof.
 fn reflective_call(node: Node<'_>, source: &str) -> bool {
     super::may_replace_dsl(node, source)
         || (node.kind() == "call"
@@ -349,6 +355,7 @@ fn reflective_call(node: Node<'_>, source: &str) -> bool {
             }))
 }
 
+/// Recognize a sole self.expect factory declaration with no nested definitions or reflective operations.
 fn closed_factory(module: Node<'_>, source: &str) -> bool {
     let Some(body) = module.child_by_field_name("body") else {
         return false;

@@ -65,6 +65,7 @@ impl AdapterSessionState for RubySession {
 }
 impl StatefulSourceAdapter for RubyAdapter {
     type State = RubySession;
+    /// Expand selected Ruby files through the bounded local dependency resolver.
     fn discover_dependencies(
         config: &crate::config::Config,
         excludes: &globset::GlobSet,
@@ -75,23 +76,29 @@ impl StatefulSourceAdapter for RubyAdapter {
 }
 
 impl SourceAdapter for RubyAdapter {
+    /// Return the adapter identifier for Cucumber Ruby.
     fn name(&self) -> &'static str {
         "cucumber-ruby"
     }
+    /// Identify extracted definitions as Ruby source.
     fn language(&self) -> SourceLanguage {
         SourceLanguage::Ruby
     }
+    /// Extract a standalone file and retain unknown usage when dependency diagnostics remain.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction> {
         let (mut extraction, _) = extract(source, file)?;
         mark_unresolved_dependency_usage(&mut extraction);
         Ok(extraction)
     }
+    /// Require explicit opt-in for experimental Ruby discovery.
     fn discover_by_default(&self) -> bool {
         false
     }
+    /// Enable accounting for Ruby step delegation and unresolved dynamic usage.
     fn supports_indirect_usage(&self) -> bool {
         true
     }
+    /// Merge source parameter types with configured patterns using Ruby registry rules.
     fn resolve_parameter_types(
         &self,
         declarations: Vec<crate::source_adapter::SourceParameterType>,
@@ -257,6 +264,7 @@ fn proof_limit_reason() -> String {
     )
 }
 
+/// Mark indirect usage unknown when unresolved dependencies may delegate to local steps.
 fn mark_unresolved_dependency_usage(extraction: &mut Extraction) {
     if extraction
         .diagnostics
@@ -854,6 +862,7 @@ fn has_operands(call: Node<'_>) -> bool {
         })
 }
 
+/// Recognize self after unwrapping the final value of parenthesized statements.
 fn is_self_receiver(mut node: Node<'_>) -> bool {
     while node.kind() == "parenthesized_statements" {
         let mut cursor = node.walk();
@@ -869,6 +878,7 @@ fn is_self_receiver(mut node: Node<'_>) -> bool {
     node.kind() == "self"
 }
 
+/// Yield call nodes paired with their source-spelled method names.
 fn named_calls<'a>(
     nodes: &'a [Node<'a>],
     source: &'a str,
@@ -882,6 +892,7 @@ fn named_calls<'a>(
     })
 }
 
+/// Collect literal self step calls and mark unresolved delegation or reflection as unknown.
 fn indirect_usage(
     nodes: &[Node<'_>],
     source: &str,
@@ -946,6 +957,7 @@ fn indirect_usage(
     usage
 }
 
+/// Decode a simple symbol or non-interpolated string into a method name.
 fn static_method_name(node: Node<'_>, source: &str) -> Option<String> {
     match node.kind() {
         "simple_symbol" => text(node, source).strip_prefix(':').map(str::to_owned),
@@ -960,6 +972,7 @@ fn static_method_name(node: Node<'_>, source: &str) -> Option<String> {
     }
 }
 
+/// Recognize calls that define, alias, or remove methods.
 fn method_table_mutator(name: &str) -> bool {
     matches!(
         name,
@@ -997,6 +1010,7 @@ fn protected_method(name: &str) -> bool {
         )
 }
 
+/// Detect calls that may replace protected DSL methods, treating unknown dispatch conservatively.
 fn may_replace_dsl(node: Node<'_>, source: &str) -> bool {
     let Some(method) = node.child_by_field_name("method") else {
         return false;
@@ -1119,15 +1133,18 @@ fn deferring_dsl_method(name: &str) -> bool {
     registration(name) || load_phase::scenario_hook(name)
 }
 
+/// Recognize the internal registrar and supported localized step keywords.
 fn registration(name: &str) -> bool {
     name == "register_rb_step_definition"
         || step_keywords::STEP_KEYWORDS.binary_search(&name).is_ok()
 }
 
+/// Borrow the source slice covered by a syntax node.
 fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
 }
 
+/// Collect the root and its named descendants with an iterative traversal.
 fn descendants(root: Node<'_>) -> Vec<Node<'_>> {
     let mut result = Vec::new();
     let mut pending = vec![root];
@@ -1174,6 +1191,7 @@ fn invalid_unicode_escape(raw: &str) -> bool {
     unicode_escape(&mut chars).is_none() || chars.next().is_some()
 }
 
+/// Extract a literal matcher and inline or resolved block handler from a supported registration.
 fn registration_parts<'a>(
     node: Node<'a>,
     source: &str,
@@ -1219,6 +1237,7 @@ fn registration_parts<'a>(
     }
 }
 
+/// Split slash or brace-delimited Ruby regex literals into a pattern and sorted unique flags.
 fn regex_literal(raw: &str) -> Option<(String, String)> {
     let (start, delimiter) = if raw.starts_with('/') {
         (1, '/')
@@ -1238,6 +1257,7 @@ fn regex_literal(raw: &str) -> Option<(String, String)> {
     })
 }
 
+/// Decode supported quoted-string escapes, returning None for unsupported or incomplete literals.
 fn literal_string(raw: &str) -> Option<String> {
     let quote = raw.chars().next()?;
     if raw.len() < 2 || !matches!(quote, '\'' | '"') || !raw.ends_with(quote) {
@@ -1324,6 +1344,7 @@ enum RegexConversionError {
     Unsupported,
 }
 
+/// Translate the supported Ruby regex subset and compile-check it under shared resource limits.
 fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexConversionError> {
     if pattern.len() > crate::resource_limits::MAX_REGEX_PATTERN_BYTES {
         return Err(RegexConversionError::PatternTooLong);
@@ -1463,6 +1484,7 @@ fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexCo
 
 // Consume only Ruby repetition syntax. Other braces are literal; excessively long numeric
 // bounds stay unsupported rather than spending unbounded work or treating a bound as text.
+/// Parse a bounded repetition after an opening brace; distinguish literal braces from overlong bounds.
 fn repetition_bound(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
 ) -> Option<Option<String>> {
@@ -1498,6 +1520,7 @@ fn repetition_bound(
     Some(None)
 }
 
+/// Convert node byte offsets to one-based lines and Unicode character columns.
 fn location(file: &SourceFile, node: Node<'_>, source: &str) -> SourceLocation {
     let column = |byte: usize| {
         source[..byte]
@@ -1517,6 +1540,7 @@ fn location(file: &SourceFile, node: Node<'_>, source: &str) -> SourceLocation {
     )
 }
 
+/// Create an extraction warning at the syntax node location.
 fn diagnostic(
     file: &SourceFile,
     node: Node<'_>,

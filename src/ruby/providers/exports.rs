@@ -2,6 +2,7 @@
 use super::*;
 
 impl Graph<'_> {
+    /// Require a unique non-value module whose declaration precedes this use in the load graph.
     pub(super) fn namespace_available(&self, key: &str, unit: usize, node: Node<'_>) -> bool {
         self.namespaces.get(key) == Some(&1)
             && !self.definitions.contains_key(key)
@@ -17,6 +18,7 @@ impl Graph<'_> {
                 })
     }
 
+    /// Index unique transparent module methods that forward calls to proven registrar exports.
     pub(super) fn collect_forwarders(&mut self) {
         let mut candidates = BTreeMap::<(String, String), Vec<String>>::new();
         let mut counts = BTreeMap::<String, usize>::new();
@@ -105,6 +107,7 @@ impl Graph<'_> {
         }
     }
 
+    /// Publish registrar aliases only when all binding references are closed and the proof budget permits.
     pub(super) fn local_export_aliases(
         &self,
         unit: usize,

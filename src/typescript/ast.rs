@@ -135,6 +135,7 @@ pub(super) fn is_const_declaration(declaration: Node<'_>) -> bool {
     has_direct_token(declaration, "const")
 }
 
+/// Checks for an anonymous token among a node's immediate children.
 fn has_direct_token(node: Node<'_>, token: &str) -> bool {
     (0..node.child_count()).any(|index| {
         node.child(index)
@@ -142,10 +143,12 @@ fn has_direct_token(node: Node<'_>, token: &str) -> bool {
     })
 }
 
+/// Checks for a named child of the requested kind without descending further.
 fn has_direct_named_child(node: Node<'_>, kind: &str) -> bool {
     direct_named_child(node, kind).is_some()
 }
 
+/// Returns the first immediate named child of the requested kind.
 fn direct_named_child<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
     let mut cursor = node.walk();
     let child = node

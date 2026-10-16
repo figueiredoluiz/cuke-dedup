@@ -20,6 +20,7 @@ pub(super) struct WrapperEffects {
     dynamic_site: Option<Site>,
 }
 
+/// Represent a syntax node by its half-open source byte range.
 fn site(node: Node<'_>) -> Site {
     (node.start_byte(), node.end_byte())
 }
@@ -41,6 +42,7 @@ impl WrapperEffects {
         self.invalidating_wrapper().is_some()
     }
 
+    /// Find a wrapper affected by dynamic mutation, multiple definitions, or unresolved uses.
     fn invalidating_wrapper(&self) -> Option<&String> {
         self.wrappers.iter().find(|name| {
             self.dynamic_mutation
@@ -59,6 +61,7 @@ impl WrapperEffects {
             .or_else(|| self.definition_sites.get(name).copied())
     }
 
+    /// Record a named method mutation and its first site, or invalidate dynamically if unnamed.
     fn mutation(&mut self, name: Option<String>, node: Node<'_>) {
         match name {
             Some(name) => {
@@ -71,11 +74,13 @@ impl WrapperEffects {
         }
     }
 
+    /// Record dynamic mutation and preserve its first source site.
     fn dynamic(&mut self, node: Node<'_>) {
         self.dynamic_mutation = true;
         self.dynamic_site.get_or_insert(site(node));
     }
 
+    /// Record an unresolved wrapper name and preserve its first source site.
     fn unresolved(&mut self, name: &str, node: Node<'_>) {
         self.unresolved_sites
             .entry(name.to_owned())

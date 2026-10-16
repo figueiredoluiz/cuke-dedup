@@ -2,6 +2,7 @@
 use super::*;
 
 impl Graph<'_> {
+    /// Recover registrations from single-use closed lambda/proc calls within the shared proof budget.
     pub(super) fn closed_execution(&self, result: &mut Providers) {
         if self.begin_proof_pass() {
             return;

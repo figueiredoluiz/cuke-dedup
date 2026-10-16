@@ -35,6 +35,7 @@ pub(super) struct RegistrationEffects {
     load_requires: Vec<crate::model::SourceLocation>,
 }
 
+/// Represent a syntax node by its half-open source byte range.
 fn site(node: Node<'_>) -> (usize, usize) {
     (node.start_byte(), node.end_byte())
 }
@@ -180,6 +181,7 @@ impl RegistrationEffects {
         effects
     }
 
+    /// Withdraw ownership certainty and preserve the first causal source range.
     fn mark_unknown(&mut self, node: Node<'_>) {
         self.unknown = true;
         self.cause.get_or_insert(site(node));
@@ -236,6 +238,7 @@ impl RegistrationEffects {
         self.unknown || self.wrappers.invalidated() || self.exposed_mutation().is_some()
     }
 
+    /// Find a mutated namespace nested under an exposed owner.
     fn exposed_mutation(&self) -> Option<(&OwnerPath, &(usize, usize))> {
         self.mutated_owners.iter().find(|(owner, _)| {
             self.exposed_owners
@@ -246,6 +249,7 @@ impl RegistrationEffects {
 }
 
 impl Declarations {
+    /// Index class and module declarations in source order, retaining unresolved scopes explicitly.
     fn collect(root: Node<'_>, source: &str) -> Self {
         let mut declarations = Self::default();
         let mut nodes = descendants(root);
@@ -263,6 +267,7 @@ impl Declarations {
         declarations
     }
 
+    /// Resolve an unconditional declaration without inheritance through established namespace prefixes.
     fn declaration_path(&self, node: Node<'_>, source: &str) -> Option<OwnerPath> {
         // Conditional/deferred declarations and unknown ancestry cannot close a namespace.
         let mut parent = node.parent();
@@ -305,6 +310,7 @@ impl Declarations {
         Some(path)
     }
 
+    /// List lexical namespace lookup candidates, rejecting unknown and singleton-class scopes.
     fn lookup_candidates(
         &self,
         node: Node<'_>,
@@ -331,6 +337,7 @@ impl Declarations {
         Some(paths)
     }
 
+    /// Return the nearest known class or module owner, stopping at singleton classes.
     fn owner(&self, node: Node<'_>) -> Option<OwnerPath> {
         let mut parent = node.parent();
         while let Some(scope) = parent {
@@ -345,6 +352,7 @@ impl Declarations {
         None
     }
 
+    /// Resolve an enclosing mutation owner only through immediate program or body-statement scopes.
     fn mutation_owner(&self, node: Node<'_>) -> Option<OwnerPath> {
         let mut parent = node.parent();
         while let Some(scope) = parent {
@@ -385,6 +393,7 @@ fn changes_registrar_implementation(node: Node<'_>, source: &str) -> bool {
 
 // Relative constant lookup can reach the top-level `Cucumber`, so any declaration spelled from
 // `Cucumber` is treated as a possible reopening rather than resolved lexically.
+/// Check whether enclosing constant paths and a supplied tail enter Cucumber::Glue.
 fn within_registrar_implementation(node: Node<'_>, tail: &[String], source: &str) -> bool {
     let mut chain = vec![tail.to_vec()];
     let mut scope = Some(node);
@@ -413,6 +422,7 @@ fn within_registrar_implementation(node: Node<'_>, tail: &[String], source: &str
 }
 
 // Existing runtime owners are globally exposed, even without a reference in selected source.
+/// Recognize framework and Ruby runtime namespaces excluded from isolated ownership proofs.
 pub(super) fn protected_namespace(name: &str) -> bool {
     matches!(
         name,
@@ -420,6 +430,7 @@ pub(super) fn protected_namespace(name: &str) -> bool {
     )
 }
 
+/// Read a static constant path and report whether it starts at the root namespace.
 fn constant_path(mut node: Node<'_>, source: &str) -> Option<(bool, Vec<String>)> {
     let mut parts = Vec::new();
     let absolute = loop {
@@ -444,6 +455,7 @@ fn constant_path(mut node: Node<'_>, source: &str) -> Option<(bool, Vec<String>)
     Some((absolute, parts))
 }
 
+/// Check whether a constant path forms the name of a class or module declaration.
 fn declaration_name(node: Node<'_>) -> bool {
     let mut child = node;
     while let Some(parent) = child.parent() {
@@ -457,6 +469,7 @@ fn declaration_name(node: Node<'_>) -> bool {
     false
 }
 
+/// Recognize a constant path passed to a direct top-level World call without a block.
 fn world_argument(node: Node<'_>, source: &str) -> bool {
     let mut child = node;
     while let Some(parent) = child.parent() {

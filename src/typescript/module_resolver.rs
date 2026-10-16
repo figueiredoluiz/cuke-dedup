@@ -102,6 +102,7 @@ pub(super) struct RegistrationResolver {
 }
 
 impl RegistrationResolver {
+    /// Creates a resolver with a canonical analysis boundary when the root exists.
     pub(super) fn for_root(root: &Path) -> Self {
         Self {
             boundary: root.canonicalize().ok(),
@@ -110,6 +111,7 @@ impl RegistrationResolver {
         }
     }
 
+    /// Resolves registration exports, reporting static limitations as reasons and propagating filesystem failures.
     pub(super) fn registration_exports(
         &mut self,
         importer: &Path,
@@ -162,6 +164,7 @@ impl RegistrationResolver {
     }
 }
 
+/// Resolves and caches exports by remaining depth, stopping cycles and the re-export depth limit.
 fn resolve_exports(
     importer: &Path,
     specifier: &str,
@@ -223,6 +226,7 @@ fn resolve_exports(
     Ok(resolved)
 }
 
+/// Charges one resolution state and merges direct and re-exported registrations, framework evidence, and incompleteness.
 fn resolve_active_exports(
     path: &Path,
     boundary: &Path,
@@ -291,6 +295,7 @@ fn is_io_failure(error: &anyhow::Error) -> bool {
         .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
 }
 
+/// Combines framework evidence using a fixed precedence, retaining unknown only when neither input is recognized.
 pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framework {
     match (current, evidence) {
         (Framework::PlaywrightBdd, _) | (_, Framework::PlaywrightBdd) => Framework::PlaywrightBdd,
@@ -306,6 +311,7 @@ pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framew
     }
 }
 
+/// Reads and caches module facts within count and byte limits, rejecting syntax-recovered exports.
 fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<ModuleFacts>> {
     if let Some(module) = state.modules.get(path) {
         return Ok(module.clone());
@@ -340,6 +346,7 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
     Ok(module)
 }
 
+/// Collects supported local registrations and ESM/CommonJS export edges, retaining unmodeled-export incompleteness.
 fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     let source = source.as_bytes();
     let scope = ExportScope::new(tree.root_node(), source);
@@ -816,6 +823,7 @@ fn property_name<'a>(key: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     }
 }
 
+/// Records runtime named imports whose exported names resolve to supported registrations.
 fn collect_imported_registrations(
     import: Node<'_>,
     source: &[u8],
@@ -839,6 +847,7 @@ fn collect_imported_registrations(
     }
 }
 
+/// Records runtime named-import provenance so later local exports can become re-export edges.
 fn collect_imported_binding_origins(
     import: Node<'_>,
     source: &[u8],
@@ -860,6 +869,7 @@ fn collect_imported_binding_origins(
     }
 }
 
+/// Records runtime named imports that resolve to registration factories, honoring local aliases.
 fn collect_factory_aliases(
     import: Node<'_>,
     source: &[u8],
@@ -885,6 +895,7 @@ fn collect_factory_aliases(
     }
 }
 
+/// Collects supported destructured registrations and Playwright factories from an available static `require` call.
 fn collect_commonjs_imports(
     declarator: Node<'_>,
     source: &[u8],
@@ -920,6 +931,7 @@ fn collect_commonjs_imports(
     }
 }
 
+/// Copies known registrations into supported direct object-pattern bindings.
 fn collect_pattern_registrations(
     pattern: Node<'_>,
     source: &[u8],
@@ -937,6 +949,7 @@ fn collect_pattern_registrations(
     }
 }
 
+/// Records direct object-pattern bindings whose imported name matches the requested export.
 fn collect_pattern_alias(
     pattern: Node<'_>,
     source: &[u8],
@@ -954,6 +967,7 @@ fn collect_pattern_alias(
     }
 }
 
+/// Returns imported and local names for a shorthand or identifier-valued pair, or no names for unsupported patterns.
 fn pattern_binding<'a>(binding: Node<'_>, source: &'a [u8]) -> (Option<&'a str>, Option<&'a str>) {
     match binding.kind() {
         "shorthand_property_identifier_pattern" => {
@@ -974,6 +988,7 @@ fn pattern_binding<'a>(binding: Node<'_>, source: &'a [u8]) -> (Option<&'a str>,
     }
 }
 
+/// Records destructured Playwright factory registrations and their names when the declaration is directly exported.
 fn collect_create_bdd_bindings(
     declarator: Node<'_>,
     source: &[u8],
@@ -1025,6 +1040,7 @@ fn collect_create_bdd_bindings(
     }
 }
 
+/// Returns an identifier callee after peeling supported transparent wrappers from the call and callee.
 fn call_identifier<'a>(mut call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     while matches!(
         call.kind(),
@@ -1052,6 +1068,7 @@ fn call_identifier<'a>(mut call: Node<'_>, source: &'a [u8]) -> Option<&'a str> 
     (function.kind() == "identifier").then(|| node_text(function, source))
 }
 
+/// Checks whether a declarator belongs to a declaration immediately inside an export statement.
 fn is_directly_exported_variable(declarator: Node<'_>) -> bool {
     declarator
         .parent()
@@ -1059,6 +1076,7 @@ fn is_directly_exported_variable(declarator: Node<'_>) -> bool {
         .is_some_and(|parent| parent.kind() == "export_statement")
 }
 
+/// Finds the nearest canonical package ancestor, falling back to the importer directory or `None` if unavailable.
 fn project_boundary(importer: &Path) -> Option<PathBuf> {
     let parent = importer.parent()?;
     let parent = parent.canonicalize().ok()?;
@@ -1070,6 +1088,7 @@ fn project_boundary(importer: &Path) -> Option<PathBuf> {
     Some(parent)
 }
 
+/// Parses a supported source language, returning `None` when language selection, grammar setup, or parsing fails.
 fn parse_module(source: &str, path: &Path) -> Option<tree_sitter::Tree> {
     let language = language_for_path(path)?;
     let mut parser = Parser::new();
@@ -1077,6 +1096,7 @@ fn parse_module(source: &str, path: &Path) -> Option<tree_sitter::Tree> {
     parser.parse(source, None)
 }
 
+/// Collects runtime export-specifier name pairs, preserving aliases and skipping type-only specifiers.
 fn export_specifiers(export: Node<'_>, source: &[u8]) -> Vec<(String, String)> {
     let mut specifiers = Vec::new();
     let mut stack = vec![export];

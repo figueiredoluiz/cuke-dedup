@@ -151,6 +151,7 @@ impl Providers {
         )
     }
 
+    /// Collect test registration proofs within file and byte limits, returning empty proofs when loading is unavailable.
     #[cfg(test)]
     fn collect_with_budget(
         files: &[SourceFile],
@@ -163,11 +164,13 @@ impl Providers {
         Self::from_units(&units, edges)
     }
 
+    /// Collect registration proofs from test units without configured assertion providers.
     #[cfg(test)]
     pub(super) fn from_units(units: &[Unit], edges: &[SourceDependency]) -> Result<Self> {
         Ok(Self::from_units_with_assertions(units, edges, &[]).0)
     }
 
+    /// Collect registrar and configured assertion proofs from the same loaded-unit graph.
     pub(super) fn from_units_with_assertions(
         units: &[Unit],
         edges: &[SourceDependency],
@@ -485,6 +488,7 @@ impl Providers {
         (result, assertions)
     }
 
+    /// Report whether provider proof collection exceeded its work budget.
     pub fn work_exhausted(&self) -> bool {
         self.1
     }
@@ -496,6 +500,7 @@ impl Providers {
 }
 
 // Registration and assertion providers must agree on whether a resolved load graph closes.
+/// Check the load graph for cycles, ignoring edges whose endpoints are outside the supplied files.
 pub(super) fn source_graph_acyclic<'a>(
     files: impl IntoIterator<Item = (&'a Path, &'a Path)>,
     edges: &[SourceDependency],
@@ -532,6 +537,7 @@ pub(super) fn source_graph_acyclic<'a>(
 }
 
 impl<'a> Graph<'a> {
+    /// Create an empty proof graph over loaded units and dependency edges.
     fn new(units: &'a [Unit], edges: &'a [SourceDependency]) -> Self {
         Self {
             units,
@@ -687,10 +693,12 @@ impl<'a> Graph<'a> {
         }
     }
 
+    /// Check shared exhaustion and the accumulated load-resolution work limit.
     fn budget_exhausted(&self) -> bool {
         self.proof_exhausted.get() || self.proof_budget_exhausted(self.load_work.get())
     }
 
+    /// Charge saturating work to the current proof pass and report sticky budget exhaustion.
     fn charge_proof_work(&self, additional: usize) -> bool {
         self.proof_work
             .set(self.proof_work.get().saturating_add(additional));
@@ -698,11 +706,13 @@ impl<'a> Graph<'a> {
     }
 
     // Each collector retains its established limit; exhaustion is shared and sticky.
+    /// Reset per-pass work while preserving shared exhaustion and prior load-resolution work.
     fn begin_proof_pass(&self) -> bool {
         self.proof_work.set(0);
         self.budget_exhausted()
     }
 
+    /// Latch exhaustion when work exceeds the configured limit and report the shared state.
     fn proof_budget_exhausted(&self, work: usize) -> bool {
         #[cfg(test)]
         let limit = self.proof_limit;
@@ -768,6 +778,7 @@ impl<'a> Graph<'a> {
     }
 }
 
+/// Detect definitions or mutations that may replace new or allocate, including unknown mutation targets.
 fn allocation_override(node: Node<'_>, source: &str) -> bool {
     ((node.kind() == "singleton_method"
         || (node.kind() == "method"

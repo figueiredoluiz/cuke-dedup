@@ -10,6 +10,7 @@ pub(super) struct RegistrationAliases {
 }
 
 impl RegistrationAliases {
+    /// Resolve top-level captured registrar methods only when every reference is a closed call.
     pub(super) fn collect(root: Node<'_>, source: &str) -> Self {
         let mut result = Self::default();
         if root.has_error() {
@@ -75,6 +76,7 @@ impl RegistrationAliases {
         result
     }
 
+    /// Import provider-proven captures and registrations by matching source byte offsets.
     pub(super) fn extend_provider(&mut self, root: Node<'_>, proof: &super::providers::Proof) {
         for node in descendants(root)
             .into_iter()
@@ -89,10 +91,12 @@ impl RegistrationAliases {
         }
     }
 
+    /// Report whether this call captures a proven registrar method.
     pub(super) fn capture(&self, node: Node<'_>) -> bool {
         self.captures.contains(&node.id())
     }
 
+    /// Return the registrar keyword proven for this call, if any.
     pub(super) fn registration(&self, node: Node<'_>) -> Option<&str> {
         self.calls.get(&node.id()).map(String::as_str)
     }

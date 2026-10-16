@@ -45,6 +45,7 @@ pub(super) struct RequireBindings {
 }
 
 impl RequireBindings {
+    /// Collects module and lexical shadowing that can replace the CommonJS loader.
     pub(super) fn discover(root: Node<'_>, source: &[u8]) -> Self {
         let (scopes, ranges, _) = collect_binding_scopes(root, source);
         let shadow_ranges = collect_scoped_bindings(scopes, ranges);
@@ -56,6 +57,7 @@ impl RequireBindings {
         }
     }
 
+    /// Reports whether the CommonJS loader remains unshadowed at this use site.
     pub(super) fn available(&self, node: Node<'_>) -> bool {
         !self.module_shadowed && !position_is_shadowed(&self.shadow_ranges, "require", node)
     }
@@ -70,6 +72,7 @@ pub(super) struct AssertionBindings {
 }
 
 impl AssertionBindings {
+    /// Discovers trusted assertion factories and removes trust for runtime shadowing and mutations.
     pub(super) fn discover(
         root: Node<'_>,
         source: &[u8],
@@ -200,6 +203,7 @@ impl AssertionBindings {
         bindings
     }
 
+    /// Recognizes trusted assertion identifiers or namespace `expect` properties at an unshadowed use site.
     pub(super) fn is_factory(&self, node: Node<'_>, source: &[u8]) -> bool {
         let Some(node) = super::registrations::unwrap_registration_callee(node) else {
             return false;
@@ -219,10 +223,12 @@ impl AssertionBindings {
             && name == "expect"
     }
 
+    /// Reports whether a call resolves to a supported unmutated asymmetric matcher builder.
     pub(super) fn is_asymmetric_matcher(&self, node: Node<'_>, source: &[u8]) -> bool {
         self.asymmetric_matcher(node, source).is_some()
     }
 
+    /// Returns a supported asymmetric builder's negation and name only for a trusted, unmutated factory.
     pub(super) fn asymmetric_matcher<'source>(
         &self,
         node: Node<'_>,
@@ -278,10 +284,12 @@ impl AssertionBindings {
         .then_some((negated, matcher))
     }
 
+    /// Checks whether a local binding hides the expected factory name over this node's span.
     fn is_locally_shadowed(&self, node: Node<'_>, expected: &str) -> bool {
         position_is_shadowed(&self.shadow_ranges, expected, node)
     }
 
+    /// Records supported assertion imports and returns their trusted local names, excluding type-only bindings.
     fn collect_import(
         &mut self,
         import: Node<'_>,
@@ -367,6 +375,7 @@ impl AssertionBindings {
         trusted
     }
 
+    /// Records assertion aliases loaded from known or explicitly configured CommonJS modules.
     fn collect_require(
         &mut self,
         declaration: Node<'_>,
@@ -432,6 +441,7 @@ impl AssertionBindings {
     }
 }
 
+/// Collects local module spellings sharing resolved registration provenance for named assertion imports.
 fn resolved_facade_modules(
     root: Node<'_>,
     source: &[u8],
@@ -466,6 +476,7 @@ fn resolved_facade_modules(
     modules
 }
 
+/// Checks whether an import introduces a recognized runtime registration alias or namespace.
 fn import_has_resolved_registration(
     import: Node<'_>,
     source: &[u8],
@@ -498,6 +509,7 @@ fn import_has_resolved_registration(
     false
 }
 
+/// Adds binding names absent from the trusted set to the names that revoke assertion trust.
 fn extend_untrusted_bindings(
     root: Node<'_>,
     source: &[u8],
@@ -509,6 +521,7 @@ fn extend_untrusted_bindings(
     shadowed.extend(locals.into_iter().filter(|local| !trusted.contains(local)));
 }
 
+/// Collects local names from binding patterns, excluding property keys, initializers and type annotations.
 pub(super) fn collect_binding_names(root: Node<'_>, source: &[u8], output: &mut BTreeSet<String>) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -640,6 +653,7 @@ fn collect_assignment_targets(
     }
 }
 
+/// Returns the written operand of assignments, updates, deletes and non-declaring loop heads.
 fn assignment_target(node: Node<'_>) -> Option<Node<'_>> {
     match node.kind() {
         "assignment_expression" | "augmented_assignment_expression" => {
@@ -660,6 +674,7 @@ fn assignment_target(node: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
+/// Detects module declarations or unshadowed assignments that replace a runtime name anywhere in the file.
 fn module_runtime_binding_exists(
     root: Node<'_>,
     source: &[u8],
@@ -733,6 +748,7 @@ type ScopeRanges = BTreeMap<usize, (usize, usize)>;
 /// agree on which nodes count as scopes.
 type ScopeParents = BTreeMap<usize, usize>;
 
+/// Propagates writes through lexical alias and shallow-copy edges to identify module names that lose trust.
 fn namespace_alias_writes(
     root: Node<'_>,
     source: &[u8],
@@ -948,6 +964,7 @@ fn namespace_alias_writes(
     modules
 }
 
+/// Indexes runtime local bindings, scope byte ranges and enclosing scope links, skipping ambient declarations.
 pub(super) fn collect_binding_scopes(
     root: Node<'_>,
     source: &[u8],
@@ -1079,6 +1096,7 @@ pub(super) fn collect_binding_scopes(
     (scopes, scope_ranges, scope_parents)
 }
 
+/// Converts scope bindings to sorted, merged byte ranges for each shadowed name.
 fn collect_scoped_bindings(
     scopes: BindingScopes,
     scope_ranges: ScopeRanges,
@@ -1107,6 +1125,7 @@ fn collect_scoped_bindings(
     ranges
 }
 
+/// Checks whether one merged shadow range contains the node's complete byte span.
 fn position_is_shadowed(
     shadow_ranges: &BTreeMap<String, Vec<(usize, usize)>>,
     expected: &str,
@@ -1119,6 +1138,7 @@ fn position_is_shadowed(
     index > 0 && ranges[index - 1].1 >= node.end_byte()
 }
 
+/// Adds names introduced by a pattern to the specified scope's binding set.
 fn add_scope_binding(
     scopes: &mut BTreeMap<usize, BTreeSet<String>>,
     scope: Node<'_>,
@@ -1128,6 +1148,7 @@ fn add_scope_binding(
     collect_binding_names(pattern, source, scopes.entry(scope.id()).or_default());
 }
 
+/// Finds a declaration keyword preceding a loop-head binding, or returns `None` for assignment heads.
 pub(super) fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Option<&'static str> {
     (0..loop_node.child_count()).find_map(|index| {
         let child = loop_node.child(index)?;
@@ -1141,6 +1162,7 @@ pub(super) fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Op
     })
 }
 
+/// Recognizes non-erased `var` declarations with no enclosing function-like scope.
 fn is_module_var(declarator: Node<'_>) -> bool {
     declarator
         .parent()
@@ -1149,6 +1171,7 @@ fn is_module_var(declarator: Node<'_>) -> bool {
         && nearest_function_scope(declarator.parent()).is_none()
 }
 
+/// Identifies syntax nodes used as local binding scopes by provenance analysis.
 pub(super) fn is_local_scope(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
@@ -1172,6 +1195,7 @@ pub(super) fn is_local_scope(node: Node<'_>) -> bool {
     )
 }
 
+/// Finds the enclosing function-like, static-block or module scope, stopping at the program root.
 pub(super) fn nearest_function_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     while let Some(candidate) = node {
         if matches!(
@@ -1196,6 +1220,7 @@ pub(super) fn nearest_function_scope(mut node: Option<Node<'_>>) -> Option<Node<
     None
 }
 
+/// Finds an enclosing lexical block, loop, catch, static-block or module scope below the program root.
 fn nearest_lexical_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     while let Some(candidate) = node {
         if matches!(
@@ -1219,6 +1244,7 @@ fn nearest_lexical_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     None
 }
 
+/// Checks whether only expression or export wrappers separate a declaration from the program root.
 fn is_module_declaration(node: Node<'_>) -> bool {
     let mut parent = node.parent();
     while let Some(candidate) = parent {
@@ -1232,6 +1258,7 @@ fn is_module_declaration(node: Node<'_>) -> bool {
     false
 }
 
+/// Reports whether a node lies within an ambient declaration erased at runtime.
 pub(super) fn is_erased_declaration(mut node: Node<'_>) -> bool {
     loop {
         if node.kind() == "ambient_declaration" {
@@ -1247,6 +1274,7 @@ pub(super) fn is_erased_declaration(mut node: Node<'_>) -> bool {
     }
 }
 
+/// Returns a literal module argument from a direct identifier call spelled `require` without checking loader provenance.
 fn required_module<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     if call.kind() != "call_expression" {
         return None;
@@ -1309,6 +1337,7 @@ fn record_matcher_local(
     }
 }
 
+/// Collects destructured factory and matcher paths, tracking copy depth and restricting trust to known top-level `expect` bindings.
 fn collect_expect_pattern(
     pattern: Node<'_>,
     source: &[u8],

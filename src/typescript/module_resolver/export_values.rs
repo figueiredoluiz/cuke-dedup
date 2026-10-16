@@ -94,6 +94,7 @@ pub(super) struct ExportScope<'tree> {
 }
 
 impl<'tree> ExportScope<'tree> {
+    /// Builds top-level declaration, taint, uncertain-loader dependency, and mutation evidence for export classification.
     pub(super) fn new(root: Node<'tree>, source: &[u8]) -> Self {
         let mut declarations = BTreeMap::new();
         // Each declaration's names with the subtree that decides whether they are tainted.
@@ -332,6 +333,7 @@ impl<'tree> ExportScope<'tree> {
             .is_some_and(|parent| self.parent_keeps_value(parent, occurrence, source))
     }
 
+    /// Checks whether a parent use preserves the declared value under the supported declaration, export, call, and operand rules.
     fn parent_keeps_value(&self, parent: Node<'_>, occurrence: Node<'_>, source: &[u8]) -> bool {
         let is_field = |field: &str| parent.child_by_field_name(field) == Some(occurrence);
         match parent.kind() {
@@ -366,6 +368,7 @@ impl<'tree> ExportScope<'tree> {
             .is_none_or(|parent| self.member_parent_keeps_value(parent, member, source))
     }
 
+    /// Checks a member use for escaping arguments, non-inert writes or calls, following enclosing member chains.
     fn member_parent_keeps_value(&self, parent: Node<'_>, member: Node<'_>, source: &[u8]) -> bool {
         match parent.kind() {
             // `api.nested.step`: judge the whole chain, so a write at its end reaches `api`.
@@ -429,6 +432,7 @@ fn unparenthesized(mut node: Node<'_>) -> Node<'_> {
     node
 }
 
+/// Records a declaration, making a repeated name opaque instead of choosing one static value.
 fn declare<'tree>(
     declarations: &mut BTreeMap<String, Option<Node<'tree>>>,
     name: String,
@@ -440,6 +444,7 @@ fn declare<'tree>(
         .or_insert(value);
 }
 
+/// Recognizes function, generator, class, and abstract-class declaration nodes.
 fn is_callable_declaration(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
@@ -549,6 +554,7 @@ fn references_taint(node: Node<'_>, source: &[u8], tainted: &BTreeSet<String>) -
     false
 }
 
+/// Detects references to uncertain loader dependencies or calls to a shadowed or unavailable `require`.
 fn depends_on_rejected_loader(
     node: Node<'_>,
     source: &[u8],
@@ -592,6 +598,7 @@ fn is_module_load(call: Node<'_>, source: &[u8]) -> bool {
         })
 }
 
+/// Recognizes `node:` specifiers and the enumerated bare Node built-in module names.
 fn is_node_builtin(module: &str) -> bool {
     module.starts_with("node:") || NODE_BUILTIN_MODULES.contains(&module)
 }

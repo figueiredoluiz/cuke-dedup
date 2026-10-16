@@ -8,12 +8,15 @@ struct RubyRegex;
 static REGEX: RubyRegex = RubyRegex;
 
 impl RegexDialect for RubyRegex {
+    /// Convert a Ruby matcher and flags to the supported shared regex representation.
     fn expression(&self, matcher: &str, flags: &str) -> Option<String> {
         super::regex_expression(matcher, flags)
     }
+    /// Preserve the Ruby flag string as supplied by extraction.
     fn normalized_flags<'a>(&self, flags: &'a str) -> Option<&'a str> {
         Some(flags)
     }
+    /// Require identical Ruby flag strings before matcher similarity comparison.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool {
         left == right
     }
