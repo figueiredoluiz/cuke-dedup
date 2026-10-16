@@ -21,10 +21,12 @@ assert.ok(!regression || !inventoryOnly, "regression requires execution");
 assert.ok(!forceEvidence || (!regression && !inventoryOnly), "--evidence requires completion mode");
 const binary = resolve(args.find((arg) => !arg.startsWith("--")) ?? "target/debug/cuke-dedup");
 const root = resolve("fixtures/ruby-parity");
+/** Read a UTF-8 file and parse its JSON, propagating read or parse failures. */
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const manifest = await readJson(join(root, "manifest.json"));
 assert.equal(manifest.schemaVersion, 1);
 
+/** Resolve a fixture path inside its parent and reject paths escaping that root. */
 function within(parent, child) {
   const path = resolve(parent, child);
   const rel = relative(parent, path);

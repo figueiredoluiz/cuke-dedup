@@ -186,6 +186,7 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
+/** Run the analyzer with the benchmark timeout, assert its exit and metrics, and return timing, memory, and analysis observations. */
 function run(root, output, expectedExitCode) {
   const binaryArguments = [".", "--reporters", "json", "--output", output];
   const memoryFile = join(root, ".cuke-dedup-benchmark-memory");
@@ -246,6 +247,7 @@ function run(root, output, expectedExitCode) {
   };
 }
 
+/** Return peak resident bytes from GNU or BSD time output, asserting valid measurements, or null when unsupported. */
 function readPeakMemory(format, memoryFile, stderr) {
   if (format === "linux-kib") {
     const kibibytes = Number.parseInt(readFileSync(memoryFile, "utf8").trim(), 10);
@@ -260,20 +262,24 @@ function readPeakMemory(format, memoryFile, stderr) {
   return null;
 }
 
+/** Return the rounded upper-middle value of a numerically sorted copy. */
 function median(values) {
   const sorted = [...values].sort((left, right) => left - right);
   return round(sorted[Math.floor(sorted.length / 2)]);
 }
 
+/** Return the median of non-null measurements, or null when none were collected. */
 function medianNullable(values) {
   const measured = values.filter((value) => value !== null);
   return measured.length === 0 ? null : median(measured);
 }
 
+/** Round a numeric measurement to two decimal places. */
 function round(value) {
   return Number(value.toFixed(2));
 }
 
+/** Generate indexed step registrations with unique, structurally shared, or identical handlers. */
 function source(count, sharedStructure, sharedHandler) {
   const lines = [];
   for (let index = 0; index < count; index += 1) {
@@ -287,6 +293,7 @@ function source(count, sharedStructure, sharedHandler) {
   return `${lines.join("\n")}\n`;
 }
 
+/** Write a single-file comparison corpus and return its expected counts, clusters, exit, and truncation state. */
 async function writeSingleFileProfile(root, definitions, profile) {
   const { sharedStructure, sharedHandler, candidateLimit } = profile;
   await writeFile(
@@ -338,6 +345,7 @@ async function writeSingleFileProfile(root, definitions, profile) {
   };
 }
 
+/** Write a single-file corpus with varied matcher and handler forms and return its expected census and completion state. */
 async function writeVariedHandlerScale(root, definitions) {
   const actors = ["customer", "administrator", "operator", "reviewer", "member"];
   const resources = [
@@ -396,6 +404,7 @@ async function writeVariedHandlerScale(root, definitions) {
   };
 }
 
+/** Generate one of four indexed matcher sentences from the supplied vocabulary. */
 function variedMatcher(index, actor, resource, state, channel) {
   switch (index % 4) {
     case 0:
@@ -409,6 +418,7 @@ function variedMatcher(index, actor, resource, state, channel) {
   }
 }
 
+/** Generate one of four indexed handler source forms using the resource and workflow names. */
 function variedHandler(index, resource, workflow, variant) {
   switch (variant) {
     case 0:
@@ -422,10 +432,12 @@ function variedHandler(index, resource, workflow, variant) {
   }
 }
 
+/** Uppercase the first character of a nonempty string, preserving the remainder. */
 function capitalize(value) {
   return `${value[0].toUpperCase()}${value.slice(1)}`;
 }
 
+/** Write the asserted multi-package benchmark layout and return expected census, duplicate findings, and completion state. */
 async function writeRepositoryScale(root, definitions) {
   const layout = definitions === 20
     ? { packages: 2, definitionFiles: 2, featureFiles: 2, stepsPerFeature: 5 }
@@ -497,6 +509,7 @@ async function writeRepositoryScale(root, definitions) {
   };
 }
 
+/** Write a corpus exercising every unique definition and return expected counts with no findings or truncation. */
 async function writeUsageScale(root, definitions, featureSteps) {
   assert.ok(featureSteps >= definitions, "usage-scale must exercise every definition");
   await writeFile(

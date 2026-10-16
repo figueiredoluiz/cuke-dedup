@@ -15,6 +15,7 @@ const [current, baseline, destination] = (regression ? [args[1], null, args[2]] 
 const manifestBytes = await readFile("fixtures/language-parity/manifest.json");
 const manifest = JSON.parse(manifestBytes);
 validateManifest(manifest);
+/** Return the SHA-256 hex digest of the supplied manifest bytes. */
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const lanes = {
   ...(regression ? {} : { releasedTypescript: { binary: baseline, language: "typescript", extension: "ts" } }),

@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { TARGETS, targetFor } from "../../../npm/lib/targets.mjs";
 
+/** Returns gnu when the process report identifies glibc, otherwise musl, including when report access throws. */
 export function detectLibc(report = process.report) {
   try {
     return report?.getReport()?.header?.glibcVersionRuntime ? "gnu" : "musl";
@@ -23,6 +24,7 @@ export function detectLibc(report = process.report) {
   }
 }
 
+/** Returns validated release metadata for the platform, architecture, and Linux libc, throwing for unsupported targets. */
 export function releaseTarget(
   platform = process.platform,
   arch = process.arch,
@@ -32,6 +34,7 @@ export function releaseTarget(
   return targetFor(platform, arch, libc, targets);
 }
 
+/** Builds analysis arguments from Action inputs and effective defaults, always adding the JSON reporter for output metrics. */
 export function buildArguments(inputs, effectiveConfig = {}) {
   const reporters = splitList(inputs.reporters || effectiveConfig.reporters?.join(",") || "terminal");
   if (!reporters.includes("json")) {
@@ -75,6 +78,7 @@ export function buildArguments(inputs, effectiveConfig = {}) {
   return args;
 }
 
+/** Builds the print-config invocation with the Action inputs that affect effective configuration. */
 export function buildEffectiveConfigArguments(inputs) {
   const args = [inputs.path || ".", "--print-config"];
   if (inputs.config) {
@@ -99,6 +103,7 @@ export function buildEffectiveConfigArguments(inputs) {
   return args;
 }
 
+/** Resolves the binary and configuration, runs analysis, and publishes outputs; rejects setup/output errors and returns the analysis status, or 2 for spawn errors, signals, or a missing status. */
 export async function runAction({ env = process.env, cwd = process.cwd() } = {}) {
   const inputs = {
     config: readInput(env, "config", ""),
@@ -147,6 +152,7 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
   return exitCode;
 }
 
+/** Runs print-config and parses its JSON output, throwing on launch failure, a nonzero exit, or invalid JSON. */
 function readEffectiveConfig(binary, inputs, cwd) {
   const args = buildEffectiveConfigArguments(inputs);
   const result = spawnSync(binary, args, { cwd, encoding: "utf8" });
@@ -165,10 +171,12 @@ function readEffectiveConfig(binary, inputs, cwd) {
   }
 }
 
+/** Returns an absolute output path unchanged or resolves it against the analysis path and working directory. */
 export function resolveReportDirectory(cwd, analysisPath, output) {
   return isAbsolute(output) ? output : resolve(cwd, analysisPath, output);
 }
 
+/** Builds Action report paths and duplication metrics from JSON, retaining zero defaults when the report or duplication summary is absent. */
 export function reportOutputs(jsonPath, outputDirectory, requestedReporters, exitCode) {
   const defaults = {
     "exit-code": String(exitCode),
@@ -199,6 +207,7 @@ export function reportOutputs(jsonPath, outputDirectory, requestedReporters, exi
   };
 }
 
+/** Downloads a versioned target archive, verifies checksum and provenance, validates and extracts its files, and returns the executable path. */
 async function installRelease(rawVersion, env) {
   const version = rawVersion.replace(/^v/, "");
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
@@ -244,6 +253,7 @@ async function installRelease(rawVersion, env) {
   return binary;
 }
 
+/** Requires exactly the binary and LICENSE archive entries in that order, throwing for any other listing. */
 export function validateArchiveMemberNames(output, binaryName) {
   const members = output.split(/\r?\n/).filter(Boolean);
   const expected = [binaryName, "LICENSE"];
@@ -252,6 +262,7 @@ export function validateArchiveMemberNames(output, binaryName) {
   }
 }
 
+/** Lists archive members with tar and rejects listing failures or unexpected entry names. */
 function validateArchiveMembers(archive, binaryName) {
   const listed = spawnSync("tar", ["-tf", archive], { encoding: "utf8" });
   if (listed.status !== 0 || listed.error) {
@@ -260,6 +271,7 @@ function validateArchiveMembers(archive, binaryName) {
   validateArchiveMemberNames(listed.stdout, binaryName);
 }
 
+/** Requires gh attestation verification for the repository release workflow and version tag, rejecting self-hosted runners or verification failure. */
 export function verifyProvenance(archive, provenance, version, spawn = spawnSync) {
   const verified = spawn(
     "gh",
@@ -285,6 +297,7 @@ export function verifyProvenance(archive, provenance, version, spawn = spawnSync
 }
 
 // A tag may resolve shortly before its release assets finish publishing.
+/** Streams a successful response to disk, retrying HTTP 404 up to ten attempts with capped exponential delays and throwing on other HTTP failures. */
 export async function download(url, destination, wait = delay) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const response = await fetch(url, {
@@ -303,6 +316,7 @@ export async function download(url, destination, wait = delay) {
   }
 }
 
+/** Validates the checksum token and compares it with the archive SHA-256 digest, throwing on malformed input or mismatch. */
 export function verifyChecksum(archive, checksumFile) {
   const expected = readFileSync(checksumFile, "utf8").trim().split(/\s+/)[0];
   if (!/^[0-9a-f]{64}$/i.test(expected)) {
@@ -314,6 +328,7 @@ export function verifyChecksum(archive, checksumFile) {
   }
 }
 
+/** Splits comma- or newline-separated values, trims entries, and drops empty entries. */
 function splitList(value = "") {
   return value
     .split(/[\n,]+/)
@@ -321,12 +336,14 @@ function splitList(value = "") {
     .filter(Boolean);
 }
 
+/** Reads the exact Action input environment key, then its underscore variant, then the supplied fallback. */
 function readInput(env, name, fallback) {
   const exact = `INPUT_${name.toUpperCase()}`;
   const portable = exact.replaceAll("-", "_");
   return env[exact] ?? env[portable] ?? fallback;
 }
 
+/** Appends a delimited output value to GITHUB_OUTPUT when configured, otherwise logs the name and value. */
 function setOutput(env, name, value) {
   if (env.GITHUB_OUTPUT) {
     const delimiter = `cuke_dedup_${randomUUID()}`;

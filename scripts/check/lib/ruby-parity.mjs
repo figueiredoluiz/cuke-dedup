@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { countMatches, findingOwners } from "./recall-oracle.mjs";
 
+/** Require a nonempty observation set, no blockers, and no observation deficits for completion. */
 export function completionPassed(observations, blockers) {
   return observations.length > 0 && blockers.length === 0
     && observations.every((item) => item.deficits.length === 0);
 }
 
 // Counterpart coverage is independent of whether the analyzer implements the contract yet.
+/** Return missing executable counterpart and exclusion-rationale gaps, including an empty source corpus. */
 export function corpusCoverageDeficits(mappings, groups) {
   const gaps = [];
   for (const item of mappings) {
@@ -24,8 +26,10 @@ export function corpusCoverageDeficits(mappings, groups) {
 
 // Desired outcomes are independent of observations. A missing positive, an unexpected finding,
 // or lost completeness must remain a deficit even if extraction counts happen to match.
+/** Return oracle mismatches for census, completeness, strict exit, finding ownership, duplication, and candidate counts. */
 export function parityDeficits(oracle, report, exit) {
   const deficits = [];
+  /** Append a labeled deficit when an observed value differs deeply from its expected value. */
   const check = (actual, expected, label) => {
     try {
       assert.deepEqual(actual, expected);
@@ -58,6 +62,7 @@ export function parityDeficits(oracle, report, exit) {
   return deficits;
 }
 
+/** Assert valid Ruby oracle counts, exit, and finding expectations, rejecting required findings also forbidden by an absence selector. */
 export function validateOracle(oracle) {
   assert.equal(typeof oracle.path, "string");
   assert.ok(Number.isSafeInteger(oracle.definitions) && oracle.definitions >= 0);
@@ -333,6 +338,7 @@ export function evidenceTargets(units) {
   return [...targets.values()];
 }
 
+/** Assert a nonempty, sorted, unique list of supported evidence platforms. */
 function validateEvidencePlatforms(platforms, label) {
   assert.ok(Array.isArray(platforms) && platforms.length > 0, `${label}: evidence platforms must be nonempty`);
   assert.deepEqual(platforms, [...new Set(platforms)].sort(), `${label}: evidence platforms must be sorted and unique`);
