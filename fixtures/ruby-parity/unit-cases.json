@@ -4370,6 +4370,12 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "module_literal_cache_matches_the_per_handler_walk",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: the per-file cache of literal `const` module constants in TypeScript handler fingerprints (`module literal cache matches the per handler walk`). Semantic residue: module-constant substitution outcomes are pinned by `module_scoped_constants_reach_the_handler_fingerprint`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "every_runtime_import_form_shadows_the_ambient_registration_global",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: CommonJS/ESM module forms (barrels, re-exports, `require`, import specifiers) (`every runtime import form shadows the ambient registration global`). Semantic residue: Ruby `require`, `require_relative` and `load` provenance is pinned by the `load-relative`, `load-cycle`, `load-unresolved` and `load-provider-root` groups.",

@@ -37,6 +37,7 @@ const allProfiles = smoke
       { name: "usage-scale", sizes: [50], usageSteps: 100 },
       { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
       { name: "ruby-single-file", sizes: [20], rubySingleFile: true },
+      { name: "module-constants", sizes: [20], moduleConstants: true },
     ]
   : [
       { name: "unrelated", sizes: [250, 500, 1000, 2000, 8000], sharedStructure: false },
@@ -54,6 +55,7 @@ const allProfiles = smoke
       // Per-handler work over the whole file grows with file size; `benchmark:check` gates the
       // parse-time ratio between these two sizes.
       { name: "ruby-single-file", sizes: [2000, 8000], rubySingleFile: true },
+      { name: "module-constants", sizes: [1000, 4000], moduleConstants: true },
     ];
 const profileFilter = process.env.CUKE_DEDUP_BENCH_PROFILE;
 const selectedProfiles = profileFilter
@@ -80,13 +82,15 @@ try {
       await mkdir(root, { recursive: true });
       const generated = profile.rubySingleFile
         ? await writeRubySingleFile(root, definitions)
-        : profile.repositoryShape
-          ? await writeRepositoryScale(root, definitions)
-          : profile.usageSteps
-            ? await writeUsageScale(root, definitions, profile.usageSteps)
-            : profile.variedHandlers
-              ? await writeVariedHandlerScale(root, definitions)
-              : await writeSingleFileProfile(root, definitions, profile);
+        : profile.moduleConstants
+          ? await writeModuleConstants(root, definitions)
+          : profile.repositoryShape
+            ? await writeRepositoryScale(root, definitions)
+            : profile.usageSteps
+              ? await writeUsageScale(root, definitions, profile.usageSteps)
+              : profile.variedHandlers
+                ? await writeVariedHandlerScale(root, definitions)
+                : await writeSingleFileProfile(root, definitions, profile);
 
       run(root, output, generated.exitCode); // Warm filesystem and process-launch paths before recording.
       const samples = [];
@@ -573,6 +577,31 @@ async function writeRubySingleFile(root, definitions) {
       features: ["features/**/*.feature"],
     }, null, 2)}\n`,
   );
+  return singleFileOutcome(definitions);
+}
+
+/**
+ * One TypeScript file declaring a literal module constant per handler. Each handler reads its own
+ * constant and calls a distinct function, so the cost measured is module-scope resolution, not
+ * pair analysis.
+ */
+async function writeModuleConstants(root, definitions) {
+  const constants = Array.from({ length: definitions }, (_, index) => `const LIMIT_${index} = ${index};`);
+  const handlers = Array.from(
+    { length: definitions },
+    (_, index) => `Given('constant step ${index}', () => action_${index}(LIMIT_${index}));`,
+  );
+  await writeFile(join(root, "steps.ts"), `${[...constants, ...handlers].join("\n")}\n`);
+  await writeFile(
+    join(root, "suite.feature"),
+    "Feature: Module constants benchmark\n  Scenario: Sentinel\n    Given a benchmark sentinel\n",
+  );
+  await writeFile(join(root, ".cuke-dedup.json"), `${JSON.stringify({ threshold: 100 }, null, 2)}\n`);
+  return singleFileOutcome(definitions);
+}
+
+/** Expected outcome of a one-file profile whose definitions are all unused and pairwise unrelated. */
+function singleFileOutcome(definitions) {
   return {
     packages: 1,
     definitions,
