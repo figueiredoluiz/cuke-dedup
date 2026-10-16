@@ -42,7 +42,7 @@ impl WrapperEffects {
         self.invalidating_wrapper().is_some()
     }
 
-    /// Find a wrapper affected by dynamic mutation, multiple definitions, or unresolved uses.
+    /// Find a wrapper affected by dynamic or named mutation, multiple definitions, or unresolved uses.
     fn invalidating_wrapper(&self) -> Option<&String> {
         self.wrappers.iter().find(|name| {
             self.dynamic_mutation
