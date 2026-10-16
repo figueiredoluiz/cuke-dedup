@@ -1,6 +1,7 @@
 use super::*;
 use std::fs;
 
+/// Checks that CLI reporter, threshold, and rule settings override both standalone and package configuration.
 #[test]
 fn standalone_config_overrides_package_and_cli_overrides_both() {
     let directory = tempfile::tempdir().unwrap();
@@ -29,6 +30,7 @@ fn standalone_config_overrides_package_and_cli_overrides_both() {
     assert_eq!(config.severity(Rule::DuplicateMatcher), Severity::Error);
 }
 
+/// Checks the zero threshold default and rejects non-finite or out-of-range percentages.
 #[test]
 fn threshold_defaults_to_zero_and_rejects_out_of_range_values() {
     let directory = tempfile::tempdir().unwrap();
@@ -48,6 +50,7 @@ fn threshold_defaults_to_zero_and_rejects_out_of_range_values() {
     }
 }
 
+/// Checks the default handler-similarity floor, a configured override, and rejection outside the supported range.
 #[test]
 fn near_duplicate_floor_applies_from_config_and_rejects_out_of_range() {
     let directory = tempfile::tempdir().unwrap();
@@ -82,6 +85,7 @@ fn near_duplicate_floor_applies_from_config_and_rejects_out_of_range() {
     }
 }
 
+/// Checks invalid reporters, selectors, parameter patterns, and analysis roots produce configuration errors.
 #[test]
 fn configuration_rejects_empty_or_malformed_public_selectors() {
     assert!("unknown"
@@ -125,6 +129,7 @@ fn configuration_rejects_empty_or_malformed_public_selectors() {
         .contains("not a directory"));
 }
 
+/// Checks JSON configuration applies discovery, reporting, safety, registration, rule, and suppression fields.
 #[test]
 fn raw_configuration_applies_every_boolean_and_collection_field() {
     let directory = tempfile::tempdir().unwrap();
@@ -173,6 +178,7 @@ fn raw_configuration_applies_every_boolean_and_collection_field() {
     assert_eq!(config.suppressions.len(), 1);
 }
 
+/// Checks the CLI can disable metrics suppression enabled by project configuration.
 #[test]
 fn no_metrics_is_available_from_project_config_and_cli_override() {
     let directory = tempfile::tempdir().unwrap();
@@ -195,6 +201,7 @@ fn no_metrics_is_available_from_project_config_and_cli_override() {
     assert!(!overridden.no_metrics);
 }
 
+/// Checks project configuration enables the requirement for discovered definitions.
 #[test]
 fn require_definitions_is_available_from_project_config() {
     let directory = tempfile::tempdir().unwrap();
@@ -207,6 +214,7 @@ fn require_definitions_is_available_from_project_config() {
     assert!(configured.require_definitions);
 }
 
+/// Checks candidate limits accept lowered values and exact ceilings but reject zero or excessive values.
 #[test]
 fn candidate_limits_can_be_lowered_but_cannot_bypass_hard_safety_ceilings() {
     let directory = tempfile::tempdir().unwrap();
@@ -254,6 +262,7 @@ fn candidate_limits_can_be_lowered_but_cannot_bypass_hard_safety_ceilings() {
     assert_eq!(exact_limits.max_structural_class_comparisons, 250_000);
 }
 
+/// Checks project-controlled output rejects absolute paths and traversal beyond the analysis root.
 #[test]
 fn project_configuration_output_cannot_escape_the_analysis_root() {
     let directory = tempfile::tempdir().unwrap();
@@ -276,6 +285,7 @@ fn project_configuration_output_cannot_escape_the_analysis_root() {
     assert!(error.to_string().contains("must stay beneath"), "{error:#}");
 }
 
+/// Checks an operator-supplied output path overrides an invalid project-controlled path.
 #[test]
 fn command_line_output_safely_overrides_an_invalid_project_value() {
     let directory = tempfile::tempdir().unwrap();
@@ -296,6 +306,7 @@ fn command_line_output_safely_overrides_an_invalid_project_value() {
     assert_eq!(config.output, operator_output);
 }
 
+/// Checks project output cannot escape the analysis root through a symlink.
 #[cfg(unix)]
 #[test]
 fn project_configuration_output_cannot_follow_a_symlink_outside_the_root() {
@@ -314,6 +325,7 @@ fn project_configuration_output_cannot_follow_a_symlink_outside_the_root() {
     assert!(error.to_string().contains("resolves outside"), "{error:#}");
 }
 
+/// Checks suppressions reject empty reasons during configuration loading.
 #[test]
 fn suppression_requires_a_reason() {
     let directory = tempfile::tempdir().unwrap();
@@ -326,6 +338,7 @@ fn suppression_requires_a_reason() {
     assert!(error.to_string().contains("non-empty reason"));
 }
 
+/// Checks suppression reasons exceeding the character limit are rejected.
 #[test]
 fn suppression_reasons_have_a_bounded_payload() {
     let directory = tempfile::tempdir().unwrap();
@@ -341,6 +354,7 @@ fn suppression_reasons_have_a_bounded_payload() {
     assert!(error.to_string().contains("512-character limit"));
 }
 
+/// Checks configured exclusions retain the default node_modules exclusion.
 #[test]
 fn configured_excludes_extend_safety_defaults() {
     let directory = tempfile::tempdir().unwrap();
@@ -354,6 +368,7 @@ fn configured_excludes_extend_safety_defaults() {
     assert!(config.exclude.contains(&"dist/**".to_owned()));
 }
 
+/// Checks higher-precedence custom exclusions replace earlier patterns while retaining safety defaults.
 #[test]
 fn exclude_layers_replace_custom_patterns_but_preserve_default_policy() {
     let directory = tempfile::tempdir().unwrap();
@@ -384,6 +399,7 @@ fn exclude_layers_replace_custom_patterns_but_preserve_default_policy() {
     assert!(!config.exclude.contains(&"standalone-only/**".to_owned()));
 }
 
+/// Checks configuration can disable default exclusions and include hidden directories explicitly.
 #[test]
 fn default_excludes_and_hidden_directories_have_explicit_escape_hatches() {
     let directory = tempfile::tempdir().unwrap();
@@ -398,6 +414,7 @@ fn default_excludes_and_hidden_directories_have_explicit_escape_hatches() {
     assert!(config.include_hidden);
 }
 
+/// Checks JSONL can accompany JSON but cannot share standard output with the terminal reporter.
 #[test]
 fn jsonl_is_configurable_but_cannot_be_mixed_with_terminal_output() {
     let directory = tempfile::tempdir().unwrap();
@@ -423,6 +440,7 @@ fn jsonl_is_configurable_but_cannot_be_mixed_with_terminal_output() {
         .contains("terminal and jsonl reporters cannot share stdout"));
 }
 
+/// Checks malformed suppression path globs fail during configuration loading.
 #[test]
 fn invalid_suppression_glob_is_rejected_during_config_load() {
     let directory = tempfile::tempdir().unwrap();
@@ -435,6 +453,7 @@ fn invalid_suppression_glob_is_rejected_during_config_load() {
     assert!(error.to_string().contains("invalid suppression path glob"));
 }
 
+/// Checks feature discovery precedence progresses from Cucumber configuration to analyzer configuration to CLI overrides.
 #[test]
 fn cucumber_config_supplies_defaults_below_cuke_dedup_configuration() {
     let directory = tempfile::tempdir().unwrap();
@@ -471,6 +490,7 @@ fn cucumber_config_supplies_defaults_below_cuke_dedup_configuration() {
     assert_eq!(cli.feature_pattern_origin, "--features");
 }
 
+/// Checks literal Playwright-BDD feature patterns are extracted statically with their origin recorded.
 #[test]
 fn playwright_bdd_literal_features_are_detected_without_executing_config() {
     let directory = tempfile::tempdir().unwrap();
@@ -484,6 +504,7 @@ fn playwright_bdd_literal_features_are_detected_without_executing_config() {
     assert!(config.feature_pattern_origin.starts_with("Playwright-BDD"));
 }
 
+/// Checks Cucumber YAML directories expand to native feature globs while explicit globs remain intact.
 #[test]
 fn cucumber_yaml_paths_are_detected() {
     let directory = tempfile::tempdir().unwrap();
@@ -502,6 +523,7 @@ fn cucumber_yaml_paths_are_detected() {
     );
 }
 
+/// Checks explicit analyzer feature patterns bypass malformed lower-precedence framework configuration.
 #[test]
 fn explicit_features_skip_invalid_lower_precedence_framework_config() {
     let directory = tempfile::tempdir().unwrap();
@@ -516,6 +538,7 @@ fn explicit_features_skip_invalid_lower_precedence_framework_config() {
     assert!(config.config_warnings.is_empty());
 }
 
+/// Checks the preferred standalone configuration wins over other discovered configuration sources.
 #[test]
 fn jscpd_style_config_discovery_uses_one_source_in_documented_order() {
     let directory = tempfile::tempdir().unwrap();
@@ -540,6 +563,7 @@ fn jscpd_style_config_discovery_uses_one_source_in_documented_order() {
     assert_eq!(config.threshold, 30.0);
 }
 
+/// Checks absolute and root-relative explicit config paths bypass discovery and missing explicit files fail.
 #[test]
 fn explicit_config_is_fatal_and_bypasses_auto_discovery() {
     let directory = tempfile::tempdir().unwrap();
@@ -581,6 +605,7 @@ fn explicit_config_is_fatal_and_bypasses_auto_discovery() {
     assert!(error.to_string().contains("failed to read"));
 }
 
+/// Checks malformed autodiscovered configuration warns and falls back to package settings.
 #[test]
 fn malformed_auto_config_warns_and_falls_through_to_package_config() {
     let directory = tempfile::tempdir().unwrap();

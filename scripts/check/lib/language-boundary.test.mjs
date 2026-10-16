@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { compareInventory, inventorySources } from "../check-language-boundary.mjs";
 
+/** Inventories canonical adapter and framework dependency edges in one synthetic Rust source. */
 const inventory = (path, source) => inventorySources({ [path]: source })[path];
 
+/** Checks qualified adapter and framework references produce canonical dependency counts. */
 test("qualified references record canonical adapter and framework edges", () => {
   assert.deepEqual(inventory("src/analysis.rs", `
     fn analyze() {
@@ -23,6 +25,7 @@ test("qualified references record canonical adapter and framework edges", () => 
   });
 });
 
+/** Checks raw identifiers and aliases retain canonical adapter and framework edges. */
 test("raw identifiers in tracked path segments and aliases retain canonical edges", () => {
   const cases = [
     ["crate::r#ruby::extract();", { "crate::ruby": 1 }],
@@ -34,6 +37,7 @@ test("raw identifiers in tracked path segments and aliases retain canonical edge
   }
 });
 
+/** Checks raw keyword identifiers remain import components and aliases rather than syntax keywords. */
 test("raw keyword import components remain identifiers", () => {
   for (const [source, expected] of [
     ["use crate::r#as::extract;", {}],
@@ -45,6 +49,7 @@ test("raw keyword import components remain identifiers", () => {
   ]) assert.deepEqual(inventory("src/analysis.rs", source), expected, source);
 });
 
+/** Checks relative paths and aliases cannot hide adapter or framework dependencies at different source depths. */
 test("relative paths cannot hide adapter or framework dependencies", () => {
   const cases = [
     ["super::ruby::extract();", { "crate::ruby": 1 }],
@@ -61,6 +66,7 @@ test("relative paths cannot hide adapter or framework dependencies", () => {
   }
 });
 
+/** Checks grouped imports count each tracked leaf and subsequent alias use. */
 test("grouped imports and aliases count each imported leaf and each alias use", () => {
   const edges = inventory("src/analysis.rs", `
     use crate::ruby::{self as ruby, assertions::trust as trust_assertions};
@@ -88,6 +94,7 @@ test("grouped imports and aliases count each imported leaf and each alias use", 
   });
 });
 
+/** Checks crate and model namespace aliases resolve to canonical tracked edges. */
 test("ancestor aliases resolve through crate and model namespaces", () => {
   assert.deepEqual(inventory("src/analysis.rs", `
     use crate as root;
@@ -100,6 +107,7 @@ test("ancestor aliases resolve through crate and model namespaces", () => {
   });
 });
 
+/** Checks alias resolution handles namespace imports declared later in the source. */
 test("aliases resolve when their namespace import appears later", () => {
   assert.deepEqual(inventory("src/analysis.rs", `
     use rb::extract as f;
@@ -108,6 +116,7 @@ test("aliases resolve when their namespace import appears later", () => {
   `), { "crate::ruby": 3 });
 });
 
+/** Checks use keywords are recognized only in import items, preserving raw identifiers and precise-capture syntax. */
 test("only import items treat use as a keyword", () => {
   for (const source of [
     "fn borrow<'a>(x: &'a str) -> impl Sized + use<'a> { x } use crate::ruby as rb; rb::extract();",
@@ -119,6 +128,7 @@ test("only import items treat use as a keyword", () => {
   ]) assert.deepEqual(inventory("src/analysis.rs", source), { "crate::ruby": 2 }, source);
 });
 
+/** Checks comments and literal contents do not create dependency edges. */
 test("comments, ordinary strings, raw strings and chars do not create edges", () => {
   const edges = inventory("src/analysis.rs", String.raw`
     // crate::ruby::commented(); crate::typescript::commented();
@@ -131,6 +141,7 @@ test("comments, ordinary strings, raw strings and chars do not create edges", ()
   assert.deepEqual(edges, {});
 });
 
+/** Checks adding another adapter edge is reported even when the file already has tracked coupling. */
 test("adding an edge to a file already coupled to an adapter is still a regression", () => {
   const baseline = { "src/analysis.rs": { "crate::ruby": 1 } };
   const actual = inventorySources({ "src/analysis.rs": `
@@ -141,6 +152,7 @@ test("adding an edge to a file already coupled to an adapter is still a regressi
   assert.ok(differences.some((item) => item.includes("src/analysis.rs") && item.includes("crate::typescript")));
 });
 
+/** Checks a removed dependency edge requires an updated baseline inventory. */
 test("removing a recorded edge requires tightening the baseline", () => {
   const baseline = { "src/analysis.rs": { "crate::ruby": 2 } };
   const actual = inventorySources({ "src/analysis.rs": "crate::ruby::extract();" });
@@ -148,6 +160,7 @@ test("removing a recorded edge requires tightening the baseline", () => {
   assert.ok(differences.some((item) => item.includes("src/analysis.rs") && item.includes("crate::ruby")));
 });
 
+/** Checks inventory comparison reports both newly scoped files and missing baseline files. */
 test("new and missing scoped files are both reported", () => {
   const baseline = {
     "src/analysis/old.rs": { "crate::ruby": 1 },
@@ -162,12 +175,14 @@ test("new and missing scoped files are both reported", () => {
   assert.ok(differences.some((item) => item.includes("src/analysis/old.rs")));
 });
 
+/** Checks wildcard imports beneath tracked framework paths fail closed. */
 test("unsupported imports under a tracked framework path fail closed", () => {
   assert.throws(() => inventory("src/analysis.rs", `
     use crate::model::Framework::*;
   `));
 });
 
+/** Checks the boundary CLI uses its selected root, honors exclusions, and rejects omitted sources, new edges, and missing inputs. */
 test("CLI uses the selected root from another cwd and fails on missing inputs", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "language-boundary-test-"));
   const root = join(workspace, "repository");
@@ -180,6 +195,7 @@ test("CLI uses the selected root from another cwd and fails on missing inputs", 
     "src/ruby.rs": "language frontend", "src/ruby/": "language frontend",
   };
   const manifestPath = join(root, "scripts/check/language-boundary.json");
+  /** Runs the boundary checker against the temporary repository from a different working directory with bounded output and runtime. */
   const run = () => spawnSync(process.execPath, [checker, "--root", root], {
     cwd: workspace, encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024,
   });

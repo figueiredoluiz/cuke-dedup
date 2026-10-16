@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 
+/// Checks escaped example values preserve duplicate and ambiguity findings while malformed neighboring features mark both frontends incomplete.
 #[test]
 fn escaped_tables_preserve_findings_and_reject_malformed_neighbors_in_both_languages() {
     for (extension, definitions) in [

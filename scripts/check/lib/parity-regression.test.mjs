@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { regressionFailures, snapshot } from "./parity-regression.mjs";
 
+/** Builds a complete synthetic parity outcome with the supplied findings. */
 const outcome = (findings = []) => ({
   definitions: 2,
   complete: true,
@@ -9,6 +10,7 @@ const outcome = (findings = []) => ({
   findings,
 });
 
+/** Builds an observation with overridable outcome, deficits, difference, and error fields. */
 const observation = (id, values = {}) => ({
   id,
   outcome: values.outcome ?? outcome(),
@@ -17,14 +19,17 @@ const observation = (id, values = {}) => ({
   ...(values.error === undefined ? {} : { error: values.error }),
 });
 
+/** Builds a baseline disposition and snapshot digest for one observation. */
 const entry = (item, status, reason) => ({
   status,
   digest: snapshot({ outcome: item.outcome, deficits: item.deficits }),
   ...(reason === undefined ? {} : { reason }),
 });
 
+/** Wraps case dispositions in the supported parity-regression manifest schema. */
 const manifest = (cases) => ({ schemaVersion: 1, cases });
 
+/** Checks unchanged passing, known-gap, and accepted-difference observations retain their reviewed dispositions. */
 test("unchanged pass, known-gap and accepted-difference observations are positive controls", () => {
   const items = [
     observation("clean"),
@@ -39,6 +44,7 @@ test("unchanged pass, known-gap and accepted-difference observations are positiv
   assert.deepEqual(regressionFailures(items, baseline), []);
 });
 
+/** Checks changed normalized outcomes and independent-oracle deficits produce regression failures. */
 test("changed outcomes and changed independent-oracle deficits fail", () => {
   const baselineItem = observation("case", { deficits: ["missing required finding"] });
   const baseline = manifest({ case: entry(baselineItem, "known-gap", "Observed gap") });
@@ -56,6 +62,7 @@ test("changed outcomes and changed independent-oracle deficits fail", () => {
   assert.ok(regressionFailures([changedDeficit], baseline).length > 0);
 });
 
+/** Checks a resolved known gap requires explicit baseline disposition reclassification. */
 test("a known gap that starts passing requires explicit reclassification", () => {
   const failing = observation("case", { deficits: ["required finding missing"] });
   const baseline = manifest({ case: entry(failing, "known-gap", "Existing gap") });
@@ -63,6 +70,7 @@ test("a known gap that starts passing requires explicit reclassification", () =>
   assert.ok(regressionFailures([improved], baseline).some((failure) => failure.includes("disposition changed")));
 });
 
+/** Checks missing, additional, and duplicate observation IDs fail exact inventory matching. */
 test("missing, new and duplicate observation IDs fail exact inventory matching", () => {
   const first = observation("first");
   const second = observation("second");
@@ -72,6 +80,7 @@ test("missing, new and duplicate observation IDs fail exact inventory matching",
   assert.ok(regressionFailures([first, first, second], baseline).length > 0);
 });
 
+/** Checks malformed manifests and observations cannot produce a passing regression gate. */
 test("invalid manifests and malformed observations cannot produce a passing gate", () => {
   const item = observation("case");
   const valid = manifest({ case: entry(item, "pass") });
@@ -96,6 +105,7 @@ test("invalid manifests and malformed observations cannot produce a passing gate
   }
 });
 
+/** Checks operational errors fail even when the retained outcome matches a known gap. */
 test("operational errors always fail, even when their apparent outcome matches a known gap", () => {
   const gap = observation("case", { deficits: ["required finding missing"] });
   const baseline = manifest({ case: entry(gap, "known-gap", "Observed analyzer gap") });
@@ -104,11 +114,13 @@ test("operational errors always fail, even when their apparent outcome matches a
   }
 });
 
+/** Checks snapshot hashing canonicalizes object keys while preserving array order. */
 test("snapshot canonicalizes object keys but preserves array order", () => {
   assert.equal(snapshot({ a: 1, b: { x: 2, y: 3 } }), snapshot({ b: { y: 3, x: 2 }, a: 1 }));
   assert.notEqual(snapshot({ findings: ["first", "second"] }), snapshot({ findings: ["second", "first"] }));
 });
 
+/** Checks accepted differences cannot hide oracle deficits or silently become equivalent. */
 test("accepted differences cannot hide oracle deficits or silently become equivalent", () => {
   const difference = observation("case", { difference: true });
   const baseline = manifest({ case: entry(difference, "accepted-difference", "Reviewed difference") });
@@ -116,6 +128,7 @@ test("accepted differences cannot hide oracle deficits or silently become equiva
   assert.ok(regressionFailures([{ ...difference, difference: false }], baseline).length);
 });
 
+/** Checks absent observations, present empty errors, and non-JSON snapshot values fail closed. */
 test("invalid JSON values, empty observations and present empty errors fail closed", () => {
   const item = observation("case");
   const baseline = manifest({ case: entry(item, "pass") });
@@ -127,8 +140,10 @@ test("invalid JSON values, empty observations and present empty errors fail clos
   }
 });
 
+/** Checks normalized finding and related-location ordering is independent of host locale. */
 test("normalized finding snapshots use host-independent path ordering", async () => {
   const { outcome: normalizedOutcome } = await import("./language-parity.mjs");
+  /** Builds a synthetic step location under the supplied path prefix. */
   const location = (name) => ({ path: `${name}/steps.ts`, line: 1 });
   const report = {
     summary: { definitionsAnalyzed: 2, featureStepsAnalyzed: 0 },

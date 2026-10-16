@@ -3,6 +3,7 @@ use crate::config::{ConfigOverrides, SuppressionConfig};
 use crate::discovery::{SourceFile, SourceLanguage};
 use std::path::{Path, PathBuf};
 
+/// Extracts TypeScript step definitions from a synthetic steps.ts source, panicking on extraction failure.
 fn definitions(source: &str) -> Vec<StepDefinition> {
     crate::typescript::extract(
         source,
@@ -28,6 +29,7 @@ fn summaries(definitions: &[StepDefinition], config: &Config) -> Vec<MatcherSumm
         .collect()
 }
 
+/// Creates a default configuration and returns its temporary directory to keep the root alive.
 fn config() -> (tempfile::TempDir, Config) {
     let directory = tempfile::tempdir().unwrap();
     let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
@@ -42,6 +44,7 @@ type OverlapFixture = (
     Vec<(usize, String)>,
 );
 
+/// Builds definitions, summaries, and a red-colour witness with a retained temporary configuration root.
 fn overlap_fixture(source: &str) -> OverlapFixture {
     let definitions = definitions(source);
     let (directory, mut config) = config();
@@ -53,6 +56,7 @@ fn overlap_fixture(source: &str) -> OverlapFixture {
     (directory, definitions, config, summaries, witnesses)
 }
 
+/// Checks that expanding a large literal matcher stops with a regex resource-limit result.
 #[test]
 fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
     let matcher = ".".repeat(600_000);
@@ -62,6 +66,7 @@ fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
     ));
 }
 
+/// Checks that a regex exactly at the pattern-byte limit still compiles.
 #[test]
 fn regex_pattern_limit_is_inclusive() {
     let mut definition = crate::typescript::extract(
@@ -83,6 +88,7 @@ fn regex_pattern_limit_is_inclusive() {
     assert!(compiled.regex.is_some());
 }
 
+/// Checks that recording a broad ambiguity twice stores one group and one membership per definition.
 #[test]
 fn broad_ambiguity_groups_use_linear_membership_storage() {
     let matched = (0..10_000).collect::<BTreeSet<_>>();
@@ -99,6 +105,7 @@ fn broad_ambiguity_groups_use_linear_membership_storage() {
     assert!(proven.contains(0, 9_999));
 }
 
+/// Checks that overlap analysis stops after its shared candidate allowance and reports incompleteness.
 #[test]
 fn matcher_overlap_respects_the_shared_candidate_budget() {
     let definitions = definitions(
@@ -216,6 +223,7 @@ fn matcher_overlap_proposals_stop_at_the_budget_inside_one_match_list() {
     );
 }
 
+/// Checks that complete cached matches preserve compiled proposals while missing or over-budget cache entries fall back to scanning.
 #[test]
 fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
     let (_directory, definitions, config, summaries, witnesses) = overlap_fixture(
@@ -335,6 +343,7 @@ fn scan_windows_stop_at_a_break() {
     assert_eq!((work, whole), (2, 3));
 }
 
+/// Checks that two directional witnesses evaluate their shared overlap pair once without exhausting its budget.
 #[test]
 fn reverse_witnesses_do_not_consume_the_unique_pair_budget_twice() {
     let definitions = definitions(
@@ -359,6 +368,7 @@ fn reverse_witnesses_do_not_consume_the_unique_pair_budget_twice() {
     assert_eq!(findings.len(), 1);
 }
 
+/// Checks that overlap findings stop at the report cap and leave an explicit incomplete-analysis diagnostic.
 #[test]
 fn matcher_overlap_caps_finding_storms_and_marks_the_result_incomplete() {
     let mut source = String::new();
@@ -395,6 +405,7 @@ fn matcher_overlap_caps_finding_storms_and_marks_the_result_incomplete() {
         .all(|finding| finding.rule == Rule::OverlappingMatcher));
 }
 
+/// Checks that splitting an oversized combined regex set preserves the matching definition index.
 #[test]
 fn oversized_combined_matcher_programs_split_without_changing_matches() {
     let compiled = (0..200)
@@ -417,6 +428,7 @@ fn oversized_combined_matcher_programs_split_without_changing_matches() {
     assert_eq!(matches, vec![123]);
 }
 
+/// Checks that a rejected combined pattern falls back to its valid individual regex.
 #[test]
 fn matcher_index_falls_back_when_even_one_combined_pattern_is_rejected() {
     let compiled = vec![CompiledMatcher {
@@ -432,6 +444,7 @@ fn matcher_index_falls_back_when_even_one_combined_pattern_is_rejected() {
     assert_eq!(matches, [0]);
 }
 
+/// Checks membership intersections distinguish shared ambiguity groups from disjoint groups.
 #[test]
 fn ambiguity_membership_intersection_handles_ordered_disjoint_groups() {
     let mut proven = ProvenAmbiguities::new(5);
@@ -443,6 +456,7 @@ fn ambiguity_membership_intersection_handles_ordered_disjoint_groups() {
     assert!(!proven.contains(1, 4));
 }
 
+/// Checks repeated feature text marks both definitions used and retains the configured ambiguity suppression.
 #[test]
 fn feature_usage_caches_repeated_text_and_supports_suppressed_ambiguity() {
     let definitions =
@@ -476,6 +490,7 @@ fn feature_usage_caches_repeated_text_and_supports_suppressed_ambiguity() {
         .all(|finding| finding.suppression.as_ref().unwrap().reason == "known overlap"));
 }
 
+/// Checks disabled overlap and unused rules emit nothing, and used definitions stay exempt when unused reporting is enabled.
 #[test]
 fn overlap_and_unused_rules_honor_disabled_severity_and_usage() {
     let definitions = definitions("Given('unused', () => work());");
@@ -516,6 +531,7 @@ fn overlap_and_unused_rules_honor_disabled_severity_and_usage() {
     assert!(findings.is_empty());
 }
 
+/// Checks unresolved parameter types and unsupported regex flags cannot produce unused-definition findings.
 #[test]
 fn non_authoritative_matchers_cannot_prove_a_definition_unused() {
     let mut extracted = definitions("Given('a {projectType}', () => work());");
@@ -541,6 +557,7 @@ fn non_authoritative_matchers_cannot_prove_a_definition_unused() {
     assert!(findings.is_empty());
 }
 
+/// Checks witness generation handles built-ins and literal alternatives while withholding unsupported parameter samples.
 #[test]
 fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
     let mut definitions = definitions(
@@ -585,6 +602,7 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
     assert_eq!(witness_literal("open(unclosed"), "open(unclosed");
 }
 
+/// Checks fallback expressions handle optional text, alternatives, declared parameters, and approximate unknown parameters.
 #[test]
 fn fallback_expression_handles_optional_alternative_and_declared_parameters() {
     let parameters = BTreeMap::from([("colour".to_owned(), "red|green".to_owned())]);
@@ -609,6 +627,7 @@ fn fallback_expression_handles_optional_alternative_and_declared_parameters() {
     assert!(fallback_cucumber_literal_regex("two  spaces").contains("two"));
 }
 
+/// Checks oversized regex and Cucumber matchers report resource limits while invalid regex syntax has no resource diagnostic.
 #[test]
 fn matcher_compilation_reports_limits_but_not_unsupported_syntax() {
     let mut definition = definitions("Given(/^valid$/, () => work());").remove(0);

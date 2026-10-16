@@ -3,15 +3,18 @@ import test from "node:test";
 import { normalizeOutcome, validateOutcomeContract } from "./behavior-spec.mjs";
 import { outcome } from "./language-parity.mjs";
 
+/** Builds an overridable active duplicate-handler finding for outcome normalization tests. */
 const finding = (overrides = {}) => ({ rule: "duplicate-handler", severity: "error",
   primary: { path: "steps.ts", line: 2 }, related: [{ path: "steps.ts", line: 4 }], suppression: null,
   ...overrides });
+/** Builds an overridable complete report with synthetic definitions and findings. */
 const report = (findings = [finding()], overrides = {}) => ({
   summary: { definitionsAnalyzed: 2, featureStepsAnalyzed: 1 },
   corpus: { incomplete: false }, findingsTruncated: 0, findings, ...overrides,
 });
 const languageSuffixes = { "steps.ts": "steps", "steps.rb": "steps" };
 
+/** Checks neutral contracts accept zero counts and valid positive finding expectations. */
 test("neutral outcome contracts accept valid zero and positive counts", () => {
   for (const expected of [
     { definitions: 0, featureSteps: 0, complete: false, requiredFindings: [{ rule: "duplicate-handler" }], requiredAbsent: [] },
@@ -19,7 +22,9 @@ test("neutral outcome contracts accept valid zero and positive counts", () => {
   ]) assert.doesNotThrow(() => validateOutcomeContract(expected, "duplicate-handler"));
 });
 
+/** Checks each invalid count, completeness, or finding expectation is rejected independently. */
 test("neutral outcome contracts reject each invalid expectation dimension", () => {
+  /** Builds a fresh valid expectation contract before each invalid mutation. */
   const valid = () => ({ definitions: 2, featureSteps: 1, complete: true,
     requiredFindings: [{ rule: "duplicate-handler" }], requiredAbsent: [{ rule: "near-duplicate-step" }] });
   const invalid = [
@@ -48,6 +53,7 @@ test("neutral outcome contracts reject each invalid expectation dimension", () =
   }
 });
 
+/** Checks explicit source-suffix mappings give TypeScript and Ruby identical logical locations. */
 test("explicit source suffix mappings preserve paired logical locations", () => {
   const typescript = normalizeOutcome(report(), 1, languageSuffixes);
   const ruby = normalizeOutcome(report([finding({ primary: { path: "steps.rb", line: 2 },
@@ -58,6 +64,7 @@ test("explicit source suffix mappings preserve paired logical locations", () => 
       related: [{ path: "steps", line: 4 }] }] });
 });
 
+/** Checks finding order and related-location order do not change normalized outcomes. */
 test("finding and related-location ordering does not change the outcome", () => {
   const first = finding({ related: [{ path: "steps.ts", line: 8 }, { path: "steps.ts", line: 4 }] });
   const second = finding({ rule: "unused-definition", primary: { path: "other.ts", line: 1 }, related: [] });
@@ -65,6 +72,7 @@ test("finding and related-location ordering does not change the outcome", () => 
     normalizeOutcome(report([second, first]), 1, languageSuffixes));
 });
 
+/** Checks normalization excludes suppressed findings while preserving semantic changes and exit status. */
 test("suppressed findings are excluded while semantic outcome fields remain visible", () => {
   const baseline = normalizeOutcome(report([finding(), finding({ suppression: { reason: "ignored" } })]), 1, languageSuffixes);
   assert.equal(baseline.findings.length, 1);
@@ -78,12 +86,14 @@ test("suppressed findings are excluded while semantic outcome fields remain visi
   assert.notDeepEqual(normalizeOutcome(report(), 2, languageSuffixes), baseline);
 });
 
+/** Checks suffix rewriting occurs only when an explicit terminal mapping is supplied. */
 test("only explicit terminal source suffixes are rewritten", () => {
   assert.equal(normalizeOutcome(report(), 1).findings[0].primary.path, "steps.ts");
   assert.equal(normalizeOutcome(report(), 1, { ".ts": ".src" }).findings[0].primary.path, "steps.src");
   assert.equal(normalizeOutcome(report(), 1, { "steps.ts": "steps" }).findings[0].primary.path, "steps");
 });
 
+/** Checks the language-parity wrapper preserves neutral outcome normalization. */
 test("language-parity outcome remains the established compatibility wrapper", () => {
   assert.deepEqual(outcome(report(), 1), normalizeOutcome(report(), 1, languageSuffixes));
 });

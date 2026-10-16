@@ -1,5 +1,6 @@
 use super::*;
 
+/// Checks outline table escapes preserve expanded text and source positions across plain/Markdown formats and newline styles.
 #[test]
 fn table_escape_matrix_preserves_outline_text_and_source_positions() {
     for (cell, expected) in [
@@ -36,6 +37,7 @@ fn table_escape_matrix_preserves_outline_text_and_source_positions() {
     }
 }
 
+/// Checks table escape adaptation preserves step and attachment text and reports only actual malformed table rows.
 #[test]
 fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
     let source = r#"Feature: escapes
@@ -141,6 +143,7 @@ fn table_escapes_do_not_rewrite_step_text_or_docstrings() {
     }
 }
 
+/// Checks escape preparation leaves fenced docstrings intact and enforces reserved-character and parser-probe budgets.
 #[test]
 fn table_escape_adaptation_is_bounded_and_does_not_change_docstrings() {
     let text = "Feature: fences\n Scenario: example\n  Given text\n   ```\n   | literal\\q |\n   ```\n  Then table\n   | table\\q |\n";
@@ -167,6 +170,7 @@ fn table_escape_adaptation_is_bounded_and_does_not_change_docstrings() {
         .contains("parser-probe budget"));
 }
 
+/// Checks malformed tables in backgrounds and rule outlines fail rather than producing truncated extraction.
 #[test]
 fn malformed_tables_under_rules_and_backgrounds_are_not_truncated() {
     for source in [
@@ -177,6 +181,7 @@ fn malformed_tables_under_rules_and_backgrounds_are_not_truncated() {
     }
 }
 
+/// Checks backgrounds, scenarios, rules, and outlines all contribute extracted steps.
 #[test]
 fn extracts_steps_from_full_document_structure() {
     let source = r#"
@@ -208,6 +213,7 @@ Scenario Outline: Several invalid cards
     assert_eq!(steps[5].text, "card stolen is rejected");
 }
 
+/// Checks each examples row produces its own substituted outline step.
 #[test]
 fn expands_every_scenario_outline_examples_row() {
     let source = r#"
@@ -229,6 +235,7 @@ Examples:
     );
 }
 
+/// Checks an outline with header-only examples retains its original step text.
 #[test]
 fn header_only_examples_preserve_verbatim_scenario_steps() {
     let source = r#"
@@ -243,6 +250,7 @@ Examples:
     assert_eq!(steps[0].text, "a known step");
 }
 
+/// Checks placeholder text introduced by an examples value is not substituted again.
 #[test]
 fn examples_values_are_substituted_once() {
     let source = r#"
@@ -258,6 +266,7 @@ Examples:
     assert_eq!(steps[0].text, "<b> and z");
 }
 
+/// Checks empty examples blocks do not add steps beside populated blocks.
 #[test]
 fn multiple_examples_blocks_keep_only_available_rows() {
     let source = r#"
@@ -275,6 +284,7 @@ Examples: Header only
     assert_eq!(steps[0].text, "value first");
 }
 
+/// Checks Portuguese dialect keywords are extracted with their original spelling.
 #[test]
 fn uses_upstream_localized_dialect_keywords() {
     let source = r#"# language: pt
@@ -296,6 +306,7 @@ Cenário: Compra recusada
     assert_eq!(steps[4].keyword, "Mas");
 }
 
+/// Checks feature, rule, and example headings do not become steps.
 #[test]
 fn structural_keywords_are_not_mistaken_for_steps() {
     let source = "Feature: Empty\n  Rule: Structure only\n    Example: No steps\n";
@@ -304,6 +315,7 @@ fn structural_keywords_are_not_mistaken_for_steps() {
         .is_empty());
 }
 
+/// Checks Markdown outlines expand examples while retaining original step line numbers.
 #[test]
 fn extracts_official_gherkin_markdown_structure_and_preserves_lines() {
     let source = r#"# Feature: Staying alive
@@ -339,6 +351,7 @@ This is living documentation with [a link](https://example.com).
     assert_eq!(steps[4].location.line, 12);
 }
 
+/// Checks a Markdown scenario with a fenced docstring works under an implicit feature heading.
 #[test]
 fn gherkin_markdown_supports_doc_strings_and_an_implicit_feature_heading() {
     let source = r#"Checkout documentation
@@ -362,6 +375,7 @@ fn gherkin_markdown_supports_doc_strings_and_an_implicit_feature_heading() {
     assert_eq!(steps[0].location.line, 5);
 }
 
+/// Checks colon-bearing prose headings do not interfere with Markdown step extraction.
 #[test]
 fn gherkin_markdown_ignores_colon_prose_headings() {
     let source = r#"# Feature: Documentation
@@ -382,6 +396,7 @@ fn gherkin_markdown_ignores_colon_prose_headings() {
     assert_eq!(steps[0].text, "a documented step");
 }
 
+/// Checks an unindented prose table is ignored beside a valid Markdown step.
 #[test]
 fn gherkin_markdown_requires_gherkin_table_indentation() {
     let source = r#"# Feature: Documentation
@@ -402,6 +417,7 @@ fn gherkin_markdown_requires_gherkin_table_indentation() {
     assert_eq!(steps.len(), 1);
 }
 
+/// Checks Markdown conversion restores Portuguese structural headings while ignoring prose headings.
 #[test]
 fn gherkin_markdown_restores_structural_headings_from_the_active_dialect() {
     let source = r#"# language: pt
@@ -424,6 +440,7 @@ fn gherkin_markdown_restores_structural_headings_from_the_active_dialect() {
     assert_eq!(steps[0].text, "uma loja configurada");
 }
 
+/// Checks notes and fenced prose examples do not become Markdown steps or attachments.
 #[test]
 fn gherkin_markdown_separates_steps_from_prose_lists_and_fenced_examples() {
     let source = r#"# Checkout: overview
@@ -450,6 +467,7 @@ not a doc string
     assert_eq!(steps[0].text, "a documented step");
 }
 
+/// Checks plus and ordered list markers and bold step keywords are accepted.
 #[test]
 fn gherkin_markdown_accepts_all_common_list_markers_and_bold_keywords() {
     let source = r#"# Feature: Lists
@@ -475,6 +493,7 @@ fn gherkin_markdown_accepts_all_common_list_markers_and_bold_keywords() {
     );
 }
 
+/// Checks the final Markdown step retains its text and line without a trailing newline.
 #[test]
 fn gherkin_markdown_preserves_a_final_step_without_a_trailing_newline() {
     let source = "# Feature: Final line\n\n## Scenario: behavior\n\n* Given the final step";
@@ -489,6 +508,7 @@ fn gherkin_markdown_preserves_a_final_step_without_a_trailing_newline() {
     assert_eq!(steps[0].location.line, 5);
 }
 
+/// Checks single-dash Markdown table separators are excluded from outline example values.
 #[test]
 fn gherkin_markdown_accepts_single_dash_gfm_table_separators() {
     let source = r#"# Feature: Examples
@@ -513,6 +533,7 @@ fn gherkin_markdown_accepts_single_dash_gfm_table_separators() {
     assert_eq!(steps[0].text, "value one");
 }
 
+/// Checks excessive Markdown list candidates fail with a candidate-conversion limit.
 #[test]
 fn gherkin_markdown_rejects_candidate_storms_before_repeated_parsing() {
     let source = format!(
@@ -530,6 +551,7 @@ fn gherkin_markdown_rejects_candidate_storms_before_repeated_parsing() {
     assert!(error.contains("candidate conversion limit"));
 }
 
+/// Checks heading and list candidates share the same conversion limit.
 #[test]
 fn gherkin_markdown_counts_heading_and_step_candidates_together() {
     let source = format!(
@@ -547,6 +569,7 @@ fn gherkin_markdown_counts_heading_and_step_candidates_together() {
     assert!(error.contains("candidate conversion limit"));
 }
 
+/// Checks a tag and unknown colon heading cannot synthesize a valid feature.
 #[test]
 fn a_tag_before_an_unknown_colon_heading_does_not_create_an_implicit_feature() {
     let source = "`@smoke`\n\n# Documentation: overview\n";
@@ -561,6 +584,7 @@ fn a_tag_before_an_unknown_colon_heading_does_not_create_an_implicit_feature() {
         .contains("failed to parse Gherkin feature"));
 }
 
+/// Checks a valid base document remains unchanged when speculative dialect headings are offered.
 #[test]
 fn valid_base_documents_do_not_restore_speculative_dialect_headings() {
     let base = vec!["Feature: base".to_owned(), String::new()];
@@ -570,6 +594,7 @@ fn valid_base_documents_do_not_restore_speculative_dialect_headings() {
     assert_eq!(restored, "Feature: base\n\n");
 }
 
+/// Checks byte and retry boundaries are inclusive while exhausted probe counts block further parsing.
 #[test]
 fn parser_probe_and_retry_budgets_include_the_exact_ceiling() {
     let mut probe_budget = MarkdownProbeBudget {
@@ -595,6 +620,7 @@ fn parser_probe_and_retry_budgets_include_the_exact_ceiling() {
     assert!(probe_budget.parse("").is_err());
 }
 
+/// Checks a step candidate beyond the document leaves the restored source unchanged.
 #[test]
 fn out_of_range_step_candidates_are_ignored_defensively() {
     let source = "Feature: base\n".to_owned();
@@ -605,6 +631,7 @@ fn out_of_range_step_candidates_are_ignored_defensively() {
     assert_eq!(restored, "Feature: base\n");
 }
 
+/// Checks dialect restoration retains a valid feature heading and rejects an invalid language directive.
 #[test]
 fn dialect_restoration_retains_only_candidates_that_make_the_document_valid() {
     let base = vec![
@@ -622,6 +649,7 @@ fn dialect_restoration_retains_only_candidates_that_make_the_document_valid() {
     assert!(!restored.contains("not-a-dialect"));
 }
 
+/// Checks a prose-heavy Markdown document still extracts 150 valid steps within the probe budget.
 #[test]
 fn prose_size_does_not_consume_budget_for_synthesized_parser_probes() {
     let prose = format!("{}\n", "x".repeat(100)).repeat(5_000);
@@ -638,6 +666,7 @@ fn prose_size_does_not_consume_budget_for_synthesized_parser_probes() {
     assert_eq!(steps.len(), 150);
 }
 
+/// Checks a large mixed Markdown document extracts 380 steps while ignoring implementation notes.
 #[test]
 fn realistic_large_markdown_with_mixed_lists_stays_within_the_probe_budget() {
     let prose = format!("{}\n", "documentation ".repeat(8)).repeat(2_000);
@@ -664,6 +693,7 @@ fn realistic_large_markdown_with_mixed_lists_stays_within_the_probe_budget() {
     assert_eq!(steps.len(), 380);
 }
 
+/// Checks a large default-dialect Markdown document extracts all 4,200 steps within conversion limits.
 #[test]
 fn thousands_of_default_dialect_steps_use_one_bounded_whole_document_probe() {
     let items = (0..4_200)
@@ -687,6 +717,7 @@ fn thousands_of_default_dialect_steps_use_one_bounded_whole_document_probe() {
     assert_eq!(steps.len(), 4_200);
 }
 
+/// Checks a successful whole-document probe charges its count and restored byte length.
 #[test]
 fn default_dialect_whole_document_probe_is_charged_to_the_budget() {
     let source = "Feature: accounting\n  Scenario: behavior\n\n".to_owned();
@@ -701,6 +732,7 @@ fn default_dialect_whole_document_probe_is_charged_to_the_budget() {
     assert_eq!(probe_budget.parsed_bytes, restored.len());
 }
 
+/// Checks ambiguous localized lists stop with an explicit Markdown conversion-budget error.
 #[test]
 fn gherkin_markdown_bounds_ambiguous_parser_probe_work() {
     let items = (0..800)

@@ -16,6 +16,7 @@ const report = {
   corpus: { incomplete: false }, findings: [finding], findingsTruncated: 0,
 };
 
+/** Checks passing Ruby fixtures cannot compensate for missing mappings, failing expectations, or an empty run. */
 test("passing implemented fixtures cannot hide missing mappings or an empty run", () => {
   const passing = [{ deficits: [] }];
   assert.equal(completionPassed(passing, []), true);
@@ -24,6 +25,7 @@ test("passing implemented fixtures cannot hide missing mappings or an empty run"
   assert.equal(completionPassed([], []), false);
 });
 
+/** Checks counterpart coverage requires explicit mapped fixture evidence or a valid framework-inapplicable rationale. */
 test("source counterpart coverage cannot be inferred from inventory or passing implementations", () => {
   const mapping = { source: "source.json", case: "case", requiredStatus: "covered", fixtureGroup: "group" };
   const groups = { group: oracle };
@@ -36,6 +38,7 @@ test("source counterpart coverage cannot be inferred from inventory or passing i
     rationale: "The positional framework has no Ruby global-registration counterpart." }], groups), []);
 });
 
+/** Checks candidate-boundary oracles validate nonnegative counts and require observed candidate-source evaluations. */
 test("candidate-boundary oracles assert evaluated sources rather than just final finding counts", () => {
   const bounded = { ...oracle, expectedCandidateSources: { matcherBlocking: 1 } };
   validateOracle(bounded);
@@ -48,6 +51,7 @@ test("candidate-boundary oracles assert evaluated sources rather than just final
   }, 0), []);
 });
 
+/** Checks Ruby parity rejects blanket suppression, unexpected findings, and overlapping oracle ownership. */
 test("Ruby parity rejects blanket suppression, unclassified findings and overlapping oracles", () => {
   validateOracle(oracle);
   assert.deepEqual(parityDeficits(oracle, report, 0), []);
@@ -60,6 +64,7 @@ test("Ruby parity rejects blanket suppression, unclassified findings and overlap
   }, report, 0).some((message) => message.includes("ownership")));
 });
 
+/** Checks completeness, finding truncation, inventory counts, exit status, and contradictory oracle rules fail independently. */
 test("Ruby parity checks strict completeness, counts and truncation independently", () => {
   for (const changed of [
     { corpus: { incomplete: true } }, { findingsTruncated: 1 },
@@ -89,6 +94,7 @@ const census = new Map([
 /** Builds a shared-engine census entry with overrides. */
 const entry = (overrides) => ({ name: "t", behaviorClass: "shared-engine-invariant", requiredStatus: "unmapped", rationale: "why", ...overrides });
 
+/** Checks oracle clauses resolve only to existing valued finding, absence, candidate-source, or duplication members. */
 test("oracle clauses resolve only against real oracle members with their observed values", () => {
   assert.ok(oracleClauseResolves(oracle, "requiredFindings[0]"));
   assert.ok(oracleClauseResolves(oracle, "requiredAbsent[0]"));
@@ -108,6 +114,7 @@ test("oracle clauses resolve only against real oracle members with their observe
   assert.ok(!oracleClauseResolves(undefined, "requiredFindings[0]"));
 });
 
+/** Checks Ruby evidence detection reads only the selected function body and handles literals, comments, lifetimes, and Ruby-specific suites. */
 test("a test body counts as Ruby evidence only when it exercises Ruby input", () => {
   const content = "#[test]\nfn ruby_case() {\n  write(\"steps.rb\", source);\n}\n#[test]\nfn js_case() {\n  write(\"steps.ts\", { nested: 1 });\n}\n/// Runs a Ruby project with an optional definition pattern.\nfn ruby_helper() {}\n#[test]\nfn lang_case() {\n  SourceLanguage::Ruby\n}\n";
   assert.ok(testBodyMentionsRuby(content, "ruby_case"));
@@ -135,6 +142,7 @@ test("a test body counts as Ruby evidence only when it exercises Ruby input", ()
   assert.ok(testBodyMentionsRuby("fn yml() {\n  write(\"cucumber.yml\", paths);\n}", "yml"));
 });
 
+/** Checks behavior classes and evidence dispositions enforce valid combinations, resolvable evidence, and explicit rationales. */
 test("the class by status matrix closes the disposition escape routes", () => {
   // Ruby and shared-engine tests can never be excluded as language-inapplicable.
   assert.throws(() => validateUnitEntry("f.rs", entry({ behaviorClass: "ruby-behavior", requiredStatus: "language-inapplicable" }), groups, census), /not allowed/);
@@ -175,6 +183,7 @@ test("the class by status matrix closes the disposition escape routes", () => {
   assert.throws(() => validateUnitEntry("f.rs", evidence("tests/ruby.rs", "absent"), groups, census), /not in the census/);
 });
 
+/** Checks Rust evidence targets use exact binary-specific test names, retain all dependents, and batch by test binary. */
 test("evidence is addressed exactly per binary and every dependent entry is named", () => {
   assert.deepEqual(cargoTestArgs({ file: "tests/cli.rs", name: "a" }), ["test", "--test", "cli", "--", "--exact", "a"]);
   assert.deepEqual(cargoTestArgs({ file: "src/config/tests.rs", name: "paths" }), ["test", "--lib", "--", "--exact", "config::tests::paths"]);
@@ -205,6 +214,7 @@ test("evidence is addressed exactly per binary and every dependent entry is name
   assert.deepEqual(batches[1].targets.map((target) => target.name), ["yaml", "late"]);
 });
 
+/** Checks Rust evidence executes only for unblocked completion runs unless explicitly forced within that mode. */
 test("only an otherwise unblocked completion run executes Rust evidence, unless forced", () => {
   assert.equal(executesEvidence({ regression: false, inventoryOnly: false }), true);
   assert.equal(executesEvidence({ regression: true, inventoryOnly: false }), false);
@@ -214,6 +224,7 @@ test("only an otherwise unblocked completion run executes Rust evidence, unless 
   assert.equal(executesEvidence({ regression: true, inventoryOnly: false, forced: true }), false);
 });
 
+/** Checks platform-specific evidence is deferred only off-platform and rejects conflicting platform declarations. */
 test("platform-gated evidence is explicit, consistent, and still required on its platform", () => {
   const linux = { file: "tests/ruby.rs", name: "linux_names", platforms: ["linux"] };
   const units = { files: {
@@ -235,6 +246,7 @@ test("platform-gated evidence is explicit, consistent, and still required on its
 /** Builds a language-specific entry whose rationale is the given text. */
 const excluded = (rationale) => ({ name: "js_only", behaviorClass: "language-specific-api", requiredStatus: "language-inapplicable", rationale });
 
+/** Checks language-inapplicable rationales name a resolvable Ruby residue or explicitly state that none exists. */
 test("a language-inapplicable rationale must state where its Ruby residue lives", () => {
   const known = new Map([["tests/ruby.rs::ruby_case", { name: "ruby_case", requiredStatus: "rust-evidence" }],
     ["f.rs::excluded_case", { name: "excluded_case", requiredStatus: "language-inapplicable" }]]);
@@ -265,6 +277,7 @@ test("a language-inapplicable rationale must state where its Ruby residue lives"
   assert.throws(() => validateUnitEntry("f.rs", excluded("JS/TS-only: `tsconfig.json` paths. Semantic residue: handled elsewhere."), withGroups, census), /Semantic residue/);
 });
 
+/** Checks Rust test discovery handles intervening attributes and parses individual outcomes without extending function bodies through raw strings. */
 test("test discovery sees attributes between the marker and the function, per-test outcomes blame only failures", () => {
   const source = "#[test]\nfn plain() {}\n#[test]\n#[should_panic]\nfn panics() {}\n#[test]\n#[cfg(unix)]\n#[ignore = \"slow\"]\nfn gated() {}\n";
   assert.deepEqual([...source.matchAll(TEST_FN_PATTERN)].map((match) => match[1]), ["plain", "panics", "gated"]);
@@ -279,6 +292,7 @@ test("test discovery sees attributes between the marker and the function, per-te
   assert.ok(testBodyMentionsRuby(wide, "wide"));
 });
 
+/** Checks incomplete Cargo runs establish no evidence while completed runs identify only failed, ignored, or missing targets. */
 test("an incomplete cargo run establishes no evidence; a completed one blames only its failures", () => {
   const targets = ["good", "bad", "missing"].map((name) => ({ file: "tests/cli.rs", name, referencedBy: [`f.rs:${name}`] }));
   const batch = { targets, args: ["test", "--test", "cli", "--", "--exact", "good", "bad", "missing"] };
@@ -310,6 +324,7 @@ test("an incomplete cargo run establishes no evidence; a completed one blames on
   assert.deepEqual(blamed({ status: 101, stdout: `${passing}test result: FAILED. 3 passed; 0 failed; 0 ignored` }), all);
 });
 
+/** Checks nested block comments preserve function boundaries and exclusion rationales name the language-specific API. */
 test("nested block comments and unnamed exclusions are rejected where they would mislead", () => {
   const nested = "fn nested() {\n  /* outer /* inner */ } still a comment */\n  write(\"steps.rb\", s);\n}\nfn after() {}\n";
   assert.equal(functionBody(nested, "nested").endsWith("write(\"steps.rb\", s);\n}"), true);
@@ -323,6 +338,7 @@ test("nested block comments and unnamed exclusions are rejected where they would
   assert.equal(validateUnitEntry("f.rs", excluded("JS/TS-only: `tsconfig.json` paths. Semantic residue: none."), withGroups, census), null);
 });
 
+/** Checks libtest output variants remain valid while captured result-shaped text cannot forge passing evidence. */
 test("libtest variants and captured output neither hide nor forge evidence", () => {
   const targets = ["good", "panics", "bad"].map((name) => ({ file: "tests/cli.rs", name, referencedBy: [`f.rs:${name}`] }));
   const batch = { targets, args: ["test", "--test", "cli", "--", "--exact", "good", "panics", "bad"] };

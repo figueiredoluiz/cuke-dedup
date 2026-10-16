@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
+/// Runs the analyzer with JSONL output and optional definition patterns, returning its captured process output.
 fn run(root: &std::path::Path, definitions: Option<&str>, extra: &[&str]) -> std::process::Output {
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command
@@ -17,6 +18,7 @@ fn run(root: &std::path::Path, definitions: Option<&str>, extra: &[&str]) -> std
     command.args(extra).output().unwrap()
 }
 
+/// Parses JSONL output and returns the summary record, panicking if records are invalid or the summary is absent.
 fn summary(stdout: &[u8]) -> Value {
     String::from_utf8_lossy(stdout)
         .lines()
@@ -25,6 +27,7 @@ fn summary(stdout: &[u8]) -> Value {
         .unwrap()
 }
 
+/// Checks Ruby opt-in, dependency discovery, unresolved inputs, and mixed-language rejection retain expected CLI outcomes.
 #[test]
 fn ruby_selection_dependencies_and_mixed_domain_keep_cli_outcomes() {
     let project = tempfile::tempdir().unwrap();
@@ -78,6 +81,7 @@ fn ruby_selection_dependencies_and_mixed_domain_keep_cli_outcomes() {
     assert!(String::from_utf8_lossy(&mixed.stderr).contains("separate analysis runs"));
 }
 
+/// Checks NUL-byte binary exclusion belongs to the JavaScript adapter and does not reject Ruby source.
 #[test]
 fn source_exclusion_stays_with_javascript_adapter() {
     let project = tempfile::tempdir().unwrap();
@@ -110,6 +114,7 @@ fn source_exclusion_stays_with_javascript_adapter() {
     );
 }
 
+/// Checks Ruby load paths retain their flat serialized configuration key and omit it when empty.
 #[test]
 fn ruby_configuration_keeps_flat_compatibility_key() {
     let root = tempfile::tempdir().unwrap();

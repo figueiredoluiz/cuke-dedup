@@ -1,6 +1,7 @@
 use super::*;
 use std::fs;
 
+/// Checks static Cucumber path extraction selects the default profile instead of other profiles.
 #[test]
 fn extracts_cucumber_default_profile_paths() {
     let source = "export default { default: { paths: ['specs', 'acceptance/**/*.feature.md'] }, ci: { paths: ['wrong'] } }";
@@ -13,6 +14,7 @@ fn extracts_cucumber_default_profile_paths() {
     );
 }
 
+/// Checks Playwright-BDD feature extraction ignores unrelated object properties.
 #[test]
 fn extracts_only_define_bdd_config_features() {
     let source = "const unrelated = { features: ['wrong'] }; const testDir = defineBddConfig({ features: ['tests/**/*.spec'] });";
@@ -22,6 +24,7 @@ fn extracts_only_define_bdd_config_features() {
     );
 }
 
+/// Checks framework directories expand to the appropriate native feature extensions.
 #[test]
 fn maps_framework_directories_to_their_native_defaults() {
     let mut warnings = Vec::new();
@@ -39,6 +42,7 @@ fn maps_framework_directories_to_their_native_defaults() {
     );
 }
 
+/// Checks Cypress feature patterns come from e2e configuration rather than component settings.
 #[test]
 fn extracts_cypress_e2e_spec_pattern_from_project_config() {
     let source = r#"
@@ -57,6 +61,7 @@ fn extracts_cypress_e2e_spec_pattern_from_project_config() {
     );
 }
 
+/// Checks recognized framework files and current or legacy dependency names enable the expected discovery defaults.
 #[test]
 fn detects_supported_frameworks_and_dependency_fallbacks() {
     let playwright = tempfile::tempdir().unwrap();
@@ -118,6 +123,7 @@ fn detects_supported_frameworks_and_dependency_fallbacks() {
         .is_none());
 }
 
+/// Checks recognized Playwright-BDD configuration takes precedence over Cypress and Cucumber providers.
 #[test]
 fn registry_precedence_prefers_recognized_playwright_bdd_configuration() {
     let directory = tempfile::tempdir().unwrap();
@@ -151,6 +157,7 @@ fn registry_precedence_prefers_recognized_playwright_bdd_configuration() {
     );
 }
 
+/// Checks ordinary Playwright configuration falls through to eligible Cypress or Cucumber discovery.
 #[test]
 fn unrecognized_playwright_config_falls_through_to_lower_precedence_frameworks() {
     let directory = tempfile::tempdir().unwrap();
@@ -184,6 +191,7 @@ fn unrecognized_playwright_config_falls_through_to_lower_precedence_frameworks()
     assert_eq!(detected.source, directory.path().join("cucumber.json"));
 }
 
+/// Checks Cypress configuration requires a supported Cucumber preprocessor dependency.
 #[test]
 fn cypress_configuration_requires_preprocessor_dependency_evidence() {
     let directory = tempfile::tempdir().unwrap();
@@ -199,6 +207,7 @@ fn cypress_configuration_requires_preprocessor_dependency_evidence() {
         .is_none());
 }
 
+/// Checks lookalike dependency names do not authorize framework discovery.
 #[test]
 fn unsupported_dependency_names_do_not_enable_framework_discovery() {
     let directory = tempfile::tempdir().unwrap();
@@ -221,6 +230,7 @@ fn unsupported_dependency_names_do_not_enable_framework_discovery() {
         .is_none());
 }
 
+/// Checks an unrecognized earlier Playwright filename does not hide a recognized later file.
 #[test]
 fn same_provider_filename_fallthrough_continues_after_a_non_match() {
     let directory = tempfile::tempdir().unwrap();
@@ -246,6 +256,7 @@ fn same_provider_filename_fallthrough_continues_after_a_non_match() {
     );
 }
 
+/// Checks Cucumber filename precedence and promotion after the preferred file is removed.
 #[test]
 fn cucumber_config_filename_order_decides_which_file_is_inspected() {
     let directory = tempfile::tempdir().unwrap();
@@ -275,6 +286,7 @@ fn cucumber_config_filename_order_decides_which_file_is_inspected() {
     );
 }
 
+/// Checks a Cucumber filename supplies defaults without literal paths while malformed JSON surfaces an error.
 #[test]
 fn cucumber_files_match_regardless_of_contents_and_errors_propagate() {
     let directory = tempfile::tempdir().unwrap();
@@ -292,6 +304,7 @@ fn cucumber_files_match_regardless_of_contents_and_errors_propagate() {
     );
 }
 
+/// Checks Playwright and Cypress distinguish absent configuration from dynamic paths and framework defaults.
 #[test]
 fn framework_files_cover_missing_dynamic_and_default_paths() {
     let directory = tempfile::tempdir().unwrap();
@@ -335,6 +348,7 @@ fn framework_files_cover_missing_dynamic_and_default_paths() {
     assert_eq!(dynamic.warnings.len(), 1);
 }
 
+/// Checks JSON, YAML, and JavaScript Cucumber formats preserve literals and warn only for dynamic paths.
 #[test]
 fn cucumber_file_formats_cover_literal_dynamic_and_missing_paths() {
     let directory = tempfile::tempdir().unwrap();
@@ -373,6 +387,7 @@ fn cucumber_file_formats_cover_literal_dynamic_and_missing_paths() {
     }
 }
 
+/// Checks path normalization handles root directories, line suffixes, Windows separators, and unsupported negation.
 #[test]
 fn framework_pattern_normalization_is_explicit() {
     let mut warnings = Vec::new();
@@ -403,6 +418,7 @@ fn framework_pattern_normalization_is_explicit() {
     assert!(has_extension("features/a.feature"));
 }
 
+/// Checks JSON and YAML path extraction distinguishes missing values, literal strings, and mixed dynamic lists.
 #[test]
 fn structured_config_values_distinguish_missing_dynamic_and_strings() {
     assert_eq!(json_strings(None), LiteralProperty::Missing);
@@ -436,6 +452,7 @@ fn structured_config_values_distinguish_missing_dynamic_and_strings() {
     );
 }
 
+/// Checks static object queries distinguish absent and dynamic paths and decode supported quoted strings.
 #[test]
 fn static_object_queries_cover_absent_and_dynamic_shapes() {
     assert_eq!(
