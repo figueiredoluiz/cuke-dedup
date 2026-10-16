@@ -776,8 +776,10 @@ fn parse_errors_render_expected_tokens_in_one_order() {
             r#"Error at 1:14: {"unknown keyword"}"#,
         ),
     ] {
+        // A CRLF checkout (Windows CI) of the fixture parses to a different expected-token set.
+        let source = source.replace("\r\n", "\n");
         for _ in 0..64 {
-            let error = extract(source, Path::new("bad.feature")).unwrap_err();
+            let error = extract(&source, Path::new("bad.feature")).unwrap_err();
             assert_eq!(
                 format!("{error:#}"),
                 format!("failed to parse Gherkin feature bad.feature: {expected}")

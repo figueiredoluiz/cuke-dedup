@@ -7087,13 +7087,26 @@ fn regression_122_ruby_receiver_registrations_fail_closed() {
 /// Checks a Gherkin parse error lists its expected tokens in one order across process runs.
 #[test]
 fn regression_gherkin_parse_error_token_order_is_deterministic() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/ruby-parity/gherkin/malformed-table-neighbor");
+    // A CRLF checkout (Windows CI) parses to a different expected-token set; an LF copy pins one
+    // input on every platform.
+    let directory = tempfile::tempdir().unwrap();
+    for name in [
+        "steps.rb",
+        "features/missing-final-pipe.feature",
+        "features/ragged-extra-cell.feature",
+        "features/valid-neighbor.feature",
+    ] {
+        let contents = fs::read_to_string(fixture.join(name)).unwrap();
+        write(directory.path(), name, &contents.replace("\r\n", "\n"));
+    }
+    let root = directory.path();
     // Each process seeds the parser's `HashSet` differently; twelve unsorted runs of a two-token
     // set all print the sorted order by chance with probability 2^-12.
     let runs = (0..12)
         .map(|_| {
-            let output = analyze_root_with(&root, &["--definitions", "**/*.rb"])
+            let output = analyze_root_with(root, &["--definitions", "**/*.rb"])
                 .code(2)
                 .get_output()
                 .clone();
