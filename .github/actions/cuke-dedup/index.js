@@ -103,7 +103,7 @@ export function buildEffectiveConfigArguments(inputs) {
   return args;
 }
 
-/** Resolves the binary and configuration, runs analysis, publishes report outputs, and returns its exit code or 2 for launch failures. */
+/** Resolves the binary and configuration, runs analysis, and publishes outputs; rejects setup/output errors and returns the analysis status, or 2 for spawn errors, signals, or a missing status. */
 export async function runAction({ env = process.env, cwd = process.cwd() } = {}) {
   const inputs = {
     config: readInput(env, "config", ""),

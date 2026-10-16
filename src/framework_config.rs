@@ -280,7 +280,7 @@ enum FrameworkKind {
     Playwright,
 }
 
-/// Normalizes a framework path, drops empty or negated inputs, removes a numeric line suffix, and expands directory paths into feature globs.
+/// Drops initially blank inputs and negated paths, normalizes prefixes and numeric line suffixes, and expands directory or dot paths into feature globs.
 fn framework_pattern(
     value: &str,
     framework: FrameworkKind,
