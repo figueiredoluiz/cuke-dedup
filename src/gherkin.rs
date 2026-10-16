@@ -81,7 +81,7 @@ pub fn extract_with_format(
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     let mut feature = Feature::parse(&parsed_source, GherkinEnv::default())
         .map_err(|error| {
-            let error = anyhow::Error::new(error);
+            let error = anyhow::anyhow!(sort_expected_tokens(&error.to_string()));
             match table_escapes::first_unterminated_row(&parsed_source) {
                 Some(line) => {
                     error.context(format!("unterminated Gherkin table row at line {line}"))
@@ -93,6 +93,45 @@ pub fn extract_with_format(
     table_escapes::finish(&mut feature, &parsed_source, marker)
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     Ok(extract_feature(&feature, path))
+}
+
+/// Sorts the expected-token set in the gherkin crate's `Error at L:C: {..}` message. The crate
+/// renders a `HashSet` with `{:?}`, so its order changes between processes. Text that is not a
+/// set of string literals is returned unchanged.
+fn sort_expected_tokens(message: &str) -> String {
+    message
+        .strip_suffix('}')
+        .and_then(|head| head.split_once(": {"))
+        .map(|(position, set)| (position, set, debug_string_literals(set)))
+        .filter(|(_, set, tokens)| tokens.join(", ") == *set)
+        .map_or_else(
+            || message.to_owned(),
+            |(position, _, mut tokens)| {
+                tokens.sort_unstable();
+                format!("{position}: {{{}}}", tokens.join(", "))
+            },
+        )
+}
+
+/// Returns each `{:?}` string literal in `text`, quotes included; an unterminated literal is
+/// dropped, which the caller detects because the literals no longer rebuild the text.
+fn debug_string_literals(text: &str) -> Vec<&str> {
+    let mut literals = Vec::new();
+    let mut open = None;
+    let mut escaped = false;
+    for (index, character) in text.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if open.is_some() && character == '\\' {
+            escaped = true;
+        } else if character == '"' {
+            match open.take() {
+                Some(start) => literals.push(&text[start..=index]),
+                None => open = Some(index),
+            }
+        }
+    }
+    literals
 }
 
 /// Converts Gherkin Markdown to classic Gherkin with one output line per source line, so parser

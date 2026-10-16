@@ -2193,6 +2193,20 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent stage `gherkin-parser`: Gherkin/Markdown text parsing (gherkin markdown bounds ambiguous parser probe work); feature text carries no adapter data and the parser runs before any adapter.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "parse_errors_render_expected_tokens_in_one_order",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: Gherkin/Markdown text parsing (parse errors render expected tokens in one order); feature text carries no adapter data and the parser runs before any adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "sort_expected_tokens_sorts_literals_and_fails_closed",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: Gherkin/Markdown text parsing (sort expected tokens sorts literals and fails closed); feature text carries no adapter data and the parser runs before any adapter.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -5643,6 +5657,13 @@
           },
           "rationale": "`regression_122_ruby_receiver_registrations_fail_closed` runs Ruby step keywords called through receivers through the built binary: every shape Cucumber-Ruby can register (a String or Regexp pattern in any literal form, at most three arguments, and a splat or `...`, a second argument that may be a Symbol or Proc, or a block or block argument when that argument is absent, nil or false), on any receiver including a local source-class instance or namespace alias, fails closed at its located call, while shapes Ruby rejects (Watir and Builder `a(...)` calls, each non-pattern literal or a lambda as pattern, no pattern, literal, parenthesized or keyword second arguments, more than three arguments for every number of values each splat or `...` may supply, a literal second argument fixed before or after splats, `-1` as a signed literal (while `- 1` is a call), `&nil`, `self.Given` without a block) stay complete.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_gherkin_parse_error_token_order_is_deterministic",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: the built binary prints one Gherkin parse-error line with the expected tokens in sorted order across repeated runs; feature parsing runs before any adapter.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

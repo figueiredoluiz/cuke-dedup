@@ -752,3 +752,59 @@ fn gherkin_markdown_bounds_ambiguous_parser_probe_work() {
     assert!(error.contains("failed to parse Gherkin feature probe-budget.feature.md"));
     assert!(error.contains("Gherkin Markdown conversion exceeds"));
 }
+
+/// Checks repeated parses of multi-token parse errors render one sorted expected-token set.
+#[test]
+fn parse_errors_render_expected_tokens_in_one_order() {
+    // Each parse builds a fresh `HashSet` with new hash keys, so 64 parses of a multi-token set
+    // agree by chance with probability at most 2^-63 when the set is unsorted.
+    for (source, expected) in [
+        (
+            include_str!("../../fixtures/ruby-parity/gherkin/malformed-table-neighbor/features/missing-final-pipe.feature"),
+            r#"unterminated Gherkin table row at line 7: Error at 8:1: {"_", "unknown keyword"}"#,
+        ),
+        (
+            "Feature: a\n  Scenario: b\n    Given c\n  @tag\n",
+            r#"Error at 5:1: {"\"@\"", "_", "no match", "tag character", "unknown keyword"}"#,
+        ),
+        (
+            "Feature: a\n  Scenario: b\n    Given c\n    \"\"\"\n    open\n",
+            r#"Error at 6:1: {"\"\\\"\\\"\\\"\"", "_"}"#,
+        ),
+        (
+            "Scenario: no feature\n",
+            r#"Error at 1:14: {"unknown keyword"}"#,
+        ),
+    ] {
+        for _ in 0..64 {
+            let error = extract(source, Path::new("bad.feature")).unwrap_err();
+            assert_eq!(
+                format!("{error:#}"),
+                format!("failed to parse Gherkin feature bad.feature: {expected}")
+            );
+        }
+    }
+}
+
+/// Checks expected-token sorting handles escaped literals and leaves unmodeled text unchanged.
+#[test]
+fn sort_expected_tokens_sorts_literals_and_fails_closed() {
+    for (message, expected) in [
+        (
+            r#"Error at 8:1: {"unknown keyword", "_"}"#,
+            r#"Error at 8:1: {"_", "unknown keyword"}"#,
+        ),
+        (
+            r#"Error at 2:3: {"\"|\"", "\", \"", "[_]", "\"\\\\\""}"#,
+            r#"Error at 2:3: {"[_]", "\", \"", "\"\\\\\"", "\"|\""}"#,
+        ),
+        (r#"Error at 1:1: {"x"}"#, r#"Error at 1:1: {"x"}"#),
+        ("Error at 1:1: {}", "Error at 1:1: {}"),
+        // Unmodeled shapes keep the upstream text rather than dropping tokens.
+        ("Error at 1:1: {b, a}", "Error at 1:1: {b, a}"),
+        (r#"Error at 1:1: {"b", "a}"#, r#"Error at 1:1: {"b", "a}"#),
+        ("plain message", "plain message"),
+    ] {
+        assert_eq!(sort_expected_tokens(message), expected, "{message}");
+    }
+}
