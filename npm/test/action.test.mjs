@@ -16,6 +16,7 @@ import {
   verifyProvenance,
 } from "../../.github/actions/cuke-dedup/index.js";
 
+/** Verify the Action selects the expected Rust target for every supported platform and libc. */
 test("action maps all eight release targets", () => {
   assert.equal(releaseTarget("linux", "x64", "gnu").rustTarget, "x86_64-unknown-linux-gnu");
   assert.equal(releaseTarget("linux", "x64", "musl").rustTarget, "x86_64-unknown-linux-musl");
@@ -27,6 +28,7 @@ test("action maps all eight release targets", () => {
   assert.equal(releaseTarget("win32", "arm64").rustTarget, "aarch64-pc-windows-msvc");
 });
 
+/** Verify target metadata is validated before use and unsupported platforms are rejected. */
 test("action rejects malformed release target metadata", () => {
   const valid = { ...releaseTarget("linux", "x64", "gnu") };
   assert.equal(
@@ -65,6 +67,7 @@ test("action rejects malformed release target metadata", () => {
   );
 });
 
+/** Verify relative report paths use the analyzed root and absolute paths remain absolute. */
 test("action resolves relative reports from the analyzed root", () => {
   const workspace = resolve("/workspace");
   const absoluteOutput = resolve("/tmp/reports");
@@ -78,6 +81,7 @@ test("action resolves relative reports from the analyzed root", () => {
   );
 });
 
+/** Verify explicit inputs form separate CLI arguments and include the internal JSON reporter. */
 test("action constructs an argument array and always requests JSON", () => {
   assert.deepEqual(
     buildArguments({
@@ -105,6 +109,7 @@ test("action constructs an argument array and always requests JSON", () => {
   );
 });
 
+/** Verify requesting JSONL retains that reporter while adding the Action's JSON report. */
 test("action preserves JSONL stdout while adding its internal JSON report", () => {
   assert.deepEqual(
     buildArguments({
@@ -122,12 +127,14 @@ test("action preserves JSONL stdout while adding its internal JSON report", () =
   );
 });
 
+/** Verify Git refs and zero allowances are forwarded literally as separate arguments. */
 test("action forwards a Git baseline and zero allowance without shell interpretation", () => {
   const args = buildArguments({ baselineFromRef: "topic;echo unsafe", failOnNew: "0" });
   assert.deepEqual(args.slice(-4), ["--baseline-from-ref", "topic;echo unsafe", "--fail-on-new", "0"]);
   assert.ok(!args.includes("--baseline"));
 });
 
+/** Verify the deterministic-report input emits the no-metrics CLI flag. */
 test("action exposes deterministic report generation", () => {
   assert.deepEqual(
     buildArguments({
@@ -145,6 +152,7 @@ test("action exposes deterministic report generation", () => {
   );
 });
 
+/** Verify incomplete analysis becomes fatal only when the Action input opts in. */
 test("action can require complete analysis coverage", () => {
   assert.deepEqual(
     buildArguments({
@@ -168,6 +176,7 @@ test("action can require complete analysis coverage", () => {
   );
 });
 
+/** Verify omitted Action inputs retain resolved project reporters and output paths. */
 test("action preserves resolved project config when inputs are omitted", () => {
   assert.deepEqual(
     buildArguments(
@@ -186,6 +195,7 @@ test("action preserves resolved project config when inputs are omitted", () => {
   );
 });
 
+/** Verify explicit inputs are forwarded when requesting the effective project configuration. */
 test("action applies explicit inputs while resolving project configuration", () => {
   assert.deepEqual(
     buildEffectiveConfigArguments({
@@ -210,6 +220,7 @@ test("action applies explicit inputs while resolving project configuration", () 
   );
 });
 
+/** Verify JSON report metrics, analyzer exit status, and requested report paths become Action outputs. */
 test("action exposes threshold metrics and requested report paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-dedup-action-"));
   const output = join(directory, "reports");
@@ -235,6 +246,7 @@ test("action exposes threshold metrics and requested report paths", async () => 
   });
 });
 
+/** Verify valid archive checksums pass while malformed digests and mismatched bytes fail. */
 test("action validates release checksums and fails closed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-dedup-checksum-"));
   const archive = join(directory, "release.tar.gz");
@@ -249,6 +261,7 @@ test("action validates release checksums and fails closed", async () => {
   assert.throws(() => verifyChecksum(archive, checksum), /checksum mismatch/);
 });
 
+/** Verify provenance verification specifies the repository, tagged source, signer workflow, and hosted-runner requirement. */
 test("action pins provenance verification to the tagged hosted build", () => {
   let invocation;
   verifyProvenance("release.tar.gz", "release.intoto.jsonl", "1.2.3", (...args) => {
@@ -275,6 +288,7 @@ test("action pins provenance verification to the tagged hosted build", () => {
   ]);
 });
 
+/** Verify archive listings contain exactly the expected binary and license in the required order. */
 test("action accepts only the exact release archive structure", () => {
   validateArchiveMemberNames("cuke-dedup\nLICENSE\n", "cuke-dedup");
   assert.throws(
@@ -298,6 +312,7 @@ test("action accepts only the exact release archive structure", () => {
   );
 });
 
+/** Verify missing assets retry with capped backoff while other HTTP, network, and stream failures stop. */
 test("action retries only missing release assets with bounded backoff", async (t) => {
   for (const [statuses, error] of [
     [[200], null],
@@ -359,6 +374,7 @@ test("action retries only missing release assets with bounded backoff", async (t
   }
 });
 
+/** Verify a destination write failure propagates after one fetch without invoking retry backoff. */
 test("action does not retry destination write failures", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-download-write-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

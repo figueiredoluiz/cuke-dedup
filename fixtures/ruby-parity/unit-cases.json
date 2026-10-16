@@ -39,7 +39,7 @@
       ]
     },
     "src/analysis/pairs/tests.rs": {
-      "sourceSha256": "3ac52c246aa1a5ec12aaee0d3aa876cf3d227908b18bab5c9f80331d21f5befc",
+      "sourceSha256": "45a0533fc81f4ff03f46a66a99a5b86a1b23548df958439a87adbdbcb263c548",
       "tests": [
         {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
@@ -260,7 +260,7 @@
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "af6afc77948b4c615b3a52408ddadded513aff97bc753efee944890e27df4853",
+      "sourceSha256": "84e6bc9f12c5c61b310e4fb678c884001866b993da9b84446358bb0661aab17a",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
@@ -1254,7 +1254,7 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "7ae59ada648e4376d2744742dbe88c3a9596b037b04458aa57b75a73dc8da6ae",
+      "sourceSha256": "5cbf04a85479723ac6f8a55ff453433718ea88efc94c8cc15ae9b04a0845e159",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1502,7 +1502,7 @@
       ]
     },
     "src/config/tests.rs": {
-      "sourceSha256": "ccaae8b3f1ea19386a30a377545cf7943d37756e11e6486c37a0df2b76fc8e77",
+      "sourceSha256": "4ae700023d840fec1c41179b793110cc8e1c20618be446a7d2d1474c7844e574",
       "tests": [
         {
           "name": "standalone_config_overrides_package_and_cli_overrides_both",
@@ -1837,7 +1837,7 @@
       ]
     },
     "src/framework_config/tests.rs": {
-      "sourceSha256": "abbc8be3e7ab921b8de9d0517be8ed741ee5c83736de932546b78e16f3b78924",
+      "sourceSha256": "bc16b850dea3b36fd1136ba1b649c7a0d0320e747b52fab4b24bf7560c89c362",
       "tests": [
         {
           "name": "extracts_cucumber_default_profile_paths",
@@ -1944,7 +1944,7 @@
       ]
     },
     "src/gherkin/tests.rs": {
-      "sourceSha256": "334ceb25e0744aafba50bcf3a1d39588f8d2e11928ca8cb776e36cf06a36b369",
+      "sourceSha256": "650cd495a3165785c8ffaf5f0bd115ab33b01de5d915daff224710770a472eb3",
       "tests": [
         {
           "name": "table_escape_matrix_preserves_outline_text_and_source_positions",
@@ -2208,7 +2208,7 @@
       ]
     },
     "src/model/sha256/tests.rs": {
-      "sourceSha256": "f415e955df28f2656ffe8e2043448da16f64d4f50a1b894011a58d01e9ba1ca1",
+      "sourceSha256": "2b831ff433fc9b585af4431b5b8dc670d2d5ac2c272c82e8ced3f2bc8a5a649a",
       "tests": [
         {
           "name": "matches_sha256_known_answer_vectors",
@@ -2234,7 +2234,7 @@
       ]
     },
     "src/model/tests.rs": {
-      "sourceSha256": "98fc93fbbf60f01a18f40c68a16e335dc2fe3b06b2b9c1eb9287699fb90a6939",
+      "sourceSha256": "cd3a70e15f8f4cffd958da9ddb397de669ac0449a7c38166f2749f730d2b7114",
       "tests": [
         {
           "name": "rule_names_are_stable_kebab_case",
@@ -2310,7 +2310,7 @@
       ]
     },
     "src/modes/tests.rs": {
-      "sourceSha256": "fb192ebfc1ff1898a28fb9bf64928841369ae70c9d2fb23c92be976eaffa8ab0",
+      "sourceSha256": "91b153bace5b88865d505048bd9c4a02dc8148e9756f2ab4c7e0b839a9453f91",
       "tests": [
         {
           "name": "changed_mode_keeps_findings_related_to_a_changed_file",
@@ -2438,7 +2438,7 @@
       ]
     },
     "src/reporters/tests.rs": {
-      "sourceSha256": "a43ed588e50edaf63a56d5460cfcf8fa6fa38f37d8a29552259346e25e78b18b",
+      "sourceSha256": "4aefd193d3b88a161d6734912a8b4f94678af587a0da219bfc420b80ba94df5c",
       "tests": [
         {
           "name": "json_uses_versioned_schema_and_relative_paths",
@@ -2693,7 +2693,7 @@
       ]
     },
     "src/source_adapter/tests.rs": {
-      "sourceSha256": "bacd6a777d58f2f77e76182ceaee23e0628c45c1825a557e31bc5b5a2476a359",
+      "sourceSha256": "1233c1f76f77be53ea51a35750b6f64ffcdf3278535b32378fc8ef32575d20a4",
       "tests": [
         {
           "name": "session_state_initializes_once_per_backend_and_per_run",
@@ -2841,7 +2841,7 @@
       ]
     },
     "src/typescript/source_filter/tests.rs": {
-      "sourceSha256": "2ec63dff2af41fa5380d53d4c7e8955b3d8d175d60721e5e627f8b51084c5359",
+      "sourceSha256": "918654966ad4aecc3caae5a16685e98b51a029cd580661d67e615ec05927e537",
       "tests": [
         {
           "name": "classifies_every_content_kind_discovery_can_deliver",
@@ -3014,7 +3014,7 @@
       ]
     },
     "src/typescript/ast.rs": {
-      "sourceSha256": "ffeb333868535500a9bf07e64ed6b5075196b479a3602cf035d887297295fc27",
+      "sourceSha256": "191bad6c1d3a2b5736fc6f3c22c8e78203056cf742af3113715768957e7ef1db",
       "tests": [
         {
           "name": "relative_specifiers_are_distinguished_from_packages_and_aliases",
@@ -3037,7 +3037,7 @@
       ]
     },
     "src/typescript/frameworks.rs": {
-      "sourceSha256": "1682f2bf06aa0332004fe0b4fc37b8959fb3aa21707790b93a533e96b0c6d40f",
+      "sourceSha256": "c46d605771e0942c70f8685f1e81ef4e406f0667fea35f4eba6cb1ed7120c202",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_export_kinds",
@@ -3060,7 +3060,7 @@
       ]
     },
     "src/typescript/matcher.rs": {
-      "sourceSha256": "ee759e90430d3e58fda95f59d730c8665e19bdd0cd9e1ef74c174eafb159a20f",
+      "sourceSha256": "c80eb95379d3bfc9d3e3e71a38d101c371db8dc2ab5f595745fcec424da9408c",
       "tests": [
         {
           "name": "unicode_sets_flag_belongs_to_matcher_identity",
@@ -3083,7 +3083,7 @@
       ]
     },
     "src/typescript/module_resolver/tests.rs": {
-      "sourceSha256": "4cec69962f348e7b8057f445bac6b0fd7e9398efaf9c3c3bc1eb00c3de4808f8",
+      "sourceSha256": "15dc5e794379fec39216597b65e087a3be509e38ac78ba3ac990ab6783cb5082",
       "tests": [
         {
           "name": "project_resolution_supports_relative_modules_and_rejects_escapes",
@@ -3256,7 +3256,7 @@
       ]
     },
     "src/typescript/project_resolution/tests.rs": {
-      "sourceSha256": "0a2520788c8b3505addae67fe8c086c6a206dfa18aad93856d53b8ab599145d9",
+      "sourceSha256": "c22c998564b53c930fe3383a494d97aa1f8f3c642d33976cb34163b6a0f1e3bf",
       "tests": [
         {
           "name": "jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas",
@@ -3441,7 +3441,7 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "dad3d2f3b85823e552b9e5a53cf8f9d2f9393b4ae9ae76ba8a3d92a8e7fcd6c6",
+      "sourceSha256": "e3a32199cb1c37152b9e33a4db4c98decf68e09dcc0ef9d3f3c15ef0d0fb523f",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -4400,7 +4400,7 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "7e3c935677f566c4e2416ed9e2fa51a185139f46777370237cac25c727859958",
+      "sourceSha256": "12f5b2ecca100fe71f21ad7611c47b7bf6186a038a77e57592b58da7de68d53a",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5672,7 +5672,7 @@
       ]
     },
     "tests/framework_callbacks.rs": {
-      "sourceSha256": "db33a88c3a81f1efd58d6bfc009763e9edc93b9df82c39bad707a4c5b59b7c95",
+      "sourceSha256": "581069d627a69c61c6f799e9f2d3e54f0eda061f6e342f30f065d688b61c8deb",
       "tests": [
         {
           "name": "positional_regex_steps_do_not_enter_global_usage_but_plugin_steps_do",
@@ -5831,7 +5831,7 @@
       ]
     },
     "tests/public_api.rs": {
-      "sourceSha256": "4eae964d30d25f1ccc7215aad331ee7e3978e8d3f60b7bdf02756c0c3fbce5cb",
+      "sourceSha256": "d40a804929e767e7ae044e539fe85b2a2931d330f93409c6edc62bcd94b1e195",
       "tests": [
         {
           "name": "extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults",
@@ -5924,7 +5924,7 @@
       ]
     },
     "tests/gherkin_tables.rs": {
-      "sourceSha256": "eb5b5e2a465bf9da63c1987c040e09bb532cfc7cb0d8b6e72185908051a4bb76",
+      "sourceSha256": "05f2451bf9ceb3c1f1e80e9bcefb6ac437721a00b40c6e451559193e7bb9af4a",
       "tests": [
         {
           "name": "escaped_tables_preserve_findings_and_reject_malformed_neighbors_in_both_languages",
@@ -5972,7 +5972,7 @@
       ]
     },
     "tests/frontend_conformance.rs": {
-      "sourceSha256": "91bbf41f9783a5fa518d98177ba856d9f0efb38d23e03eae04f13218fdbb12ee",
+      "sourceSha256": "4748199b614cb8788fd876f625a5de018ff91b2cc7bc6acc386ec22cb55dbb40",
       "tests": [
         {
           "name": "ruby_selection_dependencies_and_mixed_domain_keep_cli_outcomes",

@@ -5,6 +5,7 @@ use cuke_dedup::typescript::{self, SourceFile, SourceLanguage};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// Extracts and analyzes source without feature steps, returning frameworks, finding rules, and diagnostics.
 fn outcomes(
     source: &str,
     language: SourceLanguage,
@@ -12,6 +13,7 @@ fn outcomes(
     outcomes_with_steps(source, language, Vec::new())
 }
 
+/// Extracts and analyzes source with supplied feature steps, returning frameworks, finding rules, and diagnostics.
 fn outcomes_with_steps(
     source: &str,
     language: SourceLanguage,
@@ -47,6 +49,7 @@ fn outcomes_with_steps(
     (frameworks, rules, diagnostics)
 }
 
+/// Checks Jest positional steps avoid global ambiguity while Vitest plugin matchers participate in feature usage.
 #[test]
 fn positional_regex_steps_do_not_enter_global_usage_but_plugin_steps_do() {
     let body =
@@ -62,6 +65,7 @@ fn positional_regex_steps_do_not_enter_global_usage_but_plugin_steps_do() {
     }
 }
 
+/// Checks local framework re-exports retain registrations without granting custom expect exports assertion trust.
 #[test]
 fn local_framework_barrels_resolve_without_granting_assertion_facade_trust() {
     let directory = tempfile::tempdir().unwrap();
@@ -102,6 +106,7 @@ fn local_framework_barrels_resolve_without_granting_assertion_facade_trust() {
     }
 }
 
+/// Checks unsupported Jest setup emits unresolved-call diagnostics and fails strict JSON reporting.
 #[test]
 fn unsupported_jest_setup_keeps_cli_reports_incomplete() {
     let directory = tempfile::tempdir().unwrap();
@@ -121,6 +126,7 @@ fn unsupported_jest_setup_keeps_cli_reports_incomplete() {
     assert_eq!(value["corpus"]["incomplete"], true);
 }
 
+/// Runs strict CLI analysis and returns process output with its written JSON report.
 fn strict_report(directory: &std::path::Path) -> (std::process::Output, serde_json::Value) {
     let report = directory.join("report");
     let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("cuke-dedup"))
@@ -134,10 +140,12 @@ fn strict_report(directory: &std::path::Path) -> (std::process::Output, serde_js
     (output, value)
 }
 
+/// Returns whether the observed finding rules contain the requested rule.
 fn has(rules: &BTreeSet<Rule>, rule: Rule) -> bool {
     rules.contains(&rule)
 }
 
+/// Checks forwarding wrappers require stable lexical targets, correct argument order, and synchronous execution.
 #[test]
 fn forwarding_wrappers_use_lexical_targets_and_immediate_execution() {
     let forms = [
@@ -178,6 +186,7 @@ fn forwarding_wrappers_use_lexical_targets_and_immediate_execution() {
     }
 }
 
+/// Checks ambient Jest registrations retain literal matcher text and emit only handler duplication.
 #[test]
 fn ambient_jest_fallback_preserves_literal_kind_and_positional_rules() {
     let source = "import 'jest-cucumber'; Given('literal { int }', () => work()); Given('literal {int}', () => work());";
@@ -199,6 +208,7 @@ fn ambient_jest_fallback_preserves_literal_kind_and_positional_rules() {
     assert!(diagnostics.is_empty());
 }
 
+/// Checks fallback registrations respect runtime shadows and writes while erased imports preserve ambient behavior.
 #[test]
 fn fallback_scope_and_writes_never_gain_registration_trust() {
     let calls = "Given('first action', () => work()); Given('second action', () => work());";
@@ -230,6 +240,7 @@ fn fallback_scope_and_writes_never_gain_registration_trust() {
     }
 }
 
+/// Asserts exact, near, and parameterization handler rules are absent.
 fn assert_no_handler_findings(rules: &BTreeSet<Rule>) {
     for rule in [
         Rule::DuplicateHandler,
@@ -247,6 +258,7 @@ const JEST_SCENARIOS: &str = r#"
   });
 "#;
 
+/// Checks supported Jest binding forms retain handler duplication and exclude global matcher rules.
 #[test]
 fn jest_import_and_binding_forms_preserve_handler_findings_but_skip_matcher_rules() {
     let import_forms = [
@@ -299,6 +311,7 @@ fn jest_import_and_binding_forms_preserve_handler_findings_but_skip_matcher_rule
     }
 }
 
+/// Checks identical scenario-local Jest text does not trigger global matcher or usage rules.
 #[test]
 fn matcher_rules_stay_inapplicable_for_identical_matchers_in_one_scenario() {
     let source = r#"
@@ -322,6 +335,7 @@ fn matcher_rules_stay_inapplicable_for_identical_matchers_in_one_scenario() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
+/// Checks equal Jest step text retains exact handler findings without redundant near findings.
 #[test]
 fn jest_equal_text_keeps_handler_candidates_without_redundant_near_findings() {
     let source = "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', ({given}) => { given('same', () => work()); given('same', () => work()); }));";
@@ -331,6 +345,7 @@ fn jest_equal_text_keeps_handler_candidates_without_redundant_near_findings() {
     assert!(diagnostics.is_empty());
 }
 
+/// Checks Jest step text retains literal identity and handler duplication despite placeholder-like spelling.
 #[test]
 fn jest_literal_text_is_preserved_in_reports_and_handler_comparisons() {
     let source = "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', ({given}) => { given('literal { int }', () => work()); given('literal {int}', () => work()); }));";
@@ -354,6 +369,7 @@ fn jest_literal_text_is_preserved_in_reports_and_handler_comparisons() {
     assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
 }
 
+/// Checks trusted assertion conflicts block handler findings while custom assertions remain ordinary parameterizable calls.
 #[test]
 fn jest_assertion_conflicts_depend_on_trusted_provenance() {
     for (module, trusted) in [("@jest/globals", true), ("./custom-assertions", false)] {
@@ -378,6 +394,7 @@ fn jest_assertion_conflicts_depend_on_trusted_provenance() {
     }
 }
 
+/// Checks ordinary Vitest plugin registrations retain both matcher and handler duplication rules.
 #[test]
 fn ordinary_vitest_registrations_keep_matcher_rules_and_duplicate_handler_control() {
     let source = r#"
@@ -398,6 +415,7 @@ fn ordinary_vitest_registrations_keep_matcher_rules_and_duplicate_handler_contro
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
+/// Checks otherwise identical Jest and Vitest handlers are not compared across callback conventions.
 #[test]
 fn jest_and_vitest_handlers_are_not_compared_across_callback_conventions() {
     let source = r#"
@@ -415,6 +433,7 @@ fn jest_and_vitest_handlers_are_not_compared_across_callback_conventions() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
+/// Checks supported callback syntax extracts Jest steps and unsupported execution shapes remain incomplete.
 #[test]
 fn jest_callback_shapes_extract_only_when_synchronous_and_statically_resolved() {
     let supported = [
@@ -485,6 +504,7 @@ fn jest_callback_shapes_extract_only_when_synchronous_and_statically_resolved() 
     }
 }
 
+/// Checks erased, unknown, shadowed, and reassigned Jest setup bindings cannot invent definitions.
 #[test]
 fn jest_resolution_fails_closed_for_type_only_unknown_and_shadowed_bindings() {
     // Each negative row has a real-looking call in an untrusted or shadowed binding position.
@@ -536,6 +556,7 @@ fn jest_resolution_fails_closed_for_type_only_unknown_and_shadowed_bindings() {
     }
 }
 
+/// Checks supported Vitest ESM aliases retain findings while uncertain bindings fail closed and erased imports preserve ambient fallback.
 #[test]
 fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
     let positive = [
@@ -613,6 +634,7 @@ fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
     );
 }
 
+/// Checks Jest loader shadowing and callback writes reject discovery while supported local aliases retain findings.
 #[test]
 fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
     let common_js_shadows = [
@@ -670,6 +692,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
     assert!(has(&rules, Rule::DuplicateHandler), "{rules:?}");
 }
 
+/// Checks uncertain setup arguments, unsupported callbacks, and mutated namespaces retain diagnostics without definitions.
 #[test]
 fn jest_uncertain_setup_argument_positions_and_mixed_scope_never_register() {
     for source in [
@@ -684,6 +707,7 @@ fn jest_uncertain_setup_argument_positions_and_mixed_scope_never_register() {
     }
 }
 
+/// Checks unmodeled framework aliases emit uncertainty diagnostics without extracting steps.
 #[test]
 fn unmodeled_aliases_keep_framework_evidence_without_registering_steps() {
     for source in [
@@ -699,6 +723,7 @@ fn unmodeled_aliases_keep_framework_evidence_without_registering_steps() {
     }
 }
 
+/// Checks known Jest helpers and pending callbacks preserve complete discovery and trusted assertion outcomes.
 #[test]
 fn known_helpers_preserve_complete_handler_outcomes() {
     for helper in [
@@ -734,6 +759,7 @@ fn known_helpers_preserve_complete_handler_outcomes() {
     }
 }
 
+/// Checks helper exemptions retain diagnostics for uncertain accesses, mutations, escapes, and unsupported callbacks.
 #[test]
 fn helper_exemptions_do_not_hide_uncertain_or_escaped_registrations() {
     for (setup, count) in [
@@ -764,6 +790,7 @@ fn helper_exemptions_do_not_hide_uncertain_or_escaped_registrations() {
     }
 }
 
+/// Checks strict CLI completeness depends on statically proven helper exports through local barrels.
 #[test]
 fn helper_barrels_require_export_provenance_and_keep_strict_cli_complete() {
     let directory = tempfile::tempdir().unwrap();
@@ -786,6 +813,7 @@ fn helper_barrels_require_export_provenance_and_keep_strict_cli_complete() {
     }
 }
 
+/// Checks unrelated syntax preserves complete callback discovery while rest aliases and deep unresolved chains stay uncertain.
 #[test]
 fn callback_discovery_preserves_outcomes_through_adjacent_syntax() {
     for setup in [
@@ -830,6 +858,7 @@ fn callback_discovery_preserves_outcomes_through_adjacent_syntax() {
     }
 }
 
+/// Checks deep alias mutations and escapes invalidate framework roots while controls retain handler findings.
 #[test]
 fn deep_alias_writes_and_escapes_invalidate_roots_without_losing_uncertainty() {
     for (package, control, member) in [
@@ -864,6 +893,7 @@ fn deep_alias_writes_and_escapes_invalidate_roots_without_losing_uncertainty() {
     }
 }
 
+/// Checks strict CLI reports retain deep-alias setup uncertainty and remove definitions after root mutation.
 #[test]
 fn deep_alias_cli_rejects_incomplete_setup_and_mutated_root_findings() {
     let directory = tempfile::tempdir().unwrap();

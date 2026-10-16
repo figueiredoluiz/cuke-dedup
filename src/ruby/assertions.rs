@@ -1254,6 +1254,7 @@ mod tests {
             );
         }
     }
+    /// Extract the entry file, finalize its session, and return definitions with the finalization result.
     fn finish(
         source: &str,
         files: &[SourceFile],
@@ -1270,6 +1271,7 @@ mod tests {
         (definitions, finalized)
     }
 
+    /// Build Ruby entry and assertion-provider file descriptors under the test root.
     fn provider_files(root: &Path) -> Vec<SourceFile> {
         ["steps.rb", "assertions.rb"]
             .map(|name| SourceFile {
@@ -1279,6 +1281,7 @@ mod tests {
             .into()
     }
 
+    /// Count duplicate-handler findings produced from the supplied definitions and configuration.
     fn handler_findings(
         definitions: Vec<crate::model::StepDefinition>,
         config: &crate::config::Config,
@@ -1292,6 +1295,7 @@ mod tests {
             .count()
     }
 
+    /// Verify unavailable provider snapshots preserve ordinary findings and report uncertainty only for configured providers.
     #[test]
     fn unavailable_snapshot_preserves_ordinary_findings_and_configured_uncertainty() {
         let root = tempfile::tempdir().unwrap();

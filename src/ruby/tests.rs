@@ -1,5 +1,6 @@
 use super::regex_expression;
 
+/// Verify Ruby fingerprints retain value and callee differences while normalizing superficial formatting and local renames.
 #[test]
 fn handler_fingerprints_preserve_superficial_value_and_callee_boundaries() {
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
@@ -111,6 +112,7 @@ fn handler_fingerprints_preserve_superficial_value_and_callee_boundaries() {
     }
 }
 
+/// Verify safe local registration aliases preserve final findings while uncertain or escaping aliases gain no trust.
 #[test]
 fn local_registration_aliases_preserve_final_findings_without_granting_unknown_trust() {
     use crate::model::Rule;
@@ -322,6 +324,7 @@ fn local_registration_aliases_preserve_final_findings_without_granting_unknown_t
     }
 }
 
+/// Verify unresolved dependencies expose unknown usage through direct adapter extraction without dropping local definitions.
 #[test]
 fn unresolved_dependency_usage_is_exposed_by_the_direct_adapter_api() {
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
@@ -338,6 +341,7 @@ fn unresolved_dependency_usage_is_exposed_by_the_direct_adapter_api() {
     assert!(extraction.indirect_usage.unwrap().unknown);
 }
 
+/// Verify Ruby regex translation retains line anchors and ASCII classes while rejecting unsupported flags and constructs.
 #[test]
 fn ruby_regex_subset_preserves_line_anchors_and_ascii_digits() {
     for (pattern, input, matches) in [
@@ -375,6 +379,7 @@ fn ruby_regex_subset_preserves_line_anchors_and_ascii_digits() {
     }
 }
 
+/// Verify public analysis rejects mixed Ruby and JavaScript definitions in either order.
 #[test]
 fn public_analysis_rejects_mixed_languages_in_either_order() {
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
@@ -406,6 +411,7 @@ fn public_analysis_rejects_mixed_languages_in_either_order() {
     }
 }
 
+/// Verify escaped ASCII punctuation remains literal both inside and outside Ruby regex character classes.
 #[test]
 fn ruby_ascii_punctuation_identity_escapes_remain_literal() {
     for punctuation in (0x21_u8..=0x7e)
@@ -427,6 +433,7 @@ fn ruby_ascii_punctuation_identity_escapes_remain_literal() {
     }
 }
 
+/// Verify unresolved owner effects report incompleteness even without neighboring registrations.
 #[test]
 fn unresolved_owner_effects_are_reported_without_adjacent_registrations() {
     use crate::source_adapter::{
@@ -458,6 +465,7 @@ fn unresolved_owner_effects_are_reported_without_adjacent_registrations() {
     }
 }
 
+/// Verify static parameter-type metadata is extracted without running transformers and built-in name collisions produce diagnostics.
 #[test]
 fn parameter_type_metadata_is_available_without_running_a_transformer() {
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
@@ -518,6 +526,7 @@ fn malformed_ruby_literal_boundaries_preserve_valid_values() {
     }
 }
 
+/// Verify Ruby definitions and diagnostics each retain their source order.
 #[test]
 fn ruby_review_extraction_is_in_source_order() {
     use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};

@@ -8,6 +8,7 @@ import {
   runNpmCommand,
 } from "../../scripts/release/publish-npm-packages.mjs";
 
+/** Verify the default npm runner executes successfully and captures a version beginning with three numeric components. */
 test("release publishing has a working default npm runner", () => {
   const result = runNpmCommand(["--version"], {
     capture: true,
@@ -18,6 +19,7 @@ test("release publishing has a working default npm runner", () => {
   assert.match(result.stdout, /^\d+\.\d+\.\d+/);
 });
 
+/** Verify Windows invokes the npm CLI script through the supplied Node executable. */
 test("release publishing invokes npm through Node on Windows", () => {
   assert.deepEqual(
     npmInvocation({
@@ -32,6 +34,7 @@ test("release publishing invokes npm through Node on Windows", () => {
   );
 });
 
+/** Verify a registry response containing the exact requested version is classified as published. */
 test("release publishing skips an exact version already in the registry", () => {
   assert.equal(
     registryVersionState({ status: 0, stdout: '"0.1.0"', stderr: "" }, "0.1.0"),
@@ -39,6 +42,7 @@ test("release publishing skips an exact version already in the registry", () => 
   );
 });
 
+/** Verify registry E404 responses are classified as missing versions and authentication failures are rejected. */
 test("release publishing treats only an npm E404 as a missing version", () => {
   assert.equal(
     registryVersionState({ status: 1, stdout: "", stderr: "npm error code E404" }, "0.1.0"),
@@ -53,6 +57,7 @@ test("release publishing treats only an npm E404 as a missing version", () => {
   );
 });
 
+/** Verify platform and launcher publication arguments retain public access and provenance settings. */
 test("release publishing preserves launcher and platform arguments", () => {
   assert.deepEqual(
     npmPublishArguments("npm/platforms/darwin-arm64"),

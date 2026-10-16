@@ -41,6 +41,7 @@ fn wrapped_minified() -> Vec<u8> {
     bytes
 }
 
+/// Verify content classification excludes generated, compressed, and binary inputs while retaining authored and undecodable source.
 #[test]
 fn classifies_every_content_kind_discovery_can_deliver() {
     // Padded with ten blank lines per content line, so the verdict flips if blank lines are
@@ -109,6 +110,7 @@ fn classifies_every_content_kind_discovery_can_deliver() {
     }
 }
 
+/// Verify a minified line exceeding the inspected prefix is excluded even after a short license comment.
 #[test]
 fn a_line_wider_than_the_whole_prefix_is_minified_whatever_precedes_it() {
     // The shape that defeats measuring only whole lines: a short license comment, then one
@@ -129,6 +131,7 @@ fn a_line_wider_than_the_whole_prefix_is_minified_whatever_precedes_it() {
     assert_eq!(inspect(&path, &[]), Some(ExcludedSource::Minified));
 }
 
+/// Verify authored files longer than the inspected prefix survive despite an unterminated final line.
 #[test]
 fn authored_sources_longer_than_the_prefix_are_still_analyzed() {
     // The opposite-answer control for the case above: same truncated-prefix path, same
@@ -146,11 +149,13 @@ fn authored_sources_longer_than_the_prefix_are_still_analyzed() {
     assert_eq!(inspect(&path, &[]), None);
 }
 
+/// Verify missing paths remain unclassified so extraction can report the read failure.
 #[test]
 fn an_unreadable_path_is_left_for_extraction_to_report() {
     assert_eq!(inspect(Path::new("/nonexistent/vendor.js"), &[]), None);
 }
 
+/// Verify the source guard recognizes every analyzer registration name.
 #[test]
 fn the_guard_vocabulary_covers_every_registration_the_analyzer_understands() {
     // The guard decides only whether to keep a file, so it must never know fewer names than
@@ -168,6 +173,7 @@ fn the_guard_vocabulary_covers_every_registration_the_analyzer_understands() {
     }
 }
 
+/// Verify registration calls preserve enormous authored lines while equally wide unregistered bundles are excluded.
 #[test]
 fn authored_code_that_is_one_enormous_line_survives_on_its_registrations() {
     // Geometrically indistinguishable from a one-line bundle: a single line, megabytes wide.
@@ -187,6 +193,7 @@ fn authored_code_that_is_one_enormous_line_survives_on_its_registrations() {
     );
 }
 
+/// Verify configured registration names preserve files that geometry alone would classify as minified.
 #[test]
 fn a_configured_registration_name_also_guards_a_file() {
     let source = format!(
@@ -200,6 +207,7 @@ fn a_configured_registration_name_also_guards_a_file() {
     assert_eq!(classify(source.as_bytes(), &["myStep".to_owned()]), None);
 }
 
+/// Verify registration names embedded in longer identifiers do not preserve minified bundles.
 #[test]
 fn a_registration_name_inside_a_longer_identifier_does_not_guard_a_bundle() {
     // `promisedPatchThen(` and `splitWhen(` both occur in the reference bundles. Reading them
@@ -218,6 +226,7 @@ fn a_registration_name_inside_a_longer_identifier_does_not_guard_a_bundle() {
     }
 }
 
+/// Verify qualified capitalized registrations preserve source while promise `.then` calls do not.
 #[test]
 fn a_namespace_qualified_registration_guards_a_file_but_a_promise_chain_does_not() {
     // Both are a capitalized or lowercase name behind a `.`, and only the case distinguishes
@@ -235,6 +244,7 @@ fn a_namespace_qualified_registration_guards_a_file_but_a_promise_chain_does_not
     );
 }
 
+/// Verify bare lowercase registration aliases preserve minified-shaped source.
 #[test]
 fn a_bare_lowercase_alias_guards_a_file() {
     // `then('a step', fn)` is a registration the analyzer resolves, so geometry must not
@@ -244,6 +254,7 @@ fn a_bare_lowercase_alias_guards_a_file() {
     assert_eq!(classify(aliased.as_bytes(), &[]), None);
 }
 
+/// Verify framework module paths preserve renamed registrations while identical calls without provenance do not.
 #[test]
 fn a_renaming_import_guards_a_file_through_its_module_path() {
     // The one shape that leaves no registration name at a call site: the import renames it,
@@ -263,6 +274,7 @@ fn a_renaming_import_guards_a_file_through_its_module_path() {
     );
 }
 
+/// Verify local and project-alias module references preserve source across supported import and re-export forms.
 #[test]
 fn a_project_facade_import_guards_a_file_whatever_the_callee_form() {
     // Extraction resolves a registration re-exported by a local module, so the callee can be
@@ -290,6 +302,7 @@ fn a_project_facade_import_guards_a_file_whatever_the_callee_form() {
     }
 }
 
+/// Verify relative string data, ordinary calls, and unrelated bare imports do not preserve minified bundles.
 #[test]
 fn a_project_specifier_outside_import_position_does_not_guard_a_file() {
     // The opposite-answer control, and the reason the import context is required: one
@@ -314,6 +327,7 @@ fn a_project_specifier_outside_import_position_does_not_guard_a_file() {
     }
 }
 
+/// Verify imports from every registered framework module preserve minified-shaped source.
 #[test]
 fn every_registered_framework_module_guards_a_file() {
     // Driven from the framework registry so a newly supported framework cannot be left out.
@@ -324,6 +338,7 @@ fn every_registered_framework_module_guards_a_file() {
     }
 }
 
+/// Verify comments and newlines before registration arguments preserve source while unused registration names do not.
 #[test]
 fn comment_trivia_between_the_name_and_the_call_still_guards_a_file() {
     // `Given /* ... */ ('a step', handler)` is a call, so formatting must not decide whether
@@ -347,6 +362,7 @@ fn comment_trivia_between_the_name_and_the_call_still_guards_a_file() {
     );
 }
 
+/// Verify transparent callee wrappers preserve source without treating comparisons or bare callback arguments as registrations.
 #[test]
 fn every_transparent_callee_wrapper_still_guards_a_file() {
     // `(Given)('a step', handler)` extracts two definitions in the CLI, so geometry must not
@@ -404,6 +420,7 @@ fn every_transparent_callee_wrapper_still_guards_a_file() {
     );
 }
 
+/// Verify bzip2 exclusion requires a complete valid stream signature rather than an identifier prefix.
 #[test]
 fn a_bzip2_header_needs_its_whole_signature() {
     // `BZh`, `BZh0` and `BZh9` are all legal JavaScript identifiers, so an authored file may
@@ -424,6 +441,7 @@ fn a_bzip2_header_needs_its_whole_signature() {
     }
 }
 
+/// Verify ECMAScript Unicode whitespace preserves registration calls without treating arbitrary non-ASCII text as evidence.
 #[test]
 fn ecmascript_whitespace_beyond_ascii_still_guards_a_file() {
     // NBSP, the Unicode space separators, the line and paragraph separators and the byte-order
@@ -450,6 +468,7 @@ fn ecmascript_whitespace_beyond_ascii_still_guards_a_file() {
     );
 }
 
+/// Verify each classified exclusion exposes the expected diagnostic word.
 #[test]
 fn each_exclusion_reports_its_own_word() {
     // The word reaches the diagnostic, so each variant needs to round-trip.
@@ -471,6 +490,7 @@ fn each_exclusion_reports_its_own_word() {
     }
 }
 
+/// Verify member calls named `from`, `require`, or `import` do not count as module imports.
 #[test]
 fn an_import_keyword_reached_through_a_member_access_is_not_an_import() {
     // `t.from('./x')` is a method call on some object, not a module import, so it must not
@@ -490,6 +510,7 @@ fn an_import_keyword_reached_through_a_member_access_is_not_an_import() {
     }
 }
 
+/// Verify unterminated comments after import-like keywords do not establish module provenance.
 #[test]
 fn an_unterminated_comment_after_an_import_keyword_is_not_an_import() {
     let filler = "var a=1,b=2,c=3;".repeat(500);
@@ -503,6 +524,7 @@ fn an_unterminated_comment_after_an_import_keyword_is_not_an_import() {
     }
 }
 
+/// Verify an unfinished type operator at the inspected prefix end does not establish a registration call.
 #[test]
 fn a_type_operator_that_runs_to_the_end_of_the_prefix_is_not_a_call() {
     // The type never closes within what was inspected, so no call can be proven from it.
@@ -517,6 +539,7 @@ fn a_type_operator_that_runs_to_the_end_of_the_prefix_is_not_a_call() {
     );
 }
 
+/// Verify value-block comparisons are excluded rather than mistaken for typed registration calls.
 #[test]
 fn a_value_block_inside_a_comparison_chain_does_not_guard_a_file() {
     // `Given < class { field; } > ('x')` is a comparison chain, not a registration: the
@@ -538,6 +561,7 @@ fn a_value_block_inside_a_comparison_chain_does_not_guard_a_file() {
     }
 }
 
+/// Verify an unterminated comment after a registration name does not establish a call.
 #[test]
 fn an_unterminated_comment_does_not_run_past_the_prefix() {
     let filler = "var a=1,b=2,c=3;".repeat(500);
@@ -548,6 +572,7 @@ fn an_unterminated_comment_does_not_run_past_the_prefix() {
     );
 }
 
+/// Verify repeated unbalanced type arguments remain excluded within the classification timing bound.
 #[test]
 fn repeated_unbalanced_type_arguments_do_not_scale_quadratically() {
     // Scanning forward from each `<` separately makes this input quadratic: every `Given<`
@@ -569,6 +594,7 @@ fn repeated_unbalanced_type_arguments_do_not_scale_quadratically() {
     );
 }
 
+/// Verify long valid type-argument lists still preserve registration source.
 #[test]
 fn a_type_argument_list_longer_than_any_cap_still_guards_a_file() {
     // The control for the case above: a cap on the scan would stop recognizing this call and
@@ -585,6 +611,7 @@ fn a_type_argument_list_longer_than_any_cap_still_guards_a_file() {
     assert_eq!(classify(source.as_bytes(), &[]), None);
 }
 
+/// Verify many absent configured registration names do not exceed the classification timing bound.
 #[test]
 fn a_large_registration_configuration_does_not_multiply_classification_cost() {
     // `registrations` is configuration with no small bound, so searching the prefix once per
@@ -609,6 +636,7 @@ fn a_large_registration_configuration_does_not_multiply_classification_cost() {
     );
 }
 
+/// Verify registration-like bytes cannot preserve binary or compressed content.
 #[test]
 fn binary_and_compressed_content_is_excluded_even_when_it_mentions_a_registration() {
     // The guard is a concession to a heuristic. Binary and compressed content are not

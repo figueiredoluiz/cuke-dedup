@@ -491,6 +491,7 @@ fn registration_call(
 mod tests {
     use super::*;
 
+    /// Verify bound method proofs require unique preceding bindings, closed class lookup, and available work budget.
     #[test]
     fn bound_methods_require_unique_bindings_classes_and_unmodified_lookup() {
         for (classes, binding, expected) in [

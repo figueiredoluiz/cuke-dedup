@@ -7,6 +7,7 @@ use std::process::Command as ProcessCommand;
 
 mod common;
 
+/// Builds a CLI command selecting the supplied definition pattern with JSONL output and metrics disabled.
 fn project_command(root: &std::path::Path, patterns: &str) -> Command {
     let mut command = Command::cargo_bin("cuke-dedup").unwrap();
     command.arg(root).args([
@@ -19,6 +20,7 @@ fn project_command(root: &std::path::Path, patterns: &str) -> Command {
     command
 }
 
+/// Runs the selected project command with extra arguments and returns its process output.
 fn run_project(root: &std::path::Path, patterns: &str, extra: &[&str]) -> std::process::Output {
     project_command(root, patterns)
         .args(extra)
@@ -26,6 +28,7 @@ fn run_project(root: &std::path::Path, patterns: &str, extra: &[&str]) -> std::p
         .unwrap()
 }
 
+/// Parses every UTF-8 JSONL output line into a report record.
 fn records(stdout: Vec<u8>) -> Vec<Value> {
     String::from_utf8(stdout)
         .unwrap()
@@ -34,10 +37,12 @@ fn records(stdout: Vec<u8>) -> Vec<Value> {
         .collect()
 }
 
+/// Runs top-level Ruby sources in a project and parses their JSONL records.
 fn project_records(root: &std::path::Path) -> Vec<Value> {
     records(run_project(root, "*.rb", &[]).stdout)
 }
 
+/// Runs an isolated Ruby source fixture and returns its exit code, JSONL records, and stderr.
 fn analyze(source: &str, extra: &[&str]) -> (i32, Value, String) {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("steps.rb"), source).unwrap();
@@ -50,6 +55,7 @@ fn analyze(source: &str, extra: &[&str]) -> (i32, Value, String) {
     )
 }
 
+/// Asserts whether JSONL records contain an exact duplicate-handler finding.
 fn assert_handler_finding(rows: &Value, expected: bool, source: &str) {
     assert_eq!(
         rows.as_array()
@@ -61,6 +67,7 @@ fn assert_handler_finding(rows: &Value, expected: bool, source: &str) {
     );
 }
 
+/// Writes a captured Given provider and a consumer that registers two identical matchers.
 fn write_registration_provider_fixture(root: &std::path::Path) {
     fs::write(root.join("provider.rb"), "REGISTER = method(:Given)").unwrap();
     fs::write(
@@ -70,12 +77,14 @@ fn write_registration_provider_fixture(root: &std::path::Path) {
     .unwrap();
 }
 
+/// Asserts discovery completeness and duplicate-handler presence for a source with an expected definition count.
 fn assert_resolved_handler_source(source: &str, count: usize) {
     let (_, rows, _) = analyze(source, &[]);
     assert_discovery(rows.as_array().unwrap(), count, count == 0, source);
     assert_handler_finding(&rows, count > 0, source);
 }
 
+/// Asserts the final summary's analyzed-definition count and corpus incompleteness.
 fn assert_discovery(rows: &[Value], definitions: usize, incomplete: bool, source: &str) {
     let summary = rows.last().unwrap();
     assert_eq!(
@@ -325,6 +334,7 @@ fn ruby_wrapper_deferred_dispatch_retains_valid_registrations() {
     );
 }
 
+/// Checks Ruby Cucumber normalization finds text equivalents without merging regex semantics or uncertain interpolations.
 #[test]
 fn ruby_cucumber_normalization_preserves_matcher_and_handler_boundaries() {
     for (left, right, normalized, exact, definitions, incomplete) in [
@@ -442,6 +452,7 @@ fn ruby_final_outcomes_have_positive_and_conflicting_controls() {
     }
 }
 
+/// Checks strict incomplete Ruby analysis still reports independently proven duplicate matchers.
 #[test]
 fn ruby_strictness_and_duplicate_matchers_retain_partial_findings() {
     let source = "require 'external/glue'; Given('same') { read() }; Then('same') { write() }";
@@ -458,6 +469,7 @@ fn ruby_strictness_and_duplicate_matchers_retain_partial_findings() {
     );
 }
 
+/// Checks semantic handler differences prevent exact duplicates and dynamic registration forms fail closed.
 #[test]
 fn ruby_exact_handlers_preserve_semantics_and_refuse_dynamic_registrations() {
     for (left, right) in [
@@ -495,6 +507,7 @@ fn ruby_exact_handlers_preserve_semantics_and_refuse_dynamic_registrations() {
     }
 }
 
+/// Checks supported regex anchors drive unused findings while unsupported regex semantics remain incomplete.
 #[test]
 fn ruby_usage_respects_anchors_and_keeps_unsupported_patterns_uncertain() {
     let dir = tempfile::tempdir().unwrap();
@@ -527,6 +540,7 @@ fn ruby_usage_respects_anchors_and_keeps_unsupported_patterns_uncertain() {
     }
 }
 
+/// Checks Ruby needs explicit definition selection and mixed Ruby/JavaScript scope is rejected.
 #[test]
 fn ruby_requires_opt_in_and_rejects_mixed_language_scope() {
     let dir = tempfile::tempdir().unwrap();
@@ -551,6 +565,7 @@ fn ruby_requires_opt_in_and_rejects_mixed_language_scope() {
         .contains("separate analysis runs"));
 }
 
+/// Checks cross-file registrar redefinition withdraws definitions and findings before strict reporting.
 #[test]
 fn ruby_cross_file_redefinition_invalidates_earlier_registrations() {
     let dir = tempfile::tempdir().unwrap();
@@ -569,6 +584,7 @@ fn ruby_cross_file_redefinition_invalidates_earlier_registrations() {
     assert_eq!(summary["corpus"]["incomplete"], true);
 }
 
+/// Checks a Ruby parse failure fails strict source gating while retaining valid sibling matcher findings.
 #[test]
 fn ruby_parse_failure_preserves_valid_neighbor_findings_and_strict_exit() {
     let dir = tempfile::tempdir().unwrap();
@@ -587,6 +603,7 @@ fn ruby_parse_failure_preserves_valid_neighbor_findings_and_strict_exit() {
     assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
 }
 
+/// Checks resolved indirect steps mark only their targets used and uncertain dispatch disables unsafe unused findings.
 #[test]
 fn ruby_indirect_usage_final_outcomes() {
     let dir = tempfile::tempdir().unwrap();
@@ -644,6 +661,7 @@ fn ruby_indirect_usage_final_outcomes() {
     }
 }
 
+/// Checks support-file step calls preserve independent matcher findings and distinguish literal from dynamic usage.
 #[test]
 fn ruby_support_file_calls_preserve_unrelated_unused_and_duplicate_findings() {
     let dir = tempfile::tempdir().unwrap();
@@ -670,6 +688,7 @@ fn ruby_support_file_calls_preserve_unrelated_unused_and_duplicate_findings() {
     }
 }
 
+/// Checks reflective mutation and deferred transformer contexts retain registrations only when executable effects are proven safe.
 #[test]
 fn ruby_dispatch_context_retains_only_supported_registration_findings() {
     let dir = tempfile::tempdir().unwrap();
@@ -774,6 +793,7 @@ fn ruby_dispatch_context_retains_only_supported_registration_findings() {
     }
 }
 
+/// Checks static dependency loading discovers providers while unresolved, dynamic, and shadowed loaders remain incomplete.
 #[test]
 fn ruby_static_dependency_graph_final_outcomes() {
     let dir = tempfile::tempdir().unwrap();
@@ -943,6 +963,7 @@ fn ruby_configured_external_load_roots_preserve_containment_and_findings() {
     }
 }
 
+/// Checks load-path precedence and cycles preserve expected handlers while excluded dependencies mark analysis incomplete.
 #[test]
 fn ruby_dependency_cycles_load_order_and_exclusions_preserve_outcomes() {
     let dir = tempfile::tempdir().unwrap();
@@ -1008,6 +1029,7 @@ fn ruby_dependency_cycles_load_order_and_exclusions_preserve_outcomes() {
     assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], true);
 }
 
+/// Checks refused or malformed dependencies retain independent findings and expose incomplete load graphs.
 #[test]
 fn ruby_dependency_boundaries_and_parse_failures_keep_independent_findings() {
     let dir = tempfile::tempdir().unwrap();
@@ -1059,6 +1081,7 @@ fn ruby_dependency_boundaries_and_parse_failures_keep_independent_findings() {
     }
 }
 
+/// Checks uncertain dependencies suppress unsafe unused findings while retaining duplicate and ambiguous matcher findings.
 #[test]
 fn ruby_dependency_usage_requires_a_complete_source_graph() {
     let dir = tempfile::tempdir().unwrap();
@@ -1139,6 +1162,7 @@ fn ruby_dependency_usage_requires_a_complete_source_graph() {
     }
 }
 
+/// Checks supported regex classes, escapes, quantifiers, and dotall produce correct usage outcomes and unsupported semantics remain uncertain.
 #[test]
 fn ruby_regex_classes_and_dotall_preserve_final_matching_outcomes() {
     for (pattern, flags, value, matches) in [
@@ -2014,6 +2038,7 @@ fn assert_two_complete_ruby_definitions(records: &[Value], stderr: &str, label: 
     assert_eq!(summary["corpus"]["incomplete"], false, "{label}: {stderr}");
 }
 
+/// Checks same-named methods in separately selected files retain their own matcher and handler identities.
 #[test]
 fn ruby_named_handlers_bind_to_their_own_selected_file() {
     let feature = "Feature: Methods\n  Scenario: shared\n    Given shared\n";
@@ -2157,6 +2182,7 @@ fn ruby_windowing_does_not_change_findings_on_any_axis() {
     }
 }
 
+/// Checks nested effects, block shadowing, and capture origins preserve exact handler equivalence boundaries.
 #[test]
 fn ruby_nested_handler_outcomes_preserve_structure_and_capture_scope() {
     for (left, right, duplicate) in [
@@ -2267,6 +2293,7 @@ fn ruby_nested_handler_outcomes_preserve_structure_and_capture_scope() {
         .any(|row| row["rule"] == "duplicate-handler"));
 }
 
+/// Checks captured-handler finding fingerprints remain stable across isolated project locations.
 #[test]
 fn ruby_capture_finding_identity_survives_project_relocation() {
     let source = "captured = 'value'; Given('first') { store(captured) }; Then('second') { store(captured) }";
@@ -2282,6 +2309,7 @@ fn ruby_capture_finding_identity_survives_project_relocation() {
     assert_eq!(finding(), finding());
 }
 
+/// Checks source-line values distinguish handlers on different lines and permit identical same-line values.
 #[test]
 fn ruby_source_line_values_do_not_create_handler_reuse() {
     let (_, rows, _) = analyze(
@@ -2304,6 +2332,7 @@ fn ruby_source_line_values_do_not_create_handler_reuse() {
         .any(|row| row["rule"] == "duplicate-handler"));
 }
 
+/// Checks local owner exposure and mutations govern registration trust independently of extraction order and conflicting handlers.
 #[test]
 fn ruby_registration_owner_matrix_preserves_findings_without_granting_alias_trust() {
     let dir = tempfile::tempdir().unwrap();
@@ -2446,6 +2475,7 @@ fn ruby_registration_owner_matrix_preserves_findings_without_granting_alias_trus
     }
 }
 
+/// Checks uncertain namespace and loader effects remove authority without executing source or merging conflicting handlers.
 #[test]
 fn ruby_namespace_identity_and_loader_effects_fail_closed() {
     let definitions = "Given('first') { write(:ready) }; Given('second') { write(:ready) }; Given('conflict') { write(:rejected) }";
@@ -2497,6 +2527,7 @@ fn ruby_namespace_identity_and_loader_effects_fail_closed() {
     }
 }
 
+/// Checks namespace mutation and exposure produce the same discovery outcomes in either source order.
 #[test]
 fn ruby_namespace_effects_are_independent_of_extraction_order() {
     for (owner, effect, trusted) in [
@@ -2594,6 +2625,7 @@ fn ruby_unsupported_self_registrations_report_incomplete_discovery() {
     }
 }
 
+/// Checks near wording requires sufficient matcher similarity and equivalent effects without polarity, receiver, or regex-mode conflicts.
 #[test]
 fn ruby_near_wording_requires_exact_execution_and_real_matcher_similarity() {
     for (left, right, left_body, right_body, near) in [
@@ -2687,6 +2719,7 @@ fn ruby_near_wording_requires_exact_execution_and_real_matcher_similarity() {
         .any(|r| r["rule"] == "near-duplicate-step"));
 }
 
+/// Checks exact-effect near findings respect capture context across configured handler thresholds.
 #[test]
 fn ruby_near_exact_respects_handler_threshold_and_capture_context() {
     let dir = tempfile::tempdir().unwrap();
@@ -3250,6 +3283,7 @@ fn ruby_duplicate_matcher_components_are_invariant_to_definition_order() {
     }
 }
 
+/// Checks static suite-wide parameter declarations govern usage and completeness without executing transformers.
 #[test]
 fn ruby_parameter_types_are_static_and_suite_scoped() {
     let dir = tempfile::tempdir().unwrap();
@@ -3291,6 +3325,7 @@ fn ruby_parameter_types_are_static_and_suite_scoped() {
     }
 }
 
+/// Checks uncertain or conflicting parameter declarations remove manual pattern authority without losing safe matcher findings.
 #[test]
 fn ruby_parameter_type_uncertainty_never_preserves_manual_pattern_trust() {
     let dir = tempfile::tempdir().unwrap();
@@ -3330,6 +3365,7 @@ fn ruby_parameter_type_uncertainty_never_preserves_manual_pattern_trust() {
     }
 }
 
+/// Checks malformed literal inputs fail strict completeness and valid controls retain handler findings.
 #[test]
 fn malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls() {
     for source in [
@@ -3355,6 +3391,7 @@ fn malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls()
         .any(|row| row["rule"] == "duplicate-handler"));
 }
 
+/// Checks internal matcher identity neither consumes text-comparison work nor leaks into reports.
 #[test]
 fn ruby_review_matcher_text_does_not_spend_budget_on_internal_identity() {
     let (exit, rows, _) = analyze(
@@ -3962,6 +3999,7 @@ fn ruby_pair_verification_fails_closed_at_the_total_similarity_budget() {
     }
 }
 
+/// Checks brace and do blocks compare only when their binding, effects, and call ownership agree.
 #[test]
 fn ruby_review_block_forms_preserve_call_ownership_and_effects() {
     for (left, right, duplicate) in [
@@ -3999,6 +4037,7 @@ fn ruby_review_block_forms_preserve_call_ownership_and_effects() {
     }
 }
 
+/// Checks custom parameter overlap requires a provable shared literal witness.
 #[test]
 fn ruby_review_custom_parameter_overlap_requires_a_valid_witness() {
     for (pattern, other, overlap) in [
@@ -4019,6 +4058,7 @@ fn ruby_review_custom_parameter_overlap_requires_a_valid_witness() {
     }
 }
 
+/// Checks handler equivalence respects local bindings, implicit parameters, reflection, and block call ownership.
 #[test]
 fn ruby_review_handler_forms_preserve_binding_and_call_ownership() {
     let mut failures = Vec::new();
@@ -4114,6 +4154,7 @@ fn ruby_review_handler_forms_preserve_binding_and_call_ownership() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Checks lexical renaming preserves equivalent handlers without hiding ordering, capture, key, or receiver differences.
 #[test]
 fn ruby_lexical_renaming_preserves_findings_and_conflicts() {
     for (left, right, duplicate) in [
@@ -4190,6 +4231,7 @@ fn ruby_lexical_renaming_preserves_findings_and_conflicts() {
     }
 }
 
+/// Checks initialized registration providers retain findings while mutation, escape, and wrong receiver origins remove trust.
 #[test]
 fn ruby_loaded_constant_providers_preserve_registration_and_reject_mutation() {
     for (provider, use_code, interference, positive) in [
@@ -4275,6 +4317,7 @@ fn ruby_loaded_constant_providers_preserve_registration_and_reject_mutation() {
     }
 }
 
+/// Checks registration provider reads require a preceding load path through their barrel.
 #[test]
 fn ruby_provider_resolution_requires_preceding_load_edges() {
     for (entry, positive) in [
@@ -4291,6 +4334,7 @@ fn ruby_provider_resolution_requires_preceding_load_edges() {
     }
 }
 
+/// Checks proven isolated reflective instance dispatch preserves registrations while uncertain construction, mutation, and escape invalidate trust.
 #[test]
 fn ruby_closed_instance_dispatch_preserves_unrelated_registrations() {
     for (class, construct, dispatch, trusted) in [
@@ -4445,6 +4489,7 @@ fn ruby_direct_binding_access_revokes_only_later_closed_instance_sends() {
     }
 }
 
+/// Checks provider cycles, lexical shadows, and late loads remain incomplete without inventing matcher findings.
 #[test]
 fn ruby_provider_cycles_and_lexical_constant_shadowing_do_not_gain_trust() {
     for (provider_prefix, barrel, entry) in [
@@ -4462,6 +4507,7 @@ fn ruby_provider_cycles_and_lexical_constant_shadowing_do_not_gain_trust() {
     }
 }
 
+/// Checks same-file registration providers must initialize before their consumers use them.
 #[test]
 fn ruby_same_file_provider_values_require_prior_initialization() {
     let provider = "ROOT_GIVEN = method(:Given); module Provider; GIVEN = ::ROOT_GIVEN; end";
@@ -4485,6 +4531,7 @@ fn ruby_same_file_provider_values_require_prior_initialization() {
     }
 }
 
+/// Checks a deeply shared dependency graph terminates within a timeout and retains direct matcher findings.
 #[test]
 fn ruby_provider_shared_dependency_paths_are_bounded() {
     let dir = tempfile::tempdir().unwrap();
@@ -4639,6 +4686,7 @@ fn ruby_provider_scaling_preserves_final_outcomes() {
     }
 }
 
+/// Checks registration alias trust requires initialized, immediately executed, parseable consumers.
 #[test]
 fn ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust() {
     for origin in ["method(:Given)", "Provider::GIVEN"] {
@@ -4660,6 +4708,7 @@ fn ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust() {
     }
 }
 
+/// Checks malformed consumers cannot establish instance isolation or retain registration findings.
 #[test]
 fn ruby_instance_proofs_require_parseable_consumers() {
     for (suffix, count) in [("", 2), ("value = )", 0)] {
@@ -4674,6 +4723,7 @@ fn ruby_instance_proofs_require_parseable_consumers() {
     }
 }
 
+/// Checks custom singleton constructors revoke isolation while unrelated instance methods preserve it.
 #[test]
 fn ruby_custom_factories_cannot_establish_instance_isolation() {
     for name in ["new", "allocate"] {
@@ -4701,6 +4751,7 @@ fn ruby_custom_factories_cannot_establish_instance_isolation() {
     }
 }
 
+/// Checks exported registrar captures require a main-receiver origin initialized before export.
 #[test]
 fn ruby_provider_captures_require_main_receiver_and_initialized_origin() {
     for (provider, positive) in [
@@ -4723,6 +4774,7 @@ fn ruby_provider_captures_require_main_receiver_and_initialized_origin() {
     }
 }
 
+/// Checks qualified and conditional class reopenings invalidate instance identity without tainting unrelated classes.
 #[test]
 fn ruby_instance_identity_counts_ineligible_and_qualified_reopenings() {
     for (reopening, trusted) in [
@@ -4933,6 +4985,7 @@ fn ruby_unicode_escape_matcher_outcomes() {
     }
 }
 
+/// Checks invalid syntax and Unicode tokens emit precise diagnostics, preserve independent definitions, and withdraw unsafe provider authority.
 #[test]
 fn ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes() {
     let invalid = [
@@ -5293,6 +5346,7 @@ fn parameterization_matcher_boundaries_are_shared() {
     }
 }
 
+/// Checks cross-file parameterization requires compatible captures and an enabled rule.
 #[test]
 fn ruby_parameterization_respects_capture_context_and_suppression() {
     for (capture, extra, expected) in [
@@ -5316,6 +5370,7 @@ fn ruby_parameterization_respects_capture_context_and_suppression() {
     }
 }
 
+/// Asserts parameterization presence while excluding exact and near handler findings.
 fn assert_parameterization_outcome(rows: &[Value], expected: bool, context: &str) {
     for (rule, required) in [
         ("parameterization-candidate", expected),
@@ -5369,6 +5424,7 @@ fn ruby_native_regex_normalization_outcomes() {
     }
 }
 
+/// Checks native regex encoding semantics control unused findings and unsupported combinations remain incomplete.
 #[test]
 fn ruby_native_regex_usage_and_encoding_outcomes() {
     for (literal, step, complete, used) in [
@@ -5693,6 +5749,7 @@ fn ruby_duplication_threshold_excludes_correctness_and_usage_findings() {
     );
 }
 
+/// Checks reordered or repeated equivalent regex flags retain exact matcher identity across literal forms.
 #[test]
 fn ruby_native_regex_flag_order_is_not_identity() {
     for (left, right) in [
@@ -5737,6 +5794,7 @@ fn ruby_native_regex_flags_preserve_duplicate_matcher_outcomes() {
     }
 }
 
+/// Checks finalization withdraws cross-file registrations after ownership changes while closed helper controls retain findings.
 #[test]
 fn frontend_finalization_outcomes_preserve_cross_file_registry_authority() {
     for effect in [
@@ -5782,6 +5840,7 @@ fn frontend_finalization_outcomes_preserve_cross_file_registry_authority() {
 
 const ASSERTION_PROVIDER: &str = "module Assertions; def self.expect(actual); actual; end; end";
 
+/// Creates a loaded assertion-provider fixture with optional configured assertion-module trust.
 fn assertion_project(provider: &str, source: &str, trusted: bool) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("assertions.rb"), provider).unwrap();
@@ -5988,6 +6047,7 @@ page).to_be(
     assert!(rows.iter().any(|r| r["rule"] == "duplicate-handler"));
 }
 
+/// Checks unavailable assertion proofs retain independent matcher and handler findings while reporting graph incompleteness.
 #[test]
 fn ruby_unavailable_assertion_proof_preserves_independent_handlers() {
     for support in [
@@ -6154,6 +6214,7 @@ fn ruby_assertion_module_paths_match_resolved_load_targets() {
     }
 }
 
+/// Checks reflective provider access removes immediate authority and preserves the expected deferred discovery boundaries.
 #[test]
 fn ruby_reflective_provider_access_removes_assertion_authority() {
     for (effect, deferred_incomplete) in [
@@ -6189,6 +6250,7 @@ fn ruby_reflective_provider_access_removes_assertion_authority() {
     }
 }
 
+/// Checks unsupported assertion chains remain ordinary comparable handler calls.
 #[test]
 fn ruby_unsupported_assertion_chains_preserve_ordinary_handler_findings() {
     for chain in ["not(1).", "other.", &"not.".repeat(17)] {
@@ -6311,6 +6373,7 @@ fn ruby_complete_assertion_events_retain_effect_conflicts() {
     assert_eq!(finding["evidence"]["handlerSimilarity"], 0.95);
 }
 
+/// Checks closed local namespace calls preserve registry findings while exposed or modified owners invalidate discovery trust.
 #[test]
 fn ruby_local_namespace_ownership_keeps_registry_and_assertion_trust_separate() {
     for (provider, consumer, interference, positive) in [
@@ -6339,6 +6402,7 @@ fn ruby_local_namespace_ownership_keeps_registry_and_assertion_trust_separate() 
     }
 }
 
+/// Checks main method captures register steps while Ruby alias declarations do not gain registrar trust.
 #[test]
 fn ruby_registration_aliases_use_valid_main_method_captures() {
     for (declaration, call, count) in [
@@ -6354,6 +6418,7 @@ fn ruby_registration_aliases_use_valid_main_method_captures() {
     }
 }
 
+/// Checks supported core registrar calls and forwarding preserve findings while replacement and unsupported operands fail closed.
 #[test]
 fn ruby_core_registrar_preserves_findings_and_fails_closed() {
     for (source, definitions, matcher_finding, handler_finding) in [
@@ -6417,6 +6482,7 @@ fn ruby_core_registrar_preserves_findings_and_fails_closed() {
     }
 }
 
+/// Checks mutable or unresolved captures retain matcher discovery without gaining exact handler trust.
 #[test]
 fn ruby_unresolved_mutable_capture_never_gains_handler_trust_from_discovery() {
     for (capture, expected) in [
@@ -6443,6 +6509,7 @@ fn ruby_unresolved_mutable_capture_never_gains_handler_trust_from_discovery() {
     }
 }
 
+/// Checks stable export aliases and namespace forwarders preserve registrar origin until mutation or exposure.
 #[test]
 fn ruby_export_alias_chains_and_namespace_forwarders_preserve_origin() {
     for (uses, interference, positive) in [
@@ -6461,6 +6528,7 @@ fn ruby_export_alias_chains_and_namespace_forwarders_preserve_origin() {
     }
 }
 
+/// Checks inherited provider initialization is trusted only when every consumer load context initializes it first.
 #[test]
 fn ruby_provider_sibling_load_context_requires_every_caller_to_initialize_origin() {
     for (entry, other, positive) in [
@@ -6504,6 +6572,7 @@ fn ruby_provider_sibling_load_context_requires_every_caller_to_initialize_origin
     }
 }
 
+/// Checks named handlers require stable prior callable identity and preserve method scope and conflicting effects.
 #[test]
 fn ruby_named_handler_discovery_preserves_callable_identity_and_capture_timing() {
     for (declaration, handler, suffix, positive) in [
@@ -6679,6 +6748,7 @@ fn ruby_bound_instance_handlers_are_discovered_without_erasing_receiver_state() 
     }
 }
 
+/// Checks closed local execution discovers supported registrations without granting enclosing captures handler comparability.
 #[test]
 fn ruby_closed_local_execution_discovers_steps_without_comparing_enclosing_captures() {
     for (declaration, invocation, count) in [
@@ -6702,6 +6772,7 @@ fn ruby_closed_local_execution_discovers_steps_without_comparing_enclosing_captu
     }
 }
 
+/// Checks closed execution accepts supported literals but rejects unsupported parameters and malformed registration operands.
 #[test]
 fn ruby_coverage_closed_execution_literal_and_parameter_boundaries() {
     for value in ["1.0", ":ready", "true", "false", "nil"] {
@@ -6729,6 +6800,7 @@ fn ruby_coverage_closed_execution_literal_and_parameter_boundaries() {
     }
 }
 
+/// Checks deferred capture writes and nested declarations remove handler comparability while preserving discovery.
 #[test]
 fn ruby_coverage_deferred_capture_writes_and_nested_declarations_are_uncertain() {
     for (prefix, body, trusted) in [
@@ -6774,6 +6846,7 @@ fn ruby_coverage_instance_handler_aliases_require_closed_unique_receivers() {
     }
 }
 
+/// Checks alias chains retain only proven main registrar captures and reject replacement, escape, and arbitrary callables.
 #[test]
 fn ruby_main_registration_capture_chains_do_not_trust_arbitrary_callables() {
     for (origin, suffix, expected) in [
@@ -6800,6 +6873,7 @@ fn ruby_main_registration_capture_chains_do_not_trust_arbitrary_callables() {
     }
 }
 
+/// Checks independently selected consumers cannot inherit provider initialization from a sibling entry source.
 #[test]
 fn ruby_review_entry_sources_cannot_inherit_sibling_initialization() {
     let dir = tempfile::tempdir().unwrap();
@@ -6819,6 +6893,7 @@ fn ruby_review_entry_sources_cannot_inherit_sibling_initialization() {
     }
 }
 
+/// Checks forwarder replacement and namespace exposure revoke registration and handler trust.
 #[test]
 fn ruby_review_forwarder_identity_rejects_all_replacement_routes() {
     for (replacement, count) in [
@@ -6836,6 +6911,7 @@ fn ruby_review_forwarder_identity_rejects_all_replacement_routes() {
     }
 }
 
+/// Checks closed execution rejects unsupported registration operands while accepted blocks retain matcher discovery only.
 #[test]
 fn ruby_review_closed_execution_rejects_symbol_handlers_and_extra_arguments() {
     for (registration, count) in [
@@ -6854,6 +6930,7 @@ fn ruby_review_closed_execution_rejects_symbol_handlers_and_extra_arguments() {
     }
 }
 
+/// Checks top-level block mutations retain discovery uncertainty and prevent captured handler equivalence.
 #[test]
 fn ruby_review_top_level_blocks_cannot_hide_capture_mutation() {
     for suffix in [
@@ -6867,6 +6944,7 @@ fn ruby_review_top_level_blocks_cannot_hide_capture_mutation() {
     }
 }
 
+/// Checks shallow and deeply branching load graphs preserve complete registration outcomes within a timeout.
 #[test]
 fn ruby_review_branching_load_context_is_bounded_and_preserves_small_graphs() {
     for depth in [2, 26] {
@@ -6906,6 +6984,7 @@ fn ruby_review_branching_load_context_is_bounded_and_preserves_small_graphs() {
     }
 }
 
+/// Checks lambda and proc semantics prevent cross-kind exact, near, and parameterization findings.
 #[test]
 fn ruby_review_callable_kinds_preserve_arity_and_return_semantics() {
     for (left, right, equivalent) in [
@@ -6937,6 +7016,7 @@ fn ruby_review_callable_kinds_preserve_arity_and_return_semantics() {
     }
 }
 
+/// Checks unrelated to_proc methods preserve registrations while Proc and Method overrides revoke trust.
 #[test]
 fn ruby_review_unrelated_conversion_methods_do_not_invalidate_registry() {
     for (class, count) in [
@@ -6952,6 +7032,7 @@ fn ruby_review_unrelated_conversion_methods_do_not_invalidate_registry() {
     }
 }
 
+/// Checks root handler proofs reject singleton and Object method replacements.
 #[test]
 fn ruby_review_root_method_identity_includes_singleton_and_object_overrides() {
     for (replacement, count) in [
@@ -6965,6 +7046,7 @@ fn ruby_review_root_method_identity_includes_singleton_and_object_overrides() {
     }
 }
 
+/// Checks exposed conversion declarations invalidate only potentially relevant Proc, Method, or unknown owners.
 #[test]
 fn ruby_review_exposed_conversion_owners_preserve_unrelated_registrations() {
     for (owner, receiver, count) in [
@@ -6980,6 +7062,7 @@ fn ruby_review_exposed_conversion_owners_preserve_unrelated_registrations() {
     }
 }
 
+/// Checks a thousand loaded-provider consumers retain complete registration discovery.
 #[test]
 fn ruby_review_large_provider_suites_preserve_registration_recall() {
     let dir = tempfile::tempdir().unwrap();
@@ -7021,6 +7104,7 @@ fn ruby_named_handler_assertion_uncertainty_matches_inline_outcomes() {
     }
 }
 
+/// Checks a large suite retains complete local-callable and shared-method registration discovery.
 #[test]
 fn ruby_named_handler_large_suites_charge_local_work_and_cache_method_identity() {
     let root = tempfile::tempdir().unwrap();
@@ -7054,6 +7138,7 @@ fn ruby_named_method_assertion_bindings_follow_the_body_source() {
     }
 }
 
+/// Checks unresolved loaders cannot supply inherited provider proof while direct proof retains eligible registrations.
 #[test]
 fn ruby_unresolved_loaders_cannot_grant_inherited_provider_initialization() {
     for loader in [
@@ -7120,6 +7205,7 @@ fn ruby_assertion_reflection_exemptions_do_not_depend_on_unrelated_handlers() {
     }
 }
 
+/// Checks repeated large named bodies exhaust proof work without publishing partial definitions or handler authority.
 #[test]
 fn ruby_repeated_large_named_bodies_report_bounded_proof_exhaustion() {
     let root = tempfile::tempdir().unwrap();
@@ -7139,6 +7225,7 @@ fn ruby_repeated_large_named_bodies_report_bounded_proof_exhaustion() {
     );
 }
 
+/// Checks ordinary forwarder helpers preserve independent exports while namespace exposure revokes trust.
 #[test]
 fn ruby_review_forwarder_helpers_preserve_independent_exports() {
     for usage in ["P.helper", "expose(P)"] {
@@ -7155,6 +7242,7 @@ fn ruby_review_forwarder_helpers_preserve_independent_exports() {
     }
 }
 
+/// Checks immutable capture reads preserve handler trust while deferred writes and mutable escapes remove it.
 #[test]
 fn ruby_review_capture_reads_keep_immutable_values_and_reject_mutation() {
     for (value, usage, trusted) in [
@@ -7172,6 +7260,7 @@ fn ruby_review_capture_reads_keep_immutable_values_and_reject_mutation() {
     }
 }
 
+/// Checks escaped block arguments remove named-handler authority while independent inline controls retain findings.
 #[test]
 fn ruby_review_block_argument_escapes_remove_named_handler_proof() {
     for usage in ["", "expose(&handler)", "instance_exec(&handler)"] {
@@ -7187,6 +7276,7 @@ fn ruby_review_block_argument_escapes_remove_named_handler_proof() {
     }
 }
 
+/// Checks namespace forwarders require supported ownership and a proven captured registrar origin.
 #[test]
 fn ruby_coverage_forwarder_ownership_and_origin_boundaries() {
     for (declaration, trusted) in [
@@ -7208,6 +7298,7 @@ fn ruby_coverage_forwarder_ownership_and_origin_boundaries() {
     }
 }
 
+/// Checks uncertain uses, escapes, and replacement aliases remove exported registrar trust.
 #[test]
 fn ruby_coverage_export_alias_uses_cannot_grant_unproved_registration_trust() {
     for (usage, trusted) in [
@@ -7222,6 +7313,7 @@ fn ruby_coverage_export_alias_uses_cannot_grant_unproved_registration_trust() {
     }
 }
 
+/// Checks owner-resolution limitations retain direct controls only where registration authority remains safe.
 #[test]
 fn ruby_coverage_owner_rejection_preserves_direct_controls_when_safe() {
     for (prefix, count, incomplete) in [
@@ -7273,6 +7365,7 @@ fn ruby_coverage_owner_rejection_preserves_direct_controls_when_safe() {
     }
 }
 
+/// Checks cross-file named handlers retain source-location capture uncertainty while ordinary bodies remain comparable.
 #[test]
 fn ruby_coverage_cross_file_handlers_preserve_source_capture_uncertainty() {
     for (body, comparable) in [("work()", true), ("use(__FILE__)", false)] {
@@ -7289,6 +7382,7 @@ fn ruby_coverage_cross_file_handlers_preserve_source_capture_uncertainty() {
     }
 }
 
+/// Checks deep and qualified namespaces preserve unrelated direct handler findings.
 #[test]
 fn ruby_coverage_namespace_depth_does_not_remove_unrelated_direct_findings() {
     for prefix in [
@@ -7306,6 +7400,7 @@ fn ruby_coverage_namespace_depth_does_not_remove_unrelated_direct_findings() {
     }
 }
 
+/// Checks writes in a sibling deferred handler remove captured-value equivalence from otherwise identical handlers.
 #[test]
 fn ruby_coverage_other_deferred_handlers_invalidate_captured_values() {
     for write in ["value = 2", "value += 1"] {

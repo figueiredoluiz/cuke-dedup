@@ -14,11 +14,11 @@ after(async () => {
   await Promise.all(temporary.map((path) => rm(path, { force: true, recursive: true })));
 });
 
-/// Builds the smallest tree the bumper understands: a dependency-free Cargo workspace so
-/// `cargo update --offline` needs no registry, plus every npm, workflow, and documentation site.
+/** Build an offline Cargo fixture with every supported npm, workflow, and documentation version site and record it for cleanup. */
 async function fixture({ eol = "\n" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "cuke-dedup-bump-"));
   temporary.push(root);
+  /** Write a fixture file after creating its parent directories and applying the requested line endings. */
   const write = async (relative, text) => {
     const path = join(root, relative);
     await mkdir(join(path, ".."), { recursive: true });
@@ -94,6 +94,7 @@ async function fixture({ eol = "\n" } = {}) {
   return root;
 }
 
+/** Run the version bumper in the fixture root with optional environment overrides and capture its result. */
 function bump(root, version, environment = {}) {
   return spawnSync(process.execPath, [script, version], {
     cwd: root,
@@ -102,12 +103,14 @@ function bump(root, version, environment = {}) {
   });
 }
 
-/// Reads a file back as LF so assertions are independent of the fixture's line endings.
+/** Read a fixture file with CRLF normalized to LF for line-ending-independent assertions. */
 async function text(root, relative) {
   return (await readFile(join(root, relative), "utf8")).replaceAll("\r\n", "\n");
 }
 
+/** Group version-bump integration cases, skipping them when Cargo is unavailable. */
 describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable" }, () => {
+  /** Verify all supported manifests, lockfiles, workflow defaults, and documentation pins are bumped without a changelog. */
   test("rewrites every version site without creating a changelog", async () => {
     const root = await fixture();
     const result = bump(root, "0.3.0");
@@ -133,6 +136,7 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     await assert.rejects(readFile(join(root, "CHANGELOG.md")), { code: "ENOENT" });
   });
 
+  /** Verify ignored files stay untouched, inherited Git overrides are isolated, and discovery errors prevent writes. */
   test("updates project pins without rewriting ignored reference or history files", async () => {
     const root = await fixture();
     const gitEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
@@ -159,6 +163,7 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     assert.ok((await text(root, "Cargo.toml")).includes('version = "0.3.0"'));
   });
 
+  /** Verify bumping CRLF fixtures preserves their line endings without introducing mixed endings. */
   test("keeps CRLF files on CRLF", async () => {
     const root = await fixture({ eol: "\r\n" });
     const result = bump(root, "0.3.0");
@@ -172,6 +177,7 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     }
   });
 
+  /** Verify an unsupported version-site shape aborts planning before existing files change. */
   test("refuses a drifted file and writes nothing", async () => {
     const root = await fixture();
     // A manifest that no longer carries the shape the script understands.
@@ -187,6 +193,7 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     assert.equal(await text(root, "package.json"), before.manifest);
   });
 
+  /** Verify a failed fuzz lockfile refresh restores the already-written manifests and root lockfile. */
   test("restores the tree when a lockfile refresh fails", async () => {
     const root = await fixture();
     const before = {

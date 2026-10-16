@@ -1,6 +1,7 @@
 use super::*;
 use std::fs;
 
+/// Verify relative resolution infers extensions and indexes while rejecting paths outside the analysis boundary.
 #[test]
 fn project_resolution_supports_relative_modules_and_rejects_escapes() {
     let directory = tempfile::tempdir().unwrap();
@@ -46,6 +47,7 @@ fn project_resolution_supports_relative_modules_and_rejects_escapes() {
         .contains("outside package or analysis root"));
 }
 
+/// Verify diamond re-export graphs resolve registrations once per module at each visited depth.
 #[test]
 fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
     let directory = tempfile::tempdir().unwrap();
@@ -91,6 +93,7 @@ fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
     assert_eq!(state.resolutions_started, 1 + layers * 2);
 }
 
+/// Verify importing the same module from separate files reuses cached parsing and export resolution.
 #[test]
 fn resolver_reuses_cached_modules_across_importing_files() {
     let directory = tempfile::tempdir().unwrap();
@@ -117,6 +120,7 @@ fn resolver_reuses_cached_modules_across_importing_files() {
     assert_eq!(resolver.state.resolutions_started, resolutions_after_first);
 }
 
+/// Verify an explicit analysis root permits registration re-exports across nested package boundaries.
 #[test]
 fn configured_analysis_root_allows_cross_package_reexports() {
     let directory = tempfile::tempdir().unwrap();
@@ -147,6 +151,7 @@ fn configured_analysis_root_allows_cross_package_reexports() {
     assert_eq!(exports.framework, Framework::CucumberJs);
 }
 
+/// Verify shared modules retain distinct cached depth states within the resolution-state budget.
 #[test]
 fn depth_diverse_graphs_cache_each_module_depth_within_the_state_budget() {
     let directory = tempfile::tempdir().unwrap();
@@ -203,6 +208,7 @@ fn depth_diverse_graphs_cache_each_module_depth_within_the_state_budget() {
     assert!(resolver.state.resolutions_started < MAX_REGISTRATION_RESOLUTION_STATES);
 }
 
+/// Verify resolving one side of a cycle does not suppress exports when resolving the other side later.
 #[test]
 fn cycles_do_not_poison_context_dependent_export_results() {
     let directory = tempfile::tempdir().unwrap();
@@ -240,6 +246,7 @@ fn cycles_do_not_poison_context_dependent_export_results() {
     );
 }
 
+/// Verify module-count, aggregate-byte, and resolution-state limits reject excess work while allowing the exact byte boundary.
 #[test]
 fn aggregate_module_graph_limits_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
@@ -293,6 +300,7 @@ fn aggregate_module_graph_limits_fail_closed() {
     assert!(error.to_string().contains("state resolution limit"));
 }
 
+/// Verify malformed barrels return an explanatory unresolved outcome instead of recovered registrations or a fatal error.
 #[test]
 fn malformed_reexport_modules_cannot_supply_recovered_registrations() {
     let directory = tempfile::tempdir().unwrap();
@@ -318,6 +326,7 @@ fn malformed_reexport_modules_cannot_supply_recovered_registrations() {
     assert!(reason.contains("refusing recovered exports"), "{reason}");
 }
 
+/// Verify plain star exports retain registrations while namespace and type-only exports do not flatten them.
 #[test]
 fn namespace_star_exports_are_not_flattened_into_direct_registrations() {
     let directory = tempfile::tempdir().unwrap();
@@ -497,6 +506,7 @@ fn resolve_barrel(files: &[(&str, &str)], specifier: &str) -> RegistrationOutcom
     resolver.registration_exports(&importer, specifier).unwrap()
 }
 
+/// Collect resolved export names and their canonical registrations for assertions.
 fn exported_names(outcome: &RegistrationOutcome) -> Vec<(String, String)> {
     outcome
         .resolution

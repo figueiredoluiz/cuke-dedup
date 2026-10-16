@@ -1,6 +1,7 @@
 use super::*;
 use std::fs;
 
+/// Return the error from loading a temporary TypeScript project configuration.
 fn config_error(source: &str) -> String {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("tsconfig.json"), source).unwrap();
@@ -12,6 +13,7 @@ fn config_error(source: &str) -> String {
         .to_string()
 }
 
+/// Verify JSONC normalization preserves comment-like string contents while removing comments, BOMs, and trailing commas.
 #[test]
 fn jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas() {
     let source = "\u{feff}".to_owned()
@@ -22,6 +24,7 @@ fn jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas() {
     assert_eq!(value["paths"]["@/*"][0], "src/*");
 }
 
+/// Verify path aliases, package imports, and workspace exports resolve to local source files.
 #[test]
 fn paths_imports_and_workspace_exports_resolve_statically() {
     let directory = tempfile::tempdir().unwrap();
@@ -60,6 +63,7 @@ fn paths_imports_and_workspace_exports_resolve_statically() {
     }
 }
 
+/// Verify package-import chains stop at the shared resolution-depth limit.
 #[test]
 fn package_import_chains_respect_the_resolution_depth_limit() {
     let directory = tempfile::tempdir().unwrap();
@@ -94,6 +98,7 @@ fn package_import_chains_respect_the_resolution_depth_limit() {
     );
 }
 
+/// Verify package-import hops and workspace resolution consume the same depth budget.
 #[test]
 fn package_import_to_workspace_chains_share_the_resolution_depth_limit() {
     let directory = tempfile::tempdir().unwrap();
@@ -138,6 +143,7 @@ fn package_import_to_workspace_chains_share_the_resolution_depth_limit() {
     );
 }
 
+/// Verify later entries in an `extends` array override earlier path mappings.
 #[test]
 fn multiple_extends_use_later_base_then_child_precedence() {
     let directory = tempfile::tempdir().unwrap();
@@ -171,6 +177,7 @@ fn multiple_extends_use_later_base_then_child_precedence() {
     assert!(resolved.ends_with("two/world.ts"));
 }
 
+/// Verify a later base inherits earlier configuration fields that it does not replace.
 #[test]
 fn later_extends_inherits_fields_it_does_not_specify() {
     let directory = tempfile::tempdir().unwrap();
@@ -203,6 +210,7 @@ fn later_extends_inherits_fields_it_does_not_specify() {
     assert!(resolved.ends_with("base/world.ts"));
 }
 
+/// Verify module files precede directory indexes and JavaScript specifiers prefer substituted TypeScript sources.
 #[test]
 fn module_files_precede_indexes_and_js_specifiers_substitute_typescript() {
     let directory = tempfile::tempdir().unwrap();
@@ -228,6 +236,7 @@ fn module_files_precede_indexes_and_js_specifiers_substitute_typescript() {
         .ends_with("other.ts"));
 }
 
+/// Verify conditional package targets honor the first active condition in source order.
 #[test]
 fn conditional_targets_use_first_active_source_order_key() {
     let directory = tempfile::tempdir().unwrap();
@@ -250,6 +259,7 @@ fn conditional_targets_use_first_active_source_order_key() {
         .ends_with("default.ts"));
 }
 
+/// Verify package maps reject invalid import and export key shapes.
 #[test]
 fn package_maps_reject_invalid_key_shapes() {
     for (map, key, kind, expected) in [
@@ -277,6 +287,7 @@ fn package_maps_reject_invalid_key_shapes() {
     }
 }
 
+/// Verify pure resolution helpers distinguish supported specifiers, mappings, target shapes, and extension substitutions.
 #[test]
 fn pure_resolution_helpers_cover_valid_and_rejected_shapes() {
     assert!(is_bare_module("package"));
@@ -359,6 +370,7 @@ fn pure_resolution_helpers_cover_valid_and_rejected_shapes() {
     );
 }
 
+/// Verify package targets handle active conditions, arrays, and wildcards while rejecting unsafe targets and malformed maps.
 #[test]
 fn package_map_targets_cover_conditions_arrays_wildcards_and_errors() {
     assert_eq!(
@@ -421,6 +433,7 @@ fn package_map_targets_cover_conditions_arrays_wildcards_and_errors() {
     assert!(reject_invalid_package_target("./src/index.ts", "target").is_ok());
 }
 
+/// Verify unsafe project-config shapes, missing bases, cycles, and unterminated JSONC comments produce errors.
 #[test]
 fn project_config_validation_reports_each_unsafe_static_shape() {
     for (source, expected) in [
@@ -481,6 +494,7 @@ fn project_config_validation_reports_each_unsafe_static_shape() {
         .contains("unterminated"));
 }
 
+/// Verify workspace patterns and optional package metadata accept supported shapes and reject invalid values.
 #[test]
 fn package_metadata_and_workspace_shapes_are_validated() {
     let manifest = Path::new("package.json");
@@ -539,6 +553,7 @@ fn package_metadata_and_workspace_shapes_are_validated() {
     }
 }
 
+/// Verify relative fallback, package main entries, and subpaths resolve while unknown modules stay unresolved and escaping mains fail.
 #[test]
 fn resolver_covers_relative_fallback_package_main_subpaths_and_missing_targets() {
     let directory = tempfile::tempdir().unwrap();
@@ -592,6 +607,7 @@ fn resolver_covers_relative_fallback_package_main_subpaths_and_missing_targets()
     assert!(resolver.resolve(&importer, "root", &boundary).is_err());
 }
 
+/// Verify canonicalization retains missing suffixes within the boundary and rejects escapes and excess mappings.
 #[test]
 fn canonical_paths_and_mapping_limits_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
@@ -612,6 +628,7 @@ fn canonical_paths_and_mapping_limits_fail_closed() {
         .is_err());
 }
 
+/// Verify cached bases cannot bypass extends-depth, metadata-file, or aggregate-byte limits.
 #[test]
 fn cached_configs_cannot_bypass_extends_depth_or_metadata_limits() {
     let directory = tempfile::tempdir().unwrap();
@@ -657,6 +674,7 @@ fn cached_configs_cannot_bypass_extends_depth_or_metadata_limits() {
     assert!(error.to_string().contains("aggregate limit"));
 }
 
+/// Verify a package manifest symlink cannot read metadata outside its package.
 #[cfg(unix)]
 #[test]
 fn package_manifest_symlinks_cannot_escape_the_package() {
@@ -1085,6 +1103,7 @@ fn resolves_in_project(files: &[(&str, &str)], specifier: &str) -> bool {
     resolve_in_project(files, specifier).unwrap().is_some()
 }
 
+/// Write a temporary project and resolve a specifier from its root step file.
 fn resolve_in_project(files: &[(&str, &str)], specifier: &str) -> Result<Option<PathBuf>> {
     let directory = write_project(files);
     resolve_from_root_step(directory.path(), specifier)
@@ -1102,11 +1121,13 @@ fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     directory
 }
 
+/// Resolve a specifier from a root-level step file within the canonical project boundary.
 fn resolve_from_root_step(directory: &Path, specifier: &str) -> Result<Option<PathBuf>> {
     let root = directory.canonicalize().unwrap();
     ProjectResolution::for_root(&root).resolve(&root.join("steps.ts"), specifier, &root)
 }
 
+/// Verify workspace config bases resolve, unavailable external bases preserve local aliases, and unsafe workspace targets fail.
 #[test]
 fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
     // Shared config bases are written as package names. A workspace base inside the root is read;
@@ -1266,6 +1287,7 @@ fn package_extends_resolve_workspace_bases_and_skip_unavailable_ones() {
     }
 }
 
+/// Verify relative extends names with dotted stems receive the missing `.json` suffix.
 #[test]
 fn relative_extends_names_a_dotted_json_base_without_its_suffix() {
     // `./tsconfig.base` means `tsconfig.base.json`. The old suffix check read `.base` as a script
@@ -1283,6 +1305,7 @@ fn relative_extends_names_a_dotted_json_base_without_its_suffix() {
     ));
 }
 
+/// Verify a Windows current-directory prefix in a package `tsconfig` field is not rejected as an invalid segment.
 #[test]
 fn package_tsconfig_field_accepts_a_windows_current_directory_prefix() {
     // `.\` names the package directory like `./`. Prefixing it with another `./` would read the `.`
@@ -1307,6 +1330,7 @@ fn package_tsconfig_field_accepts_a_windows_current_directory_prefix() {
     );
 }
 
+/// Verify workspace config symlinks cannot escape their package or enter its `node_modules` tree.
 #[cfg(unix)]
 #[test]
 fn package_extends_refuse_a_symlink_out_of_the_workspace_package() {
