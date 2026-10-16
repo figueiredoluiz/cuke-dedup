@@ -362,11 +362,11 @@ fn literal(node: Node<'_>) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::{closed, contained_scope};
 
     /// Parses `source` as Ruby.
-    fn parse(source: &str) -> tree_sitter::Tree {
+    pub(in crate::ruby) fn parse(source: &str) -> tree_sitter::Tree {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_ruby::LANGUAGE.into())

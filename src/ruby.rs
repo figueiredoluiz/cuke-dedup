@@ -367,6 +367,8 @@ fn extract_with_proof(
         .parse(source, None)
         .context("Ruby parser produced no tree")?;
     let root = tree.root_node();
+    // One scope per file: every handler reads the same file-level bindings.
+    let file_scope = bindings::RootScope::new(root, source);
     let syntax_error = syntax_error(root, source);
     let syntax_valid = syntax_error.is_none();
     let proof = proof.filter(|_| syntax_valid);
@@ -576,11 +578,12 @@ fn extract_with_proof(
         let handler = proof
             .and_then(|p| p.handlers.get(&node.start_byte()))
             .cloned()
-            .unwrap_or_else(|| handler::fingerprint(block, root, source, assertions));
+            .unwrap_or_else(|| handler::fingerprint(block, &file_scope, source, assertions));
         if !handler.comparable
             && !proof.is_some_and(|proof| proof.comparison_rejections.contains(&node.start_byte()))
-            && !assertions
-                .is_some_and(|assertions| assertions.rejected_comparison(block, root, source))
+            && !assertions.is_some_and(|assertions| {
+                assertions.rejected_comparison(block, &file_scope, source)
+            })
         {
             result.diagnostics.push(diagnostic(
                 file,

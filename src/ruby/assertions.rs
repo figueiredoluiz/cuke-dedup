@@ -426,10 +426,10 @@ impl AssertionBindings {
     pub(super) fn rejected_comparison(
         &self,
         block: Node<'_>,
-        root: Node<'_>,
+        file: &super::bindings::RootScope<'_>,
         source: &str,
     ) -> bool {
-        self.known_ineligible(block, root, source)
+        self.known_ineligible(block, file, source)
             && !descendants(block).iter().any(|node| {
                 (block.kind() == "method"
                     && matches!(
@@ -454,8 +454,13 @@ impl AssertionBindings {
             })
     }
     /// Rejects optional comparison for known unsupported origins without hiding discovery errors.
-    pub(super) fn known_ineligible(&self, block: Node<'_>, root: Node<'_>, source: &str) -> bool {
-        let bindings = self.bindings(block, root, source);
+    pub(super) fn known_ineligible(
+        &self,
+        block: Node<'_>,
+        file: &super::bindings::RootScope<'_>,
+        source: &str,
+    ) -> bool {
+        let bindings = self.bindings(block, file, source);
         !bindings.uncertain
             && (self
                 .events(block, source, &bindings)
@@ -476,7 +481,7 @@ impl AssertionBindings {
     pub(super) fn bindings(
         &self,
         block: Node<'_>,
-        root: Node<'_>,
+        file: &super::bindings::RootScope<'_>,
         source: &str,
     ) -> super::bindings::Bindings {
         let captures = self
@@ -487,7 +492,7 @@ impl AssertionBindings {
             .collect();
         super::bindings::Bindings::collect_with_origins(
             block,
-            root,
+            file,
             source,
             &captures,
             &self.origins.dispatch,

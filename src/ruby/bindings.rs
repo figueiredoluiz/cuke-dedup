@@ -1,5 +1,6 @@
 //! Source-order local bindings for handler identity; names never establish framework trust.
 use super::{descendants, literal_string, text};
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
@@ -365,42 +366,120 @@ fn locals_before(
     source: &str,
     uncertain: &mut bool,
 ) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    let mut pending = vec![scope];
-    while let Some(node) = pending.pop() {
-        if node.start_byte() >= before.start_byte() {
-            continue;
+    let locals = RootLocals::walk(scope, before.start_byte(), source);
+    *uncertain |= locals.first_uncertain.is_some();
+    locals
+        .assignments
+        .into_iter()
+        .flat_map(|(_, names)| names)
+        .collect()
+}
+
+/// File-level binding facts shared by every handler in one parsed file, computed on first use.
+///
+/// Recomputing them per handler made extraction quadratic in the number of handlers per file.
+pub(super) struct RootScope<'a> {
+    root: Node<'a>,
+    source: &'a str,
+    constants: OnceCell<BTreeMap<String, String>>,
+    locals: OnceCell<RootLocals>,
+}
+
+/// Program-level assignments and local-binding syntax in source order, outside nested scopes.
+struct RootLocals {
+    /// Start byte and target names of each program-level assignment.
+    assignments: Vec<(usize, Vec<String>)>,
+    /// Start byte of the first program-level node that binds locals without an assignment.
+    first_uncertain: Option<usize>,
+}
+
+impl<'a> RootScope<'a> {
+    /// Wraps the `program` root of `source`; nothing is computed until a handler asks.
+    pub(super) fn new(root: Node<'a>, source: &'a str) -> Self {
+        Self {
+            root,
+            source,
+            constants: OnceCell::new(),
+            locals: OnceCell::new(),
         }
-        if node != scope && (scope_node(node) || WALLS.contains(&node.kind())) {
-            continue;
-        }
-        *uncertain |= binds_locals(node, source);
-        match node.kind() {
-            "assignment" | "operator_assignment" => names.extend(
-                node.child_by_field_name("left")
-                    .map(binding_nodes)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|n| text(*n, source).to_owned()),
-            ),
-            _ => {} // fail-closed: binding syntax without an assignment is reported by binds_locals
-        }
-        let mut cursor = node.walk();
-        pending.extend(node.named_children(&mut cursor));
     }
-    names
+
+    /// The file's constants, as `file_constants` computes them.
+    fn constants(&self) -> &BTreeMap<String, String> {
+        self.constants
+            .get_or_init(|| file_constants(self.root, self.source))
+    }
+
+    /// Program-level locals assigned before `before`, equal to `locals_before(root, before)`.
+    ///
+    /// That walk visits exactly the nodes reachable from the root without entering a block,
+    /// lambda or wall that start before `before`, and whether a node is entered depends only on
+    /// its kind; so the visit set is one source-ordered list cut at `before`.
+    fn locals_before(&self, before: Node<'_>, uncertain: &mut bool) -> BTreeSet<String> {
+        let locals = self
+            .locals
+            .get_or_init(|| RootLocals::walk(self.root, usize::MAX, self.source));
+        let limit = before.start_byte();
+        *uncertain |= locals.first_uncertain.is_some_and(|start| start < limit);
+        locals
+            .assignments
+            .iter()
+            .take_while(|(start, _)| *start < limit)
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect()
+    }
+}
+
+impl RootLocals {
+    /// Walks `scope` without entering nested scopes or walls, skipping nodes at or after `limit`.
+    fn walk(scope: Node<'_>, limit: usize, source: &str) -> Self {
+        let mut assignments = Vec::new();
+        let mut first_uncertain = None::<usize>;
+        let mut pending = vec![scope];
+        while let Some(node) = pending.pop() {
+            if node.start_byte() >= limit
+                || (node != scope && (scope_node(node) || WALLS.contains(&node.kind())))
+            {
+                continue;
+            }
+            if binds_locals(node, source) {
+                first_uncertain = Some(
+                    first_uncertain.map_or(node.start_byte(), |start| start.min(node.start_byte())),
+                );
+            }
+            match node.kind() {
+                "assignment" | "operator_assignment" => assignments.push((
+                    node.start_byte(),
+                    node.child_by_field_name("left")
+                        .map(binding_nodes)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|name| text(*name, source).to_owned())
+                        .collect(),
+                )),
+                _ => {} // fail-closed: binding syntax without an assignment is reported by binds_locals
+            }
+            let mut cursor = node.walk();
+            pending.extend(node.named_children(&mut cursor));
+        }
+        assignments.sort_by_key(|(start, _)| *start);
+        Self {
+            assignments,
+            first_uncertain,
+        }
+    }
 }
 
 impl Bindings {
     /// Tracks parser-order bindings while keeping unresolved reflection and implicit parameters uncertain.
-    pub fn collect(block: Node<'_>, root: Node<'_>, source: &str) -> Self {
-        Self::collect_with_origins(block, root, source, &BTreeMap::new(), &BTreeSet::new())
+    pub fn collect(block: Node<'_>, scope: &RootScope<'_>, source: &str) -> Self {
+        Self::collect_with_origins(block, scope, source, &BTreeMap::new(), &BTreeSet::new())
     }
 
     /// Resolves handler bindings with source-proven captures and lexical shadowing.
     pub(super) fn collect_with_origins(
         block: Node<'_>,
-        root: Node<'_>,
+        file: &RootScope<'_>,
         source: &str,
         captures: &BTreeMap<String, String>,
         dispatch: &BTreeSet<(usize, usize)>,
@@ -409,7 +488,7 @@ impl Bindings {
         // Ruby def opens a new local scope; it does not close over the file's locals.
         let closure = block.kind() != "method";
         let outer = if closure {
-            locals_before(root, block, source, &mut result.uncertain)
+            file.locals_before(block, &mut result.uncertain)
         } else {
             BTreeSet::new()
         };
@@ -428,7 +507,7 @@ impl Bindings {
         // Fingerprinted blocks are top-level or inside executed lambdas, so constant lookup
         // never crosses a class or module body; `def` handlers keep names.
         let constants = if closure {
-            file_constants(root, source)
+            file.constants().clone()
         } else {
             BTreeMap::new()
         };
@@ -603,7 +682,8 @@ impl Bindings {
             })
             .cloned()
             .collect();
-        result.uncertain |= !stable_captures(block, root, source, &unresolved, &BTreeSet::new());
+        result.uncertain |=
+            !stable_captures(block, file.root, source, &unresolved, &BTreeSet::new());
         for (scope, parameters) in enclosing_scopes {
             let prefix = format!("scope:{}:", scope.start_byte());
             let names = result
@@ -859,4 +939,121 @@ fn binding_nodes(node: Node<'_>) -> Vec<Node<'_>> {
     }
     names.sort_by_key(Node::start_byte);
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::load_phase::tests::parse;
+    use super::*;
+
+    /// Asserts the per-file index answers every handler-shaped node exactly as the root walk does.
+    fn assert_index_matches_walk(source: &str, label: &str) -> usize {
+        let tree = parse(source);
+        let root = tree.root_node();
+        let scope = RootScope::new(root, source);
+        let mut checked = 0;
+        for node in descendants(root) {
+            if !matches!(node.kind(), "block" | "do_block" | "lambda" | "method") {
+                continue;
+            }
+            let (mut indexed, mut walked) = (false, false);
+            assert_eq!(
+                scope.locals_before(node, &mut indexed),
+                locals_before(root, node, source, &mut walked),
+                "{label}: names"
+            );
+            assert_eq!(indexed, walked, "{label}: uncertain");
+            checked += 1;
+        }
+        assert_eq!(
+            scope.constants(),
+            &file_constants(root, source),
+            "{label}: constants"
+        );
+        checked
+    }
+
+    /// The index equals the walk for every assignment form, nested scope, enclosing block and
+    /// local-binding syntax, before and after each handler.
+    #[test]
+    fn root_index_matches_the_walk_on_the_matrix() {
+        let source = r#"
+LIMIT = 5
+first, *rest = [1, 2, 3]
+total = 0
+total += 1
+Given('first') { work(total) }
+if ready
+  inside_if = 1
+end
+begin
+  inside_begin = 2
+rescue => error
+  handled = error
+end
+def helper
+  hidden_in_def = 3
+end
+class Holder
+  hidden_in_class = 4
+end
+module Space
+  hidden_in_module = 5
+end
+class << self
+  hidden_in_singleton = 6
+end
+[1].each { |item| hidden_in_block = item }
+3.times do |index|
+  inside_loop = index
+  Given("loop #{index}") { work(inside_loop) }
+end
+callable = -> { hidden_in_lambda = 7 }
+When('middle') do
+  work(callable, inside_if)
+end
+for element in [1]
+  looped = element
+end
+case value
+in { name: }
+  matched = name
+end
+/(?<group>x)/ =~ text
+after = 8
+Then('last') { work(after) }
+def step_method
+  Given('in method') { work }
+end
+"#;
+        assert!(assert_index_matches_walk(source, "matrix") >= 10);
+    }
+
+    /// The index equals the walk for every handler-shaped node in every Ruby fixture.
+    #[test]
+    fn root_index_matches_the_walk_on_every_ruby_fixture() {
+        let mut files = Vec::new();
+        let mut pending =
+            vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")];
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rb") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        assert!(files.len() > 100, "Ruby fixtures not found");
+        let checked: usize = files
+            .iter()
+            .map(|path| {
+                let source = std::fs::read_to_string(path).unwrap();
+                assert_index_matches_walk(&source, &path.display().to_string())
+            })
+            .sum();
+        assert!(checked > 100);
+    }
 }

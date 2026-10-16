@@ -383,7 +383,8 @@ impl Graph<'_> {
 /// Direct program-level access to a Binding can rebind a local without creating
 /// an identifier reference to it. Deferred syntax and nested scopes are excluded.
 fn direct_binding_accesses(nodes: &[Node<'_>], root: Node<'_>, source: &str) -> BTreeSet<usize> {
-    let bindings = super::super::bindings::Bindings::collect(root, root, source);
+    let file_scope = super::super::bindings::RootScope::new(root, source);
+    let bindings = super::super::bindings::Bindings::collect(root, &file_scope, source);
     nodes
         .iter()
         .copied()
