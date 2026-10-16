@@ -16,16 +16,22 @@ function bashExecutable() {
   throw new Error("Git Bash was not found beside the installed Git executable");
 }
 
+/** The caller's environment without Git's repository overrides, which a hook run from a linked worktree inherits. */
+function isolatedEnvironment() {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+}
+
 /** Exercise the real hook and checker with immutable commits and a cheap full-gate stand-in. */
-test("pre-push documentation contract", () => {
+function documentationContract() {
   const root = mkdtempSync(join(tmpdir(), "cuke-docstring-hook-"));
+  const env = isolatedEnvironment();
   /** Run bounded Git commands in the disposable repository. */
-  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", timeout: 10_000 });
+  const git = (...args) => execFileSync("git", args, { cwd: root, env, encoding: "utf8", timeout: 10_000 });
   /** Create synthetic fixture commits without invoking developer hooks. */
   function snapshot() {
     git("add", ".");
     const tree = git("write-tree").trim();
-    const parent = spawnSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: root, encoding: "utf8" });
+    const parent = spawnSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: root, env, encoding: "utf8" });
     const commit = git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree,
       ...(parent.status === 0 ? ["-p", parent.stdout.trim()] : []), "-m", "Fixture").trim();
     git("update-ref", "HEAD", commit);
@@ -34,7 +40,7 @@ test("pre-push documentation contract", () => {
   /** Invoke the hook with Git's ref-update protocol. */
   function push(head, remote = "0".repeat(40)) {
     return spawnSync(bashExecutable(), [".githooks/pre-push", "origin"], {
-      cwd: root, encoding: "utf8", timeout: 10_000,
+      cwd: root, env, encoding: "utf8", timeout: 10_000,
       input: `refs/heads/topic ${head} refs/heads/topic ${remote}\n`,
     });
   }
@@ -82,5 +88,33 @@ test("pre-push documentation contract", () => {
     assert.equal(push("0".repeat(40), documented).status, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** The hook blocks undocumented pushed commits and runs the full gate only for documented ones. */
+test("pre-push documentation contract", documentationContract);
+
+/** A commit from a linked worktree exports an absolute GIT_DIR to hooks; fixture Git must not act on that repository. */
+test("fixture Git ignores the caller's repository overrides", () => {
+  const sentinel = mkdtempSync(join(tmpdir(), "cuke-docstring-sentinel-"));
+  /** Read the sentinel repository's state with no inherited overrides. */
+  const inspect = (...args) => execFileSync("git", ["-C", sentinel, ...args], { env: isolatedEnvironment(), encoding: "utf8" });
+  const saved = { GIT_DIR: process.env.GIT_DIR, GIT_INDEX_FILE: process.env.GIT_INDEX_FILE };
+  try {
+    inspect("init", "--quiet");
+    const before = { bare: inspect("config", "core.bare"), refs: inspect("for-each-ref") };
+    process.env.GIT_DIR = join(sentinel, ".git");
+    process.env.GIT_INDEX_FILE = join(sentinel, ".git", "index");
+    try {
+      documentationContract();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    assert.deepEqual({ bare: inspect("config", "core.bare"), refs: inspect("for-each-ref") }, before);
+  } finally {
+    rmSync(sentinel, { recursive: true, force: true });
   }
 });
