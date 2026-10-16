@@ -3,7 +3,6 @@
   "purpose": "Superset census of existing non-Ruby Rust tests. Unmapped is pending behavioral classification, not proof of a missing capability. Several tests may map to one Ruby fixture; shared contracts need an explicit rationale.",
   "files": {
     "src/analysis/evidence.rs": {
-      "sourceSha256": "b7a9a960b5ebd3c71ed43e2d9b37c14916e6f0babc91dc243a13b3cbbbc1253d",
       "tests": [
         {
           "name": "matcher_diffs_cover_empty_identical_disjoint_and_unicode_inputs",
@@ -39,7 +38,6 @@
       ]
     },
     "src/analysis/pairs/tests.rs": {
-      "sourceSha256": "45a0533fc81f4ff03f46a66a99a5b86a1b23548df958439a87adbdbcb263c548",
       "tests": [
         {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
@@ -203,7 +201,6 @@
       ]
     },
     "src/analysis/similarity.rs": {
-      "sourceSha256": "1e3d95b52d61e34d12ec59a566ccf4c0600b6568a2a630854188d47f518f427c",
       "tests": [
         {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
@@ -241,7 +238,6 @@
       ]
     },
     "src/analysis/string_metrics.rs": {
-      "sourceSha256": "d11694d8c3a6bd251beef5b0f8421a2d37a7d765dde96675e04cc285b56b0e7f",
       "tests": [
         {
           "name": "edge_cases_equal_strsim_and_take_the_expected_path",
@@ -260,7 +256,6 @@
       ]
     },
     "src/analysis/tests.rs": {
-      "sourceSha256": "84e6bc9f12c5c61b310e4fb678c884001866b993da9b84446358bb0661aab17a",
       "tests": [
         {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
@@ -1254,7 +1249,6 @@
       ]
     },
     "src/analysis/usage/tests.rs": {
-      "sourceSha256": "5cbf04a85479723ac6f8a55ff453433718ea88efc94c8cc15ae9b04a0845e159",
       "tests": [
         {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
@@ -1439,7 +1433,6 @@
       ]
     },
     "src/cli.rs": {
-      "sourceSha256": "3769c315b9bd0b5d30246a20be1076faa7467053b43635d9b1ab58ed748e3deb",
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1502,7 +1495,6 @@
       ]
     },
     "src/config/tests.rs": {
-      "sourceSha256": "4ae700023d840fec1c41179b793110cc8e1c20618be446a7d2d1474c7844e574",
       "tests": [
         {
           "name": "standalone_config_overrides_package_and_cli_overrides_both",
@@ -1718,7 +1710,6 @@
       ]
     },
     "src/discovery.rs": {
-      "sourceSha256": "1b8a11fc9079cd590f58abf8f9e5dc2187d27c9ca791d1aaafdc58d5ebd058f1",
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -1837,7 +1828,6 @@
       ]
     },
     "src/framework_config/tests.rs": {
-      "sourceSha256": "bc16b850dea3b36fd1136ba1b649c7a0d0320e747b52fab4b24bf7560c89c362",
       "tests": [
         {
           "name": "extracts_cucumber_default_profile_paths",
@@ -1944,7 +1934,6 @@
       ]
     },
     "src/gherkin/tests.rs": {
-      "sourceSha256": "650cd495a3165785c8ffaf5f0bd115ab33b01de5d915daff224710770a472eb3",
       "tests": [
         {
           "name": "table_escape_matrix_preserves_outline_text_and_source_positions",
@@ -2208,7 +2197,6 @@
       ]
     },
     "src/model/sha256/tests.rs": {
-      "sourceSha256": "2b831ff433fc9b585af4431b5b8dc670d2d5ac2c272c82e8ced3f2bc8a5a649a",
       "tests": [
         {
           "name": "matches_sha256_known_answer_vectors",
@@ -2234,7 +2222,6 @@
       ]
     },
     "src/model/tests.rs": {
-      "sourceSha256": "cd3a70e15f8f4cffd958da9ddb397de669ac0449a7c38166f2749f730d2b7114",
       "tests": [
         {
           "name": "rule_names_are_stable_kebab_case",
@@ -2310,7 +2297,6 @@
       ]
     },
     "src/modes/tests.rs": {
-      "sourceSha256": "91b153bace5b88865d505048bd9c4a02dc8148e9756f2ab4c7e0b839a9453f91",
       "tests": [
         {
           "name": "changed_mode_keeps_findings_related_to_a_changed_file",
@@ -2438,7 +2424,6 @@
       ]
     },
     "src/reporters/tests.rs": {
-      "sourceSha256": "4aefd193d3b88a161d6734912a8b4f94678af587a0da219bfc420b80ba94df5c",
       "tests": [
         {
           "name": "json_uses_versioned_schema_and_relative_paths",
@@ -2643,7 +2628,6 @@
       ]
     },
     "src/resource_limits.rs": {
-      "sourceSha256": "19609dfb8a029e82a643715a71c277786af7847d4571bc7c0438f0aef1b6fc97",
       "tests": [
         {
           "name": "bounded_reader_accepts_exact_limit_and_rejects_next_byte",
@@ -2693,7 +2677,6 @@
       ]
     },
     "src/source_adapter/tests.rs": {
-      "sourceSha256": "1233c1f76f77be53ea51a35750b6f64ffcdf3278535b32378fc8ef32575d20a4",
       "tests": [
         {
           "name": "session_state_initializes_once_per_backend_and_per_run",
@@ -2841,7 +2824,6 @@
       ]
     },
     "src/typescript/source_filter/tests.rs": {
-      "sourceSha256": "918654966ad4aecc3caae5a16685e98b51a029cd580661d67e615ec05927e537",
       "tests": [
         {
           "name": "classifies_every_content_kind_discovery_can_deliver",
@@ -3014,7 +2996,6 @@
       ]
     },
     "src/typescript/ast.rs": {
-      "sourceSha256": "191bad6c1d3a2b5736fc6f3c22c8e78203056cf742af3113715768957e7ef1db",
       "tests": [
         {
           "name": "relative_specifiers_are_distinguished_from_packages_and_aliases",
@@ -3037,7 +3018,6 @@
       ]
     },
     "src/typescript/frameworks.rs": {
-      "sourceSha256": "c46d605771e0942c70f8685f1e81ef4e406f0667fea35f4eba6cb1ed7120c202",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_export_kinds",
@@ -3060,7 +3040,6 @@
       ]
     },
     "src/typescript/matcher.rs": {
-      "sourceSha256": "c80eb95379d3bfc9d3e3e71a38d101c371db8dc2ab5f595745fcec424da9408c",
       "tests": [
         {
           "name": "unicode_sets_flag_belongs_to_matcher_identity",
@@ -3083,7 +3062,6 @@
       ]
     },
     "src/typescript/module_resolver/tests.rs": {
-      "sourceSha256": "15dc5e794379fec39216597b65e087a3be509e38ac78ba3ac990ab6783cb5082",
       "tests": [
         {
           "name": "project_resolution_supports_relative_modules_and_rejects_escapes",
@@ -3256,7 +3234,6 @@
       ]
     },
     "src/typescript/project_resolution/tests.rs": {
-      "sourceSha256": "c22c998564b53c930fe3383a494d97aa1f8f3c642d33976cb34163b6a0f1e3bf",
       "tests": [
         {
           "name": "jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas",
@@ -3441,7 +3418,6 @@
       ]
     },
     "src/typescript/tests.rs": {
-      "sourceSha256": "e3a32199cb1c37152b9e33a4db4c98decf68e09dcc0ef9d3f3c15ef0d0fb523f",
       "tests": [
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
@@ -4400,7 +4376,6 @@
       ]
     },
     "tests/cli.rs": {
-      "sourceSha256": "12f5b2ecca100fe71f21ad7611c47b7bf6186a038a77e57592b58da7de68d53a",
       "tests": [
         {
           "name": "baseline_from_ref_compares_history_without_mutating_the_checkout",
@@ -5672,7 +5647,6 @@
       ]
     },
     "tests/framework_callbacks.rs": {
-      "sourceSha256": "581069d627a69c61c6f799e9f2d3e54f0eda061f6e342f30f065d688b61c8deb",
       "tests": [
         {
           "name": "positional_regex_steps_do_not_enter_global_usage_but_plugin_steps_do",
@@ -5831,7 +5805,6 @@
       ]
     },
     "tests/public_api.rs": {
-      "sourceSha256": "d40a804929e767e7ae044e539fe85b2a2931d330f93409c6edc62bcd94b1e195",
       "tests": [
         {
           "name": "extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults",
@@ -5924,7 +5897,6 @@
       ]
     },
     "tests/gherkin_tables.rs": {
-      "sourceSha256": "05f2451bf9ceb3c1f1e80e9bcefb6ac437721a00b40c6e451559193e7bb9af4a",
       "tests": [
         {
           "name": "escaped_tables_preserve_findings_and_reject_malformed_neighbors_in_both_languages",
@@ -5939,7 +5911,6 @@
       ]
     },
     "src/model/behavior.rs": {
-      "sourceSha256": "1dced0699c13eaacfa087353ecd88fd7bc7eeb1cae2fcf0f74fb6efe1d9cadc3",
       "tests": [
         {
           "name": "legacy_signatures_round_trip_known_and_unknown_events",
@@ -5972,7 +5943,6 @@
       ]
     },
     "tests/frontend_conformance.rs": {
-      "sourceSha256": "4748199b614cb8788fd876f625a5de018ff91b2cc7bc6acc386ec22cb55dbb40",
       "tests": [
         {
           "name": "ruby_selection_dependencies_and_mixed_domain_keep_cli_outcomes",

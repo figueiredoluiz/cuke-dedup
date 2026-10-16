@@ -76,8 +76,9 @@ for (const dimension of manifest.additionalRequiredDimensions ?? []) {
   for (const file of dimension.fixtureFiles ?? []) await stat(within(root, file));
 }
 blockers.push(...(manifest.outstandingCensus ?? []));
-// The unit census is completion bookkeeping pinned to every Rust test file. Regression mode guards
-// observable outcomes only, so unrelated test edits elsewhere in the repository cannot fail it.
+// The unit census gives every Rust test a Ruby decision; it pins test names, not file contents, so
+// comment and non-test edits never invalidate it. Regression mode checks corpus coverage and recorded
+// outcomes but skips this census; inventory-only mode enforces it without running the analyzer.
 let unitContracts = 0;
 const units = regression ? { schemaVersion: 1, files: {} } : await readJson(join(root, "unit-cases.json"));
 assert.equal(units.schemaVersion, 1);
@@ -114,8 +115,8 @@ if (!regression) {
 }
 for (const [file, inventory] of Object.entries(units.files)) {
   const content = contents.get(file);
-  assert.equal(createHash("sha256").update(content).digest("hex"), inventory.sourceSha256,
-    `${file}: source tests changed; reassess unit-test mappings`);
+  // fail-closed: the census pins test names only; a leftover or new per-file field is rejected.
+  assert.deepEqual(Object.keys(inventory), ["tests"], `${file}: unexpected census fields`);
   const names = [...content.matchAll(TEST_FN_PATTERN)].map((match) => match[1]);
   assert.deepEqual(inventory.tests.map((item) => item.name).sort(), names.sort(),
     `${file}: unit-test census is incomplete or duplicated`);
