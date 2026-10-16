@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +12,7 @@ import {
   normalize,
   outputArgument,
   readFiles,
+  readRecords,
   summarize,
   withOutput,
 } from "./output-equivalence.mjs";
@@ -107,4 +109,26 @@ test("summary fails on mismatches and on suites that made no invocation", () => 
   assert.deepEqual([empty.ok, empty.empty], [false, ["ruby"]]);
   const mismatch = summarize([clean, dirty], ["corpus", "ruby"]);
   assert.deepEqual([mismatch.ok, mismatch.mismatches.length, mismatch.invocations], [false, 1, { corpus: 1, ruby: 1 }]);
+});
+
+/** Parallel shims each write their own record file; every record is read back whole, however large. */
+test("shim records are separate files read back whole", async () => {
+  const root = mkdtempSync(join(tmpdir(), "equivalence-test-"));
+  try {
+    const large = "x".repeat(256 * 1024);
+    const script = join(root, "writer.mjs");
+    writeFileSync(script, `import { writeRecord } from ${JSON.stringify(new URL("./output-equivalence.mjs", import.meta.url).href)};
+for (let index = 0; index < 5; index += 1) writeRecord(process.argv[2], { suite: "cli", index, payload: "x".repeat(${large.length}) });`);
+    const records = join(root, "records");
+    mkdirSync(records);
+    /** Runs one writer process to completion and resolves with its exit code. */
+    const writer = () => new Promise((done) => spawn(process.execPath, [script, records], { stdio: "ignore" }).on("exit", done));
+    assert.deepEqual(await Promise.all(Array.from({ length: 6 }, writer)), Array(6).fill(0));
+    const read = readRecords(records);
+    assert.equal(readdirSync(records).length, 30);
+    assert.equal(read.length, 30);
+    assert.ok(read.every((record) => record.payload === large));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

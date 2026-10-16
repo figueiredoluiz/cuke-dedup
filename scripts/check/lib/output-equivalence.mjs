@@ -1,6 +1,7 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
 // (timing, the scratch output directory, the version string) and what must not (everything else).
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
@@ -129,6 +130,19 @@ export function readFiles(root, before = new Map()) {
   return new Map([...fileTimes(root)]
     .filter(([name, time]) => before.get(name) !== time)
     .map(([name]) => [name, readFileSync(join(root, name), "utf8")]));
+}
+
+/**
+ * Writes one shim record as its own file in `directory`. Parallel test threads can run many shims at
+ * once; separate files, created exclusively, cannot interleave the way appends to one log could.
+ */
+export function writeRecord(directory, record) {
+  writeFileSync(join(directory, `${process.pid}-${randomUUID()}.json`), JSON.stringify(record), { flag: "wx" });
+}
+
+/** Every record `writeRecord` left in `directory`. */
+export function readRecords(directory) {
+  return readdirSync(directory).sort().map((name) => JSON.parse(readFileSync(join(directory, name), "utf8")));
 }
 
 /** Verdict over the shim log: invocations per suite, mismatches, and suites that ran nothing. */

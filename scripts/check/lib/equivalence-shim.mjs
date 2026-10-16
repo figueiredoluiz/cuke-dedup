@@ -1,11 +1,11 @@
 // Stands in for the analyzer binary under the existing checkers. Each invocation runs the baseline
 // binary (into a scratch output directory) and then the candidate with the original arguments,
 // records any difference, and reproduces the candidate's result so the checker sees only it.
-import { appendFileSync, existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { compareRuns, fileTimes, outputArgument, readFiles, withOutput } from "./output-equivalence.mjs";
+import { compareRuns, fileTimes, outputArgument, readFiles, withOutput, writeRecord } from "./output-equivalence.mjs";
 
 const {
   CUKE_DEDUP_EQUIVALENCE_BASELINE: baseline,
@@ -58,7 +58,7 @@ try {
     baseline: directoryTokens(scratch),
     candidate: [...directoryTokens(outputDirectory), ...JSON.parse(versions || "[]")],
   });
-  appendFileSync(log, `${JSON.stringify({ suite, cwd: process.cwd(), args, differences })}\n`);
+  writeRecord(log, { suite, cwd: process.cwd(), args, differences });
   process.stdout.write(candidateRun.stdout);
   process.stderr.write(candidateRun.stderr);
   signal = candidateRun.signal;
