@@ -11,6 +11,7 @@ const exclusions = {
   "src/ruby.rs": "language frontend", "src/ruby/": "language frontend",
 };
 const identifier = /^[A-Za-z_][A-Za-z_0-9]*$/;
+/** Tokenize Rust outside comments and literals, record raw-identifier positions, and reject unterminated comments or strings. */
 function tokens(source) {
   const result = [];
   result.rawIdentifiers = new Set();
@@ -47,6 +48,7 @@ function tokens(source) {
   }
   return result;
 }
+/** Normalize relative paths and return a targeted frontend or Framework edge, or null for other paths. */
 function edge(path) {
   // Relative paths are possible adapter references even inside inline modules.
   // Count conservatively; proving a local same-named module is outside this lexical guard.
@@ -61,10 +63,13 @@ function edge(path) {
   if (path[1] === "model" && path[2] === "Framework") return path.slice(0, 4).join("::");
   return null;
 }
+/** Parse lexical use-tree leaves and aliases, rejecting unsupported or malformed import syntax. */
 function imports(input, rawIdentifiers, offset) {
+  /** Recognize a keyword token only when its original spelling was not a raw identifier. */
   const keyword = (index, word) => input[index] === word && !rawIdentifiers.has(offset + index);
   let position = 0;
   const leaves = [];
+  /** Consume one use-tree branch, recursively expanding groups into path and alias leaves. */
   function branch(prefix) {
     let path = [...prefix];
     if (input[position] === "::") position++;
@@ -98,6 +103,7 @@ function imports(input, rawIdentifiers, offset) {
   return leaves;
 }
 
+/** Recognize a lexical use declaration boundary, accounting for visibility and raw identifiers. */
 function isImport(input, index) {
   if (input[index] !== "use" || input.rawIdentifiers.has(index) || input[index + 1] === "<") return false;
   let before = index - 1;
@@ -112,11 +118,13 @@ function isImport(input, index) {
   return before < 0 || [";", "{", "}", "]"].includes(input[before]);
 }
 
+/** Count targeted lexical references per source file, resolving file-wide aliases and rejecting ambiguous or unsupported targeted imports. */
 export function inventorySources(sources) {
   const inventory = {};
   for (const [file, source] of Object.entries(sources).sort(([a], [b]) => a.localeCompare(b))) {
     try {
       const input = tokens(source), aliases = new Map(), leaves = [], counts = {}, ignored = new Set();
+      /** Increment the inventory count when a path resolves to a targeted boundary edge. */
       const add = (path) => { const key = edge(path); if (key) counts[key] = (counts[key] ?? 0) + 1; };
       for (let i = 0; i < input.length; i++) {
         if (!isImport(input, i)) continue;
@@ -132,6 +140,7 @@ export function inventorySources(sources) {
         for (let n = i; n <= end; n++) ignored.add(n);
         i = end;
       }
+      /** Resolve file-wide aliases recursively, rejecting cycles and ambiguous targeted origins while preserving unrelated ambiguity. */
       function canonical(path, visited = new Set()) {
         if (path[0] === "crate") return path;
         if (aliases.has(path[0])) {
@@ -163,6 +172,7 @@ export function inventorySources(sources) {
   return inventory;
 }
 
+/** Return file and edge-count differences requiring reconciliation with the reviewed inventory. */
 export function compareInventory(actual, baseline) {
   const differences = [];
   for (const file of [...new Set([...Object.keys(actual), ...Object.keys(baseline)])].sort()) {
@@ -176,8 +186,10 @@ export function compareInventory(actual, baseline) {
   return differences;
 }
 
+/** Read scoped Rust sources while excluding frontends and dedicated tests, rejecting symbolic links. */
 async function scopedSources(root) {
   const sources = {};
+  /** Traverse one scope directory in sorted order, collecting Rust files and enforcing exclusions and link rejection. */
   async function visit(path) {
     if ((await lstat(path)).isSymbolicLink()) throw Error(`unsupported symbolic link in boundary scope: ${path}`);
     const entries = await readdir(path, { withFileTypes: true });
@@ -195,6 +207,7 @@ async function scopedSources(root) {
   await visit(join(root, "src"));
   return sources;
 }
+/** Reject a boundary manifest with an invalid schema, exclusions, file entry, edge, or count. */
 function validateManifest(manifest) {
   if (manifest?.schemaVersion !== 1 || !manifest.files || typeof manifest.files !== "object" || Array.isArray(manifest.files)) throw Error("invalid boundary manifest schema");
   if (JSON.stringify(manifest.exclusions) !== JSON.stringify(exclusions)) throw Error("invalid boundary manifest exclusions");
@@ -205,6 +218,7 @@ function validateManifest(manifest) {
     }
   }
 }
+/** Load the requested boundary manifest, compare scoped sources, and fail on inventory differences. */
 async function main() {
   const args = process.argv.slice(2);
   let root = resolve(dirname(fileURLToPath(import.meta.url)), "../.."), manifestPath;

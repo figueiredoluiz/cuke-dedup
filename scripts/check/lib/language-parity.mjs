@@ -3,10 +3,12 @@ import { countMatches } from "./recall-oracle.mjs";
 import { normalizeOutcome, validateOutcomeContract } from "./behavior-spec.mjs";
 
 // Compatibility wrapper for paired TypeScript/Ruby conformance.
+/** Normalize TypeScript and Ruby observations using a shared logical steps path. */
 export function outcome(report, exit) {
   return normalizeOutcome(report, exit, { "steps.ts": "steps", "steps.rb": "steps" });
 }
 
+/** Return census, completeness, truncation, exit, and required or forbidden finding violations against the expected contract. */
 export function deficits(expected, report, exit) {
   const actual = outcome(report, exit);
   const gaps = [];
@@ -30,6 +32,7 @@ export function deficits(expected, report, exit) {
   return gaps;
 }
 
+/** Classify paired observations by operational errors, contract deficits, and normalized outcome equality. */
 export function classify(left, right) {
   if (left.error || right.error) return "unmeasured";
   if (!left.deficits.length && right.deficits.length) return "ruby-behind";
@@ -39,6 +42,7 @@ export function classify(left, right) {
   return equal ? "equivalent" : "outcome-difference";
 }
 
+/** Assert the parity manifest schema, baseline commit, unique case IDs, source fields, and outcome contracts. */
 export function validateManifest(manifest) {
   assert.equal(manifest.schemaVersion, 1);
   assert.match(manifest.baselineCommit, /^[a-f0-9]{40}$/);

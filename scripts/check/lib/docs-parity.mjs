@@ -22,11 +22,14 @@ export function structBody(source, name) {
   throw new Error(`unterminated struct ${name}`);
 }
 
+/** Convert underscore-separated field names to kebab case for derived CLI flags. */
 export const kebab = (field) => field.replace(/_/g, "-");
+/** Convert underscore-plus-lowercase-letter sequences to camel case for config keys. */
 export const camel = (field) => field.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 
 // A struct field declaration, tolerating an optional `pub` / `pub(crate)` visibility.
 const FIELD = /^(?:pub(?:\([^)]*\))?\s+)?([a-z][a-z0-9_]*)\s*:/;
+/** Return the opening-minus-closing square-bracket count in an attribute line. */
 const netBrackets = (line) =>
   (line.match(/\[/g) || []).length - (line.match(/\]/g) || []).length;
 
@@ -42,6 +45,7 @@ export function cliFlags(structBodyText) {
   let pendingArg = ""; // the most recent #[arg(...)] attribute awaiting its field
   let attr = ""; // an attribute currently being accumulated across lines
   let depth = 0; // unclosed `[` while inside a multi-line attribute
+  /** Retain a completed arg attribute containing a long flag and clear the current attribute buffer. */
   const flush = () => {
     if (/^\s*#\[arg\b/.test(attr) && /\blong\b/.test(attr)) pendingArg = attr;
     attr = "";

@@ -72,6 +72,7 @@ const PLANTED_OVERLAPS = 10;
 /// Index-derived so the corpus is identical on every run and every machine. Vocabulary is varied so
 /// unrelated definitions do not read as near-duplicates of each other; only the planted pairs
 /// overlap.
+/** Generate deterministic, non-comparable handlers and distinct matchers with a fixed number of planted overlaps. */
 function source(count, offset) {
   const lines = ['import { Given, When, Then } from "@cucumber/cucumber";', ""];
   for (let index = 0; index < count; index += 1) {
@@ -102,6 +103,7 @@ function source(count, offset) {
   return lines.join("\n");
 }
 
+/** Write definition batches, one feature step, and configuration isolating overlapping-matcher memory use. */
 async function buildCorpus(root, definitions) {
   await mkdir(join(root, "steps"), { recursive: true });
   await mkdir(join(root, "features"), { recursive: true });
@@ -138,6 +140,7 @@ async function buildCorpus(root, definitions) {
   );
 }
 
+/** Run the analyzer under platform time tooling and return peak bytes and report counts, or null when unsupported; assert a valid exit and memory measurement. */
 function measure(root, output, definitions) {
   const binaryArguments = [".", "--reporters", "json", "--output", output];
   const memoryFile = join(root, ".memory");

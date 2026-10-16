@@ -2,10 +2,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
+/** Return whether a value is a plain object with Object.prototype. */
 const object = (value) => value !== null && typeof value === "object"
   && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const statuses = new Set(["pass", "known-gap", "accepted-difference"]);
+/** Return whether a value is a string containing non-whitespace characters. */
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
+/** Recursively sort plain-object keys and validate JSON values, rejecting non-finite numbers, sparse arrays, and symbol properties. */
 function canonical(value) {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") { assert.ok(Number.isFinite(value), "non-finite snapshot number"); return value; }
@@ -19,10 +22,12 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 
+/** Return a SHA-256 digest of the validated, canonical JSON representation. */
 export function snapshot(value) {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
 
+/** Validate the regression manifest and return errors for missing, malformed, unclassified, or changed observations. */
 export function regressionFailures(observations, manifest) {
   assert.ok(object(manifest) && manifest.schemaVersion === 1, "invalid regression manifest schema");
   assert.ok(object(manifest.cases) && Object.keys(manifest.cases).length > 0, "empty or malformed regression cases");

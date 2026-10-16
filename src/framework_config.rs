@@ -66,6 +66,7 @@ type FrameworkDiscovery = fn(&Path, Option<&JsonValue>) -> Result<Option<Framewo
 const DISCOVERY_REGISTRY: [FrameworkDiscovery; 3] =
     [playwright_discovery, cypress_discovery, cucumber_discovery];
 
+/// Returns the first framework discovery match in registry order, propagating configuration errors.
 pub(crate) fn detect(
     root: &Path,
     package: Option<&JsonValue>,
@@ -98,6 +99,7 @@ fn first_matching_config(
     Ok(None)
 }
 
+/// Inspects supported Playwright configuration filenames in precedence order for a BDD configuration.
 fn playwright_discovery(
     root: &Path,
     _package: Option<&JsonValue>,
@@ -105,6 +107,7 @@ fn playwright_discovery(
     first_matching_config(root, &PLAYWRIGHT_CONFIGS, playwright_config)
 }
 
+/// Inspects Cypress configurations only when a supported Cucumber preprocessor dependency is present.
 fn cypress_discovery(
     root: &Path,
     package: Option<&JsonValue>,
@@ -115,6 +118,7 @@ fn cypress_discovery(
     first_matching_config(root, &CYPRESS_CONFIGS, cypress_config)
 }
 
+/// Uses the first Cucumber configuration, or default feature paths when a Cucumber dependency is present.
 fn cucumber_discovery(
     root: &Path,
     package: Option<&JsonValue>,
@@ -134,6 +138,7 @@ fn cucumber_file_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
     cucumber_config(path).map(Some)
 }
 
+/// Builds default Cucumber feature patterns with package.json as the discovery source.
 fn cucumber_default_features(root: &Path) -> FrameworkFeatures {
     FrameworkFeatures {
         patterns: vec![CUCUMBER_DEFAULT.to_owned()],
@@ -143,12 +148,14 @@ fn cucumber_default_features(root: &Path) -> FrameworkFeatures {
     }
 }
 
+/// Reports whether the package declares any supplied name in a supported dependency section.
 fn package_has_any_dependency(package: Option<&JsonValue>, names: &[&str]) -> bool {
     names
         .iter()
         .any(|name| package_has_dependency(package, name))
 }
 
+/// Reads static e2e.specPattern values, using broad feature discovery with a warning for dynamic values and returning no match when absent.
 fn cypress_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
     let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
     let extension = path
@@ -181,6 +188,7 @@ fn cypress_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
     }))
 }
 
+/// Reads JSON, YAML, or scripted Cucumber paths, normalizing literal paths and warning before using defaults for dynamic values.
 fn cucumber_config(path: &Path) -> Result<FrameworkFeatures> {
     let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
     let extension = path
@@ -217,6 +225,7 @@ fn cucumber_config(path: &Path) -> Result<FrameworkFeatures> {
     })
 }
 
+/// Reads defineBddConfig feature paths or roots statically, supplying defaults for missing values and warnings for dynamic values.
 fn playwright_config(path: &Path) -> Result<Option<FrameworkFeatures>> {
     let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
     if !text.contains("defineBddConfig") {
@@ -271,6 +280,7 @@ enum FrameworkKind {
     Playwright,
 }
 
+/// Normalizes a framework path, drops empty or negated inputs, removes a numeric line suffix, and expands directory paths into feature globs.
 fn framework_pattern(
     value: &str,
     framework: FrameworkKind,
@@ -307,6 +317,7 @@ fn framework_pattern(
     Some(directory_pattern(&value, extension))
 }
 
+/// Appends a recursive glob for the requested extension, treating empty and dot paths as the current directory.
 fn directory_pattern(path: &str, extension: &str) -> String {
     let path = path.trim_end_matches('/');
     if path.is_empty() || path == "." {
@@ -316,16 +327,19 @@ fn directory_pattern(path: &str, extension: &str) -> String {
     }
 }
 
+/// Reports whether a path contains any of the supported glob-opening characters.
 fn is_glob(value: &str) -> bool {
     value
         .bytes()
         .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b'{'))
 }
 
+/// Reports whether the final path component has an extension.
 fn has_extension(value: &str) -> bool {
     Path::new(value).extension().is_some()
 }
 
+/// Checks dependencies, devDependencies, and peerDependencies for the requested package name.
 fn package_has_dependency(package: Option<&JsonValue>, dependency: &str) -> bool {
     package.is_some_and(|package| {
         ["dependencies", "devDependencies", "peerDependencies"]
@@ -346,12 +360,14 @@ enum LiteralProperty {
     Strings(Vec<String>),
 }
 
+/// Parses JSON and classifies paths from the default profile when present, otherwise from the root.
 fn cucumber_json_paths(text: &str) -> Result<LiteralProperty> {
     let root: JsonValue = serde_json::from_str(text)?;
     let profile = root.get("default").unwrap_or(&root);
     Ok(json_strings(profile.get("paths")))
 }
 
+/// Classifies an absent JSON value, a literal string or all-string array, or an unsupported dynamic value.
 fn json_strings(value: Option<&JsonValue>) -> LiteralProperty {
     match value {
         None => LiteralProperty::Missing,
@@ -369,6 +385,7 @@ fn json_strings(value: Option<&JsonValue>) -> LiteralProperty {
     }
 }
 
+/// Parses YAML and classifies paths from the default profile when present, otherwise from the root.
 fn cucumber_yaml_paths(text: &str) -> Result<LiteralProperty> {
     let root: YamlValue = yaml_serde::from_str(text)?;
     let default_key = YamlValue::String("default".to_owned());
@@ -394,6 +411,7 @@ fn cucumber_yaml_paths(text: &str) -> Result<LiteralProperty> {
     })
 }
 
+/// Reads a static property from a matching call or object, preferring an object-valued default profile when no call is specified.
 fn static_object_property(
     source: &str,
     extension: &str,
@@ -422,6 +440,7 @@ fn static_object_property(
     Ok(LiteralProperty::Missing)
 }
 
+/// Follows a property path from the first matching call object or syntax root, distinguishing absent properties from nonliteral or non-object values.
 fn static_object_property_path(
     source: &str,
     extension: &str,
@@ -453,6 +472,7 @@ fn static_object_property_path(
     Ok(LiteralProperty::Missing)
 }
 
+/// Parses configuration text with the TypeScript or JavaScript grammar selected by extension, propagating parser setup or missing-tree errors.
 fn parse_config_source(source: &str, extension: &str) -> Result<tree_sitter::Tree> {
     let mut parser = Parser::new();
     let language = if matches!(extension, "ts" | "mts" | "cts") {
@@ -469,6 +489,7 @@ fn parse_config_source(source: &str, extension: &str) -> Result<tree_sitter::Tre
     Ok(tree)
 }
 
+/// Returns the first object argument of a call whose final dotted function-name segment matches, traversing in source order.
 fn find_call_object<'a>(node: Node<'a>, source: &str, call_name: &str) -> Option<Node<'a>> {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
@@ -496,6 +517,7 @@ fn find_call_object<'a>(node: Node<'a>, source: &str, call_name: &str) -> Option
     None
 }
 
+/// Collects object nodes in depth-first source order, including nested objects.
 fn collect_objects(node: Node<'_>) -> Vec<Node<'_>> {
     let mut objects = Vec::new();
     let mut stack = vec![node];
@@ -510,6 +532,7 @@ fn collect_objects(node: Node<'_>) -> Vec<Node<'_>> {
     objects
 }
 
+/// Classifies an object property as missing, a literal string list, or dynamic.
 fn read_object_property(object: Node<'_>, source: &str, name: &str) -> LiteralProperty {
     match property_node(object, source, name) {
         None => LiteralProperty::Missing,
@@ -517,6 +540,7 @@ fn read_object_property(object: Node<'_>, source: &str, name: &str) -> LiteralPr
     }
 }
 
+/// Returns the value of the first pair whose key text matches after trimming quotes; shorthand and spread entries are skipped.
 fn property_node<'a>(object: Node<'a>, source: &str, name: &str) -> Option<Node<'a>> {
     let mut cursor = object.walk();
     for child in object.named_children(&mut cursor) {
@@ -531,6 +555,7 @@ fn property_node<'a>(object: Node<'a>, source: &str, name: &str) -> Option<Node<
     None
 }
 
+/// Reads a quoted string or an array containing only quoted strings, returning None for other syntax.
 fn literal_strings(node: Node<'_>, source: &str) -> Option<LiteralProperty> {
     match node.kind() {
         "string" => Some(LiteralProperty::Strings(vec![unquote(node_text(
@@ -551,11 +576,13 @@ fn literal_strings(node: Node<'_>, source: &str) -> Option<LiteralProperty> {
     }
 }
 
+/// Removes leading and trailing quote characters and unescapes forward slashes, returning None when either quote is absent.
 fn unquote(value: &str) -> Option<String> {
     let value = value.strip_prefix(['\'', '"'])?.strip_suffix(['\'', '"'])?;
     Some(value.replace("\\/", "/"))
 }
 
+/// Returns the source slice covered by the syntax node byte range.
 fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
 }

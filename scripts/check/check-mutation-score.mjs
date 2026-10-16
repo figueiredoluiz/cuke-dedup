@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
+/** Validate mutation accounting and the successful baseline, reject unchecked or timed-out mutants, and return a score meeting the minimum. */
 export function checkMutationScore(report, minimumScore) {
   assert.ok(Number.isFinite(minimumScore) && minimumScore >= 0 && minimumScore <= 100);
   for (const field of ["caught", "missed", "timeout", "unviable", "success", "total_mutants"]) {

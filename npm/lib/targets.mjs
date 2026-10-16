@@ -83,6 +83,7 @@ const EXPECTED_TARGETS = Object.freeze({
   }),
 });
 
+/** Requires exactly the supported release target keys and validates each target, returning the supplied object or throwing on mismatch. */
 export function validateTargets(targets) {
   const actualKeys = Object.keys(targets ?? {}).sort();
   const expectedKeys = Object.keys(EXPECTED_TARGETS).sort();
@@ -95,6 +96,7 @@ export function validateTargets(targets) {
   return targets;
 }
 
+/** Requires a supported target key and an exact metadata match, returning the supplied target or throwing on mismatch. */
 export function validateTarget(key, target) {
   const expected = EXPECTED_TARGETS[key];
   if (!expected) {
@@ -117,6 +119,7 @@ export const TARGETS = Object.freeze(Object.fromEntries(
   ),
 ));
 
+/** Looks up and validates platform, architecture, and Linux libc metadata, throwing for an unsupported target key. */
 export function targetFor(
   platform,
   arch,

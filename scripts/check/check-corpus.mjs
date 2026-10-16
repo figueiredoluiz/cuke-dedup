@@ -22,12 +22,15 @@ import {
 // checked out — a repeatedly confusing failure mode locally. Warn (never fail: CI always builds
 // fresh, and the warning is for the local edit-then-check loop) when the binary predates any
 // source or is missing.
+/** Return the latest modification time and path among source files, Cargo.toml, and Cargo.lock. */
 function newestSource() {
   let newest = { mtimeMs: 0, path: null };
+  /** Update the newest-source record when this path has a later modification time. */
   const consider = (path) => {
     const { mtimeMs } = statSync(path);
     if (mtimeMs > newest.mtimeMs) newest = { mtimeMs, path };
   };
+  /** Recursively consider modification times of every file beneath a source directory. */
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const full = join(directory, entry.name);
@@ -43,6 +46,7 @@ function newestSource() {
   return newest;
 }
 
+/** Warn without failing when the binary is missing or older than the latest source or Cargo input. */
 function warnIfBinaryStale(binaryPath) {
   let binaryMtimeMs;
   try {
@@ -131,6 +135,7 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
+/** Project a finding onto shared reporter metadata, normalizing optional comparison and cluster evidence to null. */
 function parityFinding(finding) {
   return {
     rule: finding.rule,
@@ -152,6 +157,7 @@ function parityFinding(finding) {
   };
 }
 
+/** Convert a SARIF physical location into the analyzer report location shape. */
 function sarifLocation(location) {
   const physical = location.physicalLocation;
   return {
@@ -163,15 +169,18 @@ function sarifLocation(location) {
   };
 }
 
+/** Format a report location as path, line, and column for visible reporter assertions. */
 function displayLocation(location) {
   return `${location.path}:${location.line}:${location.column}`;
 }
 
+/** Escape ampersands, angle brackets, and quotes for comparison with rendered HTML. */
 function htmlEscape(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
+/** Run all reporters, assert matching findings, metadata, summaries, and fixture controls, and return the finding count. */
 async function validateReporterParity({ name, root, exit, errors, warnings, suppressed, clusters, incomplete }, temporary) {
   const output = join(temporary, "reporter-parity", name);
   const run = spawnSync(binary, [".", "--reporters", "terminal,json,html,sarif", "--output", output],
@@ -294,6 +303,7 @@ async function validateReporterParity({ name, root, exit, errors, warnings, supp
   return json.findings.length;
 }
 
+/** Compare values by their JSON serialization for order-independent finding assertions. */
 function byJson(left, right) {
   return JSON.stringify(left).localeCompare(JSON.stringify(right));
 }

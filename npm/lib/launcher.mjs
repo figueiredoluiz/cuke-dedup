@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 
 export { TARGETS };
 
+/** Returns gnu when the process report identifies glibc, otherwise musl, including when report access throws. */
 export function detectLibc(report = process.report) {
   try {
     return report?.getReport()?.header?.glibcVersionRuntime ? "gnu" : "musl";
@@ -17,6 +18,7 @@ export function detectLibc(report = process.report) {
   }
 }
 
+/** Returns validated native package metadata for the platform, architecture, and Linux libc, throwing for unsupported targets. */
 export function targetFor(
   platform = process.platform,
   arch = process.arch,
@@ -25,6 +27,7 @@ export function targetFor(
   return validatedTargetFor(platform, arch, libc);
 }
 
+/** Resolves and checks an override binary or the platform optional package binary, throwing when the package or usable binary is missing. */
 export function resolveBinary({
   platform = process.platform,
   arch = process.arch,
@@ -53,6 +56,7 @@ export function resolveBinary({
   return binary;
 }
 
+/** Requires the binary path to exist and, outside Windows, to be executable; throws when either check fails. */
 function assertUsableBinary(binary, platform) {
   if (!existsSync(binary)) {
     throw new Error(`cuke-dedup binary was not found at ${binary}`);
@@ -68,6 +72,7 @@ function assertUsableBinary(binary, platform) {
   }
 }
 
+/** Runs the native binary with inherited stdio, returning its status, 128 plus the signal number, or 2 for resolution or launch errors. */
 export function run(
   args,
   {

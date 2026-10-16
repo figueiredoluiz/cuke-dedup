@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 // Validate the language-neutral core of a corpus case's expected outcome.
+/** Assert valid census, completeness, and finding expectations, including focus-rule coverage and no required/forbidden rule conflict. */
 export function validateOutcomeContract(expected, focusRule) {
   assert.ok(Number.isSafeInteger(expected.definitions) && expected.definitions >= 0);
   assert.ok(Number.isSafeInteger(expected.featureSteps) && expected.featureSteps >= 0);
@@ -20,7 +21,9 @@ export function validateOutcomeContract(expected, focusRule) {
 }
 
 // Normalize observable analysis results for conformance and regression comparisons.
+/** Project active findings and analysis state into a sorted outcome with optional logical source suffixes. */
 export function normalizeOutcome(report, exit, physicalToLogicalSuffixes = {}) {
+  /** Replace the first matching physical path suffix with its logical counterpart, preserving the line. */
   const location = ({ path, line }) => {
     for (const [physicalSuffix, logicalSuffix] of Object.entries(physicalToLogicalSuffixes)) {
       if (path.endsWith(physicalSuffix)) {
@@ -29,6 +32,7 @@ export function normalizeOutcome(report, exit, physicalToLogicalSuffixes = {}) {
     }
     return { path, line };
   };
+  /** Sort an array in place by JSON text and return it for deterministic outcome comparison. */
   const sorted = (items) => items.sort((a, b) => {
     const left = JSON.stringify(a), right = JSON.stringify(b);
     return left < right ? -1 : left > right ? 1 : 0;
