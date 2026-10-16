@@ -11,17 +11,17 @@ use tree_sitter::Node;
 /// Builds handler identity from bound syntax, captures, and assertion effects.
 pub(super) fn fingerprint(
     block: Node<'_>,
-    root: Node<'_>,
+    file: &super::bindings::RootScope<'_>,
     source: &str,
     assertions: Option<&super::assertions::AssertionBindings>,
 ) -> HandlerFingerprint {
     let nodes = descendants(block);
     let bindings = assertions.map_or_else(
-        || super::bindings::Bindings::collect(block, root, source),
-        |assertions| assertions.bindings(block, root, source),
+        || super::bindings::Bindings::collect(block, file, source),
+        |assertions| assertions.bindings(block, file, source),
     );
     let comparable = !bindings.uncertain
-        && !assertions.is_some_and(|assertions| assertions.known_ineligible(block, root, source))
+        && !assertions.is_some_and(|assertions| assertions.known_ineligible(block, file, source))
         && !nodes.iter().any(|node| {
             (block.kind() == "method"
                 && matches!(
