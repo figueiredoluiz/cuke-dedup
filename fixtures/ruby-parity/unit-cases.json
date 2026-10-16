@@ -258,6 +258,13 @@
     "src/analysis/tests.rs": {
       "tests": [
         {
+          "name": "fingerprint_records_serialize_every_field_in_schema_order",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: serialization of the shared definition model into fingerprint records; the record writer reads only shared model fields. `emit_fingerprints_records_each_ruby_definition_outcome` pins the Ruby records end to end.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "public_analysis_rejects_mutated_configs_above_hard_safety_ceilings",
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
@@ -4533,6 +4540,43 @@
             "name": "ruby_machine_reports_follow_metrics_and_stream_contracts"
           },
           "rationale": "A .cuke-dedup.json with definitions [\"*.rb\"], reporters [\"json\"] and noMetrics true produces a JSON report without metrics and definitionsExtracted 1.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "emit_fingerprints_records_each_ecmascript_definition_outcome",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_fingerprints_records_each_ruby_definition_outcome"
+          },
+          "rationale": "Ruby counterpart of this ECMAScript test (a shared-engine test cannot be its own evidence): `emit_fingerprints_records_each_ruby_definition_outcome` runs the same oracle over Ruby comparable, pending, uncomparable and parse-recovered definitions with an unselected file, asserting byte-identical output with and without the flag.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "emit_fingerprints_records_each_ruby_definition_outcome",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_fingerprints_records_each_ruby_definition_outcome"
+          },
+          "rationale": "`emit_fingerprints_records_each_ruby_definition_outcome` runs Ruby comparable, pending-stub, optional-block-parameter and syntax-error definitions through the built binary: one record each with domain, framework, comparable and trivial pinned, none for an unselected file, and stdout, stderr, exit code and JSON report unchanged by the flag.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "emit_fingerprints_isolate_one_dimension_per_handler_pair",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_fingerprints_isolate_one_dimension_per_handler_pair"
+          },
+          "rationale": "`emit_fingerprints_isolate_one_dimension_per_handler_pair` runs Ruby and TypeScript handler pairs through the built binary: identical handlers differ only by line, layout-only changes only in `handler.exact`, and a literal change in the exact, normalized and alpha-normalized digests and the definition fingerprint.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "emit_fingerprints_fails_closed_on_unusable_destinations",
+          "requiredStatus": "engine-invariant",
+          "stage": "cli-parsing",
+          "rationale": "Adapter-independent stage `cli-parsing`: fingerprint destination validation at the CLI boundary (missing parent, non-regular file, report or `--baseline` path and their aliases, `--print-config` conflict, no truncation or leftover file on rejection); the outcome depends on the path, not on the source adapter.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

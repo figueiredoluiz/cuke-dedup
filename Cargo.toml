@@ -49,6 +49,10 @@ tree-sitter-typescript = "0.23"
 unicode-normalization = "0.1"
 yaml_serde = "0.10"
 
+[target.'cfg(not(unix))'.dependencies]
+# File identity without read access; Unix compares device and inode from metadata instead.
+same-file = "1.0"
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"

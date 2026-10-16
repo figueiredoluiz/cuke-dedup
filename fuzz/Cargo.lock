@@ -218,6 +218,7 @@ dependencies = [
  "globset",
  "ignore",
  "regex",
+ "same-file",
  "serde",
  "serde_json",
  "strsim",

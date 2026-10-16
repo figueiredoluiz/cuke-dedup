@@ -1070,6 +1070,409 @@ fn project_config_can_disable_metrics() {
     assert_eq!(report["corpus"]["definitionsExtracted"], 1);
 }
 
+/// Runs `root` without and with `--emit-fingerprints`, asserts stdout, stderr, exit status and the
+/// JSON report are byte-identical, and returns the emitted records; a missing file panics.
+fn emitted_fingerprints(root: &Path, args: &[&str]) -> Vec<Value> {
+    let sink = tempfile::tempdir().unwrap();
+    let destination = sink.path().join("fingerprints.jsonl");
+    let run = |destination: Option<&Path>| {
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .arg(root)
+            .args(args)
+            .args(["--reporters", "terminal,json", "--no-metrics"]);
+        if let Some(destination) = destination {
+            command.arg("--emit-fingerprints").arg(destination);
+        }
+        let output = command.output().unwrap();
+        (
+            output,
+            fs::read(root.join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
+        )
+    };
+    assert_eq!(run(None), run(Some(&destination)));
+    fs::read_to_string(&destination)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// Projects each record to path, line, domain, framework, comparable and trivial.
+fn fingerprint_outcomes(records: &[Value]) -> Vec<Value> {
+    records
+        .iter()
+        .map(|record| {
+            serde_json::json!([
+                record["path"],
+                record["line"],
+                record["domain"],
+                record["framework"],
+                record["handler"]["comparable"],
+                record["handler"]["trivial"]
+            ])
+        })
+        .collect()
+}
+
+/// Checks the fingerprint oracle gives one record per JS/TS definition outcome (comparable,
+/// trivial, uncomparable, parse-recovered, unknown framework), none for an excluded generated
+/// source, and an empty file for an empty corpus, without changing any other output.
+#[test]
+fn emit_fingerprints_records_each_ecmascript_definition_outcome() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for (path, source) in [
+        ("features/steps.ts", "import { Given, Then } from '@cucumber/cucumber';\nGiven('comparable', () => { work(); });\nGiven('pending', () => 'pending');\nThen('uncertain', ({state}) => register(() => expect(state).toBe(external)));\n"),
+        ("features/broken.ts", "import { Given } from '@cucumber/cucumber';\nGiven('recovered', () => { work(); });\nconst = ;\n"),
+        ("features/plain.js", "Given('unknown framework', function () { other(); });\n"),
+        ("features/bundle.js", "Given('excluded', () => work());\0\n"),
+        ("features/a.feature", "Feature: A\n  Scenario: A\n    Given comparable\n"),
+    ] {
+        write(root, path, source);
+    }
+    let ecmascript = |path, line, framework, comparable, trivial| {
+        serde_json::json!([path, line, "ecmascript", framework, comparable, trivial])
+    };
+    assert_eq!(
+        fingerprint_outcomes(&emitted_fingerprints(root, &[])),
+        [
+            ecmascript("features/broken.ts", 2, "cucumber-js", true, false),
+            ecmascript("features/plain.js", 1, "unknown", true, false),
+            ecmascript("features/steps.ts", 2, "cucumber-js", true, false),
+            ecmascript("features/steps.ts", 3, "cucumber-js", true, true),
+            ecmascript("features/steps.ts", 4, "cucumber-js", false, false),
+        ]
+    );
+    let empty = tempfile::tempdir().unwrap();
+    write(empty.path(), "a.feature", "Feature: A\n");
+    assert!(emitted_fingerprints(empty.path(), &[]).is_empty());
+}
+
+/// Checks the fingerprint oracle gives one record per Ruby definition outcome (comparable, pending
+/// stub, uncomparable optional block parameter, parse-recovered) and none for an unselected file.
+#[test]
+fn emit_fingerprints_records_each_ruby_definition_outcome() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for (path, source) in [
+        ("features/step_definitions/steps.rb", "Given('comparable') do\n  work(1)\nend\nGiven('pending') do\n  pending\nend\nGiven('uncertain') do |value = 1|\n  page.perform(value)\nend\n"),
+        ("features/step_definitions/broken.rb", "Given('recovered') do\n  work(1)\nend end\n"),
+        ("support/unselected.rb", "Given('unselected') do\n  work(1)\nend\n"),
+        ("features/a.feature", "Feature: A\n  Scenario: A\n    Given comparable\n"),
+    ] {
+        write(root, path, source);
+    }
+    let ruby = |path, line, comparable, trivial| {
+        serde_json::json!([path, line, "ruby", "cucumber-ruby", comparable, trivial])
+    };
+    assert_eq!(
+        fingerprint_outcomes(&emitted_fingerprints(
+            root,
+            &["--definitions", "features/**/*.rb"]
+        )),
+        [
+            ruby("features/step_definitions/broken.rb", 1, true, false),
+            ruby("features/step_definitions/steps.rb", 1, true, false),
+            ruby("features/step_definitions/steps.rb", 4, true, true),
+            ruby("features/step_definitions/steps.rb", 7, false, false),
+        ]
+    );
+}
+
+/// Names the record fields, handler fields as `handler.<field>`, whose values differ.
+fn differing_fields(left: &Value, right: &Value) -> Vec<String> {
+    let flatten = |record: &Value| -> Vec<(String, Value)> {
+        record
+            .as_object()
+            .unwrap()
+            .iter()
+            .flat_map(|(key, value)| match value.as_object() {
+                Some(handler) => handler
+                    .iter()
+                    .map(|(field, value)| (format!("{key}.{field}"), value.clone()))
+                    .collect(),
+                None => vec![(key.clone(), value.clone())],
+            })
+            .collect()
+    };
+    flatten(left)
+        .into_iter()
+        .zip(flatten(right))
+        .filter(|(left, right)| left != right)
+        .map(|(left, _)| left.0)
+        .collect()
+}
+
+/// Asserts each `(left, right, fields)` pair of records differs in `line` plus exactly `fields`.
+fn assert_isolated(records: &[Value], pairs: &[(usize, usize, String)]) {
+    for (left, right, fields) in pairs {
+        let actual = differing_fields(&records[*left], &records[*right]).join(" ");
+        assert_eq!(
+            actual,
+            format!("line {fields}").trim_end(),
+            "{left}:{right}"
+        );
+    }
+}
+
+/// Checks each handler pair that differs in one dimension yields records differing in exactly the
+/// fields that dimension feeds, and identical handlers under one matcher differ only by line.
+#[test]
+fn emit_fingerprints_isolate_one_dimension_per_handler_pair() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // One matcher throughout, so `definitionFingerprint` moves only with the alpha-normalized key.
+    write(root, "steps.ts", "import { Given, When } from '@cucumber/cucumber';\nGiven('step', () => { work(1); });\nGiven('step', () => { work(1); });\nGiven('other', () => { work(1); });\nGiven('step', () => { /* note */ work(1); });\nGiven('step', () => { const x = 1; work(x); });\nGiven('step', () => { const y = 1; work(y); });\nGiven('step', () => { work(2); });\nWhen('step', () => { work(1); });\n");
+    let ts = emitted_fingerprints(root, &[]);
+    let alpha = "handler.exact handler.normalized handler.alphaNormalized";
+    let pairs = [
+        (0, 1, String::new()),
+        (
+            0,
+            2,
+            "matcher normalizedMatcher definitionFingerprint".into(),
+        ),
+        (0, 3, "handler.exact".into()),
+        (4, 5, "handler.exact handler.normalized".into()),
+        (0, 6, format!("definitionFingerprint {alpha}")),
+        (0, 7, "registration".into()),
+    ];
+    assert_isolated(&ts, &pairs);
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(root, "steps.rb", "Given('step') do\n  work(1)\nend\nGiven('step') do\n  work(1)\nend\nGiven('step') do\n  work( 1 )\nend\nGiven('step') { work(1) }\nGiven('step') do\n  work(2)\nend\n");
+    let ruby = emitted_fingerprints(root, &["--definitions", "*.rb"]);
+    let pairs = [
+        (0, 1, String::new()),
+        (0, 2, "handler.exact".into()),
+        (0, 3, "handler.exact".into()),
+        (0, 4, format!("definitionFingerprint {alpha}")),
+    ];
+    assert_isolated(&ruby, &pairs);
+}
+
+/// Checks `--emit-fingerprints` fails closed with exit 2, without truncating or leaving files, when
+/// the file cannot be created, is not a regular file, or aliases a report or the `--baseline` file,
+/// rejects `--print-config`, and accepts a distinct path, also beside `--update-baseline`.
+#[test]
+fn emit_fingerprints_fails_closed_on_unusable_destinations() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(root, "steps.ts", "Given('one', () => work());\n");
+    fs::create_dir_all(root.join("reports/cuke-dedup")).unwrap();
+    let run = |args: &[&str]| {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let mut rows = vec![
+        ("missing/fingerprints.jsonl", "failed to write"),
+        ("reports", "not a regular file"),
+        ("reports/cuke-dedup/cuke-dedup.json", "would overwrite"),
+        (
+            "reports/../reports/cuke-dedup/cuke-dedup.sarif",
+            "would overwrite",
+        ),
+    ];
+    if cfg!(unix) {
+        // Under the test harness stdout is a pipe, so this would leak records into the report.
+        rows.push(("/dev/stdout", "not a regular file"));
+    }
+    for (destination, message) in rows {
+        let output = run(&["--emit-fingerprints", destination]);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{destination}: {stderr}");
+        assert!(output.stdout.is_empty(), "{destination}");
+        assert!(
+            stderr.contains(message) && stderr.contains(destination),
+            "{destination}: {stderr}"
+        );
+    }
+    // A rejected alias leaves no file behind, and an existing report keeps its bytes.
+    assert!(!root.join("reports/cuke-dedup/cuke-dedup.json").exists());
+    assert!(!root.join("reports/cuke-dedup/cuke-dedup.sarif").exists());
+    let report = root.join("reports/cuke-dedup/cuke-dedup.json");
+    fs::write(&report, "previous report\n").unwrap();
+    let output = run(&["--emit-fingerprints", "reports/cuke-dedup/cuke-dedup.json"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&report).unwrap(), "previous report\n");
+    fs::remove_file(&report).unwrap();
+    // A symlink to a report not yet written: opening creates the target, and the rejection removes
+    // that target while the pre-existing link stays.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&report, root.join("link")).unwrap();
+        let output = run(&["--emit-fingerprints", "link"]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("would overwrite"));
+        assert!(!report.exists());
+        assert!(fs::symlink_metadata(root.join("link")).is_ok());
+        fs::remove_file(root.join("link")).unwrap();
+    }
+    // The `--baseline` file, read or rewritten, is rejected before the baseline changes; a missing
+    // baseline fails after the destination opened, which removes a new file and keeps an old one.
+    write(root, "base.json", "previous baseline\n");
+    write(root, "kept.jsonl", "kept\n");
+    fs::create_dir(root.join("x")).unwrap();
+    // A hard link to the baseline has its own canonical path; only file identity reveals it.
+    fs::hard_link(root.join("base.json"), root.join("linked.jsonl")).unwrap();
+    // A write-only hard-linked report is still identified and refused (root reads it anyway).
+    #[cfg(unix)]
+    if !ProcessCommand::new("id")
+        .arg("-u")
+        .output()
+        .is_ok_and(|id| id.stdout == b"0\n")
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let report = root.join("reports/cuke-dedup/cuke-dedup.json");
+        fs::write(&report, "protected report\n").unwrap();
+        fs::hard_link(&report, root.join("oracle.jsonl")).unwrap();
+        fs::set_permissions(&report, fs::Permissions::from_mode(0o200)).unwrap();
+        let output = run(&[
+            "--reporters",
+            "terminal",
+            "--emit-fingerprints",
+            "oracle.jsonl",
+        ]);
+        fs::set_permissions(&report, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // Identity comes from metadata, so the write-only report is recognised, not just unverifiable.
+        assert!(String::from_utf8_lossy(&output.stderr).contains("would overwrite"));
+        assert_eq!(fs::read_to_string(&report).unwrap(), "protected report\n");
+        fs::remove_file(&report).unwrap();
+        fs::remove_file(root.join("oracle.jsonl")).unwrap();
+        // A write-only destination is accepted: identity comes from metadata, not a read.
+        write(root, "write-only.jsonl", "");
+        fs::set_permissions(
+            root.join("write-only.jsonl"),
+            fs::Permissions::from_mode(0o200),
+        )
+        .unwrap();
+        let output = run(&[
+            "--reporters",
+            "terminal",
+            "--emit-fingerprints",
+            "write-only.jsonl",
+        ]);
+        fs::set_permissions(
+            root.join("write-only.jsonl"),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("write-only.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        fs::remove_file(root.join("write-only.jsonl")).unwrap();
+        // A report directory that cannot be searched leaves the report's identity unknown: refused.
+        let reports = root.join("reports/cuke-dedup");
+        fs::set_permissions(&reports, fs::Permissions::from_mode(0o000)).unwrap();
+        let output = run(&[
+            "--reporters",
+            "terminal",
+            "--emit-fingerprints",
+            "unverified.jsonl",
+        ]);
+        fs::set_permissions(&reports, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("cannot verify"));
+        assert!(!root.join("unverified.jsonl").exists());
+    }
+    // A FIFO at a report path is never opened, so checking against it cannot hang.
+    #[cfg(unix)]
+    {
+        let report = root.join("reports/cuke-dedup/cuke-dedup.json");
+        assert!(ProcessCommand::new("mkfifo")
+            .arg(&report)
+            .status()
+            .unwrap()
+            .success());
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(root)
+            .args([
+                "--reporters",
+                "terminal",
+                "--emit-fingerprints",
+                "fifo-safe.jsonl",
+            ])
+            .timeout(std::time::Duration::from_secs(20))
+            .assert()
+            .code(0);
+        fs::remove_file(&report).unwrap();
+        fs::remove_file(root.join("fifo-safe.jsonl")).unwrap();
+    }
+    for (baseline, update, destination, message) in [
+        ("base.json", false, "base.json", "would overwrite"),
+        ("base.json", false, "linked.jsonl", "would overwrite"),
+        ("base.json", true, "x/../base.json", "would overwrite"),
+        ("absent.json", false, "new.jsonl", "absent.json"),
+        ("absent.json", false, "kept.jsonl", "absent.json"),
+        ("fresh.json", true, "new.jsonl", ""),
+    ] {
+        let mut args = vec!["--baseline", baseline, "--emit-fingerprints", destination];
+        args.extend(update.then_some("--update-baseline"));
+        let output = run(&args);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let code = if message.is_empty() { 0 } else { 2 };
+        assert_eq!(output.status.code(), Some(code), "{args:?}: {stderr}");
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+        if baseline == "absent.json" {
+            assert!(!root.join("new.jsonl").exists());
+        }
+    }
+    let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+    assert_eq!(read("base.json"), "previous baseline\n");
+    assert_eq!(read("kept.jsonl"), "kept\n");
+    assert!(root.join("fresh.json").is_file());
+    assert_eq!(read("new.jsonl").lines().count(), 1);
+    let output = run(&[
+        "--print-config",
+        "--emit-fingerprints",
+        "fingerprints.jsonl",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("cannot be used with"));
+    // An existing fingerprint file longer than the new output is replaced, not overwritten in place.
+    fs::write(root.join("fingerprints.jsonl"), "stale\n".repeat(500)).unwrap();
+    let output = run(&["--emit-fingerprints", "fingerprints.jsonl"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(root.join("fingerprints.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
 /// Checks missing definition sources warn by default and fail when definitions are required.
 #[test]
 fn empty_default_definition_discovery_is_visible() {

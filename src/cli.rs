@@ -9,6 +9,7 @@ use crate::{gherkin, modes, reporters, source_adapter};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -110,6 +111,15 @@ struct CheckOptions {
     /// Omit runtime timing metrics from machine reports for reproducible output.
     #[arg(long, global = true)]
     no_metrics: bool,
+
+    /// Write one JSON line of comparison fingerprints per analyzed definition to FILE.
+    #[arg(
+        long,
+        global = true,
+        value_name = "FILE",
+        conflicts_with = "print_config"
+    )]
+    emit_fingerprints: Option<PathBuf>,
 
     /// Glob patterns excluded from discovery.
     #[arg(long, global = true, value_delimiter = ',')]
@@ -245,6 +255,12 @@ fn execute(cli: Cli) -> Result<i32> {
         analyzed.parsed_feature_files,
         analyzed.feature_files_without_steps,
     );
+    // Validated before the baseline is rewritten, so a rejected destination changes no file.
+    let fingerprints = options
+        .emit_fingerprints
+        .as_deref()
+        .map(|path| FingerprintSink::open(config, options, path))
+        .transpose()?;
     let baseline_outcome = apply_baseline_mode(
         config,
         options,
@@ -252,6 +268,9 @@ fn execute(cli: Cli) -> Result<i32> {
         analyzed.run_incomplete,
         &mut diagnostics,
     )?;
+    if let Some(sink) = fingerprints {
+        sink.write(&config.root, &analyzed.result.definitions)?;
+    }
     write_reports(
         config,
         &files,
@@ -991,6 +1010,124 @@ fn write_reports(
         terminal_color,
     )?;
     Ok(())
+}
+
+/// Validated `--emit-fingerprints` destination, opened but not yet truncated or written.
+struct FingerprintSink {
+    path: PathBuf,
+    file: Option<fs::File>,
+    /// The file this run created, to remove if the run fails before writing it.
+    created: Option<PathBuf>,
+}
+
+impl FingerprintSink {
+    /// Opens `path`, resolved against the root, without truncating it. Fails on a non-regular file
+    /// and on any file this run writes (each report) or reads back later (the `--baseline` file).
+    fn open(config: &Config, options: &CheckOptions, path: &Path) -> Result<Self> {
+        let path = config.root.join(path);
+        let context = || format!("failed to write fingerprint file {}", path.display());
+        let existing = fs::metadata(&path).ok();
+        // fail-closed: a directory, device or FIFO would fail, block or leak into another stream.
+        if existing
+            .as_ref()
+            .is_some_and(|metadata| !metadata.is_file())
+        {
+            bail!("fingerprint file {} is not a regular file", path.display());
+        }
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            // Truncated only once accepted, so a rejected alias keeps the aliased file's bytes.
+            .truncate(false)
+            .open(&path)
+            .with_context(context)?;
+        let mut sink = Self {
+            file: Some(file),
+            created: existing.is_none().then(|| path.clone()),
+            path: path.clone(),
+        };
+        // Comparing after opening resolves `..`, symlink and case-insensitive aliases, including of
+        // a report or baseline not yet written.
+        let canonical = fs::canonicalize(&path).with_context(context)?;
+        // Opening a symlink to a missing file creates its target; that target is what to remove.
+        if let Some(created) = &mut sink.created {
+            created.clone_from(&canonical);
+        }
+        let written = reporters::REPORT_FILE_NAMES
+            .iter()
+            .map(|name| config.output_path(name))
+            .chain(options.baseline.iter().map(|path| config.root.join(path)));
+        for target in written {
+            // Identity as well as path: a hard link to the baseline has a different canonical path.
+            let open = sink.file.as_ref().expect("an open sink holds its file");
+            let same = match same_file_as(open, &target) {
+                Ok(same) => same,
+                // An absent target, or one under a file (ENOTDIR), has nothing to overwrite.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    false
+                }
+                // fail-closed: a target whose identity cannot be read may be this very file.
+                Err(error) => bail!(
+                    "cannot verify that fingerprint file {} is not {}: {error}",
+                    sink.path.display(),
+                    target.display()
+                ),
+            };
+            if same || fs::canonicalize(&target).is_ok_and(|target| target == canonical) {
+                bail!(
+                    "fingerprint file {} would overwrite {}; choose a different file",
+                    sink.path.display(),
+                    target.display()
+                );
+            }
+        }
+        Ok(sink)
+    }
+
+    /// Replaces the file's content with one record per definition.
+    fn write(mut self, root: &Path, definitions: &[crate::model::StepDefinition]) -> Result<()> {
+        let context = || format!("failed to write fingerprint file {}", self.path.display());
+        let file = self.file.take().expect("an open sink holds its file");
+        file.set_len(0).with_context(context)?;
+        let mut file = io::BufWriter::new(file);
+        analysis::fingerprints::write_fingerprints(definitions, root, &mut file)
+            .with_context(context)?;
+        file.flush().with_context(context)?;
+        self.created = None;
+        Ok(())
+    }
+}
+
+/// Whether `target` is the file already open as `file`, read from metadata: device and inode on Unix,
+/// so no file is opened (a write-only target or a FIFO neither fails nor blocks).
+#[cfg(unix)]
+fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let (open, other) = (file.metadata()?, fs::metadata(target)?);
+    Ok(open.dev() == other.dev() && open.ino() == other.ino())
+}
+
+/// Whether `target` is the file already open as `file`: volume and file index, through a handle
+/// opened with no access rights.
+#[cfg(not(unix))]
+fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
+    Ok(same_file::Handle::from_file(file.try_clone()?)? == same_file::Handle::from_path(target)?)
+}
+
+impl Drop for FingerprintSink {
+    /// Removes a file this run created but did not finish writing, so a failed run leaves none.
+    fn drop(&mut self) {
+        drop(self.file.take());
+        if let Some(created) = self.created.take() {
+            // The run is already failing; a leftover empty file is the only cost of a failed removal.
+            let _ = fs::remove_file(created);
+        }
+    }
 }
 
 /// Whether terminal output uses color: stdout is a TTY and `NO_COLOR` is unset or empty.

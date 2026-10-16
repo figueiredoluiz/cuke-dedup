@@ -5718,3 +5718,40 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
         );
     }
 }
+
+/// A fingerprint record serializes every field in schema order: identity, matcher normalization,
+/// then each handler key digested, and one line per definition in input order.
+#[test]
+fn fingerprint_records_serialize_every_field_in_schema_order() {
+    use crate::model::{stable_fingerprint, stable_fingerprint_parts};
+    let defs = definitions(
+        "import { Given } from '@cucumber/cucumber';\nGiven(/^n (\\d+)$/i, (n) => { work(n); });\nGiven('pending', () => 'pending');",
+    );
+    let mut out = Vec::new();
+    fingerprints::write_fingerprints(&defs, Path::new("/elsewhere"), &mut out).unwrap();
+    let lines: Vec<_> = std::str::from_utf8(&out).unwrap().lines().collect();
+    assert_eq!(lines.len(), 2);
+    let handler = &defs[0].handler;
+    let behavior = stable_fingerprint_parts(handler.behavior_signature.iter().map(String::as_str));
+    assert_eq!(
+        lines[0],
+        format!(
+            concat!(
+                r#"{{"schemaVersion":"1","path":"steps.ts","line":2,"column":1,"domain":"ecmascript","#,
+                r#""framework":"cucumber-js","registration":"Given","matcher":"^n (\\d+)$","#,
+                r#""matcherKind":"regular-expression","matcherFlags":"i","normalizedMatcher":{},"#,
+                r#""definitionFingerprint":"{}","handler":{{"exact":"{}","normalized":"{}","#,
+                r#""alphaNormalized":"{}","structural":"{}","behavior":"{}","comparable":true,"#,
+                r#""trivial":false}}}}"#
+            ),
+            serde_json::to_string(&defs[0].normalized_matcher).unwrap(),
+            evidence::definition_semantic_fingerprint(&defs[0]),
+            stable_fingerprint(&handler.exact),
+            stable_fingerprint(&handler.normalized),
+            stable_fingerprint(&handler.alpha_normalized),
+            stable_fingerprint(&handler.structural),
+            behavior,
+        )
+    );
+    assert!(lines[1].ends_with(r#""comparable":true,"trivial":true}}"#));
+}

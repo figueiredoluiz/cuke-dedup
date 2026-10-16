@@ -234,6 +234,7 @@ dependencies = [
  "ignore",
  "predicates",
  "regex",
+ "same-file",
  "serde",
  "serde_json",
  "strsim",
