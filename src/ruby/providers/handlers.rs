@@ -330,6 +330,7 @@ impl Graph<'_> {
         }
     }
 
+    /// Reject competing definitions for root captures and explicit alias, removal, or mutation of a handler name.
     fn handler_method_unchanged(
         &self,
         target: &str,
@@ -373,6 +374,7 @@ impl Graph<'_> {
         })
     }
 
+    /// Resolve one instance method on an available isolated class, rejecting unsafe allocation, aliases, and exhausted proof work.
     fn bound_instance_method<'a>(
         &'a self,
         unit: usize,
@@ -468,6 +470,7 @@ impl Graph<'_> {
     }
 }
 
+/// Recognize direct or proven alias registrations occurring at the program root.
 fn registration_call(
     call: Node<'_>,
     root: Node<'_>,

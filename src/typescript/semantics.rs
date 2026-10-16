@@ -9,12 +9,15 @@ struct JavaScriptRegex;
 static REGEX: JavaScriptRegex = JavaScriptRegex;
 
 impl RegexDialect for JavaScriptRegex {
+    /// Builds the Rust-compatible expression used for JavaScript regex usage matching.
     fn expression(&self, matcher: &str, flags: &str) -> Option<String> {
         super::rust_regex_expression(matcher, flags)
     }
+    /// Returns no separate flag normalization for the JavaScript comparison profile.
     fn normalized_flags<'a>(&self, _: &'a str) -> Option<&'a str> {
         None
     }
+    /// Allows similarity comparisons regardless of the supplied flag strings.
     fn similarity_flags_match(&self, _: &str, _: &str) -> bool {
         true
     }

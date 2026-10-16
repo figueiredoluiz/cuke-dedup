@@ -39,11 +39,13 @@ pub(super) struct FrameworkCalls {
 }
 
 impl FrameworkCalls {
+    /// Returns the proven registration attributed to this callee's source offset, if any.
     pub(super) fn registration(&self, callee: Node<'_>) -> Option<Registration> {
         self.registrations.get(&callee.start_byte()).cloned()
     }
 }
 
+/// Identifies frameworks whose calls require the callback-aware provenance model.
 pub(super) fn is_new_framework(framework: Framework) -> bool {
     matches!(
         framework,
@@ -68,6 +70,7 @@ impl Value {
         matches!(self, Self::Export(export) if export.kind == RegistrationExportKind::NonRegistration)
     }
 
+    /// Resolves a known namespace, scenario modifier or step property without inventing unknown exports.
     fn property(self, name: &str) -> Option<Self> {
         match self {
             Self::Namespace(exports) => exports.get(name).cloned().map(Self::Export),
@@ -124,6 +127,7 @@ struct Bindings<'tree, 'source> {
 }
 
 impl<'tree> Bindings<'tree, '_> {
+    /// Records a declaration's shadow, retaining only a proven synchronous registration forwarder as its origin.
     fn shadow_declaration(&mut self, node: Node<'tree>, root: Node<'tree>) {
         if let Some(name) = node.child_by_field_name("name") {
             let key = self.key(node.parent().unwrap_or(root), node_text(name, self.source));
@@ -157,6 +161,7 @@ impl<'tree> Bindings<'tree, '_> {
         }
     }
 
+    /// Checks that lexical declarations and, unless ignored, writes leave `require` available at this node.
     fn loader_available(&self, node: Node<'_>, ignore_writes: bool) -> bool {
         let key = self.key(node, "require");
         !self.bindings.contains_key(&key)
@@ -167,6 +172,7 @@ impl<'tree> Bindings<'tree, '_> {
                 .is_some_and(|names| names.contains("require"))
     }
 
+    /// Resolves a name to its nearest indexed lexical binding or the module root.
     fn key(&self, node: Node<'_>, name: &str) -> Key {
         let mut scope = self.enclosing[&node.id()];
         while scope != self.root {
@@ -182,6 +188,7 @@ impl<'tree> Bindings<'tree, '_> {
         (scope, name.to_owned())
     }
 
+    /// Records binding origins and destructuring paths, marking unsupported forms and duplicate bindings uncertain.
     fn bind(&mut self, pattern: Node<'tree>, origin: Origin<'tree>, certain: bool) {
         let mut pending = vec![(pattern, Vec::new(), certain)];
         while let Some((pattern, properties, certain)) = pending.pop() {
@@ -256,6 +263,7 @@ impl<'tree> Bindings<'tree, '_> {
     }
 
     // Local values supply exclusion evidence only; they never confer framework trust.
+    /// Resolves bounded immutable local object aliases as exclusion evidence without granting framework trust.
     fn local_value(&self, node: Node<'tree>, depth: usize) -> Option<Node<'tree>> {
         if depth > 32 {
             return None;
@@ -301,12 +309,14 @@ impl<'tree> Bindings<'tree, '_> {
         }
     }
 
+    /// Checks whether a reference resolves to a supported local object value.
     fn local_reference(&self, node: Node<'tree>) -> bool {
         (node.kind() == "shorthand_property_identifier"
             || registration_callee(node, self.source).is_some())
             && self.local_value(node, 0).is_some()
     }
 
+    /// Resolves a static object-literal member, rejecting ambiguous keys, accessors and unsupported members.
     fn local_member(&self, object: Node<'tree>, name: &str) -> Option<Node<'tree>> {
         if object.kind() != "object" {
             return None;
@@ -353,6 +363,7 @@ impl<'tree> Bindings<'tree, '_> {
         result.and_then(unwrap_registration_callee)
     }
 
+    /// Recognizes a locally resolved callable with an empty body and parameters that require no modeled initialization.
     fn inert_call(&self, function: Node<'tree>) -> bool {
         let Some(value) = self.local_value(function, 0) else {
             return false;
@@ -390,6 +401,7 @@ impl<'tree> Bindings<'tree, '_> {
         true
     }
 
+    /// Resolves bounded framework provenance, preserving uncertainty for writes, unsupported properties and uncertain bindings.
     fn value(&self, node: Node<'tree>, depth: usize, ignore_writes: bool) -> Option<Value> {
         if depth > 32 {
             return Some(Value::Unknown);
@@ -460,6 +472,7 @@ impl<'tree> Bindings<'tree, '_> {
         }
     }
 
+    /// Resolves the step or scenario value supplied to a proven synchronous second-argument framework callback.
     fn callback_value(
         &self,
         callback: Node<'tree>,
@@ -499,6 +512,7 @@ impl<'tree> Bindings<'tree, '_> {
         }
     }
 
+    /// Marks written or escaped binding roots and their initializer aliases as untrusted.
     fn invalidate(&mut self, target: Node<'tree>) {
         let mut stack = vec![target];
         while let Some(node) = stack.pop() {
@@ -528,6 +542,7 @@ impl<'tree> Bindings<'tree, '_> {
     }
 }
 
+/// Discovers callback-scoped registrations and incomplete calls after resolving imports, bindings, mutations and escapes.
 pub(super) fn discover<'tree>(
     root: Node<'tree>,
     source: &[u8],

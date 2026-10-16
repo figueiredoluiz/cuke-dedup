@@ -4,6 +4,7 @@ use crate::resource_limits::compile_regex;
 use tree_sitter::Node;
 use unicode_normalization::UnicodeNormalization;
 
+/// Extracts matcher text, kind and flags from strings, static templates or regex literals.
 pub(super) fn matcher_value(
     node: Node<'_>,
     source: &[u8],
@@ -71,6 +72,7 @@ pub(super) fn static_string_key(node: Node<'_>, source: &[u8]) -> Option<String>
     decode_js_string(text)
 }
 
+/// Decodes quoted JavaScript string escapes, returning `None` for malformed or non-scalar escapes.
 pub(super) fn decode_js_string(text: &str) -> Option<String> {
     let quote = text.chars().next()?;
     if text.chars().last()? != quote || !matches!(quote, '\'' | '"') {
@@ -130,10 +132,12 @@ pub(super) fn decode_js_string(text: &str) -> Option<String> {
     Some(decoded)
 }
 
+/// Consumes a fixed-width hexadecimal escape and rejects values that are not Unicode scalars.
 fn decode_hex_escape(chars: &mut std::str::Chars<'_>, length: usize) -> Option<char> {
     char::from_u32(decode_hex_value(chars, length)?)
 }
 
+/// Consumes exactly `length` hexadecimal characters, rejecting truncated or invalid digits.
 fn decode_hex_value(chars: &mut std::str::Chars<'_>, length: usize) -> Option<u32> {
     let digits: String = chars.take(length).collect();
     (digits.len() == length)
@@ -170,6 +174,7 @@ pub(crate) fn rust_regex_expression(matcher: &str, flags: &str) -> Option<String
     }
 }
 
+/// Distinguishes supported regexes, unsupported syntax and compiled-size resource limits.
 pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
     let Some(expression) = rust_regex_expression(matcher, flags) else {
         return RegexSupport::Unsupported;
@@ -195,6 +200,7 @@ pub fn normalize_matcher(matcher: &str, kind: MatcherKind) -> String {
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Adds semantic regex flags to the normalized identity while leaving other matcher kinds unflagged.
 pub(super) fn normalize_matcher_with_flags(
     matcher: &str,
     kind: MatcherKind,
@@ -224,10 +230,12 @@ pub(crate) fn semantic_regex_flags(flags: &str) -> String {
     crate::source_adapter::semantics::legacy_identity_flags(flags)
 }
 
+/// Canonicalizes named capture spelling and selected regex whitespace forms for comparison.
 pub(super) fn normalize_regular_expression(expression: &str) -> String {
     normalize_regex_whitespace(&normalize_capture_groups(expression))
 }
 
+/// Folds escaped spaces and `\s+` outside character classes while preserving other escapes.
 fn normalize_regex_whitespace(expression: &str) -> String {
     let characters: Vec<_> = expression.chars().collect();
     let mut output = String::with_capacity(expression.len());
@@ -273,6 +281,7 @@ fn normalize_regex_whitespace(expression: &str) -> String {
     output
 }
 
+/// Removes recognized capture names outside character classes while preserving escapes and group bodies.
 fn normalize_capture_groups(expression: &str) -> String {
     let characters: Vec<_> = expression.chars().collect();
     let mut output = String::new();

@@ -4,6 +4,7 @@ use crate::source_adapter::{SourceFile, SourceParameterType};
 use std::collections::BTreeMap;
 use tree_sitter::Node;
 
+/// Collect receiverless ParameterType declarations, retaining unsupported patterns as unresolved entries.
 pub(super) fn collect(
     nodes: &[Node<'_>],
     source: &str,
@@ -50,6 +51,7 @@ pub(super) fn collect(
         .collect()
 }
 
+/// Read supported static parameter-type options, rejecting duplicate keys and unsupported values.
 fn options<'a>(node: Node<'a>, source: &str) -> Option<BTreeMap<String, Node<'a>>> {
     let arguments = node.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
@@ -92,6 +94,7 @@ fn options<'a>(node: Node<'a>, source: &str) -> Option<BTreeMap<String, Node<'a>
     Some(result)
 }
 
+/// Decode a non-interpolated Ruby string literal.
 fn string(node: Node<'_>, source: &str) -> Option<String> {
     (node.kind() == "string"
         && !descendants(node)
@@ -101,6 +104,7 @@ fn string(node: Node<'_>, source: &str) -> Option<String> {
     .flatten()
 }
 
+/// Convert supported string, regex, or nonempty array patterns within the regex size limit.
 fn pattern(node: Node<'_>, source: &str) -> Option<String> {
     if descendants(node)
         .iter()
@@ -137,6 +141,7 @@ fn pattern(node: Node<'_>, source: &str) -> Option<String> {
     }
 }
 
+/// Recognize lambda and receiverless lambda/proc block forms without call arguments.
 fn deferred_transformer(node: Node<'_>, source: &str) -> bool {
     node.kind() == "lambda"
         || (node.kind() == "call"
@@ -150,6 +155,7 @@ fn deferred_transformer(node: Node<'_>, source: &str) -> bool {
             && node.child_by_field_name("block").is_some())
 }
 
+/// Identify unnamed or built-in parameter-type declarations that invalidate source registry trust.
 pub(super) fn invalidates_registry(declaration: &SourceParameterType) -> bool {
     declaration.name.as_deref().is_none_or(|name| {
         matches!(

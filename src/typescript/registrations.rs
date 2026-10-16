@@ -59,6 +59,7 @@ struct ScopedRegistrations {
 }
 
 impl ScopedRegistrations {
+    /// Indexes lexical binding scopes and initializes empty registration evidence for each binding.
     fn new(root: Node<'_>, source: &[u8]) -> Self {
         let (bindings, _, _) = collect_binding_scopes(root, source);
         Self {
@@ -70,6 +71,7 @@ impl ScopedRegistrations {
         }
     }
 
+    /// Finds the nearest scope binding a name, falling back to the root for undeclared names.
     fn key(&self, node: Node<'_>, name: &str) -> BindingKey {
         let mut parent = Some(node);
         while let Some(scope) = parent {
@@ -85,20 +87,24 @@ impl ScopedRegistrations {
         (self.root, name.to_owned())
     }
 
+    /// Returns registration evidence for the name at its nearest lexical binding.
     fn alias(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExport> {
         self.aliases.get(&self.key(node, name))
     }
 
+    /// Returns namespace exports for the name at its nearest lexical binding.
     fn namespace(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExports> {
         self.namespaces.get(&self.key(node, name))
     }
 
+    /// Checks whether the nearest lexical binding has registration-factory evidence.
     fn factory(&self, node: Node<'_>, name: &str) -> bool {
         self.factories.contains(&self.key(node, name))
     }
 }
 
 impl RegistrationNames {
+    /// Returns a root registration only when the name is also recorded as a fallback alias.
     pub(super) fn fallback_export(&self, name: &str) -> Option<&RegistrationExport> {
         self.scoped
             .aliases
@@ -106,6 +112,7 @@ impl RegistrationNames {
             .filter(|_| self.fallback_aliases.contains(name))
     }
 
+    /// Recognizes non-callback registration aliases at a binding, using root evidence for explicitly configured names.
     pub(super) fn recognizes_alias_at(&self, node: Node<'_>, name: &str) -> bool {
         let registration = if self.configured.contains(name) {
             self.scoped
@@ -118,6 +125,7 @@ impl RegistrationNames {
             .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
     }
 
+    /// Checks the selected framework and discovered alias or namespace exports for callback-framework evidence.
     pub(super) fn has_callback_framework(&self) -> bool {
         super::framework_callbacks::is_new_framework(self.framework)
             || self
@@ -131,6 +139,7 @@ impl RegistrationNames {
                 .any(|export| super::framework_callbacks::is_new_framework(export.framework))
     }
 
+    /// Checks root-scope aliases for registrations outside the callback-framework extraction path.
     pub(super) fn recognizes_alias(&self, name: &str) -> bool {
         self.scoped
             .aliases
@@ -138,6 +147,7 @@ impl RegistrationNames {
             .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
     }
 
+    /// Checks whether a root namespace contains any registration outside the callback-framework extraction path.
     pub(super) fn recognizes_namespace(&self, name: &str) -> bool {
         self.scoped
             .namespaces
@@ -189,6 +199,7 @@ struct WrapperCandidate {
     name: String,
 }
 
+/// Resolves a call-kind registration to its source callee text, canonical name, and framework.
 pub(super) fn registration_name(
     function: Node<'_>,
     source: &[u8],
@@ -220,6 +231,7 @@ pub(super) fn decorator_registration_name(
     })
 }
 
+/// Looks up scoped identifier or namespace-member registration evidence, honoring configured root aliases.
 fn registration_binding<'a>(
     function: Node<'_>,
     source: &[u8],
@@ -262,6 +274,7 @@ pub(super) fn unresolved_module_reasons(
         .map(|(module, recorded)| (module.as_str(), recorded))
 }
 
+/// Returns the unresolved module behind an unshadowed root alias or recognized registration member.
 pub(super) fn unresolved_registration_module<'a>(
     function: Node<'_>,
     source: &[u8],
@@ -288,6 +301,7 @@ pub(super) fn unresolved_registration_module<'a>(
     }
 }
 
+/// Decodes identifier, member, or static-string subscript callees after removing supported transparent wrappers.
 pub(super) fn registration_callee<'tree, 'source>(
     function: Node<'tree>,
     source: &'source [u8],
@@ -310,6 +324,7 @@ pub(super) fn registration_callee<'tree, 'source>(
     }
 }
 
+/// Peels parentheses and supported TypeScript expression wrappers, returning `None` for missing required children.
 pub(super) fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<'_>> {
     loop {
         function = match function.kind() {
@@ -328,6 +343,7 @@ pub(super) fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<
     }
 }
 
+/// Merges framework evidence from runtime module references and available static `require` calls.
 pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
     let mut stack = vec![root];
     let mut framework = Framework::Unknown;
@@ -355,6 +371,7 @@ pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
     framework
 }
 
+/// Discovers scoped registrations, factories, transparent wrappers, and unresolved imports, adding unshadowed and configured fallbacks.
 pub(super) fn detect_registrations(
     root: Node<'_>,
     source: &[u8],
@@ -753,7 +770,7 @@ fn resolve_wrapper_candidates(
     forwarded
 }
 
-/// Returns the registration a wrapper forwards to, when the forward is positional and exact.
+/// Removes nested parentheses, stopping at the innermost expression or a node without a named child.
 fn unwrap_parenthesized(mut node: Node<'_>) -> Node<'_> {
     while node.kind() == "parenthesized_expression" {
         let Some(inner) = node.named_child(0) else {
@@ -872,6 +889,7 @@ pub(super) fn for_each_import_binding(
     }
 }
 
+/// Records unresolved named registrations and namespace or default bindings for source-local module diagnostics.
 fn collect_unresolved_imports(
     import: Node<'_>,
     source: &[u8],
@@ -928,6 +946,7 @@ fn collect_imports(
     });
 }
 
+/// Stores known runtime import aliases, factories, and namespaces at the root binding scope.
 fn record_import_bindings(
     import: Node<'_>,
     source: &[u8],
@@ -954,6 +973,7 @@ fn record_import_bindings(
     });
 }
 
+/// Records supported runtime named re-exports under their exported aliases.
 fn collect_exports(
     export: Node<'_>,
     source: &[u8],
@@ -978,6 +998,7 @@ fn collect_exports(
     }
 }
 
+/// Records default registration names bound by runtime import forms so ambient fallbacks are suppressed.
 fn collect_shadowing_imports(
     import: Node<'_>,
     source: &[u8],
@@ -1039,6 +1060,7 @@ fn resolve_local_module_exports<'tree>(
     }))
 }
 
+/// Collects scoped registrations from static require or factory bindings and defers identifier alias and namespace propagation.
 fn collect_variable_registration<'tree>(
     declaration: Node<'tree>,
     source: &[u8],
@@ -1227,6 +1249,7 @@ fn collect_create_bdd_factories(
     Ok(factories)
 }
 
+/// Records runtime named imports whose resolved export kind is a registration factory.
 fn collect_factory_import_aliases(
     import: Node<'_>,
     source: &[u8],
@@ -1253,6 +1276,7 @@ fn collect_factory_import_aliases(
     }
 }
 
+/// Collects aliases for the requested binding name and node kind when the alias text contains only accepted identifier characters.
 fn collect_named_binding_aliases(
     root: Node<'_>,
     source: &[u8],
@@ -1282,7 +1306,7 @@ fn collect_named_binding_aliases(
     }
 }
 
-// Only binding writes affect callable identity; property writes do not replace the callable.
+/// Records binding writes through supported assignment patterns; property writes do not replace wrapper identity.
 fn collect_wrapper_writes(
     node: Node<'_>,
     source: &[u8],
@@ -1312,6 +1336,7 @@ fn collect_wrapper_writes(
     }
 }
 
+/// Records identifier assignment aliases and marks default registration names as shadowed.
 fn collect_assignment<'tree>(
     assignment: Node<'tree>,
     source: &[u8],
@@ -1338,6 +1363,7 @@ fn collect_assignment<'tree>(
     }
 }
 
+/// Suppresses an ambient default registration when a named declaration uses that name.
 fn shadow_named_declaration(
     declaration: Node<'_>,
     source: &[u8],
@@ -1348,6 +1374,7 @@ fn shadow_named_declaration(
     }
 }
 
+/// Records a supported identifier node when its spelling matches an ambient default registration.
 fn shadow_default_name(name: Node<'_>, source: &[u8], shadowed_defaults: &mut BTreeSet<String>) {
     if matches!(
         name.kind(),
@@ -1360,6 +1387,7 @@ fn shadow_default_name(name: Node<'_>, source: &[u8], shadowed_defaults: &mut BT
     }
 }
 
+/// Walks binding positions in a pattern, excluding property keys and default-value expressions from shadowing.
 fn shadow_pattern_defaults(
     pattern: Node<'_>,
     source: &[u8],
@@ -1390,11 +1418,13 @@ fn shadow_pattern_defaults(
     }
 }
 
+/// Returns a plain identifier callee, or `None` for member calls and other callee forms.
 fn call_name<'a>(call: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     let function = call.child_by_field_name("function")?;
     (function.kind() == "identifier").then(|| node_text(function, source))
 }
 
+/// Returns the first direct named child of the requested syntax kind.
 fn first_named_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
     let mut cursor = node.walk();
     let found = node
@@ -1403,6 +1433,7 @@ fn first_named_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>>
     found
 }
 
+/// Collects known registration or factory aliases from direct object-pattern bindings with accepted identifier text.
 fn collect_pattern_aliases(
     pattern: Node<'_>,
     source: &[u8],
@@ -1442,6 +1473,7 @@ fn collect_pattern_aliases(
     }
 }
 
+/// Accepts alphanumeric characters, underscores, and dollar signs for alias-text filtering.
 fn is_identifier_character(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '_' | '$')
 }

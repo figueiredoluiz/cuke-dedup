@@ -20,6 +20,7 @@ struct EffectiveProjectConfig {
 }
 
 impl EffectiveProjectConfig {
+    /// Overrides inherited options only where the later configuration supplies a value.
     fn merge(&mut self, later: Self) {
         if later.base_url.is_some() {
             self.base_url = later.base_url;
@@ -63,6 +64,7 @@ pub(super) struct ProjectResolution {
 }
 
 impl ProjectResolution {
+    /// Creates a metadata resolver anchored to a canonical root when canonicalization succeeds.
     pub(super) fn for_root(root: &Path) -> Self {
         Self {
             root: root.canonicalize().ok(),
@@ -70,6 +72,7 @@ impl ProjectResolution {
         }
     }
 
+    /// Resolves relative paths, package imports, TypeScript path aliases, and workspace packages within the analysis boundary.
     pub(super) fn resolve(
         &mut self,
         importer: &Path,
@@ -95,6 +98,7 @@ impl ProjectResolution {
         self.resolve_workspace_specifier(importer, specifier, &root, 0)
     }
 
+    /// Tries targets from the most specific matching path alias in the nearest effective project configuration.
     fn resolve_tsconfig_path(
         &mut self,
         importer: &Path,
@@ -121,6 +125,7 @@ impl ProjectResolution {
         Ok(None)
     }
 
+    /// Caches the nearest contained tsconfig or jsconfig, preferring tsconfig within each ancestor directory.
     fn nearest_project_config(&mut self, importer: &Path, root: &Path) -> Result<Option<PathBuf>> {
         let directory = importer
             .parent()
@@ -164,6 +169,7 @@ impl ProjectResolution {
         Ok(selected)
     }
 
+    /// Caches effective contained configurations, rejecting extends cycles and excessive inheritance depth.
     fn load_project_config(
         &mut self,
         path: &Path,
@@ -196,6 +202,7 @@ impl ProjectResolution {
             .context("project config cache insertion failed")
     }
 
+    /// Reads static JSONC configuration, merges available bases in order, and validates and charges local path mappings.
     fn load_project_config_uncached(
         &mut self,
         path: &Path,
@@ -392,6 +399,7 @@ impl ProjectResolution {
         )
     }
 
+    /// Follows nearest-package import targets within a bounded chain, allowing contained paths and workspace mappings.
     fn resolve_package_import(
         &mut self,
         importer: &Path,
@@ -439,6 +447,7 @@ impl ProjectResolution {
         Ok(None)
     }
 
+    /// Resolves package self-references before declared workspace packages, enforcing the mapping-depth limit.
     fn resolve_workspace_specifier(
         &mut self,
         importer: &Path,
@@ -472,6 +481,7 @@ impl ProjectResolution {
         }
     }
 
+    /// Resolves package exports when present, otherwise trying a contained subpath, main entry, or index module.
     fn resolve_package_entry(
         &mut self,
         package: &PackageInfo,
@@ -518,6 +528,7 @@ impl ProjectResolution {
         self.resolve_path(&package.root.join("index"), &package.root)
     }
 
+    /// Loads the first package manifest found walking from the importer directory to the analysis root.
     fn nearest_package(&mut self, importer: &Path, root: &Path) -> Result<Option<PackageInfo>> {
         let directory = importer
             .parent()
@@ -541,6 +552,7 @@ impl ProjectResolution {
         Ok(None)
     }
 
+    /// Indexes named declared workspaces once using a bounded scan, rejecting duplicate package names.
     fn initialize_workspaces(&mut self, root: &Path) -> Result<()> {
         if self.workspace_packages.is_some() {
             return Ok(());
@@ -611,6 +623,7 @@ impl ProjectResolution {
         Ok(())
     }
 
+    /// Caches a contained static package manifest, validating fields and charging its import and export mappings.
     fn load_package(&mut self, package_root: &Path, root: &Path) -> Result<PackageInfo> {
         let package_root = self.canonical_contained(package_root, root, "package")?;
         if let Some(package) = self.packages.get(&package_root) {
@@ -650,6 +663,7 @@ impl ProjectResolution {
         Ok(package)
     }
 
+    /// Tries supported exact, extension-substituted, suffixed, and index paths, rejecting canonical targets outside the container.
     fn resolve_path(&self, base: &Path, container: &Path) -> Result<Option<PathBuf>> {
         let mut candidates = vec![base.to_owned()];
         if let Some(substitutions) = extension_substitutions(base) {
@@ -683,6 +697,7 @@ impl ProjectResolution {
         Ok(None)
     }
 
+    /// Canonicalizes a path and rejects it when it escapes the supplied root.
     fn canonical_contained(&self, path: &Path, root: &Path, kind: &str) -> Result<PathBuf> {
         let canonical = path
             .canonicalize()
@@ -704,6 +719,7 @@ impl ProjectResolution {
         Ok(canonical)
     }
 
+    /// Reads UTF-8 metadata within per-file and aggregate byte limits, charging successful reads against the file limit.
     fn read_metadata(&mut self, path: &Path, kind: &'static str) -> Result<String> {
         if self.metadata_files >= MAX_PROJECT_METADATA_FILES {
             bail!(
@@ -724,6 +740,7 @@ impl ProjectResolution {
         Ok(text)
     }
 
+    /// Adds mapping work to the aggregate budget, returning an error rather than exceeding the limit.
     fn charge_mappings(&mut self, count: usize) -> Result<()> {
         let total = self.mappings.saturating_add(count);
         if total > MAX_PROJECT_MODULE_MAPPINGS {
@@ -737,6 +754,7 @@ impl ProjectResolution {
     }
 }
 
+/// Checks for a nonempty specifier without a relative prefix, leading slash, or URL scheme separator.
 fn is_bare_module(module: &str) -> bool {
     !module.is_empty()
         && !is_relative_module(module)
@@ -744,6 +762,7 @@ fn is_bare_module(module: &str) -> bool {
         && !module.contains("://")
 }
 
+/// Splits a scoped or unscoped package name from its optional subpath, rejecting a scope without a slash.
 fn split_package_specifier(specifier: &str) -> Option<(&str, &str)> {
     if specifier.starts_with('@') {
         let first = specifier.find('/')?;
@@ -761,6 +780,7 @@ fn split_package_specifier(specifier: &str) -> Option<(&str, &str)> {
     }
 }
 
+/// Chooses the matching alias with maximal exact-match, prefix, suffix, and lexical specificity.
 fn best_mapping<'a>(
     mappings: &'a [PathMapping],
     specifier: &str,
@@ -775,6 +795,7 @@ fn best_mapping<'a>(
         })
 }
 
+/// Builds the ordering key that favors exact mappings, then longer wildcard prefixes and suffixes.
 fn mapping_specificity(pattern: &str) -> (bool, usize, usize, &str) {
     match pattern.split_once('*') {
         Some((prefix, suffix)) => (false, prefix.len(), suffix.len(), pattern),
@@ -782,6 +803,7 @@ fn mapping_specificity(pattern: &str) -> (bool, usize, usize, &str) {
     }
 }
 
+/// Matches an exact or single-star pattern, distinguishing no match from a match without a wildcard capture.
 fn pattern_capture(pattern: &str, value: &str) -> Option<Option<String>> {
     let Some((prefix, suffix)) = pattern.split_once('*') else {
         return (pattern == value).then_some(None);
@@ -797,10 +819,12 @@ fn pattern_capture(pattern: &str, value: &str) -> Option<Option<String>> {
     ))
 }
 
+/// Replaces wildcard occurrences with the capture, or copies the target unchanged when no capture exists.
 fn substitute_star(target: &str, capture: Option<&str>) -> String {
     capture.map_or_else(|| target.to_owned(), |capture| target.replace('*', capture))
 }
 
+/// Rejects mapping strings containing more than one wildcard.
 fn validate_single_star(value: &str, kind: &str) -> Result<()> {
     if value.bytes().filter(|byte| *byte == b'*').count() > 1 {
         bail!("{kind} `{value}` contains more than one wildcard");
@@ -808,6 +832,7 @@ fn validate_single_star(value: &str, kind: &str) -> Result<()> {
     Ok(())
 }
 
+/// Copies a JSON string or string array, rejecting other values and non-string array entries.
 fn string_or_string_array(value: &Value) -> Result<Vec<String>> {
     if let Some(value) = value.as_str() {
         return Ok(vec![value.to_owned()]);
@@ -826,6 +851,7 @@ fn string_or_string_array(value: &Value) -> Result<Vec<String>> {
         .collect()
 }
 
+/// Selects an exact or most-specific package mapping and validates subpath and condition-key structure.
 fn package_map_targets(map: &Value, key: &str, kind: &str) -> Result<Option<Vec<String>>> {
     if !map.is_object() {
         return (key == ".")
@@ -880,6 +906,7 @@ fn package_map_targets(map: &Value, key: &str, kind: &str) -> Result<Option<Vec<
         .transpose()
 }
 
+/// Flattens static target alternatives, choosing the first supported condition in map order and rejecting invalid shapes.
 fn target_candidates(value: &Value, capture: Option<&str>, kind: &str) -> Result<Vec<String>> {
     match value {
         Value::Null => Ok(Vec::new()),
@@ -915,6 +942,7 @@ fn target_candidates(value: &Value, capture: Option<&str>, kind: &str) -> Result
     }
 }
 
+/// Rejects targets without a relative package prefix or containing dot, parent, or node_modules segments.
 fn reject_invalid_package_target(target: &str, kind: &str) -> Result<()> {
     if !target.starts_with("./")
         || target
@@ -928,6 +956,7 @@ fn reject_invalid_package_target(target: &str, kind: &str) -> Result<()> {
     Ok(())
 }
 
+/// Reads direct or object-form workspace patterns, treating absent or null patterns as empty.
 fn workspace_patterns(value: Option<&Value>, manifest: &Path) -> Result<Vec<String>> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -948,6 +977,7 @@ fn workspace_patterns(value: Option<&Value>, manifest: &Path) -> Result<Vec<Stri
     })
 }
 
+/// Reads an optional manifest string field, rejecting a present value of another JSON type.
 fn optional_string(
     object: &Map<String, Value>,
     key: &str,
@@ -964,6 +994,7 @@ fn optional_string(
         .transpose()
 }
 
+/// Compiles portable workspace globs, rejecting negative or absolute patterns and invalid glob syntax.
 fn compile_workspace_globs(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
@@ -986,6 +1017,7 @@ fn compile_workspace_globs(patterns: &[String]) -> Result<GlobSet> {
         .context("failed to compile workspace patterns")
 }
 
+/// Appends a suffix to the whole path without replacing an existing extension.
 fn with_appended_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut value = path.as_os_str().to_owned();
     value.push(suffix);
@@ -1011,6 +1043,7 @@ fn is_executable_config(path: &Path) -> bool {
         .is_some_and(|extension| matches!(extension, "js" | "cjs" | "mjs" | "ts" | "cts" | "mts"))
 }
 
+/// Returns supported TypeScript source replacements for JavaScript extensions, or `None` for other suffixes.
 fn extension_substitutions(path: &Path) -> Option<Vec<PathBuf>> {
     let extension = path.extension()?.to_str()?;
     let replacements: &[&str] = match extension {
@@ -1028,6 +1061,7 @@ fn extension_substitutions(path: &Path) -> Option<Vec<PathBuf>> {
     )
 }
 
+/// Canonicalizes the existing prefix of a config path within the root and restores its missing trailing components.
 fn canonicalize_existing_ancestor(path: &Path, root: &Path) -> Result<PathBuf> {
     let mut existing = path;
     let mut tail = Vec::new();
@@ -1059,10 +1093,12 @@ fn canonicalize_existing_ancestor(path: &Path, root: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+/// Counts immediate object entries, returning zero for missing or non-object values.
 fn map_size(value: Option<&Value>) -> usize {
     value.and_then(Value::as_object).map_or(0, Map::len)
 }
 
+/// Removes a BOM, blanks comments and trailing commas while preserving line breaks, and rejects unterminated block comments.
 fn normalize_jsonc(source: &str) -> Result<String> {
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let bytes = source.as_bytes();

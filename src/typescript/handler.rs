@@ -25,6 +25,7 @@ pub(super) struct HandlerBinding<'tree> {
     hoisted: bool,
 }
 
+/// Indexes named function declarations and callable variable initializers with their scopes and hoisting state.
 pub(super) fn collect_handler_bindings<'tree>(
     node: Node<'tree>,
     source: &[u8],
@@ -79,6 +80,7 @@ pub(super) fn collect_handler_bindings<'tree>(
     }
 }
 
+/// Finds the nearest program or statement-block scope enclosing a handler binding.
 fn nearest_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     while let Some(current) = node {
         if matches!(current.kind(), "program" | "statement_block") {
@@ -89,6 +91,7 @@ fn nearest_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     None
 }
 
+/// Resolves inline, bound or named handlers using visible binding scope and declaration order, returning `None` for unsupported forms.
 pub(super) fn resolve_handler<'tree>(
     mut handler: Node<'tree>,
     source: &[u8],
@@ -146,6 +149,7 @@ pub(super) fn resolve_handler<'tree>(
         .map(|(_, binding)| binding.declaration)
 }
 
+/// Returns arguments attached to a `.bind(...)` handler call, or `None` for other expressions.
 pub(super) fn bind_arguments<'tree>(handler: Node<'tree>, source: &[u8]) -> Option<Node<'tree>> {
     if handler.kind() != "call_expression" {
         return None;
@@ -287,6 +291,7 @@ pub(super) fn fingerprint_method_handler<'tree>(
     ))
 }
 
+/// Combines runtime method modifiers, parameter semantics and the body in the selected fingerprint mode.
 fn method_representation(
     semantic_prefix: &str,
     parameters: Node<'_>,
@@ -308,6 +313,7 @@ fn method_representation(
     )
 }
 
+/// Serializes parameter binding shape and runtime defaults while omitting type annotations and local identifier spellings.
 fn serialize_parameter_semantics(
     parameters: Node<'_>,
     source: &[u8],
@@ -404,6 +410,7 @@ fn serialize_parameter_semantics(
     output
 }
 
+/// Checks a parameter subtree for default-value syntax that executes when the callable is invoked.
 fn has_parameter_initializer(parameters: Node<'_>) -> bool {
     let mut stack = vec![parameters];
     while let Some(node) = stack.pop() {
@@ -420,6 +427,7 @@ fn has_parameter_initializer(parameters: Node<'_>) -> bool {
     false
 }
 
+/// Collects parameter-bound names in traversal order without treating keys, default values or types as bindings.
 fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut Vec<String>) {
     let mut stack = vec![parameters];
     while let Some(node) = stack.pop() {
@@ -527,6 +535,7 @@ fn fingerprint_node<'tree>(
     )
 }
 
+/// Finishes stable handler fingerprints and bounds the source snippet while retaining supplied comparability flags.
 fn fingerprint_from_events(
     exact: String,
     normalized: String,
@@ -549,6 +558,7 @@ fn fingerprint_from_events(
     .finish(stable_fingerprint)
 }
 
+/// Maps supported control-flow syntax to typed events and retains other kinds as legacy events.
 pub(super) fn control_flow_behavior_event(kind: &str) -> BehaviorEvent {
     let operation = match kind {
         "if_statement" => ControlFlowOperation::If,
@@ -564,11 +574,13 @@ pub(super) fn control_flow_behavior_event(kind: &str) -> BehaviorEvent {
     BehaviorEvent::ControlFlow(operation)
 }
 
+/// Appends a delimited binding-argument context to a handler representation.
 fn append_bound_context(target: &mut String, arguments: &str) {
     target.push_str("\0bind");
     target.push_str(arguments);
 }
 
+/// Recognizes empty handlers or a single supported stub statement, rejecting other body shapes.
 fn is_trivial_handler(handler: Node<'_>, source: &[u8]) -> bool {
     let body = if handler.kind() == "statement_block" {
         handler
@@ -611,6 +623,7 @@ fn is_trivial_handler(handler: Node<'_>, source: &[u8]) -> bool {
     }
 }
 
+/// Recognizes supported empty-result and explicit pending expressions after unwrapping parentheses or awaits.
 fn is_stub_expression(node: Node<'_>, source: &[u8]) -> bool {
     let mut node = node;
     while matches!(node.kind(), "await_expression" | "parenthesized_expression") {
@@ -661,6 +674,7 @@ fn is_stub_expression(node: Node<'_>, source: &[u8]) -> bool {
     false
 }
 
+/// Returns a direct callee name or dotted property name without resolving provenance.
 fn callee_terminal_name<'a>(function: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
     match function.kind() {
         "identifier" => Some(node_text(function, source)),
@@ -671,6 +685,7 @@ fn callee_terminal_name<'a>(function: Node<'_>, source: &'a [u8]) -> Option<&'a 
     }
 }
 
+/// Matches normalized pending, not-implemented or todo labels after removing quoting and punctuation.
 fn is_stub_label(value: &str) -> bool {
     let value = value
         .trim()
@@ -683,6 +698,7 @@ fn is_stub_label(value: &str) -> bool {
     matches!(normalized.as_str(), "pending" | "notimplemented" | "todo")
 }
 
+/// Searches a subtree for an identifier or string carrying an explicit supported stub label.
 fn contains_explicit_stub_marker(node: Node<'_>, source: &[u8]) -> bool {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
@@ -749,6 +765,7 @@ impl<'tree> ModuleScope<'tree> {
     }
 }
 
+/// Builds alpha-renaming entries from the handler's declaration name, parameter bindings and variable declarations.
 fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
     let mut identifiers = Vec::new();
     if matches!(
@@ -772,6 +789,7 @@ fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, St
     identifier_map(identifiers)
 }
 
+/// Assigns each collected identifier its ordered canonical `vN` name.
 fn identifier_map(identifiers: Vec<String>) -> BTreeMap<String, String> {
     identifiers
         .into_iter()
@@ -780,6 +798,7 @@ fn identifier_map(identifiers: Vec<String>) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Collects variable-declarator names throughout the subtree for alpha renaming.
 fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut Vec<String>) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
@@ -792,6 +811,7 @@ fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut Vec<Strin
     }
 }
 
+/// Collects identifier and shorthand-pattern spellings from a subtree without duplicating names.
 fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut Vec<String>) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
@@ -805,6 +825,7 @@ fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut Vec<Strin
     }
 }
 
+/// Appends an identifier only when its spelling has not already been collected.
 fn push_identifier(output: &mut Vec<String>, identifier: &str) {
     if !output.iter().any(|existing| existing == identifier) {
         output.push(identifier.to_owned());
@@ -1140,6 +1161,7 @@ impl LocalConstants {
         constants
     }
 
+    /// Records value-less bindings that block constant substitution within their scope.
     fn insert_unresolved_shadow(
         &mut self,
         pattern: Node<'_>,
@@ -1202,6 +1224,7 @@ impl LocalConstants {
         names
     }
 
+    /// Returns the selected binding's nonempty value fingerprint, excluding parameters and unresolved shadows.
     fn resolve(&self, name: &str, use_site: Node<'_>, mode: AstMode) -> Option<&str> {
         let binding = self
             .binding(name, use_site)
@@ -1214,6 +1237,7 @@ impl LocalConstants {
         (!fingerprint.is_empty()).then_some(fingerprint)
     }
 
+    /// Selects the nearest containing binding while respecting lexical shadowing and local declaration order.
     fn binding(&self, name: &str, use_site: Node<'_>) -> Option<&LocalConstant> {
         self.bindings
             .get(name)?
@@ -1271,6 +1295,7 @@ fn scope_declarations(scope: Node<'_>) -> Vec<Node<'_>> {
         .collect()
 }
 
+/// Identifies callable syntax forms used for scope and execution handling.
 fn is_function_like(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
@@ -1283,12 +1308,14 @@ fn is_function_like(node: Node<'_>) -> bool {
     )
 }
 
+/// Checks whether a callable has any named parameter node or a single parameter field.
 fn has_function_parameters(node: Node<'_>) -> bool {
     node.child_by_field_name("parameters")
         .is_some_and(|parameters| parameters.named_child_count() > 0)
         || node.child_by_field_name("parameter").is_some()
 }
 
+/// Checks for a direct `const` token on a lexical declaration.
 fn is_const_declaration(declaration: Node<'_>) -> bool {
     declaration.kind() == "lexical_declaration"
         && (0..declaration.child_count()).any(|index| {
@@ -1298,6 +1325,7 @@ fn is_const_declaration(declaration: Node<'_>) -> bool {
         })
 }
 
+/// Finds the scope for a constant or shadow, routing `var` to function scope and rejecting unrelated callable boundaries.
 fn local_constant_scope<'tree>(
     mut node: Option<Node<'tree>>,
     handler: Node<'tree>,
@@ -1333,6 +1361,7 @@ fn local_constant_scope<'tree>(
     None
 }
 
+/// Serializes syntax in the requested fingerprint mode without assertion or constant substitution.
 fn serialize_ast(
     node: Node<'_>,
     source: &[u8],
@@ -1355,6 +1384,7 @@ fn is_identifier_name(name: &str) -> bool {
             .all(|character| character.is_alphanumeric() || character == '_' || character == '$')
 }
 
+/// Serializes syntax iteratively, optionally resolving constants and trusted asymmetric matchers while preserving static property-access semantics.
 fn serialize_ast_with_constants(
     node: Node<'_>,
     source: &[u8],
@@ -1585,6 +1615,7 @@ fn local_function_declarations<'tree>(
     declarations
 }
 
+/// Builds the handler's ordered behavior-event stream with assertion provenance and constant context.
 fn behavior_signature(
     handler: Node<'_>,
     source: &[u8],
@@ -1604,6 +1635,7 @@ fn behavior_signature(
     signature
 }
 
+/// Collects executed and deferred call evidence, bounds local-function expansion and marks unresolved callback parameters conservatively.
 fn collect_behavior<'tree>(
     node: Node<'tree>,
     source: &[u8],
@@ -1886,6 +1918,7 @@ fn assertion_behavior_event(
     ))
 }
 
+/// Serializes an assertion value with use-site constant fingerprints in the requested mode.
 fn serialize_assertion_value(
     node: Node<'_>,
     source: &[u8],
@@ -1896,6 +1929,7 @@ fn serialize_assertion_value(
     serialize_ast_with_constants(node, source, declared, mode, Some(local_constants), None)
 }
 
+/// Serializes expected values with constant resolution and canonical trusted asymmetric matcher builders.
 fn serialize_assertion_expected(
     node: Node<'_>,
     source: &[u8],
@@ -1914,12 +1948,6 @@ fn serialize_assertion_expected(
     )
 }
 
-/// Resolves a property access spelled either `object.name` or `object["name"]` to the same
-/// receiver and name, so a statically computed key means what the dotted key means at every
-/// position of an assertion chain. This is the resolver the factory and asymmetric-builder
-/// positions already use; routing the chain walk through it keeps the supported spellings in one
-/// place. A key that is not a static string yields `None`, so a runtime-selected property keeps
-/// its conservative treatment instead of gaining trust it cannot prove.
 /// Encodes a property name as a component of an assertion event.
 ///
 /// Event components are joined with `.`, `#` and `:`, so a decoded string key containing one of
@@ -1948,6 +1976,7 @@ fn encode_event_component(name: Cow<'_, str>) -> Cow<'_, str> {
     Cow::Owned(escaped)
 }
 
+/// Resolves equivalent dotted and static-string property accesses to the same receiver and name, returning `None` for unresolved keys.
 fn assertion_property<'tree, 'source>(
     node: Node<'tree>,
     source: &'source [u8],
@@ -1958,6 +1987,7 @@ fn assertion_property<'tree, 'source>(
     }
 }
 
+/// Follows a bounded assertion chain to a trusted factory call, collecting modifiers and rejecting unsupported roots.
 fn find_expect_invocation<'tree>(
     node: Node<'tree>,
     source: &[u8],
@@ -2006,6 +2036,7 @@ fn find_expect_invocation<'tree>(
     None
 }
 
+/// Builds a call event from canonical local names and static properties, falling back to structural syntax.
 fn call_behavior_event(
     function: Node<'_>,
     source: &[u8],
@@ -2034,6 +2065,7 @@ fn call_behavior_event(
     ))
 }
 
+/// Resolves a supported receiver chain to a canonical name, returning `None` for unsupported expressions.
 fn static_call_receiver(
     node: Node<'_>,
     source: &[u8],

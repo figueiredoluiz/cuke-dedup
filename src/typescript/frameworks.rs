@@ -116,6 +116,7 @@ pub(crate) fn registration_modules() -> impl Iterator<Item = &'static str> {
         .flat_map(|registration| registration.modules.iter().copied())
 }
 
+/// Looks up registration metadata for an exact supported module specifier.
 fn registration_for_module(module: &str) -> Option<&'static FrameworkRegistration> {
     FRAMEWORK_REGISTRY
         .iter()

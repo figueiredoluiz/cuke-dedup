@@ -74,6 +74,7 @@ pub(crate) struct TypeScriptExtractionSession {
 }
 
 impl TypeScriptExtractionSession {
+    /// Creates reusable project resolution state with configured registration and assertion modules.
     pub(crate) fn for_root(
         root: &std::path::Path,
         registrations: &[String],
@@ -88,6 +89,7 @@ impl TypeScriptExtractionSession {
 }
 
 impl AdapterSessionState for TypeScriptExtractionSession {
+    /// Initializes project-backed state when a root is available, otherwise uses default state.
     fn initialize(
         root: Option<&std::path::Path>,
         registrations: &[String],
@@ -105,14 +107,17 @@ impl StatefulSourceAdapter for TreeSitterSourceAdapter {
 }
 
 impl SourceAdapter for TreeSitterSourceAdapter {
+    /// Returns the adapter's stable diagnostic name.
     fn name(&self) -> &'static str {
         self.name
     }
 
+    /// Returns the source language accepted by this adapter.
     fn language(&self) -> SourceLanguage {
         self.language
     }
 
+    /// Checks whether a file can be excluded before parsing using registration evidence.
     fn inspect_source(
         &self,
         file: &SourceFile,
@@ -121,11 +126,13 @@ impl SourceAdapter for TreeSitterSourceAdapter {
         source_filter::inspect(&file.path, registrations)
     }
 
+    /// Extracts one source with a fresh session, returning definitions and diagnostics.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction> {
         let mut session = SourceExtractionSession::default();
         self.extract_with_session(source, file, &mut session)
     }
 
+    /// Extracts source using shared resolver state, rejecting a mismatched source language.
     fn extract_with_session(
         &self,
         source: &str,
@@ -171,16 +178,19 @@ struct UnresolvedRegistrationCalls {
 }
 
 impl UnresolvedRegistrationCalls {
+    /// Counts an unresolved registration and retains its first location for reporting.
     fn record(&mut self, location: SourceLocation) {
         self.count = self.count.saturating_add(1);
         self.first_location.get_or_insert(location);
     }
 
+    /// Counts registrations passed to unmodeled code and retains the first location.
     fn record_passed(&mut self, location: SourceLocation) {
         self.passed = self.passed.saturating_add(1);
         self.first_passed.get_or_insert(location);
     }
 
+    /// Counts unresolved calls per module while retaining each module's first location.
     fn record_module(&mut self, module: &str, location: SourceLocation) {
         let entry = self
             .modules
@@ -353,6 +363,7 @@ fn extract_detailed_impl(
     Ok(Extraction::new(definitions, diagnostics))
 }
 
+/// Walks calls in source order, collecting definitions and unresolved-registration evidence.
 fn collect_calls<'tree>(
     node: Node<'tree>,
     context: &AdapterContext<'_, 'tree>,
@@ -528,6 +539,7 @@ fn push_returned_values<'tree>(body: Node<'tree>, stack: &mut Vec<Node<'tree>>) 
     }
 }
 
+/// Classifies registration-like calls whose provenance or execution cannot be established.
 fn unresolved_registration_call<'a>(
     call: Node<'_>,
     context: &'a AdapterContext<'_, '_>,
@@ -772,6 +784,7 @@ fn decorated_method(call: Node<'_>) -> Option<Node<'_>> {
     (sibling.kind() == "method_definition").then_some(sibling)
 }
 
+/// Uses file-level attribution only when the registration binding has no known framework.
 fn effective_registration_framework(binding: Framework, file: Framework) -> Framework {
     if binding == Framework::Unknown {
         file
@@ -780,6 +793,7 @@ fn effective_registration_framework(binding: Framework, file: Framework) -> Fram
     }
 }
 
+/// Records an incompleteness warning at a matcher that cannot be extracted statically.
 fn warn_unsupported_matcher(
     node: Node<'_>,
     context: &AdapterContext<'_, '_>,
@@ -793,6 +807,7 @@ fn warn_unsupported_matcher(
     ));
 }
 
+/// Extracts a static matcher and reports invalid literals or unsupported regex syntax.
 fn extract_matcher(
     matcher_node: Node<'_>,
     context: &AdapterContext<'_, '_>,
@@ -830,6 +845,7 @@ fn extract_matcher(
     Some((matcher, matcher_kind, matcher_flags))
 }
 
+/// Builds the warning for a handler that cannot be compared statically.
 fn unsupported_handler_diagnostic(
     context: &AdapterContext<'_, '_>,
     node: Node<'_>,
@@ -842,6 +858,7 @@ fn unsupported_handler_diagnostic(
     )
 }
 
+/// Maps a syntax node's byte span to one-based lines and Unicode character columns.
 fn node_location(file: &SourceFile, node: Node<'_>, source: &[u8]) -> SourceLocation {
     let start = node.start_position();
     let end = node.end_position();
@@ -854,6 +871,7 @@ fn node_location(file: &SourceFile, node: Node<'_>, source: &[u8]) -> SourceLoca
     )
 }
 
+/// Converts a byte column to a one-based character column, falling back on invalid UTF-8.
 fn unicode_column(source: &[u8], byte_offset: usize, byte_column: usize) -> usize {
     let line_start = byte_offset.saturating_sub(byte_column);
     let end = byte_offset.min(source.len());
@@ -862,6 +880,7 @@ fn unicode_column(source: &[u8], byte_offset: usize, byte_column: usize) -> usiz
         + 1
 }
 
+/// Finds the first error or missing node in a source-order named-node traversal.
 fn first_syntax_error(root: Node<'_>) -> Option<Node<'_>> {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -875,6 +894,7 @@ fn first_syntax_error(root: Node<'_>) -> Option<Node<'_>> {
     None
 }
 
+/// Borrows a node's source text, returning an empty string when the slice is not UTF-8.
 fn node_text<'a>(node: Node<'_>, source: &'a [u8]) -> &'a str {
     std::str::from_utf8(&source[node.byte_range()]).unwrap_or("")
 }
