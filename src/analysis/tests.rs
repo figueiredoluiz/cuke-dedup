@@ -11,6 +11,7 @@ use crate::model::{DuplicationThreshold, Rule};
 use crate::typescript;
 use std::path::{Path, PathBuf};
 
+/// Builds one synthetic Given feature step for adapter contract tests.
 fn contract_steps(text: &str) -> Vec<FeatureStep> {
     vec![FeatureStep {
         keyword: "Given".into(),
@@ -19,12 +20,14 @@ fn contract_steps(text: &str) -> Vec<FeatureStep> {
     }]
 }
 
+/// Checks complete analysis for the requested rule and panics if analysis is incomplete or fails.
 fn contract_finding(defs: Vec<StepDefinition>, config: &Config, rule: Rule) -> bool {
     let outcome = analyze_with_step_usage(defs, vec![], config, &Default::default()).unwrap();
     assert!(outcome.incomplete.is_empty());
     outcome.result.findings.iter().any(|f| f.rule == rule)
 }
 
+/// Extracts TypeScript definitions from a synthetic steps.ts file, panicking on failure.
 fn definitions(source: &str) -> Vec<StepDefinition> {
     typescript::extract(
         source,
@@ -36,12 +39,14 @@ fn definitions(source: &str) -> Vec<StepDefinition> {
     .unwrap()
 }
 
+/// Creates a default configuration while retaining its temporary analysis root.
 fn config() -> (tempfile::TempDir, Config) {
     let directory = tempfile::tempdir().unwrap();
     let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
     (directory, config)
 }
 
+/// Checks framework contracts preserve duplicate, ambiguity, and unused outcomes across definition order and feature usage.
 #[test]
 fn adapter_contracts_preserve_global_and_positional_outcomes() {
     use crate::model::Framework::*;
@@ -102,6 +107,7 @@ fn adapter_contracts_preserve_global_and_positional_outcomes() {
     }
 }
 
+/// Checks handler comparisons respect framework domains and lexical-file captures, and mixed frontend analysis is rejected.
 #[test]
 fn adapter_contracts_preserve_handler_domains_and_capture_context() {
     use crate::model::Framework::*;
@@ -156,6 +162,7 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
         .contains("separate analysis runs"));
 }
 
+/// Checks framework-specific regex execution and flag identity preserve matcher and unused-definition outcomes.
 #[test]
 fn adapter_contracts_preserve_regex_execution_and_identity() {
     use crate::model::Framework::*;
@@ -223,6 +230,7 @@ fn adapter_contracts_preserve_regex_execution_and_identity() {
     }
 }
 
+/// Checks near-handler eligibility follows framework capabilities and unsupported regex semantics cannot prove usage findings.
 #[test]
 fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
     use crate::model::Framework::*;
@@ -267,12 +275,14 @@ fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
 
 // A config whose `near-duplicate-step` handler-similarity floor is lowered, for tests that exercise
 // near-duplicate mechanics at handler shapes below the 0.70 default.
+/// Creates a default configuration with the requested near-duplicate handler-similarity floor.
 fn config_with_near_floor(floor: f64) -> (tempfile::TempDir, Config) {
     let (directory, mut config) = config();
     config.near_duplicate_handler_similarity = floor;
     (directory, config)
 }
 
+/// Checks public analysis revalidates mutated candidate limits against hard safety ceilings.
 #[test]
 fn public_analysis_rejects_mutated_configs_above_hard_safety_ceilings() {
     let (_directory, mut config) = config();
@@ -290,6 +300,7 @@ fn public_analysis_rejects_mutated_configs_above_hard_safety_ceilings() {
         .contains("maxStructuralClassComparisons must not exceed the hard safety limit of 250000"));
 }
 
+/// Checks supported assertion-factory syntax retains trusted assertion events and distinguishes conflicting values.
 #[test]
 fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
     for (import, factory, trusted) in [
@@ -382,6 +393,7 @@ fn equivalent_assertion_factory_syntax_preserves_conflicting_values() {
     }
 }
 
+/// Checks future and nested declarations prevent unsafe assertion-value resolution while erased type declarations preserve trust.
 #[test]
 fn future_local_declarations_do_not_expose_outer_assertion_values() {
     for (body, comparable) in [
@@ -449,6 +461,7 @@ fn future_local_declarations_do_not_expose_outer_assertion_values() {
     assert!(!defs[0].handler.comparable);
 }
 
+/// Checks nested assertion builders require trusted origins and resolvable arguments before handlers can be compared.
 #[test]
 fn nested_assertion_builders_validate_their_origin_and_arguments() {
     for (prefix, expected, comparable) in [
@@ -511,6 +524,7 @@ fn nested_assertion_builders_validate_their_origin_and_arguments() {
     );
 }
 
+/// Checks static computed matcher access matches dotted behavior while dynamic, unknown, and untrusted builders lose comparability.
 #[test]
 fn computed_nested_matchers_preserve_dotted_semantics() {
     for prefix in [
@@ -563,6 +577,7 @@ fn computed_nested_matchers_preserve_dotted_semantics() {
     }
 }
 
+/// Checks distinct class, function, and enum assertion subjects retain distinct behavior events.
 #[test]
 fn unresolved_subject_shadows_do_not_collapse_to_empty_values() {
     for declarations in [
@@ -584,6 +599,7 @@ fn unresolved_subject_shadows_do_not_collapse_to_empty_values() {
     }
 }
 
+/// Checks asymmetric matcher mutation removes nested-builder trust while retaining the outer assertion factory.
 #[test]
 fn reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory() {
     for (prefix, factory) in [
@@ -632,6 +648,7 @@ fn reassigned_asymmetric_matchers_lose_trust_without_changing_outer_factory() {
     }
 }
 
+/// Checks computed and destructured namespace aliases propagate matcher mutation conservatively without crossing shadowed scopes.
 #[test]
 fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
     for prefix in [
@@ -669,6 +686,7 @@ fn namespace_matcher_mutations_follow_computed_and_destructured_aliases() {
     }
 }
 
+/// Checks static destructuring can grant assertion trust while uncertain keys can only remove trust through possible mutation.
 #[test]
 fn computed_destructuring_distinguishes_trust_from_possible_mutation() {
     let (_dir, cfg) = config();
@@ -715,6 +733,7 @@ fn computed_destructuring_distinguishes_trust_from_possible_mutation() {
     }
 }
 
+/// Checks parameterized inline calls retain immediate or deferred unresolved effects and argument calls without granting handler findings.
 #[test]
 fn parameterized_inline_calls_keep_execution_context_without_handler_findings() {
     let (_dir, cfg) = config();
@@ -766,6 +785,7 @@ fn parameterized_inline_calls_keep_execution_context_without_handler_findings() 
     }
 }
 
+/// Checks conflicting or unresolved deferred assertions block handler findings despite shared wrapper and body calls.
 #[test]
 fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
     let (_dir, cfg) = config_with_near_floor(0.5);
@@ -813,6 +833,7 @@ fn deferred_assertion_disagreement_cannot_be_outweighed_by_shared_calls() {
     }
 }
 
+/// Checks repeated CommonJS loads share mutation provenance only for the same trusted module and unshadowed loader.
 #[test]
 fn repeated_commonjs_loads_share_only_guarded_mutation_provenance() {
     let (_dir, cfg) = config();
@@ -851,6 +872,7 @@ fn repeated_commonjs_loads_share_only_guarded_mutation_provenance() {
         .all(|e| !e.starts_with("assert:")));
 }
 
+/// Checks mutation through destructured negation aliases removes handler equivalence without granting factory trust.
 #[test]
 fn destructured_negation_mutations_do_not_establish_handler_equivalence() {
     let (_dir, cfg) = config();
@@ -885,6 +907,7 @@ fn destructured_negation_mutations_do_not_establish_handler_equivalence() {
         .all(|e| !e.starts_with("assert:")));
 }
 
+/// Checks direct generator calls omit suspended bodies while retaining argument effects and deferred callback markers.
 #[test]
 fn direct_generator_calls_do_not_contribute_suspended_body_events() {
     for generator in ["function*", "async function*"] {
@@ -934,6 +957,7 @@ fn direct_generator_calls_do_not_contribute_suspended_body_events() {
     }
 }
 
+/// Checks unused definitions still participate in exact, normalized, and duplicate-handler findings.
 #[test]
 fn reports_exact_normalized_and_duplicate_handlers_even_when_unused() {
     let definitions = definitions(
@@ -952,6 +976,7 @@ Then('the user exists', async (name) => { await save(name); });
     assert!(rules.contains(&Rule::DuplicateHandler));
 }
 
+/// Checks cross-file duplicate handlers exclude an assertion imported from an unrelated module in either input order.
 #[test]
 fn exact_handlers_require_compatible_assertion_provenance_across_files() {
     let (_directory, config) = config();
@@ -1000,6 +1025,7 @@ fn exact_handlers_require_compatible_assertion_provenance_across_files() {
     }
 }
 
+/// Checks unresolved external values block handler equivalence while independent duplicate-matcher findings remain available.
 #[test]
 fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
     let (_directory, config) = config();
@@ -1066,6 +1092,7 @@ fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
     }
 }
 
+/// Checks resolvable local assertion values match inline values without conflating conflicts, mutation, or unresolved captures.
 #[test]
 fn inline_and_local_assertion_values_share_behavior_without_losing_value_precision() {
     let (_directory, config) = config();
@@ -1130,6 +1157,7 @@ fn inline_and_local_assertion_values_share_behavior_without_losing_value_precisi
     }
 }
 
+/// Checks assertion trust follows supported origins and namespace mutations without crossing lexical shadowing boundaries.
 #[test]
 fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
     let (_directory, config) = config();
@@ -1401,6 +1429,7 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
         .all(|e| !e.starts_with("assert:")));
 }
 
+/// Checks shorthand assertion objects preserve both property names and resolved values before granting handler equivalence.
 #[test]
 fn shorthand_assertions_preserve_property_keys_and_local_values() {
     let (_directory, config) = config();
@@ -1461,6 +1490,7 @@ fn shorthand_assertions_preserve_property_keys_and_local_values() {
     }
 }
 
+/// Checks required assertion members, immediate functions, and polling options preserve equal and conflicting assertion values.
 #[test]
 fn assertion_precision_covers_member_require_iifes_and_factory_options() {
     let (_directory, config) = config();
@@ -1534,6 +1564,7 @@ fn assertion_precision_covers_member_require_iifes_and_factory_options() {
     }
 }
 
+/// Checks untrusted or deferred assertions are not promoted to immediate behavior and unresolved options prevent comparison.
 #[test]
 fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
     for (prefix, body) in [
@@ -1581,6 +1612,7 @@ fn assertion_precision_keeps_untrusted_bindings_and_callbacks_separate() {
     assert!(arguments[0].handler.behavior_signature[1].starts_with("assert:"));
 }
 
+/// Checks nested callback arguments preserve discriminating deferred behavior while respecting parameters and unexecuted scope boundaries.
 #[test]
 fn nested_argument_callbacks_preserve_behavior_and_scope_boundaries() {
     let (_directory, config) = config();
@@ -1684,6 +1716,7 @@ fn nested_argument_callbacks_preserve_behavior_and_scope_boundaries() {
     }
 }
 
+/// Checks callback calls retain ordered behavior and deferred assertion precision without becoming immediate assertions.
 #[test]
 fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
     let (_directory, config) = config();
@@ -1813,6 +1846,7 @@ fn callback_calls_retain_discriminating_behavior_without_assertion_promotion() {
         .any(|event| event == "deferred-assert:unresolved"));
 }
 
+/// Checks supported runner assertion imports prevent parameterizing conflicting expected values while unknown modules remain untrusted.
 #[test]
 fn assertion_factories_are_trusted_by_provenance_across_runners() {
     let (_directory, config) = config();
@@ -3366,6 +3400,7 @@ fn matcher_similarity_gates_are_pinned_at_short_and_long_boundaries() {
     }
 }
 
+/// Checks matcher similarity equals the stronger normalized edit or Jaro-Winkler score, including empty matchers.
 #[test]
 fn matcher_similarity_reports_the_stronger_normalized_score() {
     let mut pair = definitions("Given('left', () => first()); Given('right', () => second());");
@@ -3386,6 +3421,7 @@ fn matcher_similarity_reports_the_stronger_normalized_score() {
     }
 }
 
+/// Checks alpha, structural, and ordered behavior similarity respect conflicts and empty behavior streams.
 #[test]
 fn handler_similarity_contract_is_table_driven() {
     let mut base = definitions("Given('left', () => first()); Given('right', () => second());");
@@ -3482,6 +3518,7 @@ fn handler_similarity_contract_is_table_driven() {
     }
 }
 
+/// Checks duplicate-matcher components retain the same members and finding count across input permutations.
 #[test]
 fn duplicate_matcher_components_are_invariant_to_definition_input_order() {
     let mut ordered = definitions(
@@ -3492,6 +3529,7 @@ fn duplicate_matcher_components_are_invariant_to_definition_input_order() {
     }
     let (_directory, config) = config();
 
+    /// Collects sorted unique source paths from duplicate-matcher findings and their related locations.
     fn component_members(result: &AnalysisResult) -> Vec<String> {
         let mut paths = result
             .findings
@@ -3528,6 +3566,7 @@ fn duplicate_matcher_components_are_invariant_to_definition_input_order() {
     }
 }
 
+/// Checks shared matcher context preserves parameterization evidence while rejecting polarity conflicts and near-duplicate findings.
 #[test]
 fn shared_context_does_not_override_parameterization_evidence() {
     for (left, right, expected) in [
@@ -3572,6 +3611,7 @@ fn shared_context_does_not_override_parameterization_evidence() {
     }
 }
 
+/// Checks a suppression cannot combine a path match from one definition with a matcher match from another.
 #[test]
 fn path_and_matcher_suppression_must_select_the_same_definition() {
     let mut definitions =
@@ -3604,6 +3644,7 @@ fn path_and_matcher_suppression_must_select_the_same_definition() {
     assert!(finding.suppression.is_none());
 }
 
+/// Checks suppression path patterns use paths relative to the analysis root rather than nested basenames.
 #[test]
 fn suppression_path_globs_remain_root_relative() {
     let mut definitions =
@@ -3635,6 +3676,7 @@ fn suppression_path_globs_remain_root_relative() {
     assert!(finding.suppression.is_none());
 }
 
+/// Checks a path suppression applies only when both definitions belong to the selected directory.
 #[test]
 fn path_suppression_requires_every_definition_in_a_pair_to_be_in_scope() {
     let mut definitions =
@@ -3669,6 +3711,7 @@ fn path_suppression_requires_every_definition_in_a_pair_to_be_in_scope() {
         .is_some());
 }
 
+/// Checks directory suppression patterns and unmatched-suppression detection select the same definition tree.
 #[test]
 fn suppression_directory_patterns_and_unmatched_detection_share_semantics() {
     let mut definitions = definitions("Given('legacy', () => work());");
@@ -3696,6 +3739,7 @@ fn suppression_directory_patterns_and_unmatched_detection_share_semantics() {
     );
 }
 
+/// Checks a positive assertion and its negated form do not produce a duplicate-handler finding.
 #[test]
 fn opposite_assertions_are_not_duplicate_handlers() {
     let definitions = definitions(
@@ -3712,6 +3756,7 @@ Then('the item is hidden', async () => { await expect(item).not.toBeVisible(); }
         .any(|finding| finding.rule == Rule::DuplicateHandler));
 }
 
+/// Checks highly similar matcher wording cannot override conflicting assertion subjects.
 #[test]
 fn similar_matchers_on_different_assertion_subjects_are_not_near_duplicates() {
     let definitions = definitions(
@@ -3733,6 +3778,7 @@ Then('the settings panel shows the secondary account field', async ({ page }, ex
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks highly similar matcher wording cannot override opposite assertion chains.
 #[test]
 fn similar_matchers_with_opposite_assertion_chains_are_not_near_duplicates() {
     let definitions = definitions(
@@ -3754,6 +3800,7 @@ Then('the navigation drawer state indicator is expanded', async ({ page }) => {
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks equivalent assertion-only handlers with different AST shapes reach matcher-blocking verification and produce a near finding.
 #[test]
 fn assertion_only_handlers_reach_near_duplicate_verification() {
     let definitions = definitions(
@@ -3783,6 +3830,7 @@ Then('the account badge is now visible', async ({ page }) =>
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks highly similar matchers with conflicting expected values do not produce near-duplicate findings.
 #[test]
 fn conflicting_assertion_values_are_not_near_duplicates() {
     let definitions = definitions(
@@ -3804,6 +3852,7 @@ Then('the account status indicator shows the final condition', async ({ page }) 
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks handlers sharing nine of ten ordered assertions remain eligible for near-duplicate reporting.
 #[test]
 fn mostly_matching_ordered_behavior_remains_a_near_duplicate_candidate() {
     let assertions = |last| {
@@ -3831,6 +3880,7 @@ fn mostly_matching_ordered_behavior_remains_a_near_duplicate_candidate() {
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks decorator metadata cannot make methods with conflicting assertions appear near-duplicate.
 #[test]
 fn decorated_method_metadata_does_not_create_near_duplicate_findings() {
     let definitions = definitions(
@@ -3858,6 +3908,7 @@ class StatusSteps {
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks sync and async decorated methods remain incompatible despite equivalent assertions and similar wording.
 #[test]
 fn incompatible_decorated_method_semantics_veto_near_duplicate_findings() {
     let definitions = definitions(
@@ -3885,6 +3936,7 @@ class StatusSteps {
         .any(|finding| finding.rule == Rule::NearDuplicateStep));
 }
 
+/// Checks pair evidence retains handler source and the exact common and changed matcher spans.
 #[test]
 fn pair_evidence_retains_source_and_unicode_safe_matcher_delta() {
     let definitions = definitions(
@@ -3907,6 +3959,7 @@ Then('the items are visible', async () => { await expect(item).toBeVisible(); })
     assert!(comparison.left_handler.contains("toBeVisible"));
 }
 
+/// Checks a concrete feature matching two definitions reports ambiguity and marks both definitions used.
 #[test]
 fn concrete_feature_step_detects_ambiguity_and_usage() {
     let definitions = definitions(
@@ -3932,6 +3985,7 @@ Given(/^a user named .+$/, () => { makeOtherUser(); });
         .any(|finding| finding.rule == Rule::UnusedDefinition));
 }
 
+/// Checks expanded outline values and case-insensitive regex matches prevent unused-definition findings.
 #[test]
 fn scenario_outline_rows_and_case_insensitive_regexes_count_as_usage() {
     let definitions = definitions(
@@ -3961,6 +4015,7 @@ Examples:
         .any(|finding| finding.rule == Rule::UnusedDefinition));
 }
 
+/// Checks optional and alternative Cucumber-expression text matches concrete feature steps.
 #[test]
 fn supports_optional_and_alternative_cucumber_expression_syntax() {
     let definitions = definitions(
@@ -3982,6 +4037,7 @@ Then('they are in my belly/stomach', () => { verify(); });
         .any(|finding| finding.rule == Rule::UnusedDefinition));
 }
 
+/// Checks fallback matching for custom parameters preserves optional and alternative text without false unused findings.
 #[test]
 fn fallback_for_custom_parameters_preserves_optional_and_alternative_syntax() {
     let definitions = definitions(
@@ -4003,6 +4059,7 @@ Then('they are in my belly/stomach with {mood}', () => { verify(); });
         .any(|finding| finding.rule == Rule::UnusedDefinition));
 }
 
+/// Checks different named handler bodies and pending stubs do not produce duplicate-handler findings.
 #[test]
 fn named_handlers_with_different_bodies_and_stub_handlers_do_not_duplicate() {
     let mut extracted = Vec::new();
@@ -4039,6 +4096,7 @@ fn named_handlers_with_different_bodies_and_stub_handlers_do_not_duplicate() {
         .any(|finding| finding.rule == Rule::DuplicateHandler));
 }
 
+/// Checks binding different fixed arguments to one handler does not imply duplicate handlers.
 #[test]
 fn differently_bound_arguments_do_not_report_duplicate_handlers() {
     let definitions = definitions(
@@ -4056,6 +4114,7 @@ Given('second binding', handler.bind(null, 2));
         .any(|finding| finding.rule == Rule::DuplicateHandler));
 }
 
+/// Checks repeated outline rows with the same template location and matched definitions produce one ambiguity finding.
 #[test]
 fn outline_ambiguities_are_deduplicated_by_template_location_and_matches() {
     let definitions = definitions(
@@ -4090,6 +4149,7 @@ Examples:
     );
 }
 
+/// Checks outline rows with different matching definition sets retain separate ambiguity findings.
 #[test]
 fn outline_ambiguities_keep_disjoint_match_sets_separate() {
     let definitions = definitions(
@@ -4123,6 +4183,7 @@ Feature: Different sets
     assert!(ambiguities.iter().all(|finding| finding.related.len() >= 2));
 }
 
+/// Checks approximate custom-parameter matching avoids false unused findings without proving ambiguity.
 #[test]
 fn custom_parameter_fallback_marks_usage_but_cannot_prove_ambiguity() {
     let definitions = definitions(
@@ -4144,6 +4205,7 @@ Given('I wait for the page', () => waitForPage());
         .any(|finding| { matches!(finding.rule, Rule::AmbiguousStep | Rule::UnusedDefinition) }));
 }
 
+/// Checks ordered common-subsequence lengths for equal, partial, disjoint, and empty behavior streams in both orders.
 #[test]
 fn ordered_behavior_similarity_uses_longest_common_subsequence() {
     for (left, right, expected) in [
@@ -4163,6 +4225,7 @@ fn ordered_behavior_similarity_uses_longest_common_subsequence() {
     }
 }
 
+/// Checks reported similarity scores round to three decimal places at rounding boundaries.
 #[test]
 fn reported_similarity_scores_round_to_three_decimal_places() {
     for (input, expected) in [

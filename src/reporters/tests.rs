@@ -8,6 +8,7 @@ use crate::model::{
 };
 use std::path::{Path, PathBuf};
 
+/// Builds a synthetic Cucumber-expression definition with an empty non-comparable handler.
 fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
     StepDefinition {
         matcher: matcher.to_owned(),
@@ -31,6 +32,7 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
     }
 }
 
+/// Builds a two-definition report fixture with comparison evidence and script-like handler text for escaping checks.
 fn result(root: &Path) -> AnalysisResult {
     let primary = SourceLocation::new(root.join("steps/a.ts"), 2, 1, 2, 20);
     let related = SourceLocation::new(root.join("steps/b.ts"), 3, 1, 3, 20);
@@ -73,6 +75,7 @@ fn result(root: &Path) -> AnalysisResult {
     }
 }
 
+/// Checks JSON schema version, relative paths, camel-case evidence keys, and removal of invisible controls.
 #[test]
 fn json_uses_versioned_schema_and_relative_paths() {
     let root = PathBuf::from("/repo");
@@ -103,6 +106,7 @@ fn json_uses_versioned_schema_and_relative_paths() {
     assert!(evidence.get("matcher_similarity").is_none());
 }
 
+/// Checks the default summary fails its zero threshold when duplicate definitions are present.
 #[test]
 fn default_summary_uses_the_strict_zero_percent_threshold() {
     let root = PathBuf::from("/repo");
@@ -112,6 +116,7 @@ fn default_summary_uses_the_strict_zero_percent_threshold() {
     assert!(!summary.duplication.passed);
 }
 
+/// Checks plain terminal output includes the version, readable finding spacing, and optional timing without ANSI escapes.
 #[test]
 fn terminal_report_has_version_and_finding_spacing() {
     let root = PathBuf::from("/repo");
@@ -135,6 +140,7 @@ fn terminal_report_has_version_and_finding_spacing() {
     assert!(!plain.contains('\u{1b}'));
 }
 
+/// Checks terminal color decorates selected fields without changing the underlying plain report text.
 #[test]
 fn terminal_report_colors_only_selected_text() {
     let root = PathBuf::from("/repo");
@@ -173,6 +179,7 @@ fn terminal_report_colors_only_selected_text() {
     );
 }
 
+/// Checks a single-finding report uses singular wording and omits timing when metrics are absent.
 #[test]
 fn terminal_report_uses_singular_finding_and_omits_optional_timing() {
     let root = PathBuf::from("/repo");
@@ -231,6 +238,7 @@ fn terminal_report_propagates_footer_write_failures() {
     }
 }
 
+/// Checks JSONL emits a self-contained finding, bounded Unicode evidence, and a final summary record.
 #[test]
 fn jsonl_emits_self_contained_findings_and_a_final_summary() {
     let root = PathBuf::from("/repo");
@@ -281,6 +289,7 @@ fn jsonl_emits_self_contained_findings_and_a_final_summary() {
     assert_eq!(summary["truncated"], false);
 }
 
+/// Checks JSON, JSONL, and SARIF retain cluster evidence and truncation metadata.
 #[test]
 fn machine_reporters_preserve_cluster_evidence() {
     let root = PathBuf::from("/repo");
@@ -313,6 +322,7 @@ fn machine_reporters_preserve_cluster_evidence() {
     );
 }
 
+/// Checks all reporters bound large cluster output, signal omitted members, and leave the analysis result intact.
 #[test]
 fn every_reporter_bounds_large_cluster_records_and_signals_omissions() {
     let root = PathBuf::from("/repo");
@@ -389,6 +399,7 @@ fn every_reporter_bounds_large_cluster_records_and_signals_omissions() {
     );
 }
 
+/// Checks SARIF excludes suppressed findings and retains relative locations, rule help links, and current fingerprints.
 #[test]
 fn sarif_contains_only_active_findings_with_stable_locations() {
     let root = PathBuf::from("/repo");
@@ -431,6 +442,7 @@ fn sarif_contains_only_active_findings_with_stable_locations() {
     );
 }
 
+/// Checks every SARIF rule descriptor links to one matching documentation heading.
 #[test]
 fn every_sarif_rule_links_to_its_documentation_section() {
     let rule_documentation = include_str!("../../docs/rules.md");
@@ -470,6 +482,7 @@ fn every_sarif_rule_links_to_its_documentation_section() {
     }
 }
 
+/// Checks self-contained HTML escapes unsafe finding text, removes controls, and includes theme controls and summary content.
 #[test]
 fn html_is_self_contained_and_escapes_finding_text() {
     let root = PathBuf::from("/repo");
@@ -500,6 +513,7 @@ fn html_is_self_contained_and_escapes_finding_text() {
     assert!(!html.contains("\\u202e"));
 }
 
+/// Checks buffered reporters cap emitted findings and distinguish omitted findings from incomplete analysis.
 #[test]
 fn buffered_reports_cap_findings_and_signal_truncation() {
     let root = PathBuf::from("/repo");
@@ -579,6 +593,7 @@ fn buffered_reports_cap_findings_and_signal_truncation() {
     assert!(terminal.contains("1 additional active findings omitted"));
 }
 
+/// Checks report caps retain an error even when warnings fill the available capacity.
 #[test]
 fn bounded_reports_never_displace_an_error_with_warnings() {
     let root = PathBuf::from("/repo");
@@ -626,6 +641,7 @@ fn bounded_reports_never_displace_an_error_with_warnings() {
         .contains("release-blocking error"));
 }
 
+/// Checks terminal findings are grouped once per rule and strip ANSI and invisible control characters.
 #[test]
 fn terminal_groups_each_rule_once_and_removes_control_characters() {
     let root = PathBuf::from("/repo");
@@ -651,6 +667,7 @@ fn terminal_groups_each_rule_once_and_removes_control_characters() {
     assert!(!terminal.contains('\u{e007f}'));
 }
 
+/// Checks all formats preserve active finding information, suppression counts, and duplication-threshold summaries.
 #[test]
 fn reporters_preserve_finding_counts_and_information_across_formats() {
     let root = PathBuf::from("/repo");
@@ -786,6 +803,7 @@ fn reporters_preserve_finding_counts_and_information_across_formats() {
     }
 }
 
+/// Checks the public writer creates configured report files and streams terminal or JSONL output from one context.
 #[test]
 fn public_report_writer_uses_one_context_for_every_configured_format() {
     let directory = tempfile::tempdir().unwrap();

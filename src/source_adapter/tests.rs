@@ -2,6 +2,7 @@ use super::*;
 use std::collections::BTreeSet;
 use std::fs;
 
+/// Creates a temporary project with a local Cucumber registration re-export.
 fn session_project() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("package.json"), "{}").unwrap();
@@ -13,6 +14,7 @@ fn session_project() -> tempfile::TempDir {
     directory
 }
 
+/// Extracts a synthetic source through its suffix-selected adapter and supplied session, panicking on failure.
 fn session_extract(
     session: &mut SourceExtractionSession,
     root: &Path,
@@ -36,6 +38,7 @@ fn session_extract(
 const IMPORTED_STEP: &str =
     "import { Given } from './support'; Given('shared step', () => work());";
 
+/// Checks backend state initializes once per session and invalid or missing state returns an error.
 #[test]
 fn session_state_initializes_once_per_backend_and_per_run() {
     let ruby = SourceAdapterRegistration::with_session(".rb", &crate::ruby::RUBY_ADAPTER);
@@ -44,12 +47,14 @@ fn session_state_initializes_once_per_backend_and_per_run() {
 
     struct Counter(usize);
     impl AdapterSessionState for Counter {
+        /// Creates fresh state for the test backend without using project configuration.
         fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
             Self(0)
         }
     }
     struct Other;
     impl AdapterSessionState for Other {
+        /// Creates fresh state for the test backend without using project configuration.
         fn initialize(_: Option<&Path>, _: &[String], _: &[String]) -> Self {
             Self
         }
@@ -78,6 +83,7 @@ fn session_state_initializes_once_per_backend_and_per_run() {
     assert!(session.state::<Counter>().is_err());
 }
 
+/// Checks JS, TS, and TSX share a resolver snapshot and retain duplicate findings in either extraction order.
 #[test]
 fn session_mixed_languages_share_cache_and_preserve_findings_in_either_order() {
     for suffixes in [["js", "ts", "tsx"], ["tsx", "ts", "js"]] {
@@ -128,6 +134,7 @@ fn session_mixed_languages_share_cache_and_preserve_findings_in_either_order() {
     }
 }
 
+/// Checks a session retains its failed-root fallback after that root is created, while a new session observes it.
 #[test]
 fn session_keeps_failed_root_resolution_snapshot_and_default_fallback() {
     let project = session_project();
@@ -153,6 +160,7 @@ fn session_keeps_failed_root_resolution_snapshot_and_default_fallback() {
     assert!(!rejected.diagnostics.is_empty());
 }
 
+/// Checks an existing session retains its canonical project root after a symlink is retargeted.
 #[cfg(unix)]
 #[test]
 fn session_keeps_valid_root_snapshot_when_symlink_is_retargeted() {
@@ -177,6 +185,7 @@ fn session_keeps_valid_root_snapshot_when_symlink_is_retargeted() {
     assert!(!rejected.diagnostics.is_empty());
 }
 
+/// Checks separate project sessions isolate custom registration names and local export caches.
 #[test]
 fn session_roots_and_configured_registrations_are_isolated() {
     let project = session_project();
@@ -214,19 +223,23 @@ fn session_roots_and_configured_registrations_are_isolated() {
 struct DefaultSessionAdapter;
 
 impl SourceAdapter for DefaultSessionAdapter {
+    /// Returns the default-delegation test adapter's diagnostic name.
     fn name(&self) -> &'static str {
         "default-session-test"
     }
 
+    /// Identifies the default-delegation test adapter as JavaScript.
     fn language(&self) -> SourceLanguage {
         SourceLanguage::JavaScript
     }
 
+    /// Returns a sentinel error so tests can detect delegation to the legacy extraction method.
     fn extract(&self, _source: &str, _file: &SourceFile) -> Result<Extraction> {
         anyhow::bail!("default extract delegation reached")
     }
 }
 
+/// Checks every supported suffix routes to the expected language and named adapter.
 #[test]
 fn registry_routes_supported_suffixes() {
     let cases = [
@@ -251,6 +264,7 @@ fn registry_routes_supported_suffixes() {
     assert_eq!(registered_suffixes().len(), cases.len());
 }
 
+/// Checks each registered language grammar parses a representative source without syntax errors.
 #[test]
 fn source_languages_select_their_registered_tree_sitter_grammar() {
     let cases = [
@@ -270,6 +284,7 @@ fn source_languages_select_their_registered_tree_sitter_grammar() {
     }
 }
 
+/// Checks registry suffixes are unique, initialize sessions, and extract one definition into shared IR.
 #[test]
 fn every_registration_has_a_unique_suffix_and_produces_shared_ir() {
     let mut suffixes = BTreeSet::new();
@@ -300,6 +315,7 @@ fn every_registration_has_a_unique_suffix_and_produces_shared_ir() {
     }
 }
 
+/// Checks declaration files, source maps, and unsupported language suffixes are excluded from adapter routing.
 #[test]
 fn registry_rejects_declarations_maps_and_unknown_languages() {
     for path in [
@@ -316,6 +332,7 @@ fn registry_rejects_declarations_maps_and_unknown_languages() {
     }
 }
 
+/// Checks non-UTF-8 Unix filenames route by ASCII extension while declaration files remain excluded.
 #[cfg(unix)]
 #[test]
 fn registry_classifies_non_utf8_names_by_their_ascii_extension() {
@@ -329,6 +346,7 @@ fn registry_classifies_non_utf8_names_by_their_ascii_extension() {
     assert!(adapter_for_path(&declaration).is_none());
 }
 
+/// Checks the default session extraction method delegates to an adapter's existing extract implementation.
 #[test]
 fn adapter_session_default_preserves_existing_extract_implementations() {
     let directory = tempfile::tempdir().unwrap();
@@ -349,6 +367,7 @@ fn adapter_session_default_preserves_existing_extract_implementations() {
     assert_eq!(error.to_string(), "default extract delegation reached");
 }
 
+/// Checks language and suffix lookup select the identical registered adapter instances.
 #[test]
 fn language_lookup_and_suffix_routing_agree_on_one_adapter_table() {
     // Data-address identity (not `ptr::eq`, which compares wide-pointer vtables) is what
@@ -386,6 +405,7 @@ fn language_lookup_and_suffix_routing_agree_on_one_adapter_table() {
     }
 }
 
+/// Checks either routing surface can warm shared session state without changing subsequent extraction.
 #[test]
 fn language_routed_and_suffix_routed_extraction_share_session_state() {
     // The registry's session initializers must prepare exactly the backend state that
@@ -421,6 +441,7 @@ fn language_routed_and_suffix_routed_extraction_share_session_state() {
     }
 }
 
+/// Checks legacy diagnostic classification follows message prefixes and responds to message mutation.
 #[test]
 fn legacy_diagnostics_preserve_message_classification_and_mutation() {
     for (message, incomplete, unparseable) in [
@@ -441,6 +462,7 @@ fn legacy_diagnostics_preserve_message_classification_and_mutation() {
     }
 }
 
+/// Checks uncertainty scope and cause selectively remove registrations or handler trust while preserving independent findings.
 #[test]
 fn finalization_scopes_preserve_independent_final_findings() {
     use crate::model::Rule;
@@ -486,6 +508,7 @@ fn finalization_scopes_preserve_independent_final_findings() {
     }
 }
 
+/// Checks registry uncertainty groups ECMAScript variants together while keeping Ruby findings independent.
 #[test]
 fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
     use crate::model::Rule;
@@ -526,6 +549,7 @@ fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
     }
 }
 
+/// Checks session finalization applies late Ruby registration mutation in either order and remains idempotent.
 #[test]
 fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
     for mutation_first in [false, true] {

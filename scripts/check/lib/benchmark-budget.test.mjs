@@ -56,6 +56,7 @@ test("benchmark budgets accept deterministic outcomes while treating time as adv
   );
 });
 
+/** Checks benchmark budgets detect inventory, semantic, memory, and binary regressions. */
 test("benchmark budgets reject inventory, semantic, memory, and binary regressions", () => {
   const failures = [
     validateBenchmark({ ...report, results: [] }, budgets).failures,
@@ -70,6 +71,7 @@ test("benchmark budgets reject inventory, semantic, memory, and binary regressio
   assert.ok(failures.every((items) => items.length > 0));
 });
 
+/** Checks a missing benchmark result inventory raises a clear validation error. */
 test("benchmark budgets reject a missing result inventory clearly", () => {
   assert.throws(
     () => validateBenchmark({ ...report, results: undefined }, budgets),
@@ -77,6 +79,7 @@ test("benchmark budgets reject a missing result inventory clearly", () => {
   );
 });
 
+/** Checks full-profile validation rejects smoke reports and unsupported report schemas. */
 test("full-profile budgets reject smoke reports and schema drift", () => {
   assert.throws(() => validateBenchmark({ ...report, smoke: true }, budgets));
   assert.throws(() => validateBenchmark({ ...report, schemaVersion: 4 }, budgets));

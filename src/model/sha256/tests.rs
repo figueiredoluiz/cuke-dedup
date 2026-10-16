@@ -1,15 +1,18 @@
 use super::Sha256;
 
+/// Computes a SHA-256 digest as lowercase hexadecimal for test inputs.
 fn digest(input: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input);
     hex(hasher.finalize())
 }
 
+/// Formats all 32 digest bytes as zero-padded lowercase hexadecimal.
 fn hex(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Checks empty, short, FIPS, and million-byte inputs against known SHA-256 digests.
 #[test]
 fn matches_sha256_known_answer_vectors() {
     let cases = [
@@ -44,6 +47,7 @@ fn matches_sha256_known_answer_vectors() {
     }
 }
 
+/// Checks known digests around the SHA-256 padding and block boundaries.
 #[test]
 fn padding_boundaries_are_correct() {
     for (length, expected) in [
@@ -72,6 +76,7 @@ fn padding_boundaries_are_correct() {
     }
 }
 
+/// Checks incremental updates at varied chunk sizes match the one-shot digest.
 #[test]
 fn chunk_boundaries_do_not_change_the_digest() {
     let input = (0..=255)

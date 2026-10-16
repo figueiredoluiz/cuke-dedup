@@ -26,21 +26,26 @@ fn registered_adapter(language: SourceLanguage) -> &'static dyn SourceAdapter {
         .expect("an adapter is registered for the language")
 }
 
+/// Checks external adapters retain session constructors, auto traits, default capabilities, and legacy extraction delegation.
 #[test]
 fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults() {
     use cuke_dedup::source_adapter::SourceExtractionSession;
     use std::panic::{RefUnwindSafe, UnwindSafe};
+    /// Requires session types to satisfy the public thread-safety, pinning, and unwind-safety trait bounds at compile time.
     fn assert_auto_traits<T: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe>() {}
     assert_auto_traits::<SourceExtractionSession>();
 
     struct ExternalAdapter;
     impl SourceAdapter for ExternalAdapter {
+        /// Returns the external test adapter's stable name.
         fn name(&self) -> &'static str {
             "external"
         }
+        /// Identifies the external test adapter as JavaScript.
         fn language(&self) -> SourceLanguage {
             SourceLanguage::JavaScript
         }
+        /// Returns a sentinel failure to verify default session delegation reaches the external adapter.
         fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
             anyhow::bail!("external adapter reached")
         }
@@ -82,6 +87,7 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
     }
 }
 
+/// Maps known reporter variants to names and accommodates future non-exhaustive variants.
 fn reporter_name(reporter: ReporterKind) -> &'static str {
     match reporter {
         ReporterKind::Terminal => "terminal",
@@ -93,6 +99,7 @@ fn reporter_name(reporter: ReporterKind) -> &'static str {
     }
 }
 
+/// Checks diagnostic analysis preserves a definition after a regex limit while strict analysis returns that limit as an error.
 #[test]
 fn external_callers_can_preserve_partial_results_and_operational_diagnostics() {
     let definitions = typescript::extract(
@@ -115,6 +122,7 @@ fn external_callers_can_preserve_partial_results_and_operational_diagnostics() {
     assert!(error.to_string().contains("regex resource limit"));
 }
 
+/// Checks sessionless extraction resolves a local registration re-export within the nearest package boundary.
 #[test]
 fn sessionless_file_extraction_uses_the_nearest_package_boundary() {
     let directory = tempfile::tempdir().unwrap();
@@ -142,6 +150,7 @@ fn sessionless_file_extraction_uses_the_nearest_package_boundary() {
     assert_eq!(definitions[0].matcher, "nested public API step");
 }
 
+/// Checks external callers can construct configuration, metrics, diagnostics, baselines, and adapter registrations through public APIs.
 #[test]
 fn extensible_public_outputs_use_stable_constructors() {
     let overrides = ConfigOverrides {
@@ -189,6 +198,7 @@ fn extensible_public_outputs_use_stable_constructors() {
     assert_eq!(reporter_name(ReporterKind::Json), "json");
 }
 
+/// Checks every public renderer accepts one report context with its configured duplication threshold.
 #[test]
 fn report_context_is_the_single_public_rendering_entry_point() {
     let root = PathBuf::from("/repo");
@@ -213,6 +223,7 @@ fn report_context_is_the_single_public_rendering_entry_point() {
         .contains("Analyzed 0 definitions"));
 }
 
+/// Checks lowercase global registrations require explicit session configuration before they extract definitions.
 #[test]
 fn configured_registrations_enable_lowercase_global_step_names() {
     use cuke_dedup::source_adapter::SourceExtractionSession;
@@ -249,6 +260,7 @@ fn configured_registrations_enable_lowercase_global_step_names() {
     );
 }
 
+/// Checks local registration barrels resolve through CommonJS and ESM while missing or malformed bindings remain empty.
 #[test]
 fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
     use cuke_dedup::source_adapter::SourceExtractionSession;
@@ -298,6 +310,7 @@ fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
     assert_eq!(extract("const = 5;\nvar ;\nlet x;"), 0);
 }
 
+/// Checks a CommonJS local barrel preserves Playwright-BDD factory registration extraction.
 #[test]
 fn local_barrel_re_exporting_the_bdd_factory_resolves_through_require() {
     use cuke_dedup::source_adapter::SourceExtractionSession;
@@ -329,6 +342,7 @@ fn local_barrel_re_exporting_the_bdd_factory_resolves_through_require() {
     assert_eq!(definitions.len(), 2);
 }
 
+/// Checks typed incomplete diagnostics retain their kind independently of message wording.
 #[test]
 fn adapters_can_classify_diagnostics_without_language_specific_messages() {
     use cuke_dedup::source_adapter::ExtractionDiagnosticKind;
@@ -342,6 +356,7 @@ fn adapters_can_classify_diagnostics_without_language_specific_messages() {
     assert_eq!(diagnostic.message, "external glue unavailable");
 }
 
+/// Checks Ruby usage metadata enables precise unused findings while legacy analysis preserves conservative incompleteness.
 #[test]
 fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
     let root = tempfile::tempdir().unwrap();

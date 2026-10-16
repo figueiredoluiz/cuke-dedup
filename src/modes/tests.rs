@@ -3,6 +3,7 @@ use crate::model::{
     DefinitionCluster, DefinitionComparison, FindingEvidence, Rule, Severity, SourceLocation,
 };
 
+/// Initializes a temporary Git repository with a test identity and commits its fixture files.
 fn initialize_repository(root: &Path) {
     for arguments in [
         ["init", "-q"].as_slice(),
@@ -32,6 +33,7 @@ fn fixture_git() -> Command {
     command
 }
 
+/// Builds a duplicate-matcher finding with primary and shared related locations beneath the supplied root.
 fn finding(root: &Path, file: &str) -> Finding {
     Finding {
         rule: Rule::DuplicateMatcher,
@@ -58,6 +60,7 @@ fn finding(root: &Path, file: &str) -> Finding {
     }
 }
 
+/// Checks changed mode retains only the finding whose primary file changed.
 #[test]
 fn changed_mode_keeps_findings_related_to_a_changed_file() {
     let root = Path::new("/repo");
@@ -71,6 +74,7 @@ fn changed_mode_keeps_findings_related_to_a_changed_file() {
     assert!(findings[0].primary.path.ends_with("changed.ts"));
 }
 
+/// Checks cluster fingerprints ignore locations and member order but change when membership changes.
 #[test]
 fn cluster_fingerprints_are_location_and_member_order_independent() {
     let root = Path::new("/repo");
@@ -100,6 +104,7 @@ fn cluster_fingerprints_are_location_and_member_order_independent() {
     assert_ne!(finding_fingerprint(&original), finding_fingerprint(&moved));
 }
 
+/// Checks embedded separators cannot make an unrelated cluster match a baseline fingerprint.
 #[test]
 fn multipart_framing_cannot_suppress_a_different_cluster() {
     let directory = tempfile::tempdir().unwrap();
@@ -128,6 +133,7 @@ fn multipart_framing_cannot_suppress_a_different_cluster() {
     assert!(unrelated.is_active());
 }
 
+/// Checks fallback fingerprint framing suppresses an equivalent finding without conflating different evidence fields.
 #[test]
 fn multipart_framing_cannot_suppress_a_different_fallback_finding() {
     let directory = tempfile::tempdir().unwrap();
@@ -152,6 +158,7 @@ fn multipart_framing_cannot_suppress_a_different_fallback_finding() {
     assert_eq!(unrelated_outcome.new_findings, 1);
 }
 
+/// Checks changed-file discovery handles subdirectory roots, untracked files, Unicode, and significant filename spaces.
 #[test]
 fn changed_files_are_relative_to_a_subdirectory_and_include_untracked_files() {
     let directory = tempfile::tempdir().unwrap();
@@ -175,6 +182,7 @@ fn changed_files_are_relative_to_a_subdirectory_and_include_untracked_files() {
     assert_eq!(changed, expected);
 }
 
+/// Checks changed-file discovery preserves newline bytes in Unix filenames.
 #[cfg(unix)]
 #[test]
 fn changed_files_preserve_newlines_in_unix_names() {
@@ -191,6 +199,7 @@ fn changed_files_preserve_newlines_in_unix_names() {
     assert_eq!(changed, BTreeSet::from([newline]));
 }
 
+/// Checks Git path decoding retains non-UTF-8 Unix filename bytes.
 #[cfg(unix)]
 #[test]
 fn git_path_decoder_preserves_non_utf8_unix_bytes() {
@@ -201,6 +210,7 @@ fn git_path_decoder_preserves_non_utf8_unix_bytes() {
     assert_eq!(path.as_os_str().as_bytes(), bytes);
 }
 
+/// Checks changed-file discovery retains a modified non-UTF-8 Linux filename.
 #[cfg(target_os = "linux")]
 #[test]
 fn changed_files_preserve_non_utf8_linux_names() {
@@ -220,6 +230,7 @@ fn changed_files_preserve_non_utf8_linux_names() {
     assert_eq!(changed, BTreeSet::from([non_utf8]));
 }
 
+/// Checks baseline matching survives file and line changes but suppresses only the recorded number of occurrences.
 #[test]
 fn semantic_baseline_survives_location_changes_and_enforces_multiplicity() {
     let directory = tempfile::tempdir().unwrap();
@@ -248,6 +259,7 @@ fn semantic_baseline_survives_location_changes_and_enforces_multiplicity() {
     assert_eq!(baseline.fingerprints.values().sum::<usize>(), 1);
 }
 
+/// Checks changed mode rejects invalid revisions, failed Git commands, ignored roots, and non-repository roots.
 #[test]
 fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
     let directory = tempfile::tempdir().unwrap();
@@ -276,6 +288,7 @@ fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
     assert!(ensure_changed_root_is_trackable(outside.path()).is_err());
 }
 
+/// Checks a changed related location retains a finding whose primary file is unchanged.
 #[test]
 fn changed_mode_keeps_findings_with_changed_related_locations() {
     let root = Path::new("/repo");
@@ -285,6 +298,7 @@ fn changed_mode_keeps_findings_with_changed_related_locations() {
     assert_eq!(findings.len(), 1);
 }
 
+/// Checks baseline updates remove absent active entries and reject unsupported schemas or malformed JSON.
 #[test]
 fn baseline_validation_counts_removals_and_ignores_suppressed_findings() {
     let directory = tempfile::tempdir().unwrap();
@@ -323,6 +337,7 @@ fn baseline_validation_counts_removals_and_ignores_suppressed_findings() {
         .contains("failed to parse baseline"));
 }
 
+/// Checks comparison fingerprints ignore pair order and decreasing occurrence counts add no baseline entries.
 #[test]
 fn comparison_fingerprints_are_independent_of_pair_order() {
     let root = Path::new("/repo");

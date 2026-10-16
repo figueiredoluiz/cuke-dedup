@@ -9,6 +9,7 @@ import {
   structBody,
 } from "./docs-parity.mjs";
 
+/** Checks named struct extraction returns its matched body and rejects missing structs. */
 test("structBody returns the brace-matched body of the named struct", () => {
   const src = "struct Other { a: u8 }\nstruct Target {\n  x: u8,\n  y: Vec<u8>,\n}\n";
   assert.match(structBody(src, "Target"), /x: u8/);
@@ -16,6 +17,7 @@ test("structBody returns the brace-matched body of the named struct", () => {
   assert.throws(() => structBody(src, "Missing"), /struct Missing not found/);
 });
 
+/** Checks CLI flag extraction handles derived names, explicit long names, and multiline attributes while excluding positional arguments. */
 test("cliFlags derives kebab names, honours long overrides, and spans multi-line attributes", () => {
   // A single-line bare `long`, a `long = "..."` override, and a multi-line `#[arg(...)]` block whose
   // continuation lines do not start with `#[` — the case an earlier line-by-line parser dropped.
@@ -43,6 +45,7 @@ test("cliFlags derives kebab names, honours long overrides, and spans multi-line
   assert.ok(!flags.includes("--path"), "a positional arg without `long` is not a flag");
 });
 
+/** Checks CLI flag extraction retains fields with public visibility modifiers. */
 test("cliFlags parses a field behind a `pub`/`pub(crate)` visibility modifier", () => {
   const body = `
     #[arg(long, global = true)]
@@ -56,6 +59,7 @@ test("cliFlags parses a field behind a `pub`/`pub(crate)` visibility modifier", 
   assert.ok(flags.includes("--fail-on-new"), "a pub(crate) field must not be dropped");
 });
 
+/** Checks adversarial repeated comment markers remain within a bounded flag-extraction runtime. */
 test("cliFlags scans linearly and returns quickly on an adversarial attribute string", () => {
   // Guards the ReDoS CodeQL flagged in the old regex: the previous `(?:(?:#\[…\]|///…)\s*)*` could
   // backtrack exponentially on many repetitions of `///` or `#[` after `#[arg()]`.
@@ -66,6 +70,7 @@ test("cliFlags scans linearly and returns quickly on an adversarial attribute st
   assert.ok(ms < 500, `cliFlags took ${ms}ms on a degenerate input; expected linear time`);
 });
 
+/** Checks documentation matching requires a whole flag token rather than a longer flag's prefix. */
 test("flagDocumented matches a whole flag token, not a prefix of a longer flag", () => {
   const docs = "Configure `--exclude-defaults` and `--baseline-from-ref` here.";
   assert.equal(flagDocumented(docs, "--exclude-defaults"), true);
@@ -74,6 +79,7 @@ test("flagDocumented matches a whole flag token, not a prefix of a longer flag",
   assert.equal(flagDocumented("Pass --baseline to reuse.", "--baseline"), true);
 });
 
+/** Checks configuration field names convert from snake case to camel case. */
 test("configKeys camelCases every field of the struct body", () => {
   const body = `
     #[serde(default)]
@@ -84,6 +90,7 @@ test("configKeys camelCases every field of the struct body", () => {
   assert.deepEqual(configKeys(body), ["failOnUnparseable", "maxCandidateComparisons"]);
 });
 
+/** Checks snake-case field names convert to their expected kebab and camel spellings. */
 test("kebab and camel are inverse spellings of a snake_case field", () => {
   assert.equal(kebab("fail_on_new"), "fail-on-new");
   assert.equal(camel("fail_on_new"), "failOnNew");

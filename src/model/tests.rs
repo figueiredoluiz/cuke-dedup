@@ -1,5 +1,6 @@
 use super::*;
 
+/// Builds a synthetic non-comparable step definition at the requested source line.
 fn definition(line: usize) -> StepDefinition {
     StepDefinition {
         matcher: format!("step {line}"),
@@ -23,6 +24,7 @@ fn definition(line: usize) -> StepDefinition {
     }
 }
 
+/// Builds a duplicate-matcher finding between two synthetic definitions with the requested severity.
 fn finding(
     definitions: &[StepDefinition],
     left: usize,
@@ -48,6 +50,7 @@ fn finding(
     }
 }
 
+/// Checks each public rule name round-trips and identifies its matching documentation anchor.
 #[test]
 fn rule_names_are_stable_kebab_case() {
     for &rule in Rule::ALL {
@@ -62,6 +65,7 @@ fn rule_names_are_stable_kebab_case() {
     }
 }
 
+/// Checks multipart fingerprints distinguish embedded separators, part boundaries, and the single-string domain.
 #[test]
 fn multipart_fingerprint_has_unambiguous_framing_and_a_separate_domain() {
     assert_ne!(
@@ -72,6 +76,7 @@ fn multipart_fingerprint_has_unambiguous_framing_and_a_separate_domain() {
     assert_ne!(stable_fingerprint_parts([]), stable_fingerprint_parts([""]));
 }
 
+/// Checks severity display, accepted aliases, and the diagnostic for an unknown severity.
 #[test]
 fn severity_text_forms_are_complete_and_reject_unknown_values() {
     assert_eq!(Severity::Off.to_string(), "off");
@@ -87,6 +92,7 @@ fn severity_text_forms_are_complete_and_reject_unknown_values() {
     );
 }
 
+/// Checks duplication thresholds include duplication rules but exclude ambiguity and unused-definition findings.
 #[test]
 fn threshold_rules_exclude_correctness_and_usage_findings() {
     assert!(Rule::DuplicateMatcher.contributes_to_duplication_threshold());
@@ -95,6 +101,7 @@ fn threshold_rules_exclude_correctness_and_usage_findings() {
     assert!(!Rule::UnusedDefinition.contributes_to_duplication_threshold());
 }
 
+/// Checks thresholds count distinct definitions from active errors while excluding warnings and suppressions.
 #[test]
 fn duplication_threshold_counts_unique_active_error_definitions() {
     let definitions: Vec<_> = (1..=4).map(definition).collect();
@@ -120,6 +127,7 @@ fn duplication_threshold_counts_unique_active_error_definitions() {
     assert!(!DuplicationThreshold::from_result(&result, 74.99).passed);
 }
 
+/// Checks an empty result passes a zero threshold with zero duplication.
 #[test]
 fn empty_analysis_has_zero_percent_duplication() {
     let result = AnalysisResult::default();
@@ -128,6 +136,7 @@ fn empty_analysis_has_zero_percent_duplication() {
     assert!(threshold.passed);
 }
 
+/// Checks separate definitions sharing a location are both counted toward duplication.
 #[test]
 fn duplication_threshold_counts_multiple_definitions_at_one_location() {
     let mut definitions = vec![definition(1), definition(2)];
@@ -143,6 +152,7 @@ fn duplication_threshold_counts_multiple_definitions_at_one_location() {
     assert_eq!(threshold.percentage, 100.0);
 }
 
+/// Checks the stable fingerprint value, hexadecimal shape, and case sensitivity.
 #[test]
 fn fingerprint_is_stable_and_content_sensitive() {
     assert_eq!(
@@ -156,6 +166,7 @@ fn fingerprint_is_stable_and_content_sensitive() {
     assert_ne!(stable_fingerprint("hello"), stable_fingerprint("Hello"));
 }
 
+/// Checks displayed source locations normalize Windows separators to forward slashes.
 #[test]
 fn displayed_locations_use_portable_path_separators() {
     let location = SourceLocation::new("steps\\checkout.ts", 3, 4, 3, 10);

@@ -10,6 +10,7 @@ const expected = { definitions: 2, featureSteps: 1, complete: true,
   requiredFindings: [{ rule: "duplicate-handler" }], requiredAbsent: [{ rule: "parameterization-candidate" }] };
 const passing = { outcome: outcome(report, 1), deficits: [] };
 
+/** Checks parity classification distinguishes equivalence, language-specific gaps, shared limitations, errors, and outcome drift. */
 test("classifications distinguish shared failures, adapter gaps, missing measurements and drift", () => {
   const failed = { ...passing, deficits: ["missing finding"] };
   assert.equal(classify(passing, passing), "equivalent");
@@ -21,6 +22,7 @@ test("classifications distinguish shared failures, adapter gaps, missing measure
   assert.equal(classify(failed, { ...failed, outcome: {} }), "both-have-gaps");
 });
 
+/** Checks normalized language outcomes ignore source suffixes while retaining finding locations, severity, and exit status. */
 test("outcomes ignore source extensions but retain finding ownership, severity and strict exits", () => {
   const ruby = { ...report, findings: [{ ...finding, primary: { path: "steps.rb", line: 2 },
     related: [{ path: "steps.rb", line: 3 }] }] };
@@ -31,6 +33,7 @@ test("outcomes ignore source extensions but retain finding ownership, severity a
   assert.notDeepEqual(outcome(report, 1), outcome(report, 2));
 });
 
+/** Checks independent expectations reject missing or suppressed findings, false positives, incompleteness, truncation, and incorrect exits. */
 test("independent expectations reject suppression, false positives and false completeness", () => {
   assert.deepEqual(deficits(expected, report, 1), []);
   for (const changed of [{ findings: [] }, { findings: [{ ...finding, suppression: {} }] },
@@ -44,6 +47,7 @@ test("independent expectations reject suppression, false positives and false com
   assert.ok(deficits(expected, report, 2).length);
 });
 
+/** Checks manifests reject missing or contradictory expectations, duplicate cases, and unsafe case names. */
 test("manifest rejects missing or contradictory expectations and unsafe case names", () => {
   const item = { id: "paired", rule: "duplicate-handler", sources: { typescript: "", ruby: "" }, feature: "",
     intent: "exact duplicate", expected };

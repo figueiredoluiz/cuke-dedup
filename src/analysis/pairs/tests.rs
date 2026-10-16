@@ -484,6 +484,7 @@ fn matcher_blocking_rejections_do_not_spend_handler_lcs_work() {
     assert!(findings.is_empty());
 }
 
+/// Checks that a surviving matcher-blocking pair reports its rounded matcher score and 60% ordered-handler similarity.
 #[test]
 fn matcher_blocking_survivors_retain_computed_similarity_evidence() {
     let mut left = definition();
@@ -544,6 +545,7 @@ fn matcher_blocking_survivors_retain_computed_similarity_evidence() {
     assert!(finding.evidence.comparison.is_some());
 }
 
+/// Checks that either enabled rule retains real similarity evidence when the other pair rule is disabled.
 #[test]
 fn disabled_source_rules_do_not_leak_placeholder_similarity_evidence() {
     let mut left = definition();
@@ -599,6 +601,7 @@ fn disabled_source_rules_do_not_leak_placeholder_similarity_evidence() {
     assert!(duplicate.evidence.comparison.is_some());
 }
 
+/// Checks that disabling parameterization avoids oversized matcher work for a structural-only candidate without marking analysis incomplete.
 #[test]
 fn disabled_parameterization_skips_unreachable_structural_matcher_work() {
     let mut left = definition();
@@ -648,6 +651,7 @@ fn disabled_parameterization_skips_unreachable_structural_matcher_work() {
     assert!(findings.is_empty());
 }
 
+/// Checks stage-specific work charges, shortcut exemptions, overflow handling, and exact budget boundaries.
 #[test]
 fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() {
     let mut left = definition();
@@ -798,6 +802,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
         .contains(CandidateSource::StructuralHandler)));
 }
 
+/// Checks suppression lookup charges include only the rules scheduled for each candidate source.
 #[test]
 fn work_accounting_contract_charges_only_rules_that_will_be_evaluated() {
     let left = definition();
@@ -888,6 +893,7 @@ fn work_accounting_contract_charges_only_rules_that_will_be_evaluated() {
     );
 }
 
+/// Checks that a saturated posting produces adjacent lexical candidates without recording skipped work.
 #[test]
 fn saturated_matcher_postings_use_a_linear_lexical_fallback() {
     let base = definition();
@@ -916,6 +922,7 @@ fn saturated_matcher_postings_use_a_linear_lexical_fallback() {
     );
 }
 
+/// Checks that saturated interleaved postings retain adjacent candidates within each behavior group.
 #[test]
 fn saturated_matcher_fallback_keeps_interleaved_postings_independent() {
     let base = definition();

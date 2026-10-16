@@ -110,10 +110,12 @@ async function run(failStep = "") {
   }
 }
 
+/** Checks native Windows paths convert to the drive-prefixed path format expected by Git Bash. */
 test("native Windows paths are converted for Git Bash", () => {
   assert.equal(bashPath("D:\\a\\cuke-dedup\\scripts", "win32"), "/d/a/cuke-dedup/scripts");
 });
 
+/** Checks an absent preflight trace returns an empty sequence of executed commands. */
 test("a failure before the first command produces an empty trace", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "cuke-dedup-missing-trace-"));
   try {
@@ -123,6 +125,7 @@ test("a failure before the first command produces an empty trace", async () => {
   }
 });
 
+/** Checks a successful preflight executes every configured inexpensive check in order. */
 test("preflight executes every inexpensive check in order", async () => {
   const { observed, result } = await run();
   assert.equal(result.status, 0, result.error?.stack ?? result.stderr);
@@ -130,6 +133,7 @@ test("preflight executes every inexpensive check in order", async () => {
 });
 
 for (const [index, step] of steps.entries()) {
+  /** Checks failure at each preflight step preserves its exit status and prevents later commands. */
   test(`preflight stops after ${step} fails`, async () => {
     const { observed, result } = await run(step);
     assert.equal(result.status, 23, result.error?.stack ?? result.stderr);
