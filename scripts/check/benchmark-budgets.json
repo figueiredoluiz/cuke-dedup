@@ -18,10 +18,13 @@
     "usage-scale:2000": { "peakMemoryBytes": 41943040, "findingCount": 0, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "ruby-single-file:2000": { "peakMemoryBytes": 41943040, "findingCount": 2000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "ruby-single-file:8000": { "peakMemoryBytes": 134217728, "findingCount": 8000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
+    "module-constants:1000": { "peakMemoryBytes": 33554432, "findingCount": 1000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
+    "module-constants:4000": { "peakMemoryBytes": 83886080, "findingCount": 4000, "analysisComplete": true, "analysisTruncated": false, "candidateComparisonsEvaluated": 0, "skippedCandidateComparisons": 0, "truncatedStructuralClasses": 0 },
     "candidate-limit:10000": { "peakMemoryBytes": 157286400, "findingCount": 1000, "analysisComplete": false, "analysisTruncated": true, "candidateComparisonsEvaluated": 1000, "skippedCandidateComparisons": 49994000, "truncatedStructuralClasses": 1 }
   },
   "scaling": {
     "unrelated": { "small": 2000, "large": 8000, "metric": "parsingMedianMs", "maxRatio": 6 },
-    "ruby-single-file": { "small": 2000, "large": 8000, "metric": "parsingMedianMs", "maxRatio": 6 }
+    "ruby-single-file": { "small": 2000, "large": 8000, "metric": "parsingMedianMs", "maxRatio": 6 },
+    "module-constants": { "small": 1000, "large": 4000, "metric": "parsingMedianMs", "maxRatio": 6 }
   }
 }

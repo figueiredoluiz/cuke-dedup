@@ -4579,3 +4579,155 @@ fn passing_a_registration_to_a_function_is_reported() {
         );
     }
 }
+
+/// Fingerprints every callable in `source` with and without the module literal cache, asserting
+/// equality, and returns how many callables it compared.
+fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, label: &str) -> usize {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&grammar_for_language(language))
+        .unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let (root, bytes) = (tree.root_node(), source.as_bytes());
+    let mut session = TypeScriptExtractionSession::default();
+    let registrations = detect_registrations(
+        root,
+        bytes,
+        detect_framework(root, bytes),
+        std::path::Path::new("steps.ts"),
+        &mut session.resolver,
+        &session.configured_registrations,
+    )
+    .unwrap();
+    let assertions = AssertionBindings::discover(root, bytes, &registrations, &BTreeSet::new());
+    let (cached, walked) = (ModuleScope::new(root), ModuleScope::uncached(root));
+    let mut compared = 0;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let pair = match node.kind() {
+            "method_definition" => Some((
+                fingerprint_method_handler(node, bytes, &assertions, &cached),
+                fingerprint_method_handler(node, bytes, &assertions, &walked),
+            )),
+            "arrow_function"
+            | "function_expression"
+            | "generator_function"
+            | "function_declaration"
+            | "generator_function_declaration"
+            | "call_expression" => Some((
+                Some(fingerprint_handler(
+                    node,
+                    None,
+                    bytes,
+                    true,
+                    &assertions,
+                    &cached,
+                )),
+                Some(fingerprint_handler(
+                    node,
+                    None,
+                    bytes,
+                    true,
+                    &assertions,
+                    &walked,
+                )),
+            )),
+            _ => None, // fail-closed: other kinds are not callables; the comparison floors fail an empty sweep
+        };
+        if let Some((left, right)) = pair {
+            assert_eq!(left, right, "{label}: {}", node_text(node, bytes));
+            compared += 1;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    compared
+}
+
+/// Cached module literals give every callable the fingerprint the per-handler walk computes, for
+/// each constant shape and binding position below and for every JS/TS fixture.
+#[test]
+fn module_literal_cache_matches_the_per_handler_walk() {
+    // Cached: plain, exported and multi-declarator literal `const`s. Walked per handler: every
+    // other shape. `FORWARD` and `EARLY` name a cached literal declared later, which the walk
+    // leaves unresolved; the remaining handlers shadow, capture or alias the cached names.
+    let matrix = r#"
+import { Given } from '@cucumber/cucumber';
+import { expect } from '@playwright/test';
+const FORWARD = LATER;
+const LIT_STRING = 'ready';
+const LIT_NUMBER = 7, LIT_TRUE = true, LIT_NULL = null, LIT_UNDEFINED = undefined;
+const LIT_FALSE = false;
+export const EXPORTED = 'ready';
+export const EXPORTED_A = 1, EXPORTED_B = 2;
+const LATER = 'ready';
+const TEMPLATE = `ready`, NEGATIVE = -1, AS_CONST = 'ready' as const, PARENTHESISED = ('ready');
+const OBJECT = { a: LIT_NUMBER }, ARRAY = [LIT_STRING], CALL = make(LIT_STRING);
+const ALIAS = LIT_STRING, CHAINED = ALIAS;
+const MIXED = 1, MIXED_CALL = make();
+const ANNOTATED: string = 'ready';
+const /* note */ COMMENTED = 'ready';
+let MUTABLE = 'ready';
+var LEGACY = 'ready';
+export let EXPORTED_MUTABLE = 'ready';
+const DUPLICATE = 1;
+const DUPLICATE = 2;
+function SAME_NAME() {}
+const SAME_NAME = 1;
+const { DESTRUCTURED } = { DESTRUCTURED: LIT_NUMBER };
+const helper = () => {
+  const LIT_STRING = 'inner';
+  const INNER_ALIAS = LIT_NUMBER;
+  Given('nested', () => expect(INNER_ALIAS).toBe(LIT_STRING));
+};
+Given('literals', () => {
+  expect(LIT_STRING).toBe(LIT_NUMBER);
+  work(LIT_TRUE, LIT_NULL, LIT_UNDEFINED, LIT_FALSE, EXPORTED, EXPORTED_B, LATER);
+});
+Given('other shapes', () => work(TEMPLATE, NEGATIVE, AS_CONST, PARENTHESISED, OBJECT, ARRAY,
+  CALL, ALIAS, CHAINED, FORWARD, MIXED, MIXED_CALL, ANNOTATED, COMMENTED, MUTABLE, LEGACY,
+  EXPORTED_MUTABLE, DUPLICATE, SAME_NAME, DESTRUCTURED));
+Given('local shadow', () => { const LIT_STRING = 'other'; expect(value).toBe(LIT_STRING); });
+Given('parameter shadow', (LIT_NUMBER) => expect(LIT_NUMBER).toBe(LIT_STRING));
+Given('shorthand', () => work({ LIT_STRING, EXPORTED }));
+Given('later alias', () => { const EARLY = DECLARED_AFTER; expect(EARLY).toBe(DECLARED_AFTER); });
+function named(value = LIT_STRING) { expect(value).toBe(LIT_NUMBER); }
+Given('named', named);
+Given('bound', named.bind(null, LIT_STRING));
+for (const LIT_STRING of ['loop']) { Given('loop', () => expect(value).toBe(LIT_STRING)); }
+try { run(); } catch (LIT_NUMBER) { Given('catch', () => expect(value).toBe(LIT_NUMBER)); }
+namespace Space { export const LIT_STRING = 'space'; Given('space', () => expect(value).toBe(LIT_STRING)); }
+class Steps {
+  static VALUE = LIT_STRING;
+  @Given('decorated') step(input = LIT_TRUE) { expect(input).toBe(ALIAS); }
+}
+const DECLARED_AFTER = 'late';
+"#;
+    let compared = assert_literal_cache_matches_walk(matrix, SourceLanguage::TypeScript, "matrix");
+    assert!(compared >= 50, "matrix compared only {compared} callables");
+
+    let (mut files, mut directories) = (Vec::new(), vec![PathBuf::from("fixtures")]);
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if let Some(language) = crate::source_adapter::language_for_path(&path)
+                .filter(|language| *language != SourceLanguage::Ruby)
+            {
+                files.push((path, language));
+            }
+        }
+    }
+    let mut compared = 0;
+    for (path, language) in &files {
+        let source = String::from_utf8_lossy(&fs::read(path).unwrap()).into_owned();
+        let label = path.display().to_string();
+        compared += assert_literal_cache_matches_walk(&source, *language, &label);
+    }
+    assert!(
+        files.len() >= 100 && compared >= 1000,
+        "{} fixture files, {compared} callables",
+        files.len()
+    );
+}
