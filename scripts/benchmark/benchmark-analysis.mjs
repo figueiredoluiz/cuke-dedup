@@ -36,6 +36,7 @@ const allProfiles = smoke
       { name: "repository-scale", sizes: [20], repositoryShape: true },
       { name: "usage-scale", sizes: [50], usageSteps: 100 },
       { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
+      { name: "ruby-single-file", sizes: [20], rubySingleFile: true },
     ]
   : [
       { name: "unrelated", sizes: [250, 500, 1000, 2000, 8000], sharedStructure: false },
@@ -50,6 +51,9 @@ const allProfiles = smoke
       { name: "repository-scale", sizes: [2000], repositoryShape: true },
       { name: "usage-scale", sizes: [2000], usageSteps: 2000 },
       { name: "candidate-limit", sizes: [10000], sharedStructure: true, candidateLimit: 1000 },
+      // Per-handler work over the whole file grows with file size; `benchmark:check` gates the
+      // parse-time ratio between these two sizes.
+      { name: "ruby-single-file", sizes: [2000, 8000], rubySingleFile: true },
     ];
 const profileFilter = process.env.CUKE_DEDUP_BENCH_PROFILE;
 const selectedProfiles = profileFilter
@@ -74,13 +78,15 @@ try {
       const root = join(temporary, `${profile.name}-${definitions}`);
       const output = join(temporary, "reports", `${profile.name}-${definitions}`);
       await mkdir(root, { recursive: true });
-      const generated = profile.repositoryShape
-        ? await writeRepositoryScale(root, definitions)
-        : profile.usageSteps
-          ? await writeUsageScale(root, definitions, profile.usageSteps)
-          : profile.variedHandlers
-            ? await writeVariedHandlerScale(root, definitions)
-            : await writeSingleFileProfile(root, definitions, profile);
+      const generated = profile.rubySingleFile
+        ? await writeRubySingleFile(root, definitions)
+        : profile.repositoryShape
+          ? await writeRepositoryScale(root, definitions)
+          : profile.usageSteps
+            ? await writeUsageScale(root, definitions, profile.usageSteps)
+            : profile.variedHandlers
+              ? await writeVariedHandlerScale(root, definitions)
+              : await writeSingleFileProfile(root, definitions, profile);
 
       run(root, output, generated.exitCode); // Warm filesystem and process-launch paths before recording.
       const samples = [];
@@ -536,6 +542,45 @@ async function writeUsageScale(root, definitions, featureSteps) {
     featureFiles: 1,
     candidatePairs: 0,
     findingCount: 0,
+    clusterFindings: [],
+    exitCode: 0,
+    analysisTruncated: false,
+  };
+}
+
+/**
+ * One Ruby file of block handlers. Ruby is opt-in, so the configuration selects the suite. Every
+ * definition is unused against the sentinel feature, and distinct callees keep pair analysis idle.
+ */
+async function writeRubySingleFile(root, definitions) {
+  await mkdir(join(root, "features", "step_definitions"), { recursive: true });
+  await writeFile(
+    join(root, "features", "step_definitions", "steps.rb"),
+    Array.from(
+      { length: definitions },
+      (_, index) => `Given('ruby step ${index}') do\n  action_${index}\nend`,
+    ).join("\n") + "\n",
+  );
+  await writeFile(
+    join(root, "features", "suite.feature"),
+    "Feature: Ruby benchmark\n  Scenario: Sentinel\n    Given a benchmark sentinel\n",
+  );
+  await writeFile(
+    join(root, ".cuke-dedup.json"),
+    `${JSON.stringify({
+      threshold: 100,
+      definitions: ["features/**/*.rb"],
+      features: ["features/**/*.feature"],
+    }, null, 2)}\n`,
+  );
+  return {
+    packages: 1,
+    definitions,
+    featureSteps: 1,
+    definitionFiles: 1,
+    featureFiles: 1,
+    candidatePairs: 0,
+    findingCount: definitions,
     clusterFindings: [],
     exitCode: 0,
     analysisTruncated: false,

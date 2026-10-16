@@ -17,6 +17,7 @@ impl Graph<'_> {
                 return;
             }
             let references = identifier_references(&nodes, &input.source);
+            let file_scope = super::super::bindings::RootScope::new(root, &input.source);
             for (assignment, left, value) in root_assignments(&nodes, root) {
                 if left.kind() != "identifier" {
                     continue;
@@ -144,7 +145,7 @@ impl Graph<'_> {
                         return false;
                     }
                     let mut handler =
-                        super::super::handler::fingerprint(block, root, &input.source, None);
+                        super::super::handler::fingerprint(block, &file_scope, &input.source, None);
                     handler.comparable = false;
                     registrations.push((statement.start_byte(), handler));
                     true
