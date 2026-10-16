@@ -17,6 +17,8 @@ cargo +stable install cargo-shear --version 1.13.4 --locked
 cargo install cargo-mutants --version 27.1.0 --locked
 ```
 
+The corpus check and `npm run benchmark` run every case after a failure, report each failing one under its case name, and exit 1; the benchmark then prints no results.
+
 Update `rust-toolchain.toml` when upgrading the development and release compiler together. Run `rustup update stable` to refresh the separate stable quality checks. Use `cargo +1.90.0 test --all-targets --all-features --locked` to check minimum-version compatibility locally.
 
 Enable the repository's pre-commit hook:

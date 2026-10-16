@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { attempt, reportFailures } from "../check/lib/keep-going.mjs";
 
 const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
 const repeats = Number.parseInt(process.env.CUKE_DEDUP_BENCH_REPEATS || "3", 10);
@@ -73,10 +74,14 @@ assert.ok(
 );
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-benchmark-"));
 const results = [];
+// Every profile size runs; the run fails after reporting each failing one, and prints no results.
+const failures = [];
 
 try {
   for (const profile of profiles) {
-    for (const definitions of profile.sizes) {
+    for (const definitions of profile.sizes) await attempt(failures, `${profile.name}-${definitions}`, () => measure(definitions));
+    /** Generates, runs and checks one size of `profile`, and records its result. */
+    async function measure(definitions) {
       const root = join(temporary, `${profile.name}-${definitions}`);
       const output = join(temporary, "reports", `${profile.name}-${definitions}`);
       await mkdir(root, { recursive: true });
@@ -175,7 +180,7 @@ try {
       });
     }
   }
-  console.log(
+  if (reportFailures(failures, "benchmark")) console.log(
     JSON.stringify(
       {
         schemaVersion: 3,

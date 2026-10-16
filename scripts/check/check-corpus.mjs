@@ -16,6 +16,7 @@ import {
   findingOwners,
   locationLabel,
 } from "./lib/recall-oracle.mjs";
+import { attempt, reportFailures } from "./lib/keep-going.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
 // analyzes with stale behavior, so a passing or failing run reflects code that is no longer
@@ -78,12 +79,16 @@ const recallManifest = JSON.parse(
 assert.equal(recallManifest.schemaVersion, 1);
 
 // Narrows a run to one recall case, so a deliberate break can be attributed to the case meant to
-// catch it. The aggregate run stops at the first failure and cannot show that.
+// catch it.
 const onlyCase = process.env.CUKE_DEDUP_CORPUS_CASE;
+// Every behavior, recall and parity case runs; the run fails after reporting each failing one.
+const failures = [];
 
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-corpus-"));
 try {
-  for (const testCase of onlyCase ? [] : manifest.cases) {
+  for (const testCase of onlyCase ? [] : manifest.cases) await attempt(failures, testCase.name, () => validateBehaviorCase(testCase));
+  /** Runs one behavior case and asserts its exit, summary, rules and stderr. */
+  async function validateBehaviorCase(testCase) {
     const caseRoot = join(temporary, testCase.name, "case");
     const output = join(temporary, testCase.name, "report");
     await cp(join(corpus, testCase.path), caseRoot, { recursive: true });
@@ -112,7 +117,8 @@ try {
     }
   }
 
-  const recall = await validateRecallCorpus(temporary);
+  let recall;
+  await attempt(failures, "recall corpus", async () => { recall = await validateRecallCorpus(temporary); });
 
   const parityCases = [
     { name: "threshold-group", root: join(corpus, "threshold-group"), exit: 0, errors: 2 },
@@ -123,14 +129,16 @@ try {
   ];
   let parityFindings = 0;
   for (const parityCase of parityCases) {
-    parityFindings += await validateReporterParity(parityCase, temporary);
+    await attempt(failures, `reporter parity ${parityCase.name}`, async () => { parityFindings += await validateReporterParity(parityCase, temporary); });
   }
-  console.log(
-    `Validated ${manifest.cases.length} behavior cases, ${recall.cases} recall cases, and ${parityFindings} parity findings across terminal, JSON, JSONL, HTML, and SARIF.`,
-  );
-  console.log(
-    `Recall baseline: ${recall.detected}/${recall.desired} desired findings (${(recall.ratio * 100).toFixed(1)}%); ${recall.knownMisses} explicit known misses.`,
-  );
+  if (reportFailures(failures, "corpus check")) {
+    console.log(
+      `Validated ${manifest.cases.length} behavior cases, ${recall.cases} recall cases, and ${parityFindings} parity findings across terminal, JSON, JSONL, HTML, and SARIF.`,
+    );
+    console.log(
+      `Recall baseline: ${recall.detected}/${recall.desired} desired findings (${(recall.ratio * 100).toFixed(1)}%); ${recall.knownMisses} explicit known misses.`,
+    );
+  }
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -338,7 +346,11 @@ async function validateRecallCorpus(temporary) {
   const names = cases.map((testCase) => testCase.name);
   const repeated = names.filter((name, index) => names.indexOf(name) !== index);
   assert.deepEqual(repeated, [], `duplicate recall case name(s): ${repeated.join(", ")}`);
-  for (const testCase of cases) {
+
+  const failuresBefore = failures.length;
+  for (const testCase of cases) await attempt(failures, `recall ${testCase.name}`, () => validateRecallCase(testCase));
+  /** Runs one recall case, asserts its findings and adds them to the corpus totals. */
+  async function validateRecallCase(testCase) {
     // `findingMatches` compares `rule` first, so an expectation without one can never match any
     // finding: as an absence it is satisfied vacuously, and as a positive it can only fail. Either
     // way it asserts nothing, which counting entries alone would not notice — and a malformed
@@ -358,9 +370,6 @@ async function validateRecallCorpus(temporary) {
       asserted.length > 0,
       `${testCase.name}: asserts no finding, non-finding or known miss, so it occupies a corpus slot without pinning anything`,
     );
-  }
-
-  for (const testCase of cases) {
     const caseRoot = join(temporary, "recall", testCase.name, "case");
     const output = join(temporary, "recall", testCase.name, "report");
     await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
@@ -445,7 +454,8 @@ async function validateRecallCorpus(temporary) {
 
   const desired = detected + knownMisses;
   const ratio = desired === 0 ? 1 : detected / desired;
-  if (!only) {
+  // A failed case leaves the totals partial, so corpus-wide figures need every case to complete.
+  if (!only && failures.length === failuresBefore) {
     // Recall is a ratio, so deleting an unsatisfied case raises it. Exact equality — matching how
     // `knownMissBaseline` below is asserted — makes the corpus ratchet in one direction only. A
     // `>=` floor would let the corpus grow to 60 and then shed all seven additions while staying
