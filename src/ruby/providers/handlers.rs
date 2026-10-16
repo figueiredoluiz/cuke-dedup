@@ -35,6 +35,14 @@ impl Graph<'_> {
         }
         let mut method_checks = BTreeMap::new();
         let total_nodes: usize = nodes.iter().map(Vec::len).sum();
+        // One scope per file, so every handler whose body lives there shares its lazy caches.
+        let file_scopes: Vec<_> = self
+            .units
+            .iter()
+            .map(|input| {
+                super::super::bindings::RootScope::new(input.tree.root_node(), &input.source)
+            })
+            .collect();
         for (unit, input) in self.units.iter().enumerate() {
             let root = input.tree.root_node();
             if root.has_error() {
@@ -239,13 +247,10 @@ impl Graph<'_> {
                     &self.units[body_unit].file.path,
                     &self.units[body_unit].source,
                 );
-                let file_scope = super::super::bindings::RootScope::new(
-                    self.units[body_unit].tree.root_node(),
-                    &self.units[body_unit].source,
-                );
+                let file_scope = &file_scopes[body_unit];
                 let mut fingerprint = super::super::handler::fingerprint(
                     body,
-                    &file_scope,
+                    file_scope,
                     &self.units[body_unit].source,
                     assertion_bindings.as_ref(),
                 );
@@ -300,7 +305,7 @@ impl Graph<'_> {
                 if body_unit != unit
                     && !super::super::bindings::Bindings::collect(
                         body,
-                        &file_scope,
+                        file_scope,
                         &self.units[body_unit].source,
                     )
                     .captures
@@ -312,7 +317,7 @@ impl Graph<'_> {
                     && assertion_bindings.as_ref().is_some_and(|assertions| {
                         assertions.rejected_comparison(
                             body,
-                            &file_scope,
+                            file_scope,
                             &self.units[body_unit].source,
                         )
                     })
