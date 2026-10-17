@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, chmodSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
@@ -340,6 +340,41 @@ test("restore returns a location to its snapshot", () => withTemporary((root) =>
     assert.equal(readFileSync(outside, "utf8"), "outside", name);
     assert.ok(lstatSync(reports).isDirectory(), name);
   }
+}));
+
+/** A file restore recreates keeps its permission bits, so restoring never widens access to a private file. */
+test("restore keeps a file's permissions", { skip: process.platform === "win32" }, () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  const secret = join(reports, "secret.json");
+  mkdirSync(reports);
+  writeFileSync(secret, "private");
+  chmodSync(secret, 0o600);
+  const before = snapshot(reports);
+  writeFileSync(secret, "changed");
+  chmodSync(secret, 0o644);
+  restore(reports, before);
+  // One read of the restored file: its mode and bytes from the same descriptor.
+  const restored = snapshot(secret).get(secret);
+  assert.equal(restored.mode & 0o777, 0o600);
+  assert.equal(restored.bytes.toString(), "private");
+}));
+
+/** A location inside another through a symbolic link is rejected before either run: the outer snapshot stops at the link. */
+test("paired runs reject a location reached through a link inside another", { skip: process.platform === "win32" }, () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  mkdirSync(reports);
+  mkdirSync(join(root, "elsewhere"));
+  symlinkSync(join(root, "elsewhere"), join(reports, "linked"));
+  let ran = false;
+  /** Records that a run started. */
+  const mark = () => { ran = true; return run(); };
+  assert.throws(() => pairRuns([reports, join(reports, "linked", "baseline.json")], mark, mark), /unsupported write location .* through the symbolic link/);
+  // The outer location itself a link, with the nested one its direct child.
+  assert.throws(() => pairRuns([join(reports, "linked"), join(reports, "linked", "a.json")], mark, mark), /through the symbolic link/);
+  assert.equal(ran, false);
+  // Control: the same nesting through a real directory is accepted.
+  mkdirSync(join(reports, "real"));
+  assert.deepEqual(pairRuns([reports, join(reports, "real", "baseline.json")], mark, mark).map(({ files }) => files.size), [0, 0]);
 }));
 
 /** Restoring a location that was missing removes every directory a run created on the way to it. */

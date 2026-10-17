@@ -1,7 +1,7 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
 // (timing, the scratch output directory, the version string) and what must not (everything else).
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
@@ -163,7 +163,7 @@ function leafEntry(path) {
     const stats = fstatSync(descriptor);
     // fail-closed: a FIFO, socket or device in a write location would block or not compare.
     if (!stats.isFile()) throw new Error(`unsupported file type in a write location: ${path}`);
-    return { kind: "file", time: stats.mtimeMs, bytes: readFileSync(descriptor) };
+    return { kind: "file", time: stats.mtimeMs, mode: stats.mode & 0o7777, bytes: readFileSync(descriptor) };
   } finally {
     closeSync(descriptor);
   }
@@ -249,7 +249,10 @@ export function restore(location, before) {
       symlinkSync(entry.target, path);
     } else if (changed(current, entry)) {
       rmSync(path, { force: true });
-      writeFileSync(path, entry.bytes);
+      // The new file gets the original mode (the umask can only narrow it, `chmod` then sets it exactly),
+      // so a recreated file never has more access than it had; modes a run changes are not restored.
+      writeFileSync(path, entry.bytes, { mode: entry.mode });
+      chmodSync(path, entry.mode);
       // The original time too, so a later write in the same clock tick still reads as a change.
       utimesSync(path, entry.time / 1000, entry.time / 1000);
     }
@@ -278,8 +281,10 @@ export function missingAncestor(path) {
  * `locations` added to its `files`. The locations return to their pre-baseline state before the
  * candidate runs, and the candidate's snapshot is taken after that, so a restored file is never
  * counted as a candidate write. Like `snapshot`, it requires that nothing else writes there meanwhile.
- * Limits: a location that is already a symbolic link is recorded as the link, not followed; locations
- * are compared as spelled after `resolve`, so two spellings differing only in letter case are distinct.
+ * Limits: a location that is already a symbolic link is recorded as the link, not followed, and one
+ * inside another through a link is rejected; locations are compared as spelled after `resolve`, so two
+ * spellings differing only in letter case are distinct; files sharing an inode (hard links) are
+ * restored as separate files; permission changes a run makes are neither compared nor restored.
  */
 export function pairRuns(locations, baseline, candidate) {
   // Resolved like snapshot keys, so a location's spelling cannot drop its output from the comparison.
@@ -291,6 +296,19 @@ export function pairRuns(locations, baseline, candidate) {
   const within = (path, parent) => path === parent || path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
   // A root inside another is covered by the outer snapshot; restoring it separately could write
   // through a link the outer root was replaced with.
+  for (const root of watched) {
+    for (const outer of watched.filter((other) => other !== root && within(root, other))) {
+      // Every component from the outer location down to the nested one's parent, the outer one included.
+      for (let current = dirname(root); ; current = dirname(current)) {
+        // fail-closed: the outer snapshot stops at a link, so a location reached through one would be
+        // neither compared nor restored.
+        if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
+          throw new Error(`unsupported write location ${root}: inside ${outer} through the symbolic link ${current}`);
+        }
+        if (current === outer) break;
+      }
+    }
+  }
   const roots = watched.filter((root) => !watched.some((other) => other !== root && within(root, other)));
   /** Whether `path` is one of the locations or below one; a missing parent is watched only to restore it. */
   const inside = (path) => resolved.some((location) => within(path, location));
