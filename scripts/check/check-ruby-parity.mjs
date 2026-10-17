@@ -36,7 +36,12 @@ function within(parent, child) {
 
 const sources = new Map();
 for (const file of manifest.sourceManifests) {
-  for (const item of (await readJson(file)).cases) sources.set(`${file}:${item.name}`, item);
+  // `isolation` checks a non-finding against fingerprint records and changes no expected outcome,
+  // so declaring one does not ask for a Ruby mapping reassessment.
+  for (const item of (await readJson(file)).cases) {
+    const expectedAbsent = item.expectedAbsent?.map(({ isolation, ...expected }) => expected);
+    sources.set(`${file}:${item.name}`, expectedAbsent ? { ...item, expectedAbsent } : item);
+  }
 }
 const groups = { ...manifest.groupOracles };
 const mappings = [...manifest.cases];
