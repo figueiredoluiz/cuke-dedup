@@ -1,11 +1,11 @@
 // Stands in for the analyzer binary under the existing checkers. Each invocation runs the baseline
-// binary (into a scratch output directory) and then the candidate with the original arguments,
-// records any difference, and reproduces the candidate's result so the checker sees only it.
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+// binary and then the candidate with the original arguments, records any difference, and
+// reproduces the candidate's result so the checker sees only it. Every location a run writes (the
+// report directory, explicit or configured, and an updated `--baseline`) is snapshotted before each
+// run and restored before the candidate runs, so both start from one state and each run is compared
+// on what it created, rewrote or deleted there.
 import { spawnSync } from "node:child_process";
-import { compareRuns, fileTimes, outputArgument, readFiles, withOutput, writeRecord } from "./output-equivalence.mjs";
+import { compareRuns, pairRuns, probeArgs, writeLocations, writeRecord } from "./output-equivalence.mjs";
 
 const {
   CUKE_DEDUP_EQUIVALENCE_BASELINE: baseline,
@@ -20,51 +20,28 @@ if (!baseline || !candidate || !log || !suite) {
 }
 
 const args = process.argv.slice(2);
-const output = outputArgument(args);
-const scratch = output ? mkdtempSync(join(tmpdir(), "cuke-equivalence-")) : null;
-// Streams stay bytes: compared exactly when not valid UTF-8, and forwarded unchanged.
+// Streams stay bytes: they are compared exactly when not valid UTF-8, and forwarded unchanged.
 const options = { maxBuffer: 512 * 1024 * 1024 };
 
-/** Replacements mapping a run's output directory, as given and as resolved, to one token. */
-function directoryTokens(directory) {
-  if (!directory) return [];
-  // Longest spelling first, so `/private/var/...` is not left with a `/private` prefix.
-  // A failed run may never create its output directory.
-  const spellings = existsSync(directory) ? [realpathSync(directory), directory] : [directory];
-  return [...new Set(spellings)]
-    .sort((a, b) => b.length - a.length)
-    .map((spelling) => [spelling, "<output>"]);
-}
-
-/** One run of `binary`, with the files it wrote to `directory` when the run writes reports. */
-function execute(binary, binaryArgs, directory) {
-  const before = directory ? fileTimes(directory) : null;
-  const run = spawnSync(binary, binaryArgs, options);
+/** One run of `binary` with the original arguments; `pairRuns` adds the files it wrote. */
+function execute(binary) {
+  const run = spawnSync(binary, args, options);
   if (run.error) throw run.error;
-  return {
-    status: run.status,
-    signal: run.signal,
-    stdout: run.stdout,
-    stderr: run.stderr,
-    files: directory ? readFiles(directory, before) : null,
-  };
+  return { status: run.status, signal: run.signal, stdout: run.stdout, stderr: run.stderr, files: null };
 }
 
-let signal = null;
-try {
-  const outputDirectory = output ? resolve(output.value) : null;
-  const baselineRun = execute(baseline, output ? withOutput(args, output, scratch) : args, scratch);
-  const candidateRun = execute(candidate, args, outputDirectory);
-  const differences = compareRuns(baselineRun, candidateRun, {
-    baseline: directoryTokens(scratch),
-    candidate: [...directoryTokens(outputDirectory), ...JSON.parse(versions || "[]")],
-  });
-  writeRecord(log, { suite, cwd: process.cwd(), args, differences });
-  process.stdout.write(candidateRun.stdout);
-  process.stderr.write(candidateRun.stderr);
-  signal = candidateRun.signal;
-  process.exitCode = candidateRun.status;
-} finally {
-  if (scratch) rmSync(scratch, { recursive: true, force: true });
-}
-if (signal) process.kill(process.pid, signal);
+// Both binaries' configurations, so a location either one resolves differently is still watched.
+const locations = [baseline, candidate].flatMap((binary) => {
+  const probe = spawnSync(binary, probeArgs(args), options);
+  // A probe that could not run, overflowed or was killed would silently leave its locations untracked.
+  if (probe.error) throw probe.error;
+  if (probe.signal) throw new Error(`${binary} --print-config terminated by ${probe.signal}`);
+  return writeLocations(probe.stdout.toString("utf8"), args);
+});
+const [baselineRun, candidateRun] = pairRuns(locations, () => execute(baseline), () => execute(candidate));
+const differences = compareRuns(baselineRun, candidateRun, { candidate: JSON.parse(versions || "[]") });
+writeRecord(log, { suite, cwd: process.cwd(), args, differences });
+process.stdout.write(candidateRun.stdout);
+process.stderr.write(candidateRun.stderr);
+process.exitCode = candidateRun.status;
+if (candidateRun.signal) process.kill(process.pid, candidateRun.signal);

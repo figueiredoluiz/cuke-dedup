@@ -1,31 +1,23 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
-// (timing, the scratch output directory, the version string) and what must not (everything else).
+// (timing, the version string) and what must not (everything else).
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
 const TERMINAL_TIMING = /Detection time: \d+(?:\.\d+)? ms/g;
 
-/** Index and value of the `--output` directory argument, or null when the run writes no directory. */
-export function outputArgument(args) {
+/** Index and value of the `name` option (default `--output`), or null when the run does not pass it. */
+export function outputArgument(args, name = "--output") {
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === "--output" && index + 1 < args.length) {
+    if (args[index] === name && index + 1 < args.length) {
       return { index, inline: false, value: args[index + 1] };
     }
-    if (args[index].startsWith("--output=")) {
-      return { index, inline: true, value: args[index].slice("--output=".length) };
+    if (args[index].startsWith(`${name}=`)) {
+      return { index, inline: true, value: args[index].slice(name.length + 1) };
     }
   }
   return null;
-}
-
-/** Copy of `args` whose `--output` directory is `directory`; other arguments are untouched. */
-export function withOutput(args, output, directory) {
-  const copy = [...args];
-  if (output.inline) copy[output.index] = `--output=${directory}`;
-  else copy[output.index + 1] = directory;
-  return copy;
 }
 
 /** Text with run-dependent values replaced: timing metrics plus each `[from, to]` replacement. */
@@ -40,29 +32,6 @@ function replace(text, replacements) {
     if (from) replaced = replaced.split(from).join(to);
   }
   return replaced;
-}
-
-/** Sorted `/`-separated relative paths of every file below `root`, or an empty list when it does not exist. */
-export function listFiles(root) {
-  const files = [];
-  /** Appends every file below `directory` to `files`. */
-  const walk = (directory) => {
-    let entries;
-    try {
-      entries = readdirSync(directory, { withFileTypes: true });
-    } catch (error) {
-      if (error.code === "ENOENT") return;
-      throw error;
-    }
-    for (const entry of entries) {
-      const full = join(directory, entry.name);
-      if (entry.isDirectory()) walk(full);
-      // One spelling on every platform, so report names compare equal across runs and hosts.
-      else files.push(relative(root, full).split(sep).join("/"));
-    }
-  };
-  walk(root);
-  return files.sort();
 }
 
 /** First line at which two texts differ, with both sides, or null when they are equal. */
@@ -359,20 +328,31 @@ export function pairRuns(locations, baseline, candidate) {
   return [first, observe(candidate, capture())];
 }
 
-/** Modification time of every file below `root`, keyed by relative path. */
-export function fileTimes(root) {
-  return new Map(listFiles(root).map((name) => [name, statSync(join(root, name)).mtimeMs]));
+/**
+ * Where a run writes outside a CLI `--output`, from the configuration its `--print-config` printed:
+ * the configured report directory, and the `--baseline` file under `--update-baseline`.
+ */
+export function writeLocations(printed, args) {
+  let config;
+  try {
+    config = JSON.parse(printed);
+  } catch {
+    // The configuration resolves before anything is written, so a run that prints none (`--help`,
+    // `--version`, a rejected argument or configuration) writes nothing.
+    return [];
+  }
+  // The printed `output` already reflects a CLI `--output`, resolved against the root as the analyzer does.
+  const reports = [resolve(config.root, config.output)];
+  const updated = args.includes("--update-baseline") ? outputArgument(args, "--baseline") : null;
+  return updated ? [...reports, resolve(config.root, updated.value)] : reports;
 }
 
-/**
- * Files below `root` created or rewritten since the `before` snapshot, as their bytes.
- *
- * A checker may reuse an output directory, so files a previous run left behind are not this run's.
- */
-export function readFiles(root, before = new Map()) {
-  return new Map([...fileTimes(root)]
-    .filter(([name, time]) => before.get(name) !== time)
-    .map(([name]) => [name, readFileSync(join(root, name))]));
+/** `args` with `--print-config` added as an option: before a `--` terminator, where it would read as a path. */
+export function probeArgs(args) {
+  const terminator = args.indexOf("--");
+  // After `--` the same spelling is a positional path, not the option.
+  if ((terminator === -1 ? args : args.slice(0, terminator)).includes("--print-config")) return args;
+  return terminator === -1 ? [...args, "--print-config"] : [...args.slice(0, terminator), "--print-config", ...args.slice(terminator)];
 }
 
 /**

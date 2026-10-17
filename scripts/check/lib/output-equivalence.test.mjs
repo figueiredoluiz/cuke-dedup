@@ -3,41 +3,58 @@ import assert from "node:assert/strict";
 import { existsSync, linkSync, lstatSync, chmodSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   changedFiles,
   compareRuns,
   DELETED,
-  fileTimes,
   firstDifference,
-  listFiles,
   missingAncestor,
   normalize,
   outputArgument,
-  readFiles,
   pairRuns,
+  probeArgs,
   readRecords,
   restore,
   snapshot,
   summarize,
-  withOutput,
+  writeLocations,
 } from "./output-equivalence.mjs";
 
 /** Analyzer run record with defaults for every field `over` does not set. */
 const run = (over = {}) => ({ status: 0, signal: null, stdout: "", stderr: "", files: null, ...over });
 
-/** Both `--output DIR` and `--output=DIR` are found and rewritten in place; other arguments stay. */
-test("output argument is found and replaced in both spellings", () => {
+/** Both `--name VALUE` and `--name=VALUE` are found; a trailing flag without a value is not. */
+test("option values are found in both spellings", () => {
   const spaced = [".", "--reporters", "json", "--output", "report", "--no-metrics"];
-  const found = outputArgument(spaced);
-  assert.deepEqual(found, { index: 3, inline: false, value: "report" });
-  assert.deepEqual(withOutput(spaced, found, "/tmp/x"), [".", "--reporters", "json", "--output", "/tmp/x", "--no-metrics"]);
-  const inline = [".", "--output=report"];
-  const foundInline = outputArgument(inline);
-  assert.deepEqual(foundInline, { index: 1, inline: true, value: "report" });
-  assert.deepEqual(withOutput(inline, foundInline, "/tmp/x"), [".", "--output=/tmp/x"]);
+  assert.deepEqual(outputArgument(spaced), { index: 3, inline: false, value: "report" });
+  assert.deepEqual(outputArgument([".", "--output=report"]), { index: 1, inline: true, value: "report" });
   assert.equal(outputArgument([".", "--reporters", "terminal"]), null);
   assert.equal(outputArgument([".", "--output"]), null);
+  assert.deepEqual(outputArgument([".", "--baseline-from-ref", "HEAD", "--baseline=b.json"], "--baseline"), { index: 3, inline: true, value: "b.json" });
+  assert.equal(outputArgument([".", "--baseline-from-ref", "HEAD"], "--baseline"), null);
+});
+
+/** Reports land in the printed output directory (a CLI `--output` included, root-relative); only `--update-baseline` writes `--baseline`. */
+test("write locations follow the printed configuration", () => {
+  const printed = JSON.stringify({ root: resolve("/project"), output: "reports/cuke-dedup" });
+  const reports = resolve("/project/reports/cuke-dedup");
+  assert.deepEqual(writeLocations(printed, ["."]), [reports]);
+  assert.deepEqual(writeLocations(printed, [".", "--baseline", "b.json"]), [reports]);
+  assert.deepEqual(writeLocations(printed, [".", "--baseline", "b.json", "--update-baseline"]), [reports, resolve("/project/b.json")]);
+  const explicit = JSON.stringify({ root: resolve("/project"), output: "elsewhere" });
+  assert.deepEqual(writeLocations(explicit, [".", "--output", "elsewhere", "--update-baseline", "--baseline", "b.json"]), [resolve("/project/elsewhere"), resolve("/project/b.json")]);
+  assert.deepEqual(writeLocations(explicit, [".", "--output", "elsewhere"]), [resolve("/project/elsewhere")]);
+  assert.deepEqual(writeLocations("cuke-dedup 0.12.2\n", ["--version"]), []);
+  assert.deepEqual(writeLocations("", ["."]), []);
+});
+
+/** The configuration probe adds `--print-config` as an option, before any `--`, and never twice. */
+test("probe arguments keep --print-config an option", () => {
+  assert.deepEqual(probeArgs([".", "--reporters", "json"]), [".", "--reporters", "json", "--print-config"]);
+  assert.deepEqual(probeArgs(["--output", "/tmp/r", "--", "."]), ["--output", "/tmp/r", "--print-config", "--", "."]);
+  assert.deepEqual(probeArgs([".", "--print-config"]), [".", "--print-config"]);
+  assert.deepEqual(probeArgs(["--output", "r", "--", "--print-config"]), ["--output", "r", "--print-config", "--", "--print-config"]);
 });
 
 /** Timing values and replacements are erased; every other number survives, so counts still compare. */
@@ -84,26 +101,6 @@ test("side-specific replacements reconcile output directories", () => {
     baseline: [["/tmp/scratch", "<output>"]],
     candidate: [["/work/report", "<output>"]],
   }), []);
-});
-
-/** Only files created or rewritten after the snapshot belong to the run; stale ones are ignored. */
-test("readFiles keeps only files written since the snapshot", () => {
-  const root = mkdtempSync(join(tmpdir(), "equivalence-test-"));
-  try {
-    mkdirSync(join(root, "nested"));
-    writeFileSync(join(root, "stale.json"), "old");
-    writeFileSync(join(root, "nested", "rewritten.json"), "old");
-    utimesSync(join(root, "stale.json"), 1, 1);
-    utimesSync(join(root, "nested", "rewritten.json"), 1, 1);
-    const before = fileTimes(root);
-    writeFileSync(join(root, "nested", "rewritten.json"), "new");
-    writeFileSync(join(root, "created.json"), "new");
-    assert.deepEqual(listFiles(root), ["created.json", "nested/rewritten.json", "stale.json"]);
-    assert.deepEqual([...readFiles(root, before)].map(([name, bytes]) => [name, bytes.toString()]).sort(), [["created.json", "new"], ["nested/rewritten.json", "new"]]);
-    assert.deepEqual(listFiles(join(root, "absent")), []);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 /** A suite with no invocation fails the verdict even when nothing mismatched. */
