@@ -16,7 +16,12 @@ built-in defaults
 ```
 
 `--config/-c <file>` bypasses automatic discovery. A missing or malformed explicit file is fatal.
-Relative configuration, output, and baseline paths are resolved from the analyzed root.
+A relative `--config` path is resolved from the analyzed root, not from the shell's working
+directory, like relative output and baseline paths:
+
+```sh
+cuke-dedup packages/billing --config .cuke-dedup.json   # reads packages/billing/.cuke-dedup.json
+```
 
 Without `--config`, CukeDedup stops at the first valid source in this order:
 
@@ -148,7 +153,7 @@ through a resolved import (see `safety-and-limitations.md`).
 
 `registrations` applies to JS/TS sources only. Every run still validates each entry as a JavaScript
 identifier, but the Ruby adapter does not read the names; Ruby forwarding helpers are inferred (see
-[Registrations and providers](discovery-and-frameworks.md#registrations-and-providers)).
+[Registrations and providers](discovery/cucumber-ruby.md#registrations-and-providers)).
 
 ## Trusted assertion modules
 

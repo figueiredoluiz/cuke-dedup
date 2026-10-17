@@ -16,110 +16,47 @@ Configure a rule as `off`, `warning`, or `error`. The CLI also accepts `warn` as
 
 Jest-Cucumber's inline scenario steps are positional rather than global matcher registrations. `duplicate-matcher`, `normalized-matcher`, `ambiguous-step`, `overlapping-matcher`, and `unused-definition` do not apply to them. The three handler-reuse rules still apply across Jest scenarios, and `duplicate-handler` can report identical matcher text. Handler pairs involving Jest-Cucumber or Vitest Cucumber Plugin must belong to the same framework, preserving their different argument conventions.
 
+Each rule has its own page with meaning, evidence, remediation and language support.
+
 ### duplicate-matcher
 
-Two definitions have the same matcher kind, source text, and effective regular-expression flags.
-Handlers are irrelevant: both definitions still claim the same step at runtime. Keep one
-definition or make the matchers intentionally distinct. Suppress only when the definitions cannot
-coexist in one runtime scope.
+Two definitions claim the same step at runtime: same matcher kind, source text and effective flags. Handlers are irrelevant. Details: [rules/duplicate-matcher.md](rules/duplicate-matcher.md).
 
 ### normalized-matcher
 
-Matchers become equal after Unicode, whitespace, placeholder, and regular-expression
-normalization, although their original source differs. Distinct matcher kinds or meaningful regex
-flags remain distinct. Consolidate the definitions or rewrite the intended distinction so it
-survives normalization.
+Matchers differ in source but become equal after Unicode, whitespace, placeholder and regular-expression normalization. Details: [rules/normalized-matcher.md](rules/normalized-matcher.md).
 
 ### ambiguous-step
 
-One concrete step from the discovered feature corpus matches multiple definitions. This rule does
-not speculate about steps absent from the corpus; `overlapping-matcher` handles that case. Narrow
-one matcher or remove the duplicate.
-
-The selected definitions form one comparison corpus; CukeDedup does not infer which definitions a runner loads for each feature. Before changing matchers in a monorepo or a suite with feature-local Cypress steps, check that the reported definitions actually coexist at runtime. Scope both definitions and features to that registry as described in [Corpus boundaries](discovery-and-frameworks.md#corpus-boundaries). Filtering only features still compares each selected step against every selected definition.
+A concrete step in the discovered features matches more than one definition. Proven by the corpus, never by speculation. Details: [rules/ambiguous-step.md](rules/ambiguous-step.md).
 
 ### overlapping-matcher
 
-Static analysis can synthesize a concrete Cucumber Expression accepted by two definitions, even
-if no discovered feature currently uses it. Equivalent matchers already covered by duplicate
-rules are not repeated, and unsupported regular expressions are never reversed into samples.
-
-The rule complements `ambiguous-step`: ambiguity is demonstrated by a discovered feature step,
-while overlap is demonstrated from definitions alone. Work shares `maxCandidateComparisons` with
-other pair rules and retains at most 10,000 findings. Reaching a limit marks analysis incomplete.
-Scanning definitions for witnesses evaluates no comparison, so a limit equal to the comparisons a
-corpus needs stays complete while its witness scans fit within four times the limit. The pass is
-incomplete when an overlap pair exceeds the remaining budget, witness scans exceed four times the
-limit, more than 10,000 findings would be retained, or suppression lookups exceed their work limit.
+Two matchers accept a synthesized step text even though no feature uses it. Complements `ambiguous-step` from definitions alone. Details: [rules/overlapping-matcher.md](rules/overlapping-matcher.md).
 
 ### duplicate-handler
 
-Different effective matchers use the same non-trivial handler after parameter and local-variable
-normalization. Empty, pending, unresolved, and otherwise non-comparable handlers are excluded.
-Exact handler matches also require equal behavior signatures. Handlers whose assertion arguments
-reference unresolved external values are excluded from handler comparisons; matcher checks still run.
-Consider one parameterized definition, but retain separate definitions when shared implementation
-is intentional domain vocabulary.
+Different matchers run the same handler after parameter and local-variable normalization, with equal behaviour signatures. Details: [rules/duplicate-handler.md](rules/duplicate-handler.md).
 
 ### near-duplicate-step
 
-Matcher wording is close and meaningful handlers share enough ordered behavior, with compatible
-structural or canonical-call evidence. Similar prose alone and unrelated actions do not qualify.
-Review the pair and consolidate only when both definitions express the same behavior.
-
-The required handler-similarity floor defaults to **0.70** and is configurable through
-`nearDuplicateHandlerSimilarity` (0.5–1.0). Raising it demands more handler evidence, which
-suppresses systematically-named steps whose matchers are near-identical but whose handlers act on
-different things; lowering it toward 0.5 restores the older, looser behaviour.
-
-When handlers are not structurally equivalent, they must share canonical action evidence: either
-a call action, including direct and fluent forms such as `page.click()` and
-`page.locator(...).click()`, or an assertion with the same matcher and subject shape. Expected
-assertion values and polarity remain semantic during final similarity verification.
-Decorated class methods must also have compatible runtime-affecting semantics: async versus sync,
-static versus instance, generator, getter, and setter differences veto a near-duplicate match.
-Call evidence includes inline callback bodies syntactically; deferred assertions are not treated as
-directly executed assertions.
-Deferred assertion sequences must match in value, polarity, and order for a near-duplicate finding.
-Shared wrapper calls cannot compensate for different deferred assertions. This conservatively skips
-fuzzy matches when one callback adds or reorders assertions; exact matcher checks still run.
+Matcher wording is close and the handlers share enough ordered behaviour. The handler-similarity floor is configurable (`nearDuplicateHandlerSimilarity`, default 0.70). Details: [rules/near-duplicate-step.md](rules/near-duplicate-step.md).
 
 ### parameterization-candidate
 
-Handlers preserve the same control flow and calls after literal normalization, and their matchers
-differ only in a small, value-like region — the token or two a parameter would stand in for — with
-compatible syntax and no polarity conflict. Matchers that share a prefix but then differ in a
-multi-word phrase describing different behaviour, or that conflict in polarity, are not proposed even
-when literal erasure collapses their handlers into one shape. Findings remain pair-specific so
-reports retain the differing literals and matcher text. Replace repeated literals with a parameter
-when it makes the test vocabulary clearer.
-
-Expected assertion values and polarity are not erased for this rule. For example,
-`expect(state).toBe('ready')` and `expect(state).toBe('idle')` express distinct expectations and
-do not produce a parameterization suggestion solely because their expected literals differ.
+Handlers keep the same structure after literal normalization and the matchers differ only in a small value-like region. Details: [rules/parameterization-candidate.md](rules/parameterization-candidate.md).
 
 ### unused-definition
 
-No successfully parsed concrete feature step matches a definition. This rule is disabled when the
-feature corpus is absent or incomplete because the run cannot prove non-use. Remove the
-definition, add the missing scenario, or suppress it when external or generated features provide
-the usage.
+No successfully parsed feature step matches the definition. Disabled when the feature corpus is absent or incomplete. Details: [rules/unused-definition.md](rules/unused-definition.md).
 
 ## Language support
 
 Rules run on the shared representation, but each source language supplies different evidence.
 Cucumber-Ruby support is experimental; its details are in
-[Cucumber-Ruby](discovery-and-frameworks.md#cucumber-ruby).
+[Cucumber-Ruby](discovery/cucumber-ruby.md).
 
-| Rule | JavaScript/TypeScript | Cucumber-Ruby |
-| --- | --- | --- |
-| `duplicate-matcher` | Supported. | Supported for static strings and `/.../` or `%r{...}` regex literals. |
-| `normalized-matcher`, `ambiguous-step`, `overlapping-matcher` | Supported. | Supported for Cucumber Expressions and the translated Ruby regex subset. Other regexes are indeterminate: the run is incomplete and they produce no overlap or unused findings. |
-| `duplicate-handler` | Supported, with assertion evidence from recognized assertion packages. | Exact supported handler structure. Assertion evidence comes only from an explicitly configured provider; RSpec, Minitest and Capybara assertions are compared as ordinary calls. Unresolved captures, constants or receiver identity make the handler non-comparable and the run incomplete. |
-| `near-duplicate-step` | Wording similarity plus handler-behavior overlap. | Wording similarity plus handler-behavior overlap: action streams for ordinary handlers whose every construct is modeled, configured assertion streams otherwise; a conflicting assertion is one differing event, as in JavaScript. Handlers with an unmodeled construct or an untrusted receiverless `expect` chain must be exactly equal. |
-| `parameterization-candidate` | Handler structures that differ in literal values. | Straight-line handlers of explicit simple-receiver calls with static string or numeric arguments; with a configured assertion provider, any supported handler abstracts its literal values. |
-| `unused-definition` | Feature-file usage. | Feature-file usage and literal `step` calls; dynamic `step`/`steps` calls disable the rule. |
-| Inline suppressions | `// cuke-dedup:ignore RULE -- REASON` | `# cuke-dedup:ignore RULE -- REASON` |
+Per-rule language support is on each rule page. Inline suppressions: JavaScript/TypeScript `// cuke-dedup:ignore RULE -- REASON`, Cucumber-Ruby `# cuke-dedup:ignore RULE -- REASON`.
 
 ## Exact groups and fuzzy pairs
 
