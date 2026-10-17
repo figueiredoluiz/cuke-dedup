@@ -63,6 +63,14 @@ test("normalization erases timing and replacements but keeps other numbers", () 
   assert.equal(normalize(json), '{"metrics":{"discoveryMs":0,"parsingMs":0,"analysisMs":0,"definitionFiles":4}}');
   assert.equal(normalize("Found 2 findings.\nDetection time: 41.7 ms"), "Found 2 findings.\nDetection time: 0 ms");
   assert.equal(normalize("/tmp/a/cuke-dedup.json 0.13.0", [["/tmp/a", "<output>"], ["0.13.0", "0.12.0"]]), "<output>/cuke-dedup.json 0.12.0");
+  // `--baseline-from-ref` checks out into a fresh `.tmpXXXXXX` directory per run; only for such a run,
+  // and only that checkout prefix, is erased.
+  const historical = { historical: true };
+  assert.equal(normalize("/tmp/.tmpAb3dE9/checkout/a.feature /tmp/.tmpAb3dE9/other", [], historical), "/tmp/.tmp<checkout>/checkout/a.feature /tmp/.tmpAb3dE9/other");
+  assert.equal(normalize("x /tmp/.tmpAb3dE9/checkout/r.ts: bad", [], historical), normalize("x /tmp/.tmpZz9Yx1/checkout/r.ts: bad", [], historical));
+  assert.notEqual(normalize("x .tmpAb3dE9/checkout/r.ts"), normalize("x .tmpZz9Yx1/checkout/r.ts"));
+  assert.deepEqual(compareRuns(run({ stdout: ".tmpAb3dE9/checkout/r.ts" }), run({ stdout: ".tmpZz9Yx1/checkout/r.ts" }), historical), []);
+  assert.deepEqual(compareRuns(run({ stdout: ".tmpAb3dE9/checkout/r.ts" }), run({ stdout: ".tmpZz9Yx1/checkout/r.ts" })).map(({ part }) => part), ["stdout"]);
 });
 
 /** The first differing line is reported with both sides, including a missing trailing line. */
