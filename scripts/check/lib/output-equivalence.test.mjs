@@ -93,7 +93,7 @@ test("readFiles keeps only files written since the snapshot", () => {
     writeFileSync(join(root, "nested", "rewritten.json"), "new");
     writeFileSync(join(root, "created.json"), "new");
     assert.deepEqual(listFiles(root), ["created.json", "nested/rewritten.json", "stale.json"]);
-    assert.deepEqual([...readFiles(root, before)].sort(), [["created.json", "new"], ["nested/rewritten.json", "new"]]);
+    assert.deepEqual([...readFiles(root, before)].map(([name, bytes]) => [name, bytes.toString()]).sort(), [["created.json", "new"], ["nested/rewritten.json", "new"]]);
     assert.deepEqual(listFiles(join(root, "absent")), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -109,6 +109,25 @@ test("summary fails on mismatches and on suites that made no invocation", () => 
   assert.deepEqual([empty.ok, empty.empty], [false, ["ruby"]]);
   const mismatch = summarize([clean, dirty], ["corpus", "ruby"]);
   assert.deepEqual([mismatch.ok, mismatch.mismatches.length, mismatch.invocations], [false, 1, { corpus: 1, ruby: 1 }]);
+});
+
+/** Output that is not valid UTF-8 compares by its exact bytes; valid text is still normalized. */
+test("binary output compares by bytes", () => {
+  /** A run whose stdout and report are `bytes`. */
+  const out = (bytes) => run({ stdout: Buffer.from(bytes), files: new Map([["report.bin", Buffer.from(bytes)]]) });
+  assert.deepEqual(compareRuns(out([0xff]), out([0xfe])).map(({ part }) => part), ["stdout", "file:report.bin"]);
+  assert.deepEqual(compareRuns(out([0xff]), out([0xff])), []);
+  assert.deepEqual(compareRuns(out([0xff]), out([0x78])).map(({ part }) => part), ["stdout", "file:report.bin"]);
+  assert.deepEqual(compareRuns(run({ stdout: Buffer.from("Detection time: 3 ms") }), run({ stdout: Buffer.from("Detection time: 9 ms") })), []);
+});
+
+/** A byte-order mark is content: output that gains or loses one differs. */
+test("a byte-order mark is not dropped", () => {
+  /** A run whose report is `bytes`. */
+  const report = (bytes) => run({ files: new Map([["cuke-dedup.json", Buffer.from(bytes)]]) });
+  const bom = [0xef, 0xbb, 0xbf, 0x7b, 0x7d];
+  assert.deepEqual(compareRuns(report(bom), report([0x7b, 0x7d])).map(({ part }) => part), ["file:cuke-dedup.json"]);
+  assert.deepEqual(compareRuns(report(bom), report(bom)), []);
 });
 
 /** Parallel shims each write their own record file; every record is read back whole, however large. */
