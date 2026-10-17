@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import {
   changedFiles,
   compareRuns,
@@ -11,10 +11,13 @@ import {
   fileTimes,
   firstDifference,
   listFiles,
+  missingAncestor,
   normalize,
   outputArgument,
   readFiles,
+  pairRuns,
   readRecords,
+  restore,
   snapshot,
   summarize,
   withOutput,
@@ -292,6 +295,139 @@ test("deleted files and links have their own states", () => {
   assert.deepEqual(compareRuns(file({ link: "/tmp/scratch/r.json" }), file({ link: "/work/report/r.json" }), sides), []);
   assert.deepEqual(compareRuns(file({ link: "/tmp/scratch/r.json" }), file({ link: "/work/report/s.json" }), sides).map(({ part }) => part), ["file:report"]);
 });
+
+/** A tree's contents as `[relative path, kind, file text or link target]`, for comparing whole states. */
+const describe = (root) => [...snapshot(root)].map(([path, entry]) => [relative(root, path), entry.kind, entry.kind === "file" ? entry.bytes.toString() : entry.target ?? ""])
+  .sort(([left], [right]) => left.localeCompare(right));
+
+/** Every kind of change a run can make is undone by `restore`, and nothing outside the location changes. */
+test("restore returns a location to its snapshot", () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  const outside = join(root, "outside.json");
+  const links = process.platform !== "win32";
+  /** Builds the same starting tree in `reports`. */
+  const seed = () => {
+    rmSync(reports, { recursive: true, force: true });
+    mkdirSync(join(reports, "dir"), { recursive: true });
+    for (const name of ["kept.json", "gone.json", "to-dir.json"]) writeFileSync(join(reports, name), name);
+    writeFileSync(join(reports, "dir", "inner.json"), "inner");
+    if (links) symlinkSync("kept.json", join(reports, "link"));
+    writeFileSync(outside, "outside");
+  };
+  // [name, change a run makes]
+  const rows = [
+    ["rewrite", () => writeFileSync(join(reports, "kept.json"), "changed")],
+    ["same tick", () => { writeFileSync(join(reports, "kept.json"), "kept.jsoX"); utimesSync(join(reports, "kept.json"), 1, 1); }],
+    ["create", () => { mkdirSync(join(reports, "new", "deep"), { recursive: true }); writeFileSync(join(reports, "new", "deep", "x.json"), "x"); }],
+    ["delete", () => rmSync(join(reports, "gone.json"))],
+    ["file to directory", () => { rmSync(join(reports, "to-dir.json")); mkdirSync(join(reports, "to-dir.json")); }],
+    ["directory to file", () => { rmSync(join(reports, "dir"), { recursive: true }); writeFileSync(join(reports, "dir"), "file"); }],
+    ["hard link to an outside file", () => { rmSync(join(reports, "kept.json")); linkSync(outside, join(reports, "kept.json")); }],
+    ...(links ? [
+      ["create link", () => symlinkSync(outside, join(reports, "new-link"))],
+      ["retarget link", () => { rmSync(join(reports, "link")); symlinkSync("gone.json", join(reports, "link")); }],
+      ["delete link", () => rmSync(join(reports, "link"))],
+      ["location replaced by a link", () => { rmSync(reports, { recursive: true }); symlinkSync(root, reports); }],
+    ] : []),
+  ];
+  for (const [name, change] of rows) {
+    seed();
+    const expected = describe(reports);
+    const before = snapshot(reports);
+    change();
+    restore(reports, before);
+    assert.deepEqual(describe(reports), expected, name);
+    assert.equal(readFileSync(outside, "utf8"), "outside", name);
+    assert.ok(lstatSync(reports).isDirectory(), name);
+  }
+}));
+
+/** Restoring a location that was missing removes every directory a run created on the way to it. */
+test("restore removes the missing ancestors a run created", () => withTemporary((root) => {
+  const location = join(root, "fresh", "deep", "baseline.json");
+  const ancestor = missingAncestor(location);
+  assert.equal(ancestor, join(root, "fresh"));
+  assert.equal(missingAncestor(root), null);
+  // A dangling link exists as a link; a path under a file does not exist.
+  if (process.platform !== "win32") {
+    symlinkSync(join(root, "nowhere"), join(root, "dangling"));
+    assert.equal(missingAncestor(join(root, "dangling")), null);
+  }
+  writeFileSync(join(root, "file.json"), "{}");
+  assert.equal(missingAncestor(join(root, "file.json", "child")), join(root, "file.json", "child"));
+  const before = snapshot(ancestor);
+  mkdirSync(dirname(location), { recursive: true });
+  writeFileSync(location, "[]");
+  restore(ancestor, before);
+  assert.equal(existsSync(join(root, "fresh")), false);
+}));
+
+/**
+ * Paired runs: a pre-existing file is not output, each run's changes inside the locations are, the
+ * candidate starts from the pre-baseline state, and how a location is spelled changes nothing.
+ */
+test("paired runs compare each run's changes from one starting state", () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  const report = join(reports, "cuke-dedup.json");
+  const baselineFile = join(root, "fresh", "baseline.json");
+  /** Starts from one stale report and no `fresh` directory. */
+  const seed = () => {
+    rmSync(join(root, "fresh"), { recursive: true, force: true });
+    rmSync(reports, { recursive: true, force: true });
+    mkdirSync(reports);
+    writeFileSync(report, "stale");
+    utimesSync(report, 1, 1);
+  };
+  /** A run writing `content` as its report and baseline, plus a file outside both locations. */
+  const write = (content) => () => {
+    writeFileSync(report, content);
+    mkdirSync(dirname(baselineFile), { recursive: true });
+    writeFileSync(baselineFile, content);
+    writeFileSync(join(root, "fresh", "unrelated.txt"), content);
+    return run();
+  };
+  let started;
+  /** The candidate records what it starts from, then writes `content`. */
+  const candidate = (content) => () => { started = [readFileSync(report, "utf8"), existsSync(join(root, "fresh"))]; return write(content)(); };
+  const spellings = [
+    [reports, baselineFile],
+    [`${reports}${sep}`, `${root}${sep}x${sep}..${sep}fresh${sep}baseline.json`],
+    [relative(process.cwd(), reports) || ".", relative(process.cwd(), baselineFile)],
+  ];
+  for (const locations of spellings) {
+    seed();
+    const [baselineRun, candidateRun] = pairRuns(locations, write("same"), candidate("same"));
+    assert.deepEqual(started, ["stale", false], String(locations));
+    assert.deepEqual([...candidateRun.files.keys()].sort(), [report, baselineFile].sort(), String(locations));
+    assert.deepEqual(compareRuns(baselineRun, candidateRun), [], String(locations));
+    seed();
+    assert.deepEqual(compareRuns(...pairRuns(locations, write("a"), candidate("b"))).map(({ part }) => part).sort(),
+      [`file:${baselineFile}`, `file:${report}`].sort(), String(locations));
+    seed();
+    // Nothing rewritten: the stale report is not output on either side.
+    assert.deepEqual(pairRuns(locations, () => run(), () => run()).map(({ files }) => files.size), [0, 0], String(locations));
+  }
+}));
+
+/** Nested locations restore once, from the outer one, so a parent replaced by a link is never written through. */
+test("nested locations never restore through a replaced parent", { skip: process.platform === "win32" }, () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  const outside = join(root, "outside");
+  for (const locations of [[join(reports, "a.json"), reports], [reports, join(reports, "a.json")]]) {
+    rmSync(reports, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+    mkdirSync(reports);
+    mkdirSync(outside);
+    writeFileSync(join(reports, "a.json"), "original");
+    writeFileSync(join(outside, "a.json"), "outside");
+    /** Replaces the report directory with a link to `outside`. */
+    const swap = () => { rmSync(reports, { recursive: true }); symlinkSync(outside, reports); return run(); };
+    pairRuns(locations, swap, () => run());
+    assert.equal(readFileSync(join(outside, "a.json"), "utf8"), "outside", String(locations));
+    assert.ok(lstatSync(reports).isDirectory(), String(locations));
+    assert.equal(readFileSync(join(reports, "a.json"), "utf8"), "original", String(locations));
+  }
+}));
 
 /** Parallel shims each write their own record file; every record is read back whole, however large. */
 test("shim records are separate files read back whole", async () => {

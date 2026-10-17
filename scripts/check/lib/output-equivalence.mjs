@@ -1,8 +1,8 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
 // (timing, the scratch output directory, the version string) and what must not (everything else).
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
 const TERMINAL_TIMING = /Detection time: \d+(?:\.\d+)? ms/g;
@@ -228,6 +228,82 @@ export function changedFiles(location, before) {
     .filter(([path, entry]) => entry.kind !== "directory" && (!now.has(path) || now.get(path).kind === "directory"))
     .map(([path]) => [path, DELETED]);
   return [...written, ...deleted];
+}
+
+/**
+ * Returns `location` to its `before` snapshot: removes what is new and puts back what changed. A
+ * changed file is recreated, never written into, so a run that left a hard link to an outside file
+ * cannot have that file overwritten; links are put back as links and never followed.
+ */
+export function restore(location, before) {
+  const now = snapshot(location);
+  for (const path of now.keys()) if (!before.has(path)) rmSync(path, { recursive: true, force: true });
+  // Parents precede children in a snapshot, so a directory exists before its entries are restored.
+  for (const [path, entry] of before) {
+    const current = now.get(path);
+    if (current && current.kind !== entry.kind) rmSync(path, { recursive: true, force: true });
+    if (entry.kind === "directory") mkdirSync(path, { recursive: true });
+    else if (entry.kind === "link") {
+      if (current?.kind === "link" && current.target === entry.target) continue;
+      rmSync(path, { force: true });
+      symlinkSync(entry.target, path);
+    } else if (changed(current, entry)) {
+      rmSync(path, { force: true });
+      writeFileSync(path, entry.bytes);
+      // The original time too, so a later write in the same clock tick still reads as a change.
+      utimesSync(path, entry.time / 1000, entry.time / 1000);
+    }
+  }
+}
+
+/** Whether anything, a dangling link included, exists at `path`; a parent that is a file means no. */
+function present(path) {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+  } catch (error) {
+    if (error.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+/** Outermost missing path among `path` and its ancestors, or null when `path` exists. */
+export function missingAncestor(path) {
+  let missing = null;
+  for (let current = resolve(path); !present(current); current = dirname(current)) missing = current;
+  return missing;
+}
+
+/**
+ * Runs `baseline`, then `candidate`, each with the files and links it created, changed or deleted in
+ * `locations` added to its `files`. The locations return to their pre-baseline state before the
+ * candidate runs, and the candidate's snapshot is taken after that, so a restored file is never
+ * counted as a candidate write. Like `snapshot`, it requires that nothing else writes there meanwhile.
+ * Limits: a location that is already a symbolic link is recorded as the link, not followed; locations
+ * are compared as spelled after `resolve`, so two spellings differing only in letter case are distinct.
+ */
+export function pairRuns(locations, baseline, candidate) {
+  // Resolved like snapshot keys, so a location's spelling cannot drop its output from the comparison.
+  const resolved = [...new Set(locations.map((location) => resolve(location)))];
+  // A missing location is watched from its outermost missing ancestor, so restoring removes every
+  // directory a run created on the way to it.
+  const watched = [...new Set(resolved.map((location) => missingAncestor(location) ?? location))];
+  /** Whether `path` is `parent` or below it. */
+  const within = (path, parent) => path === parent || path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+  // A root inside another is covered by the outer snapshot; restoring it separately could write
+  // through a link the outer root was replaced with.
+  const roots = watched.filter((root) => !watched.some((other) => other !== root && within(root, other)));
+  /** Whether `path` is one of the locations or below one; a missing parent is watched only to restore it. */
+  const inside = (path) => resolved.some((location) => within(path, location));
+  /** `run()` with what it changed inside the locations added to its files, and the snapshots taken before it. */
+  const observe = (run) => {
+    const before = roots.map((root) => [root, snapshot(root)]);
+    const result = run();
+    const written = before.flatMap(([root, entries]) => changedFiles(root, entries)).filter(([path]) => inside(path));
+    return { result: { ...result, files: new Map([...(result.files ?? []), ...written]) }, before };
+  };
+  const first = observe(baseline);
+  for (const [root, entries] of first.before) restore(root, entries);
+  return [first.result, observe(candidate).result];
 }
 
 /** Modification time of every file below `root`, keyed by relative path. */
