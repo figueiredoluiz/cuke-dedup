@@ -1,6 +1,6 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
 // (timing, the scratch output directory, the version string) and what must not (everything else).
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -73,6 +73,20 @@ export function firstDifference(left, right) {
   return { line: a.length, baseline: "<trailing>", candidate: "<trailing>" };
 }
 
+// `ignoreBOM` keeps a byte-order mark as a character, so output that gains or loses one differs.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** Output as compared: text when valid UTF-8, otherwise `{ binary }`, a digest of its exact bytes. */
+export function comparable(value) {
+  if (!Buffer.isBuffer(value)) return value;
+  try {
+    return UTF8.decode(value);
+  } catch {
+    // Lossy decoding would map different invalid bytes to the same replacement characters.
+    return { binary: createHash("sha256").update(value).digest("hex") };
+  }
+}
+
 /**
  * Differences between a baseline and a candidate run: exit status, streams and written files.
  *
@@ -88,13 +102,19 @@ export function compareRuns(baseline, candidate, { baseline: left = [], candidat
       candidate: candidate.signal ?? candidate.status,
     });
   }
-  for (const part of ["stdout", "stderr"]) {
-    const difference = firstDifference(
-      normalize(baseline[part], left),
-      normalize(candidate[part], right),
-    );
-    if (difference) differences.push({ part, ...difference });
-  }
+  /** Adds the difference between two outputs of `part`: text normalized and diffed, binary by digest. */
+  const compare = (part, before, after) => {
+    const [text, other] = [comparable(before), comparable(after)];
+    if (typeof text === "string" && typeof other === "string") {
+      const difference = firstDifference(normalize(text, left), normalize(other, right));
+      if (difference) differences.push({ part, ...difference });
+      return;
+    }
+    /** A label that differs whenever the bytes or the text/binary kind differ. */
+    const label = (value) => (typeof value === "string" ? "text" : `binary sha256:${value.binary}`);
+    if (label(text) !== label(other)) differences.push({ part, baseline: label(text), candidate: label(other) });
+  };
+  for (const part of ["stdout", "stderr"]) compare(part, baseline[part], candidate[part]);
   const baselineFiles = baseline.files ?? new Map();
   const candidateFiles = candidate.files ?? new Map();
   const names = [...new Set([...baselineFiles.keys(), ...candidateFiles.keys()])].sort();
@@ -107,11 +127,7 @@ export function compareRuns(baseline, candidate, { baseline: left = [], candidat
       });
       continue;
     }
-    const difference = firstDifference(
-      normalize(baselineFiles.get(name), left),
-      normalize(candidateFiles.get(name), right),
-    );
-    if (difference) differences.push({ part: `file:${name}`, ...difference });
+    compare(`file:${name}`, baselineFiles.get(name), candidateFiles.get(name));
   }
   return differences;
 }
@@ -122,14 +138,14 @@ export function fileTimes(root) {
 }
 
 /**
- * Files below `root` created or rewritten since the `before` snapshot, read as UTF-8.
+ * Files below `root` created or rewritten since the `before` snapshot, as their bytes.
  *
  * A checker may reuse an output directory, so files a previous run left behind are not this run's.
  */
 export function readFiles(root, before = new Map()) {
   return new Map([...fileTimes(root)]
     .filter(([name, time]) => before.get(name) !== time)
-    .map(([name]) => [name, readFileSync(join(root, name), "utf8")]));
+    .map(([name]) => [name, readFileSync(join(root, name))]));
 }
 
 /**

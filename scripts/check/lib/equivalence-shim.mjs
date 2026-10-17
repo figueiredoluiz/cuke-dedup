@@ -22,7 +22,8 @@ if (!baseline || !candidate || !log || !suite) {
 const args = process.argv.slice(2);
 const output = outputArgument(args);
 const scratch = output ? mkdtempSync(join(tmpdir(), "cuke-equivalence-")) : null;
-const options = { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 };
+// Streams stay bytes: compared exactly when not valid UTF-8, and forwarded unchanged.
+const options = { maxBuffer: 512 * 1024 * 1024 };
 
 /** Replacements mapping a run's output directory, as given and as resolved, to one token. */
 function directoryTokens(directory) {
