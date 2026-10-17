@@ -8,7 +8,7 @@ resource limits keep failures visible and bound the work performed.
 
 - The minimum supported Rust version is 1.90.
 - Node.js 24 LTS is recommended for the npm launcher. CI also tests Node.js 20 as the minimum compatible version; Node.js 20 has reached end of life upstream.
-- Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental, opt-in [Cucumber-Ruby](discovery-and-frameworks.md#cucumber-ruby) requires explicit source selection; its supported subset and completion gaps remain separate from JS/TS support.
+- Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental, opt-in [Cucumber-Ruby](discovery/cucumber-ruby.md) requires explicit source selection; its supported subset and completion gaps remain separate from JS/TS support.
 - Unsupported source languages are rejected rather than guessed.
 - Classic Gherkin and Gherkin Markdown are supported, including declared Gherkin dialects.
 - Before version 1.0, configuration and machine-report schemas may evolve between minor releases.
@@ -16,7 +16,7 @@ resource limits keep failures visible and bound the work performed.
 ## Static-analysis boundaries
 
 - Dynamic framework configuration may require explicit `features` or `definitions` patterns.
-- Jest-Cucumber setup provenance is limited to statically resolved inline synchronous callbacks and immutable aliases. Unmodeled setup, including `autoBindSteps`, named/escaped callbacks, generators, async callbacks, and dynamic properties, remains incomplete. Its positional steps are excluded from global matcher and feature-usage rules. Vitest support covers the ESM `vitest-cucumber-plugin` package, not the separate `@amiceli/vitest-cucumber` API. See [supported registrations](discovery-and-frameworks.md#supported-registrations).
+- Jest-Cucumber setup provenance is limited to statically resolved inline synchronous callbacks and immutable aliases. Unmodeled setup, including `autoBindSteps`, named/escaped callbacks, generators, async callbacks, and dynamic properties, remains incomplete. Its positional steps are excluded from global matcher and feature-usage rules. Vitest support covers the ESM `vitest-cucumber-plugin` package, not the separate `@amiceli/vitest-cucumber` API. See [supported registrations](discovery/registrations.md).
 - Named handlers declared in the same file resolve to their bodies. Imported or unresolved handler
   references remain usable for matcher and usage rules but are not compared by name.
 - JS/TS parse failures retain error-recovered definitions and warn as incomplete by default. `--fail-on-unparseable` makes those failures fatal; `--fail-on-incomplete` rejects all incompleteness. Unsupported regex constructs warn; malformed matcher escapes are operational errors.

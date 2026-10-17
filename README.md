@@ -186,6 +186,7 @@ and is distributed independently from the Cargo and npm packages.
 - [Reports](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/reports.md)
 - [CI and baselines](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/ci-and-baselines.md)
 - [Safety and limitations](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/safety-and-limitations.md)
+- [All pages](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/README.md), including the per-rule and discovery pages, the development reference and release steps
 
 ## Compatibility
 

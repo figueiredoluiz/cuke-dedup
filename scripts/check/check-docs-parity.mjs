@@ -30,9 +30,14 @@ const UNDOCUMENTED_ALLOWED = new Map([
   // ["--some-flag", "reason it is intentionally undocumented"],
 ]);
 
-const docs = readdirSync(join(root, "docs"))
-  .filter((name) => name.endsWith(".md"))
-  .map((name) => readFileSync(join(root, "docs", name), "utf8"))
+// Recursive: rule and discovery pages live in `docs/rules/` and `docs/discovery/`. The option
+// exists since Node 20.1; an older runtime would ignore it and scan the top level only, so fail
+// loudly instead of passing on a partial scan.
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+assert.ok(nodeMajor > 20 || (nodeMajor === 20 && nodeMinor >= 1), `Node 20.1 or newer is required for a recursive docs scan; found ${process.versions.node}`);
+const docs = readdirSync(join(root, "docs"), { recursive: true })
+  .filter((name) => String(name).endsWith(".md"))
+  .map((name) => readFileSync(join(root, "docs", String(name)), "utf8"))
   .join("\n");
 
 const flags = cliFlags(structBody(cliSource, "CheckOptions"));
