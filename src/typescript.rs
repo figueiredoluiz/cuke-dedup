@@ -20,7 +20,6 @@ use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding, ModuleScope,
 };
-pub use self::matcher::normalize_matcher;
 #[cfg(test)]
 use self::matcher::normalize_regular_expression;
 pub(crate) use self::matcher::rust_regex_expression;
@@ -202,12 +201,9 @@ impl UnresolvedRegistrationCalls {
 
 /// Reads and extracts step definitions from a discovered JavaScript or TypeScript file.
 pub fn extract_file(file: &SourceFile) -> Result<Vec<StepDefinition>> {
-    Ok(extract_file_detailed(file)?.definitions)
-}
-
-/// Reads a source file and returns definitions plus localized extraction diagnostics.
-pub fn extract_file_detailed(file: &SourceFile) -> Result<Extraction> {
-    adapter_for_language(file.language).extract_file(file)
+    Ok(adapter_for_language(file.language)
+        .extract_file(file)?
+        .definitions)
 }
 
 /// Extracts step definitions from in-memory source using `file` for syntax and locations.
