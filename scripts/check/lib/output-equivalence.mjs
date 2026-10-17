@@ -171,7 +171,8 @@ function leafEntry(path) {
 
 /**
  * Every directory, file and symbolic link at or below `path`, keyed by absolute path; empty when
- * it does not exist. Links, the location itself included, carry their target and are never
+ * it does not exist. Take it only while nothing writes to the location (between analyzer runs): a
+ * concurrent swap of a listed directory for a link is not detected. Links, the location itself included, carry their target and are never
  * followed, so a link loop or a link out of the location cannot hang the walk or pull in outside paths.
  */
 export function snapshot(path) {
@@ -189,7 +190,13 @@ export function snapshot(path) {
       else entries.set(child, leafEntry(child));
     }
   };
-  const root = lstatSync(location, { throwIfNoEntry: false });
+  let root;
+  try {
+    root = lstatSync(location, { throwIfNoEntry: false });
+  } catch (error) {
+    // A parent that is now a file (ENOTDIR) leaves the location as absent as a missing one.
+    if (error.code !== "ENOTDIR") throw error;
+  }
   if (root?.isSymbolicLink()) entries.set(location, { kind: "link", target: readlinkSync(location) });
   else if (root?.isDirectory()) visit(location);
   else if (root) entries.set(location, leafEntry(location));

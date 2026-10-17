@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import {
   changedFiles,
   compareRuns,
@@ -171,6 +171,75 @@ test("snapshot treats symbolic links as leaves", { skip: process.platform === "w
   assert.deepEqual(snapshot(join(reports, "out")).get(join(reports, "out")), { kind: "link", target: outside });
   // A trailing separator still names the link, not the directory it points to.
   assert.deepEqual([...snapshot(`${join(reports, "out")}/`)], [[join(reports, "out"), { kind: "link", target: outside }]]);
+}));
+
+/**
+ * Every spelling of a location records the same entries under the same absolute keys, and a snapshot
+ * taken through one spelling and compared through another reports no change: path spelling must never
+ * invent or hide output. Links at or below the resolved location are leaves recorded by target; a link
+ * above it is part of the configured path, traversed and kept as spelled in the keys.
+ */
+test("snapshot keys do not depend on how a location is spelled", () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  mkdirSync(join(reports, "nested"), { recursive: true });
+  writeFileSync(join(reports, "cuke-dedup.json"), "{}");
+  writeFileSync(join(reports, "nested", "a.json"), "{}");
+  writeFileSync(join(root, "baseline.json"), "[]");
+  const tree = [reports, join(reports, "cuke-dedup.json"), join(reports, "nested"), join(reports, "nested", "a.json")];
+  const links = process.platform !== "win32";
+  if (links) {
+    mkdirSync(join(root, "outside"));
+    writeFileSync(join(root, "outside", "secret.json"), "{}");
+    symlinkSync(join(root, "outside"), join(root, "dir-link"));
+    symlinkSync(join(root, "baseline.json"), join(root, "file-link"));
+    symlinkSync(join(root, "missing"), join(root, "dangling"));
+    symlinkSync(root, join(root, "parent-link"));
+  }
+  const viaParent = links ? join(root, "parent-link", "reports") : null;
+  // [spelling, expected entries as [key, kind]]
+  const rows = [
+    [reports, tree.map((key) => [key, key.endsWith(".json") ? "file" : "directory"])],
+    [`${reports}${sep}`, null],
+    [`${reports}${sep}${sep}`, null],
+    // Interpolated, not `join`ed: `join` would normalize the dot segments away before `snapshot` sees them.
+    [`${root}${sep}x${sep}..${sep}reports`, null],
+    [relative(process.cwd(), reports) || ".", null],
+    [join(root, "baseline.json"), [[join(root, "baseline.json"), "file"]]],
+    [`${join(root, "baseline.json")}${sep}`, [[join(root, "baseline.json"), "file"]]],
+    [join(root, "absent"), []],
+    [`${join(root, "absent", "deeper")}${sep}`, []],
+    ...(links ? [
+      [join(root, "dir-link"), [[join(root, "dir-link"), "link"]]],
+      [`${join(root, "dir-link")}${sep}`, [[join(root, "dir-link"), "link"]]],
+      [join(root, "file-link"), [[join(root, "file-link"), "link"]]],
+      [join(root, "dangling"), [[join(root, "dangling"), "link"]]],
+      // A link above the location is the configured path, not output: walked, keyed as spelled.
+      [viaParent, tree.map((key) => [key.replace(reports, viaParent), key.endsWith(".json") ? "file" : "directory"])],
+    ] : []),
+  ];
+  const expectedTree = rows[0][1];
+  for (const [spelling, expected] of rows) {
+    const entries = [...snapshot(spelling)].map(([key, entry]) => [key, entry.kind]).sort(([a], [b]) => a.localeCompare(b));
+    assert.deepEqual(entries, [...(expected ?? expectedTree)].sort(([a], [b]) => a.localeCompare(b)), spelling);
+  }
+  // A snapshot through one spelling, compared through another, shows no change.
+  for (const [first] of rows.slice(0, 5)) {
+    for (const [second] of rows.slice(0, 5)) assert.deepEqual(changedFiles(second, snapshot(first)), [], `${first} then ${second}`);
+  }
+}));
+
+/** A location under a file (ENOTDIR) is absent, not an error, so a parent replaced by a file reports deletions. */
+test("a location under a file snapshots as empty", () => withTemporary((root) => {
+  writeFileSync(join(root, "file.json"), "{}");
+  assert.equal(snapshot(join(root, "file.json", "not-a-location")).size, 0);
+  const reports = join(root, "reports");
+  const nested = join(reports, "nested");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(nested, "a.json"), "{}");
+  const before = snapshot(nested);
+  rmSync(reports, { recursive: true });
+  writeFileSync(reports, "now a file");
+  assert.deepEqual(changedFiles(nested, before), [[join(nested, "a.json"), DELETED]]);
 }));
 
 /** A FIFO, inside a location or as the location itself, fails instead of blocking or passing silently. */
