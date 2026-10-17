@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "knownMissBaseline": 1,
+  "unisolatedNegativeBaseline": 131,
   "minimumRecall": 0.6,
   "minimumCases": 64,
   "cases": [
@@ -1777,7 +1778,11 @@
           "matchers": [
             "the account is enabled",
             "the account is not enabled"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2416,7 +2421,11 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",

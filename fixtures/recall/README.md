@@ -24,6 +24,29 @@ Each case in `manifest.json` records one of three outcomes:
 When a known miss is fixed, move it to `expectedFindings` and reduce
 `knownMissBaseline`. New known misses must not be added to make CI pass.
 
+An `expectedAbsent` entry passes whenever its finding is missing, including when a participant was
+never analyzed or the pair differs in more than the case claims. For `duplicate-handler`,
+`near-duplicate-step`, `parameterization-candidate`, `duplicate-matcher` and `normalized-matcher`,
+an `isolation` object states why the finding is absent, and the corpus check verifies it against
+the run's `--emit-fingerprints` records:
+
+- `participants`: `path:line` labels, one distinct record each. Without it, each of the entry's
+  `matchers` must select exactly one record. Either way the participants' matchers must be exactly the
+  entry's `matchers`; with `relatedLocations`, their labels must be exactly the entry's primary and
+  related locations, and with a primary alone they must include it; `primaryPath` and
+  `primaryLine` come together. Every record must be schema
+  `"1"` with each compared field present.
+- `differs`: exactly the record fields that differ between participants, from `domain`,
+  `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher` and
+  `handler.exact|normalized|alphaNormalized|structural|behavior`.
+- `compared` (handler rules only): `true` when every participant is comparable and not trivial;
+  `false` when the pair was excluded from comparison. An excluded pair must have equal handler
+  fields, so differing handlers cannot also explain the absence.
+
+`unisolatedNegativeBaseline` counts entries of those rules without `isolation`. It is asserted
+exactly: declare an isolation and lower it. `unused-definition`, `ambiguous-step` and
+`overlapping-matcher` also depend on feature steps and take no `isolation`.
+
 The fixtures are synthetic and contain no private project data.
 
 Every recall case pins `expectedFeatureSteps`, including cases without feature files. The count is extracted keyword step records, not runner executions: feature and rule `Background` steps each count once in their source position, while a populated `Scenario Outline` contributes its step lines once per `Examples` data row. The `gherkin-axes` cases separately pin backgrounds and rules, outline rows, continuations, and classic plus Markdown files; `gherkin-attachments` pins that tags, data-table rows, and doc-string lines do not add steps. The earlier simple and mixed Gherkin cases remain as controls.

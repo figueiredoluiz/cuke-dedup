@@ -17,6 +17,7 @@ import {
   locationLabel,
 } from "./lib/recall-oracle.mjs";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
+import { checkIsolation, isolatable, parseRecords } from "./lib/negative-isolation.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
 // analyzes with stale behavior, so a passing or failing run reflects code that is no longer
@@ -331,6 +332,7 @@ async function validateRecallCorpus(temporary) {
   const knownIds = new Set();
   let detected = 0;
   let knownMisses = 0;
+  let unisolated = 0;
 
   // The recall baseline is only asserted over a full run, since a subset cannot meet a
   // corpus-wide ratio.
@@ -372,10 +374,11 @@ async function validateRecallCorpus(temporary) {
     );
     const caseRoot = join(temporary, "recall", testCase.name, "case");
     const output = join(temporary, "recall", testCase.name, "report");
+    const fingerprints = join(temporary, "recall", testCase.name, "fingerprints.jsonl");
     await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
     const run = spawnSync(
       binary,
-      [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output],
+      [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
       { cwd: caseRoot, encoding: "utf8" },
     );
     assert.equal(run.status, testCase.expectedExit || 0, `${testCase.name}: ${run.stderr}`);
@@ -429,8 +432,17 @@ async function validateRecallCorpus(temporary) {
       );
     }
 
+    // `!== undefined`, so a null or false declaration is checked and rejected, not counted as absent.
+    const isolated = (testCase.expectedAbsent || []).filter((expected) => expected.isolation !== undefined);
+    const records = isolated.length > 0 ? parseRecords(await readFile(fingerprints, "utf8")) : [];
     for (const expected of testCase.expectedAbsent || []) {
       assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
+      if (expected.isolation !== undefined) {
+        await attempt(failures, `recall ${testCase.name}: isolation ${JSON.stringify(expected.matchers ?? expected.isolation.participants)}`,
+          () => checkIsolation(records, expected));
+      } else if (isolatable(expected.rule)) {
+        unisolated += 1;
+      }
     }
     for (const miss of testCase.knownMisses || []) {
       assert.ok(miss.reason, `${testCase.name}: known miss ${miss.id} needs a reason`);
@@ -466,6 +478,14 @@ async function validateRecallCorpus(temporary) {
       recallManifest.minimumCases,
       `recall corpus has ${cases.length} cases against a floor of ${recallManifest.minimumCases}; `
         + "raise minimumCases when adding a case, and never lower it to drop one",
+    );
+    // Same one-way ratchet: declaring an isolation lowers the count, and a new negative without one
+    // raises it and fails.
+    assert.equal(
+      unisolated,
+      recallManifest.unisolatedNegativeBaseline,
+      `${unisolated} handler or matcher non-findings declare no isolation against a baseline of `
+        + `${recallManifest.unisolatedNegativeBaseline}; declare one, and lower the baseline when you do`,
     );
     assert.equal(
       knownMisses,
