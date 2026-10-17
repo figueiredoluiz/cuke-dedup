@@ -464,6 +464,96 @@ test("nested locations never restore through a replaced parent", { skip: process
   }
 }));
 
+/**
+ * Red paths: a failing run, snapshot or restore surfaces its error and never lets the candidate start
+ * from a changed or half-restored location; a failed baseline is still undone.
+ */
+test("paired runs fail closed on a failing run, snapshot or restore", () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  const report = join(reports, "cuke-dedup.json");
+  /** Starts from one report and no other entries. */
+  const seed = () => {
+    rmSync(reports, { recursive: true, force: true });
+    mkdirSync(reports);
+    writeFileSync(report, "original");
+  };
+  let candidateRan;
+  /** A candidate that records that it ran. */
+  const candidate = () => { candidateRan = true; return run(); };
+  // [name, baseline, error matcher, candidate expected to run]
+  const rows = [
+    ["baseline throws after writing", () => {
+      writeFileSync(report, "partial");
+      mkdirSync(join(reports, "created", "deep"), { recursive: true });
+      throw new Error("baseline failed");
+    }, /baseline failed/],
+  ];
+  for (const [name, baseline, error] of rows) {
+    seed();
+    candidateRan = false;
+    const expected = describe(reports);
+    assert.throws(() => pairRuns([reports], baseline, candidate), error, name);
+    assert.equal(candidateRan, false, name);
+    assert.deepEqual(describe(reports), expected, name);
+  }
+  // A failing candidate surfaces its error; the baseline had already been undone when it started.
+  seed();
+  let started;
+  assert.throws(() => pairRuns([reports], () => { writeFileSync(report, "baseline"); return run(); },
+    () => { started = readFileSync(report, "utf8"); throw new Error("candidate failed"); }), /candidate failed/);
+  assert.equal(started, "original");
+  if (process.platform === "win32") return;
+  // An unsupported entry already in a location fails before either run.
+  seed();
+  assert.equal(spawnSync("mkfifo", [join(reports, "pipe")]).status, 0);
+  let ran = false;
+  assert.throws(() => pairRuns([reports], () => { ran = true; return run(); }, candidate), /unsupported file type/);
+  assert.equal(ran, false);
+  // One a baseline creates fails the comparison and is removed by the restore; the candidate never runs.
+  seed();
+  candidateRan = false;
+  assert.throws(() => pairRuns([reports], () => { spawnSync("mkfifo", [join(reports, "made")]); return run(); }, candidate), /unsupported file type/);
+  assert.equal(candidateRan, false);
+  assert.equal(lstatSync(join(reports, "made"), { throwIfNoEntry: false }), undefined);
+  // A restore that cannot finish (a read-only directory a run left behind) throws; root bypasses the mode.
+  if (process.getuid?.() === 0) return;
+  seed();
+  candidateRan = false;
+  const sealed = join(reports, "sealed");
+  /** Leaves a file in a directory it then makes read-only. */
+  const seal = () => { mkdirSync(sealed); writeFileSync(join(sealed, "inner.json"), "x"); chmodSync(sealed, 0o500); return run(); };
+  try {
+    // Linux reports EACCES, macOS ENOTEMPTY, for a read-only directory that cannot be emptied.
+    assert.throws(() => pairRuns([reports], seal, candidate), /EACCES|EPERM|ENOTEMPTY/);
+    assert.equal(candidateRan, false);
+  } finally {
+    chmodSync(sealed, 0o700);
+  }
+  // Both errors are kept, the run's first, when a failed baseline also cannot be restored.
+  seed();
+  /** Leaves a sealed directory, then fails. */
+  const sealAndFail = () => { seal(); throw new Error("baseline failed"); };
+  try {
+    assert.throws(() => pairRuns([reports], sealAndFail, candidate), (error) => error instanceof AggregateError && /baseline failed/.test(error.errors[0].message));
+  } finally {
+    chmodSync(sealed, 0o700);
+  }
+  // One location that cannot be restored does not stop the others from being restored.
+  seed();
+  const other = join(root, "other");
+  rmSync(other, { recursive: true, force: true });
+  mkdirSync(other);
+  writeFileSync(join(other, "report.json"), "original");
+  /** Seals `reports`, overwrites the other location's report, then fails. */
+  const both = () => { seal(); writeFileSync(join(other, "report.json"), "partial"); throw new Error("baseline failed"); };
+  try {
+    assert.throws(() => pairRuns([reports, other], both, candidate), AggregateError);
+    assert.equal(readFileSync(join(other, "report.json"), "utf8"), "original");
+  } finally {
+    chmodSync(sealed, 0o700);
+  }
+}));
+
 /** Parallel shims each write their own record file; every record is read back whole, however large. */
 test("shim records are separate files read back whole", async () => {
   const root = mkdtempSync(join(tmpdir(), "equivalence-test-"));

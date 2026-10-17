@@ -150,19 +150,24 @@ const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.
  * The non-directory entry at `path`, read through one descriptor so its time and bytes describe the
  * same file: a link by its target (never followed), a regular file by time and bytes.
  */
-function leafEntry(path) {
+function leafEntry(path, lenient) {
   let descriptor;
   try {
     descriptor = openSync(path, NO_FOLLOW);
   } catch (error) {
     // `O_NOFOLLOW` refuses a link with ELOOP, so a link swapped in after classification stays a leaf.
     if (error.code === "ELOOP") return { kind: "link", target: readlinkSync(path) };
+    // A socket cannot be opened; to `restore` it is just something to remove.
+    if (lenient) return { kind: "other" };
     throw error;
   }
   try {
     const stats = fstatSync(descriptor);
-    // fail-closed: a FIFO, socket or device in a write location would block or not compare.
-    if (!stats.isFile()) throw new Error(`unsupported file type in a write location: ${path}`);
+    if (!stats.isFile()) {
+      if (lenient) return { kind: "other" };
+      // fail-closed: a FIFO, socket or device in a write location would block or not compare.
+      throw new Error(`unsupported file type in a write location: ${path}`);
+    }
     return { kind: "file", time: stats.mtimeMs, mode: stats.mode & 0o7777, bytes: readFileSync(descriptor) };
   } finally {
     closeSync(descriptor);
@@ -174,8 +179,10 @@ function leafEntry(path) {
  * it does not exist. Take it only while nothing writes to the location (between analyzer runs): a
  * concurrent swap of a listed directory for a link is not detected. Links, the location itself included, carry their target and are never
  * followed, so a link loop or a link out of the location cannot hang the walk or pull in outside paths.
+ * A FIFO, socket or device throws, unless `lenient` (for `restore`, which only removes it) records it
+ * as `{ kind: "other" }`.
  */
-export function snapshot(path) {
+export function snapshot(path, { lenient = false } = {}) {
   // `resolve` drops a trailing separator, which would make `lstat` resolve a link to its target.
   const location = resolve(path);
   const entries = new Map();
@@ -187,7 +194,7 @@ export function snapshot(path) {
       const child = join(path, entry.name);
       if (entry.isSymbolicLink()) entries.set(child, { kind: "link", target: readlinkSync(child) });
       else if (entry.isDirectory()) visit(child);
-      else entries.set(child, leafEntry(child));
+      else entries.set(child, leafEntry(child, lenient));
     }
   };
   let root;
@@ -199,7 +206,7 @@ export function snapshot(path) {
   }
   if (root?.isSymbolicLink()) entries.set(location, { kind: "link", target: readlinkSync(location) });
   else if (root?.isDirectory()) visit(location);
-  else if (root) entries.set(location, leafEntry(location));
+  else if (root) entries.set(location, leafEntry(location, lenient));
   return entries;
 }
 
@@ -236,7 +243,8 @@ export function changedFiles(location, before) {
  * cannot have that file overwritten; links are put back as links and never followed.
  */
 export function restore(location, before) {
-  const now = snapshot(location);
+  // Lenient: an unsupported entry a run created is removed, not a reason to leave the location changed.
+  const now = snapshot(location, { lenient: true });
   for (const path of now.keys()) if (!before.has(path)) rmSync(path, { recursive: true, force: true });
   // Parents precede children in a snapshot, so a directory exists before its entries are restored.
   for (const [path, entry] of before) {
@@ -312,16 +320,43 @@ export function pairRuns(locations, baseline, candidate) {
   const roots = watched.filter((root) => !watched.some((other) => other !== root && within(root, other)));
   /** Whether `path` is one of the locations or below one; a missing parent is watched only to restore it. */
   const inside = (path) => resolved.some((location) => within(path, location));
-  /** `run()` with what it changed inside the locations added to its files, and the snapshots taken before it. */
-  const observe = (run) => {
-    const before = roots.map((root) => [root, snapshot(root)]);
+  /** Every watched root with its current snapshot. */
+  const capture = () => roots.map((root) => [root, snapshot(root)]);
+  /** `run()` with what it changed inside the locations since `before` added to its files. */
+  const observe = (run, before) => {
     const result = run();
     const written = before.flatMap(([root, entries]) => changedFiles(root, entries)).filter(([path]) => inside(path));
-    return { result: { ...result, files: new Map([...(result.files ?? []), ...written]) }, before };
+    return { ...result, files: new Map([...(result.files ?? []), ...written]) };
   };
-  const first = observe(baseline);
-  for (const [root, entries] of first.before) restore(root, entries);
-  return [first.result, observe(candidate).result];
+  /** Returns every watched root to `before`, attempting each even when another fails. */
+  const restoreAll = (before) => {
+    const errors = [];
+    for (const [root, entries] of before) {
+      try {
+        restore(root, entries);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "watched locations could not be restored");
+  };
+  const initial = capture();
+  let first;
+  try {
+    first = observe(baseline, initial);
+  } catch (error) {
+    // A failed baseline still leaves its partial changes behind; undo them, keep its error first.
+    try {
+      restoreAll(initial);
+    } catch (restoreError) {
+      throw new AggregateError([error, restoreError], "baseline run failed and its locations could not be restored");
+    }
+    throw error;
+  }
+  // A failed restore throws here, so the candidate never starts from a half-restored location.
+  restoreAll(initial);
+  return [first, observe(candidate, capture())];
 }
 
 /** Modification time of every file below `root`, keyed by relative path. */
