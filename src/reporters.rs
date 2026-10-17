@@ -29,6 +29,14 @@ pub const JSON_SCHEMA_VERSION: &str = "3";
 /// Schema version written into each JSON Lines record.
 pub const JSONL_SCHEMA_VERSION: &str = "3";
 
+const JSON_REPORT_FILE: &str = "cuke-dedup.json";
+const HTML_REPORT_FILE: &str = "cuke-dedup.html";
+const SARIF_REPORT_FILE: &str = "cuke-dedup.sarif";
+
+/// File names of the reports written inside the output directory.
+pub(crate) const REPORT_FILE_NAMES: [&str; 3] =
+    [JSON_REPORT_FILE, HTML_REPORT_FILE, SARIF_REPORT_FILE];
+
 /// Writes every configured report and returns the paths of file-based reports.
 pub fn write_reports(
     context: &ReportContext<'_>,
@@ -78,7 +86,7 @@ fn write_reports_context(
                 terminal::write_terminal_with_color(context, terminal, terminal_color)?
             }
             ReporterKind::Json => {
-                let path = config.output_path("cuke-dedup.json");
+                let path = config.output_path(JSON_REPORT_FILE);
                 ensure_parent(&path)?;
                 fs::write(
                     &path,
@@ -89,7 +97,7 @@ fn write_reports_context(
             }
             ReporterKind::Jsonl => jsonl::write_jsonl_context(context, metadata, terminal)?,
             ReporterKind::Html => {
-                let path = config.output_path("cuke-dedup.html");
+                let path = config.output_path(HTML_REPORT_FILE);
                 ensure_parent(&path)?;
                 fs::write(
                     &path,
@@ -99,7 +107,7 @@ fn write_reports_context(
                 written.push(path);
             }
             ReporterKind::Sarif => {
-                let path = config.output_path("cuke-dedup.sarif");
+                let path = config.output_path(SARIF_REPORT_FILE);
                 ensure_parent(&path)?;
                 fs::write(
                     &path,

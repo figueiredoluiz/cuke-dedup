@@ -73,6 +73,26 @@ The GitHub Action can generate SARIF alongside terminal or HTML output. Uploadin
 code-scanning platform is controlled by the consuming workflow and may require additional
 permissions.
 
+## Fingerprint oracle
+
+`--emit-fingerprints FILE` writes the per-definition evidence the analyzer compared, for test tooling that must tell "no finding" apart from "nothing analyzed". It is not a reporter: stdout, stderr, report files and the exit code are the same with or without it.
+
+- One compact JSON line per analyzed definition, sorted by path, line and column. A definition from an excluded, unselected or unreadable source, or one removed by an uncertain registration, has no line; an empty corpus writes an empty file.
+- Every definition extracted from the current tree is written, including under `--changed-since`; `--baseline-from-ref` does not write the baseline revision's definitions.
+- A relative `FILE` is resolved from the analysis root. Its parent directory must exist.
+- The destination is checked after analysis and before the baseline is updated; the records are written after the baseline step and before any report. A run that fails before the records are written removes a file it created and leaves an existing file unchanged, so use a fresh path per run.
+- The run exits with code 2, with an error naming the path, when the destination:
+  - cannot be created (missing parent directory, no permission);
+  - exists but is not a regular file (a directory, a device or a FIFO);
+  - is the same file as `cuke-dedup.json`, `cuke-dedup.html` or `cuke-dedup.sarif` in the output directory (all three, whatever reporters are enabled) or as the `--baseline` file (with or without `--update-baseline`). A `..` path, a symbolic link, a hard link or a case-insensitive spelling counts only when it leads to one of those files;
+  - cannot be checked against one of those files because the file's identity cannot be read (for example, its directory cannot be searched).
+
+  A rejection truncates nothing, creates no file and changes no baseline. `--print-config` rejects the flag.
+
+Fields, in this order: `schemaVersion` (`"1"`), `path` (root-relative, `/`-separated), `line`, `column`, `domain` (`ecmascript` or `ruby`), `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher`, `definitionFingerprint` (the value reports use as `leftFingerprint`/`rightFingerprint`), and `handler` with `exact`, `normalized`, `alphaNormalized`, `structural`, `behavior`, `comparable` and `trivial`.
+
+Each `handler` representation is a 32-hex digest of the analyzer's comparison key: equal digests mean the analyzer treats that representation as equal. Digests are comparable within one build only. `duplicate-handler`, `parameterization-candidate` and `near-duplicate-step` consider a pair only when both definitions have `comparable: true` and `trivial: false`. Matcher text is written verbatim, without report sanitization or bounds.
+
 ## Output safety and bounds
 
 - Handler snippets are bounded before reports embed them.

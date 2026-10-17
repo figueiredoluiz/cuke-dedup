@@ -1,6 +1,7 @@
 //! Rule evaluation over the shared step-definition representation.
 
 mod evidence;
+pub(crate) mod fingerprints;
 mod pairs;
 mod similarity;
 mod string_metrics;

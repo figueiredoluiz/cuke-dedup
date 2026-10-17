@@ -26,7 +26,7 @@ pub(super) fn definition_comparison(
 
 /// Hashes matcher kind, normalized matcher, matcher flags and alpha-normalized handler into a
 /// 32-hex-digit fingerprint; parts are length-prefixed, so bytes cannot shift between components.
-fn definition_semantic_fingerprint(definition: &StepDefinition) -> String {
+pub(super) fn definition_semantic_fingerprint(definition: &StepDefinition) -> String {
     let matcher_kind = match definition.matcher_kind {
         MatcherKind::Literal => "literal",
         MatcherKind::CucumberExpression => "cucumber-expression",
