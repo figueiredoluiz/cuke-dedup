@@ -1,11 +1,13 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
-// (timing, the version string) and what must not (everything else).
+// (timing, the version string, the private baseline checkout) and what must not (everything else).
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
 const TERMINAL_TIMING = /Detection time: \d+(?:\.\d+)? ms/g;
+// `--baseline-from-ref` extracts the revision into a fresh `tempfile` directory on every run.
+const SNAPSHOT_CHECKOUT = /\.tmp[A-Za-z0-9]{6}\/checkout\//g;
 
 /** Index and value of the `name` option (default `--output`), or null when the run does not pass it. */
 export function outputArgument(args, name = "--output") {
@@ -21,8 +23,10 @@ export function outputArgument(args, name = "--output") {
 }
 
 /** Text with run-dependent values replaced: timing metrics plus each `[from, to]` replacement. */
-export function normalize(text, replacements = []) {
-  return replace(text.replace(TIMING_KEYS, "$10").replace(TERMINAL_TIMING, "Detection time: 0 ms"), replacements);
+export function normalize(text, replacements = [], { historical = false } = {}) {
+  const stable = text.replace(TIMING_KEYS, "$10").replace(TERMINAL_TIMING, "Detection time: 0 ms");
+  // Only a `--baseline-from-ref` run has a checkout; elsewhere the same spelling is real output.
+  return replace(historical ? stable.replace(SNAPSHOT_CHECKOUT, ".tmp<checkout>/checkout/") : stable, replacements);
 }
 
 /** `text` with each side-specific literal replacement applied, and nothing else. */
@@ -67,7 +71,7 @@ export function comparable(value) {
  * Each side is normalized with its own replacements, so both can map their own output directory
  * and version string to one shared spelling.
  */
-export function compareRuns(baseline, candidate, { baseline: left = [], candidate: right = [] } = {}) {
+export function compareRuns(baseline, candidate, { baseline: left = [], candidate: right = [], historical = false } = {}) {
   const differences = [];
   if (baseline.status !== candidate.status || baseline.signal !== candidate.signal) {
     differences.push({
@@ -80,7 +84,7 @@ export function compareRuns(baseline, candidate, { baseline: left = [], candidat
   const compare = (part, before, after) => {
     const [text, other] = [comparable(before), comparable(after)];
     if (typeof text === "string" && typeof other === "string") {
-      const difference = firstDifference(normalize(text, left), normalize(other, right));
+      const difference = firstDifference(normalize(text, left, { historical }), normalize(other, right, { historical }));
       if (difference) differences.push({ part, ...difference });
       return;
     }

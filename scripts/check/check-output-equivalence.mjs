@@ -2,10 +2,11 @@
 //
 // Refactors and performance work must not change what the analyzer reports. This check builds the
 // analyzer at a baseline Git ref and runs the existing corpus, Ruby, language-parity and benchmark
-// checkers with a shim in place of the binary. Every invocation runs both binaries on the same
-// input and compares exit status, stdout, stderr and every written report, after removing timing
-// metrics and the version string. Any difference fails the check, and so does a suite that made no
-// invocation: a checker that silently stopped calling the binary would otherwise pass vacuously.
+// checkers, and the `tests/cli.rs` integration tests, with a shim in place of the binary. Every
+// invocation runs both binaries on the same input and compares exit status, stdout, stderr and every
+// written report, after removing timing metrics and the version string. Any difference fails the
+// check, and so does a suite that made no invocation: a checker that silently stopped calling the
+// binary would otherwise pass vacuously.
 //
 // The checkers still assert their own oracles against the candidate. A checker failure is reported
 // separately from equivalence, so a run can show "behavior unchanged, oracle still failing" apart
@@ -25,6 +26,9 @@ const SUITES = {
   ruby: ["node", ["scripts/check/check-ruby-parity.mjs", "--regression", "{shim}"]],
   language: ["node", ["scripts/check/check-language-parity.mjs", "--regression", "{shim}", "{scratch}/language-parity.json"]],
   benchmark: ["node", ["scripts/benchmark/benchmark-analysis.mjs", "{shim}"], { CUKE_DEDUP_BENCH_REPEATS: "1", CUKE_DEDUP_BENCH_TIMEOUT_MS: "1800000" }],
+  // assert_cmd's `Command::cargo_bin` reads this variable at run time, so the tests' own invocations
+  // go through the shim while their assertions see the candidate's output.
+  cli: [cliTestBinary, [], { "CARGO_BIN_EXE_cuke-dedup": "{shim}" }],
 };
 
 // The shim is a POSIX shell script and the binary path has no `.exe`; fail clearly rather than
@@ -89,6 +93,17 @@ function baselineBinary(revision) {
   return binary;
 }
 
+/** The `tests/cli.rs` test executable of the checked-out tree, built by Cargo when stale. */
+function cliTestBinary() {
+  const messages = run("cargo", ["test", "--locked", "--no-run", "--test", "cli", "--message-format", "json-render-diagnostics"],
+    { stdio: ["ignore", "pipe", "inherit"] });
+  const executables = messages.split("\n").filter(Boolean).map((line) => JSON.parse(line))
+    .filter((message) => message.reason === "compiler-artifact" && message.target.name === "cli" && message.executable)
+    .map((message) => message.executable);
+  assert.equal(executables.length, 1, `expected one cli test executable, found ${executables.length}`);
+  return executables[0];
+}
+
 const baseline = baselineBinary(ref);
 /** Version number printed by `binary --version`. */
 const version = (binary) => run(binary, ["--version"]).trim().split(/\s+/).pop();
@@ -100,7 +115,7 @@ try {
   const shimScript = `'${resolve("scripts/check/lib/equivalence-shim.mjs").replaceAll("'", "'\\''")}'`;
   writeFileSync(shim, `#!/bin/sh\nexec node ${shimScript} "$@"\n`);
   chmodSync(shim, 0o755);
-  // One record file per shim invocation, so concurrent invocations never share a write target.
+  // One record file per shim invocation: the cli suite's parallel tests run many shims at once.
   const log = join(scratch, "equivalence-records");
   mkdirSync(log);
   const checkerFailures = [];
@@ -108,11 +123,13 @@ try {
     const [command, template, extraEnv = {}] = SUITES[suite];
     const commandArgs = template.map((arg) => arg.replace("{shim}", shim).replace("{scratch}", scratch));
     process.stderr.write(`\n== ${suite}\n`);
-    const result = spawnSync(command, commandArgs, {
-      stdio: ["ignore", "ignore", "inherit"],
+    const result = spawnSync(typeof command === "function" ? command() : command, commandArgs, {
+      stdio: ["ignore", "pipe", "inherit"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
       env: {
         ...process.env,
-        ...extraEnv,
+        ...Object.fromEntries(Object.entries(extraEnv).map(([name, value]) => [name, value.replace("{shim}", shim)])),
         CUKE_DEDUP_EQUIVALENCE_BASELINE: baseline,
         CUKE_DEDUP_EQUIVALENCE_CANDIDATE: candidate,
         CUKE_DEDUP_EQUIVALENCE_LOG: log,
@@ -120,7 +137,11 @@ try {
         CUKE_DEDUP_EQUIVALENCE_VERSIONS: JSON.stringify(versions),
       },
     });
-    if (result.status !== 0) checkerFailures.push(`${suite} (exit ${result.status ?? result.signal})`);
+    if (result.status !== 0) {
+      // Test harnesses report failures on stdout; keep its tail so a checker failure is diagnosable.
+      process.stderr.write(`${(result.stdout ?? "").split("\n").slice(-40).join("\n")}\n`);
+      checkerFailures.push(`${suite} (exit ${result.status ?? result.signal})`);
+    }
   }
   const records = readRecords(log);
   const verdict = summarize(records, selected);

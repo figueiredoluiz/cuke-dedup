@@ -5,7 +5,7 @@
 // run and restored before the candidate runs, so both start from one state and each run is compared
 // on what it created, rewrote or deleted there.
 import { spawnSync } from "node:child_process";
-import { compareRuns, pairRuns, probeArgs, writeLocations, writeRecord } from "./output-equivalence.mjs";
+import { compareRuns, outputArgument, pairRuns, probeArgs, writeLocations, writeRecord } from "./output-equivalence.mjs";
 
 const {
   CUKE_DEDUP_EQUIVALENCE_BASELINE: baseline,
@@ -39,7 +39,10 @@ const locations = [baseline, candidate].flatMap((binary) => {
   return writeLocations(probe.stdout.toString("utf8"), args);
 });
 const [baselineRun, candidateRun] = pairRuns(locations, () => execute(baseline), () => execute(candidate));
-const differences = compareRuns(baselineRun, candidateRun, { candidate: JSON.parse(versions || "[]") });
+// Options end at `--`; a `--baseline-from-ref` among them makes this a run with a historical checkout.
+const terminator = args.indexOf("--");
+const historical = outputArgument(terminator === -1 ? args : args.slice(0, terminator), "--baseline-from-ref") !== null;
+const differences = compareRuns(baselineRun, candidateRun, { candidate: JSON.parse(versions || "[]"), historical });
 writeRecord(log, { suite, cwd: process.cwd(), args, differences });
 process.stdout.write(candidateRun.stdout);
 process.stderr.write(candidateRun.stderr);
