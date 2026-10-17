@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  changedFiles,
   compareRuns,
+  DELETED,
   fileTimes,
   firstDifference,
   listFiles,
@@ -13,6 +15,7 @@ import {
   outputArgument,
   readFiles,
   readRecords,
+  snapshot,
   summarize,
   withOutput,
 } from "./output-equivalence.mjs";
@@ -128,6 +131,91 @@ test("a byte-order mark is not dropped", () => {
   const bom = [0xef, 0xbb, 0xbf, 0x7b, 0x7d];
   assert.deepEqual(compareRuns(report(bom), report([0x7b, 0x7d])).map(({ part }) => part), ["file:cuke-dedup.json"]);
   assert.deepEqual(compareRuns(report(bom), report(bom)), []);
+});
+
+/** Runs `check` with a fresh temporary directory, removed afterwards. */
+function withTemporary(check) {
+  const root = mkdtempSync(join(tmpdir(), "equivalence-test-"));
+  try {
+    check(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** Paths and values of `changedFiles`, sorted by path, with each file's bytes as text. */
+const changes = (location, before) => changedFiles(location, before)
+  .map(([path, value]) => [path, Buffer.isBuffer(value) ? value.toString() : value])
+  .sort(([left], [right]) => left.localeCompare(right));
+
+/** A missing location snapshots as empty; a file location records one file; a directory records its tree. */
+test("snapshot records what exists and nothing for a missing location", () => withTemporary((root) => {
+  assert.equal(snapshot(join(root, "absent", "reports")).size, 0);
+  writeFileSync(join(root, "baseline.json"), "[]");
+  assert.deepEqual([...snapshot(join(root, "baseline.json")).values()].map((entry) => entry.kind), ["file"]);
+  mkdirSync(join(root, "reports", "nested"), { recursive: true });
+  writeFileSync(join(root, "reports", "nested", "a.json"), "{}");
+  assert.deepEqual([...snapshot(join(root, "reports")).keys()], [join(root, "reports"), join(root, "reports", "nested"), join(root, "reports", "nested", "a.json")]);
+}));
+
+/** Links, the location itself included, are leaves recorded by target: a loop or a link outside is never followed. */
+test("snapshot treats symbolic links as leaves", { skip: process.platform === "win32" }, () => withTemporary((root) => {
+  const reports = join(root, "reports");
+  const outside = join(root, "outside");
+  mkdirSync(reports);
+  mkdirSync(outside);
+  writeFileSync(join(outside, "secret.json"), "{}");
+  symlinkSync(reports, join(reports, "loop"));
+  symlinkSync(outside, join(reports, "out"));
+  assert.deepEqual([...snapshot(reports).keys()].sort(), [reports, join(reports, "loop"), join(reports, "out")].sort());
+  assert.deepEqual(snapshot(join(reports, "out")).get(join(reports, "out")), { kind: "link", target: outside });
+}));
+
+/** A FIFO, inside a location or as the location itself, fails instead of blocking or passing silently. */
+test("snapshot rejects unsupported file types", { skip: process.platform === "win32" }, () => withTemporary((root) => {
+  assert.equal(spawnSync("mkfifo", [join(root, "pipe")]).status, 0);
+  assert.throws(() => snapshot(root), /unsupported file type in a write location/);
+  assert.throws(() => snapshot(join(root, "pipe")), /unsupported file type in a write location/);
+}));
+
+/** Created, rewritten (by time or, within one tick, by bytes) and deleted files are changes; untouched ones are not. */
+test("changed files are what a run created, rewrote or deleted", () => withTemporary((root) => {
+  const kept = join(root, "kept.json");
+  const same = join(root, "same-bytes.json");
+  const tick = join(root, "same-tick.json");
+  const gone = join(root, "gone.json");
+  const replaced = join(root, "replaced.json");
+  for (const path of [kept, same, tick, gone, replaced]) {
+    writeFileSync(path, "{}");
+    utimesSync(path, 1, 1);
+  }
+  const before = snapshot(root);
+  writeFileSync(same, "{}");
+  writeFileSync(tick, "{\"a\":1}");
+  utimesSync(tick, 1, 1);
+  rmSync(gone);
+  rmSync(replaced);
+  mkdirSync(replaced);
+  writeFileSync(join(root, "created.json"), "new");
+  assert.deepEqual(changes(root, before), [
+    [join(root, "created.json"), "new"],
+    [gone, DELETED],
+    [replaced, DELETED],
+    [same, "{}"],
+    [tick, "{\"a\":1}"],
+  ]);
+  assert.deepEqual(changes(root, snapshot(root)), []);
+}));
+
+/** A deletion, a link and file content never compare equal to each other, even content spelling a marker. */
+test("deleted files and links have their own states", () => {
+  /** A run whose only file is `value`. */
+  const file = (value) => run({ files: new Map([["report", value]]) });
+  assert.deepEqual(compareRuns(file(DELETED), file(Buffer.from("<deleted>"))), [{ part: "file:report", baseline: "deleted", candidate: "present" }]);
+  assert.deepEqual(compareRuns(file(DELETED), file("<deleted>")), [{ part: "file:report", baseline: "deleted", candidate: "present" }]);
+  assert.deepEqual(compareRuns(file({ link: "a" }), file({ link: "b" })), [{ part: "file:report", baseline: "link -> a", candidate: "link -> b" }]);
+  assert.deepEqual(compareRuns(file(DELETED), file(DELETED)), []);
+  assert.deepEqual(compareRuns(file({ link: "a" }), file({ link: "a" })), []);
 });
 
 /** Parallel shims each write their own record file; every record is read back whole, however large. */
