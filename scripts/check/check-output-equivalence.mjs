@@ -13,11 +13,11 @@
 //
 // Usage: node scripts/check/check-output-equivalence.mjs [--ref REF] [--suites a,b] [CANDIDATE]
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { summarize } from "./lib/output-equivalence.mjs";
+import { readRecords, summarize } from "./lib/output-equivalence.mjs";
 
 const SUITES = {
   corpus: ["node", ["scripts/check/check-corpus.mjs", "{shim}", "fixtures/corpus"]],
@@ -100,8 +100,9 @@ try {
   const shimScript = `'${resolve("scripts/check/lib/equivalence-shim.mjs").replaceAll("'", "'\\''")}'`;
   writeFileSync(shim, `#!/bin/sh\nexec node ${shimScript} "$@"\n`);
   chmodSync(shim, 0o755);
-  const log = join(scratch, "equivalence.jsonl");
-  writeFileSync(log, "");
+  // One record file per shim invocation, so concurrent invocations never share a write target.
+  const log = join(scratch, "equivalence-records");
+  mkdirSync(log);
   const checkerFailures = [];
   for (const suite of selected) {
     const [command, template, extraEnv = {}] = SUITES[suite];
@@ -121,7 +122,7 @@ try {
     });
     if (result.status !== 0) checkerFailures.push(`${suite} (exit ${result.status ?? result.signal})`);
   }
-  const records = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const records = readRecords(log);
   const verdict = summarize(records, selected);
   console.log(`\nbaseline ${ref}; candidate ${candidate}`);
   for (const [suite, count] of Object.entries(verdict.invocations)) console.log(`${suite}: ${count} invocations`);
