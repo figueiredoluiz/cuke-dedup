@@ -1,8 +1,8 @@
 # ambiguous-step
 
-One concrete step from the discovered feature corpus matches multiple definitions. This rule does
-not speculate about steps absent from the corpus; `overlapping-matcher` handles that case. Narrow
-one matcher or remove the duplicate.
+One concrete step from the discovered feature corpus matches multiple authoritative definitions. This rule
+does not speculate about steps absent from the corpus; `overlapping-matcher` handles that case.
+Narrow one matcher or remove the duplicate.
 
 The selected definitions form one comparison corpus; CukeDedup does not infer which definitions a runner loads for each feature. Before changing matchers in a monorepo or a suite with feature-local Cypress steps, check that the reported definitions actually coexist at runtime. Scope both definitions and features to that registry as described in [Corpus boundaries](../discovery/corpus-boundaries.md). Filtering only features still compares each selected step against every selected definition.
 
