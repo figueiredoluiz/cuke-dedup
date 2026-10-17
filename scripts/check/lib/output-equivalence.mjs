@@ -2,7 +2,7 @@
 // (timing, the scratch output directory, the version string) and what must not (everything else).
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
 const TERMINAL_TIMING = /Detection time: \d+(?:\.\d+)? ms/g;
@@ -30,11 +30,16 @@ export function withOutput(args, output, directory) {
 
 /** Text with run-dependent values replaced: timing metrics plus each `[from, to]` replacement. */
 export function normalize(text, replacements = []) {
-  let normalized = text.replace(TIMING_KEYS, "$10").replace(TERMINAL_TIMING, "Detection time: 0 ms");
+  return replace(text.replace(TIMING_KEYS, "$10").replace(TERMINAL_TIMING, "Detection time: 0 ms"), replacements);
+}
+
+/** `text` with each side-specific literal replacement applied, and nothing else. */
+function replace(text, replacements) {
+  let replaced = text;
   for (const [from, to] of replacements) {
-    if (from) normalized = normalized.split(from).join(to);
+    if (from) replaced = replaced.split(from).join(to);
   }
-  return normalized;
+  return replaced;
 }
 
 /** Sorted `/`-separated relative paths of every file below `root`, or an empty list when it does not exist. */
@@ -119,16 +124,16 @@ export function compareRuns(baseline, candidate, { baseline: left = [], candidat
   const candidateFiles = candidate.files ?? new Map();
   const names = [...new Set([...baselineFiles.keys(), ...candidateFiles.keys()])].sort();
   for (const name of names) {
-    /** How one side left `name`: untouched, deleted, a link to a target, or written. */
-    const state = (files) => {
+    /** How one side left `name`: untouched, deleted, a link to a target (with that side's replacements), or written. */
+    const state = (files, replacements) => {
       if (!files.has(name)) return "missing";
       const value = files.get(name);
       if (value === DELETED) return "deleted";
       // Only a plain object is a link: a string has a `link` method of its own.
       const link = typeof value === "object" && !Buffer.isBuffer(value);
-      return link ? `link -> ${value.link}` : "present";
+      return link ? `link -> ${replace(value.link, replacements)}` : "present";
     };
-    const [before, after] = [state(baselineFiles), state(candidateFiles)];
+    const [before, after] = [state(baselineFiles, left), state(candidateFiles, right)];
     if (before !== "present" || after !== "present") {
       if (before !== after) differences.push({ part: `file:${name}`, baseline: before, candidate: after });
       continue;
@@ -165,11 +170,13 @@ function leafEntry(path) {
 }
 
 /**
- * Every directory, file and symbolic link at or below `location`, keyed by path; empty when
- * `location` does not exist. Links, the location itself included, carry their target and are never
+ * Every directory, file and symbolic link at or below `path`, keyed by absolute path; empty when
+ * it does not exist. Links, the location itself included, carry their target and are never
  * followed, so a link loop or a link out of the location cannot hang the walk or pull in outside paths.
  */
-export function snapshot(location) {
+export function snapshot(path) {
+  // `resolve` drops a trailing separator, which would make `lstat` resolve a link to its target.
+  const location = resolve(path);
   const entries = new Map();
   /** Records the directory `path`, once listed, and everything below it. */
   const visit = (path) => {

@@ -169,6 +169,8 @@ test("snapshot treats symbolic links as leaves", { skip: process.platform === "w
   symlinkSync(outside, join(reports, "out"));
   assert.deepEqual([...snapshot(reports).keys()].sort(), [reports, join(reports, "loop"), join(reports, "out")].sort());
   assert.deepEqual(snapshot(join(reports, "out")).get(join(reports, "out")), { kind: "link", target: outside });
+  // A trailing separator still names the link, not the directory it points to.
+  assert.deepEqual([...snapshot(`${join(reports, "out")}/`)], [[join(reports, "out"), { kind: "link", target: outside }]]);
 }));
 
 /** A FIFO, inside a location or as the location itself, fails instead of blocking or passing silently. */
@@ -216,6 +218,10 @@ test("deleted files and links have their own states", () => {
   assert.deepEqual(compareRuns(file({ link: "a" }), file({ link: "b" })), [{ part: "file:report", baseline: "link -> a", candidate: "link -> b" }]);
   assert.deepEqual(compareRuns(file(DELETED), file(DELETED)), []);
   assert.deepEqual(compareRuns(file({ link: "a" }), file({ link: "a" })), []);
+  // Each side's path replacements apply to link targets, as to file contents.
+  const sides = { baseline: [["/tmp/scratch", "<output>"]], candidate: [["/work/report", "<output>"]] };
+  assert.deepEqual(compareRuns(file({ link: "/tmp/scratch/r.json" }), file({ link: "/work/report/r.json" }), sides), []);
+  assert.deepEqual(compareRuns(file({ link: "/tmp/scratch/r.json" }), file({ link: "/work/report/s.json" }), sides).map(({ part }) => part), ["file:report"]);
 });
 
 /** Parallel shims each write their own record file; every record is read back whole, however large. */
