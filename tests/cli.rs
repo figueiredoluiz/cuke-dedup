@@ -1305,7 +1305,9 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
     // that target while the pre-existing link stays.
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&report, root.join("link")).unwrap();
+        // Relative, so the target resolves against the link's directory, not the working one.
+        std::os::unix::fs::symlink("reports/cuke-dedup/cuke-dedup.json", root.join("link"))
+            .unwrap();
         let output = run(&["--emit-fingerprints", "link"]);
         assert_eq!(output.status.code(), Some(2));
         assert!(String::from_utf8(output.stderr)
@@ -1426,6 +1428,26 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
             .code(0);
         fs::remove_file(&report).unwrap();
         fs::remove_file(root.join("fifo-safe.jsonl")).unwrap();
+    }
+    // A FIFO destination opens non-blocking: without a reader it is refused instead of waiting.
+    #[cfg(unix)]
+    {
+        assert!(ProcessCommand::new("mkfifo")
+            .arg(root.join("pipe.jsonl"))
+            .status()
+            .unwrap()
+            .success());
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(root)
+            .args(["--emit-fingerprints", "pipe.jsonl"])
+            .timeout(std::time::Duration::from_secs(20))
+            .assert()
+            .code(2)
+            .stderr(predicates::str::contains(
+                "pipe.jsonl is not a regular file",
+            ));
+        fs::remove_file(root.join("pipe.jsonl")).unwrap();
     }
     for (baseline, update, destination, message) in [
         ("base.json", false, "base.json", "would overwrite"),

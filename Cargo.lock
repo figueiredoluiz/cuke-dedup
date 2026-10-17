@@ -232,6 +232,7 @@ dependencies = [
  "gherkin",
  "globset",
  "ignore",
+ "libc",
  "predicates",
  "regex",
  "same-file",

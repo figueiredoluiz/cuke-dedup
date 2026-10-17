@@ -1026,24 +1026,22 @@ impl FingerprintSink {
     fn open(config: &Config, options: &CheckOptions, path: &Path) -> Result<Self> {
         let path = config.root.join(path);
         let context = || format!("failed to write fingerprint file {}", path.display());
-        let existing = fs::metadata(&path).ok();
-        // fail-closed: a directory, device or FIFO would fail, block or leak into another stream.
-        if existing
-            .as_ref()
-            .is_some_and(|metadata| !metadata.is_file())
-        {
+        let (file, created) = match open_destination(&path) {
+            Ok(opened) => opened,
+            // An open that fails on a directory or a FIFO without a reader still names the cause.
+            Err(_) if fs::metadata(&path).is_ok_and(|metadata| !metadata.is_file()) => {
+                bail!("fingerprint file {} is not a regular file", path.display())
+            }
+            Err(error) => return Err(error).with_context(context),
+        };
+        // fail-closed: a device or FIFO would fail, block or leak into another stream. The handle is
+        // checked, not the path, so nothing swapped in after the open is trusted.
+        if !file.metadata().with_context(context)?.is_file() {
             bail!("fingerprint file {} is not a regular file", path.display());
         }
-        let file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            // Truncated only once accepted, so a rejected alias keeps the aliased file's bytes.
-            .truncate(false)
-            .open(&path)
-            .with_context(context)?;
         let mut sink = Self {
             file: Some(file),
-            created: existing.is_none().then(|| path.clone()),
+            created: created.then(|| path.clone()),
             path: path.clone(),
         };
         // Comparing after opening resolves `..`, symlink and case-insensitive aliases, including of
@@ -1100,6 +1098,41 @@ impl FingerprintSink {
         file.flush().with_context(context)?;
         self.created = None;
         Ok(())
+    }
+}
+
+/// Opens `path` for writing without truncating it, and whether this call created the file. Only an
+/// exclusive create counts as created, so a file another process makes meanwhile is never removed.
+/// An existing file opens non-blocking, so a FIFO fails instead of waiting for a reader; a dangling
+/// symlink is followed to the target it would create.
+fn open_destination(path: &Path) -> io::Result<(fs::File, bool)> {
+    let mut path = path.to_path_buf();
+    loop {
+        let created = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path);
+        let error = match created {
+            Ok(file) => return Ok((file, true)),
+            Err(error) => error,
+        };
+        if error.kind() != io::ErrorKind::AlreadyExists {
+            return Err(error);
+        }
+        let mut existing = fs::OpenOptions::new();
+        existing.write(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut existing, libc::O_NONBLOCK);
+        match existing.open(&path) {
+            Ok(file) => return Ok((file, false)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound && path.is_symlink() => {
+                let target = fs::read_link(&path)?;
+                path = path
+                    .parent()
+                    .map_or(target.clone(), |parent| parent.join(&target));
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
