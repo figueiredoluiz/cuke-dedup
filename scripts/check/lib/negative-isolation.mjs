@@ -58,6 +58,13 @@ function assertRecord(record) {
   }
 }
 
+/** Whether the report shows no truncation and no skipped candidate or structural-class comparison. */
+function unlimited(analysis) {
+  return analysis?.truncated === false
+    && analysis.skippedCandidateComparisons === 0
+    && analysis.truncatedStructuralClasses === 0;
+}
+
 /** Same items with the same multiplicity, in any order. */
 function sameMultiset(left, right) {
   return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
@@ -114,11 +121,13 @@ export function differingFields(records) {
  * Throws unless the declaration matches the records: participants resolve to one record each, the
  * declared fields are exactly those that differ, and a handler rule's pair was compared or excluded
  * as declared. An excluded pair must have equal handler keys, so differing handlers cannot also
- * explain the absence.
+ * explain the absence. Records show eligibility, not that the pair was evaluated, so `compared`
+ * also requires a run whose candidate limits skipped nothing.
  * @param {object[]} records Records from the same run.
  * @param {object} expected The `expectedAbsent` entry carrying `isolation`.
+ * @param {object} analysis The JSON report's `analysis` section from the same run.
  */
-export function checkIsolation(records, expected) {
+export function checkIsolation(records, expected, analysis) {
   const { isolation } = expected;
   if (!isolatable(expected.rule)) {
     throw new Error(`${expected.rule} also depends on feature steps; isolation covers handler and matcher rules only`);
@@ -151,6 +160,9 @@ export function checkIsolation(records, expected) {
   const compared = selected.every((record) => record.handler.comparable && !record.handler.trivial);
   if (compared !== isolation.compared) {
     throw new Error(`the pair was ${compared ? "compared" : "excluded from comparison"}, declared ${isolation.compared ? "compared" : "excluded"}`);
+  }
+  if (compared && !unlimited(analysis)) {
+    throw new Error("candidate limits skipped comparisons in this run, so the compared pair may never have been evaluated");
   }
   if (!compared && actual.some((field) => HANDLER_KEYS.includes(field))) {
     throw new Error("an excluded pair whose handlers also differ is absent for two reasons; make the handlers equal");

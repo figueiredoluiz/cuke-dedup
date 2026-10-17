@@ -39,7 +39,9 @@ the run's `--emit-fingerprints` records:
 - `differs`: exactly the record fields that differ between participants, from `domain`,
   `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher` and
   `handler.exact|normalized|alphaNormalized|structural|behavior`.
-- `compared` (handler rules only): `true` when every participant is comparable and not trivial;
+- `compared` (handler rules only): `true` when every participant is comparable and not trivial
+  and the run's report shows no truncation and no skipped candidate or structural-class
+  comparison (records show eligibility, not that the pair was evaluated);
   `false` when the pair was excluded from comparison. An excluded pair must have equal handler
   fields, so differing handlers cannot also explain the absence.
 

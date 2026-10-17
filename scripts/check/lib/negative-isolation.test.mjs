@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkIsolation, differingFields, isolatable, parseRecords } from "./negative-isolation.mjs";
+import { checkIsolation as checkWith, differingFields, isolatable, parseRecords } from "./negative-isolation.mjs";
+
+/** A run whose candidate limits skipped nothing. */
+const UNLIMITED = { truncated: false, skippedCandidateComparisons: 0, truncatedStructuralClasses: 0 };
+/** Checks an isolation against records from a run with no skipped comparisons. */
+const checkIsolation = (records, expected, analysis = UNLIMITED) => checkWith(records, expected, analysis);
 
 /** A comparable fingerprint record with overridable top-level and handler fields. */
 const record = (line, matcher, handler = {}, over = {}) => ({
@@ -54,6 +59,23 @@ test("compared and excluded are each checked against the records", () => {
   assert.throws(() => checkIsolation(trivial, absent({ compared: true, differs: MATCHER })), /excluded from comparison/);
   const compared = [record(1, "one"), record(2, "two", { exact: "x" })];
   assert.throws(() => checkIsolation(compared, absent({ compared: false, differs: [...MATCHER, "handler.exact"] })), /was compared, declared excluded/);
+});
+
+/** Checks a compared pair is rejected when candidate limits skipped work, and an excluded one is not. */
+test("compared needs a run whose candidate limits skipped nothing", () => {
+  const records = [record(1, "one"), record(2, "two", { exact: "x" })];
+  const compared = absent({ compared: true, differs: [...MATCHER, "handler.exact"] });
+  for (const limited of [
+    { ...UNLIMITED, truncated: true },
+    { ...UNLIMITED, skippedCandidateComparisons: 3 },
+    { ...UNLIMITED, truncatedStructuralClasses: 1 },
+    {},
+    undefined,
+  ]) {
+    assert.throws(() => checkWith(records, compared, limited), /candidate limits skipped comparisons/);
+  }
+  const excluded = [record(1, "one", { comparable: false }), record(2, "two", { comparable: false })];
+  checkWith(excluded, absent({ compared: false, differs: MATCHER }), { ...UNLIMITED, truncated: true });
 });
 
 /** Checks an excluded pair whose handlers also differ is rejected as absent for two reasons. */

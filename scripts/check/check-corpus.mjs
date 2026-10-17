@@ -439,7 +439,7 @@ async function validateRecallCorpus(temporary) {
       assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
       if (expected.isolation !== undefined) {
         await attempt(failures, `recall ${testCase.name}: isolation ${JSON.stringify(expected.matchers ?? expected.isolation.participants)}`,
-          () => checkIsolation(records, expected));
+          () => checkIsolation(records, expected, report.analysis));
       } else if (isolatable(expected.rule)) {
         unisolated += 1;
       }
