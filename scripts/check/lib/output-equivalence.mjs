@@ -1,8 +1,8 @@
 // Comparison rules for the output-equivalence check: what in two runs of the analyzer may differ
 // (timing, the scratch output directory, the version string) and what must not (everything else).
 import { createHash, randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 
 const TIMING_KEYS = /("(?:discoveryMs|parsingMs|analysisMs)"\s*:\s*)-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
 const TERMINAL_TIMING = /Detection time: \d+(?:\.\d+)? ms/g;
@@ -30,11 +30,16 @@ export function withOutput(args, output, directory) {
 
 /** Text with run-dependent values replaced: timing metrics plus each `[from, to]` replacement. */
 export function normalize(text, replacements = []) {
-  let normalized = text.replace(TIMING_KEYS, "$10").replace(TERMINAL_TIMING, "Detection time: 0 ms");
+  return replace(text.replace(TIMING_KEYS, "$10").replace(TERMINAL_TIMING, "Detection time: 0 ms"), replacements);
+}
+
+/** `text` with each side-specific literal replacement applied, and nothing else. */
+function replace(text, replacements) {
+  let replaced = text;
   for (const [from, to] of replacements) {
-    if (from) normalized = normalized.split(from).join(to);
+    if (from) replaced = replaced.split(from).join(to);
   }
-  return normalized;
+  return replaced;
 }
 
 /** Sorted `/`-separated relative paths of every file below `root`, or an empty list when it does not exist. */
@@ -119,17 +124,110 @@ export function compareRuns(baseline, candidate, { baseline: left = [], candidat
   const candidateFiles = candidate.files ?? new Map();
   const names = [...new Set([...baselineFiles.keys(), ...candidateFiles.keys()])].sort();
   for (const name of names) {
-    if (!baselineFiles.has(name) || !candidateFiles.has(name)) {
-      differences.push({
-        part: `file:${name}`,
-        baseline: baselineFiles.has(name) ? "present" : "missing",
-        candidate: candidateFiles.has(name) ? "present" : "missing",
-      });
+    /** How one side left `name`: untouched, deleted, a link to a target (with that side's replacements), or written. */
+    const state = (files, replacements) => {
+      if (!files.has(name)) return "missing";
+      const value = files.get(name);
+      if (value === DELETED) return "deleted";
+      // Only a plain object is a link: a string has a `link` method of its own.
+      const link = typeof value === "object" && !Buffer.isBuffer(value);
+      return link ? `link -> ${replace(value.link, replacements)}` : "present";
+    };
+    const [before, after] = [state(baselineFiles, left), state(candidateFiles, right)];
+    if (before !== "present" || after !== "present") {
+      if (before !== after) differences.push({ part: `file:${name}`, baseline: before, candidate: after });
       continue;
     }
     compare(`file:${name}`, baselineFiles.get(name), candidateFiles.get(name));
   }
   return differences;
+}
+
+// Opening never follows a link or waits on a FIFO; both flags are absent (0) on Windows.
+const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+/**
+ * The non-directory entry at `path`, read through one descriptor so its time and bytes describe the
+ * same file: a link by its target (never followed), a regular file by time and bytes.
+ */
+function leafEntry(path) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, NO_FOLLOW);
+  } catch (error) {
+    // `O_NOFOLLOW` refuses a link with ELOOP, so a link swapped in after classification stays a leaf.
+    if (error.code === "ELOOP") return { kind: "link", target: readlinkSync(path) };
+    throw error;
+  }
+  try {
+    const stats = fstatSync(descriptor);
+    // fail-closed: a FIFO, socket or device in a write location would block or not compare.
+    if (!stats.isFile()) throw new Error(`unsupported file type in a write location: ${path}`);
+    return { kind: "file", time: stats.mtimeMs, bytes: readFileSync(descriptor) };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/**
+ * Every directory, file and symbolic link at or below `path`, keyed by absolute path; empty when
+ * it does not exist. Take it only while nothing writes to the location (between analyzer runs): a
+ * concurrent swap of a listed directory for a link is not detected. Links, the location itself included, carry their target and are never
+ * followed, so a link loop or a link out of the location cannot hang the walk or pull in outside paths.
+ */
+export function snapshot(path) {
+  // `resolve` drops a trailing separator, which would make `lstat` resolve a link to its target.
+  const location = resolve(path);
+  const entries = new Map();
+  /** Records the directory `path`, once listed, and everything below it. */
+  const visit = (path) => {
+    const children = readdirSync(path, { withFileTypes: true });
+    entries.set(path, { kind: "directory" });
+    for (const entry of children) {
+      const child = join(path, entry.name);
+      if (entry.isSymbolicLink()) entries.set(child, { kind: "link", target: readlinkSync(child) });
+      else if (entry.isDirectory()) visit(child);
+      else entries.set(child, leafEntry(child));
+    }
+  };
+  let root;
+  try {
+    root = lstatSync(location, { throwIfNoEntry: false });
+  } catch (error) {
+    // A parent that is now a file (ENOTDIR) leaves the location as absent as a missing one.
+    if (error.code !== "ENOTDIR") throw error;
+  }
+  if (root?.isSymbolicLink()) entries.set(location, { kind: "link", target: readlinkSync(location) });
+  else if (root?.isDirectory()) visit(location);
+  else if (root) entries.set(location, leafEntry(location));
+  return entries;
+}
+
+/** Content recorded for a file a run deleted; a symbol, so no file content can equal it. */
+export const DELETED = Symbol("deleted");
+
+/** Whether `entry` differs from `prior`: another kind, a moved link, or a file rewritten by time or bytes. */
+function changed(prior, entry) {
+  if (!prior || prior.kind !== entry.kind) return true;
+  if (entry.kind === "link") return prior.target !== entry.target;
+  // Time catches a rewrite with identical bytes; bytes catch one within a coarse timestamp tick.
+  return entry.kind === "file" && (prior.time !== entry.time || !prior.bytes.equals(entry.bytes));
+}
+
+/**
+ * Files and links at or below `location` created, changed or deleted since the `before` snapshot:
+ * a file as its bytes, a link as `{ link: target }`, a deletion as `DELETED`.
+ */
+export function changedFiles(location, before) {
+  const now = snapshot(location);
+  const written = [...now]
+    .filter(([path, entry]) => entry.kind !== "directory" && changed(before.get(path), entry))
+    .map(([path, entry]) => [path, entry.kind === "link" ? { link: entry.target } : entry.bytes]);
+  const deleted = [...before]
+    // A leaf whose path now holds a directory is gone too; the directory itself is not output.
+    .filter(([path, entry]) => entry.kind !== "directory" && (!now.has(path) || now.get(path).kind === "directory"))
+    .map(([path]) => [path, DELETED]);
+  return [...written, ...deleted];
 }
 
 /** Modification time of every file below `root`, keyed by relative path. */
