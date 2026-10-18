@@ -24,6 +24,28 @@ Each case in `manifest.json` records one of three outcomes:
 When a known miss is fixed, move it to `expectedFindings` and reduce
 `knownMissBaseline`. New known misses must not be added to make CI pass.
 
+Every case also carries metadata that classifies it for evaluation reports. None of it changes what
+the case asserts; `scripts/check/lib/manifest-schema.mjs` validates it on every corpus run.
+
+| Field | Values | Checked against |
+| --- | --- | --- |
+| `role` | `positive` (has `expectedFindings`), `negative` (has none), `ambiguous`, `variant` | the case's own expectations |
+| `origin` | `synthetic`, `real`, `regression` (added for a reviewer finding or shipped bug) | format only |
+| `language` | `ecmascript`, `ruby` | the `domain` of the run's fingerprint records |
+| `frameworks` | distinct lowercase slugs, in any order | the frameworks of the run's fingerprint records |
+| `verdict` | `reviewed`, `generated` (labels written by a tool, not yet read by a person) | format only |
+| `classifiedAt` | `YYYY-MM-DD`, not in the future | format only |
+| `axes` | optional distinct lowercase slugs naming what the case varies | format only |
+
+`ambiguous` is for a pair whose desired outcome is undecided. Such a case lists `expectedAmbiguous`
+entries: a `rule`, a `reason`, and both endpoints of one pair: `primaryPath`, `primaryLine` and non-empty `relatedLocations`. Matcher
+text, one location or a message alone can match several pairs and is rejected. A finding matching one needs no owner in `expectedFindings`, is not counted as desired or
+detected, and still fails a matching `expectedAbsent` entry. A case with only ambiguous expectations
+accepts exit status 0 or 1, since the undecided finding may change it; operational failures (2) still
+fail, and a case that also requires findings keeps its exact `expectedExit`. `variant` needs
+`variantOf`, the name of a non-variant case it varies. A case with `expectedDefinitions` 0 has no
+records and skips the `language` and `frameworks` check; any other case with no records fails.
+
 An `expectedAbsent` entry passes whenever its finding is missing, including when a participant was
 never analyzed or the pair differs in more than the case claims. For `duplicate-handler`,
 `near-duplicate-step`, `parameterization-candidate`, `duplicate-matcher` and `normalized-matcher`,

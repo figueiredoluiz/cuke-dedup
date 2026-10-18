@@ -37,8 +37,10 @@ function within(parent, child) {
 const sources = new Map();
 for (const file of manifest.sourceManifests) {
   // `isolation` checks a non-finding against fingerprint records and changes no expected outcome,
-  // so declaring one does not ask for a Ruby mapping reassessment.
-  for (const item of (await readJson(file)).cases) {
+  // so declaring one does not ask for a Ruby mapping reassessment. The case metadata only
+  // classifies a case for reports and likewise changes no expected outcome.
+  for (const raw of (await readJson(file)).cases) {
+    const { role, origin, language, frameworks, verdict, classifiedAt, axes, variantOf, ...item } = raw;
     const expectedAbsent = item.expectedAbsent?.map(({ isolation, ...expected }) => expected);
     sources.set(`${file}:${item.name}`, expectedAbsent ? { ...item, expectedAbsent } : item);
   }
