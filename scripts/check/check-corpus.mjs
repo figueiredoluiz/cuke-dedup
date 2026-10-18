@@ -18,6 +18,13 @@ import {
 } from "./lib/recall-oracle.mjs";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
 import { checkIsolation, isolatable, parseRecords } from "./lib/negative-isolation.mjs";
+import {
+  exitAcceptable,
+  partitionAmbiguous,
+  validateAgainstRecords,
+  validateCaseMetadata,
+  validateVariantReferences,
+} from "./lib/manifest-schema.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
 // analyzes with stale behavior, so a passing or failing run reflects code that is no longer
@@ -349,6 +356,12 @@ async function validateRecallCorpus(temporary) {
   const repeated = names.filter((name, index) => names.indexOf(name) !== index);
   assert.deepEqual(repeated, [], `duplicate recall case name(s): ${repeated.join(", ")}`);
 
+  // Variant references name other cases, so they are checked against the whole manifest even when
+  // a single case is selected.
+  await attempt(failures, "recall variant references", async () => validateVariantReferences(recallManifest.cases));
+  // The latest calendar date anywhere on Earth (UTC+14), so a label written on the author's local
+  // date is never rejected as future while UTC is still the day before.
+  const today = new Date(Date.now() + 14 * 3_600_000).toISOString().slice(0, 10);
   const failuresBefore = failures.length;
   for (const testCase of cases) await attempt(failures, `recall ${testCase.name}`, () => validateRecallCase(testCase));
   /** Runs one recall case, asserts its findings and adds them to the corpus totals. */
@@ -357,10 +370,12 @@ async function validateRecallCorpus(temporary) {
     // finding: as an absence it is satisfied vacuously, and as a positive it can only fail. Either
     // way it asserts nothing, which counting entries alone would not notice — and a malformed
     // expectation is far likelier as an authoring slip than as an attempt to game the floor.
+    validateCaseMetadata(testCase, today);
     const asserted = [
       ...(testCase.expectedFindings || []),
       ...(testCase.expectedAbsent || []),
       ...(testCase.knownMisses || []),
+      ...(testCase.expectedAmbiguous || []),
     ];
     for (const expectation of asserted) {
       assert.ok(
@@ -381,7 +396,10 @@ async function validateRecallCorpus(temporary) {
       [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
       { cwd: caseRoot, encoding: "utf8" },
     );
-    assert.equal(run.status, testCase.expectedExit || 0, `${testCase.name}: ${run.stderr}`);
+    assert.ok(
+      exitAcceptable(run.status, testCase.expectedExit || 0, testCase),
+      `${testCase.name}: exit ${run.status}, expected ${testCase.expectedExit || 0}: ${run.stderr}`,
+    );
     const report = JSON.parse(await readFile(join(output, "cuke-dedup.json"), "utf8"));
     assert.equal(
       report.summary.definitionsAnalyzed,
@@ -401,13 +419,18 @@ async function validateRecallCorpus(temporary) {
     }
 
     const activeFindings = report.findings.filter((finding) => finding.suppression === null);
+    // Ambiguous findings are neither desired nor forbidden: they need no owner and stay out of the
+    // recall ratio. Absences below still see them, so a finding cannot be both ambiguous and absent.
+    const { owned: ownedFindings } = partitionAmbiguous(activeFindings, testCase.expectedAmbiguous || []);
     const expectedFindings = testCase.expectedFindings || [];
     // `count` lets one expectation stand for several findings sharing every asserted field. It
     // defaults to 1 so existing entries keep their exact meaning.
     const expectedTotal = sumExpected(expectedFindings);
+    // Required findings are counted without the ambiguous ones, so an undecided pair of the same
+    // rule cannot change a required count.
     for (const expected of expectedFindings) {
       assertFindingCount(
-        activeFindings,
+        ownedFindings,
         expected,
         expected.count ?? 1,
         `${testCase.name}: expected finding`,
@@ -417,7 +440,7 @@ async function validateRecallCorpus(temporary) {
     // narrow expectation at once, leaving room for a second unclassified finding while the totals
     // still balance. Requiring a one-to-one mapping closes that, and `count` still lets a single
     // expectation own several findings.
-    for (const finding of activeFindings) {
+    for (const finding of ownedFindings) {
       const owners = findingOwners(finding, expectedFindings);
       assert.equal(
         owners.length,
@@ -434,7 +457,8 @@ async function validateRecallCorpus(temporary) {
 
     // `!== undefined`, so a null or false declaration is checked and rejected, not counted as absent.
     const isolated = (testCase.expectedAbsent || []).filter((expected) => expected.isolation !== undefined);
-    const records = isolated.length > 0 ? parseRecords(await readFile(fingerprints, "utf8")) : [];
+    const records = parseRecords(await readFile(fingerprints, "utf8"));
+    validateAgainstRecords(testCase, records);
     for (const expected of testCase.expectedAbsent || []) {
       assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
       if (expected.isolation !== undefined) {
@@ -457,7 +481,7 @@ async function validateRecallCorpus(temporary) {
       knownMisses += 1;
     }
     assert.equal(
-      activeFindings.length,
+      ownedFindings.length,
       expectedTotal,
       `${testCase.name}: unclassified active findings`,
     );
