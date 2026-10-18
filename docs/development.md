@@ -152,6 +152,14 @@ npm run corpus:check
 definition pair is cross-window; it changes memory and time, never findings. The full gate runs the
 corpus once normally and once this way.
 
+`npm run corpus:evaluate` runs the same recall cases without asserting and reports, per rule, true and
+false positives and negatives, known misses, precision, recall and F1, plus each entry that disagrees
+with its expectation (missing, unowned, excess, a known miss that is now found). Recall counts known
+misses as desired findings, as the gate's baseline does. It is a report, not a gate: it exits 1 only
+when a case cannot be observed. `--case NAME` limits the run; `--json FILE` and `--markdown FILE`
+write the report (markdown goes to stdout when neither is given). On the current corpus every
+disagreement count is zero except the one known miss, because the gate already fails on any other.
+
 ## Language adapters and parity
 
 - `SourceAdapter` owns default source selection, input filtering, indirect-usage policy and
