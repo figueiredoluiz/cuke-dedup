@@ -1,4 +1,5 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
+use super::pair_records::PairRecord;
 use super::similarity::{
     event_similarity_available, handler_runtime_compatible, handler_similarity_with_relationship,
     is_near_matcher, is_parameterizable_matcher, matcher_similarity, matcher_words, round_score,
@@ -111,8 +112,10 @@ struct CandidatePair {
     owner: CandidateSource,
 }
 
-#[derive(Clone, Copy)]
-struct PairRelationships {
+/// Equalities between two definitions on each comparison axis; serialized by `--emit-pairs`.
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PairRelationships {
     exact_matcher: bool,
     normalized_matcher: bool,
     same_handler: bool,
@@ -156,6 +159,7 @@ pub(super) fn analyze_definition_pairs(
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
+    mut records: Option<&mut Vec<PairRecord>>,
 ) -> PairAnalysis {
     let first_pair_finding = findings.len();
     let mut generated = definition_pair_candidates(definitions, config);
@@ -297,7 +301,8 @@ pub(super) fn analyze_definition_pairs(
         {
             break;
         }
-        let handler_similarity = if handler_is_needed && handler_runtime_compatible(left, right) {
+        let handler_computed = handler_is_needed && handler_runtime_compatible(left, right);
+        let handler_similarity = if handler_computed {
             handler_similarity_with_relationship(
                 same_handler,
                 relationships.same_structure,
@@ -467,6 +472,25 @@ pub(super) fn analyze_definition_pairs(
                         "Check for wording drift and consolidate if the steps express one behavior",
                 },
             );
+        }
+        if let Some(records) = records.as_deref_mut() {
+            records.push(PairRecord {
+                left: left_index,
+                right: right_index,
+                sources: CandidateSource::ALL
+                    .into_iter()
+                    .filter(|source| candidate.sources.contains(*source))
+                    .map(CandidateSource::as_str)
+                    .collect(),
+                owner: candidate.owner.as_str(),
+                positional,
+                relationships,
+                meaningful_handlers,
+                matcher_similarity: (matcher_is_needed || normalized_finding.is_some())
+                    .then_some(matcher_similarity),
+                handler_similarity: handler_computed.then_some(handler_similarity),
+                rules: finding_rules.into_iter().flatten().collect(),
+            });
         }
         evaluated += 1;
     }

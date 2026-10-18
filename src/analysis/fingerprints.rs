@@ -42,6 +42,15 @@ struct HandlerRecord {
     trivial: bool,
 }
 
+/// Root-relative, `/`-separated path of a definition, shared with the pair oracle so both join.
+pub(super) fn relative_path(definition: &StepDefinition, root: &Path) -> String {
+    let path = &definition.location.path;
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 /// Builds the record for one definition. Handler representations are digested so Ruby's raw keys
 /// and TypeScript's hashed keys have one bounded form; equal keys give equal digests.
 fn record<'a>(definition: &'a StepDefinition, root: &Path) -> impl Serialize + 'a {
@@ -49,12 +58,7 @@ fn record<'a>(definition: &'a StepDefinition, root: &Path) -> impl Serialize + '
     let handler = &definition.handler;
     FingerprintRecord {
         schema_version: FINGERPRINT_SCHEMA_VERSION,
-        path: location
-            .path
-            .strip_prefix(root)
-            .unwrap_or(&location.path)
-            .to_string_lossy()
-            .replace('\\', "/"),
+        path: relative_path(definition, root),
         line: location.line,
         column: location.column,
         domain: match definition.analysis_profile().comparison_domain {

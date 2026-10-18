@@ -93,6 +93,18 @@ Fields, in this order: `schemaVersion` (`"1"`), `path` (root-relative, `/`-separ
 
 Each `handler` representation is a 32-hex digest of the analyzer's comparison key: equal digests mean the analyzer treats that representation as equal. Digests are comparable within one build only. `duplicate-handler`, `parameterization-candidate` and `near-duplicate-step` consider a pair only when both definitions have `comparable: true` and `trivial: false`. Matcher text is written verbatim, without report sanitization or bounds.
 
+## Pair evidence
+
+`--emit-pairs FILE` writes what the pair verifier decided for each candidate pair it evaluated, for test tooling that must tell "no finding" apart from "pair never compared". Like `--emit-fingerprints` it is not a reporter and changes no other output. Destination and failure rules are the same as for `--emit-fingerprints`, and `FILE` must also differ from the `--emit-fingerprints` file.
+
+- One compact JSON line per evaluated candidate pair, in verification order (by definition position). Records are held in memory until the write, bounded by the candidate-pair ceiling. A pair no candidate source proposed has no line. When a work limit stops verification, the pairs not yet verified have no line and the run is incomplete.
+- Pairs of `ambiguous-step`, `overlapping-matcher` and `unused-definition` are not written; those rules do not compare definition pairs through this stage.
+- `--print-config` rejects the flag.
+
+Fields, in this order: `schemaVersion` (`"1"`), `left` and `right` (each `path`, `line`, `column` and `definitionFingerprint`, joining to `--emit-fingerprints`), `candidateSources` (every source that proposed the pair: `normalizedMatcher`, `identicalHandler`, `structuralHandler`, `matcherBlocking`), `owner` (the source that owns the pair), `positional`, `relationships` (`exactMatcher`, `normalizedMatcher`, `sameHandler`, `sameHandlerStructure`, `sameStructure`, `sameDeferredAssertions`), `meaningfulHandlers`, `matcherSimilarity`, `handlerSimilarity` and `rules`.
+
+`matcherSimilarity` and `handlerSimilarity` are `null` when the verifier did not compute the score because no active rule needed it, for example when the rule that would use it is off. `rules` lists the pair rules that fired before suppression; a suppressed finding still appears.
+
 ## Output safety and bounds
 
 - Handler snippets are bounded before reports embed them.

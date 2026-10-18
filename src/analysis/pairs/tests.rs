@@ -471,7 +471,8 @@ fn matcher_blocking_rejections_do_not_spend_handler_lcs_work() {
 
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
-    let analysis = analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+    let analysis =
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
 
     assert!(!analysis.census.truncated);
     assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
@@ -525,7 +526,8 @@ fn matcher_blocking_survivors_retain_computed_similarity_evidence() {
 
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
-    let analysis = analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+    let analysis =
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
 
     assert!(!analysis.census.truncated);
     assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
@@ -562,7 +564,8 @@ fn disabled_source_rules_do_not_leak_placeholder_similarity_evidence() {
 
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
-    let analysis = analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+    let analysis =
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
 
     assert!(!analysis.census.truncated);
     assert!(!findings
@@ -583,7 +586,8 @@ fn disabled_source_rules_do_not_leak_placeholder_similarity_evidence() {
     config.rules.insert(Rule::NearDuplicateStep, Severity::Off);
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
-    let analysis = analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+    let analysis =
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
 
     assert!(!analysis.census.truncated);
     assert!(!findings
@@ -638,7 +642,8 @@ fn disabled_parameterization_skips_unreachable_structural_matcher_work() {
 
     let suppressions = SuppressionIndex::new(&config, &definitions);
     let mut findings = Vec::new();
-    let analysis = analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+    let analysis =
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
 
     assert!(!analysis.census.truncated);
     assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
@@ -1048,7 +1053,7 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
             let suppressions = SuppressionIndex::new(&config, &definitions);
             let mut findings = Vec::new();
             let analysis =
-                analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+                analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
             assert!(
                 analysis.incomplete.is_none(),
                 "complete={complete}, same={same_handler}, oversized={oversized}"

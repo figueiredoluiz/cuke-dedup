@@ -4,6 +4,7 @@
     "src/analysis.rs": {},
     "src/analysis/evidence.rs": {"crate::typescript":1},
     "src/analysis/fingerprints.rs": {},
+    "src/analysis/pair_records.rs": {},
     "src/analysis/pairs.rs": {},
     "src/analysis/similarity.rs": {"crate::model::Framework":1,"crate::model::Framework::Unknown":1},
     "src/analysis/string_metrics.rs": {},

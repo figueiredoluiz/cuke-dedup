@@ -121,6 +121,15 @@ struct CheckOptions {
     )]
     emit_fingerprints: Option<PathBuf>,
 
+    /// Write one JSON line of verification evidence per evaluated definition pair to FILE.
+    #[arg(
+        long,
+        global = true,
+        value_name = "FILE",
+        conflicts_with = "print_config"
+    )]
+    emit_pairs: Option<PathBuf>,
+
     /// Glob patterns excluded from discovery.
     #[arg(long, global = true, value_delimiter = ',')]
     exclude: Option<Vec<String>>,
@@ -209,6 +218,7 @@ struct AnalyzedCorpus {
     feature_files_without_steps: usize,
     corpus_incomplete: bool,
     run_incomplete: bool,
+    pair_records: Vec<analysis::pair_records::PairRecord>,
 }
 
 struct PhaseTimings {
@@ -246,7 +256,8 @@ fn execute(cli: Cli) -> Result<i32> {
     let extracted = extract_corpus(config, &files, &changed_files, &mut diagnostics);
     let parsing_ms = elapsed_ms(parsing_started);
     let analysis_started = Instant::now();
-    let mut analyzed = analyze_corpus(config, extracted, &mut diagnostics)?;
+    let collect_pairs = options.emit_pairs.is_some();
+    let mut analyzed = analyze_corpus(config, extracted, &mut diagnostics, collect_pairs)?;
     let analysis_ms = elapsed_ms(analysis_started);
     apply_finding_modes(
         &mut analyzed.result,
@@ -259,7 +270,12 @@ fn execute(cli: Cli) -> Result<i32> {
     let fingerprints = options
         .emit_fingerprints
         .as_deref()
-        .map(|path| FingerprintSink::open(config, options, path))
+        .map(|path| EmitSink::open(config, options, path, "fingerprint file", None))
+        .transpose()?;
+    let pairs = options
+        .emit_pairs
+        .as_deref()
+        .map(|path| EmitSink::open(config, options, path, "pair file", fingerprints.as_ref()))
         .transpose()?;
     let baseline_outcome = apply_baseline_mode(
         config,
@@ -269,7 +285,23 @@ fn execute(cli: Cli) -> Result<i32> {
         &mut diagnostics,
     )?;
     if let Some(sink) = fingerprints {
-        sink.write(&config.root, &analyzed.result.definitions)?;
+        sink.write(|out| {
+            analysis::fingerprints::write_fingerprints(
+                &analyzed.result.definitions,
+                &config.root,
+                out,
+            )
+        })?;
+    }
+    if let Some(sink) = pairs {
+        sink.write(|out| {
+            analysis::pair_records::write_pairs(
+                &analyzed.result.definitions,
+                &analyzed.pair_records,
+                &config.root,
+                out,
+            )
+        })?;
     }
     write_reports(
         config,
@@ -764,6 +796,7 @@ fn analyze_corpus(
     config: &Config,
     extracted: ExtractedCorpus,
     diagnostics: &mut Diagnostics,
+    collect_pairs: bool,
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
         parameter_types,
@@ -788,8 +821,11 @@ fn analyze_corpus(
     corpus_incomplete |= !type_diagnostics.is_empty();
     diagnostics.warnings.extend(type_diagnostics);
     let config = &effective_config;
-    let (analysis, census, unmatched_suppressions) =
-        analysis::analyze_for_cli(&indirect_usage, definitions, feature_steps, config)?;
+    let mut pair_records = Vec::new();
+    let sink = collect_pairs.then_some(&mut pair_records);
+    let analyzed =
+        analysis::analyze_for_cli(&indirect_usage, definitions, feature_steps, config, sink);
+    let (analysis, census, unmatched_suppressions) = analyzed?;
     for index in unmatched_suppressions.indices {
         let suppression = &config.suppressions[index];
         diagnostics.warnings.push(format!(
@@ -826,6 +862,7 @@ fn analyze_corpus(
         feature_files_without_steps,
         corpus_incomplete,
         run_incomplete,
+        pair_records,
     })
 }
 
@@ -876,7 +913,7 @@ fn apply_baseline_mode(
         let files = discovery::discover(&base_config)?;
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
         let extracted = extract_corpus(&base_config, &files, &None, &mut base_diagnostics);
-        let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics)?;
+        let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics, false)?;
         // A baseline that produced a hard error, or that has definitions but no features to anchor
         // usage, cannot be subtracted at all — those always bail. A baseline that kept no
         // definitions while the current tree has some cannot match any finding, so every current
@@ -1012,37 +1049,48 @@ fn write_reports(
     Ok(())
 }
 
-/// Validated `--emit-fingerprints` destination, opened but not yet truncated or written.
-struct FingerprintSink {
+/// Validated `--emit-fingerprints` or `--emit-pairs` destination, opened but not yet truncated or
+/// written.
+struct EmitSink {
     path: PathBuf,
+    /// Names the destination in errors.
+    label: &'static str,
     file: Option<fs::File>,
     /// The file this run created, to remove if the run fails before writing it.
     created: Option<PathBuf>,
 }
 
-impl FingerprintSink {
+impl EmitSink {
     /// Opens `path`, resolved against the root, without truncating it. Fails on a non-regular file
-    /// and on any file this run writes (each report) or reads back later (the `--baseline` file).
-    fn open(config: &Config, options: &CheckOptions, path: &Path) -> Result<Self> {
+    /// and on any file this run writes (each report, `earlier`) or reads back later (the
+    /// `--baseline` file).
+    fn open(
+        config: &Config,
+        options: &CheckOptions,
+        path: &Path,
+        label: &'static str,
+        earlier: Option<&Self>,
+    ) -> Result<Self> {
         let path = config.root.join(path);
-        let context = || format!("failed to write fingerprint file {}", path.display());
+        let context = || format!("failed to write {label} {}", path.display());
         let (file, created) = match open_destination(&path) {
             Ok(opened) => opened,
             // An open that fails on a directory or a FIFO without a reader still names the cause.
             Err(_) if fs::metadata(&path).is_ok_and(|metadata| !metadata.is_file()) => {
-                bail!("fingerprint file {} is not a regular file", path.display())
+                bail!("{label} {} is not a regular file", path.display())
             }
             Err(error) => return Err(error).with_context(context),
         };
         // fail-closed: a device or FIFO would fail, block or leak into another stream. The handle is
         // checked, not the path, so nothing swapped in after the open is trusted.
         if !file.metadata().with_context(context)?.is_file() {
-            bail!("fingerprint file {} is not a regular file", path.display());
+            bail!("{label} {} is not a regular file", path.display());
         }
         let mut sink = Self {
             file: Some(file),
             created: created.then(|| path.clone()),
             path: path.clone(),
+            label,
         };
         // Comparing after opening resolves `..`, symlink and case-insensitive aliases, including of
         // a report or baseline not yet written.
@@ -1054,7 +1102,8 @@ impl FingerprintSink {
         let written = reporters::REPORT_FILE_NAMES
             .iter()
             .map(|name| config.output_path(name))
-            .chain(options.baseline.iter().map(|path| config.root.join(path)));
+            .chain(options.baseline.iter().map(|path| config.root.join(path)))
+            .chain(earlier.map(|sink| sink.path.clone()));
         for target in written {
             // Identity as well as path: a hard link to the baseline has a different canonical path.
             let open = sink.file.as_ref().expect("an open sink holds its file");
@@ -1071,14 +1120,16 @@ impl FingerprintSink {
                 }
                 // fail-closed: a target whose identity cannot be read may be this very file.
                 Err(error) => bail!(
-                    "cannot verify that fingerprint file {} is not {}: {error}",
+                    "cannot verify that {} {} is not {}: {error}",
+                    sink.label,
                     sink.path.display(),
                     target.display()
                 ),
             };
             if same || fs::canonicalize(&target).is_ok_and(|target| target == canonical) {
                 bail!(
-                    "fingerprint file {} would overwrite {}; choose a different file",
+                    "{} {} would overwrite {}; choose a different file",
+                    sink.label,
                     sink.path.display(),
                     target.display()
                 );
@@ -1087,14 +1138,13 @@ impl FingerprintSink {
         Ok(sink)
     }
 
-    /// Replaces the file's content with one record per definition.
-    fn write(mut self, root: &Path, definitions: &[crate::model::StepDefinition]) -> Result<()> {
-        let context = || format!("failed to write fingerprint file {}", self.path.display());
+    /// Replaces the file's content with the records `fill` writes.
+    fn write(mut self, fill: impl FnOnce(&mut dyn Write) -> Result<()>) -> Result<()> {
+        let context = || format!("failed to write {} {}", self.label, self.path.display());
         let file = self.file.take().expect("an open sink holds its file");
         file.set_len(0).with_context(context)?;
         let mut file = io::BufWriter::new(file);
-        analysis::fingerprints::write_fingerprints(definitions, root, &mut file)
-            .with_context(context)?;
+        fill(&mut file).with_context(context)?;
         file.flush().with_context(context)?;
         self.created = None;
         Ok(())
@@ -1152,7 +1202,7 @@ fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
     Ok(same_file::Handle::from_file(file.try_clone()?)? == same_file::Handle::from_path(target)?)
 }
 
-impl Drop for FingerprintSink {
+impl Drop for EmitSink {
     /// Removes a file this run created but did not finish writing, so a failed run leaves none.
     fn drop(&mut self) {
         drop(self.file.take());
@@ -1292,7 +1342,7 @@ mod tests {
             .errors
             .iter()
             .any(|e| e == "failed to finalize source evidence: adapter unavailable"));
-        let analyzed = analyze_corpus(&config, corpus, &mut diagnostics).unwrap();
+        let analyzed = analyze_corpus(&config, corpus, &mut diagnostics, false).unwrap();
         assert!(analyzed.run_incomplete);
         assert!(analyzed.result.findings.is_empty());
     }
