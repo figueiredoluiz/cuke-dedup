@@ -10,21 +10,9 @@ import { readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import {
-  countMatches,
-  expectedTotal as sumExpected,
-  findingOwners,
-  locationLabel,
-} from "./lib/recall-oracle.mjs";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
-import { checkIsolation, isolatable, parseRecords } from "./lib/negative-isolation.mjs";
-import {
-  exitAcceptable,
-  partitionAmbiguous,
-  validateAgainstRecords,
-  validateCaseMetadata,
-  validateVariantReferences,
-} from "./lib/manifest-schema.mjs";
+import { validateVariantReferences } from "./lib/manifest-schema.mjs";
+import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./lib/recall-runner.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
 // analyzes with stale behavior, so a passing or failing run reflects code that is no longer
@@ -337,9 +325,7 @@ function byJson(left, right) {
  */
 async function validateRecallCorpus(temporary) {
   const knownIds = new Set();
-  let detected = 0;
-  let knownMisses = 0;
-  let unisolated = 0;
+  const totals = { detected: 0, knownMisses: 0, unisolated: 0 };
 
   // The recall baseline is only asserted over a full run, since a subset cannot meet a
   // corpus-wide ratio.
@@ -366,128 +352,21 @@ async function validateRecallCorpus(temporary) {
   for (const testCase of cases) await attempt(failures, `recall ${testCase.name}`, () => validateRecallCase(testCase));
   /** Runs one recall case, asserts its findings and adds them to the corpus totals. */
   async function validateRecallCase(testCase) {
-    // `findingMatches` compares `rule` first, so an expectation without one can never match any
-    // finding: as an absence it is satisfied vacuously, and as a positive it can only fail. Either
-    // way it asserts nothing, which counting entries alone would not notice — and a malformed
-    // expectation is far likelier as an authoring slip than as an attempt to game the floor.
-    validateCaseMetadata(testCase, today);
-    const asserted = [
-      ...(testCase.expectedFindings || []),
-      ...(testCase.expectedAbsent || []),
-      ...(testCase.knownMisses || []),
-      ...(testCase.expectedAmbiguous || []),
-    ];
-    for (const expectation of asserted) {
-      assert.ok(
-        expectation.rule,
-        `${testCase.name}: an expectation names no rule, so it can never match a finding: ${JSON.stringify(expectation)}`,
-      );
-    }
-    assert.ok(
-      asserted.length > 0,
-      `${testCase.name}: asserts no finding, non-finding or known miss, so it occupies a corpus slot without pinning anything`,
-    );
-    const caseRoot = join(temporary, "recall", testCase.name, "case");
-    const output = join(temporary, "recall", testCase.name, "report");
-    const fingerprints = join(temporary, "recall", testCase.name, "fingerprints.jsonl");
-    await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
-    const run = spawnSync(
+    assertCaseWellFormed(testCase, today);
+    const observation = await observeRecallCase({
       binary,
-      [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
-      { cwd: caseRoot, encoding: "utf8" },
-    );
-    assert.ok(
-      exitAcceptable(run.status, testCase.expectedExit || 0, testCase),
-      `${testCase.name}: exit ${run.status}, expected ${testCase.expectedExit || 0}: ${run.stderr}`,
-    );
-    const report = JSON.parse(await readFile(join(output, "cuke-dedup.json"), "utf8"));
-    assert.equal(
-      report.summary.definitionsAnalyzed,
-      testCase.expectedDefinitions,
-      `${testCase.name}: definitions`,
-    );
-    assert.ok(Number.isSafeInteger(testCase.expectedFeatureSteps) && testCase.expectedFeatureSteps >= 0,
-      `${testCase.name}: expectedFeatureSteps must declare a nonnegative integer`);
-    assert.equal(report.summary.featureStepsAnalyzed, testCase.expectedFeatureSteps,
-      `${testCase.name}: extracted feature steps`);
-    for (const [source, expected] of Object.entries(testCase.expectedCandidateSources || {})) {
-      assert.equal(
-        report.analysis.candidateSources[source]?.evaluated,
-        expected,
-        `${testCase.name}: ${source} candidate count`,
-      );
-    }
-
-    const activeFindings = report.findings.filter((finding) => finding.suppression === null);
-    // Ambiguous findings are neither desired nor forbidden: they need no owner and stay out of the
-    // recall ratio. Absences below still see them, so a finding cannot be both ambiguous and absent.
-    const { owned: ownedFindings } = partitionAmbiguous(activeFindings, testCase.expectedAmbiguous || []);
-    const expectedFindings = testCase.expectedFindings || [];
-    // `count` lets one expectation stand for several findings sharing every asserted field. It
-    // defaults to 1 so existing entries keep their exact meaning.
-    const expectedTotal = sumExpected(expectedFindings);
-    // Required findings are counted without the ambiguous ones, so an undecided pair of the same
-    // rule cannot change a required count.
-    for (const expected of expectedFindings) {
-      assertFindingCount(
-        ownedFindings,
-        expected,
-        expected.count ?? 1,
-        `${testCase.name}: expected finding`,
-      );
-    }
-    // Counting each expectation independently is not enough: one finding can satisfy a broad and a
-    // narrow expectation at once, leaving room for a second unclassified finding while the totals
-    // still balance. Requiring a one-to-one mapping closes that, and `count` still lets a single
-    // expectation own several findings.
-    for (const finding of ownedFindings) {
-      const owners = findingOwners(finding, expectedFindings);
-      assert.equal(
-        owners.length,
-        1,
-        `${testCase.name}: each finding needs exactly one expectation, ${
-          owners.length === 0 ? "none" : owners.length
-        } matched ${JSON.stringify({
-          rule: finding.rule,
-          primary: locationLabel(finding.primary),
-          related: finding.related.map(locationLabel),
-        })}`,
-      );
-    }
-
-    // `!== undefined`, so a null or false declaration is checked and rejected, not counted as absent.
-    const isolated = (testCase.expectedAbsent || []).filter((expected) => expected.isolation !== undefined);
-    const records = parseRecords(await readFile(fingerprints, "utf8"));
-    validateAgainstRecords(testCase, records);
-    for (const expected of testCase.expectedAbsent || []) {
-      assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
-      if (expected.isolation !== undefined) {
-        await attempt(failures, `recall ${testCase.name}: isolation ${JSON.stringify(expected.matchers ?? expected.isolation.participants)}`,
-          () => checkIsolation(records, expected, report.analysis));
-      } else if (isolatable(expected.rule)) {
-        unisolated += 1;
-      }
-    }
-    for (const miss of testCase.knownMisses || []) {
-      assert.ok(miss.reason, `${testCase.name}: known miss ${miss.id} needs a reason`);
-      assert.ok(!knownIds.has(miss.id), `duplicate known-miss id ${miss.id}`);
-      knownIds.add(miss.id);
-      assertFindingCount(
-        activeFindings,
-        miss,
-        0,
-        `${testCase.name}: known miss ${miss.id} was fixed; move it to expectedFindings`,
-      );
-      knownMisses += 1;
-    }
-    assert.equal(
-      ownedFindings.length,
-      expectedTotal,
-      `${testCase.name}: unclassified active findings`,
-    );
-    detected += expectedTotal;
+      recallRoot,
+      scratch: join(temporary, "recall", testCase.name),
+      testCase,
+    });
+    await judgeRecallCase(testCase, observation, {
+      totals,
+      knownIds,
+      attemptCheck: (label, check) => attempt(failures, label, check),
+    });
   }
 
+  const { detected, knownMisses, unisolated } = totals;
   const desired = detected + knownMisses;
   const ratio = desired === 0 ? 1 : detected / desired;
   // A failed case leaves the totals partial, so corpus-wide figures need every case to complete.
@@ -522,21 +401,6 @@ async function validateRecallCorpus(temporary) {
     );
   }
   return { cases: cases.length, detected, desired, ratio, knownMisses };
-}
-
-/**
- * Asserts that exactly `count` findings match an expectation.
- *
- * The same helper serves positives, deliberate non-findings (`count` 0) and known misses, so all
- * three are held to one matching rule and cannot drift apart.
- *
- * @param {object[]} findings Active findings from one case.
- * @param {object} expected Expectation to match against, as written in the manifest.
- * @param {number} count Exact number of findings that must match.
- * @param {string} context Message prefix identifying the case and the kind of expectation.
- */
-function assertFindingCount(findings, expected, count, context) {
-  assert.equal(countMatches(findings, expected), count, `${context}: ${JSON.stringify(expected)}`);
 }
 
 /**
