@@ -55,4 +55,8 @@ test("markdown renders the table, totals, dashes and entries", () => {
   assert.match(full, /`a` r \*\*unowned\*\*: s\.ts:1 p \/ q/);
   assert.match(full, /`b`: spawn x/);
   assert.doesNotMatch(full, /None\./);
+  // An isolation failure names its reason, so the markdown alone explains the uncredited absence.
+  const failed = renderMarkdown(aggregate([classified("c", {}, [{ case: "c", rule: "r", kind: "isolation-failed", expected: { matchers: ["p", "q"] }, error: "participants differ in [matcher]" }])]));
+  assert.match(failed, /\*\*isolation-failed\*\*: \["p","q"\] \(participants differ in \[matcher\]\)/);
+  assert.doesNotMatch(full, /\(undefined\)/);
 });

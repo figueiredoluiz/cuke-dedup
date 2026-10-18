@@ -88,7 +88,8 @@ export function renderMarkdown(report) {
   if (report.entries.length === 0) lines.push("None.");
   for (const entry of report.entries) {
     const what = entry.observed ? `${entry.observed.primary} ${entry.observed.matchers?.join(" / ") ?? entry.observed.message}` : JSON.stringify(entry.expected?.matchers ?? entry.expected);
-    lines.push(`- \`${entry.case}\` ${entry.rule} **${entry.kind}**: ${what}`);
+    const why = entry.error ? ` (${entry.error})` : "";
+    lines.push(`- \`${entry.case}\` ${entry.rule} **${entry.kind}**: ${what}${why}`);
   }
   return `${lines.join("\n")}\n`;
 }
