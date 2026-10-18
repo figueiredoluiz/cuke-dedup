@@ -2,6 +2,7 @@
 
 mod evidence;
 pub(crate) mod fingerprints;
+pub(crate) mod pair_records;
 mod pairs;
 mod similarity;
 mod string_metrics;
@@ -71,7 +72,7 @@ pub fn analyze_with_diagnostics(
     feature_steps: Vec<FeatureStep>,
     config: &Config,
 ) -> Result<AnalysisOutcome> {
-    Ok(analyze_internal(definitions, feature_steps, config, false, None)?.0)
+    Ok(analyze_internal(definitions, feature_steps, config, false, None, None)?.0)
 }
 
 /// Analyzes definitions with indirect usage merged from every selected Ruby source.
@@ -82,7 +83,7 @@ pub fn analyze_with_step_usage(
     config: &Config,
     usage: &crate::source_adapter::IndirectStepUsage,
 ) -> Result<AnalysisOutcome> {
-    Ok(analyze_internal(definitions, feature_steps, config, false, Some(usage))?.0)
+    Ok(analyze_internal(definitions, feature_steps, config, false, Some(usage), None)?.0)
 }
 
 /// CLI entry point: analysis with indirect usage that also returns the candidate census and the
@@ -92,6 +93,7 @@ pub(crate) fn analyze_for_cli(
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
     config: &Config,
+    pair_records: Option<&mut Vec<pair_records::PairRecord>>,
 ) -> Result<(
     AnalysisOutcome,
     AnalysisCensus,
@@ -103,6 +105,7 @@ pub(crate) fn analyze_for_cli(
         config,
         true,
         Some(indirect_usage),
+        pair_records,
     )
 }
 
@@ -110,13 +113,14 @@ pub(crate) fn analyze_for_cli(
 /// pair stage left, indirect usage, and unused definitions; findings are sorted by primary path,
 /// line, column and rule. Fails on invalid analysis limits or definitions from more than one
 /// comparison domain. Unmatched suppressions are collected only when
-/// `include_unmatched_suppressions` is set.
+/// `include_unmatched_suppressions` is set; `pair_records` receives one record per evaluated pair.
 fn analyze_internal(
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
     config: &Config,
     include_unmatched_suppressions: bool,
     indirect_usage: Option<&crate::source_adapter::IndirectStepUsage>,
+    pair_records: Option<&mut Vec<pair_records::PairRecord>>,
 ) -> Result<(
     AnalysisOutcome,
     AnalysisCensus,
@@ -134,8 +138,13 @@ fn analyze_internal(
         }
     }
     let suppressions = suppression::SuppressionIndex::new(config, &definitions);
-    let pair_analysis =
-        pairs::analyze_definition_pairs(&definitions, config, &suppressions, &mut findings);
+    let pair_analysis = pairs::analyze_definition_pairs(
+        &definitions,
+        config,
+        &suppressions,
+        &mut findings,
+        pair_records,
+    );
     let overlap_budget = config
         .max_candidate_comparisons
         .saturating_sub(pair_analysis.census.candidate_comparisons_evaluated);

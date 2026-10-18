@@ -4573,6 +4573,33 @@
           "behaviorClass": "ruby-behavior"
         },
         {
+          "name": "emit_pairs_records_each_evaluated_pair_and_changes_no_other_output",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_pairs_records_each_evaluated_ruby_pair"
+          },
+          "rationale": "Ruby counterpart of this ECMAScript test (a shared-engine test cannot be its own evidence): `emit_pairs_records_each_evaluated_ruby_pair` runs the pair oracle over Ruby identical-handler and unrelated definitions, asserting byte-identical output with and without the flag, one `duplicate-handler` record and no record for the unrelated definition.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "emit_pairs_records_each_evaluated_ruby_pair",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_pairs_records_each_evaluated_ruby_pair"
+          },
+          "rationale": "`emit_pairs_records_each_evaluated_ruby_pair` runs Ruby identical-handler and unrelated definitions through the built binary: one `duplicate-handler` record with `positional` false, none for the unrelated definition, and stdout, stderr, exit code and JSON report unchanged by the flag.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "emit_pairs_fails_closed_on_unusable_destinations",
+          "requiredStatus": "engine-invariant",
+          "stage": "cli-parsing",
+          "rationale": "Adapter-independent stage `cli-parsing`: pair destination validation at the CLI boundary (missing parent, report or `--emit-fingerprints` path and its aliases, `--print-config` conflict, stale longer file replaced); the outcome depends on the path, not on the source adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "emit_fingerprints_fails_closed_on_unusable_destinations",
           "requiredStatus": "engine-invariant",
           "stage": "cli-parsing",

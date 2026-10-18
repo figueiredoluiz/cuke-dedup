@@ -1070,11 +1070,11 @@ fn project_config_can_disable_metrics() {
     assert_eq!(report["corpus"]["definitionsExtracted"], 1);
 }
 
-/// Runs `root` without and with `--emit-fingerprints`, asserts stdout, stderr, exit status and the
-/// JSON report are byte-identical, and returns the emitted records; a missing file panics.
-fn emitted_fingerprints(root: &Path, args: &[&str]) -> Vec<Value> {
+/// Runs `root` without and with `flag FILE`, asserts stdout, stderr, exit status and the JSON
+/// report are byte-identical, and returns the emitted JSON lines; a missing file panics.
+fn emitted_records(root: &Path, args: &[&str], flag: &str) -> Vec<Value> {
     let sink = tempfile::tempdir().unwrap();
-    let destination = sink.path().join("fingerprints.jsonl");
+    let destination = sink.path().join("records.jsonl");
     let run = |destination: Option<&Path>| {
         let mut command = Command::cargo_bin("cuke-dedup").unwrap();
         command
@@ -1082,7 +1082,7 @@ fn emitted_fingerprints(root: &Path, args: &[&str]) -> Vec<Value> {
             .args(args)
             .args(["--reporters", "terminal,json", "--no-metrics"]);
         if let Some(destination) = destination {
-            command.arg("--emit-fingerprints").arg(destination);
+            command.arg(flag).arg(destination);
         }
         let output = command.output().unwrap();
         (
@@ -1096,6 +1096,21 @@ fn emitted_fingerprints(root: &Path, args: &[&str]) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+/// Runs the built binary on `root` with `args` and returns its output.
+fn run_on(root: &Path, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// Returns the records `--emit-fingerprints` wrote for `root`.
+fn emitted_fingerprints(root: &Path, args: &[&str]) -> Vec<Value> {
+    emitted_records(root, args, "--emit-fingerprints")
 }
 
 /// Projects each record to path, line, domain, framework, comparable and trivial.
@@ -1261,14 +1276,7 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
     let root = directory.path();
     write(root, "steps.ts", "Given('one', () => work());\n");
     fs::create_dir_all(root.join("reports/cuke-dedup")).unwrap();
-    let run = |args: &[&str]| {
-        Command::cargo_bin("cuke-dedup")
-            .unwrap()
-            .arg(root)
-            .args(args)
-            .output()
-            .unwrap()
-    };
+    let run = |args: &[&str]| run_on(root, args);
     let mut rows = vec![
         ("missing/fingerprints.jsonl", "failed to write"),
         ("reports", "not a regular file"),
@@ -1493,6 +1501,189 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
             .count(),
         1
     );
+}
+
+/// Counts the lines of the JSON Lines file at `path`.
+fn jsonl_lines(path: &Path) -> usize {
+    fs::read_to_string(path).unwrap().lines().count()
+}
+
+/// Returns the records `--emit-pairs` wrote for `root`.
+fn emitted_pairs(root: &Path, args: &[&str]) -> Vec<Value> {
+    emitted_records(root, args, "--emit-pairs")
+}
+
+/// Projects each pair record to its line pair, candidate sources and rules.
+fn pair_outcomes(records: &[Value]) -> Vec<Value> {
+    records
+        .iter()
+        .map(|record| {
+            serde_json::json!([
+                record["left"]["line"],
+                record["right"]["line"],
+                record["candidateSources"],
+                record["rules"]
+            ])
+        })
+        .collect()
+}
+
+/// Checks `--emit-pairs` changes no other output and records one line per evaluated pair with its
+/// sources, rules and scores. A pair no source proposed has no record, and turning the rule off
+/// keeps the record but empties `rules` and the handler score.
+#[test]
+fn emit_pairs_records_each_evaluated_pair_and_changes_no_other_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\n\
+         Given('I open the page', () => { openPage(); });\n\
+         Given('I load the page', () => { openPage(); });\n\
+         Given('the cart has {int} items', (n) => { cart.add(n); check(1); });\n\
+         Given('the cart has {int} items', (n) => { cart.remove(n); check(2); });\n\
+         Given('the user clicks the save button', () => { click('save'); wait(1); log('a'); });\n\
+         Given('the user clicks the cancel button', () => { click('cancel'); fetch('x'); render(); });\n",
+    );
+    write(
+        root,
+        "a.feature",
+        "Feature: A\n  Scenario: A\n    Given I open the page\n",
+    );
+    let records = emitted_pairs(root, &[]);
+    // The click pair shares no source, so it has no record.
+    assert_eq!(
+        pair_outcomes(&records),
+        [
+            serde_json::json!([2, 3, ["identicalHandler"], ["duplicate-handler"]]),
+            serde_json::json!([4, 5, ["normalizedMatcher"], ["duplicate-matcher"]]),
+        ]
+    );
+    assert_eq!(records[0]["schemaVersion"], "1");
+    assert_eq!(records[0]["left"]["path"], "steps.ts");
+    assert_eq!(records[0]["relationships"]["sameHandler"], true);
+    assert_eq!(records[0]["handlerSimilarity"], 1.0);
+    assert_eq!(records[1]["relationships"]["exactMatcher"], true);
+    assert_eq!(records[1]["relationships"]["sameHandler"], false);
+
+    // Control: the same pair with its rule off is still evaluated, with no rule and no handler score.
+    write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"rules":{"duplicate-handler":"off"}}"#,
+    );
+    let off = emitted_pairs(root, &[]);
+    assert_eq!(
+        pair_outcomes(&off)[0],
+        serde_json::json!([2, 3, ["identicalHandler"], []])
+    );
+    assert!(off[0]["handlerSimilarity"].is_null());
+    // The normalized-matcher shortcut score is also withheld when its rule is off.
+    assert_eq!(off[1]["matcherSimilarity"], 1.0);
+    write(
+        root,
+        ".cuke-dedup.json",
+        r#"{"rules":{"duplicate-matcher":"off"}}"#,
+    );
+    let off = emitted_pairs(root, &[]);
+    assert_eq!(
+        pair_outcomes(&off)[1],
+        serde_json::json!([4, 5, ["normalizedMatcher"], []])
+    );
+    assert!(off[1]["matcherSimilarity"].is_null());
+}
+
+/// Checks the pair oracle for Ruby: identical handlers under different matchers give one
+/// `duplicate-handler` record, a distinct handler none, and `positional` stays false.
+#[test]
+fn emit_pairs_records_each_evaluated_ruby_pair() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "features/step_definitions/steps.rb",
+        "Given('I open the page') do\n  open_page(1)\nend\nGiven('I load the page') do\n  open_page(1)\nend\nGiven('totally unrelated') do\n  other(2)\nend\n",
+    );
+    write(
+        root,
+        "features/a.feature",
+        "Feature: A\n  Scenario: A\n    Given I open the page\n",
+    );
+    let records = emitted_pairs(root, &["--definitions", "features/**/*.rb"]);
+    assert_eq!(
+        pair_outcomes(&records),
+        [serde_json::json!([
+            1,
+            4,
+            ["identicalHandler"],
+            ["duplicate-handler"]
+        ])]
+    );
+    assert_eq!(records[0]["positional"], false);
+}
+
+/// Checks `--emit-pairs` fails closed with exit 2 on an uncreatable path, an alias of a report or of
+/// the `--emit-fingerprints` file, and `--print-config`, and writes both files when they differ.
+#[test]
+fn emit_pairs_fails_closed_on_unusable_destinations() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "steps.ts",
+        "Given('one', () => work());\nGiven('two', () => work());\n",
+    );
+    fs::create_dir(root.join("sub")).unwrap();
+    let run = |args: &[&str]| run_on(root, args);
+    for (args, message) in [
+        (
+            vec!["--emit-pairs", "missing/pairs.jsonl"],
+            "failed to write pair file",
+        ),
+        (
+            vec!["--emit-pairs", "reports/cuke-dedup/cuke-dedup.json"],
+            "pair file",
+        ),
+        (
+            vec![
+                "--emit-fingerprints",
+                "same.jsonl",
+                "--emit-pairs",
+                "same.jsonl",
+            ],
+            "pair file",
+        ),
+        (
+            vec![
+                "--emit-fingerprints",
+                "same.jsonl",
+                "--emit-pairs",
+                "./sub/../same.jsonl",
+            ],
+            "would overwrite",
+        ),
+        (
+            vec!["--print-config", "--emit-pairs", "pairs.jsonl"],
+            "cannot be used with",
+        ),
+    ] {
+        let output = run(&args);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+    }
+    // The fingerprint file of a rejected run is not left behind either.
+    assert!(!root.join("same.jsonl").exists());
+    let output = run(&["--emit-fingerprints", "f.jsonl", "--emit-pairs", "p.jsonl"]);
+    // Exit 1: the corpus holds a duplicate-handler finding.
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(jsonl_lines(&root.join("p.jsonl")), 1);
+    assert_eq!(jsonl_lines(&root.join("f.jsonl")), 2);
+    // An existing pair file longer than the new output is replaced, not overwritten in place.
+    fs::write(root.join("p.jsonl"), "stale\n".repeat(500)).unwrap();
+    assert_eq!(run(&["--emit-pairs", "p.jsonl"]).status.code(), Some(1));
+    assert_eq!(jsonl_lines(&root.join("p.jsonl")), 1);
 }
 
 /// Checks missing definition sources warn by default and fail when definitions are required.

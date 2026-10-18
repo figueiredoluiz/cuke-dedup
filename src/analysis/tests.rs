@@ -2327,6 +2327,7 @@ fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
         class_definitions,
         Vec::new(),
         &config,
+        None,
     )
     .unwrap();
     assert!(!outcome.result.findings.is_empty());
@@ -2360,8 +2361,19 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     let (_directory, config) = config();
     let mut findings = Vec::new();
     let suppressions = super::suppression::SuppressionIndex::new(&config, &long_matchers);
-    let pair_analysis =
-        analyze_definition_pairs(&long_matchers, &config, &suppressions, &mut findings);
+    let mut records = Vec::new();
+    let pair_analysis = analyze_definition_pairs(
+        &long_matchers,
+        &config,
+        &suppressions,
+        &mut findings,
+        Some(&mut records),
+    );
+    // A pair whose verification was skipped has no record; the evaluated count is the record count.
+    assert_eq!(
+        records.len(),
+        pair_analysis.census.candidate_comparisons_evaluated
+    );
     assert!(pair_analysis.census.truncated);
     assert_eq!(pair_analysis.census.candidate_comparisons_evaluated, 0);
     assert_eq!(pair_analysis.census.skipped_candidate_comparisons, 1);
@@ -2392,8 +2404,19 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     }
     let mut findings = Vec::new();
     let suppressions = super::suppression::SuppressionIndex::new(&config, &long_handlers);
-    let pair_analysis =
-        analyze_definition_pairs(&long_handlers, &config, &suppressions, &mut findings);
+    let mut records = Vec::new();
+    let pair_analysis = analyze_definition_pairs(
+        &long_handlers,
+        &config,
+        &suppressions,
+        &mut findings,
+        Some(&mut records),
+    );
+    // A pair whose verification was skipped has no record; the evaluated count is the record count.
+    assert_eq!(
+        records.len(),
+        pair_analysis.census.candidate_comparisons_evaluated
+    );
     assert!(pair_analysis.census.truncated);
     assert_eq!(pair_analysis.census.candidate_comparisons_evaluated, 0);
     assert_eq!(pair_analysis.census.skipped_candidate_comparisons, 1);
@@ -2450,7 +2473,7 @@ fn suppression_globs_compile_once_and_pair_lookups_share_the_work_budget() {
 
     let mut findings = Vec::new();
     let pair_analysis =
-        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings);
+        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
     assert!(pair_analysis.census.truncated);
     assert!(pair_analysis.census.candidate_comparisons_evaluated < definitions.len() - 1);
     assert!(pair_analysis
@@ -2710,6 +2733,7 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
         class_definitions,
         Vec::new(),
         &config,
+        None,
     )
     .unwrap();
     assert_eq!(census.truncated_structural_classes, 5);
@@ -2724,6 +2748,7 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
         definitions,
         Vec::new(),
         &config,
+        None,
     )
     .unwrap();
     assert_eq!(census.truncated_structural_classes, 1);
