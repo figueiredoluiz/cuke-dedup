@@ -123,6 +123,8 @@ test("language and frameworks are held against the analyzed records", () => {
   // No records is acceptable only for a case that expects no definitions.
   validateAgainstRecords(positive({ language: "ruby", expectedDefinitions: 0 }), []);
   assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2 }), []), /expects definitions/);
+  // Control: a zero-definition case with matching labels still fails when records exist.
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 0, frameworks: ["cucumber-js"] }), [{ domain: "ecmascript", framework: "cucumber-js" }]), /expects no definitions/);
 });
 
 /** Checks ambiguous findings leave the owned set; every other finding stays. */
@@ -151,6 +153,8 @@ test("ambiguity makes the finding-dependent exit status neutral but not an opera
   assert.equal(exitAcceptable(2, 1, ambiguous), false);
   assert.equal(exitAcceptable(null, 0, ambiguous), false);
   assert.equal(exitAcceptable(0, 2, ambiguous), false);
+  assert.equal(exitAcceptable(2, 2, ambiguous), false);
+  assert.equal(exitAcceptable(2, 2, positive()), true);
   // A case that also requires findings keeps its exact status.
   const mixed = { ...ambiguous, expectedFindings: [{ rule: "duplicate-matcher" }] };
   assert.equal(exitAcceptable(0, 1, mixed), false);

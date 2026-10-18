@@ -130,10 +130,11 @@ export function validateVariantReferences(cases) {
  */
 export function validateAgainstRecords(testCase, records) {
   // An empty record set proves nothing about a case that analyzes definitions: the run lost them.
-  if (records.length === 0) {
-    assert.equal(testCase.expectedDefinitions, 0, `${testCase.name}: no fingerprint records, but the case expects definitions`);
+  if (testCase.expectedDefinitions === 0) {
+    assert.equal(records.length, 0, `${testCase.name}: the case expects no definitions, but the run wrote fingerprint records`);
     return;
   }
+  assert.ok(records.length > 0, `${testCase.name}: no fingerprint records, but the case expects definitions`);
   const domains = [...new Set(records.map((record) => record.domain))];
   assert.deepEqual(domains, [testCase.language], `${testCase.name}: language label disagrees with the analyzed definitions`);
   const frameworks = [...new Set(records.map((record) => record.framework))].sort();
@@ -169,7 +170,8 @@ export function partitionAmbiguous(findings, ambiguous) {
  * @returns {boolean}
  */
 export function exitAcceptable(status, expectedExit, testCase) {
-  if (status === expectedExit) return true;
   const onlyAmbiguous = (testCase.expectedAmbiguous || []).length > 0 && (testCase.expectedFindings || []).length === 0;
-  return onlyAmbiguous && [0, 1].includes(status) && [0, 1].includes(expectedExit);
+  // Status 2 is never neutral, even when the case declares it as the expected status.
+  if (onlyAmbiguous) return [0, 1].includes(status) && [0, 1].includes(expectedExit);
+  return status === expectedExit;
 }
