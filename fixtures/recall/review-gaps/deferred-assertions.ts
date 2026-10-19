@@ -11,4 +11,6 @@ Then('the switch position is checked', ({ state }) => register(() => expect(stat
 Then('the switch position is now checked', ({ state }) => register(() => expect(state.switch).not.toBe('on')));
 
 Then('the warehouse is inspected', () => register(() => { ((value) => save(value))(external); }));
-Then('the warehouse is now inspected', () => register(() => { (function (value) { save(value); })(external); }));
+// Identical on purpose: an unresolved inline call keeps the pair out of comparison, and were it
+// resolved these identical handlers would be reported as duplicates.
+Then('the warehouse is now inspected', () => register(() => { ((value) => save(value))(external); }));
