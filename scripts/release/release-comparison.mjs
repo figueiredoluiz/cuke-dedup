@@ -12,18 +12,25 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { compare, loadCases, renderTable, runCase, summarizeRuns } from "./lib/release-comparison.mjs";
 
-const { values } = parseArgs({
-  options: {
-    previous: { type: "string" },
-    candidate: { type: "string" },
-    "previous-label": { type: "string", default: "previous release" },
-    "candidate-label": { type: "string", default: "this release" },
-    repeats: { type: "string", default: "3" },
-    "timeout-ms": { type: "string", default: "120000" },
-    markdown: { type: "string" },
-    json: { type: "string" },
-  },
-});
+let values;
+try {
+  ({ values } = parseArgs({
+    options: {
+      previous: { type: "string" },
+      candidate: { type: "string" },
+      "previous-label": { type: "string", default: "previous release" },
+      "candidate-label": { type: "string", default: "this release" },
+      repeats: { type: "string", default: "3" },
+      "timeout-ms": { type: "string", default: "120000" },
+      markdown: { type: "string" },
+      json: { type: "string" },
+    },
+  }));
+} catch (error) {
+  // An unknown option or a missing value is a bad invocation, like the checks below.
+  console.error(`release-comparison.mjs: ${error.message}`);
+  process.exit(2);
+}
 const repeats = Number(values.repeats);
 const timeoutMs = Number(values["timeout-ms"]);
 if (!values.previous || !values.candidate || !Number.isSafeInteger(repeats) || repeats < 1 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {

@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { compare, loadCases, median, renderTable, runCase, summarizeRuns } from "./release-comparison.mjs";
 
 /** A run of a binary that produced `byRule` findings, `time` ms of analysis, and exit `status`. */
@@ -63,6 +65,21 @@ test("comparison sums the shared cases and lists the cases left out", () => {
   assert.equal(comparison.rules.find((entry) => entry.rule === "a").candidate, 3);
 });
 
+/** Checks the timing medians use only the cases both releases measured. */
+test("timing is compared over the cases both releases measured", () => {
+  /** A summary of one run with the given analysis time, or none. */
+  const side = (time) => summarizeRuns([run({ a: 1 }, time, 0, time === null ? { metrics: undefined } : {})]);
+  // Previous [1, unmeasured] and candidate [1, 100]: the only paired case is unchanged.
+  const comparison = compare([
+    { name: "paired", previous: side(1), candidate: side(1) },
+    { name: "half", previous: side(null), candidate: side(100) },
+  ]);
+  assert.deepEqual(comparison.medianAnalysisMs, { previous: 1, candidate: 1 });
+  assert.deepEqual(comparison.totalAnalysisMs, { previous: 1, candidate: 1 });
+  // The counts still cover both cases.
+  assert.equal(comparison.findings.candidate, 2);
+});
+
 /** Checks the table shows each rule with a signed change, the time row with decimals, and the notes only when needed. */
 test("the table shows signed changes, timing and the exclusion notes", () => {
   /** The summary of one run with a given analysis time. */
@@ -90,7 +107,8 @@ test("the table shows signed changes, timing and the exclusion notes", () => {
   assert.doesNotMatch(many, /`c10`/);
   assert.match(many, /and 2 more/);
   const noTime = renderTable(compare([{ name: "z", previous: summarizeRuns([run({ a: 1 }, 1, 0, { metrics: undefined })]), candidate: side({ a: 1 }, 1) }]), { previous: "v1", candidate: "v2" });
-  assert.match(noTime, /\| - \| 1\.00 \| - \|/);
+  // With no measurement on one side the case is not timed on either, so both columns are a dash.
+  assert.match(noTime, /\| - \| - \| - \|/);
 });
 
 /** Checks the committed manifests produce one case per entry, from both corpora. */
@@ -101,6 +119,15 @@ test("loadCases reads the behavior and recall corpora", async () => {
   assert.equal(new Set(cases.map((entry) => entry.name)).size, cases.length);
 });
 
+/** Checks a bad option or a missing value exits 2 like the other invocation errors, and a good call does not. */
+test("the command exits 2 for an unknown option or a missing value", { skip: process.platform === "win32" }, () => {
+  const script = fileURLToPath(new URL("../release-comparison.mjs", import.meta.url));
+  for (const args of [["--bogus"], ["--previous"], ["--previous", "a"], ["--previous", "a", "--candidate", "b", "--repeats", "x"], ["--previous", "a", "--candidate", "b", "--timeout-ms", "0"]]) {
+    const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 2, `${args.join(" ")}: ${result.stderr}`);
+  }
+});
+
 /** Checks a run reports a binary's status and report, and a binary that writes none gives null. */
 test("runCase returns the report a binary wrote, or none", { skip: process.platform === "win32" }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "release-comparison-"));
@@ -109,11 +136,11 @@ test("runCase returns the report a binary wrote, or none", { skip: process.platf
     await writeFile(join(directory, "fixture", "steps.ts"), "x\n");
     const testCase = { dir: join(directory, "fixture"), arguments: ["--flag"], materialize: [] };
     const writer = join(directory, "writer");
-    await writeFile(writer, '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "--output" ] && out="$2"; shift; done\nmkdir -p "$out"\necho \'{"summary":{"byRule":{}}}\' > "$out/cuke-dedup.json"\nexit 1\n');
+    await writeFile(writer, '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "--output" ] && out="$2"; shift; done\nmkdir -p "$out"\necho \'{"summary":{"byRule":{},"findings":0,"definitionsAnalyzed":1,"featureStepsAnalyzed":0}}\' > "$out/cuke-dedup.json"\nexit 1\n');
     await chmod(writer, 0o755);
     const written = await runCase(writer, testCase, join(directory, "scratch-a"));
     assert.equal(written.status, 1);
-    assert.deepEqual(written.report, { summary: { byRule: {} } });
+    assert.deepEqual(written.report, { summary: { byRule: {}, findings: 0, definitionsAnalyzed: 1, featureStepsAnalyzed: 0 } });
     const silent = join(directory, "silent");
     await writeFile(silent, "#!/bin/sh\nexit 2\n");
     await chmod(silent, 0o755);
@@ -125,6 +152,23 @@ test("runCase returns the report a binary wrote, or none", { skip: process.platf
     const truncated = await runCase(broken, testCase, join(directory, "scratch-d"));
     assert.equal(truncated.report, null);
     assert.match(truncated.spawnFailure, /not valid JSON/);
+    // A report with a summary but not every compared count is unusable, not a source of NaN totals.
+    const partial = join(directory, "partial");
+    await writeFile(partial, '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "--output" ] && out="$2"; shift; done\nmkdir -p "$out"\necho \'{"summary":{"byRule":{"a":"x"},"findings":1,"definitionsAnalyzed":1,"featureStepsAnalyzed":0}}\' > "$out/cuke-dedup.json"\nexit 0\n');
+    await chmod(partial, 0o755);
+    assert.match((await runCase(partial, testCase, join(directory, "scratch-g"))).spawnFailure, /missing a usable summary/);
+    // Each top-level count is required too.
+    for (const [index, summary] of [
+      '{"byRule":{},"definitionsAnalyzed":1,"featureStepsAnalyzed":0}',
+      '{"byRule":{},"findings":0,"featureStepsAnalyzed":0}',
+      '{"byRule":{},"findings":0,"definitionsAnalyzed":1}',
+      '{"byRule":{},"findings":null,"definitionsAnalyzed":1,"featureStepsAnalyzed":0}',
+    ].entries()) {
+      const missingCount = join(directory, `missing-${index}`);
+      await writeFile(missingCount, `#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "--output" ] && out="$2"; shift; done\nmkdir -p "$out"\necho '{"summary":${summary}}' > "$out/cuke-dedup.json"\nexit 0\n`);
+      await chmod(missingCount, 0o755);
+      assert.match((await runCase(missingCount, testCase, join(directory, `scratch-m${index}`))).spawnFailure, /missing a usable summary/, summary);
+    }
     const bare = join(directory, "bare");
     await writeFile(bare, '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "--output" ] && out="$2"; shift; done\nmkdir -p "$out"\necho \'{"findings":[]}\' > "$out/cuke-dedup.json"\nexit 0\n');
     await chmod(bare, 0o755);
@@ -141,6 +185,14 @@ test("runCase returns the report a binary wrote, or none", { skip: process.platf
     const timedOut = await runCase(hung, testCase, join(directory, "scratch-e"), 200);
     assert.equal(timedOut.report, null);
     assert.match(timedOut.spawnFailure, /ETIMEDOUT/);
+    // A binary that ignores SIGTERM and leaves a child behind is still ended, without waiting on it.
+    const stubborn = join(directory, "stubborn");
+    await writeFile(stubborn, "#!/bin/sh\ntrap '' TERM\nsleep 30 &\nsleep 30\n");
+    await chmod(stubborn, 0o755);
+    const started = Date.now();
+    const stuck = await runCase(stubborn, testCase, join(directory, "scratch-h"), 200);
+    assert.ok(Date.now() - started < 10_000, "a stubborn binary must not outlast the timeout");
+    assert.match(stuck.spawnFailure, /ETIMEDOUT/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

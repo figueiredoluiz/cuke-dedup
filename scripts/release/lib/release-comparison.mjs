@@ -30,6 +30,24 @@ export async function loadCases(root) {
   return cases;
 }
 
+/** Whether a value is a finite number. */
+function finite(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Whether a report carries every count the comparison reads: findings, definitions and feature steps
+ * analyzed, and a count per rule.
+ * @param {object} report A parsed JSON report.
+ * @returns {boolean}
+ */
+function hasCounts(report) {
+  const { summary } = report;
+  return typeof summary === "object" && summary !== null
+    && finite(summary.findings) && finite(summary.definitionsAnalyzed) && finite(summary.featureStepsAnalyzed)
+    && typeof summary.byRule === "object" && summary.byRule !== null && Object.values(summary.byRule).every(finite);
+}
+
 /**
  * Runs one binary on one case and returns what its JSON report says.
  * @param {string} binary Path to the analyzer binary.
@@ -47,7 +65,7 @@ export async function runCase(binary, testCase, scratch, timeoutMs = 120_000) {
     await mkdir(join(destination, ".."), { recursive: true });
     await cp(join(caseRoot, item.source), destination);
   }
-  const run = spawnSync(binary, [".", ...testCase.arguments, "--reporters", "json", "--output", output], { cwd: caseRoot, encoding: "utf8", timeout: timeoutMs });
+  const run = spawnSync(binary, [".", ...testCase.arguments, "--reporters", "json", "--output", output], { cwd: caseRoot, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", stdio: "ignore" });
   const text = await readFile(join(output, "cuke-dedup.json"), "utf8").catch((error) => {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -61,8 +79,9 @@ export async function runCase(binary, testCase, scratch, timeoutMs = 120_000) {
   } catch (error) {
     invalid = `report is not valid JSON: ${error.message}`;
   }
-  // Valid JSON without a summary has nothing to compare, so it is as unusable as a corrupt report.
-  if (report !== null && (typeof report.summary !== "object" || report.summary === null || typeof report.summary.byRule !== "object" || report.summary.byRule === null)) {
+  // Valid JSON that lacks the counts compared has nothing to compare, so it is as unusable as a corrupt
+  // report: a missing count would otherwise reach the totals as `undefined` and print `NaN`.
+  if (report !== null && !hasCounts(report)) {
     report = null;
     invalid = "report is missing a usable summary";
   }
@@ -130,8 +149,10 @@ export function compare(cases) {
   const rules = [...new Set(usable.flatMap((entry) => [...Object.keys(entry.previous.byRule), ...Object.keys(entry.candidate.byRule)]))].sort();
   /** The findings of one rule summed over the usable cases for a side. */
   const ruleTotal = (side, rule) => usable.reduce((sum, entry) => sum + (entry[side].byRule[rule] ?? 0), 0);
-  /** The measured per-case analysis times of the usable cases for a side. */
-  const times = (side) => usable.map((entry) => entry[side].analysisMs).filter((value) => value !== null);
+  // Time is compared only on cases both releases measured, so the two medians are over the same inputs.
+  const timed = usable.filter((entry) => entry.previous.analysisMs !== null && entry.candidate.analysisMs !== null);
+  /** The per-case analysis times of the timed cases for a side. */
+  const times = (side) => timed.map((entry) => entry[side].analysisMs);
   return {
     cases: cases.length,
     compared: usable.length,
