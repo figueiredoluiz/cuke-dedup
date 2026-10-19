@@ -13,6 +13,35 @@ export const LANGUAGES = Object.freeze(["ecmascript", "ruby"]);
 export const VERDICTS = Object.freeze(["reviewed", "generated"]);
 
 /**
+ * What a recall case varies, as a closed vocabulary so a report can count cases per axis. A case
+ * lists every axis it exercises; a new axis is added here, with its meaning, before a case uses it.
+ */
+export const AXES = Object.freeze({
+  "registration-form": "how a step is registered: call, alias, wrapper, decorator, ambient global, legacy entrypoint",
+  "framework-api": "a framework's own registration API or scoping: cucumber-js, Cypress, Playwright BDD, jest-cucumber, the Vitest plugin",
+  "module-resolution": "how registrations are found across modules: barrels, re-exports, path aliases, workspace packages, cross-package imports",
+  "import-form": "named, namespace, default or `require` imports",
+  "module-kind": "how an assertion module is trusted: declared, undeclared, known factory, erased at runtime",
+  "binding-form": "function declarations, `const`, `let`, parameters and destructuring",
+  "scope": "block, nested function, shadowing and the temporal dead zone",
+  "value-provenance": "where a compared value comes from: literal, constant, mutable, external, local, decorator",
+  "mutation-trust": "writes that revoke trust: alias, rest copy, computed key, negation, `require`",
+  "assertion-shape": "assertion subjects, chains, callbacks, deferred and wrapped assertions, computed access",
+  "handler-shape": "handler structure: direct against fluent, varied shape, local-function expansion, inline locals, renaming",
+  "matcher-kind": "Cucumber Expression against regular expression",
+  "matcher-flags": "effective regular-expression flags and their order",
+  "matcher-normalization": "Unicode, whitespace, placeholders, capture groups, anchors and quantifiers",
+  "matcher-wording": "fuzzy wording and polarity",
+  "matcher-overlap": "overlap synthesized from definitions alone",
+  "cluster-size": "the boundary between pair findings and one cluster finding",
+  "candidate-limits": "candidate filtering and the comparison budget",
+  "ambiguity-origin": "where definitions and steps come from for `ambiguous-step`",
+  "gherkin-structure": "backgrounds, rules, outlines, continuation keywords and attachments",
+  "gherkin-source": "classic and Markdown files, step sources, empty Markdown",
+  "control": "the simplest case of a rule, varying nothing, kept so a regression in the common path is not lost",
+});
+
+/**
  * Whether an ambiguity entry names one pair rather than a class of findings. `findingMatches`
  * ignores a falsy selector, and neither matcher text nor one endpoint identifies a pair when
  * definitions are shared, so the entry needs both endpoints: the primary location and the related
@@ -56,6 +85,17 @@ function assertSlugs(name, field, value) {
 }
 
 /**
+ * Asserts `value` is a non-empty array of distinct axes from the closed vocabulary.
+ * @param {string} name Case name, for the message.
+ * @param {unknown} value
+ */
+function assertAxes(name, value) {
+  assertSlugs(name, "axes", value);
+  const unknown = value.filter((axis) => !Object.hasOwn(AXES, axis));
+  assert.deepEqual(unknown, [], `${name}: axes not in the vocabulary: ${unknown.join(", ")}`);
+}
+
+/**
  * Asserts `value` is a real calendar date, `YYYY-MM-DD`, not after `today`.
  * @param {string} name Case name, for the message.
  * @param {unknown} value
@@ -82,7 +122,7 @@ export function validateCaseMetadata(testCase, today) {
   assertOneOf(name, "verdict", testCase.verdict, VERDICTS);
   assertSlugs(name, "frameworks", testCase.frameworks);
   assertDate(name, testCase.classifiedAt, today);
-  if (testCase.axes !== undefined) assertSlugs(name, "axes", testCase.axes);
+  assertAxes(name, testCase.axes);
 
   const findings = testCase.expectedFindings || [];
   const ambiguous = testCase.expectedAmbiguous;

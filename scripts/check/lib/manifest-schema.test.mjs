@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
+  AXES,
   partitionAmbiguous,
   exitAcceptable,
   validateAgainstRecords,
@@ -17,6 +19,7 @@ const positive = (over = {}) => ({
   origin: "synthetic",
   language: "ecmascript",
   frameworks: ["cucumber-js"],
+  axes: ["import-form"],
   verdict: "reviewed",
   classifiedAt: "2026-10-18",
   expectedFindings: [{ rule: "duplicate-matcher" }],
@@ -35,7 +38,7 @@ const finding = (rule, left = "a", right = "b") => ({
 /** Checks a complete case passes and each required field is rejected when missing. */
 test("a complete case passes and each required field is rejected when missing", () => {
   validateCaseMetadata(positive(), TODAY);
-  for (const field of ["role", "origin", "language", "frameworks", "verdict", "classifiedAt"]) {
+  for (const field of ["role", "origin", "language", "frameworks", "axes", "verdict", "classifiedAt"]) {
     const { [field]: _removed, ...rest } = positive();
     assert.throws(() => validateCaseMetadata(rest, TODAY), new RegExp(field), field);
   }
@@ -48,13 +51,18 @@ test("vocabulary values outside the set are rejected", () => {
   }
 });
 
-/** Checks frameworks and axes must be distinct lowercase slugs, axes only when present. */
-test("frameworks and axes must be distinct lowercase slugs, axes only when present", () => {
+/** Checks frameworks and axes must be non-empty distinct lowercase slugs, and axes must belong to the vocabulary. */
+test("frameworks and axes must be distinct slugs and axes must be in the vocabulary", () => {
   for (const bad of [[], ["Cucumber"], ["a", "a"], "cucumber-js"]) {
     assert.throws(() => validateCaseMetadata(positive({ frameworks: bad }), TODAY), /frameworks/);
     assert.throws(() => validateCaseMetadata(positive({ axes: bad }), TODAY), /axes/);
   }
   validateCaseMetadata(positive({ axes: ["import-form", "scope"] }), TODAY);
+  // A well-formed slug outside the closed vocabulary is rejected and named; every listed axis is accepted.
+  assert.throws(() => validateCaseMetadata(positive({ axes: ["import-form", "made-up-axis"] }), TODAY), /not in the vocabulary: made-up-axis/);
+  for (const axis of Object.keys(AXES)) validateCaseMetadata(positive({ axes: [axis] }), TODAY);
+  assert.ok(Object.keys(AXES).length >= 10);
+  for (const [axis, meaning] of Object.entries(AXES)) assert.ok(/^[a-z][a-z0-9-]*$/.test(axis) && meaning.length > 10, axis);
 });
 
 /** Checks classifiedAt must be a real calendar date that is not in the future. */
@@ -158,4 +166,14 @@ test("ambiguity makes the finding-dependent exit status neutral but not an opera
   // A case that also requires findings keeps its exact status.
   const mixed = { ...ambiguous, expectedFindings: [{ rule: "duplicate-matcher" }] };
   assert.equal(exitAcceptable(0, 1, mixed), false);
+});
+
+/** Checks the recall README documents exactly the axes in the vocabulary, with the same meaning. */
+test("the recall README lists every axis in the vocabulary and no other", async () => {
+  const readme = await readFile("fixtures/recall/README.md", "utf8");
+  const documented = new Map([...readme.matchAll(/^\| `([a-z][a-z0-9-]*)` \| (.+) \|$/gm)].map((match) => [match[1], match[2]]));
+  // The metadata table above it also has backticked first cells (role, origin, ...); keep the axes.
+  const axes = new Map([...documented].filter(([name]) => Object.hasOwn(AXES, name) || !["role", "origin", "language", "frameworks", "verdict", "classifiedAt", "axes"].includes(name)));
+  assert.deepEqual([...axes.keys()].sort(), Object.keys(AXES).sort());
+  for (const [axis, meaning] of Object.entries(AXES)) assert.equal(axes.get(axis), meaning, axis);
 });

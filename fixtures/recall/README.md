@@ -35,7 +35,37 @@ the case asserts; `scripts/check/lib/manifest-schema.mjs` validates it on every 
 | `frameworks` | distinct lowercase slugs, in any order | the frameworks of the run's fingerprint records |
 | `verdict` | `reviewed`, `generated` (labels written by a tool, not yet read by a person) | format only |
 | `classifiedAt` | `YYYY-MM-DD`, not in the future | format only |
-| `axes` | optional distinct lowercase slugs naming what the case varies | format only |
+| `axes` | one or more distinct axes from the closed vocabulary below | membership in the vocabulary |
+
+Axes are what a case varies. The vocabulary is closed (`AXES` in `scripts/check/lib/manifest-schema.mjs`),
+so a report can count cases per axis; add an axis there, with its meaning, before a case uses it.
+
+| Axis | Varies |
+| --- | --- |
+| `registration-form` | how a step is registered: call, alias, wrapper, decorator, ambient global, legacy entrypoint |
+| `framework-api` | a framework's own registration API or scoping: cucumber-js, Cypress, Playwright BDD, jest-cucumber, the Vitest plugin |
+| `module-resolution` | how registrations are found across modules: barrels, re-exports, path aliases, workspace packages, cross-package imports |
+| `import-form` | named, namespace, default or `require` imports |
+| `module-kind` | how an assertion module is trusted: declared, undeclared, known factory, erased at runtime |
+| `binding-form` | function declarations, `const`, `let`, parameters and destructuring |
+| `scope` | block, nested function, shadowing and the temporal dead zone |
+| `value-provenance` | where a compared value comes from: literal, constant, mutable, external, local, decorator |
+| `mutation-trust` | writes that revoke trust: alias, rest copy, computed key, negation, `require` |
+| `assertion-shape` | assertion subjects, chains, callbacks, deferred and wrapped assertions, computed access |
+| `handler-shape` | handler structure: direct against fluent, varied shape, local-function expansion, inline locals, renaming |
+| `matcher-kind` | Cucumber Expression against regular expression |
+| `matcher-flags` | effective regular-expression flags and their order |
+| `matcher-normalization` | Unicode, whitespace, placeholders, capture groups, anchors and quantifiers |
+| `matcher-wording` | fuzzy wording and polarity |
+| `matcher-overlap` | overlap synthesized from definitions alone |
+| `cluster-size` | the boundary between pair findings and one cluster finding |
+| `candidate-limits` | candidate filtering and the comparison budget |
+| `ambiguity-origin` | where definitions and steps come from for `ambiguous-step` |
+| `gherkin-structure` | backgrounds, rules, outlines, continuation keywords and attachments |
+| `gherkin-source` | classic and Markdown files, step sources, empty Markdown |
+| `control` | the simplest case of a rule, varying nothing, kept so a regression in the common path is not lost |
+
+`npm run corpus:distribution` counts cases and expectations per dimension from the manifest and names the thin cells.
 
 `ambiguous` is for a pair whose desired outcome is undecided. Such a case lists `expectedAmbiguous`
 entries: a `rule`, a `reason`, and both endpoints of one pair: `primaryPath`, `primaryLine` and non-empty `relatedLocations`. Matcher
