@@ -15,6 +15,7 @@ const baseCase = (over = {}) => ({
   origin: "synthetic",
   language: "ecmascript",
   frameworks: ["cucumber-js"],
+  axes: ["import-form"],
   verdict: "reviewed",
   classifiedAt: "2026-10-18",
   expectedDefinitions: 2,

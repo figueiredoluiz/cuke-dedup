@@ -14,6 +14,7 @@
       "frameworks": ["unknown"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["registration-form", "framework-api"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -47,6 +48,7 @@
       "frameworks": ["cucumber-js", "cypress-cucumber", "playwright-bdd", "unknown"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["ambiguity-origin", "registration-form", "framework-api", "import-form"],
       "expectedDefinitions": 30,
       "expectedFeatureSteps": 20,
       "expectedExit": 1,
@@ -224,6 +226,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["ambiguity-origin", "matcher-kind"],
       "expectedDefinitions": 15,
       "expectedFeatureSteps": 11,
       "expectedExit": 1,
@@ -316,6 +319,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["ambiguity-origin", "gherkin-source"],
       "expectedDefinitions": 29,
       "expectedFeatureSteps": 17,
       "expectedExit": 1,
@@ -464,6 +468,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-kind", "import-form"],
       "expectedDefinitions": 10,
       "expectedFeatureSteps": 0,
       "expectedFindings": [],
@@ -534,6 +539,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-kind", "import-form"],
       "expectedDefinitions": 10,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -584,6 +590,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-kind", "assertion-shape"],
       "expectedDefinitions": 10,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -651,6 +658,7 @@
       "frameworks": ["cucumber-js", "playwright-bdd"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "expectedDefinitions": 14,
       "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
@@ -743,6 +751,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "expectedDefinitions": 6,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -810,6 +819,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-resolution"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -831,6 +841,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-resolution", "import-form"],
       "expectedDefinitions": 4,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -859,6 +870,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["handler-shape"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
@@ -883,6 +895,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["matcher-kind", "matcher-flags"],
       "expectedDefinitions": 24,
       "expectedFeatureSteps": 1,
       "expectedExit": 0,
@@ -1053,6 +1066,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-source"],
       "expectedDefinitions": 1,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -1070,6 +1084,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["cluster-size", "matcher-flags"],
       "expectedDefinitions": 17,
       "expectedFeatureSteps": 1,
       "expectedExit": 0,
@@ -1191,6 +1206,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["control"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -1212,6 +1228,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["matcher-wording", "handler-shape"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedCandidateSources": {
@@ -1236,6 +1253,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-structure"],
       "arguments": [
         "--features",
         "features/grouping.feature"
@@ -1266,6 +1284,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-structure"],
       "arguments": [
         "--features",
         "features/outline.feature"
@@ -1296,6 +1315,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-structure"],
       "arguments": [
         "--features",
         "features/continuations.feature"
@@ -1326,6 +1346,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-source"],
       "arguments": [
         "--features",
         "features/multi*.feature*"
@@ -1356,6 +1377,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-structure"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 3,
       "expectedExit": 0,
@@ -1371,6 +1393,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["gherkin-structure", "gherkin-source"],
       "expectedDefinitions": 5,
       "expectedFeatureSteps": 7,
       "expectedExit": 0,
@@ -1413,6 +1436,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["registration-form", "module-resolution"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -1434,6 +1458,7 @@
       "frameworks": ["cypress-cucumber"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["registration-form", "framework-api"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -1455,6 +1480,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["binding-form", "scope", "handler-shape"],
       "expectedDefinitions": 24,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -1651,6 +1677,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["registration-form"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -1672,6 +1699,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["matcher-overlap", "ambiguity-origin", "matcher-kind"],
       "expectedDefinitions": 14,
       "expectedFeatureSteps": 1,
       "expectedFindings": [
@@ -1756,6 +1784,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["value-provenance", "scope"],
       "expectedDefinitions": 24,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -1915,6 +1944,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["matcher-kind", "matcher-flags", "matcher-normalization"],
       "expectedDefinitions": 24,
       "expectedFeatureSteps": 1,
       "expectedExit": 0,
@@ -2094,6 +2124,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["mutation-trust", "module-kind"],
       "expectedDefinitions": 4,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2146,6 +2177,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "expectedDefinitions": 6,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2202,6 +2234,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-resolution", "import-form"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2223,6 +2256,7 @@
       "frameworks": ["playwright-bdd"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["registration-form", "framework-api"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2244,6 +2278,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["matcher-wording"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2269,6 +2304,7 @@
       "frameworks": ["playwright-bdd"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["value-provenance", "framework-api"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2305,6 +2341,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["import-form", "module-kind"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2341,6 +2378,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["value-provenance"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2377,6 +2415,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["import-form", "value-provenance"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2413,6 +2452,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["import-form", "value-provenance"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2449,6 +2489,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["value-provenance", "handler-shape"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2470,6 +2511,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["value-provenance"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2506,6 +2548,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["value-provenance", "module-kind", "import-form"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2527,6 +2570,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["scope", "value-provenance"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedAbsent": [
@@ -2563,6 +2607,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["binding-form", "handler-shape"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2584,6 +2629,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["matcher-flags"],
       "expectedDefinitions": 4,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2618,6 +2664,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["mutation-trust", "binding-form"],
       "expectedDefinitions": 4,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -2670,6 +2717,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "arguments": [
         "--definitions",
         "callbacks.ts"
@@ -2708,6 +2756,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["candidate-limits"],
       "arguments": [
         "--definitions",
         "candidates.ts"
@@ -2771,6 +2820,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["candidate-limits"],
       "arguments": [
         "--definitions",
         "candidates.ts",
@@ -2824,6 +2874,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["mutation-trust", "assertion-shape"],
       "arguments": [
         "--definitions",
         "computed-key-mutation.ts"
@@ -2875,6 +2926,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape", "module-kind"],
       "arguments": [
         "--definitions",
         "computed-key-trust.cjs"
@@ -2935,6 +2987,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "arguments": [
         "--definitions",
         "deferred-assertions.ts"
@@ -3017,6 +3070,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["scope", "value-provenance"],
       "arguments": [
         "--definitions",
         "tdz.ts"
@@ -3056,6 +3110,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["import-form"],
       "arguments": [
         "--definitions",
         "named-default.ts"
@@ -3116,6 +3171,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["import-form", "mutation-trust"],
       "arguments": [
         "--definitions",
         "alias.ts,control.ts"
@@ -3167,6 +3223,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["mutation-trust"],
       "arguments": [
         "--definitions",
         "negation-mutation.ts"
@@ -3218,6 +3275,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "arguments": [
         "--definitions",
         "nested.ts"
@@ -3243,6 +3301,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["mutation-trust", "import-form"],
       "arguments": [
         "--definitions",
         "require-mutation.cjs"
@@ -3294,6 +3353,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["assertion-shape"],
       "arguments": [
         "--definitions",
         "wrapped.ts"
@@ -3354,6 +3414,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-resolution"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -3375,6 +3436,7 @@
       "frameworks": ["cucumber-js"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["module-resolution"],
       "expectedDefinitions": 2,
       "expectedFeatureSteps": 0,
       "expectedFindings": [
@@ -3396,6 +3458,7 @@
       "frameworks": ["vitest-cucumber"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["framework-api", "registration-form", "import-form"],
       "expectedDefinitions": 4,
       "expectedFeatureSteps": 1,
       "expectedExit": 1,
@@ -3472,6 +3535,7 @@
       "frameworks": ["jest-cucumber", "vitest-cucumber"],
       "verdict": "reviewed",
       "classifiedAt": "2026-10-18",
+      "axes": ["framework-api"],
       "expectedDefinitions": 5,
       "expectedFeatureSteps": 5,
       "expectedFindings": [

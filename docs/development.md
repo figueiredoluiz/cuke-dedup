@@ -160,6 +160,14 @@ when a case cannot be observed. `--case NAME` limits the run; `--json FILE` and 
 write the report (markdown goes to stdout when neither is given). On the current corpus every
 disagreement count is zero except the one known miss, because the gate already fails on any other.
 
+`npm run corpus:distribution` summarizes the recall manifest without running the analyzer: cases and
+expectations per rule, outcome, language, framework, axis, origin, verdict and fixture root, an
+axis-by-rule matrix, and the thin cells (axes and frameworks with `--floor N` cases or fewer, rules with
+no negative or no positive, languages and origins with no case, cases without axes, handler and matcher
+negatives without isolation). A case missing a label is a row in the report, not an error.
+`--json FILE` and `--markdown FILE` write the report; markdown goes to stdout when neither is given.
+The case labels it reads are described in the recall corpus README.
+
 `npm run corpus:candidate-recall` asks, for every pair finding a recall case expects, whether a
 candidate source proposed the pair, from `--emit-pairs` records. It reports candidate recall per
 pair rule, how many positives each source proposed and how many only it proposed (what removing the
