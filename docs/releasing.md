@@ -25,6 +25,30 @@ git diff
 
 Release notes live in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 
+## Comparison with the previous release
+
+`npm run release:compare` runs a previous release binary and a new one on every committed corpus case
+(the behavior corpus and the recall corpus) and prints a markdown table for the release notes:
+
+```bash
+npm run release:compare -- --previous PATH --candidate target/release/cuke-dedup \
+  --previous-label v0.13.0 --candidate-label v0.14.0
+```
+
+- Rows are findings per rule, total findings, definitions and feature steps analyzed, and the median
+  analysis time per case. Counts are exact. Time is the report's own `analysisMs`, the median of
+  `--repeats` runs (default 3), and is advisory: shared runners are noisy. Each run is killed after
+  `--timeout-ms` (default 120000) and counts as failed.
+- A case counts only when both releases produce a report with stable counts across repeats. Cases left
+  out are listed under the table with the reason (the first ten, then a count; `--json` has all), and
+  cases whose exit status changed are named. The command
+  exits 1, with the first reasons on stderr and every reason in the `--json` output, when no case could
+  be compared.
+- `--markdown FILE` and `--json FILE` write the outputs; the table goes to stdout only when neither
+  is given. The
+  command takes two binaries and does not download or build anything. A different rule set between
+  releases appears as a rule with `0` on one side.
+
 ## Prerequisites
 
 - Cargo, npm, the Git tag and the GitHub release use one version.
