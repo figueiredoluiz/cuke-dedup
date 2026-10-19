@@ -126,13 +126,15 @@ test("language and frameworks are held against the analyzed records", () => {
     { domain: "ecmascript", framework: "cucumber-js" },
     { domain: "ecmascript", framework: "playwright-bdd" },
   ];
-  validateAgainstRecords(positive({ frameworks: ["playwright-bdd", "cucumber-js"] }), records);
-  assert.throws(() => validateAgainstRecords(positive({ frameworks: ["cucumber-js"] }), records), /frameworks label/);
-  assert.throws(() => validateAgainstRecords(positive({ frameworks: ["cucumber-js", "playwright-bdd", "cypress-cucumber"] }), records), /frameworks label/);
-  assert.throws(() => validateAgainstRecords(positive({ language: "ruby", frameworks: ["cucumber-js", "playwright-bdd"] }), records), /language label/);
+  validateAgainstRecords(positive({ expectedDefinitions: 2, frameworks: ["playwright-bdd", "cucumber-js"] }), records);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2, frameworks: ["cucumber-js"] }), records), /frameworks label/);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2, frameworks: ["cucumber-js", "playwright-bdd", "cypress-cucumber"] }), records), /frameworks label/);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2, language: "ruby", frameworks: ["cucumber-js", "playwright-bdd"] }), records), /language label/);
+  // A truncated record set fails even when its labels match.
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 3, frameworks: ["cucumber-js", "playwright-bdd"] }), records), /record count/);
   // No records is acceptable only for a case that expects no definitions.
   validateAgainstRecords(positive({ language: "ruby", expectedDefinitions: 0 }), []);
-  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2 }), []), /expects definitions/);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2 }), []), /record count/);
   // Control: a zero-definition case with matching labels still fails when records exist.
   assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 0, frameworks: ["cucumber-js"] }), [{ domain: "ecmascript", framework: "cucumber-js" }]), /expects no definitions/);
 });

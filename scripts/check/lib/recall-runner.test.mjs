@@ -158,7 +158,7 @@ test("isolation checks are delegated and their failures do not stop the case", a
 test("language and framework labels are checked against the records", async () => {
   await assert.rejects(judge(baseCase({ language: "ruby" }), observed()), /language label/);
   await assert.rejects(judge(baseCase({ frameworks: ["playwright-bdd"] }), observed()), /frameworks label/);
-  await assert.rejects(judge(baseCase(), observed(undefined, { fingerprintsText: null })), /no fingerprint records/);
+  await assert.rejects(judge(baseCase(), observed(undefined, { fingerprintsText: null })), /record count/);
 });
 
 /** Checks an expectation without a rule, a case that pins nothing and invalid metadata are rejected before a run. */

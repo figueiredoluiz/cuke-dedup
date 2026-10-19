@@ -210,7 +210,7 @@ export function validateVariantReferences(cases) {
 
 /**
  * Holds the labels the run can contradict against its `--emit-fingerprints` records. Only a case
- * that expects no definitions may have no records.
+ * that expects no definitions may have no records; otherwise there is one record per definition.
  * @param {object} testCase Manifest case.
  * @param {object[]} records Parsed fingerprint records of the case's run.
  */
@@ -220,7 +220,7 @@ export function validateAgainstRecords(testCase, records) {
     assert.equal(records.length, 0, `${testCase.name}: the case expects no definitions, but the run wrote fingerprint records`);
     return;
   }
-  assert.ok(records.length > 0, `${testCase.name}: no fingerprint records, but the case expects definitions`);
+  assert.equal(records.length, testCase.expectedDefinitions, `${testCase.name}: fingerprint record count differs from the expected definitions`);
   const domains = [...new Set(records.map((record) => record.domain))];
   assert.deepEqual(domains, [testCase.language], `${testCase.name}: language label disagrees with the analyzed definitions`);
   const frameworks = [...new Set(records.map((record) => record.framework))].sort();
