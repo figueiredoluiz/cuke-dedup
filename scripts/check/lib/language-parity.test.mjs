@@ -50,11 +50,16 @@ test("independent expectations reject suppression, false positives and false com
 /** Checks manifests reject missing or contradictory expectations, duplicate cases, and unsafe case names. */
 test("manifest rejects missing or contradictory expectations and unsafe case names", () => {
   const item = { id: "paired", rule: "duplicate-handler", sources: { typescript: "", ruby: "" }, feature: "",
-    intent: "exact duplicate", expected };
+    intent: "exact duplicate", expected, role: "positive", origin: "synthetic", language: "both",
+    frameworks: ["cucumber-js", "cucumber-ruby"], verdict: "reviewed", classifiedAt: "2026-10-18", axes: ["handler-shape"] };
   const manifest = { schemaVersion: 1, baselineCommit: "a".repeat(40), cases: [item] };
   validateManifest(manifest);
   for (const cases of [[], [item, item], [{ ...item, id: "../escape" }],
     [{ ...item, expected: { ...expected, requiredAbsent: expected.requiredFindings } }]]) {
     assert.throws(() => validateManifest({ ...manifest, cases }));
+  }
+  // The shared labels are required, and a negative role cannot require a finding.
+  for (const changed of [{ role: undefined }, { axes: undefined }, { axes: ["made-up"] }, { language: "python" }, { role: "negative" }]) {
+    assert.throws(() => validateManifest({ ...manifest, cases: [{ ...item, ...changed }] }), JSON.stringify(changed));
   }
 });

@@ -3,6 +3,13 @@
   "purpose": "Complete shared handler/matcher behavioral dimensions translated from the assigned source cases; desired outcomes never inferred from current Ruby observations.",
   "groupOracles": {
     "equivalent-handlers-adversarial-parser-and-handler-behavior": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parser-recovery", "handler-shape"],
       "sourceCase": "adversarial-parser-and-handler-behavior",
       "path": "equivalent-handlers/adversarial",
       "arguments": [
@@ -39,6 +46,13 @@
       ]
     },
     "equivalent-handlers-parser-and-analysis-regressions": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parser-recovery"],
       "sourceCase": "parser-and-analysis-regressions",
       "path": "equivalent-handlers/parser-regressions",
       "arguments": [
@@ -78,6 +92,13 @@
       ]
     },
     "equivalent-handlers-direct-and-fluent-action-equivalence": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "sourceCase": "direct-and-fluent-action-equivalence",
       "path": "equivalent-handlers/direct-fluent-action",
       "arguments": [
@@ -110,6 +131,13 @@
       }
     },
     "equivalent-handlers-fuzzy-wording-with-varied-handler-shape": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-wording", "handler-shape"],
       "sourceCase": "fuzzy-wording-with-varied-handler-shape",
       "path": "equivalent-handlers/fuzzy-varied-handler",
       "arguments": [
@@ -142,6 +170,13 @@
       }
     },
     "equivalent-handlers-duplicate-matcher-precision-requires-kind-text-and-flags": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-kind", "matcher-flags"],
       "sourceCase": "duplicate-matcher-precision-requires-kind-text-and-flags",
       "path": "equivalent-handlers/duplicate-matcher-precision",
       "arguments": [
@@ -267,6 +302,13 @@
       ]
     },
     "equivalent-handlers-normalized-matcher-covers-four-axes-and-four-exclusions": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-kind", "matcher-flags", "matcher-normalization"],
       "sourceCase": "normalized-matcher-covers-four-axes-and-four-exclusions",
       "path": "equivalent-handlers/normalized-matcher-axes",
       "arguments": [
@@ -397,6 +439,13 @@
       ]
     },
     "equivalent-handlers-matcher-overlap-is-synthesised-without-features": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-overlap", "ambiguity-origin", "matcher-kind"],
       "sourceCase": "matcher-overlap-is-synthesised-without-features",
       "path": "equivalent-handlers/matcher-overlap",
       "arguments": [
@@ -480,6 +529,13 @@
       ]
     },
     "equivalent-handlers-precision-local-values": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["value-provenance"],
       "sourceCase": "precision-local-values",
       "path": "equivalent-handlers/precision-local-values",
       "arguments": [
@@ -516,6 +572,13 @@
       ]
     },
     "equivalent-handlers-precision-inline-local": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["value-provenance", "handler-shape"],
       "sourceCase": "precision-inline-local",
       "path": "equivalent-handlers/precision-inline-local",
       "arguments": [
@@ -546,6 +609,13 @@
       ]
     },
     "equivalent-handlers-precision-renamed-local": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["binding-form", "handler-shape"],
       "sourceCase": "precision-renamed-local",
       "path": "equivalent-handlers/precision-renamed-local",
       "arguments": [
@@ -575,6 +645,13 @@
       ]
     },
     "equivalent-handlers-precision-nested-shadow": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["scope", "value-provenance"],
       "sourceCase": "precision-nested-shadow",
       "path": "equivalent-handlers/precision-nested-shadow",
       "arguments": [
@@ -611,6 +688,13 @@
       ]
     },
     "equivalent-handlers-precision-external-values": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["value-provenance"],
       "sourceCase": "precision-external-values",
       "path": "equivalent-handlers/precision-external-values",
       "arguments": [
@@ -647,6 +731,13 @@
       ]
     },
     "equivalent-handlers-precision-import-esm": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["import-form", "value-provenance"],
       "sourceCase": "precision-import-esm",
       "path": "equivalent-handlers/precision-import-esm",
       "arguments": [
@@ -676,6 +767,13 @@
       ]
     },
     "equivalent-handlers-precision-import-cjs": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["import-form", "value-provenance"],
       "sourceCase": "precision-import-cjs",
       "path": "equivalent-handlers/precision-import-cjs",
       "arguments": [
@@ -705,6 +803,13 @@
       ]
     },
     "equivalent-handlers-precision-erased-runtime": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["import-form", "module-kind"],
       "sourceCase": "precision-erased-runtime",
       "path": "equivalent-handlers/precision-erased-runtime",
       "arguments": [
@@ -734,6 +839,13 @@
       ]
     },
     "equivalent-handlers-precision-mixed-positive": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["value-provenance", "module-kind", "import-form"],
       "sourceCase": "precision-mixed-positive",
       "path": "equivalent-handlers/precision-mixed-positive",
       "arguments": [
@@ -763,6 +875,13 @@
       ]
     },
     "equivalent-handlers-review-gap-callback-call-evidence": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "sourceCase": "review-gap-callback-call-evidence",
       "path": "equivalent-handlers/callbacks",
       "arguments": [
@@ -799,6 +918,13 @@
       ]
     },
     "equivalent-handlers-review-gap-candidate-filter": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["candidate-limits"],
       "sourceCase": "review-gap-candidate-filter",
       "path": "equivalent-handlers/candidates",
       "arguments": [
@@ -854,6 +980,13 @@
       "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one and report the truncation diagnostic; the matcher-overlap pass completes because no matcher pair overlaps, and the corpus itself stays complete."
     },
     "equivalent-handlers-review-gap-candidate-small-budget": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["candidate-limits"],
       "sourceCase": "review-gap-candidate-small-budget",
       "path": "equivalent-handlers/candidates",
       "arguments": [
@@ -911,6 +1044,13 @@
       "reason": "The explicit block-local next and implicit assertion expression preserve identical observable assertion behavior but distinct exact handler structure, so only the source near-duplicate-step outcome is required. Exit 2 is the source outcome: under --max-candidate-comparisons 1 both languages evaluate one matcher-blocking candidate, skip one and report the truncation diagnostic; the matcher-overlap pass completes because no matcher pair overlaps, and the corpus itself stays complete."
     },
     "equivalent-handlers-review-gap-lexical-tdz": {
+      "role": "negative",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["scope", "value-provenance"],
       "sourceCase": "review-gap-lexical-tdz",
       "path": "equivalent-handlers/lexical-early-read",
       "arguments": [
@@ -948,6 +1088,13 @@
       "reason": "Opaque nested block parameters prevent an outer literal from granting assertion trust. Ruby nil-initialization is not represented as TypeScript TDZ uncertainty."
     },
     "equivalent-handlers-regex-flag-identity-keeps-semantic-flags": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-flags"],
       "sourceCase": "regex-flag-identity-keeps-semantic-flags",
       "path": "equivalent-handlers/regex-flag-identity",
       "arguments": [
@@ -991,6 +1138,13 @@
       ]
     },
     "equivalent-handlers-module-constant-values-reach-the-fingerprint": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["value-provenance", "scope"],
       "sourceCase": "module-constant-values-reach-the-fingerprint",
       "path": "equivalent-handlers/module-constant-values",
       "arguments": [

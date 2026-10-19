@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "regex-classes-ascii-word": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-classes/ascii-word",
       "definitions": 2,
       "featureSteps": 1,
@@ -26,6 +33,13 @@
       ]
     },
     "regex-classes-nonascii-word": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-classes/nonascii-word",
       "definitions": 2,
       "featureSteps": 1,
@@ -55,6 +69,13 @@
       ]
     },
     "regex-classes-dotall": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-classes/dotall",
       "definitions": 2,
       "featureSteps": 1,

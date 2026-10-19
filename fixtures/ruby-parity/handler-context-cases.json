@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "handler-context-nested-exact": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-context"],
       "path": "handler-context/nested-exact",
       "definitions": 2,
       "featureSteps": 0,
@@ -29,6 +36,13 @@
       "requiredAbsent": []
     },
     "handler-context-nested-conflict": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-context"],
       "path": "handler-context/nested-conflict",
       "definitions": 2,
       "featureSteps": 0,
@@ -59,6 +73,13 @@
       ]
     },
     "handler-context-captured-files": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-context"],
       "path": "handler-context/captured-files",
       "definitions": 2,
       "featureSteps": 0,
@@ -89,6 +110,13 @@
       ]
     },
     "handler-context-shadowed-captures": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-context", "scope"],
       "path": "handler-context/shadowed-captures",
       "definitions": 2,
       "featureSteps": 0,

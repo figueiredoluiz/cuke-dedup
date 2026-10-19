@@ -7,6 +7,13 @@
     {
       "id": "duplicate-identical",
       "rule": "duplicate-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["control"],
       "intent": "duplicate-identical: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the same action\", () => { page.open(\"home\"); });\nGiven(\"the same action\", () => { page.close(\"home\"); });\n",
@@ -29,6 +36,13 @@
     {
       "id": "duplicate-distinct",
       "rule": "duplicate-matcher",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["control"],
       "intent": "duplicate-distinct: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the first action\", () => { page.open(\"home\"); });\nGiven(\"the second action\", () => { page.close(\"home\"); });\n",
@@ -50,6 +64,13 @@
     {
       "id": "normalized-whitespace",
       "rule": "normalized-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-normalization"],
       "intent": "normalized-whitespace: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the   panel opens\", () => { page.open(\"home\"); });\nGiven(\"the panel opens\", () => { page.close(\"home\"); });\n",
@@ -72,6 +93,13 @@
     {
       "id": "normalized-unicode-escape",
       "rule": "normalized-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-normalization"],
       "intent": "Equivalent Unicode escapes must decode before Cucumber expression normalization.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the \\uff21 panel opens\", () => { page.open(\"home\"); });\nGiven(\"the A panel opens\", () => { page.close(\"home\"); });\n",
@@ -94,6 +122,13 @@
     {
       "id": "normalized-unicode-literal",
       "rule": "normalized-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-normalization"],
       "intent": "Literal Unicode compatibility forms share Cucumber expression normalization.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the Ａ panel opens\", () => { page.open(\"home\"); });\nGiven(\"the A panel opens\", () => { page.close(\"home\"); });\n",
@@ -116,6 +151,13 @@
     {
       "id": "normalized-distinct",
       "rule": "normalized-matcher",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-normalization"],
       "intent": "normalized-distinct: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the panel opens\", () => { page.open(\"home\"); });\nGiven(\"the panel closes\", () => { page.close(\"home\"); });\n",
@@ -137,6 +179,13 @@
     {
       "id": "ambiguous-concrete",
       "rule": "ambiguous-step",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["ambiguity-origin"],
       "intent": "ambiguous-concrete: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"I have {int} coins\", () => { page.open(\"home\"); });\nGiven(/^I have (\\d+) coins$/, () => { page.close(\"home\"); });\n",
@@ -159,6 +208,13 @@
     {
       "id": "ambiguous-disjoint",
       "rule": "ambiguous-step",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["ambiguity-origin"],
       "intent": "ambiguous-disjoint: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"I have {int} coins\", () => { page.open(\"home\"); });\nGiven(\"I have {int} shells\", () => { page.close(\"home\"); });\n",
@@ -180,6 +236,13 @@
     {
       "id": "overlap-expression",
       "rule": "overlapping-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-overlap", "matcher-kind"],
       "intent": "overlap-expression: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"a {word} panel\", () => { page.open(\"home\"); });\nGiven(\"a violet panel\", () => { page.close(\"home\"); });\n",
@@ -202,6 +265,13 @@
     {
       "id": "overlap-disjoint",
       "rule": "overlapping-matcher",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-overlap"],
       "intent": "overlap-disjoint: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"a {int} panel\", () => { page.open(\"home\"); });\nGiven(\"a violet panel\", () => { page.close(\"home\"); });\n",
@@ -223,6 +293,13 @@
     {
       "id": "handler-identical",
       "rule": "duplicate-handler",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "intent": "handler-identical: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { page.open(\"home\"); });\nGiven(\"visit the workspace\", () => { page.open(\"home\"); });\n",
@@ -245,6 +322,13 @@
     {
       "id": "handler-parameters-renamed",
       "rule": "duplicate-handler",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["binding-form", "handler-shape"],
       "intent": "handler-parameters-renamed: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open {word} dashboard\", (name) => { page.open(name); });\nGiven(\"visit {word} workspace\", (value) => { page.open(value); });\n",
@@ -267,6 +351,13 @@
     {
       "id": "handler-locals-renamed",
       "rule": "duplicate-handler",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["binding-form", "handler-shape"],
       "intent": "handler-locals-renamed: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { const item = page.current(); page.open(item); });\nGiven(\"visit the workspace\", () => { const value = page.current(); page.open(value); });\n",
@@ -289,6 +380,13 @@
     {
       "id": "handler-conflicting-actions",
       "rule": "duplicate-handler",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "intent": "handler-conflicting-actions: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { page.open(\"home\"); });\nGiven(\"visit the workspace\", () => { page.close(\"home\"); });\n",
@@ -316,6 +414,13 @@
     {
       "id": "handler-conflicting-argument-order",
       "rule": "duplicate-handler",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "intent": "handler-conflicting-argument-order: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"open the dashboard\", () => { page.move(left, right); });\nGiven(\"visit the workspace\", () => { page.move(right, left); });\n",
@@ -343,6 +448,13 @@
     {
       "id": "near-identical-handlers",
       "rule": "near-duplicate-step",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "intent": "near-identical-handlers: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens\", () => { page.open(\"home\"); });\nGiven(\"the dashboard panel open\", () => { page.open(\"home\"); });\n",
@@ -365,6 +477,13 @@
     {
       "id": "near-renamed-parameters",
       "rule": "near-duplicate-step",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["binding-form", "handler-shape"],
       "intent": "near-renamed-parameters: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens {word}\", (name) => { page.open(name); });\nGiven(\"the dashboard panel open {word}\", (value) => { page.open(value); });\n",
@@ -387,6 +506,13 @@
     {
       "id": "near-conflicting-actions",
       "rule": "near-duplicate-step",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "intent": "near-conflicting-actions: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens\", () => { page.open(\"home\"); });\nGiven(\"the dashboard panel open\", () => { page.close(\"home\"); });\n",
@@ -414,6 +540,13 @@
     {
       "id": "parameterization-action-literals",
       "rule": "parameterization-candidate",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape", "value-provenance"],
       "intent": "parameterization-action-literals: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"switches to dark theme\", () => { page.theme(\"dark\"); });\nGiven(\"switches to light theme\", () => { page.theme(\"light\"); });\n",
@@ -436,6 +569,13 @@
     {
       "id": "parameterization-polarity",
       "rule": "parameterization-candidate",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-wording"],
       "intent": "parameterization-polarity: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the panel is enabled\", () => { page.theme(\"dark\"); });\nGiven(\"the panel is disabled\", () => { page.theme(\"light\"); });\n",
@@ -460,6 +600,13 @@
     {
       "id": "parameterization-conflicting-actions",
       "rule": "parameterization-candidate",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape"],
       "intent": "parameterization-conflicting-actions: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"switches to dark theme\", () => { page.open(\"home\"); });\nGiven(\"switches to light theme\", () => { page.close(\"home\"); });\n",
@@ -487,6 +634,13 @@
     {
       "id": "unused-one-definition",
       "rule": "unused-definition",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["control"],
       "intent": "unused-one-definition: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the first action\", () => { page.open(\"home\"); });\nGiven(\"the second action\", () => { page.close(\"home\"); });\n",
@@ -509,6 +663,13 @@
     {
       "id": "unused-all-used",
       "rule": "unused-definition",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["control"],
       "intent": "unused-all-used: equivalent source intent in Cucumber.js and Cucumber-Ruby",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the first action\", () => { page.open(\"home\"); });\nGiven(\"the second action\", () => { page.close(\"home\"); });\n",
@@ -530,6 +691,13 @@
     {
       "id": "normalized-matcher-kind-boundary",
       "rule": "normalized-matcher",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-kind", "matcher-normalization"],
       "intent": "A regular expression and expression text do not share normalized matcher identity.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"a panel\", () => { page.open(); });\nGiven(/a panel/, () => { page.close(); });\n",
@@ -554,6 +722,13 @@
     {
       "id": "normalized-regex-flags-boundary",
       "rule": "normalized-matcher",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-flags"],
       "intent": "Case-sensitive and case-insensitive regexes remain distinct.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(/a panel/i, () => { page.open(); });\nGiven(/a panel/, () => { page.close(); });\n",
@@ -578,6 +753,13 @@
     {
       "id": "discovery-unknown-matcher",
       "rule": "duplicate-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "intent": "An unresolved matcher stays incomplete while independent direct registrations retain findings.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the same action\", () => { page.open(\"home\"); });\nGiven(\"the same action\", () => { page.close(\"home\"); });\nGiven(pattern, () => { page.open(); });\n",
@@ -600,6 +782,13 @@
     {
       "id": "discovery-foreign-receiver",
       "rule": "duplicate-matcher",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "intent": "An unrelated object registration does not invent a Cucumber definition or hide direct registrations.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\"; const foreign = { Given(...args) {} };\nGiven(\"the same action\", () => { page.open(\"home\"); });\nGiven(\"the same action\", () => { page.close(\"home\"); });\nforeign.Given(\"foreign\", () => { page.open(); });\n",
@@ -622,6 +811,13 @@
     {
       "id": "assertion-identical",
       "rule": "duplicate-handler",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "intent": "Assertion identity, expected values and deferred execution must survive handler comparison.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { expect(page.state()).toBe(\"ready\"); });\nGiven(\"the dashboard panel open\", () => { expect(page.state()).toBe(\"ready\"); });\n",
@@ -644,6 +840,13 @@
     {
       "id": "assertion-conflicting",
       "rule": "duplicate-handler",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "intent": "Assertion identity, expected values and deferred execution must survive handler comparison.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { expect(page.state()).toBe(\"ready\"); });\nGiven(\"the dashboard panel open\", () => { expect(page.state()).toBe(\"idle\"); });\n",
@@ -671,6 +874,13 @@
     {
       "id": "assertion-deferred-conflicting",
       "rule": "duplicate-handler",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "intent": "Assertion identity, expected values and deferred execution must survive handler comparison.",
       "sources": {
         "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { later(() => { expect(page.state()).toBe(\"ready\"); }); });\nGiven(\"the dashboard panel open\", () => { later(() => { expect(page.state()).toBe(\"idle\"); }); });\n",

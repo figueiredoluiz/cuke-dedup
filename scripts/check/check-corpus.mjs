@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
-import { validateVariantReferences } from "./lib/manifest-schema.mjs";
+import { parseRecords } from "./lib/negative-isolation.mjs";
+import { latestClassifiedAt, validateCorpusLabels, validateAgainstRecords, validateVariantReferences } from "./lib/manifest-schema.mjs";
 import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./lib/recall-runner.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
@@ -93,9 +94,10 @@ try {
       await mkdir(dirname(destination), { recursive: true });
       await cp(join(caseRoot, materialized.source), destination);
     }
+    const fingerprints = join(temporary, testCase.name, "fingerprints.jsonl");
     const run = spawnSync(
       binary,
-      [".", ...testCase.arguments, "--reporters", "json", "--output", output],
+      [".", ...testCase.arguments, "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
       { cwd: caseRoot, encoding: "utf8" },
     );
     assert.equal(run.status, testCase.expectedExit, `${testCase.name}: ${run.stderr}`);
@@ -111,6 +113,12 @@ try {
     for (const message of testCase.stderrIncludes || []) {
       assert.ok(run.stderr.includes(message), `${testCase.name}: missing stderr message ${message}`);
     }
+    // The labels the run can contradict are held against its fingerprint records, as for recall cases.
+    validateCorpusLabels(testCase, testCase.name, latestClassifiedAt(), Object.keys(expected.byRule).length);
+    validateAgainstRecords(
+      { name: testCase.name, language: testCase.language, frameworks: testCase.frameworks, expectedDefinitions: expected.definitions },
+      parseRecords(await readFile(fingerprints, "utf8")),
+    );
   }
 
   let recall;
@@ -345,9 +353,7 @@ async function validateRecallCorpus(temporary) {
   // Variant references name other cases, so they are checked against the whole manifest even when
   // a single case is selected.
   await attempt(failures, "recall variant references", async () => validateVariantReferences(recallManifest.cases));
-  // The latest calendar date anywhere on Earth (UTC+14), so a label written on the author's local
-  // date is never rejected as future while UTC is still the day before.
-  const today = new Date(Date.now() + 14 * 3_600_000).toISOString().slice(0, 10);
+  const today = latestClassifiedAt();
   const failuresBefore = failures.length;
   for (const testCase of cases) await attempt(failures, `recall ${testCase.name}`, () => validateRecallCase(testCase));
   /** Runs one recall case, asserts its findings and adds them to the corpus totals. */

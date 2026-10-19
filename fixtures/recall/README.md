@@ -31,7 +31,7 @@ the case asserts; `scripts/check/lib/manifest-schema.mjs` validates it on every 
 | --- | --- | --- |
 | `role` | `positive` (has `expectedFindings`), `negative` (has none), `ambiguous`, `variant` | the case's own expectations |
 | `origin` | `synthetic`, `real`, `regression` (added for a reviewer finding or shipped bug) | format only |
-| `language` | `ecmascript`, `ruby` | the `domain` of the run's fingerprint records |
+| `language` | `ecmascript`, `ruby`, or `both` for a paired case with a TypeScript and a Ruby source | the `domain` of the run's fingerprint records, where the case is run (recall and behavior corpora) |
 | `frameworks` | distinct lowercase slugs, in any order | the frameworks of the run's fingerprint records |
 | `verdict` | `reviewed`, `generated` (labels written by a tool, not yet read by a person) | format only |
 | `classifiedAt` | `YYYY-MM-DD`, not in the future | format only |
@@ -64,6 +64,16 @@ so a report can count cases per axis; add an axis there, with its meaning, befor
 | `gherkin-structure` | backgrounds, rules, outlines, continuation keywords and attachments |
 | `gherkin-source` | classic and Markdown files, step sources, empty Markdown |
 | `control` | the simplest case of a rule, varying nothing, kept so a regression in the common path is not lost |
+| `discovery` | which files are found: exclusions, ignore files, hidden files, nested roots, default includes |
+| `gate-threshold` | the duplication threshold and the exit status it decides |
+| `parser-recovery` | malformed or adversarial input that must not hide valid definitions |
+| `gherkin-dialect` | localized and Unicode Gherkin keywords |
+| `provider-context` | which receiver or module context makes a call a registration: mixins, World modules, lifecycle hooks, nested callbacks |
+| `regex-translation` | translating regular-expression syntax into the shared matcher model: classes, braces, punctuation, dot-all |
+| `parameter-types` | custom parameter types and their collisions |
+| `owner-identity` | the qualified owner of a definition and autoloaded owners |
+| `dependency-usage` | usage reached through loaded files |
+| `handler-context` | nested handler contexts and the files a handler captures |
 
 `npm run corpus:distribution` counts cases and expectations per dimension from the manifest and names the thin cells.
 

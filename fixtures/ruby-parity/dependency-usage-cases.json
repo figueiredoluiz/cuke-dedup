@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "dependency-usage-no-load": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["dependency-usage"],
       "path": "dependency-usage/no-load",
       "arguments": [
         "--definitions",
@@ -40,6 +47,13 @@
       "requiredAbsent": []
     },
     "dependency-usage-resolved": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["dependency-usage", "module-resolution"],
       "path": "dependency-usage/resolved",
       "arguments": [
         "--definitions",
@@ -73,6 +87,13 @@
       "requiredAbsent": []
     },
     "dependency-usage-missing": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["dependency-usage", "module-resolution"],
       "path": "dependency-usage/missing",
       "arguments": [
         "--definitions",
@@ -105,6 +126,13 @@
       ]
     },
     "dependency-usage-dynamic-target": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["dependency-usage", "module-resolution"],
       "path": "dependency-usage/dynamic-target",
       "arguments": [
         "--definitions",

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   AXES,
+  latestClassifiedAt,
   partitionAmbiguous,
+  validateCorpusLabels,
   exitAcceptable,
   validateAgainstRecords,
   validateCaseMetadata,
@@ -124,13 +126,15 @@ test("language and frameworks are held against the analyzed records", () => {
     { domain: "ecmascript", framework: "cucumber-js" },
     { domain: "ecmascript", framework: "playwright-bdd" },
   ];
-  validateAgainstRecords(positive({ frameworks: ["playwright-bdd", "cucumber-js"] }), records);
-  assert.throws(() => validateAgainstRecords(positive({ frameworks: ["cucumber-js"] }), records), /frameworks label/);
-  assert.throws(() => validateAgainstRecords(positive({ frameworks: ["cucumber-js", "playwright-bdd", "cypress-cucumber"] }), records), /frameworks label/);
-  assert.throws(() => validateAgainstRecords(positive({ language: "ruby", frameworks: ["cucumber-js", "playwright-bdd"] }), records), /language label/);
+  validateAgainstRecords(positive({ expectedDefinitions: 2, frameworks: ["playwright-bdd", "cucumber-js"] }), records);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2, frameworks: ["cucumber-js"] }), records), /frameworks label/);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2, frameworks: ["cucumber-js", "playwright-bdd", "cypress-cucumber"] }), records), /frameworks label/);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2, language: "ruby", frameworks: ["cucumber-js", "playwright-bdd"] }), records), /language label/);
+  // A truncated record set fails even when its labels match.
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 3, frameworks: ["cucumber-js", "playwright-bdd"] }), records), /record count/);
   // No records is acceptable only for a case that expects no definitions.
   validateAgainstRecords(positive({ language: "ruby", expectedDefinitions: 0 }), []);
-  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2 }), []), /expects definitions/);
+  assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 2 }), []), /record count/);
   // Control: a zero-definition case with matching labels still fails when records exist.
   assert.throws(() => validateAgainstRecords(positive({ expectedDefinitions: 0, frameworks: ["cucumber-js"] }), [{ domain: "ecmascript", framework: "cucumber-js" }]), /expects no definitions/);
 });
@@ -176,4 +180,27 @@ test("the recall README lists every axis in the vocabulary and no other", async 
   const axes = new Map([...documented].filter(([name]) => Object.hasOwn(AXES, name) || !["role", "origin", "language", "frameworks", "verdict", "classifiedAt", "axes"].includes(name)));
   assert.deepEqual([...axes.keys()].sort(), Object.keys(AXES).sort());
   for (const [axis, meaning] of Object.entries(AXES)) assert.equal(axes.get(axis), meaning, axis);
+});
+
+/** Checks labels in the other corpora: the shared fields are required, and the role follows the required findings. */
+test("corpus labels need the shared fields and a role that follows the required findings", () => {
+  /** A labelled Ruby group, with fields overridden. */
+  const labelled = (over = {}) => ({ role: "positive", origin: "synthetic", language: "ruby", frameworks: ["cucumber-ruby"], verdict: "reviewed", classifiedAt: "2026-10-18", axes: ["provider-context"], ...over });
+  validateCorpusLabels(labelled(), "group", TODAY, 2);
+  validateCorpusLabels(labelled({ role: "negative" }), "group", TODAY, 0);
+  validateCorpusLabels(labelled({ language: "both" }), "group", TODAY, 1);
+  assert.throws(() => validateCorpusLabels(labelled(), "group", TODAY, 0), /role positive needs a required finding/);
+  assert.throws(() => validateCorpusLabels(labelled({ role: "negative" }), "group", TODAY, 1), /role negative requires a finding/);
+  // Roles that only recall cases can have are rejected here.
+  for (const role of ["ambiguous", "variant", undefined]) assert.throws(() => validateCorpusLabels(labelled({ role }), "group", TODAY, 1), /role must be one of/);
+  for (const field of ["origin", "language", "frameworks", "verdict", "classifiedAt", "axes"]) {
+    assert.throws(() => validateCorpusLabels(labelled({ [field]: undefined }), "group", TODAY, 1), new RegExp(field), field);
+  }
+});
+
+/** Checks the newest allowed label date is the date anywhere on Earth, so a local date ahead of UTC is accepted. */
+test("the latest label date is the calendar date at UTC+14", () => {
+  assert.equal(latestClassifiedAt(Date.UTC(2026, 9, 19, 12)), "2026-10-20");
+  assert.equal(latestClassifiedAt(Date.UTC(2026, 9, 19, 9)), "2026-10-19");
+  assert.equal(latestClassifiedAt(Date.UTC(2026, 11, 31, 23)), "2027-01-01");
 });

@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "regex-punctuation-quoted": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-punctuation/quoted",
       "definitions": 3,
       "featureSteps": 1,
@@ -29,6 +36,13 @@
       ]
     },
     "regex-punctuation-unquoted": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-punctuation/unquoted",
       "definitions": 3,
       "featureSteps": 1,

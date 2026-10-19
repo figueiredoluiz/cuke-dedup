@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "provider-context-lifecycle-direct": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context", "registration-form"],
       "definitions": 4,
       "featureSteps": 4,
       "complete": true,
@@ -52,6 +59,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-callback-nested-registration": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context", "scope"],
       "definitions": 2,
       "featureSteps": 2,
       "complete": false,
@@ -100,6 +114,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-unrelated-module-alias": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 2,
       "featureSteps": 2,
       "complete": true,
@@ -135,6 +156,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-uninstalled-module-given": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 2,
       "featureSteps": 2,
       "complete": true,
@@ -170,6 +198,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-world-module-given": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 2,
       "featureSteps": 2,
       "complete": true,
@@ -205,6 +240,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-object-kernel-mixins": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 0,
       "featureSteps": 2,
       "complete": false,
@@ -219,6 +261,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-local-method-added": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 2,
       "featureSteps": 2,
       "complete": true,
@@ -254,6 +303,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-receiver-local-send": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 2,
       "featureSteps": 2,
       "complete": true,
@@ -289,6 +345,13 @@
       "definitionsPattern": "entry.rb"
     },
     "provider-context-global-method-added": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["provider-context"],
       "definitions": 0,
       "featureSteps": 2,
       "complete": false,

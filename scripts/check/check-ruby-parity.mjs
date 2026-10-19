@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, parityDeficits, partitionEvidenceTargets, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, testSummary, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
+import { latestClassifiedAt, validateCorpusLabels } from "./lib/manifest-schema.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
 const args = process.argv.slice(2);
@@ -135,6 +136,7 @@ for (const [file, inventory] of Object.entries(units.files)) {
 }
 for (const [name, group] of Object.entries(groups)) {
   validateOracle(group);
+  validateCorpusLabels(group, name, latestClassifiedAt(), group.requiredFindings.length);
   assert.ok((await stat(within(root, group.path))).isDirectory(), `${name}: missing fixture directory`);
   for (const item of group.materialize ?? []) {
     await stat(within(within(root, group.path), item.source));

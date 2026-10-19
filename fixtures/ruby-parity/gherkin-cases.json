@@ -3,6 +3,13 @@
   "sourceManifest": "fixtures/recall/manifest.json",
   "groupOracles": {
     "gherkin-backgrounds-and-rules": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure"],
       "sourceCase": "gherkin-backgrounds-and-rules",
       "path": "gherkin/backgrounds-rules",
       "arguments": [
@@ -41,6 +48,13 @@
       "expectedExit": 0
     },
     "gherkin-outline-examples-rows": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure"],
       "sourceCase": "gherkin-outline-examples-rows",
       "path": "gherkin/outline-examples",
       "arguments": [
@@ -79,6 +93,13 @@
       "expectedExit": 0
     },
     "gherkin-continuation-keywords": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure"],
       "sourceCase": "gherkin-continuation-keywords",
       "path": "gherkin/continuations",
       "arguments": [
@@ -117,6 +138,13 @@
       "expectedExit": 0
     },
     "gherkin-classic-and-markdown-files": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-source"],
       "sourceCase": "gherkin-classic-and-markdown-files",
       "path": "gherkin/mixed-feature-formats",
       "arguments": [
@@ -155,6 +183,13 @@
       "expectedExit": 0
     },
     "gherkin-attachments-do-not-create-steps": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure"],
       "sourceCase": "gherkin-attachments-do-not-create-steps",
       "path": "gherkin/attachments",
       "arguments": [
@@ -181,6 +216,13 @@
       "expectedExit": 0
     },
     "gherkin-step-sources-contribute-concrete-steps": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure", "gherkin-source"],
       "sourceCase": "gherkin-step-sources-contribute-concrete-steps",
       "path": "gherkin/step-sources",
       "arguments": [
@@ -222,6 +264,13 @@
       "expectedExit": 0
     },
     "empty-markdown-does-not-prove-unused-definitions": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-source"],
       "sourceCase": "empty-markdown-does-not-prove-unused-definitions",
       "path": "gherkin/empty-markdown",
       "arguments": [
@@ -243,6 +292,13 @@
       "reason": "The Markdown feature file parses but yields no steps; retain incomplete status so an empty corpus cannot prove the registration unused."
     },
     "ambiguous-step-identity-pins-the-finding-key": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["ambiguity-origin", "matcher-kind"],
       "sourceCase": "ambiguous-step-identity-pins-the-finding-key",
       "path": "gherkin/ambiguous-identity",
       "arguments": [
@@ -334,6 +390,13 @@
       "expectedExit": 1
     },
     "exact-group-cluster-boundary-splits-at-five-members": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["cluster-size", "matcher-flags"],
       "sourceCase": "exact-group-cluster-boundary-splits-at-five-members",
       "path": "gherkin/cluster-boundary",
       "arguments": [
@@ -461,6 +524,13 @@
       "expectedExit": 0
     },
     "gherkin-table-cell-escapes": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure"],
       "sourceCase": "gherkin-table-cell-escapes",
       "path": "gherkin/table-escapes",
       "arguments": [
@@ -512,6 +582,13 @@
       ]
     },
     "malformed-table-neighbor": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-structure", "parser-recovery"],
       "sourceCase": "malformed-table-neighbor",
       "path": "gherkin/malformed-table-neighbor",
       "arguments": [

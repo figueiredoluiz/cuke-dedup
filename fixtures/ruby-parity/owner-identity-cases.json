@@ -3,6 +3,13 @@
   "mappings": [],
   "groupOracles": {
     "owner-identity-qualified-missing-owner": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["owner-identity"],
       "path": "owner-identity/qualified-missing-owner",
       "definitionsPattern": "entry.rb",
       "definitions": 0,
@@ -20,6 +27,13 @@
       ]
     },
     "owner-identity-autoloaded-owner": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["owner-identity", "module-resolution"],
       "path": "owner-identity/autoloaded-owner",
       "definitionsPattern": "entry.rb",
       "definitions": 0,

@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "parameter-types-regex": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parameter-types"],
       "path": "parameter-types/regex",
       "definitions": 2,
       "featureSteps": 1,
@@ -29,6 +36,13 @@
       ]
     },
     "parameter-types-array": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parameter-types"],
       "path": "parameter-types/array",
       "definitions": 2,
       "featureSteps": 1,
@@ -56,6 +70,13 @@
       ]
     },
     "parameter-types-unresolved": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parameter-types"],
       "path": "parameter-types/unresolved",
       "definitions": 2,
       "featureSteps": 1,
@@ -81,6 +102,13 @@
       ]
     },
     "parameter-types-collision": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parameter-types"],
       "path": "parameter-types/collision",
       "definitions": 2,
       "featureSteps": 1,

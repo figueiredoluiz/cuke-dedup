@@ -4,6 +4,13 @@
     {
       "name": "configured-threshold-at-limit",
       "path": "threshold-group",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gate-threshold"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -19,6 +26,13 @@
     {
       "name": "threshold-over-limit",
       "path": "threshold-group",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gate-threshold"],
       "arguments": ["--threshold", "59.99"],
       "expectedExit": 1,
       "expected": {
@@ -34,6 +48,13 @@
     {
       "name": "explicit-exclusion-patterns",
       "path": "exclusions",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "arguments": [
         "--exclude",
         "ignored-file.ts",
@@ -56,6 +77,13 @@
     {
       "name": "comma-separated-exclusion-patterns",
       "path": "exclusions",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "arguments": [
         "--exclude",
         "ignored-file.ts,ignored-directory,generated/**/*.ts"
@@ -74,6 +102,13 @@
     {
       "name": "gitignore-exclusion",
       "path": "gitignore",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "arguments": [],
       "materialize": [
         {
@@ -99,6 +134,13 @@
     {
       "name": "nested-root-directory-exclusion",
       "path": "nested-root/packages/e2e",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "arguments": ["--exclude", "ignored"],
       "expectedExit": 0,
       "expected": {
@@ -114,6 +156,13 @@
     {
       "name": "gherkin-markdown-default-discovery",
       "path": "gherkin-markdown",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["cucumber-js"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery", "gherkin-source"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -129,6 +178,13 @@
     {
       "name": "playwright-bdd-framework-discovery",
       "path": "framework-config",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["playwright-bdd"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["framework-api", "discovery"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -144,6 +200,13 @@
     {
       "name": "playwright-bdd-local-fixture-duplicate-handler",
       "path": "playwright-bdd-local-fixture",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["playwright-bdd"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["framework-api", "handler-shape"],
       "arguments": [],
       "expectedExit": 1,
       "expected": {
@@ -159,6 +222,13 @@
     {
       "name": "cypress-cucumber-framework-discovery",
       "path": "cypress-config",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["cypress-cucumber"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["framework-api", "discovery"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -174,6 +244,13 @@
     {
       "name": "cuke-dedup-ignore-file",
       "path": "cuke-dedup-ignore",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -189,6 +266,13 @@
     {
       "name": "multi-package-cross-package-detection",
       "path": "multi-package",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -204,6 +288,13 @@
     {
       "name": "adversarial-parser-and-handler-behavior",
       "path": "adversarial",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parser-recovery", "handler-shape"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -219,6 +310,13 @@
     {
       "name": "parser-and-analysis-regressions",
       "path": "parser-regressions",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parser-recovery"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -234,6 +332,13 @@
     {
       "name": "all-registered-source-adapters",
       "path": "mixed-source-adapters",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -249,6 +354,13 @@
     {
       "name": "localized-unicode-gherkin",
       "path": "localized-unicode",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-dialect"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -264,6 +376,13 @@
     {
       "name": "malformed-matcher-keeps-valid-definitions",
       "path": "malformed-matcher",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parser-recovery"],
       "arguments": [],
       "expectedExit": 2,
       "stderrIncludes": [
@@ -283,6 +402,13 @@
     {
       "name": "hidden-and-default-exclusion-overrides",
       "path": "discovery-overrides",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["unknown"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "arguments": ["--include-hidden", "--no-default-excludes"],
       "materialize": [
         {
@@ -304,6 +430,13 @@
     {
       "name": "mixed-esm-and-cjs-registration-syntax",
       "path": "mixed-esm-cjs",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["cucumber-js"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["import-form", "registration-form"],
       "arguments": [],
       "expectedExit": 1,
       "expected": {
@@ -319,6 +452,13 @@
     {
       "name": "mixed-framework-detection-is-per-file",
       "path": "mixed-frameworks",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["cucumber-js", "playwright-bdd"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["framework-api"],
       "arguments": [],
       "expectedExit": 1,
       "expected": {
@@ -334,6 +474,13 @@
     {
       "name": "spanish-classic-gherkin-dialect",
       "path": "spanish-dialect",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["cucumber-js"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-dialect"],
       "arguments": [],
       "expectedExit": 0,
       "expected": {
@@ -349,6 +496,13 @@
     {
       "name": "playwright-injected-fixture-handler-renames",
       "path": "playwright-auth-fixtures",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["playwright-bdd"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["framework-api", "handler-shape"],
       "arguments": [],
       "expectedExit": 1,
       "expected": {
@@ -364,6 +518,13 @@
     {
       "name": "playwright-decorator-handler-fingerprints",
       "path": "playwright-decorators",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ecmascript",
+      "frameworks": ["playwright-bdd"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["framework-api", "handler-shape"],
       "arguments": [],
       "expectedExit": 1,
       "expected": {
