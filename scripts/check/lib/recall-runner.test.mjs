@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./recall-runner.mjs";
@@ -177,7 +177,7 @@ test("observing a failed run returns its status and no outputs", { skip: process
   try {
     await mkdir(join(directory, "cases", "case"), { recursive: true });
     const binary = join(directory, "fake-binary");
-    await writeFile(binary, "#!/bin/sh\necho broken >&2\nexit 2\n");
+    await writeFile(binary, '#!/bin/sh\nprintf "%s\\n" "$@" > "$0.args"\necho broken >&2\nexit 2\n');
     await chmod(binary, 0o755);
     const observation = await observeRecallCase({
       binary,
@@ -199,6 +199,19 @@ test("observing a failed run returns its status and no outputs", { skip: process
     });
     assert.equal(missing.status, null);
     assert.match(missing.spawnFailure, /ENOENT/);
+    // Pair records are requested only on demand: the flag reaches the binary only then.
+    assert.equal((await readFile(`${binary}.args`, "utf8")).includes("--emit-pairs"), false);
+    assert.equal(observation.pairsText, null);
+    const withPairs = await observeRecallCase({
+      binary,
+      recallRoot: join(directory, "cases"),
+      scratch: join(directory, "scratch-pairs"),
+      testCase: { path: "case" },
+      emitPairs: true,
+    });
+    assert.equal(withPairs.pairsText, null);
+    const args = (await readFile(`${binary}.args`, "utf8")).split("\n");
+    assert.equal(args[args.indexOf("--emit-pairs") + 1], join(directory, "scratch-pairs", "pairs.jsonl"));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

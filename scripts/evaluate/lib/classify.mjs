@@ -52,6 +52,17 @@ function isolationFailure(records, absent, analysis) {
 }
 
 /**
+ * Whether an exit status is the tool failing. Exit 0 and 1 depend on the findings, which a report
+ * classifies; any other status means its absences would certify nothing, unless the case declares it.
+ * @param {number|null} status Exit status of the run, `null` when it never reached one.
+ * @param {object} testCase Recall manifest case.
+ * @returns {boolean}
+ */
+export function isOperationalExit(status, testCase) {
+  return status === null || (status !== 0 && status !== 1 && status !== (testCase.expectedExit || 0));
+}
+
+/**
  * The result for a case that could not be observed: no counts, only the cause.
  * @param {string} name Case name.
  * @param {string} cause Why the run gave nothing to classify.
@@ -122,8 +133,7 @@ export function classifyCase(testCase, observation) {
   const { report, status, spawnFailure } = observation;
   // Exit 0 and 1 depend on the findings, which this report classifies. Any other status is the tool
   // failing, so its absences would certify nothing; a case that declares exit 2 expects it.
-  const operational = status === null || (status !== 0 && status !== 1 && status !== (testCase.expectedExit || 0));
-  if (report === null || operational) {
+  if (report === null || isOperationalExit(status, testCase)) {
     const cause = spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : ""}: ${observation.stderr}`.trim();
     return unobservableCase(testCase.name, cause);
   }
