@@ -2,17 +2,22 @@ import { Given } from "@cucumber/cucumber";
 
 // Declared and never called: nothing executes, so the values are not behaviour. The pair differs
 // only in an unproven value.
-Given("the crane idles at a first angle", () => { function act() { expect(crane()).toBe(1); } });
-Given("the crane idles at a second angle", () => { function act() { expect(crane()).toBe(2); } });
+Given("the crane idles at a first angle", () => { /** Declared, never called. */ function act() { expect(crane()).toBe(1); } });
+Given("the crane idles at a second angle", () => { /** Declared, never called. */ function act() { expect(crane()).toBe(2); } });
 
 // Arguments are not substituted at the call, so a parameterized local function's body is unproven.
+// The two handlers are identical on purpose: the pair is silent only because that body is unproven
+// and the pair is excluded from comparison. Were the body expanded, identical handlers would be
+// reported as duplicates, so a distinct argument here would hide that regression.
 Given("the pulley turns to a first notch", () => {
+  /** Parameterized, so its body is unproven at the call. */
   function act(value) { expect(pulley()).toBe(value); }
   act(1);
 });
 Given("the pulley turns to a second notch", () => {
+  /** Parameterized, so its body is unproven at the call. */
   function act(value) { expect(pulley()).toBe(value); }
-  act(2);
+  act(1);
 });
 
 // Expansion is single level, so self-recursion terminates rather than walking forever.

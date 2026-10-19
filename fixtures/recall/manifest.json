@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "knownMissBaseline": 1,
-  "unisolatedNegativeBaseline": 105,
+  "unisolatedNegativeBaseline": 8,
   "minimumRecall": 0.6,
   "minimumCases": 64,
   "cases": [
@@ -473,35 +473,55 @@
           "matchers": [
             "the alpha meter shows a first value",
             "the alpha meter shows a second value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the beta dial holds a first entry",
             "the beta dial holds a second entry"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the delta sensor logs a first sample",
             "the delta sensor logs a second sample"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the epsilon valve reports a first state",
             "the epsilon valve reports a second state"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the gamma probe records a first reading",
             "the gamma probe records a second reading"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -581,28 +601,44 @@
           "matchers": [
             "the playwright gauge reads a first value",
             "the playwright gauge reads a second value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the vitest dial reads a first entry",
             "the vitest dial reads a second entry"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the bun probe reads a first sample",
             "the bun probe reads a second sample"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the chai sensor reads a first reading",
             "the chai sensor reads a second reading"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -635,42 +671,66 @@
           "matchers": [
             "the settings panel shows the primary account field",
             "the settings panel shows the secondary account field"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the navigation drawer state indicator is collapsed",
             "the navigation drawer state indicator is expanded"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the account status indicator shows the first condition",
             "the account status indicator shows the final condition"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the profile state indicator shows the first condition",
             "the profile state indicator shows the final condition"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the local account status shows the first condition",
             "the local account status shows the final condition"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the decorated status shows the first condition",
             "the decorated status shows the final condition"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -700,28 +760,44 @@
           "matchers": [
             "the terminal panel reads the first value",
             "the terminal panel reads the final value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the terminal panel reads the first value",
             "the terminal panel reads the final value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the option panel reads the first value",
             "the option panel reads the final value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the option panel reads the first value",
             "the option panel reads the final value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -870,57 +946,101 @@
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 17
+          "primaryLine": 17,
+          "isolation": {
+            "participants": ["steps.ts:17", "steps.ts:18"],
+            "differs": ["matcherKind", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 21
+          "primaryLine": 21,
+          "isolation": {
+            "participants": ["steps.ts:21", "steps.ts:22"],
+            "differs": ["matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 25
+          "primaryLine": 25,
+          "isolation": {
+            "participants": ["steps.ts:25", "steps.ts:26"],
+            "differs": ["matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 29
+          "primaryLine": 29,
+          "isolation": {
+            "participants": ["steps.ts:29", "steps.ts:30"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 53
+          "primaryLine": 53,
+          "isolation": {
+            "participants": ["steps.ts:53", "steps.ts:54"],
+            "differs": ["matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 57
+          "primaryLine": 57,
+          "isolation": {
+            "participants": ["steps.ts:57", "steps.ts:58"],
+            "differs": ["matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 11
+          "primaryLine": 11,
+          "isolation": {
+            "participants": ["steps.ts:11", "steps.ts:12"],
+            "differs": ["handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 36
+          "primaryLine": 36,
+          "isolation": {
+            "participants": ["steps.ts:36", "steps.ts:37"],
+            "differs": ["matcherFlags", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 40
+          "primaryLine": 40,
+          "isolation": {
+            "participants": ["steps.ts:40", "steps.ts:41"],
+            "differs": ["matcherFlags", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 45
+          "primaryLine": 45,
+          "isolation": {
+            "participants": ["steps.ts:45", "steps.ts:46"],
+            "differs": ["registration", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 62
+          "primaryLine": 62,
+          "isolation": {
+            "participants": ["steps.ts:62", "steps.ts:63"],
+            "differs": ["matcherFlags", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -1036,17 +1156,29 @@
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 22
+          "primaryLine": 22,
+          "isolation": {
+            "participants": ["steps.ts:22", "steps.ts:23"],
+            "differs": ["handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 23
+          "primaryLine": 23,
+          "isolation": {
+            "participants": ["steps.ts:23", "steps.ts:24"],
+            "differs": ["handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 24
+          "primaryLine": 24,
+          "isolation": {
+            "participants": ["steps.ts:24", "steps.ts:25"],
+            "differs": ["handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -1403,70 +1535,110 @@
           "matchers": [
             "the gamma probe reads a shadowed first value",
             "the gamma probe reads a shadowed second value"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the delta sensor logs a replaced first sample",
             "the delta sensor logs a replaced second sample"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the winch spools past a first mark",
             "the winch spools past a second mark"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the ratchet holds a first tooth",
             "the ratchet holds a second tooth"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the gantry shifts a first span",
             "the gantry shifts a second span"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the beta dial resolves downward",
             "the beta dial resolves upward"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the beta dial resolves downward",
             "the beta dial resolves upward"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the hoist lifts along a first track",
             "the hoist lifts along a second track"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the pulley turns to a first notch",
             "the pulley turns to a second notch"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the crane idles at a first angle",
             "the crane idles at a second angle"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized"]
+          }
         }
       ]
     },
@@ -1657,14 +1829,22 @@
           "matchers": [
             "the epsilon lever locks at its high notch",
             "the epsilon lever locks at its low notch"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the beta dial holds its first stop",
             "the beta dial holds its second stop"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
@@ -1685,14 +1865,22 @@
           "matchers": [
             "the nested slot is pressed first",
             "the nested slot is pressed second"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the omega brake holds a local stop",
             "the omega brake holds a module stop"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
@@ -1790,62 +1978,110 @@
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 32
+          "primaryLine": 32,
+          "isolation": {
+            "participants": ["steps.ts:32", "steps.ts:33"],
+            "differs": ["matcher", "matcherKind", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 32
+          "primaryLine": 32,
+          "isolation": {
+            "participants": ["steps.ts:32", "steps.ts:33"],
+            "differs": ["matcher", "matcherKind", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 36
+          "primaryLine": 36,
+          "isolation": {
+            "participants": ["steps.ts:36", "steps.ts:37"],
+            "differs": ["matcher", "matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 36
+          "primaryLine": 36,
+          "isolation": {
+            "participants": ["steps.ts:36", "steps.ts:37"],
+            "differs": ["matcher", "matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 41
+          "primaryLine": 41,
+          "isolation": {
+            "participants": ["steps.ts:41", "steps.ts:42"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 41
+          "primaryLine": 41,
+          "isolation": {
+            "participants": ["steps.ts:41", "steps.ts:42"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 45
+          "primaryLine": 45,
+          "isolation": {
+            "participants": ["steps.ts:45", "steps.ts:46"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 45
+          "primaryLine": 45,
+          "isolation": {
+            "participants": ["steps.ts:45", "steps.ts:46"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 60
+          "primaryLine": 60,
+          "isolation": {
+            "participants": ["steps.ts:60", "steps.ts:61"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 60
+          "primaryLine": 60,
+          "isolation": {
+            "participants": ["steps.ts:60", "steps.ts:61"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "normalized-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 64
+          "primaryLine": 64,
+          "isolation": {
+            "participants": ["steps.ts:64", "steps.ts:65"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-matcher",
           "primaryPath": "steps.ts",
-          "primaryLine": 64
+          "primaryLine": 64,
+          "isolation": {
+            "participants": ["steps.ts:64", "steps.ts:65"],
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -1927,21 +2163,33 @@
           "matchers": [
             "the computed panel shows the first state",
             "the computed panel shows the final state"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the computed panel shows the first state",
             "the computed panel shows the final state"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the gauge reading is checked",
             "the gauge reading is now checked"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2029,14 +2277,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2093,14 +2349,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2214,14 +2478,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2263,14 +2535,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2321,7 +2601,11 @@
           "matchers": [
             "^the pallet gauge is settled$",
             "^the pallet gauge is settled$"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.cjs:11", "steps.cjs:7"],
+            "differs": ["matcherFlags", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2407,7 +2691,11 @@
           "matchers": [
             "the admin applies the discount rule",
             "the admin applies the shipping rule"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2444,21 +2732,33 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2656,35 +2956,55 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the switch position is checked",
             "the switch position is now checked"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the warehouse is inspected",
             "the warehouse is now inspected"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the warehouse is inspected",
             "the warehouse is now inspected"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the warehouse is inspected",
             "the warehouse is now inspected"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2757,21 +3077,33 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2983,21 +3315,33 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     },
@@ -3086,21 +3430,36 @@
           "matchers": [
             "the parcel is ready",
             "the parcel is ready"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.ts:4", "steps.ts:5"],
+            "compared": true,
+            "differs": ["handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel is ready",
             "the parcel is idle"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.ts:4", "steps.ts:9"],
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel is ready",
             "the parcel is idle"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.ts:4", "steps.ts:9"],
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.behavior"]
+          }
         }
       ]
     },
@@ -3140,7 +3499,11 @@
           "primaryLine": 7,
           "relatedLocations": [
             "steps.test.ts:11"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:7", "steps.test.ts:11"],
+            "differs": []
+          }
         },
         {
           "rule": "normalized-matcher",
@@ -3148,7 +3511,11 @@
           "primaryLine": 7,
           "relatedLocations": [
             "steps.test.ts:11"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:7", "steps.test.ts:11"],
+            "differs": []
+          }
         },
         {
           "rule": "ambiguous-step",
@@ -3173,42 +3540,72 @@
           "matchers": [
             "the parcel is ready",
             "the parcel is idle"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:11", "steps.test.ts:19"],
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the parcel is ready",
             "plugin parcel is ready"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:11", "vitest-plugin.ts:3"],
+            "compared": true,
+            "differs": ["framework", "registration", "matcher", "matcherKind", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel is ready",
             "plugin parcel is ready"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:11", "vitest-plugin.ts:3"],
+            "compared": true,
+            "differs": ["framework", "registration", "matcher", "matcherKind", "normalizedMatcher"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel is ready",
             "plugin parcel is ready"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:11", "vitest-plugin.ts:3"],
+            "compared": true,
+            "differs": ["framework", "registration", "matcher", "matcherKind", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel is ready",
             "the parcel is idle"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:11", "steps.test.ts:19"],
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel is ready",
             "the parcel is idle"
-          ]
+          ],
+          "isolation": {
+            "participants": ["steps.test.ts:11", "steps.test.ts:19"],
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.exact", "handler.normalized", "handler.alphaNormalized", "handler.structural", "handler.behavior"]
+          }
         }
       ]
     }
