@@ -160,6 +160,29 @@ when a case cannot be observed. `--case NAME` limits the run; `--json FILE` and 
 write the report (markdown goes to stdout when neither is given). On the current corpus every
 disagreement count is zero except the one known miss, because the gate already fails on any other.
 
+`npm run corpus:candidate-recall` asks, for every pair finding a recall case expects, whether a
+candidate source proposed the pair, from `--emit-pairs` records. It reports candidate recall per
+pair rule, how many positives each source proposed and how many only it proposed (what removing the
+source would lose), and names each declared pair that was never reported with where it stopped:
+
+- `definitions-not-extracted`: too few definitions were extracted for a pair the expectation has not
+  already had credited.
+- `never-proposed`: the definitions exist, no pair record covers them, and the run evaluated every
+  pair it generated.
+- `skipped-by-limit`: as above, but a candidate or verification limit applied, and only evaluated
+  pairs are recorded, so generation cannot be blamed.
+- `evaluated-no-finding`: a pair record exists and no finding was reported.
+- `unresolved`: the expectation names a selector the join cannot apply (a message, a cluster shape, a
+  related count, or only part of its locations).
+
+A counted expectation is diagnosed from the pairs not already credited to a finding of its rule. A
+cluster finding counts as reached through the pairs among its members that produced its rule. A
+finding claimed by more than one expectation, or a cluster whose related locations the report truncated, joins no positive and is listed separately. Paths are compared in the form the JSON report writes them (control and invisible-format characters removed). Pairs of
+`ambiguous-step`, `overlapping-matcher` and `unused-definition` have no pair record and are not
+covered. Options and exit codes are those of `corpus:evaluate`. On the synthetic corpus every positive
+is reached, because a reported finding was necessarily evaluated; the report is informative for known
+misses and for labelled real projects.
+
 ## Language adapters and parity
 
 - `SourceAdapter` owns default source selection, input filtering, indirect-usage policy and

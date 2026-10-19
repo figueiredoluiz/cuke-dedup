@@ -60,19 +60,22 @@ export function assertCaseWellFormed(testCase, today) {
  * @param {string} options.recallRoot Directory holding the recall case directories.
  * @param {string} options.scratch Directory the case's copy and outputs are written under.
  * @param {object} options.testCase Recall manifest case.
+ * @param {boolean} [options.emitPairs] Also write `--emit-pairs` records; the gate does not.
  * @returns {Promise<{status: number|null, stderr: string, spawnFailure: string|null,
- *   report: object|null, fingerprintsText: string|null}>} The run's exit status, stderr, why it did
- *   not run to an exit status (a spawn error or a signal, else `null`), JSON report and raw
- *   `--emit-fingerprints` text; the last two are `null` when the run wrote none.
+ *   report: object|null, fingerprintsText: string|null, pairsText: string|null}>} The run's exit
+ *   status, stderr, why it did not run to an exit status (a spawn error or a signal, else `null`),
+ *   JSON report, raw `--emit-fingerprints` text and raw `--emit-pairs` text (`null` unless
+ *   requested); the report and the texts are `null` when the run wrote none.
  */
-export async function observeRecallCase({ binary, recallRoot, scratch, testCase }) {
+export async function observeRecallCase({ binary, recallRoot, scratch, testCase, emitPairs = false }) {
   const caseRoot = join(scratch, "case");
   const output = join(scratch, "report");
   const fingerprints = join(scratch, "fingerprints.jsonl");
+  const pairs = join(scratch, "pairs.jsonl");
   await cp(join(recallRoot, testCase.path), caseRoot, { recursive: true });
   const run = spawnSync(
     binary,
-    [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
+    [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints, ...(emitPairs ? ["--emit-pairs", pairs] : [])],
     { cwd: caseRoot, encoding: "utf8" },
   );
   /** Reads a file the run may not have written. */
@@ -87,6 +90,7 @@ export async function observeRecallCase({ binary, recallRoot, scratch, testCase 
     spawnFailure: run.error?.message ?? (run.signal ? `killed by ${run.signal}` : null),
     report: reportText === null ? null : JSON.parse(reportText),
     fingerprintsText: await optional(fingerprints),
+    pairsText: emitPairs ? await optional(pairs) : null,
   };
 }
 
