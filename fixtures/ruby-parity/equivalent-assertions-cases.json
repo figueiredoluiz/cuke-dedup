@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "assertion-modules-declared-trust-every-import-form": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-kind", "import-form"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -58,6 +65,13 @@
       ]
     },
     "assertion-modules-undeclared-stay-untrusted": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-kind", "import-form"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -139,6 +153,13 @@
       ]
     },
     "assertion-runner-provenance-trusts-known-factories": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-kind", "assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -200,6 +221,13 @@
       ]
     },
     "assertion-subjects-and-chains-preserve-precision": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -279,6 +307,13 @@
       }
     },
     "b1-computed-positions-match-dot-access": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -340,6 +375,13 @@
       ]
     },
     "open1-nested-alias-revokes-matcher-trust": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust", "module-kind"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -399,6 +441,13 @@
       ]
     },
     "open2-computed-modifier-preserves-semantics": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -452,6 +501,13 @@
       ]
     },
     "rest-alias-depth-decides-shared-mutation": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust", "binding-form"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -510,6 +566,13 @@
       ]
     },
     "review-gap-computed-key-mutation": {
+      "role": "negative",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust", "assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -550,6 +613,13 @@
       ]
     },
     "review-gap-computed-key-trust": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape", "module-kind"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -604,6 +674,13 @@
       ]
     },
     "review-gap-deferred-assertions": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -673,6 +750,13 @@
       ]
     },
     "review-gap-negation-mutation": {
+      "role": "negative",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -713,6 +797,13 @@
       ]
     },
     "review-gap-nested-matcher": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -744,6 +835,13 @@
       ]
     },
     "review-gap-namespace-alias": {
+      "role": "negative",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["import-form", "mutation-trust"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",
@@ -784,6 +882,13 @@
       ]
     },
     "review-gap-wrapped-callee": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape"],
       "path": "equivalent-assertions",
       "arguments": [
         "--definitions",

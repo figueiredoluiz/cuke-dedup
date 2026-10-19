@@ -9,7 +9,8 @@ import { findingMatches } from "./recall-oracle.mjs";
 
 export const ROLES = Object.freeze(["positive", "negative", "ambiguous", "variant"]);
 export const ORIGINS = Object.freeze(["synthetic", "real", "regression"]);
-export const LANGUAGES = Object.freeze(["ecmascript", "ruby"]);
+/** `both` labels a paired case that carries a TypeScript and a Ruby source; no single run analyzes both. */
+export const LANGUAGES = Object.freeze(["ecmascript", "ruby", "both"]);
 export const VERDICTS = Object.freeze(["reviewed", "generated"]);
 
 /**
@@ -39,6 +40,16 @@ export const AXES = Object.freeze({
   "gherkin-structure": "backgrounds, rules, outlines, continuation keywords and attachments",
   "gherkin-source": "classic and Markdown files, step sources, empty Markdown",
   "control": "the simplest case of a rule, varying nothing, kept so a regression in the common path is not lost",
+  "discovery": "which files are found: exclusions, ignore files, hidden files, nested roots, default includes",
+  "gate-threshold": "the duplication threshold and the exit status it decides",
+  "parser-recovery": "malformed or adversarial input that must not hide valid definitions",
+  "gherkin-dialect": "localized and Unicode Gherkin keywords",
+  "provider-context": "which receiver or module context makes a call a registration: mixins, World modules, lifecycle hooks, nested callbacks",
+  "regex-translation": "translating regular-expression syntax into the shared matcher model: classes, braces, punctuation, dot-all",
+  "parameter-types": "custom parameter types and their collisions",
+  "owner-identity": "the qualified owner of a definition and autoloaded owners",
+  "dependency-usage": "usage reached through loaded files",
+  "handler-context": "nested handler contexts and the files a handler captures",
 });
 
 /**
@@ -110,19 +121,54 @@ function assertDate(name, value, today) {
 }
 
 /**
- * Validates one case's metadata and its consistency with the case's own expectations.
- * @param {object} testCase Manifest case.
+ * The latest `classifiedAt` allowed now: the calendar date anywhere on Earth (UTC+14), so a label
+ * written on the author's local date is never rejected as future while UTC is still the day before.
+ * @param {number} [now] Milliseconds since the epoch.
+ * @returns {string} `YYYY-MM-DD`.
+ */
+export function latestClassifiedAt(now = Date.now()) {
+  return new Date(now + 14 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Validates the labels of a case in a corpus other than the recall corpus: the six shared fields and
+ * a role that is `positive` exactly when the case requires a finding.
+ * @param {object} item The case, with its labels beside its other fields.
+ * @param {string} name Case or group name, for messages.
+ * @param {string} today `YYYY-MM-DD`, the latest allowed `classifiedAt`.
+ * @param {number} findings How many findings the case requires.
+ */
+export function validateCorpusLabels(item, name, today, findings) {
+  validateLabels(item, name, today);
+  assertOneOf(name, "role", item.role, ["positive", "negative"]);
+  if (item.role === "positive") assert.ok(findings > 0, `${name}: role positive needs a required finding`);
+  else assert.equal(findings, 0, `${name}: role negative requires a finding; use positive`);
+}
+
+/**
+ * Validates the fields every labelled case carries, in any corpus.
+ * @param {object} testCase The case.
+ * @param {string} name Case or group name, for messages.
  * @param {string} today `YYYY-MM-DD`, the latest allowed `classifiedAt`.
  */
-export function validateCaseMetadata(testCase, today) {
-  const { name } = testCase;
-  assertOneOf(name, "role", testCase.role, ROLES);
+function validateLabels(testCase, name, today) {
   assertOneOf(name, "origin", testCase.origin, ORIGINS);
   assertOneOf(name, "language", testCase.language, LANGUAGES);
   assertOneOf(name, "verdict", testCase.verdict, VERDICTS);
   assertSlugs(name, "frameworks", testCase.frameworks);
   assertDate(name, testCase.classifiedAt, today);
   assertAxes(name, testCase.axes);
+}
+
+/**
+ * Validates one recall case's metadata and its consistency with the case's own expectations.
+ * @param {object} testCase Manifest case.
+ * @param {string} today `YYYY-MM-DD`, the latest allowed `classifiedAt`.
+ */
+export function validateCaseMetadata(testCase, today) {
+  const { name } = testCase;
+  validateLabels(testCase, name, today);
+  assertOneOf(name, "role", testCase.role, ROLES);
 
   const findings = testCase.expectedFindings || [];
   const ambiguous = testCase.expectedAmbiguous;

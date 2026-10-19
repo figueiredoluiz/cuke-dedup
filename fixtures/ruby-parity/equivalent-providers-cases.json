@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "equivalent-provider-fixture-facade": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-kind"],
       "path": "equivalent-providers/fixture-facade",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -33,6 +40,13 @@
       }
     },
     "equivalent-provider-adapter-shapes": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-kind"],
       "path": "equivalent-providers/adapter-shapes",
       "definitionsPattern": "steps/*.rb",
       "definitions": 8,
@@ -76,6 +90,13 @@
       }
     },
     "equivalent-provider-ambient-alias": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "path": "equivalent-providers/ambient-alias",
       "definitionsPattern": "entry.rb",
       "definitions": 4,
@@ -124,6 +145,13 @@
       }
     },
     "equivalent-provider-relative-reexport": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "equivalent-providers/relative-reexport",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -156,6 +184,13 @@
       }
     },
     "equivalent-provider-barrel-reexport": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "equivalent-providers/barrel-reexport",
       "definitionsPattern": "entry.rb",
       "definitions": 4,
@@ -199,6 +234,13 @@
       }
     },
     "equivalent-provider-legacy-provider": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form", "module-resolution"],
       "path": "equivalent-providers/legacy-provider",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -233,6 +275,13 @@
       }
     },
     "equivalent-provider-wrapper": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "path": "equivalent-providers/wrapper",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -267,6 +316,13 @@
       }
     },
     "equivalent-provider-package-load-root": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "equivalent-providers/package-load-root",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -301,6 +357,13 @@
       }
     },
     "equivalent-provider-alias-load-root": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "equivalent-providers/alias-load-root",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -335,6 +398,13 @@
       }
     },
     "equivalent-provider-workspace-load-root": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "equivalent-providers/workspace-load-root",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -369,6 +439,13 @@
       }
     },
     "equivalent-provider-gherkin-origins": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["ambiguity-origin", "gherkin-source"],
       "path": "equivalent-providers/gherkin-origins",
       "definitionsPattern": "steps.rb",
       "definitions": 29,
@@ -533,6 +610,13 @@
       }
     },
     "equivalent-provider-receiver-origin": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["ambiguity-origin", "provider-context"],
       "path": "equivalent-providers/receiver-origin",
       "definitionsPattern": "steps.rb",
       "definitions": 0,
@@ -551,6 +635,13 @@
       "reason": "Ruby divergence for the sigma origin of ambiguous-step-definition-origins: `ordinary.Given(...)` calls a keyword through a local that `binding` or `binding_of_caller` can rebind to main, where it registers, so the corpus is incomplete; the TypeScript import binding it mirrors is immutable."
     },
     "equivalent-provider-registration-origins": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["ambiguity-origin", "registration-form"],
       "path": "equivalent-providers/registration-origins",
       "definitionsPattern": "steps.rb",
       "definitions": 30,
@@ -853,6 +944,13 @@
       }
     },
     "equivalent-provider-factory-alias": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-kind", "mutation-trust"],
       "path": "equivalent-providers/factory-alias",
       "definitionsPattern": "entry.rb",
       "definitions": 4,
@@ -905,6 +1003,13 @@
       }
     },
     "equivalent-provider-factory-mutation": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust"],
       "path": "equivalent-providers/factory-mutation",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -950,6 +1055,13 @@
       }
     },
     "equivalent-provider-local-callables": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["handler-shape", "scope"],
       "path": "equivalent-providers/local-callables",
       "definitionsPattern": "entry.rb",
       "definitions": 24,
@@ -1122,6 +1234,13 @@
       }
     },
     "equivalent-provider-factory-immutable-control": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust"],
       "path": "equivalent-providers/factory-immutable-control",
       "definitionsPattern": "entry.rb",
       "definitions": 2,
@@ -1169,6 +1288,13 @@
       }
     },
     "equivalent-provider-factory-static-mutation-control": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["mutation-trust"],
       "path": "equivalent-providers/factory-static-mutation-control",
       "definitionsPattern": "entry.rb",
       "definitions": 2,

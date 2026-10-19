@@ -1,11 +1,12 @@
-// Distribution and coverage of the recall corpus from its manifest: no binary is run.
+// Distribution and coverage of the labelled corpora from their manifests: no binary is run. The first
+// part is the recall corpus in detail; the second compares every corpus side by side.
 //
 //   node scripts/evaluate/corpus-distribution.mjs [--floor N] [--json FILE] [--markdown FILE]
 
-import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { distribution, renderDistribution } from "./lib/distribution.mjs";
+import { loadCorpora } from "./lib/corpora.mjs";
+import { distribution, overview, renderDistribution, renderOverview } from "./lib/distribution.mjs";
 
 let values;
 try {
@@ -19,10 +20,10 @@ if (!Number.isSafeInteger(floor) || floor < 0) {
   console.error("usage: corpus-distribution.mjs [--floor N>=0] [--json FILE] [--markdown FILE]");
   process.exit(2);
 }
-const manifest = JSON.parse(await readFile(join(resolve("fixtures/recall"), "manifest.json"), "utf8"));
-const behavior = JSON.parse(await readFile(join(resolve("fixtures/corpus"), "manifest.json"), "utf8"));
-const report = distribution(manifest, { floor, behaviorCases: behavior.cases.length });
+const corpora = await loadCorpora();
+const all = overview(corpora, { floor });
+const report = { ...distribution({ cases: corpora[0].items }, { floor }), allCorpora: all };
 if (values.json) await writeFile(values.json, `${JSON.stringify(report, null, 2)}\n`);
-const markdown = renderDistribution(report);
+const markdown = `${renderDistribution(report)}\n${renderOverview(all)}`;
 if (values.markdown) await writeFile(values.markdown, markdown);
 if (!values.json && !values.markdown) process.stdout.write(markdown);

@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "configured-threshold-at-limit": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gate-threshold"],
       "path": "project-behavior/threshold",
       "arguments": [
         "--definitions",
@@ -47,6 +54,13 @@
       "requiredAbsent": []
     },
     "threshold-over-limit": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gate-threshold"],
       "path": "project-behavior/threshold",
       "arguments": [
         "--definitions",
@@ -94,6 +108,13 @@
       "requiredAbsent": []
     },
     "explicit-exclusion-patterns": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "project-behavior/exclusions",
       "arguments": [
         "--definitions",
@@ -123,6 +144,13 @@
       ]
     },
     "comma-separated-exclusion-patterns": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "project-behavior/exclusions",
       "arguments": [
         "--definitions",
@@ -148,6 +176,13 @@
       ]
     },
     "gitignore-exclusion": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "project-behavior/gitignore",
       "arguments": [
         "--definitions",
@@ -181,6 +216,13 @@
       ]
     },
     "nested-root-directory-exclusion": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "project-behavior/nested-root/packages/e2e",
       "arguments": [
         "--definitions",
@@ -206,6 +248,13 @@
       ]
     },
     "gherkin-markdown-default-discovery": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery", "gherkin-source"],
       "path": "project-behavior/gherkin-markdown",
       "arguments": [
         "--definitions",
@@ -223,6 +272,13 @@
       ]
     },
     "cuke-dedup-ignore-file": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "project-behavior/cuke-dedup-ignore",
       "arguments": [
         "--definitions",
@@ -246,6 +302,13 @@
       ]
     },
     "multi-package-cross-package-detection": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "project-behavior/multi-package",
       "arguments": [
         "--definitions",
@@ -290,6 +353,13 @@
       ]
     },
     "localized-unicode-gherkin": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-dialect"],
       "path": "project-behavior/localized-unicode",
       "arguments": [
         "--definitions",
@@ -310,6 +380,13 @@
       ]
     },
     "malformed-matcher-keeps-valid-definitions": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["parser-recovery"],
       "path": "project-behavior/malformed-matcher",
       "arguments": [
         "--definitions",
@@ -327,6 +404,13 @@
       ]
     },
     "hidden-and-default-exclusion-overrides": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "project-behavior/discovery-overrides",
       "arguments": [
         "--definitions",
@@ -349,6 +433,13 @@
       ]
     },
     "spanish-classic-gherkin-dialect": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["gherkin-dialect"],
       "path": "project-behavior/spanish-dialect",
       "arguments": [
         "--definitions",

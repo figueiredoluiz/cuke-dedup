@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { distribution, renderDistribution } from "./distribution.mjs";
+import { AXES, LANGUAGES, validateCorpusLabels } from "../../check/lib/manifest-schema.mjs";
+import { loadCorpora } from "./corpora.mjs";
+import { distribution, overview, renderDistribution, renderOverview } from "./distribution.mjs";
 
 /** A case with the metadata the report reads, overridable. */
 const testCase = (name, over = {}) => ({
@@ -14,6 +16,7 @@ const testCase = (name, over = {}) => ({
   language: "ecmascript",
   frameworks: ["cucumber-js"],
   verdict: "reviewed",
+  classifiedAt: "2026-10-20",
   axes: ["import-form"],
   expectedFindings: [{ rule: "duplicate-matcher" }],
   ...over,
@@ -94,8 +97,6 @@ test("the markdown has each section and the thin cells", () => {
   assert.match(text, /\| import-form \| 3 \| 3 \|/);
   assert.match(text, /Rules with no negative: duplicate-matcher/);
   assert.match(text, /Languages with no case: ruby/);
-  assert.match(text, /Behavior corpus cases, which carry no labels: 0/);
-  assert.match(renderDistribution(distribution({ cases: [testCase("a")] }, { behaviorCases: 23 })), /carry no labels: 23/);
 });
 
 /** Checks the real manifest's totals agree with the baselines the corpus gate asserts exactly. */
@@ -120,4 +121,62 @@ test("the command exits 2 for a bad invocation and prints the report otherwise",
   assert.equal(good.status, 0);
   assert.match(good.stdout, /^# Recall corpus distribution/);
   assert.match(good.stdout, /A value is thin at 2 cases or fewer/);
+});
+
+/** Checks the overview counts each corpus and axis per corpus, and names axes at the floor or used by no case. */
+test("the overview compares corpora and names the gaps", () => {
+  const report = overview([
+    { name: "one", items: [testCase("a", { axes: ["scope"] }), testCase("b", { axes: ["scope", "import-form"], language: "ruby" })] },
+    { name: "two", items: [testCase("c", { axes: ["scope"], language: "both" })] },
+  ]);
+  assert.deepEqual(report.corpora.map((entry) => [entry.corpus, entry.cases]), [["one", 2], ["two", 1]]);
+  assert.deepEqual(report.axes.find((entry) => entry.axis === "scope"), { axis: "scope", perCorpus: { one: 2, two: 1 }, cases: 3 });
+  assert.deepEqual(report.thinAxes, [{ axis: "import-form", cases: 1 }]);
+  assert.ok(report.uncoveredAxes.includes("control") && !report.uncoveredAxes.includes("scope"));
+  assert.deepEqual(report.unlabelled, []);
+  assert.deepEqual(overview([{ name: "x", items: [{ name: "bare" }] }]).unlabelled, ["x/bare"]);
+  const { verdict, ...noVerdict } = testCase("v", { axes: ["scope"] });
+  const { classifiedAt, ...noDate } = testCase("d", { axes: ["scope"] });
+  assert.deepEqual(overview([{ name: "x", items: [noVerdict, noDate, testCase("ok", { axes: ["scope"] })] }]).unlabelled, ["x/v", "x/d"]);
+  const text = renderOverview(report);
+  assert.match(text, /\| scope \| 3 \| 2 \| 1 \|/);
+  assert.match(text, /Axes at or below the floor across all corpora: import-form \(1\)/);
+  assert.match(text, /Cases missing a label: none/);
+});
+
+/** Checks every case of every corpus carries valid labels, and the corpora hold the counts the gates assert. */
+test("every corpus case is labelled and the corpora are complete", async () => {
+  const corpora = await loadCorpora();
+  assert.deepEqual(corpora.map((corpus) => [corpus.name, corpus.items.length]), [["recall", 64], ["behavior", 23], ["language-parity", 30], ["ruby-parity", 137]]);
+  for (const { name, items } of corpora) {
+    const names = items.map((item) => item.name ?? item.id);
+    assert.equal(new Set(names).size, names.length, `${name}: duplicate names`);
+    for (const item of items) {
+      const required = item.requiredFindings ?? item.expected?.requiredFindings ?? item.expectedFindings ?? Object.keys(item.expected?.byRule ?? {});
+      assert.ok(LANGUAGES.includes(item.language) && item.axes.every((axis) => Object.hasOwn(AXES, axis)), `${name}/${item.name ?? item.id}`);
+      if (name !== "recall") validateCorpusLabels(item, item.name ?? item.id, "2099-01-01", required.length);
+    }
+  }
+  const report = overview(corpora);
+  assert.deepEqual(report.unlabelled, []);
+  assert.deepEqual(report.uncoveredAxes, [], "an axis in the vocabulary has no case; remove it or add a case");
+});
+
+/** Checks a Ruby group that mirrors a recall or behavior case takes that case's axes and origin, as the README states. */
+test("Ruby groups mirror their source case's axes and origin", async () => {
+  const corpora = await loadCorpora();
+  const sources = new Map(corpora.filter((corpus) => corpus.name === "recall" || corpus.name === "behavior").flatMap((corpus) => corpus.items.map((item) => [item.name, item])));
+  const groups = corpora.find((corpus) => corpus.name === "ruby-parity").items;
+  let mirrored = 0;
+  for (const group of groups) {
+    // A group mirrors the case it names in `sourceCase`, or the case it is named after, with an optional prefix.
+    const source = [group.sourceCase, group.name, group.name.replace(/^equivalent-handlers-/, ""), group.name.replace(/^equivalent-/, "")]
+      .map((name) => sources.get(name)).find(Boolean);
+    if (source === undefined) continue;
+    mirrored += 1;
+    assert.deepEqual(group.axes, source.axes, `${group.name}: axes differ from ${source.name}`);
+    assert.equal(group.origin, source.origin, `${group.name}: origin differs from ${source.name}`);
+  }
+  // The count pins the rule: a new mirrored group is a deliberate change here.
+  assert.equal(mirrored, 71);
 });

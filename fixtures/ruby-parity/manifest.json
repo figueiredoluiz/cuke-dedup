@@ -7,6 +7,13 @@
   ],
   "groupOracles": {
     "registration-identical": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "path": "registration/identical",
       "definitions": 2,
       "featureSteps": 0,
@@ -47,6 +54,13 @@
       "expectedExit": 1
     },
     "registration-conflicting": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "path": "registration/conflicting",
       "definitions": 2,
       "featureSteps": 0,
@@ -80,6 +94,13 @@
       "expectedExit": 0
     },
     "registration-uncertain-dynamic": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form"],
       "path": "registration/uncertain",
       "definitionsPattern": "dynamic.rb",
       "definitions": 0,
@@ -104,6 +125,13 @@
       "expectedExit": 2
     },
     "registration-uncertain-nested": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form", "scope"],
       "path": "registration/uncertain",
       "definitionsPattern": "nested.rb",
       "definitions": 0,
@@ -128,6 +156,13 @@
       "expectedExit": 2
     },
     "registration-shadowing": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form", "scope"],
       "path": "registration/scope",
       "definitions": 0,
       "featureSteps": 0,
@@ -151,6 +186,13 @@
       "expectedExit": 2
     },
     "matcher-family": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-kind"],
       "path": "matcher",
       "definitions": 8,
       "featureSteps": 0,
@@ -224,6 +266,13 @@
       "expectedExit": 1
     },
     "assertion-and-polarity": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["assertion-shape", "matcher-wording"],
       "path": "assertions",
       "definitions": 6,
       "featureSteps": 0,
@@ -293,6 +342,13 @@
       "reason": "Identical source reuse is distinct from assertion trust. An undeclared expect method must not create assertion-based similarity; opposite effects must remain distinct."
     },
     "usage-indirect": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["dependency-usage"],
       "path": "usage",
       "definitions": 3,
       "featureSteps": 1,
@@ -315,6 +371,13 @@
       "expectedExit": 0
     },
     "load-relative": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "loads/relative",
       "definitions": 2,
       "featureSteps": 1,
@@ -338,6 +401,13 @@
       "requiredAbsent": []
     },
     "load-unresolved": {
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "loads/unresolved",
       "definitions": 1,
       "featureSteps": 0,
@@ -358,6 +428,13 @@
       "expectedExit": 2
     },
     "load-cycle": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "loads/cycle",
       "definitions": 2,
       "featureSteps": 1,
@@ -381,6 +458,13 @@
       "requiredAbsent": []
     },
     "load-provider-root": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "loads/provider-root",
       "definitions": 2,
       "featureSteps": 1,
@@ -404,6 +488,13 @@
       "requiredAbsent": []
     },
     "discovery-explicit-root": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["discovery"],
       "path": "discovery",
       "definitions": 2,
       "featureSteps": 1,
@@ -426,6 +517,13 @@
       "requiredAbsent": []
     },
     "polarity": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["matcher-wording"],
       "path": "polarity",
       "definitions": 4,
       "featureSteps": 2,
@@ -452,6 +550,13 @@
       "reason": "Preserve the original polarity-negative configuration and add a meaningful member-call positive. Disabling similarity cannot satisfy both."
     },
     "load-helper-dispatch-contained": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["module-resolution"],
       "path": "loads/helper-invalidation",
       "definitions": 2,
       "featureSteps": 1,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { latestClassifiedAt, validateCorpusLabels } from "./manifest-schema.mjs";
 import { countMatches } from "./recall-oracle.mjs";
 import { normalizeOutcome, validateOutcomeContract } from "./behavior-spec.mjs";
 
@@ -56,5 +57,6 @@ export function validateManifest(manifest) {
     assert.equal(typeof item.feature, "string");
     assert.equal(typeof item.intent, "string");
     validateOutcomeContract(item.expected, item.rule);
+    validateCorpusLabels(item, item.id, latestClassifiedAt(), item.expected.requiredFindings.length);
   }
 }

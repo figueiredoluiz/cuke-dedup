@@ -39,12 +39,11 @@ function expectationsFor(testCase, rule) {
 /**
  * Summarizes a recall manifest.
  * @param {object} manifest Parsed recall manifest.
- * @param {{floor?: number, behaviorCases?: number}} [options] `floor`: a value with this many cases or fewer
- *   is thin (default 1). `behaviorCases`: the behavior corpus's case count, which carries no labels.
+ * @param {{floor?: number}} [options] `floor`: a value with this many cases or fewer is thin (default 1).
  * @returns {object} Totals per dimension, per rule, an axis-by-rule matrix of case counts, fixture
  *   roots, and the thin cells.
  */
-export function distribution(manifest, { floor = 1, behaviorCases = 0 } = {}) {
+export function distribution(manifest, { floor = 1 } = {}) {
   const cases = manifest.cases;
   /** The rules a case declares any expectation for. */
   const ruleOf = (testCase) => [...new Set(["expectedFindings", "expectedAbsent", "knownMisses", "expectedAmbiguous"].flatMap((key) => (testCase[key] || []).map((entry) => entry.rule)))];
@@ -86,7 +85,8 @@ export function distribution(manifest, { floor = 1, behaviorCases = 0 } = {}) {
     frameworks: dimensions.framework.filter((row) => row.cases <= floor),
     rulesWithoutNegatives: byRule.filter((row) => row.absent === 0).map((row) => row.rule),
     rulesWithoutPositives: byRule.filter((row) => row.positives === 0).map((row) => row.rule),
-    languagesMissing: LANGUAGES.filter((language) => !present("language").includes(language)),
+    // `both` labels a paired case that no single recall run can be, so it is never missing here.
+    languagesMissing: LANGUAGES.filter((language) => language !== "both" && !present("language").includes(language)),
     originsMissing: ORIGINS.filter((origin) => !present("origin").includes(origin)),
     casesWithoutAxes: cases.filter((testCase) => axesOf(testCase).length === 0).map((testCase) => testCase.name),
     axesOutsideVocabulary: [...new Set(cases.flatMap(axesOf))].filter((axis) => !Object.hasOwn(AXES, axis)).sort(),
@@ -94,7 +94,6 @@ export function distribution(manifest, { floor = 1, behaviorCases = 0 } = {}) {
   return {
     cases: cases.length,
     floor,
-    behaviorCases,
     dimensions,
     rules: byRule,
     axes: matrix,
@@ -102,6 +101,63 @@ export function distribution(manifest, { floor = 1, behaviorCases = 0 } = {}) {
     unisolatedNegatives: byRule.filter((row) => row.isolatable).reduce((sum, row) => sum + row.absent - row.isolated, 0),
     thin,
   };
+}
+
+/** Whether a case lacks any required label: role, origin, language, frameworks, verdict, classifiedAt or axes. */
+function missingLabel(item) {
+  return ["role", "origin", "language", "frameworks", "verdict", "classifiedAt"].some((field) => item[field] === undefined) || (item.axes ?? []).length === 0;
+}
+
+/**
+ * Summarizes every labelled corpus side by side: cases, languages, frameworks, roles and origins per
+ * corpus, and cases per axis per corpus, so an axis covered only by Ruby parity, or by no corpus at
+ * all, is visible.
+ * @param {{name: string, items: object[]}[]} corpora Each corpus's labelled cases or groups.
+ * @param {{floor?: number}} [options] `floor`: an axis with this many cases or fewer across all corpora is thin.
+ * @returns {{corpora: object[], axes: object[], unlabelled: string[], thinAxes: object[], uncoveredAxes: string[]}}
+ */
+export function overview(corpora, { floor = 1 } = {}) {
+  const summary = corpora.map(({ name, items }) => ({
+    corpus: name,
+    cases: items.length,
+    languages: tally(items.map((item) => item.language ?? UNLABELLED)),
+    frameworks: tally(items.flatMap((item) => item.frameworks ?? [UNLABELLED])),
+    roles: tally(items.map((item) => item.role ?? UNLABELLED)),
+    origins: tally(items.map((item) => item.origin ?? UNLABELLED)),
+  }));
+  const axes = Object.keys(AXES).map((axis) => {
+    const perCorpus = Object.fromEntries(corpora.map(({ name, items }) => [name, items.filter((item) => (item.axes ?? []).includes(axis)).length]));
+    return { axis, perCorpus, cases: Object.values(perCorpus).reduce((sum, count) => sum + count, 0) };
+  });
+  return {
+    corpora: summary,
+    axes,
+    unlabelled: corpora.flatMap(({ name, items }) => items.filter(missingLabel).map((item) => `${name}/${item.name ?? item.id}`)),
+    thinAxes: axes.filter((entry) => entry.cases > 0 && entry.cases <= floor).map(({ axis, cases }) => ({ axis, cases })),
+    uncoveredAxes: axes.filter((entry) => entry.cases === 0).map((entry) => entry.axis),
+  };
+}
+
+/**
+ * Renders {@link overview} as markdown.
+ * @param {object} report Result of {@link overview}.
+ * @returns {string}
+ */
+export function renderOverview(report) {
+  const lines = ["# All corpora", "", row("Corpus", "Cases", "Languages", "Frameworks", "Roles", "Origins"), row("---", "---:", "---", "---", "---", "---")];
+  /** Value-and-count pairs as one cell. */
+  const join = (entries) => entries.map((entry) => `${entry.value} ${entry.cases}`).join(", ");
+  for (const entry of report.corpora) lines.push(row(entry.corpus, entry.cases, join(entry.languages), join(entry.frameworks), join(entry.roles), join(entry.origins)));
+  const names = report.corpora.map((entry) => entry.corpus);
+  lines.push("", "## Axes by corpus (cases)", "", row("Axis", "Total", ...names), row("---", "---:", ...names.map(() => "---:")));
+  for (const entry of report.axes) lines.push(row(entry.axis, entry.cases, ...names.map((name) => entry.perCorpus[name] || "·")));
+  /** A comma-separated list, or "none". */
+  const list = (items) => (items.length === 0 ? "none" : items.join(", "));
+  lines.push("", "## Gaps", "");
+  lines.push(`- Axes at or below the floor across all corpora: ${list(report.thinAxes.map((entry) => `${entry.axis} (${entry.cases})`))}`);
+  lines.push(`- Axes no case uses: ${list(report.uncoveredAxes)}`);
+  lines.push(`- Cases missing a label: ${list(report.unlabelled)}`);
+  return `${lines.join("\n")}\n`;
 }
 
 /** A table row from cells. */
@@ -141,6 +197,5 @@ export function renderDistribution(report) {
   lines.push(`- Cases with no axes: ${list(thin.casesWithoutAxes)}`);
   lines.push(`- Axes outside the vocabulary: ${list(thin.axesOutsideVocabulary)}`);
   lines.push(`- Handler and matcher negatives without isolation: ${report.unisolatedNegatives}`);
-  lines.push(`- Behavior corpus cases, which carry no labels: ${report.behaviorCases}`);
   return `${lines.join("\n")}\n`;
 }

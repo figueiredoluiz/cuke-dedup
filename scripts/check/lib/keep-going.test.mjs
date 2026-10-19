@@ -47,12 +47,16 @@ test("corpus check reports every failing case", () => {
     const summary = { definitionsAnalyzed: 0, featureStepsAnalyzed: 0, byRule: {},
       duplication: { duplicatedDefinitions: 0, percentage: 0, threshold: 0, passed: true } };
     const cases = { "fail-one": 9, "pass-one": 0, "fail-two": 9 };
+    // The labels every behavior case carries; a case with no required finding is negative.
+    const labels = { role: "negative", origin: "synthetic", language: "ecmascript", frameworks: ["cucumber-js"],
+      verdict: "reviewed", classifiedAt: "2026-10-18", axes: ["discovery"] };
     // The "binary" is Node itself: `node . ARGS` runs the case directory's index.js, on every platform.
     const caseFiles = Object.entries(cases).flatMap(([name, exit]) => [
       [`fixtures/corpus/${name}/package.json`, '{"type":"commonjs"}'],
       [`fixtures/corpus/${name}/index.js`, `const { mkdirSync, writeFileSync } = require("node:fs");
 const output = process.argv[process.argv.indexOf("--output") + 1];
 mkdirSync(output, { recursive: true });
+writeFileSync(process.argv[process.argv.indexOf("--emit-fingerprints") + 1], "");
 writeFileSync(require("node:path").join(output, "cuke-dedup.json"), ${JSON.stringify(JSON.stringify({ summary }))});
 process.exitCode = ${exit};
 `],
@@ -62,7 +66,7 @@ process.exitCode = ${exit};
       "Cargo.toml": "",
       "Cargo.lock": "",
       "fixtures/corpus/manifest.json": JSON.stringify({ schemaVersion: 1,
-        cases: Object.keys(cases).map((name) => ({ name, path: name, arguments: [], expectedExit: 0, expected })) }),
+        cases: Object.keys(cases).map((name) => ({ name, path: name, arguments: [], expectedExit: 0, expected, ...labels })) }),
       "fixtures/recall/manifest.json": JSON.stringify({ schemaVersion: 1, cases: [] }),
       ...Object.fromEntries(caseFiles),
     });

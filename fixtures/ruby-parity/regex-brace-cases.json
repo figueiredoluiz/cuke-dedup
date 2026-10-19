@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "groupOracles": {
     "regex-braces-literal": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-braces/literal",
       "definitions": 3,
       "featureSteps": 1,
@@ -29,6 +36,13 @@
       ]
     },
     "regex-braces-literal-conflict": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-braces/literal-conflict",
       "definitions": 3,
       "featureSteps": 1,
@@ -61,6 +75,13 @@
       ]
     },
     "regex-braces-class-boundary": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["regex-translation"],
       "path": "regex-braces/class-boundary",
       "definitions": 3,
       "featureSteps": 1,

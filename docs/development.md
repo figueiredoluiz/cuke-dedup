@@ -164,9 +164,14 @@ disagreement count is zero except the one known miss, because the gate already f
 expectations per rule, outcome, language, framework, axis, origin, verdict and fixture root, an
 axis-by-rule matrix, and the thin cells (axes and frameworks with `--floor N` cases or fewer, rules with
 no negative or no positive, languages and origins with no case, cases without axes, handler and matcher
-negatives without isolation). A case missing a label is a row in the report, not an error.
+negatives without isolation), followed by an "All corpora" section that compares the recall, behavior,
+language-parity and Ruby-parity corpora side by side (cases, languages, frameworks, roles, origins, and
+cases per axis per corpus) and names axes no case uses. A case missing a label is a row in the report,
+not an error.
 `--json FILE` and `--markdown FILE` write the report; markdown goes to stdout when neither is given.
-The case labels it reads are described in the recall corpus README.
+Every case in every corpus carries the labels described in the recall corpus README; the behavior and
+recall corpora check `language` and `frameworks` against the run, and the parity corpora check format and
+role.
 
 `npm run corpus:candidate-recall` asks, for every pair finding a recall case expects, whether a
 candidate source proposed the pair, from `--emit-pairs` records. It reports candidate recall per
