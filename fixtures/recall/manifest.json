@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "knownMissBaseline": 1,
-  "unisolatedNegativeBaseline": 131,
+  "unisolatedNegativeBaseline": 105,
   "minimumRecall": 0.6,
   "minimumCases": 64,
   "cases": [
@@ -1699,14 +1699,22 @@
           "matchers": [
             "the capstan winds to a first limit",
             "the capstan winds to a second limit"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "duplicate-handler",
           "matchers": [
             "the derrick swings to a first span",
             "the derrick swings to a second span"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -1874,14 +1882,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2041,14 +2057,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2097,14 +2121,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2125,14 +2157,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2318,14 +2358,22 @@
           "matchers": [
             "the crate seal is verified",
             "the crate seal is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the crate seal is verified",
             "the crate seal is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2488,21 +2536,33 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2536,21 +2596,33 @@
           "matchers": [
             "the unknown status is verified",
             "the unknown status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the unknown status is verified",
             "the unknown status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the unknown status is verified",
             "the unknown status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2724,21 +2796,33 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": true,
+            "differs": ["matcher", "normalizedMatcher", "handler.behavior"]
+          }
         }
       ]
     },
@@ -2774,14 +2858,22 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
@@ -2831,21 +2923,33 @@
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "near-duplicate-step",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         },
         {
           "rule": "parameterization-candidate",
           "matchers": [
             "the parcel status is verified",
             "the parcel status is now verified"
-          ]
+          ],
+          "isolation": {
+            "compared": false,
+            "differs": ["matcher", "normalizedMatcher"]
+          }
         }
       ]
     },
