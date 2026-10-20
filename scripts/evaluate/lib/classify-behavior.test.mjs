@@ -138,3 +138,32 @@ test("judgeBehaviorCase fails on a rule count the classifier scores as a miss", 
   // A binary that cannot start names why, instead of a bare null status.
   assert.throws(() => judgeBehaviorCase(labelled, { ...good, status: null, spawnFailure: "spawn ENOENT", stderr: "" }), /case: spawn ENOENT/);
 });
+
+/** Checks a malformed observed summary is unscored, while the same fields well typed but different stay entries. */
+test("a malformed duplication summary is unscored, not scored", () => {
+  /** The matching summary with fields overridden. */
+  const summaryOf = (over) => ({ ...observed({ "duplicate-matcher": 2 }).report.summary, ...over });
+  const rows = [
+    ["no duplication", { duplication: undefined }, /summary\.duplication is missing/],
+    ["null duplication", { duplication: null }, /summary\.duplication is missing/],
+    ["empty duplication", { duplication: {} }, /incomplete or mistyped/],
+    ["string percentage", { duplication: { duplicatedDefinitions: 2, percentage: "66.7", threshold: 0, passed: false } }, /incomplete or mistyped/],
+    ["string passed", { duplication: { duplicatedDefinitions: 2, percentage: 66.7, threshold: 0, passed: "false" } }, /incomplete or mistyped/],
+    ["fractional count", { duplication: { duplicatedDefinitions: 1.5, percentage: 66.7, threshold: 0, passed: false } }, /incomplete or mistyped/],
+    ["string census", { definitionsAnalyzed: "3" }, /not a nonnegative integer/],
+    ["no summary", null, /summary is missing/],
+  ];
+  for (const [label, over, cause] of rows) {
+    const report = { summary: over === null ? undefined : summaryOf(over) };
+    const result = classifyBehaviorCase(baseCase(), observed({ "duplicate-matcher": 2 }, { report }));
+    assert.equal(result.observable, false, label);
+    assert.match(result.cause ?? result.runFailure ?? JSON.stringify(result), cause, label);
+  }
+  // Control: the same summary well typed but disagreeing with the case is scored and listed.
+  const control = classifyBehaviorCase(baseCase(), observed({ "duplicate-matcher": 2 }, {
+    report: { summary: summaryOf({ duplication: { duplicatedDefinitions: 1, percentage: 33.3, threshold: 0, passed: true } }) },
+  }));
+  assert.equal(control.observable, true);
+  assert.deepEqual(control.rules["duplicate-matcher"], { tp: 2, fp: 0, fn: 0, tn: 0, knownMisses: 0 });
+  assert.ok(control.entries.some((entry) => entry.kind === "summary"));
+});

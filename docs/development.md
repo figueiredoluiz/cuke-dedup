@@ -180,7 +180,8 @@ A case that cannot be scored is listed under "Cases that could not be scored" wi
 counts for nothing, never as clean: a binary that did not start, an exit status the corpus does not
 allow, no JSON report, a definition or feature-step count (and, for recall, a candidate-source
 count) that differs from the one the case declares, or a label or report shape the classifier does not model (a missing or malformed
-`byRule`).
+`byRule`, census counts or `duplication` summary; a well-typed summary that disagrees with the case
+is an entry instead).
 
 `npm run corpus:distribution` summarizes the recall manifest without running the analyzer: cases and
 expectations per rule, outcome, language, framework, axis, origin, verdict and fixture root, an

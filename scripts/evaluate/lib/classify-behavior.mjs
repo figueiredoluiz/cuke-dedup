@@ -42,6 +42,25 @@ function labelProblem(testCase) {
 }
 
 /**
+ * Why a run's summary cannot be scored, or `null` when every field the classifier reads is well
+ * typed. Ordinary disagreements with the case are not problems; a field of the wrong type is, since
+ * comparing it would score a malformed report as if it had been observed.
+ * @param {*} summary The report's `summary`.
+ * @returns {string|null}
+ */
+function summaryProblem(summary) {
+  if (typeof summary !== "object" || summary === null) return "summary is missing";
+  if (!countMap(summary.byRule)) return "summary.byRule is not a map of counts";
+  if (!count(summary.definitionsAnalyzed) || !count(summary.featureStepsAnalyzed)) return "summary definitionsAnalyzed or featureStepsAnalyzed is not a nonnegative integer";
+  const duplication = summary.duplication;
+  if (typeof duplication !== "object" || duplication === null) return "summary.duplication is missing";
+  if (!count(duplication.duplicatedDefinitions) || typeof duplication.percentage !== "number" || typeof duplication.threshold !== "number" || typeof duplication.passed !== "boolean") {
+    return "summary.duplication (duplicatedDefinitions, percentage, threshold, passed) is incomplete or mistyped";
+  }
+  return null;
+}
+
+/**
  * Classifies a behavior case's observation.
  * @param {object} testCase Behavior manifest case.
  * @param {{status: number|null, stderr: string, spawnFailure: string|null, report: object|null}} observation
@@ -57,8 +76,9 @@ export function classifyBehaviorCase(testCase, { status, stderr, spawnFailure, r
     return unscored(spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : ""}: ${stderr}`.trim());
   }
   const expected = testCase.expected;
-  const observedByRule = report.summary?.byRule;
-  if (!countMap(observedByRule)) return unscored("unmodeled report: summary.byRule is not a map of counts");
+  const reportProblem = summaryProblem(report.summary);
+  if (reportProblem !== null) return unscored(`unmodeled report: ${reportProblem}`);
+  const observedByRule = report.summary.byRule;
   // A run that analyzed other inputs than the case declares proves nothing about its counts.
   const comparisons = summaryComparisons(testCase, report);
   const census = comparisons.filter(({ census: inputs, actual, expected: wanted }) => inputs && actual !== wanted)

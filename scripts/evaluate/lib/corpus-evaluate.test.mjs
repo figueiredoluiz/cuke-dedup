@@ -68,9 +68,14 @@ test("the driver wires the behavior corpus to its classifier", { skip: process.p
       const result = run(["--binary", binary, "--corpus", "behavior", "--case", item.name, "--json", json], { FAKE_REPORT: file, FAKE_EXIT: String(exit) });
       return { status: result.status, report: JSON.parse(await readFile(json, "utf8")) };
     };
-    /** A report with the case's census and the given per-rule counts. */
+    /** A report with the case's census and duplication summary and the given per-rule counts. */
     const fakeReport = (byRule) => JSON.stringify({
-      summary: { definitionsAnalyzed: item.expected.definitions, featureStepsAnalyzed: item.expected.featureSteps, byRule, duplication: {} },
+      summary: {
+        definitionsAnalyzed: item.expected.definitions,
+        featureStepsAnalyzed: item.expected.featureSteps,
+        byRule,
+        duplication: { duplicatedDefinitions: item.expected.duplicatedDefinitions, percentage: item.expected.percentage, threshold: item.expected.threshold, passed: item.expected.passed },
+      },
     });
     const counted = await evaluate(fakeReport({ ...item.expected.byRule, "stray-rule": 1 }), item.expectedExit);
     assert.equal(counted.status, 0);
@@ -78,6 +83,10 @@ test("the driver wires the behavior corpus to its classifier", { skip: process.p
     // Control: the expected counts alone have no false positive.
     const exact = await evaluate(fakeReport(item.expected.byRule), item.expectedExit);
     assert.deepEqual(exact.report.rules.filter((row) => row.fp > 0), []);
+    // A report whose duplication summary is malformed is unscored, not scored from its byRule alone.
+    const malformed = await evaluate(JSON.stringify({ summary: { ...JSON.parse(fakeReport(item.expected.byRule)).summary, duplication: {} } }), item.expectedExit);
+    assert.equal(malformed.status, 1);
+    assert.ok(malformed.report.unobservable.some((entry) => entry.corpus === "behavior" && /unmodeled report/.test(entry.runFailure)));
     // A report that is not JSON makes the case unscored under its own corpus, not the default.
     const garbage = await evaluate("{not json", 0);
     assert.equal(garbage.status, 1);
