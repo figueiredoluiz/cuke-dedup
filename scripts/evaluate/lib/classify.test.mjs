@@ -153,6 +153,9 @@ test("a run that wrote no report is unobservable", () => {
   assert.match(classifyCase(baseCase(), none).runFailure, /exit 2 wrote no JSON report: bad/);
   assert.equal(classifyCase(baseCase(), { ...none, status: null, spawnFailure: "spawn ENOENT" }).runFailure, "spawn ENOENT");
   assert.equal(classifyCase(baseCase(), none).observable, false);
+  // A process error with a report and an allowed exit is unobservable; the control without one is scored.
+  assert.equal(classifyCase(baseCase(), { ...observed([]), spawnFailure: "spawnSync ENOBUFS" }).runFailure, "spawnSync ENOBUFS");
+  assert.equal(classifyCase(baseCase(), observed([])).observable, true);
   assert.deepEqual(classifyCase(baseCase(), none).rules, {});
 });
 
@@ -242,4 +245,22 @@ test("a declared isolation must hold before an absence is credited", () => {
   assert.match(broken.entries[0].error, /declared \[matcher\]/);
   // An absence with no isolation is still credited when the finding is absent.
   assert.equal(classifyCase(baseCase({ expectedFindings: [], expectedAbsent: [{ rule: "duplicate-handler", matchers: ["one", "two"] }] }), observed([], records)).rules["duplicate-handler"].tn, 1);
+});
+
+/** Checks recall results name their corpus, and a failed observation keeps the corpus and lane it was asked for. */
+test("results carry their corpus and lane through a failed observation", async () => {
+  const recall = classifyCase(baseCase(), observed([finding("duplicate-matcher")]));
+  assert.deepEqual([recall.corpus, recall.lane], ["recall", null]);
+  /** An observation that always fails. */
+  const failing = async () => { throw new Error("copy failed"); };
+  const defaulted = await evaluateCase({ name: "x" }, failing);
+  assert.deepEqual([defaulted.corpus, defaulted.lane, defaulted.observable], ["recall", null, false]);
+  const lane = await evaluateCase({ name: "x" }, failing, classifyCase, { corpus: "language-parity", lane: "ruby" });
+  assert.deepEqual([lane.corpus, lane.lane, lane.runFailure], ["language-parity", "ruby", "observation failed: copy failed"]);
+  // Control: a successful observation is classified by the classifier given, not the default.
+  const custom = await evaluateCase({ name: "x" }, async () => 1, (named, value) => ({ named, value }));
+  assert.deepEqual(custom, { named: { name: "x" }, value: 1 });
+  // A classifier defect is named as such, not blamed on the observation.
+  const broken = await evaluateCase({ name: "x" }, async () => 1, () => { throw new Error("bad shape"); }, { corpus: "behavior" });
+  assert.deepEqual([broken.corpus, broken.observable, broken.runFailure], ["behavior", false, "classification failed: bad shape"]);
 });

@@ -66,24 +66,34 @@ export function isOperationalExit(status, testCase) {
  * The result for a case that could not be observed: no counts, only the cause.
  * @param {string} name Case name.
  * @param {string} cause Why the run gave nothing to classify.
+ * @param {string} [corpus] The corpus the case belongs to.
+ * @param {string|null} [lane] The language of a paired case's run, `null` for a corpus without lanes.
  * @returns {object}
  */
-export function unobservableCase(name, cause) {
-  return { name, observable: false, runFailure: cause, rules: {}, entries: [], ambiguous: 0 };
+export function unobservableCase(name, cause, corpus = "recall", lane = null) {
+  return { corpus, lane, name, observable: false, runFailure: cause, rules: {}, entries: [], ambiguous: 0 };
 }
 
 /**
  * Observes and classifies one case. A failure while observing (a report that is not valid JSON, a
- * copy that fails) makes that case unobservable instead of ending the whole evaluation.
- * @param {object} testCase Recall manifest case.
+ * copy that fails) or classifying makes that case unobservable instead of ending the whole evaluation.
+ * @param {object} testCase Manifest case of the corpus; only its `name` is read here.
  * @param {() => Promise<object>} observe Produces the case's observation.
+ * @param {(testCase: object, observation: object) => object} [classify] Classifier of the corpus.
+ * @param {{corpus?: string, lane?: string|null}} [origin] Corpus and lane of the unobservable result.
  * @returns {Promise<object>} The classification, or an unobservable result with the error message.
  */
-export async function evaluateCase(testCase, observe) {
+export async function evaluateCase(testCase, observe, classify = classifyCase, { corpus = "recall", lane = null } = {}) {
+  let observation;
   try {
-    return classifyCase(testCase, await observe());
+    observation = await observe();
   } catch (error) {
-    return unobservableCase(testCase.name, `observation failed: ${error.message}`);
+    return unobservableCase(testCase.name, `observation failed: ${error.message}`, corpus, lane);
+  }
+  try {
+    return classify(testCase, observation);
+  } catch (error) {
+    return unobservableCase(testCase.name, `classification failed: ${error.message}`, corpus, lane);
   }
 }
 
@@ -126,14 +136,14 @@ function participantsOf(expected, records) {
  * @param {object} testCase Recall manifest case.
  * @param {{status: number|null, stderr: string, spawnFailure: string|null, report: object|null,
  *   fingerprintsText: string|null}} observation Result of `observeRecallCase`.
- * @returns {{name: string, observable: boolean, runFailure: string|null, rules: object,
- *   entries: object[], ambiguous: number}} Per-rule counts and the entries worth reviewing.
+ * @returns {{corpus: string, lane: null, name: string, observable: boolean, runFailure: string|null,
+ *   rules: object, entries: object[], ambiguous: number}} Per-rule counts and the entries worth reviewing.
  */
 export function classifyCase(testCase, observation) {
   const { report, status, spawnFailure } = observation;
   // Exit 0 and 1 depend on the findings, which this report classifies. Any other status is the tool
   // failing, so its absences would certify nothing; a case that declares exit 2 expects it.
-  if (report === null || isOperationalExit(status, testCase)) {
+  if (report === null || spawnFailure !== null || isOperationalExit(status, testCase)) {
     const cause = spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : ""}: ${observation.stderr}`.trim();
     return unobservableCase(testCase.name, cause);
   }
@@ -148,7 +158,7 @@ export function classifyCase(testCase, observation) {
   const records = parseRecords(observation.fingerprintsText ?? "");
   /** Records an entry to review for this case. */
   const entry = (kind, rule, extra) => entries.push({
-    case: testCase.name, rule, kind, candidateSources: report.analysis?.candidateSources ?? null, ...extra,
+    corpus: "recall", case: testCase.name, rule, kind, candidateSources: report.analysis?.candidateSources ?? null, ...extra,
   });
 
   const active = report.findings.filter((finding) => finding.suppression === null);
@@ -208,5 +218,5 @@ export function classifyCase(testCase, observation) {
     // finding is also owned or ambiguous, where the two declarations contradict.
     else if (!matched.every((finding) => unowned.has(finding))) entry("violated-absence", absent.rule, { expected: absent });
   }
-  return { name: testCase.name, observable: true, runFailure: null, rules, entries, ambiguous: ambiguous.length };
+  return { corpus: "recall", lane: null, name: testCase.name, observable: true, runFailure: null, rules, entries, ambiguous: ambiguous.length };
 }

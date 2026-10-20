@@ -5,9 +5,10 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, readFile } from "node:fs/promises";
+import { cp } from "node:fs/promises";
 import { join } from "node:path";
 import { checkIsolation, isolatable, parseRecords } from "./negative-isolation.mjs";
+import { readOptional } from "./read-optional.mjs";
 import {
   exitAcceptable,
   partitionAmbiguous,
@@ -78,19 +79,14 @@ export async function observeRecallCase({ binary, recallRoot, scratch, testCase,
     [".", ...(testCase.arguments || []), "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints, ...(emitPairs ? ["--emit-pairs", pairs] : [])],
     { cwd: caseRoot, encoding: "utf8" },
   );
-  /** Reads a file the run may not have written. */
-  const optional = (path) => readFile(path, "utf8").catch((error) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  const reportText = await optional(join(output, "cuke-dedup.json"));
+  const reportText = await readOptional(join(output, "cuke-dedup.json"));
   return {
     status: run.status,
     stderr: run.stderr,
     spawnFailure: run.error?.message ?? (run.signal ? `killed by ${run.signal}` : null),
     report: reportText === null ? null : JSON.parse(reportText),
-    fingerprintsText: await optional(fingerprints),
-    pairsText: emitPairs ? await optional(pairs) : null,
+    fingerprintsText: await readOptional(fingerprints),
+    pairsText: emitPairs ? await readOptional(pairs) : null,
   };
 }
 
@@ -111,6 +107,8 @@ export async function judgeRecallCase(testCase, observation, { totals, knownIds,
     exitAcceptable(status, testCase.expectedExit || 0, testCase),
     `${testCase.name}: exit ${status}, expected ${testCase.expectedExit || 0}: ${spawnFailure ?? stderr}`,
   );
+  // An allowed exit does not excuse a process error such as an output-limit kill.
+  assert.equal(spawnFailure, null, `${testCase.name}: process error: ${spawnFailure}`);
   assert.ok(report, `${testCase.name}: the run wrote no JSON report`);
   assert.equal(
     report.summary.definitionsAnalyzed,

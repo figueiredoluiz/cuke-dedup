@@ -263,6 +263,9 @@ test("a run with no report, no pair records or a tool failure is unobservable", 
   assert.match(candidateRecallForCase(baseCase(), { ...ok, status: 2, stderr: "boom" }).runFailure, /exit 2: boom/);
   assert.equal(candidateRecallForCase(baseCase({ expectedExit: 2 }), { ...ok, status: 2 }).observable, true);
   assert.equal(candidateRecallForCase(baseCase(), { ...ok, status: null, spawnFailure: "spawn ENOENT" }).runFailure, "spawn ENOENT");
+  // A process error with a report, pairs and an allowed exit is unobservable; the control without one is observable.
+  assert.equal(candidateRecallForCase(baseCase(), { ...ok, spawnFailure: "spawnSync ENOBUFS" }).runFailure, "spawnSync ENOBUFS");
+  assert.equal(candidateRecallForCase(baseCase(), ok).observable, true);
   const failed = await recallForCase(baseCase(), async () => { throw new Error("bad JSON"); });
   assert.match(failed.runFailure, /observation failed: bad JSON/);
 });
