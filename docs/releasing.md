@@ -71,6 +71,29 @@ appends the table to the GitHub release notes:
 - To add the table to an existing release by hand, run `npm run release:compare` as above with
   `--markdown FILE` and paste the file into the notes.
 
+## Website rebuild
+
+After a publish, the `notify-site` job asks the website repository (`cuke-dedup-site`) to rebuild by
+sending a `release-published` `repository_dispatch` event with `client_payload` `{"tag": "vX.Y.Z"}`.
+The site documents the latest released version, so it rebuilds from that tag.
+
+- It runs after the `github-release` job, and after the crate and npm jobs, each of which must have
+  succeeded or been skipped (failed and cancelled both block it). A registry job that is switched off
+  (`PUBLISH_CRATES` or `PUBLISH_NPM` not `true`) is skipped, so the site is still rebuilt after the
+  GitHub release.
+- It runs for a normal publish, and for an npm-only recovery once the packages land. It never runs
+  when `publish_release` is off. It does not wait on `release-comparison`.
+- `release_tag` must match `vX.Y.Z`; the job fails before sending anything otherwise, so a
+  pre-release tag such as `v0.14.0-rc.1` publishes but does not rebuild the site.
+- A failure here unpublishes nothing. Re-run only that job from the workflow run page. The request is
+  sent once, with no automatic retry; any status other than 204 fails the job and shows the response.
+- It needs the repository secret `SITE_DISPATCH_TOKEN`: a fine-grained personal access token limited to
+  the website repository, with `Contents: read and write`, which `repository_dispatch` requires. A
+  cross-repository dispatch cannot use OIDC, so this is the one long-lived secret in the workflow.
+  Without it the job fails with a message saying so.
+- The website repository must run a workflow `on: repository_dispatch` for `release-published` and
+  read the tag from `github.event.client_payload.tag`.
+
 ## Prerequisites
 
 - Cargo, npm, the Git tag and the GitHub release use one version.

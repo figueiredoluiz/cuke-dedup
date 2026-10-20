@@ -73,3 +73,91 @@ test("release comparison cannot block or widen the release", () => {
   assert.ok(append, "append step slice must be found");
   assert.match(append, /continue-on-error: true/);
 });
+
+/** Slice one top-level job out of a workflow text, up to the next job or the end of the file. */
+function jobSlice(text, name) {
+  return text.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?:\\n  [a-z][a-z-]*:\\n|$)`))?.[1];
+}
+
+/** Assert every contract property of the notify-site job; throws on the first violation. */
+function assertSiteJobContract(text) {
+  const job = jobSlice(text, "notify-site");
+  assert.ok(job?.includes("steps:"), "notify-site job slice must be found");
+
+  const needs = job.match(/\n    needs: \[([^\]]*)\]/)?.[1].split(",").map((n) => n.trim());
+  assert.deepEqual(needs, ["github-release", "publish-crate", "publish-npm"]);
+  assert.doesNotMatch(job, /release-comparison/);
+
+  // A real publish, a successful release or npm-only recovery, and no failed registry job.
+  const condition = job.match(/\n    if: >-\n((?: {6}.*\n)+)/)?.[1].replace(/\s+/g, " ");
+  // The whole expression is compared so regrouping `&&`/`||` or flipping an operator fails too.
+  assert.equal(
+    condition?.trim(),
+    "${{ !cancelled() && inputs.publish_release && " +
+      "(needs.github-release.result == 'success' || " +
+      "(inputs.publish_npm_only && needs.publish-npm.result == 'success')) && " +
+      "(needs.publish-crate.result == 'success' || needs.publish-crate.result == 'skipped') && " +
+      "(needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}",
+  );
+  assert.doesNotMatch(job, /continue-on-error/);
+  assert.match(job, /\n    timeout-minutes: 5\n/);
+
+  // No repository token; the dispatch token and the tag come through env, never into the script.
+  assert.match(job, /\n    permissions: \{\}\n/);
+  assert.match(job, /\n {10}SITE_DISPATCH_TOKEN: \$\{\{ secrets\.SITE_DISPATCH_TOKEN \}\}\n/);
+  assert.match(text, /\nenv:\n(?: {2}.*\n)*? {2}RELEASE_TAG: \$\{\{ inputs\.release_tag \}\}\n/);
+  const script = job.match(/\n {8}run: \|\n([\s\S]*)$/)?.[1];
+  assert.ok(script?.includes("curl"), "run script slice must be found");
+  assert.doesNotMatch(script, /\$\{\{/);
+  assert.match(script, /Authorization: Bearer \$SITE_DISPATCH_TOKEN/);
+
+  // Tag validated before the JSON is built; JSON built by jq from that variable.
+  const check = script.indexOf('[[ "$RELEASE_TAG" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]');
+  const build = script.indexOf('jq -nc --arg tag "$RELEASE_TAG"');
+  assert.ok(check >= 0 && build > check, "tag validation must precede payload construction");
+  assert.ok(script.includes('{event_type: "release-published", client_payload: {tag: $tag}}'));
+  assert.ok(
+    script.includes("https://api.github.com/repos/figueiredoluiz/cuke-dedup-site/dispatches"),
+  );
+  assert.ok(script.includes('-d "$payload"'));
+  // The POST is not idempotent (no --retry) and anything but 204 fails the job with the body shown.
+  assert.doesNotMatch(script, /--retry/);
+  assert.ok(script.includes('if [ "$status" != "204" ]; then'));
+}
+
+/** Verify the website trigger is gated on a real publish, isolated from the release, and carries only the tag. */
+test("website rebuild trigger follows the registries and cannot block the release", () => {
+  assertSiteJobContract(workflow);
+  // Controls: the slicer finds other jobs with their own content and does not leak across jobs.
+  assert.ok(jobSlice(workflow, "publish-npm")?.includes("id-token: write"));
+  assert.ok(!jobSlice(workflow, "notify-site").includes("id-token"));
+});
+
+/** Verify each contract assertion fails when its behavior is broken (opposite-answer controls). */
+test("website rebuild contract rejects each broken variant", () => {
+  const variants = [
+    ["needs the comparison", "needs: [github-release, publish-crate, publish-npm]", "needs: [github-release, publish-crate, publish-npm, release-comparison]"],
+    ["drops the npm guard", "(needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')", "true"],
+    ["drops the crate guard", "(needs.publish-crate.result == 'success' || needs.publish-crate.result == 'skipped')", "true"],
+    ["regroups the guards", "needs.publish-crate.result == 'skipped') &&", "needs.publish-crate.result == 'skipped') ||"],
+    ["treats cancelled npm as ok", "needs.publish-npm.result == 'skipped')", "needs.publish-npm.result != 'failure')"],
+    ["drops the npm-only path", "inputs.publish_npm_only && needs.publish-npm.result == 'success'", "false"],
+    ["runs on rehearsals", "inputs.publish_release &&\n        (needs.github-release", "(needs.github-release"],
+    ["gains permissions", "permissions: {}", "permissions:\n      contents: write"],
+    ["interpolates the token", 'Bearer $SITE_DISPATCH_TOKEN', "Bearer ${{ secrets.SITE_DISPATCH_TOKEN }}"],
+    ["interpolates the tag", 'jq -nc --arg tag "$RELEASE_TAG"', 'jq -nc --arg tag "${{ inputs.release_tag }}"'],
+    ["wrong event type", '"release-published"', '"other"'],
+    ["wrong repository", "cuke-dedup-site/dispatches", "other-site/dispatches"],
+    ["tag not in payload", "client_payload: {tag: $tag}", "client_payload: {}"],
+    ["tag unvalidated", "=~ ^v[0-9]+", "=~ ^[0-9v]+"],
+    ["retries the POST", "curl -sS --max-time 30", "curl -sS --max-time 30 --retry 3"],
+    ["accepts any status", 'if [ "$status" != "204" ]; then', 'if [ "$status" = "000" ]; then'],
+    ["swallows failure", "    timeout-minutes: 5\n    permissions: {}", "    timeout-minutes: 5\n    continue-on-error: true\n    permissions: {}"],
+  ];
+  for (const [label, from, to] of variants) {
+    const start = workflow.indexOf("\n  notify-site:\n");
+    assert.ok(start >= 0 && workflow.indexOf(from, start) >= 0, `${label}: pattern present`);
+    const broken = workflow.slice(0, start) + workflow.slice(start).replace(from, to);
+    assert.throws(() => assertSiteJobContract(broken), `${label}: contract must fail`);
+  }
+});
