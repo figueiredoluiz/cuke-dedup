@@ -1,0 +1,7 @@
+# Tests read these files and match them with LF-only patterns; a Windows checkout must not turn them into CRLF.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.mjs text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
