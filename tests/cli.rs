@@ -7700,6 +7700,65 @@ fn regression_122_ruby_receiver_registrations_fail_closed() {
     }
 }
 
+/// Every `%r` delimiter registers like the slash literal with the same source: a second
+/// registration with a different handler is reported as a duplicate matcher, which needs both
+/// matchers recognized. Controls: a different pattern under the same delimiter is distinct, and a
+/// literal Ruby rejects stays incomplete instead of registering.
+#[test]
+fn regression_191_ruby_percent_r_delimiters_are_recognized() {
+    for (slash, percent) in [
+        (r"/\Aitem 1\z/", r"%r!\Aitem 1\z!"),
+        (r"/\Aitem (1)\z/", r"%r(\Aitem (1)\z)"),
+        (r"/\Aitem [1]\z/", r"%r[\Aitem [1]\z]"),
+        (r"/\Aitem <1>\z/", r"%r<\Aitem <1>\z>"),
+        (r"/\Aitem1{1}\z/", r"%r{\Aitem1{1}\z}"),
+        (r"/\Aitem 1\|2\z/", r"%r|\Aitem 1\|2\z|"),
+        (r"/\Aitem!1\z/", r"%r!\Aitem\!1\z!"),
+        (r"/\Aitem\/1\z/", r"%r{\Aitem/1\z}"),
+        (r"/\Aitem [a-c]\z/", r"%r-\Aitem [a\-c]\z-"),
+        (r"/\Aitem 1\z/m", r"%r(\Aitem 1\z)m"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "steps.rb",
+            &format!("Given({slash}) {{ first() }}\nGiven({percent}) {{ second() }}\n"),
+        );
+        let run = ruby_run(directory.path(), &["--definitions", "steps.rb"]);
+        assert_eq!(run.definitions, 2, "{percent}: {}", run.stderr);
+        assert!(!run.incomplete, "{percent}: {}", run.stderr);
+        assert!(
+            run.active.iter().any(|rule| rule == "duplicate-matcher"),
+            "{percent}: {:?}",
+            run.active
+        );
+        // Control: the same delimiter with another pattern is not a duplicate.
+        let distinct = percent.replace("item", "other");
+        write(
+            directory.path(),
+            "steps.rb",
+            &format!("Given({slash}) {{ first() }}\nGiven({distinct}) {{ second() }}\n"),
+        );
+        let run = ruby_run(directory.path(), &["--definitions", "steps.rb"]);
+        assert_eq!(run.definitions, 2, "{distinct}: {}", run.stderr);
+        assert!(!run.incomplete, "{distinct}: {}", run.stderr);
+        assert!(
+            !run.active.iter().any(|rule| rule == "duplicate-matcher"),
+            "{distinct}: {:?}",
+            run.active
+        );
+    }
+    // Unmodeled control: `|` closes the literal, so `b|` is not a flag and Ruby rejects the file.
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.rb",
+        "Given(/\\Aitem 1\\z/) { first() }\nGiven(%r|\\Aitem 1\\z|b|) { second() }\n",
+    );
+    let run = ruby_run(directory.path(), &["--definitions", "steps.rb"]);
+    assert!(run.incomplete, "{}", run.stderr);
+}
+
 /// Checks a Gherkin parse error lists its expected tokens in one order across process runs.
 #[test]
 fn regression_gherkin_parse_error_token_order_is_deterministic() {

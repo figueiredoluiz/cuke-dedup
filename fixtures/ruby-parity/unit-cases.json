@@ -5736,6 +5736,14 @@
           "behaviorClass": "ruby-behavior"
         },
         {
+          "name": "regression_191_ruby_percent_r_delimiters_are_recognized",
+          "requiredStatus": "covered",
+          "fixtureGroup": "regex-percent-delimiters-all",
+          "oracleClause": "requiredFindings[0]",
+          "rationale": "`regression_191_ruby_percent_r_delimiters_are_recognized` registers one matcher through `/…/` and each `%r` delimiter (bang, parens, brackets, angle brackets, braces, pipes, an escaped delimiter, a class range, a flag) and requires a duplicate-matcher finding, with a distinct-pattern control and a rejected literal that stays incomplete. The `regex-percent-delimiters-all` and `regex-percent-delimiters-nested-pair` groups pin the bang, bracket, angle, pipe and brace delimiters and a nested pair with a distinct-pattern control; the escape and flag rows are pinned by this test and the `percent_r_*` unit tests.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "regression_gherkin_parse_error_token_order_is_deterministic",
           "requiredStatus": "engine-invariant",
           "stage": "gherkin-parser",
