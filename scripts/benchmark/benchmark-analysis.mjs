@@ -37,8 +37,11 @@ const allProfiles = smoke
       { name: "repository-scale", sizes: [20], repositoryShape: true },
       { name: "usage-scale", sizes: [50], usageSteps: 100 },
       { name: "candidate-limit", sizes: [20], sharedStructure: true, candidateLimit: 5 },
-      { name: "ruby-single-file", sizes: [20], rubySingleFile: true },
-      { name: "module-constants", sizes: [20], moduleConstants: true },
+      { name: "ruby-single-file", sizes: [20], shape: "ruby-single-file" },
+      { name: "module-constants", sizes: [20], shape: "module-constants" },
+      { name: "rb-locals", sizes: [20], shape: "rb-locals" },
+      { name: "rb-constants", sizes: [20], shape: "rb-constants" },
+      { name: "ts-alias", sizes: [20], shape: "ts-alias" },
     ]
   : [
       { name: "unrelated", sizes: [250, 500, 1000, 2000, 8000], sharedStructure: false },
@@ -55,8 +58,11 @@ const allProfiles = smoke
       { name: "candidate-limit", sizes: [10000], sharedStructure: true, candidateLimit: 1000 },
       // Per-handler work over the whole file grows with file size; `benchmark:check` gates the
       // parse-time ratio between these two sizes.
-      { name: "ruby-single-file", sizes: [2000, 8000], rubySingleFile: true },
-      { name: "module-constants", sizes: [1000, 4000], moduleConstants: true },
+      { name: "ruby-single-file", sizes: [2000, 8000], shape: "ruby-single-file" },
+      { name: "module-constants", sizes: [1000, 4000], shape: "module-constants" },
+      { name: "rb-locals", sizes: [2000, 8000], shape: "rb-locals" },
+      { name: "rb-constants", sizes: [2000, 8000], shape: "rb-constants" },
+      { name: "ts-alias", sizes: [1000, 4000], shape: "ts-alias" },
     ];
 const profileFilter = process.env.CUKE_DEDUP_BENCH_PROFILE;
 const selectedProfiles = profileFilter
@@ -85,11 +91,9 @@ try {
       const root = join(temporary, `${profile.name}-${definitions}`);
       const output = join(temporary, "reports", `${profile.name}-${definitions}`);
       await mkdir(root, { recursive: true });
-      const generated = profile.rubySingleFile
-        ? await writeRubySingleFile(root, definitions)
-        : profile.moduleConstants
-          ? await writeModuleConstants(root, definitions)
-          : profile.repositoryShape
+      const generated = profile.shape
+        ? await writeShapedSingleFile(root, definitions, profile.shape)
+        : profile.repositoryShape
             ? await writeRepositoryScale(root, definitions)
             : profile.usageSteps
               ? await writeUsageScale(root, definitions, profile.usageSteps)
@@ -561,47 +565,77 @@ async function writeUsageScale(root, definitions, featureSteps) {
  * One Ruby file of block handlers. Ruby is opt-in, so the configuration selects the suite. Every
  * definition is unused against the sentinel feature, and distinct callees keep pair analysis idle.
  */
-async function writeRubySingleFile(root, definitions) {
-  await mkdir(join(root, "features", "step_definitions"), { recursive: true });
-  await writeFile(
-    join(root, "features", "step_definitions", "steps.rb"),
-    Array.from(
-      { length: definitions },
-      (_, index) => `Given('ruby step ${index}') do\n  action_${index}\nend`,
-    ).join("\n") + "\n",
-  );
-  await writeFile(
-    join(root, "features", "suite.feature"),
-    "Feature: Ruby benchmark\n  Scenario: Sentinel\n    Given a benchmark sentinel\n",
-  );
-  await writeFile(
-    join(root, ".cuke-dedup.json"),
-    `${JSON.stringify({
-      threshold: 100,
-      definitions: ["features/**/*.rb"],
-      features: ["features/**/*.feature"],
-    }, null, 2)}\n`,
-  );
-  return singleFileOutcome(definitions);
+
+/** Lines for `definitions` indices, joined with a trailing newline. */
+function indexedLines(definitions, line) {
+  return `${Array.from({ length: definitions }, (_, index) => line(index)).join("\n")}\n`;
 }
 
-/**
- * One TypeScript file declaring a literal module constant per handler. Each handler reads its own
- * constant and calls a distinct function, so the cost measured is module-scope resolution, not
- * pair analysis.
- */
-async function writeModuleConstants(root, definitions) {
-  const constants = Array.from({ length: definitions }, (_, index) => `const LIMIT_${index} = ${index};`);
-  const handlers = Array.from(
-    { length: definitions },
-    (_, index) => `Given('constant step ${index}', () => action_${index}(LIMIT_${index}));`,
-  );
-  await writeFile(join(root, "steps.ts"), `${[...constants, ...handlers].join("\n")}\n`);
-  await writeFile(
-    join(root, "suite.feature"),
-    "Feature: Module constants benchmark\n  Scenario: Sentinel\n    Given a benchmark sentinel\n",
-  );
-  await writeFile(join(root, ".cuke-dedup.json"), `${JSON.stringify({ threshold: 100 }, null, 2)}\n`);
+/** Ruby source with, per index, an optional `declaration` line followed by a block handler whose body is `call`. */
+function rubyBlocks(definitions, call, declaration = null) {
+  return indexedLines(definitions, (index) =>
+    `${declaration ? `${declaration(index)}\n` : ""}Given('ruby step ${index}') do\n  ${call(index)}\nend`);
+}
+
+/** Return the language, sentinel feature title and definition-file generator of a `shape` profile (a function: the table is used before module evaluation reaches a `const`). */
+function singleFileShape(shape) {
+  return {
+    "ruby-single-file": {
+      ruby: true,
+      feature: "Ruby benchmark",
+      source: (definitions) => rubyBlocks(definitions, (index) => `action_${index}`),
+    },
+    "rb-locals": {
+      ruby: true,
+      feature: "rb-locals benchmark",
+      source: (definitions) =>
+        rubyBlocks(definitions, (index) => `action_${index}(value_${index})`, (index) => `value_${index} = ${index}`),
+    },
+    "rb-constants": {
+      ruby: true,
+      feature: "rb-constants benchmark",
+      source: (definitions) =>
+        rubyBlocks(definitions, (index) => `action_${index}(LIMIT_${index})`, (index) => `LIMIT_${index} = ${index}`),
+    },
+    "module-constants": {
+      ruby: false,
+      feature: "Module constants benchmark",
+      source: (definitions) =>
+        indexedLines(definitions, (index) => `const LIMIT_${index} = ${index};`) +
+        indexedLines(definitions, (index) => `Given('constant step ${index}', () => action_${index}(LIMIT_${index}));`),
+    },
+    "ts-alias": {
+      ruby: false,
+      feature: "ts-alias benchmark",
+      source: (definitions) =>
+        "import { Given } from '@cucumber/cucumber';\n" +
+        indexedLines(definitions, (index) => `const BASE_${index} = ${index};\nconst LIMIT_${index} = BASE_${index};`) +
+        indexedLines(definitions, (index) => `Given('alias step ${index}', () => action_${index}(LIMIT_${index}));`),
+    },
+  }[shape];
+}
+
+/** Write one definition file for a `shape` profile with a sentinel feature, so every definition is unused. */
+async function writeShapedSingleFile(root, definitions, shape) {
+  const { ruby, feature, source: shapeSource } = singleFileShape(shape);
+  const sentinel = `Feature: ${feature}\n  Scenario: Sentinel\n    Given a benchmark sentinel\n`;
+  if (ruby) {
+    await mkdir(join(root, "features", "step_definitions"), { recursive: true });
+    await writeFile(join(root, "features", "step_definitions", "steps.rb"), shapeSource(definitions));
+    await writeFile(join(root, "features", "suite.feature"), sentinel);
+    await writeFile(
+      join(root, ".cuke-dedup.json"),
+      `${JSON.stringify({
+        threshold: 100,
+        definitions: ["features/**/*.rb"],
+        features: ["features/**/*.feature"],
+      }, null, 2)}\n`,
+    );
+  } else {
+    await writeFile(join(root, "steps.ts"), shapeSource(definitions));
+    await writeFile(join(root, "suite.feature"), sentinel);
+    await writeFile(join(root, ".cuke-dedup.json"), `${JSON.stringify({ threshold: 100 }, null, 2)}\n`);
+  }
   return singleFileOutcome(definitions);
 }
 
