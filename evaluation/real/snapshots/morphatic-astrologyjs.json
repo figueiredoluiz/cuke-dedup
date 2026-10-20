@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "suite": "morphatic-astrologyjs",
+  "repo": "https://github.com/morphatic/astrologyjs",
+  "commit": "6b891f2d79221ed2cf7a024ed5ae617efa11590b",
+  "root": ".",
+  "framework": "cucumber-js",
+  "exit": 1,
+  "census": {
+    "definitions": 53,
+    "featureSteps": 127,
+    "definitionFiles": 46,
+    "featureFiles": 4,
+    "corpusIncomplete": false,
+    "frameworks": {
+      "cucumber-js": 53
+    },
+    "findings": {
+      "duplicate-handler": 1,
+      "near-duplicate-step": 6
+    },
+    "truncatedFindings": 0,
+    "suppressed": 0,
+    "pairs": {
+      "evaluated": 99,
+      "byRule": {
+        "duplicate-handler": 1,
+        "near-duplicate-step": 7
+      },
+      "bySource": {
+        "identicalHandler": 1,
+        "matcherBlocking": 95,
+        "structuralHandler": 3
+      }
+    },
+    "candidates": {
+      "truncated": false,
+      "evaluated": 99,
+      "skipped": 0,
+      "truncatedStructuralClasses": 0,
+      "sources": {
+        "identicalHandler": {
+          "evaluated": 1,
+          "skipped": 0
+        },
+        "matcherBlocking": {
+          "evaluated": 95,
+          "skipped": 0
+        },
+        "matcherOverlap": {
+          "evaluated": 0,
+          "skipped": 0
+        },
+        "normalizedMatcher": {
+          "evaluated": 0,
+          "skipped": 0
+        },
+        "structuralHandler": {
+          "evaluated": 3,
+          "skipped": 0
+        }
+      }
+    }
+  },
+  "findings": {
+    "duplicate-handler": [
+      {"id":"47048a3a8f48968c","fp":"5b82903bb580d5e6"}
+    ],
+    "near-duplicate-step": [
+      {"id":"640603d6164e0973","fp":"ba30992824ec911e"},
+      {"id":"8eefc4708e960532","fp":"699f6d7706fe2723"},
+      {"id":"a62f25a716c56833","fp":"0fae194c51a0585a"},
+      {"id":"cb481fe50411a2bc","fp":"5932d034394f84a9"},
+      {"id":"d151647342447db8","fp":"8dab5c010e2dd3c5"},
+      {"id":"ea5a35621e485581","fp":"35e67f64f63f23d1"}
+    ]
+  }
+}
