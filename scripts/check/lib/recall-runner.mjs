@@ -107,6 +107,8 @@ export async function judgeRecallCase(testCase, observation, { totals, knownIds,
     exitAcceptable(status, testCase.expectedExit || 0, testCase),
     `${testCase.name}: exit ${status}, expected ${testCase.expectedExit || 0}: ${spawnFailure ?? stderr}`,
   );
+  // An allowed exit does not excuse a process error such as an output-limit kill.
+  assert.equal(spawnFailure, null, `${testCase.name}: process error: ${spawnFailure}`);
   assert.ok(report, `${testCase.name}: the run wrote no JSON report`);
   assert.equal(
     report.summary.definitionsAnalyzed,

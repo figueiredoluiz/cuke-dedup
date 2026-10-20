@@ -177,8 +177,8 @@ duplication summary and stderr messages are listed as entries when they disagree
 so a case can show full recall and still have entries to review.
 
 A case that cannot be scored is listed under "Cases that could not be scored" with the cause and
-counts for nothing, never as clean: a binary that did not start, an exit status the corpus does not
-allow, no JSON report, a definition or feature-step count (and, for recall, a candidate-source
+counts for nothing, never as clean: a binary that did not start, or hit a process error such as exceeding the output limit even when it wrote
+a report, an exit status the corpus does not allow, no JSON report, a definition or feature-step count (and, for recall, a candidate-source
 count) that differs from the one the case declares, or a label or report shape the classifier does not model (a missing or malformed
 `byRule`, census counts or `duplication` summary; a well-typed summary that disagrees with the case
 is an entry instead).

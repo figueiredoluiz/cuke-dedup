@@ -153,6 +153,9 @@ test("a run that wrote no report is unobservable", () => {
   assert.match(classifyCase(baseCase(), none).runFailure, /exit 2 wrote no JSON report: bad/);
   assert.equal(classifyCase(baseCase(), { ...none, status: null, spawnFailure: "spawn ENOENT" }).runFailure, "spawn ENOENT");
   assert.equal(classifyCase(baseCase(), none).observable, false);
+  // A process error with a report and an allowed exit is unobservable; the control without one is scored.
+  assert.equal(classifyCase(baseCase(), { ...observed([]), spawnFailure: "spawnSync ENOBUFS" }).runFailure, "spawnSync ENOBUFS");
+  assert.equal(classifyCase(baseCase(), observed([])).observable, true);
   assert.deepEqual(classifyCase(baseCase(), none).rules, {});
 });
 

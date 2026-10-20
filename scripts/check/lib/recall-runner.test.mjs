@@ -83,6 +83,8 @@ test("exit status, report, definition and feature-step mismatches are rejected",
     [observed(undefined, { status: null, stderr: null, spawnFailure: "spawn x ENOENT", report: null }), /exit null, expected 0: spawn x ENOENT/],
     [observed(undefined, { status: null, stderr: "", spawnFailure: "killed by SIGKILL", report: null }), /killed by SIGKILL/],
     [observed(undefined, { report: null }), /wrote no JSON report/],
+    // An allowed exit with a report does not excuse a process error such as an output-limit kill.
+    [observed(undefined, { spawnFailure: "spawnSync ENOBUFS" }), /process error: spawnSync ENOBUFS/],
     [{ ...observed(), report: { ...observed().report, summary: { definitionsAnalyzed: 3, featureStepsAnalyzed: 0 } } }, /definitions/],
     [{ ...observed(), report: { ...observed().report, summary: { definitionsAnalyzed: 2, featureStepsAnalyzed: 1 } } }, /extracted feature steps/],
   ];

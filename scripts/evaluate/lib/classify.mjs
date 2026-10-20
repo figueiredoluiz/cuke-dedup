@@ -143,7 +143,7 @@ export function classifyCase(testCase, observation) {
   const { report, status, spawnFailure } = observation;
   // Exit 0 and 1 depend on the findings, which this report classifies. Any other status is the tool
   // failing, so its absences would certify nothing; a case that declares exit 2 expects it.
-  if (report === null || isOperationalExit(status, testCase)) {
+  if (report === null || spawnFailure !== null || isOperationalExit(status, testCase)) {
     const cause = spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : ""}: ${observation.stderr}`.trim();
     return unobservableCase(testCase.name, cause);
   }

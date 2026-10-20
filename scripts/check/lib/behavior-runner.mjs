@@ -73,6 +73,7 @@ export async function observeBehaviorCase({ binary, corpusRoot, scratch, testCas
  */
 export function judgeBehaviorCase(testCase, { status, stderr, spawnFailure, report, fingerprintsText }) {
   assert.equal(status, testCase.expectedExit, `${testCase.name}: ${spawnFailure ?? stderr}`);
+  assert.equal(spawnFailure, null, `${testCase.name}: process error: ${spawnFailure}`);
   assert.ok(report, `${testCase.name}: the run wrote no JSON report (exit ${status}): ${stderr}`);
   assert.ok(fingerprintsText !== null, `${testCase.name}: the run wrote no fingerprint records (exit ${status}): ${stderr}`);
   const expected = testCase.expected;

@@ -117,7 +117,7 @@ function pairState(expected, { records, pairsByKey, reported, complete: exhausti
 export function candidateRecallForCase(testCase, observation) {
   const { report, status, spawnFailure, pairsText } = observation;
   // A tool failure, or a run that wrote no pair file, cannot be joined.
-  if (report === null || pairsText === null || isOperationalExit(status, testCase)) {
+  if (report === null || pairsText === null || spawnFailure !== null || isOperationalExit(status, testCase)) {
     const cause = spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : pairsText === null ? " wrote no pair records" : ""}: ${observation.stderr}`.trim();
     return { name: testCase.name, observable: false, runFailure: cause, positives: [], discarded: [], anomalies: [] };
   }

@@ -72,7 +72,8 @@ export function classifyBehaviorCase(testCase, { status, stderr, spawnFailure, r
   const unscored = (cause) => unobservableCase(testCase.name, cause, BEHAVIOR_CORPUS);
   const problem = labelProblem(testCase);
   if (problem !== null) return unscored(`unmodeled label: ${problem}`);
-  if (report === null || isOperationalExit(status, testCase)) {
+  // A process error (spawn failure, killed child, output limit) taints the run even with a report and an allowed exit.
+  if (report === null || spawnFailure !== null || isOperationalExit(status, testCase)) {
     return unscored(spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : ""}: ${stderr}`.trim());
   }
   const expected = testCase.expected;

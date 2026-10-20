@@ -80,6 +80,8 @@ test("operational failures are unscored", () => {
     ["no report", observed({}, { report: null, stderr: "boom" }), /exit 1 wrote no JSON report: boom/],
     ["unexpected exit", observed({}, { status: 101, stderr: "panic" }), /exit 101: panic/],
     ["signal", observed({}, { status: null, spawnFailure: "killed by SIGKILL", report: null }), /killed by SIGKILL/],
+    // A process error with a valid report and an allowed exit must not be scored (output limit exceeded).
+    ["process error with report", observed({ "duplicate-matcher": 2 }, { spawnFailure: "spawnSync cuke-dedup ENOBUFS" }), /ENOBUFS/],
   ];
   for (const [label, observation, cause] of rows) {
     const result = classifyBehaviorCase(baseCase(), observation);
@@ -137,6 +139,9 @@ test("judgeBehaviorCase fails on a rule count the classifier scores as a miss", 
   assert.throws(() => judgeBehaviorCase(labelled, { ...good, fingerprintsText: null }), /no fingerprint records/);
   // A binary that cannot start names why, instead of a bare null status.
   assert.throws(() => judgeBehaviorCase(labelled, { ...good, status: null, spawnFailure: "spawn ENOENT", stderr: "" }), /case: spawn ENOENT/);
+  // Control: the same observation without a process error is not rejected for one; with it and an allowed exit it is.
+  assert.throws(() => judgeBehaviorCase(labelled, good), (error) => !/process error/.test(error.message));
+  assert.throws(() => judgeBehaviorCase(labelled, { ...good, spawnFailure: "spawnSync ENOBUFS" }), /process error: spawnSync ENOBUFS/);
 });
 
 /** Checks a malformed observed summary is unscored, while the same fields well typed but different stay entries. */
