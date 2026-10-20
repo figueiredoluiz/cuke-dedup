@@ -116,8 +116,10 @@ function assertSiteJobContract(text) {
   const build = script.indexOf('jq -nc --arg tag "$RELEASE_TAG"');
   assert.ok(check >= 0 && build > check, "tag validation must precede payload construction");
   assert.ok(script.includes('{event_type: "release-published", client_payload: {tag: $tag}}'));
-  assert.ok(
-    script.includes("https://api.github.com/repos/figueiredoluiz/cuke-dedup-site/dispatches"),
+  // The endpoint is matched as a whole line, so no other host can precede or follow it.
+  assert.match(
+    script,
+    /^ +https:\/\/api\.github\.com\/repos\/figueiredoluiz\/cuke-dedup-site\/dispatches \\$/m,
   );
   assert.ok(script.includes('-d "$payload"'));
   // The POST is not idempotent (no --retry) and anything but 204 fails the job with the body shown.
@@ -148,6 +150,7 @@ test("website rebuild contract rejects each broken variant", () => {
     ["interpolates the tag", 'jq -nc --arg tag "$RELEASE_TAG"', 'jq -nc --arg tag "${{ inputs.release_tag }}"'],
     ["wrong event type", '"release-published"', '"other"'],
     ["wrong repository", "cuke-dedup-site/dispatches", "other-site/dispatches"],
+    ["another host first", "https://api.github.com/repos", "https://example.invalid/?u=https://api.github.com/repos"],
     ["tag not in payload", "client_payload: {tag: $tag}", "client_payload: {}"],
     ["tag unvalidated", "=~ ^v[0-9]+", "=~ ^[0-9v]+"],
     ["retries the POST", "curl -sS --max-time 30", "curl -sS --max-time 30 --retry 3"],
