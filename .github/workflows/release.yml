@@ -329,3 +329,55 @@ jobs:
         run: node scripts/release/check-npm-trusted-publishing.mjs
       - name: Publish platform packages, then launcher
         run: node scripts/release/publish-npm-packages.mjs
+
+  # Asks the website repository to rebuild once the release is out. It waits for the registries so
+  # the site never advertises a version nobody can install yet. It cannot block them: a failure
+  # here unpublishes nothing, and the job can be re-run on its own. A normal publish triggers it
+  # after the GitHub release; an npm-only recovery triggers it once the packages land.
+  # It does not depend on `release-comparison`, which is informational.
+  #
+  # `SITE_DISPATCH_TOKEN` is a fine-grained personal access token for the website repository only,
+  # with `Contents: read and write` (what `repository_dispatch` requires). A cross-repository
+  # dispatch cannot use OIDC. The token and the tag reach the shell through `env`, never by
+  # interpolation into the script.
+  notify-site:
+    name: Trigger website rebuild
+    needs: [github-release, publish-crate, publish-npm]
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.publish_release &&
+        (needs.github-release.result == 'success' ||
+          (inputs.publish_npm_only && needs.publish-npm.result == 'success')) &&
+        (needs.publish-crate.result == 'success' || needs.publish-crate.result == 'skipped') &&
+        (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Trigger website rebuild
+        shell: bash
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SITE_DISPATCH_TOKEN" ]; then
+            echo "::error::SITE_DISPATCH_TOKEN is not set; the release is published, so re-run this job once it is"
+            exit 1
+          fi
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_tag must look like vX.Y.Z to notify the website"
+            exit 1
+          fi
+          payload=$(jq -nc --arg tag "$RELEASE_TAG" '{event_type: "release-published", client_payload: {tag: $tag}}')
+          # Sent once: the POST is not idempotent. Re-run the job instead of retrying inline.
+          status=$(curl -sS --max-time 30 -X POST -o "$RUNNER_TEMP/dispatch.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $SITE_DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/figueiredoluiz/cuke-dedup-site/dispatches \
+            -d "$payload") || status=000
+          if [ "$status" != "204" ]; then
+            echo "::error::dispatch returned HTTP $status: $(cat "$RUNNER_TEMP/dispatch.json" 2>/dev/null || true)"
+            exit 1
+          fi
