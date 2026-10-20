@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import {
-  cp,
-  mkdir,
   mkdtemp,
   readFile,
   rm,
 } from "node:fs/promises";
 import { readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
-import { parseRecords } from "./lib/negative-isolation.mjs";
-import { latestClassifiedAt, validateCorpusLabels, validateAgainstRecords, validateVariantReferences } from "./lib/manifest-schema.mjs";
+import { latestClassifiedAt, validateVariantReferences } from "./lib/manifest-schema.mjs";
+import { judgeBehaviorCase, observeBehaviorCase } from "./lib/behavior-runner.mjs";
 import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./lib/recall-runner.mjs";
 
 // The corpus check runs whatever binary is on disk. A binary older than the sources silently
@@ -86,39 +84,10 @@ try {
   for (const testCase of onlyCase ? [] : manifest.cases) await attempt(failures, testCase.name, () => validateBehaviorCase(testCase));
   /** Runs one behavior case and asserts its exit, summary, rules and stderr. */
   async function validateBehaviorCase(testCase) {
-    const caseRoot = join(temporary, testCase.name, "case");
-    const output = join(temporary, testCase.name, "report");
-    await cp(join(corpus, testCase.path), caseRoot, { recursive: true });
-    for (const materialized of testCase.materialize || []) {
-      const destination = join(caseRoot, materialized.destination);
-      await mkdir(dirname(destination), { recursive: true });
-      await cp(join(caseRoot, materialized.source), destination);
-    }
-    const fingerprints = join(temporary, testCase.name, "fingerprints.jsonl");
-    const run = spawnSync(
-      binary,
-      [".", ...testCase.arguments, "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
-      { cwd: caseRoot, encoding: "utf8" },
-    );
-    assert.equal(run.status, testCase.expectedExit, `${testCase.name}: ${run.stderr}`);
-    const report = JSON.parse(await readFile(join(output, "cuke-dedup.json"), "utf8"));
-    const expected = testCase.expected;
-    assert.equal(report.summary.definitionsAnalyzed, expected.definitions, `${testCase.name}: definitions`);
-    assert.equal(report.summary.featureStepsAnalyzed, expected.featureSteps, `${testCase.name}: feature steps`);
-    assert.equal(report.summary.duplication.duplicatedDefinitions, expected.duplicatedDefinitions, `${testCase.name}: duplicated definitions`);
-    assert.equal(report.summary.duplication.percentage, expected.percentage, `${testCase.name}: percentage`);
-    assert.equal(report.summary.duplication.threshold, expected.threshold, `${testCase.name}: threshold`);
-    assert.equal(report.summary.duplication.passed, expected.passed, `${testCase.name}: result`);
-    assert.deepEqual(report.summary.byRule, expected.byRule, `${testCase.name}: rules`);
-    for (const message of testCase.stderrIncludes || []) {
-      assert.ok(run.stderr.includes(message), `${testCase.name}: missing stderr message ${message}`);
-    }
-    // The labels the run can contradict are held against its fingerprint records, as for recall cases.
-    validateCorpusLabels(testCase, testCase.name, latestClassifiedAt(), Object.keys(expected.byRule).length);
-    validateAgainstRecords(
-      { name: testCase.name, language: testCase.language, frameworks: testCase.frameworks, expectedDefinitions: expected.definitions },
-      parseRecords(await readFile(fingerprints, "utf8")),
-    );
+    const observation = await observeBehaviorCase({
+      binary, corpusRoot: corpus, scratch: join(temporary, testCase.name), testCase,
+    });
+    judgeBehaviorCase(testCase, observation);
   }
 
   let recall;

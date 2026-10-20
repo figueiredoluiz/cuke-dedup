@@ -152,13 +152,35 @@ npm run corpus:check
 definition pair is cross-window; it changes memory and time, never findings. The full gate runs the
 corpus once normally and once this way.
 
-`npm run corpus:evaluate` runs the same recall cases without asserting and reports, per rule, true and
-false positives and negatives, known misses, precision, recall and F1, plus each entry that disagrees
-with its expectation (missing, unowned, excess, a known miss that is now found). Recall counts known
-misses as desired findings, as the gate's baseline does. It is a report, not a gate: it exits 1 only
-when a case cannot be observed. `--case NAME` limits the run; `--json FILE` and `--markdown FILE`
-write the report (markdown goes to stdout when neither is given). On the current corpus every
-disagreement count is zero except the one known miss, because the gate already fails on any other.
+`npm run corpus:evaluate` runs the recall and behavior corpora without asserting and reports, per
+corpus and rule, true and false positives and negatives, known misses, precision, recall and F1,
+plus each entry that disagrees with its expectation. It is a report, not a gate. Exit codes: 0 when
+every selected case was scored, 1 when a case could not be observed or scored, 2 for an unknown case
+or corpus. `--corpus NAME` (`recall` or `behavior`) and `--case NAME` limit the run; `--json FILE`
+and `--markdown FILE` write the report (markdown goes to stdout when neither is given). Corpora stay
+separate: every row of the table and of the JSON `rules` list names its corpus, each corpus has a
+total row, and `ruleTotals` sums each rule across all corpora under the corpus name `all`. Every
+corpus counts findings. Recall counts known misses as desired findings, as the gate's baseline
+does. On the current corpora every disagreement count is zero except the one known miss, because
+the gates already fail on any other.
+
+What a count means per corpus:
+
+| Corpus | Observed by | Oracle | TP | FP | FN | TN |
+| --- | --- | --- | --- | --- | --- | --- |
+| recall | `observeRecallCase` | `expectedFindings`, `expectedAbsent`, `knownMisses` | expected finding reported | unowned or excess finding | expected finding missing | absence holds |
+| behavior | `observeBehaviorCase` | `expected.byRule` counts | `min(expected, observed)` per rule | observed above expected, or a rule not listed | expected above observed | always 0 (no absences declared) |
+
+A behavior case pins counts per rule, not individual findings, so it is scored on counts. A case
+with no expected findings and none observed contributes only to the case count. Its exit status,
+duplication summary and stderr messages are listed as entries when they disagree and are not scored,
+so a case can show full recall and still have entries to review.
+
+A case that cannot be scored is listed under "Cases that could not be scored" with the cause and
+counts for nothing, never as clean: a binary that did not start, an exit status the corpus does not
+allow, no JSON report, a definition or feature-step count (and, for recall, a candidate-source
+count) that differs from the one the case declares, or a label or report shape the classifier does not model (a missing or malformed
+`byRule`).
 
 `npm run corpus:distribution` summarizes the recall manifest without running the analyzer: cases and
 expectations per rule, outcome, language, framework, axis, origin, verdict and fixture root, an
@@ -192,8 +214,8 @@ A counted expectation is diagnosed from the pairs not already credited to a find
 cluster finding counts as reached through the pairs among its members that produced its rule. A
 finding claimed by more than one expectation, or a cluster whose related locations the report truncated, joins no positive and is listed separately. Paths are compared in the form the JSON report writes them (control and invisible-format characters removed). Pairs of
 `ambiguous-step`, `overlapping-matcher` and `unused-definition` have no pair record and are not
-covered. Options and exit codes are those of `corpus:evaluate`. On the synthetic corpus every positive
-is reached, because a reported finding was necessarily evaluated; the report is informative for known
+covered. Options are `--binary`, `--case`, `--json` and `--markdown`; it exits 1 when a case cannot be
+observed and 2 for an unknown case, and reads the recall corpus only. On the synthetic corpus every positive is reached, because a reported finding was necessarily evaluated; the report is informative for known
 misses and for labelled real projects.
 
 ## Language adapters and parity
