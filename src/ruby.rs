@@ -1240,24 +1240,50 @@ fn registration_parts<'a>(
     }
 }
 
-/// Split slash or brace-delimited Ruby regex literals into a pattern and sorted unique flags.
+/// Split a `/…/` or `%r<delimiter>…` Ruby regex literal into a pattern and sorted unique flags.
+///
+/// Bracket delimiters `() [] {} <>` nest by depth, any other ASCII punctuation delimiter ends at
+/// its next occurrence, and a backslash escapes the following character. As in Ruby, the backslash
+/// of an escaped non-bracket delimiter is dropped unless that character is regex syntax
+/// (`$ * + . ? ^ | ) ] } >`), so `%r-[a\-z]-` is the range `[a-z]`. A `\` delimiter never closes
+/// because the escape wins, so it stays unrecognized.
 fn regex_literal(raw: &str) -> Option<(String, String)> {
-    let (start, delimiter) = if raw.starts_with('/') {
-        (1, '/')
-    } else if raw.starts_with("%r{") {
-        (3, '}')
-    } else {
-        return None;
+    let (open, body) = raw.strip_prefix('/').map(|body| ('/', body)).or_else(|| {
+        let rest = raw.strip_prefix("%r")?;
+        let open = rest.chars().next().filter(char::is_ascii_punctuation)?;
+        Some((open, &rest[open.len_utf8()..]))
+    })?;
+    let close = match open {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        '<' => '>',
+        other => other,
     };
-    let end = raw.rfind(delimiter)?;
-    (end >= start).then(|| {
-        let flags = raw[end + 1..]
-            .chars()
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        (raw[start..end].to_owned(), flags)
-    })
+    let nests = open != close;
+    let drops_escape = !nests && !"$*+.?^|)]}>".contains(close);
+    let (mut pattern, mut depth, mut chars) = (String::new(), 0usize, body.char_indices());
+    while let Some((index, ch)) = chars.next() {
+        if ch == '\\' {
+            let (_, escaped) = chars.next()?;
+            if !(drops_escape && escaped == close) {
+                pattern.push(ch);
+            }
+            pattern.push(escaped);
+        } else if ch == close && depth == 0 {
+            let flags = &body[index + close.len_utf8()..];
+            let flags = flags.chars().collect::<std::collections::BTreeSet<_>>();
+            return Some((pattern, flags.into_iter().collect()));
+        } else {
+            if nests && ch == close {
+                depth -= 1;
+            } else if nests && ch == open {
+                depth += 1;
+            }
+            pattern.push(ch);
+        }
+    }
+    None
 }
 
 /// Decode supported quoted-string escapes, returning None for unsupported or incomplete literals.

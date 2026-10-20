@@ -496,6 +496,44 @@ fn parameter_type_metadata_is_available_without_running_a_transformer() {
     assert!(!extraction.diagnostics.is_empty());
 }
 
+/// Verify parameter-type regexps accept every `%r` delimiter through the shared literal splitter,
+/// including a nested pair and an escaped delimiter, and that an unterminated literal is rejected.
+#[test]
+fn parameter_type_regexps_accept_percent_r_delimiters() {
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    let file = SourceFile {
+        path: "support.rb".into(),
+        language: SourceLanguage::Ruby,
+    };
+    for (literal, hit, miss) in [
+        ("%r!std(out)!", "stdout", "std"),
+        ("%r(std(out))", "stdout", "std"),
+        ("%r[std[o]ut]", "stdout", "stu"),
+        ("%r<std<out>>", "std<out>", "stdout"),
+        ("%r{std{1}}", "std", "stdd"),
+        ("%r|std\\|out|", "std|out", "stdout"),
+        ("%r-std\\-out-", "std-out", "stdout"),
+    ] {
+        let source = format!(
+            "ParameterType(name: 'channel', regexp: {literal}, transformer: ->(value) {{ value }})"
+        );
+        let extraction = super::RUBY_ADAPTER.extract(&source, &file).unwrap();
+        assert!(
+            extraction.diagnostics.is_empty(),
+            "{literal}: {:?}",
+            extraction.diagnostics
+        );
+        let pattern = extraction.parameter_types[0].expression.as_ref().unwrap();
+        let matcher = regex::Regex::new(&format!("^(?:{pattern})$")).unwrap();
+        assert!(matcher.is_match(hit), "{literal} hit");
+        assert!(!matcher.is_match(miss), "{literal} miss");
+    }
+    let unterminated =
+        "ParameterType(name: 'channel', regexp: %r(std(out), transformer: ->(value) { value })";
+    let extraction = super::RUBY_ADAPTER.extract(unterminated, &file).unwrap();
+    assert!(!extraction.diagnostics.is_empty());
+}
+
 /// Ruby string literals decode only when complete and valid; truncated quotes and invalid escapes
 /// yield no value.
 #[test]
@@ -729,5 +767,164 @@ fn receiver_registration_counts_keywords_blocks_and_splats() {
             expected,
             "{arguments}"
         );
+    }
+}
+
+/// Extract one Ruby registration and return its matcher, flags and whether analysis stayed complete.
+fn extract_matcher(literal: &str) -> (Vec<(String, String)>, bool) {
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    let file = SourceFile {
+        path: "steps.rb".into(),
+        language: SourceLanguage::Ruby,
+    };
+    let extraction = super::RUBY_ADAPTER
+        .extract(&format!("Given({literal}) {{ work() }}"), &file)
+        .unwrap();
+    (
+        extraction
+            .definitions
+            .into_iter()
+            .map(|d| (d.matcher, d.matcher_flags))
+            .collect(),
+        extraction.diagnostics.is_empty(),
+    )
+}
+
+/// Verify every `%r` delimiter registers like `/…/`: bracket pairs nest by depth, an escaped
+/// delimiter or backslash does not end the literal, and each row's matcher is Ruby 4.0's
+/// `source` with the same match results.
+#[test]
+fn percent_r_delimiters_register_with_nesting_and_escapes() {
+    // (literal, matcher, text Ruby matches, text Ruby does not match)
+    for (literal, matcher, hit, miss) in [
+        ("/a.c/", "a.c", "abc", "ac"),
+        ("%r{a.c}", "a.c", "abc", "ac"),
+        ("%r!a.c!", "a.c", "abc", "ac"),
+        ("%r(a.c)", "a.c", "abc", "ac"),
+        ("%r[a.c]", "a.c", "abc", "ac"),
+        ("%r<a.c>", "a.c", "abc", "ac"),
+        ("%r|a.c|", "a.c", "abc", "ac"),
+        // Nested pairs close at depth zero, not at the first closer.
+        ("%r(a(b)c)", "a(b)c", "abc", "ac"),
+        ("%r[a[b]c]", "a[b]c", "abc", "ac"),
+        ("%r<a<b>c>", "a<b>c", "a<b>c", "abc"),
+        ("%r{a{2}c}", "a{2}c", "aac", "ac"),
+        // An escaped bracket neither opens nor closes a level.
+        (r"%r(a\(b)", r"a\(b", "a(b", "ab"),
+        (r"%r(a\)b)", r"a\)b", "a)b", "ab"),
+        (r"%r[a\]b]", r"a\]b", "a]b", "ab"),
+        (r"%r<a\>b>", r"a\>b", "a>b", "ab"),
+        (r"%r{a\}b}", r"a\}b", "a}b", "ab"),
+        // An escaped non-bracket delimiter stays inside. Ruby drops its backslash unless the
+        // character is regex syntax, which changes `[a\-z]` into the range `[a-z]`.
+        (r"%r!a\!b!", "a!b", "a!b", "ab"),
+        (r"/a\/b/", "a/b", "a/b", "ab"),
+        // `/` is not the terminator here, so its backslash stays.
+        (r"%r!a\/b!", r"a\/b", "a/b", "ab"),
+        (r"%r,a\,b,", "a,b", "a,b", "ab"),
+        (r"%r-\A[a\-z]\z-", r"\A[a-z]\z", "b", "-"),
+        (r"%r|a\|b|", r"a\|b", "a|b", "a"),
+        (r"%r^a\^b^", r"a\^b", "a^b", "ab"),
+        (r"%r.a\.b.", r"a\.b", "a.b", "axb"),
+        (r"%r?a\?b?", r"a\?b", "a?b", "ab"),
+        (r"%r*a\*b*", r"a\*b", "a*b", "ab"),
+        (r"%r+a\+b+", r"a\+b", "a+b", "ab"),
+        (r"%r$a\$b$", r"a\$b", "a$b", "ab"),
+        (r"%r)a\)b)", r"a\)b", "a)b", "ab"),
+        (r"%r]a\]b]", r"a\]b", "a]b", "ab"),
+        (r"%r}a\}b}", r"a\}b", "a}b", "ab"),
+        (r"%r>a\>b>", r"a\>b", "a>b", "ab"),
+        // An escaped backslash does not escape the delimiter after it.
+        (r"%r(a\\b)", r"a\\b", r"a\b", "ab"),
+        (r"%r!a\\!", r"a\\", r"a\", "a"),
+        ("%r(a\nb)", "a\nb", "a\nb", "ab"),
+    ] {
+        let (definitions, complete) = extract_matcher(literal);
+        assert!(complete, "{literal}");
+        assert_eq!(
+            definitions,
+            [(matcher.to_owned(), String::new())],
+            "{literal}"
+        );
+        let regex = regex::Regex::new(&regex_expression(matcher, "").unwrap()).unwrap();
+        assert!(regex.is_match(hit), "{literal} hit");
+        assert!(!regex.is_match(miss), "{literal} miss");
+    }
+    // Ruby 4.0 accepts every ASCII punctuation character as a symmetric delimiter, including
+    // closing brackets, and drops the backslash of an escaped delimiter except for the regex
+    // syntax characters (probe: `ruby -e 'p %r<c>a\<c>b<c>.source'`). tree-sitter-ruby 0.23
+    // cannot parse `%r=`, and `\` as a delimiter is not modeled; both stay incomplete.
+    let dropped = "!\"#%&',-/:;@_`~";
+    for delimiter in ('!'..='~').filter(|c| c.is_ascii_punctuation() && !"([{<".contains(*c)) {
+        let modeled = !"=\\".contains(delimiter);
+        let (plain, escaped) = (
+            format!("%r{delimiter}abc{delimiter}i"),
+            format!("%r{delimiter}a\\{delimiter}b{delimiter}"),
+        );
+        let expect = |matcher: String, flags: &str| {
+            if modeled {
+                (vec![(matcher, flags.to_owned())], true)
+            } else {
+                (vec![], false)
+            }
+        };
+        assert_eq!(
+            extract_matcher(&plain),
+            expect("abc".into(), "i"),
+            "{plain}"
+        );
+        let source = if dropped.contains(delimiter) {
+            format!("a{delimiter}b")
+        } else {
+            format!("a\\{delimiter}b")
+        };
+        assert_eq!(extract_matcher(&escaped), expect(source, ""), "{escaped}");
+    }
+}
+
+/// Verify flags are collected after the closing delimiter for every form, and that literals
+/// Ruby rejects or this adapter does not model stay incomplete instead of registering.
+#[test]
+fn percent_r_flags_and_unmodeled_literals_fail_closed() {
+    for (raw, expected) in [
+        ("/a/", Some(("a", ""))),
+        ("/a/mi", Some(("a", "im"))),
+        ("%r{a}iim", Some(("a", "im"))),
+        ("%r!a!xm", Some(("a", "mx"))),
+        ("%r(a)n", Some(("a", "n"))),
+        ("%r a ", None),
+        (r"%r\a\", None),
+        // Unterminated, escaped closer, bare prefix, alphanumeric delimiter and other `%` literals.
+        ("%r(a", None),
+        ("%r(a(b)", None),
+        ("%r!a", None),
+        (r"%r(a\)", None),
+        ("%r", None),
+        ("%ra", None),
+        ("%R(a)", None),
+        ("%w(a)", None),
+        ("(a)", None),
+    ] {
+        assert_eq!(
+            super::regex_literal(raw),
+            expected.map(|(pattern, flags)| (pattern.to_owned(), flags.to_owned())),
+            "{raw}"
+        );
+    }
+    // Control: the same registration is complete with a supported delimiter and incomplete when
+    // tree-sitter-ruby reports a syntax error (invalid Ruby, or a valid whitespace or `=`
+    // delimiter it cannot parse), the matcher interpolates, or a flag is unsupported.
+    assert!(extract_matcher("%r(a)").1);
+    for literal in [
+        "%r|a|b|",
+        "%r a ",
+        r"%r\a\",
+        "%r(a",
+        "%r(a#{x})",
+        "%r!a#{x}!",
+        "/a#{x}/",
+        "%r(a)z",
+    ] {
+        assert!(!extract_matcher(literal).1, "{literal}");
     }
 }

@@ -68,6 +68,8 @@
     "regex-braces-literal": {"status":"pass","digest":"3bd194b2e317bf6ba5e37edd2d7a222492014cda070445dd1efa11abf973e087"},
     "regex-braces-literal-conflict": {"status":"pass","digest":"532398d353fec709143dfe4e4d30591ae83b0e54cdc10a19546ecbd9a6ccee35"},
     "regex-braces-class-boundary": {"status":"pass","digest":"532398d353fec709143dfe4e4d30591ae83b0e54cdc10a19546ecbd9a6ccee35"},
+    "regex-percent-delimiters-all": {"status":"pass","digest":"9c253c169441f2b1be1d2e1561440ff3668a08501754bcea8aeb39dbb92db2b7"},
+    "regex-percent-delimiters-nested-pair": {"status":"pass","digest":"27d12ca954e22cb253fab349d4669d0965c157317bf09f3b11c6ef6b37c82569"},
     "owner-identity-qualified-missing-owner": {"status":"pass","digest":"405e9727e5d092f12fcf5d46a81f804889628376c416ace9ce9e8bb0c9f29c4f"},
     "owner-identity-autoloaded-owner": {"status":"pass","digest":"405e9727e5d092f12fcf5d46a81f804889628376c416ace9ce9e8bb0c9f29c4f"},
     "assertion-modules-declared-trust-every-import-form": {"status":"pass","digest":"2ed3875d3bb91048bcc2aae8fbec289a401b144b16c253fd7aa6a474fa797370"},

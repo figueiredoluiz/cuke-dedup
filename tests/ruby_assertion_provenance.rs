@@ -1618,6 +1618,60 @@ fn unbinding_syntax_before_handlers_keeps_comparison() {
             "/[(?<found>]y/ =~ ENV['X']",
             false,
         ),
+        // `%r` delimiters: the delimiter is not a character class, so the group binds. Controls
+        // are the same bodies where Ruby leaves `found` unbound.
+        (
+            "named group in %r bang on the left",
+            "%r!(?<found>y)! =~ ENV['X']",
+            true,
+        ),
+        (
+            "named group in %r brackets on the left",
+            "%r[(?<found>y)] =~ ENV['X']",
+            true,
+        ),
+        (
+            "named group in nested %r parens on the left",
+            "%r(a(?<found>y)) =~ ENV['X']",
+            true,
+        ),
+        (
+            "named group in %r angle brackets on the left",
+            "%r<(?<found>y)> =~ ENV['X']",
+            true,
+        ),
+        (
+            "named group in %r pipes on the left",
+            "%r|(?<found>y)| =~ ENV['X']",
+            true,
+        ),
+        (
+            "class opened inside %r brackets on the left",
+            "%r[[(?<found>]y] =~ ENV['X']",
+            false,
+        ),
+        (
+            "escaped group text in %r parens on the left",
+            "%r(\\(?<found>y) =~ ENV['X']",
+            false,
+        ),
+        // The escaped quote is dropped, so the scan sees the live group `(?'found'y)`.
+        (
+            "named group written with an escaped delimiter on the left",
+            "%r'(?\\'found\\'y)' =~ ENV['X']",
+            true,
+        ),
+        // A backslash delimiter is valid Ruby that binds `found` but is not modeled: fail closed.
+        (
+            "unmodeled backslash delimiter on the left",
+            "%r\\(?<found>y)\\ =~ ENV['X']",
+            true,
+        ),
+        (
+            "lookahead in %r bang on the left",
+            "%r!(?=y)! =~ ENV['X']",
+            false,
+        ),
         (
             "named group after a class on the left",
             "/[(]x(?<found>y)/ =~ ENV['X']",

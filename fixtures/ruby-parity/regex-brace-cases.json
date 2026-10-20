@@ -112,6 +112,78 @@
           "rule": "duplicate-handler"
         }
       ]
+    },
+    "regex-percent-delimiters-all": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form", "regex-translation"],
+      "path": "regex-percent-delimiters/all-delimiters",
+      "definitions": 7,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 6
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 12
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    },
+    "regex-percent-delimiters-nested-pair": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-20",
+      "axes": ["registration-form", "regex-translation"],
+      "path": "regex-percent-delimiters/nested-pair",
+      "definitions": 3,
+      "featureSteps": 1,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 5
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 7
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
     }
   },
   "mappings": []

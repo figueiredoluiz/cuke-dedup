@@ -1,5 +1,5 @@
 //! Source-order local bindings for handler identity; names never establish framework trust.
-use super::{descendants, literal_string, text};
+use super::{descendants, literal_string, regex_literal, text};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
@@ -323,7 +323,9 @@ fn binds_locals(node: Node<'_>, source: &str) -> bool {
                         && !descendants(left)
                             .iter()
                             .any(|part| part.kind() == "interpolation")
-                        && named_group(text(left, source))
+                        // fail-closed: a spelling regex_literal does not model may bind a group
+                        && regex_literal(text(left, source))
+                            .is_none_or(|(pattern, _)| named_group(&pattern))
                 })
         }
         _ => false, // fail-closed: assignments are tracked separately; no other syntax binds a local

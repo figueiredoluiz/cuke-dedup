@@ -9,7 +9,7 @@ coexist in one runtime scope.
 
 | JavaScript/TypeScript | Cucumber-Ruby |
 | --- | --- |
-| Supported. | Supported for static strings and `/.../` or `%r{...}` regex literals. |
+| Supported. | Supported for static strings and `/.../` or `%r` regex literals with any ASCII punctuation delimiter other than `=` and `\`. `%r=…=`, `%r\…\` and whitespace delimiters leave the run incomplete. |
 
 Cucumber-Ruby support is experimental; see [Cucumber-Ruby](../discovery/cucumber-ruby.md).
 
