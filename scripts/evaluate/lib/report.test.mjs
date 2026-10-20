@@ -99,14 +99,14 @@ test("same-named cases in two corpora stay distinct and unscored lanes are named
     inCorpus("language-parity", "p", {}, "ruby", { observable: false, runFailure: "no report" }),
     inCorpus("language-parity", "p", { r: counts({ tp: 1 }) }, "typescript"),
   ]);
-  assert.deepEqual([report.cases, report.observed, report.ruleTotals[0].cases], [3, 3, 3]);
+  assert.deepEqual([report.cases, report.observed, report.ruleTotals[0].cases], [3, 2, 3]);
   assert.deepEqual(report.unobservable, [{ corpus: "language-parity", lane: "ruby", name: "p", runFailure: "no report" }]);
   const markdown = renderMarkdown(report);
   assert.match(markdown, /- language-parity \(ruby\) `p`: no report/);
   assert.match(markdown, /\| language-parity \| typescript \| r \|/);
-  // Total rows count observed cases, like the rule rows: the unscored lane adds none.
-  assert.match(markdown, /\| language-parity \| - \| \*\*all rules\*\* \| 1 \|/);
-  assert.match(markdown, /\| all \| - \| \*\*all rules\*\* \| 3 \|/);
+  // Total rows count cases whose every run was scored: the paired case lost a lane, so it is not one.
+  assert.match(markdown, /\| language-parity \| - \| \*\*all rules\*\* \| 0 \|/);
+  assert.match(markdown, /\| all \| - \| \*\*all rules\*\* \| 2 \|/);
 });
 
 /** Checks entries name their corpus and lane, and a detail replaces the finding description. */
