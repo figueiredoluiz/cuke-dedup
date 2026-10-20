@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EVIDENCE_TARGET_DIR, RUBY_SUITES, TEST_FN_PATTERN, completionPassed, corpusCoverageDeficits, evidenceBatches, evidenceTargets, executesEvidence, parityDeficits, partitionEvidenceTargets, rubySuiteEvidence, testBodyMentionsRuby, evidenceFailures, testSummary, validateOracle, validateUnitEntry } from "./lib/ruby-parity.mjs";
 import { normalizeOutcome } from "./lib/behavior-spec.mjs";
 import { latestClassifiedAt, validateCorpusLabels } from "./lib/manifest-schema.mjs";
+import { completedReport, observeRubyGroup, within } from "./lib/parity-runner.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
 const args = process.argv.slice(2);
@@ -26,14 +27,6 @@ const root = resolve("fixtures/ruby-parity");
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const manifest = await readJson(join(root, "manifest.json"));
 assert.equal(manifest.schemaVersion, 1);
-
-/** Resolve a fixture path inside its parent and reject paths escaping that root. */
-function within(parent, child) {
-  const path = resolve(parent, child);
-  const rel = relative(parent, path);
-  assert.ok(!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`), `fixture escapes root: ${child}`);
-  return path;
-}
 
 const sources = new Map();
 for (const file of manifest.sourceManifests) {
@@ -149,26 +142,14 @@ const scratch = await mkdtemp(join(tmpdir(), "cuke-ruby-parity-"));
 try {
   if (!inventoryOnly) {
     for (const [name, oracle] of Object.entries(groups)) {
-      const project = within(scratch, name);
-      await cp(within(root, oracle.path), project, { recursive: true });
-      for (const item of oracle.materialize ?? []) {
-        const destination = within(project, item.destination);
-        await mkdir(dirname(destination), { recursive: true });
-        await cp(within(project, item.source), destination);
-      }
-      const output = join(scratch, `${name}-output`);
-      const run = spawnSync(binary, [".",
-        ...(oracle.arguments ?? ["--definitions", oracle.definitionsPattern ?? "*.rb"]),
-        "--reporters", "json", "--output", output, "--no-metrics", "--fail-on-incomplete"],
-      { cwd: project, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+      // A fixture that cannot be copied or materialized aborts the run; only the analysis is per group.
+      const observed = await observeRubyGroup({ binary, root, scratch: within(scratch, name), oracle });
       let deficits, measured, digest, failure;
       try {
-        if (run.error) throw run.error;
-        assert.ok([0, 1, 2].includes(run.status), `analyzer did not complete: ${run.signal ?? run.status}`);
-        const report = await readJson(join(output, "cuke-dedup.json"));
-        measured = { ...normalizeOutcome(report, run.status, { "steps.ts": "steps", "steps.rb": "steps" }), duplication: report.summary.duplication,
+        const report = completedReport(observed);
+        measured = { ...normalizeOutcome(report, observed.status, { "steps.ts": "steps", "steps.rb": "steps" }), duplication: report.summary.duplication,
           candidateSources: report.analysis.candidateSources };
-        deficits = parityDeficits(oracle, report, run.status);
+        deficits = parityDeficits(oracle, report, observed.status);
         digest = snapshot({ outcome: measured, deficits });
       } catch (error) {
         failure = error.message;

@@ -10,13 +10,14 @@ import { loadCorpora } from "./corpora.mjs";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const script = join(root, "scripts/evaluate/corpus-evaluate.mjs");
 /** The corpora the driver evaluates. */
-const evaluated = ["recall", "behavior", "language-parity"];
+const evaluated = ["recall", "behavior", "language-parity", "ruby-parity"];
 
 // Matrix for the driver. Exit codes: unknown corpus or case (2), a binary that cannot start in every
 // evaluated corpus (1, with the control that each corpus lists its own case as unscored, so a skipped
 // corpus would show as missing). Wiring: a fake binary's report reaches the behavior classifier and,
-// per language, the paired classifier, which does not score a finding no oracle owns; a report that
-// is not JSON leaves the case unscored under its own corpus and lane.
+// per language, the paired classifier, which does not score a finding no oracle owns, and the
+// Ruby-parity classifier, which does; a report that is not JSON leaves the case unscored under its
+// own corpus and lane.
 
 /** Runs the driver from the repository root and returns its exit status and stderr. */
 const run = (args, env = {}) => spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, ...env } });
@@ -132,6 +133,40 @@ test("the driver scores a paired case once per language", { skip: process.platfo
     const garbage = await evaluate("{not json");
     assert.equal(garbage.status, 1);
     assert.deepEqual(garbage.report.unobservable.map((entry) => [entry.corpus, entry.lane]).sort(), [["language-parity", "ruby"], ["language-parity", "typescript"]]);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+/** Checks a binary's report reaches the Ruby-parity classifier, which scores a finding no required finding owns. */
+test("the driver scores a Ruby-parity group with ownership", { skip: process.platform === "win32" }, async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "cuke-evaluate-fake-"));
+  try {
+    const binary = join(scratch, "fake-binary");
+    await writeFile(binary, '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --output ] && out=$2; shift; done\nmkdir -p "$out"\ncp "$FAKE_REPORT" "$out/cuke-dedup.json"\nexit "$FAKE_EXIT"\n');
+    await chmod(binary, 0o755);
+    const item = (await loadCorpora(join(root, "fixtures"))).find(({ name }) => name === "ruby-parity").items[0];
+    const stray = { rule: "stray-rule", suppression: null, primary: { path: "steps.rb", line: 1 }, related: [], message: "m", evidence: {} };
+    /** Evaluates the first group against a fake report text and returns the exit status and JSON report. */
+    const evaluate = async (reportText) => {
+      const file = join(scratch, "fake-report.json");
+      await writeFile(file, reportText);
+      const json = join(scratch, "ruby-parity.json");
+      const result = run(["--binary", binary, "--corpus", "ruby-parity", "--case", item.name, "--json", json], { FAKE_REPORT: file, FAKE_EXIT: String(item.expectedExit) });
+      return { status: result.status, report: JSON.parse(await readFile(json, "utf8")) };
+    };
+    const scored = await evaluate(JSON.stringify({
+      summary: { definitionsAnalyzed: item.definitions, featureStepsAnalyzed: item.featureSteps },
+      corpus: { incomplete: !item.complete },
+      findingsTruncated: 0,
+      analysis: { candidateSources: Object.fromEntries(Object.entries(item.expectedCandidateSources ?? {}).map(([source, evaluated]) => [source, { evaluated }])) },
+      findings: [stray],
+    }));
+    assert.equal(scored.status, 0);
+    assert.deepEqual(scored.report.rules.filter((row) => row.fp > 0).map((row) => [row.corpus, row.rule, row.fp]), [["ruby-parity", "stray-rule", 1]]);
+    const garbage = await evaluate("{not json");
+    assert.equal(garbage.status, 1);
+    assert.deepEqual(garbage.report.unobservable.map((entry) => [entry.corpus, entry.name, entry.lane]), [["ruby-parity", item.name, null]]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

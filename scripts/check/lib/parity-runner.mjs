@@ -1,12 +1,40 @@
-// Observer for the paired language-parity corpus, shared by its check and by the evaluation report.
-// An observer runs the binary and returns what it produced without judging; the check derives
-// deficits from the observation and the report classifies it. The run uses strict incompleteness.
+// Observers for the two parity corpora, shared by their checks and by the evaluation report. An
+// observer runs the binary and returns what it produced without judging; the checks derive deficits
+// from the observation and the report classifies it. Both runs use strict incompleteness.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { readOptional } from "./read-optional.mjs";
+
+/**
+ * Runs the analyzer with strict incompleteness and JSON output, the one invocation both parity
+ * corpora use.
+ * @param {string} binary Path to the analyzer binary.
+ * @param {string} cwd Directory holding the project.
+ * @param {string[]} selection Definition and feature selection arguments.
+ * @param {string} output Output directory, absolute or relative to `cwd`.
+ * @returns {Promise<object>} See {@link observation}.
+ */
+function runStrict(binary, cwd, selection, output) {
+  const run = spawnSync(binary, [".", ...selection, "--reporters", "json", "--output", output, "--no-metrics", "--fail-on-incomplete"],
+    { cwd, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+  return observation(run, resolve(cwd, output, "cuke-dedup.json"));
+}
+
+/**
+ * Resolves a fixture path inside its parent and rejects paths escaping that root.
+ * @param {string} parent Directory the path must stay within.
+ * @param {string} child Path relative to `parent`.
+ * @returns {string} The resolved absolute path.
+ */
+export function within(parent, child) {
+  const path = resolve(parent, child);
+  const rel = relative(parent, path);
+  assert.ok(!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`), `fixture escapes root: ${child}`);
+  return path;
+}
 
 /** The definition file extension of each language of a paired case. */
 export const LANGUAGE_EXTENSIONS = { typescript: "ts", ruby: "rb" };
@@ -41,6 +69,28 @@ async function observation(run, reportPath) {
 }
 
 /**
+ * Runs one Ruby-parity group through the binary.
+ * @param {object} options
+ * @param {string} options.binary Path to the analyzer binary.
+ * @param {string} options.root The Ruby-parity fixture directory.
+ * @param {string} options.scratch Directory the group's copy and output are written under.
+ * @param {object} options.oracle The group's manifest entry.
+ * @returns {Promise<object>} See {@link observation}. Rejects when the fixture cannot be copied or
+ *   materialized, or a path escapes the fixture root; a run that fails is returned, not thrown.
+ */
+export async function observeRubyGroup({ binary, root, scratch, oracle }) {
+  const project = join(scratch, "project");
+  const output = join(scratch, "output");
+  await cp(within(root, oracle.path), project, { recursive: true });
+  for (const item of oracle.materialize ?? []) {
+    const destination = within(project, item.destination);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(within(project, item.source), destination);
+  }
+  return runStrict(binary, project, oracle.arguments ?? ["--definitions", oracle.definitionsPattern ?? "*.rb"], output);
+}
+
+/**
  * Runs one paired language-parity case in one language.
  * @param {object} options
  * @param {string} options.binary Path to the analyzer binary.
@@ -54,10 +104,7 @@ export async function observeParityLane({ binary, directory, item, language, ext
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `steps.${extension}`), item.sources[language]);
   await writeFile(join(directory, "suite.feature"), item.feature);
-  const run = spawnSync(binary, [".", "--definitions", `*.${extension}`,
-    "--features", "*.feature", "--reporters", "json", "--output", "report", "--no-metrics", "--fail-on-incomplete"],
-  { cwd: directory, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
-  return observation(run, join(directory, "report/cuke-dedup.json"));
+  return runStrict(binary, directory, ["--definitions", `*.${extension}`, "--features", "*.feature"], "report");
 }
 
 /**
