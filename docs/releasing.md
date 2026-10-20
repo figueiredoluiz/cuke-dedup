@@ -49,6 +49,28 @@ npm run release:compare -- --previous PATH --candidate target/release/cuke-dedup
   command takes two binaries and does not download or build anything. A different rule set between
   releases appears as a rule with `0` on one side.
 
+### In the release workflow
+
+When `publish_release` is set (and `publish_npm_only` is not), `release.yml` runs the comparison and
+appends the table to the GitHub release notes:
+
+- The `release-comparison` job has `contents: read` and `attestations: read` only. It checks out the
+  dispatched commit (validated to equal the release tag) and takes the newest published release
+  below `release_tag` (drafts and pre-releases excluded). It verifies that release's
+  `x86_64-unknown-linux-gnu` archive with `gh attestation verify`, pinned to this repository's
+  `release.yml`; that command needs `attestations: read`. It then compares the binary with the
+  `binary-x86_64-unknown-linux-gnu` artifact built in the same run and uploads the table as the
+  `comparison-table` artifact. Only the Linux gnu target is compared. The job times out after 10
+  minutes and `github-release` waits for it.
+- After `gh release create`, the `github-release` job (the one with `contents: write`, which has no
+  checkout) downloads `comparison-table` and appends it to the notes with `gh release edit`.
+- The `release-comparison` job and the download and append steps in `github-release` use
+  `continue-on-error`. A first release with no predecessor, a release that predates attestations, a
+  failed comparison or a failed edit leaves the release published without the table, and the
+  `github-release` job emits a warning annotation.
+- To add the table to an existing release by hand, run `npm run release:compare` as above with
+  `--markdown FILE` and paste the file into the notes.
+
 ## Prerequisites
 
 - Cargo, npm, the Git tag and the GitHub release use one version.

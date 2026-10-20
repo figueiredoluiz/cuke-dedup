@@ -131,9 +131,72 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  release-comparison:
+    name: Compare with previous release
+    needs: build-native
+    if: inputs.publish_release && !inputs.publish_npm_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A comparison failure must not block the release: the job then reports success to its dependents.
+    continue-on-error: true
+    permissions:
+      contents: read
+      attestations: read # gh attestation verify
+    env:
+      COMPARISON_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: binary-${{ env.COMPARISON_TARGET }}
+          path: candidate
+      - name: Download the previous release binary
+        id: previous
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The newest published release below the one being released, so a re-run or a backport
+          # still compares against the release before it.
+          published=$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName')
+          previous_tag=$(printf '%s\n%s\n' "$published" "$RELEASE_TAG" \
+            | sort -uV | awk -v tag="$RELEASE_TAG" '$0 == tag { found = prev } { prev = $0 } END { print found }')
+          [[ -n "$previous_tag" ]] || { echo "no previous release to compare with" >&2; exit 1; }
+          archive="cuke-dedup-${previous_tag}-${COMPARISON_TARGET}.tar.gz"
+          gh release download "$previous_tag" --dir previous --pattern "$archive"
+          # The binary is executed below: require build provenance from this repository's release workflow.
+          gh attestation verify "previous/${archive}" --repo "$GH_REPO" \
+            --signer-workflow "${GH_REPO}/.github/workflows/release.yml"
+          tar -xzf "previous/${archive}" -C previous cuke-dedup
+          echo "tag=$previous_tag" >> "$GITHUB_OUTPUT"
+      - name: Compare on the committed corpus
+        shell: bash
+        env:
+          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
+        run: |
+          chmod +x candidate/cuke-dedup previous/cuke-dedup
+          npm run release:compare -- \
+            --previous previous/cuke-dedup --candidate candidate/cuke-dedup \
+            --previous-label "$PREVIOUS_TAG" --candidate-label "$RELEASE_TAG" \
+            --markdown release-comparison.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          # Not `release-*`: the publish jobs download that pattern as release assets.
+          name: comparison-table
+          path: release-comparison.md
+          if-no-files-found: error
+
   github-release:
     name: Publish GitHub release
-    needs: build-native
+    needs: [build-native, release-comparison]
     if: inputs.publish_release && !inputs.publish_npm_only
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -171,6 +234,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+      # The comparison is informational: neither step may fail the release.
+      - name: Download the comparison table
+        id: comparison
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: comparison-table
+          path: comparison
+      - name: Append the comparison to the release notes
+        if: steps.comparison.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        id: append
+        run: |
+          gh release view "$RELEASE_TAG" --json body --jq .body > notes.md
+          printf '\n' >> notes.md
+          cat comparison/release-comparison.md >> notes.md
+          gh release edit "$RELEASE_TAG" --notes-file notes.md
+      - name: Warn when the comparison is missing from the release notes
+        if: steps.comparison.outcome == 'failure' || steps.append.outcome == 'failure'
+        run: echo "::warning::The release was published without the comparison table; see the release-comparison job and the steps above."
 
   publish-crate:
     name: Publish crate
