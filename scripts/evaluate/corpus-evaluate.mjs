@@ -1,7 +1,8 @@
-// Report-only evaluation of the labelled corpora: runs every case of the recall and behavior
-// corpora through the binary, classifies the outcome against the manifest without asserting, and
-// writes per-corpus and per-rule metrics. It is not a gate. Exit codes: 0 when every selected case
-// was scored, 1 when a case could not be observed or scored, 2 for an unknown case or corpus.
+// Report-only evaluation of the labelled corpora: runs every case of the recall, behavior and
+// language-parity corpora through the binary, classifies the outcome against the manifest without
+// asserting, and writes per-corpus and per-rule metrics. It is not a gate. Exit codes: 0 when every
+// selected case was scored, 1 when a case could not be observed or scored, 2 for an unknown case or
+// corpus.
 //
 //   node scripts/evaluate/corpus-evaluate.mjs [--binary PATH] [--corpus NAME] [--case NAME]
 //     [--json FILE] [--markdown FILE]
@@ -11,8 +12,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { observeBehaviorCase } from "../check/lib/behavior-runner.mjs";
+import { LANGUAGE_EXTENSIONS, observeParityLane } from "../check/lib/parity-runner.mjs";
 import { observeRecallCase } from "../check/lib/recall-runner.mjs";
 import { BEHAVIOR_CORPUS, classifyBehaviorCase } from "./lib/classify-behavior.mjs";
+import { classifyOracle } from "./lib/classify-oracle.mjs";
 import { evaluateCase } from "./lib/classify.mjs";
 import { loadCorpora } from "./lib/corpora.mjs";
 import { aggregate, renderMarkdown } from "./lib/report.mjs";
@@ -28,6 +31,8 @@ const { values } = parseArgs({
 });
 
 const binary = resolve(values.binary);
+/** The paired corpus's name in the report. */
+const PARITY_CORPUS = "language-parity";
 /** How each corpus runs one of its cases and classifies the outcome; each returns its classified results. */
 const runners = {
   /** Observes a recall case and classifies it against its expected and absent findings. */
@@ -38,16 +43,31 @@ const runners = {
   behavior: async (item, scratch) => [await evaluateCase(item, () => observeBehaviorCase({
     binary, corpusRoot: resolve("fixtures/corpus"), scratch, testCase: item,
   }), classifyBehaviorCase, { corpus: BEHAVIOR_CORPUS })],
+  /** Runs a paired case once per language against the same oracle and scores each run separately. */
+  [PARITY_CORPUS]: async (item, scratch) => {
+    const results = [];
+    for (const [language, extension] of Object.entries(LANGUAGE_EXTENSIONS)) {
+      results.push(await evaluateCase(
+        { name: item.id },
+        () => observeParityLane({ binary, directory: join(scratch, language), item, language, extension }),
+        (named, observation) => classifyOracle({ corpus: PARITY_CORPUS, name: named.name, lane: language, oracle: item.expected, ownership: false }, observation),
+        { corpus: PARITY_CORPUS, lane: language },
+      ));
+    }
+    return results;
+  },
 };
 
 if (values.corpus !== undefined && !Object.hasOwn(runners, values.corpus)) {
   console.error(`no corpus named ${values.corpus}; expected one of ${Object.keys(runners).join(", ")}`);
   process.exit(2);
 }
+/** A case's name: recall and behavior cases carry `name`, paired cases `id`. */
+const nameOf = (item) => item.name ?? item.id;
 // Corpora without a runner are not evaluated yet.
 const selected = (await loadCorpora())
   .filter((corpus) => Object.hasOwn(runners, corpus.name) && (values.corpus === undefined || corpus.name === values.corpus))
-  .map((corpus) => ({ ...corpus, items: corpus.items.filter((item) => values.case === undefined || item.name === values.case) }));
+  .map((corpus) => ({ ...corpus, items: corpus.items.filter((item) => values.case === undefined || nameOf(item) === values.case) }));
 if (values.case !== undefined && selected.every((corpus) => corpus.items.length === 0)) {
   console.error(`no case named ${values.case}${values.corpus ? ` in corpus ${values.corpus}` : ""}`);
   process.exit(2);
@@ -58,7 +78,7 @@ try {
   const classified = [];
   for (const corpus of selected) {
     for (const item of corpus.items) {
-      classified.push(...await runners[corpus.name](item, join(scratch, corpus.name, item.name)));
+      classified.push(...await runners[corpus.name](item, join(scratch, corpus.name, nameOf(item))));
     }
   }
   const report = aggregate(classified);

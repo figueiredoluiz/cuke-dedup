@@ -87,12 +87,15 @@ export function aggregate(classified) {
   const ruleTotals = rows(observed, () => ({ corpus: "all", lane: null }));
   /** Distinct cases of a list of results. */
   const caseCount = (list) => new Set(list.map(caseKey)).size;
+  const unscored = new Set(classified.filter((result) => !result.observable).map(caseKey));
+  /** Distinct cases of a list of results whose every run was scored; a paired case with one lost lane is not observed. */
+  const observedCount = (list) => caseCount(list.filter((result) => !unscored.has(caseKey(result))));
   const corpora = [...new Set(classified.map((result) => result.corpus))].sort(byCorpus).map((corpus) => {
     const own = classified.filter((result) => result.corpus === corpus);
     return {
       corpus,
       cases: caseCount(own),
-      observed: caseCount(own.filter((result) => result.observable)),
+      observed: observedCount(own),
       unobservable: own.filter((result) => !result.observable).length,
       totals: total(ruleRows.filter((row) => row.corpus === corpus)),
     };
@@ -102,7 +105,7 @@ export function aggregate(classified) {
   const known = (entry) => entry.kind === "known-miss";
   return {
     cases: caseCount(classified),
-    observed: caseCount(observed),
+    observed: observedCount(classified),
     unobservable: classified.filter((result) => !result.observable).map(({ corpus, lane, name, runFailure }) => ({ corpus, lane, name, runFailure })),
     ambiguous: classified.reduce((sum, result) => sum + result.ambiguous, 0),
     totals: total(ruleRows),

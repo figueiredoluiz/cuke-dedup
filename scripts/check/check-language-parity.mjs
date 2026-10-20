@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { classify, deficits, outcome, validateManifest } from "./lib/language-parity.mjs";
+import { LANGUAGE_EXTENSIONS, completedReport, observeParityLane } from "./lib/parity-runner.mjs";
 import { regressionFailures, snapshot } from "./lib/parity-regression.mjs";
 
 const args = process.argv.slice(2);
@@ -18,9 +18,9 @@ validateManifest(manifest);
 /** Return the SHA-256 hex digest of the supplied manifest bytes. */
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const lanes = {
-  ...(regression ? {} : { releasedTypescript: { binary: baseline, language: "typescript", extension: "ts" } }),
-  currentTypescript: { binary: current, language: "typescript", extension: "ts" },
-  ruby: { binary: current, language: "ruby", extension: "rb" },
+  ...(regression ? {} : { releasedTypescript: { binary: baseline, language: "typescript", extension: LANGUAGE_EXTENSIONS.typescript } }),
+  currentTypescript: { binary: current, language: "typescript", extension: LANGUAGE_EXTENSIONS.typescript },
+  ruby: { binary: current, language: "ruby", extension: LANGUAGE_EXTENSIONS.ruby },
 };
 const observations = [];
 const scratch = await mkdtemp(join(tmpdir(), "cuke-language-parity-"));
@@ -28,20 +28,13 @@ try {
   for (const item of manifest.cases) {
     const observation = { id: item.id, rule: item.rule };
     for (const [name, lane] of Object.entries(lanes)) {
-      const directory = join(scratch, item.id, name);
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, `steps.${lane.extension}`), item.sources[lane.language]);
-      await writeFile(join(directory, "suite.feature"), item.feature);
-      const run = spawnSync(lane.binary, [".", "--definitions", `*.${lane.extension}`,
-        "--features", "*.feature", "--reporters", "json", "--output", "report", "--no-metrics", "--fail-on-incomplete"],
-      { cwd: directory, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+      let observed;
       try {
-        if (run.error) throw run.error;
-        assert.ok([0, 1, 2].includes(run.status), `analyzer did not complete: ${run.signal ?? run.status}`);
-        const report = JSON.parse(await readFile(join(directory, "report/cuke-dedup.json"), "utf8"));
-        observation[name] = { outcome: outcome(report, run.status), deficits: deficits(item.expected, report, run.status) };
+        observed = await observeParityLane({ binary: lane.binary, directory: join(scratch, item.id, name), item, language: lane.language, extension: lane.extension });
+        const report = completedReport(observed);
+        observation[name] = { outcome: outcome(report, observed.status), deficits: deficits(item.expected, report, observed.status) };
       } catch (error) {
-        observation[name] = { error: error.message, stderr: run.stderr?.slice(-2000) };
+        observation[name] = { error: error.message, stderr: observed?.stderr.slice(-2000) };
       }
     }
     observation.classification = classify(observation.currentTypescript, observation.ruby);
