@@ -33,7 +33,7 @@ function reportPath(path) {
 }
 
 /** The key of a definition: path, line and column, since several registrations can share a line. */
-function definitionKey({ path, line, column }) {
+export function definitionKey({ path, line, column }) {
   return `${reportPath(path)}:${line}:${column}`;
 }
 

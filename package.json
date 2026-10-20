@@ -34,6 +34,7 @@
     "benchmark:check": "node scripts/check/check-benchmark-budget.mjs benchmark.json",
     "corpus:ruby": "node scripts/check/check-ruby-parity.mjs",
     "corpus:candidate-recall": "node scripts/evaluate/candidate-recall.mjs",
+    "corpus:real": "node scripts/evaluate/real-corpus.mjs",
     "check:equivalence": "node scripts/check/check-output-equivalence.mjs",
     "check:ruby-keywords": "node scripts/check/check-ruby-step-keywords.mjs"
   },
