@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "suites": [
+    {
+      "name": "vitalets-playwright-bdd",
+      "repo": "https://github.com/vitalets/playwright-bdd",
+      "commit": "85291276ec4bf9fca58d9cde1e9e83a54ee52133",
+      "root": ".",
+      "framework": "playwright-bdd",
+      "expectedExits": [0, 1]
+    },
+    {
+      "name": "morphatic-astrologyjs",
+      "repo": "https://github.com/morphatic/astrologyjs",
+      "commit": "6b891f2d79221ed2cf7a024ed5ae617efa11590b",
+      "root": ".",
+      "framework": "cucumber-js",
+      "expectedExits": [0, 1]
+    }
+  ]
+}
