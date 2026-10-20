@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const workflow = await readFile(
-  new URL("../../.github/workflows/release.yml", import.meta.url),
-  "utf8",
-);
+// A Windows checkout may convert the workflow to CRLF; the patterns below match LF.
+const workflow = (
+  await readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8")
+).replaceAll("\r\n", "\n");
 
 /** Verify release validation and all five checkouts bind to the dispatched immutable commit. */
 test("release publishing stays bound to one immutable tagged commit", () => {
@@ -50,9 +50,15 @@ test("npm publishing uses short-lived OIDC credentials only", () => {
 
 /** Verify the release comparison is read-only, non-blocking and kept out of the release assets. */
 test("release comparison cannot block or widen the release", () => {
-  const job = workflow.match(/\n  release-comparison:\n([\s\S]*?)\n  github-release:/)?.[1] ?? "";
+  // Controls: an empty slice would otherwise fail or pass the assertions below for the wrong reason.
+  const job = workflow.match(/\n  release-comparison:\n([\s\S]*?)\n  [a-z][a-z-]*:\n/)?.[1];
+  assert.ok(job?.includes("steps:"), "release-comparison job slice must be found");
   assert.match(job, /continue-on-error: true/);
-  assert.match(job, /permissions:\s*\n\s*contents: read\s*\n/);
+  const permissions = job.match(/\n    permissions:\n((?: {6}\S.*\n)+)/)?.[1];
+  assert.equal(
+    permissions?.replace(/ #.*$/gm, ""),
+    "      contents: read\n      attestations: read\n",
+  );
   assert.doesNotMatch(job, /contents: write|id-token|attestations: write/);
   assert.match(job, /name: comparison-table/);
   assert.match(job, /binary-\$\{\{ env\.COMPARISON_TARGET \}\}/);
@@ -63,6 +69,7 @@ test("release comparison cannot block or widen the release", () => {
   assert.match(workflow, /if: steps\.comparison\.outcome == 'failure' \|\| steps\.append\.outcome == 'failure'/);
   // `release-*` is downloaded into the release assets and the npm archive check.
   assert.doesNotMatch(job, /name: release-/);
-  const append = workflow.match(/name: Append the comparison[\s\S]*?gh release edit/)?.[0] ?? "";
+  const append = workflow.match(/name: Append the comparison[\s\S]*?gh release edit/)?.[0];
+  assert.ok(append, "append step slice must be found");
   assert.match(append, /continue-on-error: true/);
 });

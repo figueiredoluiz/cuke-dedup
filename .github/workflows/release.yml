@@ -141,6 +141,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+      attestations: read # gh attestation verify
     env:
       COMPARISON_TARGET: x86_64-unknown-linux-gnu
     steps:
