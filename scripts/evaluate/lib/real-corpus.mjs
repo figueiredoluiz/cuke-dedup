@@ -7,9 +7,9 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseRecords } from "../../check/lib/negative-isolation.mjs";
 import { PAIR_RULES, definitionKey } from "./candidate-recall.mjs";
 
@@ -22,6 +22,8 @@ const DEFAULT_EXITS = Object.freeze([0, 1]);
 /** Snapshot schema version, bumped when a snapshot field changes meaning. */
 export const SNAPSHOT_SCHEMA = 1;
 
+const FILE_OPERATIONS = Object.freeze({ mkdir, mkdtemp, rename, rm, writeFile });
+
 /** A suite name: a lowercase checkout directory name. */
 const NAME = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -30,6 +32,77 @@ const REPO = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*
 
 /** A full revision. */
 const REVISION = /^[0-9a-f]{40}$/;
+
+/**
+ * Replaces a set of snapshots as one transaction. Every new file is prepared before any target
+ * changes; an interrupted replacement restores old targets and removes newly created ones.
+ * @param {string} directory Snapshot directory.
+ * @param {{suite: string, text: string}[]} pending Snapshots to write.
+ * @param {Partial<typeof FILE_OPERATIONS>} overrides Filesystem operations for failure tests.
+ * @returns {Promise<string|null>} A non-fatal warning when committed transaction cleanup fails.
+ */
+export async function replaceSnapshots(directory, pending, overrides = {}) {
+  const operations = { ...FILE_OPERATIONS, ...overrides };
+  await operations.mkdir(directory, { recursive: true });
+  const transaction = await operations.mkdtemp(join(dirname(directory), `.${basename(directory)}-`));
+  const entries = pending.map(({ suite, text }) => ({
+    text,
+    target: join(directory, `${suite}.json`),
+    fresh: join(transaction, `${suite}.new`),
+    backup: join(transaction, `${suite}.old`),
+    original: false,
+    installed: false,
+  }));
+  try {
+    for (const entry of entries) await operations.writeFile(entry.fresh, entry.text, { flag: "wx" });
+    for (const entry of entries) {
+      try {
+        await operations.rename(entry.target, entry.backup);
+        entry.original = true;
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await operations.rename(entry.fresh, entry.target);
+      entry.installed = true;
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    const strandedBackups = [];
+    for (const entry of [...entries].reverse()) {
+      if (entry.installed) {
+        try {
+          await operations.rm(entry.target, { force: true });
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (entry.original) {
+        try {
+          await operations.rename(entry.backup, entry.target);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+          strandedBackups.push(entry.backup);
+        }
+      }
+    }
+    if (strandedBackups.length === 0) {
+      try {
+        await operations.rm(transaction, { recursive: true, force: true });
+      } catch (cleanupError) {
+        rollbackErrors.push(cleanupError);
+      }
+    }
+    const recovery = strandedBackups.length > 0 ? `; original snapshots kept in ${transaction}: ${strandedBackups.join(", ")}` : "";
+    if (rollbackErrors.length > 0) throw new AggregateError([error, ...rollbackErrors], `${error.message}; rollback failed: ${rollbackErrors.map((failure) => failure.message).join("; ")}${recovery}`);
+    throw error;
+  }
+  try {
+    await operations.rm(transaction, { recursive: true, force: true });
+    return null;
+  } catch (error) {
+    return `snapshot update succeeded but could not remove ${transaction}: ${error.message}`;
+  }
+}
 
 /** Whether `root` is a nonempty relative path with no `..` segment, in either separator style. */
 function insideCheckout(root) {

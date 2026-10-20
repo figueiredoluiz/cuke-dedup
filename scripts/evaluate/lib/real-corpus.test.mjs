@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -13,10 +15,117 @@ import {
   compareSnapshots,
   formatSnapshot,
   observationProblem,
+  replaceSnapshots,
   renderDrift,
   runSuite,
   validateManifest,
 } from "./real-corpus.mjs";
+
+/** Checks every pre-commit failure phase restores the complete old snapshot set. */
+test("replaceSnapshots rolls back write and rename failures", async () => {
+  const cases = [
+    {
+      name: "write",
+      originals: true,
+      operations: () => ({ writeFile: async (path, ...args) => {
+        if (path.endsWith("b.new")) throw Object.assign(new Error("injected write failure"), { code: "EACCES" });
+        return writeFile(path, ...args);
+      } }),
+    },
+    {
+      name: "first rename",
+      originals: true,
+      operations: (directory) => ({ rename: async (from, to) => {
+        if (from === join(directory, "a.json")) throw Object.assign(new Error("injected first rename failure"), { code: "EACCES" });
+        return rename(from, to);
+      } }),
+    },
+    ...[true, false].map((originals) => ({
+      name: `later rename with ${originals ? "existing" : "absent"} targets`,
+      originals,
+      operations: (directory) => {
+        let failed = false;
+        return { rename: async (from, to) => {
+          if (!failed && to === join(directory, "b.json") && from.includes(".real-corpus-")) {
+            failed = true;
+            throw Object.assign(new Error("injected later rename failure"), { code: "EACCES" });
+          }
+          return rename(from, to);
+        } };
+      },
+    })),
+  ];
+  for (const scenario of cases) {
+    const directory = mkdtempSync(join(tmpdir(), "real-corpus-snapshots-"));
+    try {
+      if (scenario.originals) {
+        writeFileSync(join(directory, "a.json"), "old a");
+        writeFileSync(join(directory, "b.json"), "old b");
+      }
+      await assert.rejects(
+        replaceSnapshots(directory, [{ suite: "a", text: "new a" }, { suite: "b", text: "new b" }], scenario.operations(directory)),
+        /injected/,
+        scenario.name,
+      );
+      assert.deepEqual(readdirSync(directory).sort(), scenario.originals ? ["a.json", "b.json"] : [], scenario.name);
+      if (scenario.originals) {
+        assert.equal(readFileSync(join(directory, "a.json"), "utf8"), "old a", scenario.name);
+        assert.equal(readFileSync(join(directory, "b.json"), "utf8"), "old b", scenario.name);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+/** Checks cleanup after the commit cannot turn a successful replacement into a reported failure. */
+test("replaceSnapshots reports post-commit cleanup as a warning", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "real-corpus-snapshots-"));
+  try {
+    writeFileSync(join(directory, "a.json"), "old a");
+    const warning = await replaceSnapshots(directory, [{ suite: "a", text: "new a" }], {
+      rm: async (path, options) => {
+        await rm(path, options);
+        throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+      },
+    });
+    assert.match(warning, /snapshot update succeeded.*injected cleanup failure/);
+    assert.equal(readFileSync(join(directory, "a.json"), "utf8"), "new a");
+    assert.deepEqual(readdirSync(directory), ["a.json"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+/** Checks a backup that cannot be restored is retained at the recovery path named by the error. */
+test("replaceSnapshots preserves a stranded backup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "real-corpus-rollback-"));
+  const directory = join(root, "snapshots");
+  mkdirSync(directory);
+  try {
+    writeFileSync(join(directory, "a.json"), "old a");
+    writeFileSync(join(directory, "b.json"), "old b");
+    let installFailed = false;
+    const error = await replaceSnapshots(directory, [{ suite: "a", text: "new a" }, { suite: "b", text: "new b" }], { rename: async (from, to) => {
+      if (!installFailed && to === join(directory, "b.json") && from.endsWith("b.new")) {
+        installFailed = true;
+        throw Object.assign(new Error("injected install failure"), { code: "EACCES" });
+      }
+      if (installFailed && to === join(directory, "b.json") && from.endsWith("b.old")) {
+        throw Object.assign(new Error("injected restore failure"), { code: "EACCES" });
+      }
+      return rename(from, to);
+    } })
+      .then(() => null, (failure) => failure);
+    assert.match(error.message, /injected restore failure.*original snapshots kept in/);
+    assert.equal(readFileSync(join(directory, "a.json"), "utf8"), "old a");
+    const transaction = readdirSync(root).find((name) => name.startsWith(".snapshots-"));
+    assert.ok(transaction);
+    assert.equal(readFileSync(join(root, transaction, "b.old"), "utf8"), "old b");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 /** A valid suite, overridable. */
 const suite = (over = {}) => ({

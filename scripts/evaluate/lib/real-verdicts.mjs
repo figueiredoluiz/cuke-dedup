@@ -40,14 +40,13 @@ export function buildLabels(snapshot, locations, { perRule, seed }) {
 }
 
 /**
- * Why a labels file must not be written to `path`, or `null`. An existing file may hold reviewed
- * verdicts, and a path git does not ignore could be committed with file locations in it.
+ * Why a labels file must not be written to `path`, or `null`. A path git does not ignore could be
+ * committed with file locations in it. The atomic create separately refuses an existing file.
  * @param {string} path
- * @param {{exists: boolean, ignored: boolean}} state
+ * @param {{ignored: boolean}} state
  * @returns {string|null}
  */
-export function labelsPathProblem(path, { exists, ignored }) {
-  if (exists) return `${path} exists and may hold reviewed verdicts; move it or choose another --labels path`;
+export function labelsPathProblem(path, { ignored }) {
   if (!ignored) return `${path} is not ignored by git; labels name source locations and must stay local`;
   return null;
 }

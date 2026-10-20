@@ -11,7 +11,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -21,6 +21,7 @@ import {
   formatSnapshot,
   renderDrift,
   isWithin,
+  replaceSnapshots,
   validateManifest,
 } from "./lib/real-corpus.mjs";
 import { buildLabels, labelsPathProblem, precisionReport, renderPrecision, validateLabels } from "./lib/real-verdicts.mjs";
@@ -110,6 +111,7 @@ if (suites.length === 0) fail(`no suite named ${values.suite}`);
 const labelsDir = join(dirname(values.references), "real-labels");
 
 const errors = [];
+const warnings = [];
 let drifted = false;
 let complete = true;
 let output = "";
@@ -144,12 +146,13 @@ if (command === "run") {
   // Snapshots are replaced together or not at all, so one failing suite cannot leave a mix of analyzer builds.
   if (errors.length > 0 && pending.length > 0) output += "no snapshot written: a suite could not be observed\n";
   else if (pending.length > 0) {
-    await mkdir(values.snapshots, { recursive: true });
-    // Written beside the targets and renamed, so a failed write leaves the old snapshots whole.
-    for (const { suite, text } of pending) await writeFile(join(values.snapshots, `${suite}.json.tmp`), text);
-    for (const { suite } of pending) {
-      await rename(join(values.snapshots, `${suite}.json.tmp`), join(values.snapshots, `${suite}.json`));
-      output += `### ${suite}\n\nsnapshot written\n\n`;
+    try {
+      const cleanupWarning = await replaceSnapshots(values.snapshots, pending);
+      if (cleanupWarning) warnings.push(cleanupWarning);
+      for (const { suite } of pending) output += `### ${suite}\n\nsnapshot written\n\n`;
+    } catch (error) {
+      errors.push(`snapshot update: ${error.message}`);
+      output += "no snapshot written: snapshot update failed\n";
     }
   }
   if (values.json && !complete) errors.push("--json: not written because a suite has no committed snapshot");
@@ -161,7 +164,7 @@ if (command === "run") {
   const [suite] = suites;
   const path = values.labels ?? join(labelsDir, `${suite.name}.json`);
   try {
-    const problem = labelsPathProblem(path, { exists: existsSync(path), ignored: keptOutOfCommits(path) });
+    const problem = labelsPathProblem(path, { ignored: keptOutOfCommits(path) });
     if (problem) throw new Error(problem);
     const committed = await readSnapshot(suite);
     if (committed === null) throw new Error("no committed snapshot to label; run with --update first");
@@ -170,7 +173,12 @@ if (command === "run") {
     const perRule = Number(perRuleText);
     await mkdir(dirname(path), { recursive: true });
     // `wx` fails if the file appeared during the run, so reviewed verdicts are never overwritten.
-    await writeFile(path, `${JSON.stringify(buildLabels(snapshot, locations, { perRule, seed: values.seed ?? "1" }), null, 2)}\n`, { flag: "wx" });
+    try {
+      await writeFile(path, `${JSON.stringify(buildLabels(snapshot, locations, { perRule, seed: values.seed ?? "1" }), null, 2)}\n`, { flag: "wx" });
+    } catch (error) {
+      if (error.code === "EEXIST") throw new Error(`${path} exists and may hold reviewed verdicts; move it or choose another --labels path`);
+      throw error;
+    }
     output += `labels written to ${path}; fill in each verdict by hand\n`;
   } catch (error) {
     errors.push(`${suite.name}: ${error.message}`);
@@ -196,5 +204,6 @@ if (command === "run") {
 }
 
 process.stdout.write(output);
+for (const message of warnings) console.error(`real-corpus: warning: ${message}`);
 for (const message of errors) console.error(`real-corpus: ${message}`);
 process.exitCode = errors.length > 0 ? 2 : values.gate && drifted ? 1 : 0;

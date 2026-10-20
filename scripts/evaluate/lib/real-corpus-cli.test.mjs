@@ -149,6 +149,12 @@ test("run reports drift, gate fails on it, and unobservable runs fail closed", {
     assert.equal(cli(args).status, 2, args.join(" "));
   }
   assert.equal(cli(["run"], spec([[1, 2]]), ["--json", join(work, "missing-dir", "drift.json")]).status, 2);
+  const blockedSnapshots = join(work, "blocked-snapshots");
+  writeFileSync(blockedSnapshots, "not a directory");
+  const failedUpdate = cli(["run", "--update"], spec([[1, 2]]), ["--snapshots", blockedSnapshots]);
+  assert.equal(failedUpdate.status, 2);
+  assert.match(failedUpdate.out, /no snapshot written: snapshot update failed/);
+  assert.match(failedUpdate.err, /snapshot update:/);
   assert.equal(cli(["run", "--suite"]).status, 2);
   assert.equal(cli(["run"], spec([[1, 2]]), ["--manifest", join(work, "absent.json")]).status, 2);
   writeFileSync(join(work, "broken.json"), "{");

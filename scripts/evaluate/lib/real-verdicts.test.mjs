@@ -34,11 +34,10 @@ test("buildLabels draws a reproducible capped sample with no verdicts", () => {
   for (const bad of [0, -1, 1.5, Number.NaN]) assert.throws(() => draw("1", bad), /positive integer/);
 });
 
-/** Checks labels are written only to a fresh path that cannot be committed. */
-test("labelsPathProblem refuses an existing or committable path", () => {
-  assert.equal(labelsPathProblem("p", { exists: false, ignored: true }), null);
-  assert.match(labelsPathProblem("p", { exists: true, ignored: true }), /may hold reviewed verdicts/);
-  assert.match(labelsPathProblem("p", { exists: false, ignored: false }), /not ignored by git/);
+/** Checks labels are written only to a path that cannot be committed. */
+test("labelsPathProblem refuses a committable path", () => {
+  assert.equal(labelsPathProblem("p", { ignored: true }), null);
+  assert.match(labelsPathProblem("p", { ignored: false }), /not ignored by git/);
 });
 
 /** Labels for the snapshot below, overridable. */
