@@ -4644,16 +4644,18 @@ fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, lab
     compared
 }
 
-/// Cached module literals give every callable the fingerprint the per-handler walk computes, for
-/// each constant shape and binding position below and for every JS/TS fixture.
+/// Cached module literals and aliases give every callable the fingerprint the per-handler walk
+/// computes, for each constant shape and binding position below and for every JS/TS fixture.
 #[test]
 fn module_literal_cache_matches_the_per_handler_walk() {
-    // Cached: plain, exported and multi-declarator literal `const`s. Walked per handler: every
-    // other shape. `FORWARD` and `EARLY` name a cached literal declared later, which the walk
-    // leaves unresolved; the remaining handlers shadow, capture or alias the cached names.
+    // Cached: plain, exported and multi-declarator literal `const`s, and `const` aliases that
+    // resolve safely to them. Walked per handler: every other shape. `FORWARD` and `EARLY` name a
+    // cached literal declared later, which the walk leaves unresolved; the remaining handlers
+    // shadow, capture or alias the cached names. Each alias row states what it pins.
     let matrix = r#"
 import { Given } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
+enum Color { Red }
 const FORWARD = LATER;
 const LIT_STRING = 'ready';
 const LIT_NUMBER = 7, LIT_TRUE = true, LIT_NULL = null, LIT_UNDEFINED = undefined;
@@ -4675,6 +4677,60 @@ const DUPLICATE = 2;
 function SAME_NAME() {}
 const SAME_NAME = 1;
 const { DESTRUCTURED } = { DESTRUCTURED: LIT_NUMBER };
+// Alias of an alias: cached through two hops with the literal's digest.
+const ALIAS_CHAIN = CHAINED;
+// Alias to a literal inside a mixed declaration: cached while `MIXED` itself stays walked.
+const MIXED_ALIAS = MIXED;
+// Alias to a safe literal the cache rejects for its annotation: cached from the walked target.
+const ANNOTATED_ALIAS = ANNOTATED;
+// Forward alias: the target is declared later, so the walk leaves it unresolved and uncached.
+const FORWARD_ALIAS = DECLARED_AFTER;
+// Aliases to `let` and `var`: mutable targets are unsafe and stay walked.
+const LET_ALIAS = MUTABLE, VAR_ALIAS = LEGACY;
+// Aliases to a function, a class, an enum and an import: no binding, unresolved, walked.
+const FN_ALIAS = named, CLASS_ALIAS = Steps, ENUM_ALIAS = Color, IMPORT_ALIAS = expect;
+// Alias after both duplicate `const`s: resolves to the later one.
+const DUPLICATE_ALIAS = DUPLICATE;
+// Alias between duplicate `const`s: the later declarator outranks the earlier, unresolved.
+const BETWEEN = 1;
+const BETWEEN_ALIAS = BETWEEN;
+const BETWEEN = 2;
+// A `var` redeclared after a handler's read: its root shadow outranks the earlier literal, and
+// the alias to it, so neither resolves; the cache must insert the same root shadows.
+const ORDERED = 1;
+Given('ordered', () => expect(value).toBe(ORDERED));
+var ORDERED = 2;
+const ORDERED_BASE = 1;
+const ORDERED_ALIAS = ORDERED_BASE;
+Given('ordered alias', () => expect(value).toBe(ORDERED_ALIAS));
+var ORDERED_BASE = 2;
+// Alias with a type annotation and alias with a comment in its declaration: walked.
+const TYPED_ALIAS: string = LIT_STRING;
+const /* note */ COMMENTED_ALIAS = LIT_STRING;
+// Exported alias: cached like an exported literal.
+export const EXPORTED_ALIAS = LIT_STRING;
+// Cached alias read inside an unsafe module value: the value resolves it per handler.
+const OBJECT_OF_ALIAS = { a: ALIAS };
+// Handler-local `const` and parameter shadowing a cached alias name.
+Given('alias local shadow', () => { const ALIAS = 'other'; expect(value).toBe(ALIAS); });
+Given('alias parameter shadow', (ALIAS) => expect(ALIAS).toBe(CHAINED));
+// Two handlers reading one value through different alias names, as assertion expected values.
+Given('same value through alias', () => expect(value).toBe(ALIAS));
+Given('same value through chain', () => expect(value).toBe(ALIAS_CHAIN));
+// A handler-local name equal to an unsafe alias's unresolved target: the walk serializes the
+// target through this handler's alpha map, so that alias must not be cached. The alias is the
+// assertion subject: an expected value that is not bound safe marks the assertion unresolved
+// before its digest is read, so only the subject position observes it.
+Given('unsafe alias target shadow', () => { const LATER = 'x'; expect(FORWARD).toBe('x'); });
+// A `let` alias of an unresolved target, read as the subject by a handler shadowing the target:
+// a mutable declaration is never cached even when its shape qualifies.
+let LET_FORWARD = DECLARED_AFTER;
+Given('let alias target shadow', () => { const DECLARED_AFTER = 'x'; expect(LET_FORWARD).toBe('x'); });
+Given('alias uses', () => work(ALIAS_CHAIN, MIXED_ALIAS, ANNOTATED_ALIAS, FORWARD_ALIAS,
+  LET_ALIAS, VAR_ALIAS, FN_ALIAS, CLASS_ALIAS, ENUM_ALIAS, IMPORT_ALIAS, DUPLICATE_ALIAS,
+  BETWEEN_ALIAS, TYPED_ALIAS, COMMENTED_ALIAS, EXPORTED_ALIAS, OBJECT_OF_ALIAS));
+// Alias inside a namespace: not module scope, only a shadow.
+namespace Aliases { const SPACE_ALIAS = LIT_STRING; Given('space alias', () => expect(value).toBe(SPACE_ALIAS)); }
 const helper = () => {
   const LIT_STRING = 'inner';
   const INNER_ALIAS = LIT_NUMBER;
@@ -4704,7 +4760,7 @@ class Steps {
 const DECLARED_AFTER = 'late';
 "#;
     let compared = assert_literal_cache_matches_walk(matrix, SourceLanguage::TypeScript, "matrix");
-    assert!(compared >= 50, "matrix compared only {compared} callables");
+    assert!(compared >= 85, "matrix compared only {compared} callables");
 
     let (mut files, mut directories) = (Vec::new(), vec![PathBuf::from("fixtures")]);
     while let Some(directory) = directories.pop() {
@@ -4730,4 +4786,61 @@ const DECLARED_AFTER = 'late';
         "{} fixture files, {compared} callables",
         files.len()
     );
+}
+
+/// Two handlers that read one literal through different cached alias names fingerprint equal,
+/// while a handler reading another value stays distinct.
+#[test]
+fn cached_aliases_fingerprint_equal_across_names() {
+    let source = r#"
+import { Given } from '@cucumber/cucumber';
+import { expect } from '@playwright/test';
+const BASE = 'ready';
+const ALIAS = BASE;
+const CHAINED = ALIAS;
+Given('through alias', () => expect(value).toBe(ALIAS));
+Given('through chain', () => expect(value).toBe(CHAINED));
+Given('other value', () => expect(value).toBe('other'));
+"#;
+    let definitions = extract_ts(source);
+    assert_eq!(definitions.len(), 3);
+    let (alias, chain, other) = (
+        &definitions[0].handler,
+        &definitions[1].handler,
+        &definitions[2].handler,
+    );
+    assert_eq!(alias.alpha_normalized, chain.alpha_normalized);
+    assert_eq!(alias.behavior_signature, chain.behavior_signature);
+    assert_ne!(alias.alpha_normalized, other.alpha_normalized);
+    assert_ne!(alias.behavior_signature, other.behavior_signature);
+}
+
+/// A file of `const BASE = n; const LIMIT = BASE;` pairs leaves nothing to walk per handler,
+/// while the same pairs on `let` bases are all walked: the cache is what makes alias files linear.
+#[test]
+fn module_cache_holds_every_safe_alias_pair() {
+    let generate = |keyword: &str| {
+        let mut source = String::from("import { Given } from '@cucumber/cucumber';\n");
+        for index in 0..300 {
+            source.push_str(&format!(
+                "{keyword} BASE_{index} = {index};\nconst LIMIT_{index} = BASE_{index};\n"
+            ));
+        }
+        for index in 0..300 {
+            source.push_str(&format!(
+                "Given('alias step {index}', () => action_{index}(LIMIT_{index}));\n"
+            ));
+        }
+        source
+    };
+    let counts = |source: &str| {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&grammar_for_language(SourceLanguage::TypeScript))
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        ModuleScope::new(tree.root_node()).cache_counts(source.as_bytes())
+    };
+    assert_eq!(counts(&generate("const")), (600, 0, 0));
+    assert_eq!(counts(&generate("let")), (0, 600, 600));
 }

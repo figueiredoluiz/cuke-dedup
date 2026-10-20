@@ -734,13 +734,16 @@ pub(super) struct ModuleScope<'tree> {
     literals: OnceCell<ModuleLiterals<'tree>>,
 }
 
-/// Top-level literal constants evaluated once per file, and the declarations left to walk.
+/// Top-level constants evaluated once per file, and the declarations left to walk.
 ///
 /// Walking and hashing every module constant for each handler made extraction quadratic in file
-/// size. Only a declaration whose walk records one literal binding per declarator is cached: that
-/// binding does not depend on the handler. Every other declaration is still walked per handler.
+/// size. A `const` declaration is cached when every declarator binds an identifier to a literal or
+/// to an identifier the module-level walk resolves safely: such a binding does not depend on the
+/// handler, because only program-scope bindings can hold a module-level use site and the
+/// handler's alpha map is read only on the unsafe and structured-value paths. Every other
+/// declaration is still walked per handler.
 struct ModuleLiterals<'tree> {
-    /// The binding the per-handler walk recorded for each cached declarator. Their root shadows
+    /// The binding the per-handler walk records for each cached declarator. Their root shadows
     /// are left out: at every use site the declarator's own binding outranks its shadow, having
     /// the same scope and a later start.
     bindings: BTreeMap<String, Vec<LocalConstant>>,
@@ -797,40 +800,72 @@ impl<'tree> ModuleScope<'tree> {
         scope
     }
 
-    /// The file's literal constants; `source` is the text `root` was parsed from.
+    /// `(cached bindings, declarations walked per handler, shadows walked per handler)`.
+    #[cfg(test)]
+    pub(super) fn cache_counts(&self, source: &[u8]) -> (usize, usize, usize) {
+        let literals = self.literals(source);
+        (
+            literals.bindings.values().map(Vec::len).sum(),
+            literals.declarations.len(),
+            literals.shadows.len(),
+        )
+    }
+
+    /// The file's cached constants; `source` is the text `root` was parsed from.
     fn literals(&self, source: &[u8]) -> &ModuleLiterals<'tree> {
         self.literals.get_or_init(|| {
-            let mut bindings = BTreeMap::<String, Vec<LocalConstant>>::new();
-            let cached = self
-                .declarations
-                .iter()
-                .filter_map(|d| literal_declarators(*d));
-            for (name, value) in cached.flatten() {
-                // A literal serializes without reading `declared`, so this is the value every
-                // handler's walk computed.
-                let fingerprint = |mode| {
-                    stable_fingerprint(&serialize_ast(value, source, &BTreeMap::new(), mode))
+            // One uncached walk over every top-level declaration, anchored at the root and with
+            // the root's own shadows in place, computes for each module-level declarator the
+            // binding every handler's walk computes: a program-scope binding encloses any
+            // handler, and the handler-dependent inputs are never read for a cacheable shape.
+            let mut walk = LocalConstants {
+                handler_span: (self.root.start_byte(), self.root.end_byte()),
+                ..LocalConstants::default()
+            };
+            walk.insert_scope_shadows(self.root, source, self.shadows.clone());
+            walk.evaluate(
+                self.declarations.clone(),
+                self.root,
+                source,
+                &BTreeMap::new(),
+            );
+            // Declarations cached as a whole, and the declarator starts cached under each name.
+            let mut cached = BTreeSet::<usize>::new();
+            let mut declarators = BTreeMap::<String, BTreeSet<usize>>::new();
+            for declaration in &self.declarations {
+                let Some(entries) = cacheable_declarators(*declaration).and_then(|pairs| {
+                    pairs
+                        .into_iter()
+                        .map(|(declarator, name)| {
+                            walk.module_binding(declarator, name, self.root, source)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                }) else {
+                    continue;
                 };
-                bindings
-                    .entry(node_text(name, source).to_owned())
-                    .or_default()
-                    .push(LocalConstant {
-                        // A declarator starts at its name.
-                        declaration_start: name.start_byte(),
-                        scope_start: self.root.start_byte(),
-                        scope_end: self.root.end_byte(),
-                        alpha: fingerprint(AstMode::Alpha),
-                        structural: fingerprint(AstMode::Structural),
-                        safe: true,
-                        parameter: false,
-                        lexical: true,
-                    });
+                cached.insert(declaration.id());
+                for (name, start) in entries {
+                    declarators.entry(name).or_default().insert(start);
+                }
+            }
+            // The cached entries move out of the walk rather than being copied next to it, so
+            // the file's peak memory stays at one evaluated module map.
+            let mut bindings = BTreeMap::<String, Vec<LocalConstant>>::new();
+            for (name, entries) in walk.bindings {
+                let starts = declarators.get(&name);
+                let moved: Vec<LocalConstant> = entries
+                    .into_iter()
+                    .filter(|binding| {
+                        starts.is_some_and(|starts| starts.contains(&binding.declaration_start))
+                    })
+                    .collect();
+                if !moved.is_empty() {
+                    bindings.insert(name, moved);
+                }
             }
             let uncached = |declarations: &[Node<'tree>]| {
                 let walked = declarations.iter().copied();
-                walked
-                    .filter(|d| literal_declarators(*d).is_none())
-                    .collect()
+                walked.filter(|d| !cached.contains(&d.id())).collect()
             };
             ModuleLiterals {
                 bindings,
@@ -841,11 +876,13 @@ impl<'tree> ModuleScope<'tree> {
     }
 }
 
-/// Each `(name, value)` of a `const` declaration that only binds identifiers to literals.
+/// Each `(declarator, name)` of a `const` declaration that only binds identifiers to literals or
+/// identifiers.
 ///
 /// `None` for any other shape, including a type annotation, comment or parse error inside it: the
-/// per-handler walk could record more than one literal binding per declarator there.
-fn literal_declarators(declaration: Node<'_>) -> Option<Vec<(Node<'_>, Node<'_>)>> {
+/// per-handler walk could record more than one binding per declarator there, or read the
+/// handler's alpha map while serializing the value.
+fn cacheable_declarators(declaration: Node<'_>) -> Option<Vec<(Node<'_>, Node<'_>)>> {
     (is_const_declaration(declaration) && !declaration.has_error()).then_some(())?;
     let mut cursor = declaration.walk();
     let declarators: Vec<Node<'_>> = declaration.named_children(&mut cursor).collect();
@@ -857,8 +894,8 @@ fn literal_declarators(declaration: Node<'_>) -> Option<Vec<(Node<'_>, Node<'_>)
                 .zip(declarator.child_by_field_name("value"))?;
             (declarator.named_child_count() == 2
                 && name.kind() == "identifier"
-                && is_literal_value(value))
-            .then_some((name, value))
+                && (is_literal_value(value) || value.kind() == "identifier"))
+                .then_some((declarator, name))
         })
         .collect()
 }
@@ -971,7 +1008,7 @@ static UNEVALUATED: LocalConstant = LocalConstant {
 #[derive(Default)]
 struct LocalConstants<'m> {
     bindings: BTreeMap<String, Vec<LocalConstant>>,
-    /// The file's cached literal constants, consulted alongside `bindings`.
+    /// The file's cached module constants, consulted alongside `bindings`.
     literals: Option<&'m BTreeMap<String, Vec<LocalConstant>>>,
     /// While initializers are evaluated in source order, a cached constant declared at or after
     /// this byte reads as unevaluated, as it did when every handler walked it: an earlier
@@ -1020,6 +1057,9 @@ impl<'m> LocalConstants<'m> {
     }
 
     /// Records the bindings reachable from `seeds` and the shadows of every scope enclosing `handler`.
+    ///
+    /// The cache's own build runs `insert_scope_shadows` and `evaluate` directly, before the
+    /// cache exists.
     fn collect_from<'tree>(
         seeds: Vec<Node<'tree>>,
         handler: Node<'tree>,
@@ -1035,74 +1075,103 @@ impl<'m> LocalConstants<'m> {
         };
         let mut ancestor = handler.parent();
         while let Some(node) = ancestor {
-            if matches!(
-                node.kind(),
-                "class" | "class_declaration" | "abstract_class_declaration"
-            ) {
-                if let Some(name) = node.child_by_field_name("name") {
-                    constants.insert_unresolved_shadow(
-                        name,
-                        source,
-                        node.start_byte(),
-                        node,
-                        false,
-                    );
-                }
-            }
-            // A handler can close over a binding in an enclosing scope. That name is neither
-            // handler-local nor module-scoped, so without recording it a module constant of the
-            // same name would substitute over the captured value and fuse two handlers that read
-            // different values. The value itself is not resolved here — only the fact that a nearer
-            // binding exists, which is enough to decline substitution.
-            //
-            // Every binding form an enclosing scope can introduce is recorded, not just its
-            // declarations: a parameter, a catch binding and a loop head all capture the same way,
-            // and covering one form at a time leaves the next as a latent false duplicate.
-            let captured = if is_function_like(node) {
-                node.child_by_field_name("parameters")
-                    .or_else(|| node.child_by_field_name("parameter"))
-            } else {
-                match node.kind() {
-                    "catch_clause" => node.child_by_field_name("parameter"),
-                    "for_in_statement" => node
-                        .child_by_field_name("kind")
-                        .and_then(|_| node.child_by_field_name("left")),
-                    _ => None,
-                }
-            };
-            if let Some(captured) = captured {
-                constants.insert_unresolved_shadow(
-                    captured,
-                    source,
-                    node.start_byte(),
-                    node,
-                    false,
-                );
-            }
             let declarations = if node == module.root {
                 literals.shadows.clone()
             } else {
                 scope_declarations(node)
             };
-            for declaration in declarations {
-                let mut declarators = declaration.walk();
-                let names: Vec<Node<'_>> = declaration
-                    .named_children(&mut declarators)
-                    .filter(|declarator| declarator.kind() == "variable_declarator")
-                    .filter_map(|declarator| declarator.child_by_field_name("name"))
-                    .collect();
-                for name in names {
-                    constants.insert_unresolved_shadow(
-                        name,
-                        source,
-                        declaration.start_byte(),
-                        node,
-                        true,
-                    );
-                }
-            }
+            constants.insert_scope_shadows(node, source, declarations);
             ancestor = node.parent();
         }
+        constants.evaluate(seeds, handler, source, declared);
+        constants
+    }
+
+    /// Records the shadows `node`, a scope enclosing the handler, introduces: its class name, the
+    /// bindings it captures, and the names its `declarations` declare.
+    fn insert_scope_shadows(&mut self, node: Node<'_>, source: &[u8], declarations: Vec<Node<'_>>) {
+        if matches!(
+            node.kind(),
+            "class" | "class_declaration" | "abstract_class_declaration"
+        ) {
+            if let Some(name) = node.child_by_field_name("name") {
+                self.insert_unresolved_shadow(name, source, node.start_byte(), node, false);
+            }
+        }
+        // A handler can close over a binding in an enclosing scope. That name is neither
+        // handler-local nor module-scoped, so without recording it a module constant of the
+        // same name would substitute over the captured value and fuse two handlers that read
+        // different values. The value itself is not resolved here — only the fact that a nearer
+        // binding exists, which is enough to decline substitution.
+        //
+        // Every binding form an enclosing scope can introduce is recorded, not just its
+        // declarations: a parameter, a catch binding and a loop head all capture the same way,
+        // and covering one form at a time leaves the next as a latent false duplicate.
+        let captured = if is_function_like(node) {
+            node.child_by_field_name("parameters")
+                .or_else(|| node.child_by_field_name("parameter"))
+        } else {
+            match node.kind() {
+                "catch_clause" => node.child_by_field_name("parameter"),
+                "for_in_statement" => node
+                    .child_by_field_name("kind")
+                    .and_then(|_| node.child_by_field_name("left")),
+                _ => None, // fail-closed: other enclosing kinds bind nothing of their own; their declarations are recorded below
+            }
+        };
+        if let Some(captured) = captured {
+            self.insert_unresolved_shadow(captured, source, node.start_byte(), node, false);
+        }
+        for declaration in declarations {
+            let mut declarators = declaration.walk();
+            let names: Vec<Node<'_>> = declaration
+                .named_children(&mut declarators)
+                .filter(|declarator| declarator.kind() == "variable_declarator")
+                .filter_map(|declarator| declarator.child_by_field_name("name"))
+                .collect();
+            for name in names {
+                self.insert_unresolved_shadow(name, source, declaration.start_byte(), node, true);
+            }
+        }
+    }
+
+    /// `(name, declaration start)` of a module-level `declarator` the walk bound safely at
+    /// program scope.
+    ///
+    /// `None` when the walk left the declarator unresolved, mutable or shadowed: that outcome
+    /// depends on the handler's alpha map and is recomputed per handler. A safe binding here
+    /// never resolved through a parameter, the one safe kind with no digest, because no
+    /// parameter binding has program scope.
+    fn module_binding(
+        &self,
+        declarator: Node<'_>,
+        name: Node<'_>,
+        root: Node<'_>,
+        source: &[u8],
+    ) -> Option<(String, usize)> {
+        let name = node_text(name, source);
+        self.bindings
+            .get(name)
+            .and_then(|entries| {
+                entries.iter().find(|binding| {
+                    binding.declaration_start == declarator.start_byte()
+                        && binding.scope_start == root.start_byte()
+                        && binding.scope_end == root.end_byte()
+                })
+            })
+            .filter(|binding| binding.safe && !binding.alpha.is_empty())
+            .map(|binding| (name.to_owned(), binding.declaration_start))
+    }
+
+    /// Walks `seeds`, registers every binding they declare, and evaluates the declarators'
+    /// initializers in declaration order with `handler` as the scope anchor.
+    fn evaluate<'tree>(
+        &mut self,
+        seeds: Vec<Node<'tree>>,
+        handler: Node<'tree>,
+        source: &[u8],
+        declared: &BTreeMap<String, String>,
+    ) {
         let mut pending = Vec::new();
         let mut stack = seeds;
         while let Some(node) = stack.pop() {
@@ -1114,20 +1183,16 @@ impl<'m> LocalConstants<'m> {
                     let mut names = Vec::new();
                     collect_parameter_bindings(parameters, source, &mut names);
                     for name in names {
-                        constants
-                            .bindings
-                            .entry(name)
-                            .or_default()
-                            .push(LocalConstant {
-                                declaration_start: node.start_byte(),
-                                scope_start: node.start_byte(),
-                                scope_end: node.end_byte(),
-                                alpha: String::new(),
-                                structural: String::new(),
-                                safe: true,
-                                parameter: true,
-                                lexical: false,
-                            });
+                        self.bindings.entry(name).or_default().push(LocalConstant {
+                            declaration_start: node.start_byte(),
+                            scope_start: node.start_byte(),
+                            scope_end: node.end_byte(),
+                            alpha: String::new(),
+                            structural: String::new(),
+                            safe: true,
+                            parameter: true,
+                            lexical: false,
+                        });
                     }
                 }
             }
@@ -1169,7 +1234,7 @@ impl<'m> LocalConstants<'m> {
                 _ => None,
             };
             if let Some((name, scope, declaration_start, lexical)) = declaration_shadow {
-                constants.insert_unresolved_shadow(name, source, declaration_start, scope, lexical);
+                self.insert_unresolved_shadow(name, source, declaration_start, scope, lexical);
             }
             if node.kind() == "variable_declarator" {
                 let declaration = node.parent();
@@ -1186,15 +1251,14 @@ impl<'m> LocalConstants<'m> {
                             declaration.is_none_or(|d| d.kind() != "variable_declaration");
                         if !lexical
                             && node.child_by_field_name("value").is_none()
-                            && constants.entries(&binding_name).any(|b| {
+                            && self.entries(&binding_name).any(|b| {
                                 b.scope_start == scope.start_byte()
                                     && b.scope_end == scope.end_byte()
                             })
                         {
                             continue;
                         }
-                        constants
-                            .bindings
+                        self.bindings
                             .entry(binding_name)
                             .or_default()
                             .push(LocalConstant {
@@ -1231,11 +1295,11 @@ impl<'m> LocalConstants<'m> {
         // AST traversal; forward references remain unresolved because they are invalid at runtime.
         pending.sort_by_key(|(_, declaration_start, _, _, _, _)| *declaration_start);
         for (name, declaration_start, scope_start, scope_end, value, immutable) in pending {
-            constants.evaluated_before = declaration_start;
+            self.evaluated_before = declaration_start;
             let safe = immutable
                 && match value.kind() {
                     _ if is_literal_value(value) => true,
-                    "identifier" => constants
+                    "identifier" => self
                         .binding(node_text(value, source), value)
                         .is_some_and(|binding| binding.safe),
                     _ => false,
@@ -1243,21 +1307,20 @@ impl<'m> LocalConstants<'m> {
             let fingerprint = |mode| {
                 // Reuse the value digest across aliases instead of hashing the alias spelling.
                 if safe && value.kind() == "identifier" {
-                    if let Some(resolved) = constants.resolve(node_text(value, source), value, mode)
-                    {
+                    if let Some(resolved) = self.resolve(node_text(value, source), value, mode) {
                         return resolved.to_owned();
                     }
                 }
                 let serialized = if safe {
                     serialize_ast(value, source, declared, mode)
                 } else {
-                    serialize_assertion_value(value, source, declared, mode, &constants)
+                    serialize_assertion_value(value, source, declared, mode, &*self)
                 };
                 stable_fingerprint(&serialized)
             };
             let alpha = fingerprint(AstMode::Alpha);
             let structural = fingerprint(AstMode::Structural);
-            constants.bindings.entry(name).and_modify(|entries| {
+            self.bindings.entry(name).and_modify(|entries| {
                 if let Some(binding) = entries
                     .iter_mut()
                     .find(|binding| binding.declaration_start == declaration_start)
@@ -1275,8 +1338,7 @@ impl<'m> LocalConstants<'m> {
                 }
             });
         }
-        constants.evaluated_before = usize::MAX;
-        constants
+        self.evaluated_before = usize::MAX;
     }
 
     /// Records value-less bindings that block constant substitution within their scope.

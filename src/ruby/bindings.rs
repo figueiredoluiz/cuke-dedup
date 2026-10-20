@@ -385,6 +385,10 @@ pub(super) struct RootScope<'a> {
     source: &'a str,
     constants: OnceCell<BTreeMap<String, String>>,
     locals: OnceCell<RootLocals>,
+    /// Start byte of the first program-level assignment of each name.
+    first_assignment: OnceCell<BTreeMap<String, usize>>,
+    /// Capture facts of the whole program, for blocks a registration call defers.
+    stability: OnceCell<CaptureFacts>,
 }
 
 /// Program-level assignments and local-binding syntax in source order, outside nested scopes.
@@ -395,6 +399,30 @@ struct RootLocals {
     first_uncertain: Option<usize>,
 }
 
+/// Program-level locals assigned before one handler, answered by name.
+///
+/// Materializing the set for every handler copied every earlier assignment per handler, which
+/// made extraction quadratic in the number of handlers per file.
+struct OuterLocals<'a> {
+    first_assignment: &'a BTreeMap<String, usize>,
+    limit: usize,
+}
+
+impl OuterLocals<'_> {
+    /// Whether `name` is assigned at program level before the handler.
+    fn contains(&self, name: &str) -> bool {
+        self.first_assignment
+            .get(name)
+            .is_some_and(|start| *start < self.limit)
+    }
+}
+
+/// The constants a `def` handler can read: none, since it opens a fresh local scope.
+static NO_CONSTANTS: BTreeMap<String, String> = BTreeMap::new();
+
+/// The file locals a `def` handler closes over: none, for the same reason.
+static NO_LOCALS: BTreeMap<String, usize> = BTreeMap::new();
+
 impl<'a> RootScope<'a> {
     /// Wraps the `program` root of `source`; nothing is computed until a handler asks.
     pub(super) fn new(root: Node<'a>, source: &'a str) -> Self {
@@ -403,7 +431,54 @@ impl<'a> RootScope<'a> {
             source,
             constants: OnceCell::new(),
             locals: OnceCell::new(),
+            first_assignment: OnceCell::new(),
+            stability: OnceCell::new(),
         }
+    }
+
+    /// The program-level locals assigned before `limit`, equal by name to
+    /// `locals_before(root, before)` for a handler starting at `limit`; `None` for a handler
+    /// that closes over no file local, which reads nothing from the file.
+    fn outer_locals(&self, limit: Option<usize>, uncertain: &mut bool) -> OuterLocals<'_> {
+        let Some(limit) = limit else {
+            return OuterLocals {
+                first_assignment: &NO_LOCALS,
+                limit: 0,
+            };
+        };
+        *uncertain |= self
+            .locals()
+            .first_uncertain
+            .is_some_and(|start| start < limit);
+        let first_assignment = self.first_assignment.get_or_init(|| {
+            let mut first = BTreeMap::new();
+            for (start, names) in &self.locals().assignments {
+                for name in names {
+                    first.entry(name.clone()).or_insert(*start);
+                }
+            }
+            first
+        });
+        OuterLocals {
+            first_assignment,
+            limit,
+        }
+    }
+
+    /// Whether `name`, captured by a block that a registration call defers, is stable in the
+    /// file: the verdict of `stable_captures` for every such block, computed once.
+    fn stable_capture(&self, name: &str) -> bool {
+        name == "<source-file>"
+            || self
+                .stability
+                .get_or_init(|| CaptureFacts::walk(None, self.root, self.source, &|_| true))
+                .stable(name, &BTreeSet::new())
+    }
+
+    /// The file's program-level locals, indexed on first use.
+    fn locals(&self) -> &RootLocals {
+        self.locals
+            .get_or_init(|| RootLocals::walk(self.root, usize::MAX, self.source))
     }
 
     /// The file's constants, as `file_constants` computes them.
@@ -417,10 +492,9 @@ impl<'a> RootScope<'a> {
     /// That walk visits exactly the nodes reachable from the root without entering a block,
     /// lambda or wall that start before `before`, and whether a node is entered depends only on
     /// its kind; so the visit set is one source-ordered list cut at `before`.
+    #[cfg(test)]
     fn locals_before(&self, before: Node<'_>, uncertain: &mut bool) -> BTreeSet<String> {
-        let locals = self
-            .locals
-            .get_or_init(|| RootLocals::walk(self.root, usize::MAX, self.source));
+        let locals = self.locals();
         let limit = before.start_byte();
         *uncertain |= locals.first_uncertain.is_some_and(|start| start < limit);
         locals
@@ -435,7 +509,7 @@ impl<'a> RootScope<'a> {
 impl RootLocals {
     /// Walks `scope` without entering nested scopes or walls, skipping nodes at or after `limit`.
     fn walk(scope: Node<'_>, limit: usize, source: &str) -> Self {
-        let mut assignments = Vec::new();
+        let mut assignments: Vec<(usize, Vec<String>)> = Vec::new();
         let mut first_uncertain = None::<usize>;
         let mut pending = vec![scope];
         while let Some(node) = pending.pop() {
@@ -489,11 +563,7 @@ impl Bindings {
         let mut result = Self::default();
         // Ruby def opens a new local scope; it does not close over the file's locals.
         let closure = block.kind() != "method";
-        let outer = if closure {
-            file.locals_before(block, &mut result.uncertain)
-        } else {
-            BTreeSet::new()
-        };
+        let outer = file.outer_locals(closure.then(|| block.start_byte()), &mut result.uncertain);
         // Enclosing block and lambda scopes up to the nearest scope wall; a lambda's own body
         // block is folded into the lambda.
         let enclosing: Vec<_> = std::iter::successors(block.parent(), |node| node.parent())
@@ -509,19 +579,32 @@ impl Bindings {
         // Fingerprinted blocks are top-level or inside executed lambdas, so constant lookup
         // never crosses a class or module body; `def` handlers keep names.
         let constants = if closure {
-            file.constants().clone()
+            file.constants()
         } else {
-            BTreeMap::new()
+            &NO_CONSTANTS
         };
-        let mut scopes = vec![outer
-            .into_iter()
-            .map(|name| (name.clone(), format!("capture:{name}")))
-            .collect::<BTreeMap<_, _>>()];
+        // Scope layers above the file's locals; the bottom layer holds the handler's own
+        // bindings when the handler is not itself a scope node.
+        let mut scopes = vec![BTreeMap::<String, String>::new()];
+        // The nearest binding of a spelling: scope layers innermost first, then the file's
+        // locals, which bind as captures.
+        let lookup = |scopes: &[BTreeMap<String, String>], spelling: &str| {
+            scopes
+                .iter()
+                .rev()
+                .find_map(|s| s.get(spelling))
+                .cloned()
+                .or_else(|| {
+                    outer
+                        .contains(spelling)
+                        .then(|| format!("capture:{spelling}"))
+                })
+        };
         let mut enclosing_scopes = Vec::new();
         for scope in enclosing.iter().rev() {
             // An assignment creates a scope-local only when no outer local already owns the
             // name; parameters and block-locals rebind it regardless.
-            let visible: BTreeSet<_> = scopes.iter().flat_map(BTreeMap::keys).cloned().collect();
+            let visible = |name: &str| lookup(&scopes, name).is_some();
             let parameters = parameter_names(*scope, source);
             let mut names = parameters.clone();
             // The handler sits inside this scope, so the scope has a body.
@@ -531,7 +614,7 @@ impl Bindings {
                         locals_before(body, block, source, &mut result.uncertain)
                     })
                     .into_iter()
-                    .filter(|name| !visible.contains(name)),
+                    .filter(|name| !visible(name)),
             );
             scopes.push(
                 names
@@ -576,20 +659,15 @@ impl Bindings {
                 if let Some(left) = node.child_by_field_name("left") {
                     for name in binding_nodes(left) {
                         let spelling = text(name, source);
-                        let key = scopes
-                            .iter()
-                            .rev()
-                            .find_map(|s| s.get(spelling))
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                let key = format!("local:{next}");
-                                next += 1;
-                                scopes
-                                    .last_mut()
-                                    .unwrap()
-                                    .insert(spelling.to_owned(), key.clone());
-                                key
-                            });
+                        let key = lookup(&scopes, spelling).unwrap_or_else(|| {
+                            let key = format!("local:{next}");
+                            next += 1;
+                            scopes
+                                .last_mut()
+                                .unwrap()
+                                .insert(spelling.to_owned(), key.clone());
+                            key
+                        });
                         writes.entry(key.clone()).or_default().push(node);
                         result.names.insert(name.id(), key);
                     }
@@ -606,7 +684,7 @@ impl Bindings {
                     p.kind() == "call" && p.child_by_field_name("method") == Some(node)
                 });
                 if !method {
-                    if let Some(key) = scopes.iter().rev().find_map(|s| s.get(spelling)) {
+                    if let Some(key) = lookup(&scopes, spelling) {
                         if !result.names.contains_key(&node.id()) {
                             reads.entry(key.clone()).or_default().push(node);
                         }
@@ -683,9 +761,14 @@ impl Bindings {
                     && !captures.contains_key(*name)
             })
             .cloned()
-            .collect();
-        result.uncertain |=
-            !stable_captures(block, file.root, source, &unresolved, &BTreeSet::new());
+            .collect::<BTreeSet<String>>();
+        // A block a registration call defers reads the file's facts, which are the same for
+        // every such block; any other handler shape keeps its own walk.
+        result.uncertain |= if registration_block(block, source) {
+            !unresolved.iter().all(|name| file.stable_capture(name))
+        } else {
+            !stable_captures(block, file.root, source, &unresolved, &BTreeSet::new())
+        };
         for (scope, parameters) in enclosing_scopes {
             let prefix = format!("scope:{}:", scope.start_byte());
             let names = result
@@ -775,6 +858,17 @@ impl Bindings {
     }
 }
 
+/// Whether `node` is the block of a step-registration call, which defers its body.
+fn registration_block(node: Node<'_>, source: &str) -> bool {
+    scope_node(node)
+        && node.parent().is_some_and(|parent| {
+            parent.kind() == "call"
+                && parent
+                    .child_by_field_name("method")
+                    .is_some_and(|name| super::registration(text(name, source)))
+        })
+}
+
 /// Lexical identity alone cannot close mutable factories, property aliases or escaped values.
 ///
 /// `scope` is the program or an enclosing block whose body initializes the captures;
@@ -789,98 +883,126 @@ fn stable_captures(
     if captures.is_empty() {
         return true;
     }
-    let body = if scope.kind() == "program" {
-        Some(scope)
-    } else {
-        scope_body(scope)
-    };
-    let mut initialized = BTreeSet::new();
-    let mut immutable = BTreeSet::new();
-    let mut reads = BTreeSet::new();
-    let mut unsafe_names = BTreeSet::new();
-    let mut shadows: Vec<BTreeSet<String>> = Vec::new();
-    let mut pending = vec![(scope, false)];
-    while let Some((node, closing)) = pending.pop() {
-        if closing {
-            shadows.pop();
-            continue;
-        }
-        if node != scope {
-            if WALLS.contains(&node.kind()) {
+    let facts = CaptureFacts::walk(Some(handler), scope, source, &|name| {
+        captures.contains(name)
+    });
+    captures.iter().all(|name| facts.stable(name, parameters))
+}
+
+/// What a scope's body establishes about each tracked name: the facts `stable_captures`
+/// judges. Names never interact, so the facts of one name are the same whichever names are
+/// tracked alongside it.
+#[derive(Default)]
+struct CaptureFacts {
+    initialized: BTreeSet<String>,
+    immutable: BTreeSet<String>,
+    reads: BTreeSet<String>,
+    unsafe_names: BTreeSet<String>,
+}
+
+impl CaptureFacts {
+    /// Walks `scope` recording the names `tracked` accepts. `handler`'s own body is deferred,
+    /// as is every block a registration call defers; `None` defers only the latter.
+    fn walk(
+        handler: Option<Node<'_>>,
+        scope: Node<'_>,
+        source: &str,
+        tracked: &dyn Fn(&str) -> bool,
+    ) -> Self {
+        let body = if scope.kind() == "program" {
+            Some(scope)
+        } else {
+            scope_body(scope)
+        };
+        let mut facts = Self::default();
+        let mut shadows: Vec<BTreeSet<String>> = Vec::new();
+        let mut pending = vec![(scope, false)];
+        while let Some((node, closing)) = pending.pop() {
+            if closing {
+                shadows.pop();
                 continue;
             }
-            if scope_node(node) {
-                let rebound = parameter_names(node, source);
-                let deferred = node == handler
-                    || node.parent().is_some_and(|parent| {
-                        parent.kind() == "call"
-                            && parent
-                                .child_by_field_name("method")
-                                .is_some_and(|name| super::registration(text(name, source)))
-                    });
-                if deferred {
-                    shadows.push(rebound);
-                    deferred_writes(node, source, captures, &mut shadows, &mut unsafe_names);
-                    shadows.pop();
+            if node != scope {
+                if WALLS.contains(&node.kind()) {
                     continue;
                 }
-                shadows.push(rebound);
-                pending.push((node, true));
-            }
-        }
-        if node.kind() == "identifier"
-            && captures.contains(text(node, source))
-            && !shadows
-                .iter()
-                .any(|names| names.contains(text(node, source)))
-        {
-            let name = text(node, source);
-            let assignment = node.parent().filter(|n| {
-                n.kind() == "assignment"
-                    && n.parent() == body
-                    && n.child_by_field_name("left") == Some(node)
-            });
-            let right = assignment.and_then(|n| n.child_by_field_name("right"));
-            let literal = right.is_some_and(|n| {
-                scalar_literal(n)
-                    || string_literal(n, source).is_some()
-                    || callable_literal(n, source).is_some()
-            });
-            if assignment.is_some() {
-                if right.is_some_and(|n| n.kind() != "string") {
-                    immutable.insert(name.to_owned());
+                if scope_node(node) {
+                    let rebound = parameter_names(node, source);
+                    let deferred = handler == Some(node) || registration_block(node, source);
+                    if deferred {
+                        shadows.push(rebound);
+                        deferred_writes(
+                            node,
+                            source,
+                            tracked,
+                            &mut shadows,
+                            &mut facts.unsafe_names,
+                        );
+                        shadows.pop();
+                        continue;
+                    }
+                    shadows.push(rebound);
+                    pending.push((node, true));
                 }
-                if !literal || !initialized.insert(name.to_owned()) {
-                    unsafe_names.insert(name.to_owned());
-                }
-            } else if node.parent().is_some_and(|parent| {
-                matches!(parent.kind(), "assignment" | "operator_assignment")
-                    && parent.child_by_field_name("left") == Some(node)
-            }) {
-                unsafe_names.insert(name.to_owned());
-            } else {
-                reads.insert(name.to_owned());
             }
+            if node.kind() == "identifier"
+                && tracked(text(node, source))
+                && !shadows
+                    .iter()
+                    .any(|names| names.contains(text(node, source)))
+            {
+                let name = text(node, source);
+                let assignment = node.parent().filter(|n| {
+                    n.kind() == "assignment"
+                        && n.parent() == body
+                        && n.child_by_field_name("left") == Some(node)
+                });
+                let right = assignment.and_then(|n| n.child_by_field_name("right"));
+                let literal = right.is_some_and(|n| {
+                    scalar_literal(n)
+                        || string_literal(n, source).is_some()
+                        || callable_literal(n, source).is_some()
+                });
+                if assignment.is_some() {
+                    if right.is_some_and(|n| n.kind() != "string") {
+                        facts.immutable.insert(name.to_owned());
+                    }
+                    if !literal || !facts.initialized.insert(name.to_owned()) {
+                        facts.unsafe_names.insert(name.to_owned());
+                    }
+                } else if node.parent().is_some_and(|parent| {
+                    matches!(parent.kind(), "assignment" | "operator_assignment")
+                        && parent.child_by_field_name("left") == Some(node)
+                }) {
+                    facts.unsafe_names.insert(name.to_owned());
+                } else {
+                    facts.reads.insert(name.to_owned());
+                }
+            }
+            let mut cursor = node.walk();
+            pending.extend(node.named_children(&mut cursor).map(|child| (child, false)));
         }
-        let mut cursor = node.walk();
-        pending.extend(node.named_children(&mut cursor).map(|child| (child, false)));
+        facts
     }
-    captures.iter().all(|name| {
+
+    /// Whether `name` is stable: written once by a literal and either never read or
+    /// immutable, or one of the scope's own `parameters`.
+    fn stable(&self, name: &str, parameters: &BTreeSet<String>) -> bool {
         name == "<source-file>"
-            || (!unsafe_names.contains(name)
-                && if initialized.contains(name) {
-                    !reads.contains(name) || immutable.contains(name)
+            || (!self.unsafe_names.contains(name)
+                && if self.initialized.contains(name) {
+                    !self.reads.contains(name) || self.immutable.contains(name)
                 } else {
                     parameters.contains(name)
                 })
-    })
+    }
 }
 
 /// Writes inside a deferred body reach a capture unless a nearer scope rebinds the name.
 fn deferred_writes(
     body: Node<'_>,
     source: &str,
-    captures: &BTreeSet<String>,
+    tracked: &dyn Fn(&str) -> bool,
     shadows: &mut Vec<BTreeSet<String>>,
     unsafe_names: &mut BTreeSet<String>,
 ) {
@@ -907,7 +1029,7 @@ fn deferred_writes(
                     .iter()
                     .map(|n| text(*n, source).to_owned())
                     .filter(|name| {
-                        captures.contains(name) && !shadows.iter().any(|names| names.contains(name))
+                        tracked(name) && !shadows.iter().any(|names| names.contains(name))
                     }),
             );
         }
@@ -948,31 +1070,68 @@ mod tests {
     use super::super::load_phase::tests::parse;
     use super::*;
 
-    /// Asserts the per-file index answers every handler-shaped node exactly as the root walk does.
-    fn assert_index_matches_walk(source: &str, label: &str) -> usize {
+    /// Asserts the per-file index answers every handler-shaped node exactly as the root walk
+    /// does: the locals before it, by set and by name, and the stability of every name the file
+    /// mentions for each block a registration call defers. Returns the handler and registration
+    /// block counts.
+    fn assert_index_matches_walk(source: &str, label: &str) -> (usize, usize) {
         let tree = parse(source);
         let root = tree.root_node();
         let scope = RootScope::new(root, source);
-        let mut checked = 0;
+        let mut names: BTreeSet<String> = descendants(root)
+            .into_iter()
+            .filter(|node| node.kind() == "identifier")
+            .map(|node| text(node, source).to_owned())
+            .collect();
+        names.insert("<source-file>".to_owned());
+        let (mut checked, mut deferred) = (0, 0);
         for node in descendants(root) {
             if !matches!(node.kind(), "block" | "do_block" | "lambda" | "method") {
                 continue;
             }
-            let (mut indexed, mut walked) = (false, false);
+            let (mut indexed, mut looked_up, mut walked) = (false, false, false);
+            let before = locals_before(root, node, source, &mut walked);
             assert_eq!(
                 scope.locals_before(node, &mut indexed),
-                locals_before(root, node, source, &mut walked),
+                before,
                 "{label}: names"
             );
             assert_eq!(indexed, walked, "{label}: uncertain");
+            let outer = scope.outer_locals(Some(node.start_byte()), &mut looked_up);
+            for name in &names {
+                assert_eq!(
+                    outer.contains(name),
+                    before.contains(name),
+                    "{label}: outer {name}"
+                );
+            }
+            assert_eq!(looked_up, walked, "{label}: outer uncertain");
             checked += 1;
+            if !registration_block(node, source) {
+                continue;
+            }
+            let none = BTreeSet::new();
+            for name in &names {
+                let single = BTreeSet::from([name.clone()]);
+                assert_eq!(
+                    scope.stable_capture(name),
+                    stable_captures(node, root, source, &single, &none),
+                    "{label}: stable {name}"
+                );
+            }
+            assert_eq!(
+                names.iter().all(|name| scope.stable_capture(name)),
+                stable_captures(node, root, source, &names, &none),
+                "{label}: stable set"
+            );
+            deferred += 1;
         }
         assert_eq!(
             scope.constants(),
             &file_constants(root, source),
             "{label}: constants"
         );
-        checked
+        (checked, deferred)
     }
 
     /// The index equals the walk for every assignment form, nested scope, enclosing block and
@@ -1028,7 +1187,88 @@ def step_method
   Given('in method') { work }
 end
 "#;
-        assert!(assert_index_matches_walk(source, "matrix") >= 10);
+        assert!(assert_index_matches_walk(source, "matrix").0 >= 10);
+    }
+
+    /// The cached stability verdict equals the walk for every way a file-level local can be
+    /// written, read, shadowed or captured, and the handler shapes that keep their own walk
+    /// are compared through the fallback.
+    #[test]
+    fn root_stability_matches_the_walk_on_the_matrix() {
+        let source = r#"
+literal = 1
+Given('literal') { work(literal) }
+nonliteral = make
+Given('nonliteral') { work(nonliteral) }
+twice = 1
+twice = 2
+Given('twice') { work(twice) }
+later = 1
+Given('later') { work(later) }
+later = 3
+plus = 1
+plus += 1
+Given('plus') { work(plus) }
+inner = 1
+Given('inner write') { inner = 2 }
+Given('inner read') { work(inner) }
+text = "mutable"
+Given('text') { work(text) }
+[1].each { work(text) }
+frozen = :symbol
+[1].each { work(frozen) }
+Given('frozen') { work(frozen) }
+shadowed = 1
+[1].each { |shadowed| shadowed = 2 }
+Given('shadowed') { work(shadowed) }
+local = 1
+Given('block local') { |;local| local = 5 }
+Given('local') { work(local) }
+Given('file') { work(__FILE__) }
+CONST = 1
+Given('const') { work(CONST) }
+first, second = 1, 2
+Given('destructured') { work(first, second) }
+Given('before') { work(after_handler) }
+after_handler = 1
+step = lambda { work(text) }
+Given('lambda', &step)
+callable = -> { work(frozen) }
+Before { setup = 1 }
+Given('setup') { work(setup) }
+def helper_step
+  Given('in def') { work(literal) }
+end
+3.times do
+  nested = 4
+  Given('nested') { work(nested) }
+end
+"#;
+        let (checked, deferred) = assert_index_matches_walk(source, "stability");
+        assert!(
+            checked >= 24 && deferred >= 18,
+            "{checked} handlers, {deferred} deferred"
+        );
+    }
+
+    /// A handler that no registration call defers keeps its own walk: the reads in its own body
+    /// do not count for it, while they do count for every registration block, whose cached
+    /// verdict therefore differs from the lambda's.
+    #[test]
+    fn handlers_outside_registration_calls_keep_their_own_walk() {
+        let source = "text = \"mutable\"\nstep = lambda { work(text) }\nGiven('lambda', &step)\nGiven('block') { work(text) }\n";
+        let tree = parse(source);
+        let root = tree.root_node();
+        let scope = RootScope::new(root, source);
+        let mut handlers: Vec<_> = descendants(root)
+            .into_iter()
+            .filter(|node| matches!(node.kind(), "lambda" | "block"))
+            .collect();
+        handlers.sort_by_key(Node::start_byte);
+        let [lambda, block]: [Node<'_>; 2] = handlers.try_into().unwrap();
+        assert!(!Bindings::collect(lambda, &scope, source).uncertain);
+        assert!(Bindings::collect(block, &scope, source).uncertain);
+        assert!(!scope.stable_capture("text"));
     }
 
     /// The index equals the walk for every handler-shaped node in every Ruby fixture.
@@ -1049,13 +1289,16 @@ end
         }
         files.sort();
         assert!(files.len() > 100, "Ruby fixtures not found");
-        let checked: usize = files
-            .iter()
-            .map(|path| {
-                let source = std::fs::read_to_string(path).unwrap();
-                assert_index_matches_walk(&source, &path.display().to_string())
-            })
-            .sum();
-        assert!(checked > 100);
+        let (mut checked, mut deferred) = (0, 0);
+        for path in &files {
+            let source = std::fs::read_to_string(path).unwrap();
+            let counts = assert_index_matches_walk(&source, &path.display().to_string());
+            checked += counts.0;
+            deferred += counts.1;
+        }
+        assert!(
+            checked > 100 && deferred > 100,
+            "{checked} handlers, {deferred} deferred"
+        );
     }
 }
