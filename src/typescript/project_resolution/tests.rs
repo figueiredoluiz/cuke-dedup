@@ -1371,6 +1371,13 @@ fn package_extends_refuse_a_symlink_out_of_the_workspace_package() {
     }
 }
 
+/// The file name `specifier` resolves to from `root`, or `None` when it stays unresolved.
+fn resolved_file_name(root: &std::path::Path, specifier: &str) -> Option<String> {
+    resolve_from_root_step(root, specifier)
+        .unwrap()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+}
+
 /// Resolution follows only ECMAScript source suffixes. Every module suffix resolves (the
 /// control that the check is not "resolve nothing"); Ruby, JSON, CSS, feature files, declaration
 /// files, an uppercase suffix and a Ruby-only directory index do not, and a Ruby neighbour never
@@ -1401,11 +1408,7 @@ fn resolution_follows_only_ecmascript_source_suffixes() {
         ("ts/index.ts", ""),
     ];
     let directory = write_project(&files);
-    let resolve = |specifier: &str| {
-        resolve_from_root_step(directory.path(), specifier)
-            .unwrap()
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
-    };
+    let resolve = |specifier: &str| resolved_file_name(directory.path(), specifier);
     for (specifier, expected) in [
         ("./t.ts", Some("t.ts")),
         ("./t.tsx", Some("t.tsx")),
@@ -1429,6 +1432,22 @@ fn resolution_follows_only_ecmascript_source_suffixes() {
     ] {
         assert_eq!(resolve(specifier).as_deref(), expected, "{specifier}");
     }
+}
+
+/// An import of `./s.rb` resolves to `s.rb.ts` when that file exists, as TypeScript does (checked
+/// with `tsc --traceResolution`: the `.rb` is stripped, then `s.rb.ts` is used); with no such
+/// ECMAScript file the same specifier stays unresolved.
+#[test]
+fn an_appended_ecmascript_suffix_resolves_like_typescript() {
+    let directory = write_project(&[
+        ("package.json", "{}"),
+        ("s.rb", "# ruby\n"),
+        ("s.rb.ts", ""),
+        ("u.rb", "# ruby\n"),
+    ]);
+    let resolve = |specifier: &str| resolved_file_name(directory.path(), specifier);
+    assert_eq!(resolve("./s.rb").as_deref(), Some("s.rb.ts"));
+    assert_eq!(resolve("./u.rb"), None);
 }
 
 /// Every route that ends in `resolve_path` applies the same suffix rule: a tsconfig alias, a

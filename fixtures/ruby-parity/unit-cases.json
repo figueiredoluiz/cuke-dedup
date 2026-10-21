@@ -3496,6 +3496,12 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`every resolution route rejects non ecmascript targets`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "an_appended_ecmascript_suffix_resolves_like_typescript",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`an appended ecmascript suffix resolves like typescript`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     },

@@ -178,5 +178,5 @@ test("Ruby groups mirror their source case's axes and origin", async () => {
     assert.equal(group.origin, source.origin, `${group.name}: origin differs from ${source.name}`);
   }
   // The count pins the rule: a new mirrored group is a deliberate change here.
-  assert.equal(mirrored, 71);
+  assert.equal(mirrored, 72);
 });
