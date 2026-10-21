@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { judgeRecallCase } from "../../check/lib/recall-runner.mjs";
+import { census } from "../../check/lib/pair-census-fixture.mjs";
 import { classifyCase, evaluateCase } from "./classify.mjs";
 
 /** A recall case with one duplicate-matcher expectation, overridable. */
@@ -203,7 +204,7 @@ test("a throwing observation becomes an unobservable case", async () => {
 /** A fingerprint record with every field an isolation reads. */
 const fingerprint = (line, matcher, handler = {}) => ({
   schemaVersion: "1", path: "steps.ts", line, column: 1, domain: "ecmascript", framework: "cucumber-js", registration: "Given",
-  matcher, matcherKind: "cucumber-expression", matcherFlags: "", normalizedMatcher: matcher,
+  definitionFingerprint: `definition-${line}`, matcher, matcherKind: "cucumber-expression", matcherFlags: "", normalizedMatcher: matcher,
   handler: { exact: "e", normalized: "n", alphaNormalized: "a", structural: "s", behavior: "b", comparable: true, trivial: false, ...handler },
 });
 
@@ -228,21 +229,37 @@ test("a declared isolation must hold before an absence is credited", () => {
   const records = [fingerprint(1, "one"), fingerprint(2, "two", { behavior: "other" })];
   /** A duplicate-handler absence over the two matchers with the given isolation. */
   const absence = (isolation) => ({ rule: "duplicate-handler", matchers: ["one", "two"], isolation });
-  // `compared: true` needs a run whose candidate limits skipped nothing.
-  const unlimited = { truncated: false, skippedCandidateComparisons: 0, truncatedStructuralClasses: 0, candidateSources: {} };
-  /** Classifies the absence with its run's analysis reporting no skipped comparisons. */
-  const run = (isolation) => {
-    const observation = observed([], records);
+  // `not-proposed` needs a pair file that matches the census and a run that skipped nothing.
+  const unlimited = census();
+  /** Classifies the absence with its run's analysis reporting no skipped comparisons and, by default, an empty pair file. */
+  const run = (isolation, pairsText = "") => {
+    const observation = { ...observed([], records), pairsText };
     observation.report.analysis = unlimited;
     return classifyCase(baseCase({ expectedFindings: [], expectedAbsent: [absence(isolation)] }), observation);
   };
-  const holds = run({ compared: true, differs: ["matcher", "normalizedMatcher", "handler.behavior"] });
+  const declared = { compared: "not-proposed", reason: "behavior-differs", differs: ["matcher", "normalizedMatcher", "handler.behavior"] };
+  const holds = run(declared);
   assert.equal(holds.rules["duplicate-handler"].tn, 1);
   assert.deepEqual(holds.entries, []);
-  const broken = run({ compared: true, differs: ["matcher"] });
+  const broken = run({ ...declared, differs: ["matcher"] });
   assert.equal(broken.rules["duplicate-handler"]?.tn ?? 0, 0);
   assert.equal(broken.entries[0].kind, "isolation-failed");
   assert.match(broken.entries[0].error, /declared \[matcher\]/);
+  // The same declaration is not credited without the pair file the evidence comes from.
+  const noFile = run(declared, null);
+  assert.equal(noFile.rules["duplicate-handler"]?.tn ?? 0, 0);
+  assert.match(noFile.entries[0].error, /wrote no --emit-pairs file/);
+  // A pair file that does not parse fails the isolation, not the case: the result stays observable.
+  const cut = run(declared, '{"schemaVersion":"1","left":');
+  assert.equal(cut.observable, true);
+  assert.match(cut.entries[0].error, /the pair file does not parse/);
+  // A matcher rule's isolation never reads the file either.
+  const matcherAbsence = { rule: "normalized-matcher", matchers: ["one", "two"], isolation: { differs: ["matcher", "normalizedMatcher", "handler.behavior"] } };
+  const matcher = classifyCase(baseCase({ expectedFindings: [], expectedAbsent: [matcherAbsence] }), { ...observed([], records), pairsText: '{"schemaVersion":"1","left":' });
+  assert.equal(matcher.rules["normalized-matcher"].tn, 1);
+  // Control: a case with no isolation never reads the file.
+  const unread = { ...observed([], records), pairsText: '{"schemaVersion":"1","left":' };
+  assert.equal(classifyCase(baseCase({ expectedFindings: [], expectedAbsent: [{ rule: "duplicate-handler", matchers: ["one", "two"] }] }), unread).rules["duplicate-handler"].tn, 1);
   // An absence with no isolation is still credited when the finding is absent.
   assert.equal(classifyCase(baseCase({ expectedFindings: [], expectedAbsent: [{ rule: "duplicate-handler", matchers: ["one", "two"] }] }), observed([], records)).rules["duplicate-handler"].tn, 1);
 });

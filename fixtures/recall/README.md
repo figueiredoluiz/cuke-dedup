@@ -86,30 +86,30 @@ fail, and a case that also requires findings keeps its exact `expectedExit`. `va
 `variantOf`, the name of a non-variant case it varies. A case with `expectedDefinitions` 0 has no
 records and skips the `language` and `frameworks` check; any other case with no records fails.
 
-An `expectedAbsent` entry passes whenever its finding is missing, including when a participant was
-never analyzed or the pair differs in more than the case claims. For `duplicate-handler`,
-`near-duplicate-step`, `parameterization-candidate`, `duplicate-matcher` and `normalized-matcher`,
-an `isolation` object states why the finding is absent, and the corpus check verifies it against
-the run's `--emit-fingerprints` records:
+An `expectedAbsent` entry passes whenever its finding is missing, including when a participant was never analyzed, the analyzer never evaluated the pair, or the pair differs in more than the case claims. For `duplicate-handler`, `near-duplicate-step`, `parameterization-candidate`, `duplicate-matcher` and `normalized-matcher`, an `isolation` object states why the finding is absent, and the corpus check verifies it against the run's `--emit-fingerprints` records and, for the handler rules, its `--emit-pairs` records:
 
-- `participants`: `path:line` labels, one distinct record each. Without it, each of the entry's
-  `matchers` must select exactly one record. Either way the participants' matchers must be exactly the
-  entry's `matchers`; with `relatedLocations`, their labels must be exactly the entry's primary and
-  related locations, and with a primary alone they must include it; `primaryPath` and
-  `primaryLine` come together. Every record must be schema
-  `"1"` with each compared field present.
-- `differs`: exactly the record fields that differ between participants, from `domain`,
-  `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher` and
-  `handler.exact|normalized|alphaNormalized|structural|behavior`.
-- `compared` (handler rules only): `true` when every participant is comparable and not trivial
-  and the run's report shows no truncation and no skipped candidate or structural-class
-  comparison (records show eligibility, not that the pair was evaluated);
-  `false` when the pair was excluded from comparison. An excluded pair must have equal handler
-  fields, so differing handlers cannot also explain the absence.
+- `participants`: `path:line` labels, with the path in the form the JSON report writes it, one distinct record each. Without it, each of the entry's `matchers` must select exactly one record. Either way the participants' matchers must be exactly the entry's `matchers`; with `relatedLocations`, their labels must be exactly the entry's primary and related locations, and with a primary alone they must include it; `primaryPath` and `primaryLine` come together. Every record must be schema `"1"` with each compared field present. A handler rule compares exactly two participants.
+- `differs`: exactly the record fields that differ between participants, from `domain`, `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher` and `handler.exact|normalized|alphaNormalized|structural|behavior`.
+- `compared` (handler rules only) states what the analyzer did with the pair, and each state is proven from the pair records. A participant is eligible when its handler is comparable and not trivial.
+- `reason`: required with `not-proposed` (`behavior-differs`) and `unevaluated-under-limit` (`candidate-limit`), and allowed nowhere else.
+- `handlerDifference`: `unresolved-value`, only with `compared: false` and only when the excluded participants' handlers differ.
 
-`unisolatedNegativeBaseline` counts entries of those rules without `isolation`. It is asserted
-exactly: declare an isolation and lower it. `unused-definition`, `ambiguous-step` and
-`overlapping-matcher` also depend on feature steps and take no `isolation`.
+The states and the evidence each requires:
+
+- `true`: the analyzer evaluated the pair and the rule did not fire. Eligible participants; exactly one pair record joins them, with `meaningfulHandlers: true`; its `rules` omit the entry's rule, since otherwise the finding was produced and then suppressed or collapsed.
+- `false`: the analyzer excluded the pair from comparison. A participant is not comparable or is trivial, or eligible participants whose pair record has `meaningfulHandlers: false` (runtime-incompatible handlers; the record is the analyzer's verdict, and the check requires the participants to differ in `framework` (the handler domain: scenario-local, plugin-global or shared) or, for Ruby, in file (lexical capture), the two things the verdict reads besides the method semantics in the behavior signature, which would be a handler difference and a second reason for the absence). A record that exists never says the handlers are meaningful while a participant is ineligible; eligible participants with no record are rejected, since nothing then shows the exclusion. Handler fields must be equal, because differing handlers would be a second reason for the absence, unless `handlerDifference` is declared.
+- `"not-proposed"`: no candidate source proposed the pair. Eligible participants; no pair record; a report in which no pair-proposing source (`normalizedMatcher`, `identicalHandler`, `structuralHandler`, `matcherBlocking`) skipped a comparison and no structural class was truncated; the missing record in a run that skipped nothing shows no source, matcher blocking included, proposed the pair; `differs` must include `handler.behavior` and `normalizedMatcher`, the keys the other three sources group by, since an unproposed pair with equal keys would be unexplained.
+- `"unevaluated-under-limit"`: an explicit exemption for a case that runs under a candidate limit. Eligible participants; no pair record; `differs` includes `handler.behavior` and `normalizedMatcher`, as for `not-proposed`; a report in which a pair-proposing source skipped a comparison or a structural class was truncated. The census counts skips without naming the pairs, so it cannot show whether the limit dropped this pair or no source would have proposed it; the entry claims only that the pair was not evaluated while limits applied, and pins that no finding appears then.
+
+Whenever a pair record joins the participants, in any state, its `relationships` must agree with the fingerprint records: `sameHandler` is `handler.alphaNormalized` and `handler.behavior` both equal, `sameHandlerStructure` is `handler.structural` equal, `sameStructure` is `handler.structural` and `handler.behavior` both equal, and `sameDeferredAssertions` may be false only when `handler.behavior` differs. `exactMatcher` is false when `matcher` or `matcherKind` differs, true when neither differs and `matcherFlags` and `domain` are equal, and open otherwise (raw flags can differ with equal effective flags, and each dialect reads them its own way). `normalizedMatcher` follows `normalizedMatcher` and `matcherKind` the same way, and is false for a positional pair.
+
+Choose the state in this order: `true`, by reworking the fixture or the participant selection so the pair is evaluated (the identical-handler source proposes a handler group's anchor against the other matcher groups, so a later duplicate's pair with another framework's definition has no record while the anchor's does); `false` when the exclusion is visible in the evidence; `not-proposed` where the separation happens at candidate generation. A provenance negative whose handlers differ in a value the analyzer reads is that case: the behavior signature keys the identical-handler and structural-handler sources, and matcher blocking drops value-only differences and pairs that cannot reach the handler similarity gate. Padding the handlers until matcher blocking proposes the pair would let a handler similarity threshold decide the outcome, a second reason for the absence. `unevaluated-under-limit` is only for a case that runs under a candidate limit.
+
+`handlerDifference: unresolved-value` is for an excluded pair whose handlers differ because they reference a value the analyzer cannot resolve (a mutable binding, a nested declaration or a shadowed one). Both participants must be non-comparable and equal in `handler.behavior`. Equal handlers would change what such a case tests: the value substitution it forbids would no longer make a difference.
+
+The run must provide the evidence. A handler-rule isolation rejects the case when the run wrote no pair file, when the pair file holds a different number of records than the pair-proposing sources evaluated (summed from the report's `candidateSources`; matcher overlap writes no pair record and its counts are ignored), when a pair record is outside schema `"1"`, when several records join one pair, when a definition key (path, line and column in the report's form) is shared by several fingerprint records, as when one source position registers several steps and the pair cannot be told apart, and when an endpoint's `definitionFingerprint` is not the fingerprint record's. An unknown `compared` value, `reason` or `handlerDifference` is rejected, and so is `reason` or `handlerDifference` where it does not apply. The gate and `corpus:evaluate` run only a case that declares a handler-rule isolation with `--emit-pairs`; `corpus:candidate-recall` requests them for every case. A rule its case configuration switches off also leaves a pair record's `rules` without it, which no evidence distinguishes, so a unit test rejects an isolation on a disabled rule. Matcher rules are decided by the keys in the fingerprint records and take no pair evidence.
+
+`unisolatedNegativeBaseline` counts entries of those rules without `isolation`. It is asserted exactly and is 0: a new handler or matcher negative declares an isolation. `unused-definition`, `ambiguous-step` and `overlapping-matcher` also depend on feature steps and take no `isolation`.
 
 The fixtures are synthetic and contain no private project data.
 

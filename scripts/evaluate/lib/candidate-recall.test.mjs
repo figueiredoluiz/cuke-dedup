@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { census } from "../../check/lib/pair-census-fixture.mjs";
 import { aggregateCandidateRecall, candidateRecallForCase, recallForCase, renderCandidateMarkdown } from "./candidate-recall.mjs";
 
 /** A recall case expecting one duplicate-matcher pair over matchers `a` and `a`, overridable. */
@@ -21,11 +22,20 @@ const finding = (rule, first, second, extra = []) => ({
 
 /** A pair record between two `steps.ts` lines (column 1), proposed by `sources` and producing `rules`. */
 const pair = (left, right, sources = ["normalizedMatcher"], rules = ["duplicate-matcher"]) => ({
-  left: { path: "steps.ts", line: left, column: 1 },
-  right: { path: "steps.ts", line: right, column: 1 },
+  schemaVersion: "1",
+  left: { path: "steps.ts", line: left, column: 1, definitionFingerprint: `definition-${left}` },
+  right: { path: "steps.ts", line: right, column: 1, definitionFingerprint: `definition-${right}` },
   candidateSources: sources,
+  relationships: {
+    exactMatcher: true, normalizedMatcher: true, sameHandler: true, sameHandlerStructure: true, sameStructure: true, sameDeferredAssertions: true,
+  },
+  meaningfulHandlers: true,
+  positional: false,
   rules,
 });
+
+/** A pair record between two arbitrary endpoint locations, proposed by `sources`. */
+const between = (left, right, sources) => ({ ...pair(1, 2, sources), left: { ...left, definitionFingerprint: "left" }, right: { ...right, definitionFingerprint: "right" } });
 
 /** A fingerprint record for a definition with `matcher` at `steps.ts:line` and `column`. */
 const definition = (line, matcher, column = 1) => ({ path: "steps.ts", line, column, matcher });
@@ -35,7 +45,7 @@ const observed = (findings, pairs = [], definitions = []) => ({
   status: 0,
   stderr: "",
   spawnFailure: null,
-  report: { findings, analysis: { truncated: false, skippedCandidateComparisons: 0, truncatedStructuralClasses: 0 } },
+  report: { findings, analysis: census({ evaluated: pairs.length }) },
   fingerprintsText: definitions.map((record) => JSON.stringify(record)).join("\n"),
   pairsText: pairs.map((record) => JSON.stringify(record)).join("\n"),
 });
@@ -84,10 +94,7 @@ test("definitions on one line are joined by column", () => {
   const second = { ...finding("duplicate-matcher", 1, 1), primary: at(1), related: [at(20)] };
   /** A pair-record endpoint on line 1 at `column`. */
   const side = (column) => ({ path: "steps.ts", line: 1, column });
-  const pairs = [
-    { left: side(1), right: side(10), candidateSources: ["normalizedMatcher"], rules: ["duplicate-matcher"] },
-    { left: side(1), right: side(20), candidateSources: ["identicalHandler"], rules: ["duplicate-matcher"] },
-  ];
+  const pairs = [between(side(1), side(10), ["normalizedMatcher"]), between(side(1), side(20), ["identicalHandler"])];
   const result = candidateRecallForCase(baseCase({ expectedFindings: [{ rule: "duplicate-matcher", count: 2 }] }), observed([first, second], pairs));
   assert.deepEqual(result.positives.map((positive) => positive.sources), [["normalizedMatcher"], ["identicalHandler"]]);
 });
@@ -107,6 +114,19 @@ test("only owned, active pair findings are positives", () => {
   assert.deepEqual(result.positives.map((positive) => positive.at), [["steps.ts:1:1", "steps.ts:2:1"]]);
 });
 
+/** Checks a pair file the join cannot trust makes the case unobservable instead of scoring it. */
+test("a pair file with a malformed or doubled record is not observable", () => {
+  const definitions = [definition(1, "a"), definition(2, "a")];
+  const doubled = candidateRecallForCase(baseCase(), observed([finding("duplicate-matcher", 1, 2)], [pair(1, 2), pair(2, 1)], definitions));
+  assert.equal(doubled.observable, false);
+  assert.match(doubled.runFailure, /several pair records join/);
+  const foreign = candidateRecallForCase(baseCase(), observed([], [{ ...pair(1, 2), schemaVersion: "2" }], definitions));
+  assert.equal(foreign.observable, false);
+  assert.match(foreign.runFailure, /pair record 1 is not schema 1/);
+  // Control: the same pair, once and well formed, is joined.
+  assert.equal(candidateRecallForCase(baseCase(), observed([finding("duplicate-matcher", 1, 2)], [pair(1, 2)], definitions)).observable, true);
+});
+
 /** Checks a missing pair is not blamed on candidate generation when a limit may have skipped it. */
 test("a limit on the run turns never-proposed into skipped-by-limit", () => {
   /** The base observation with its report analysis replaced. */
@@ -116,11 +136,23 @@ test("a limit on the run turns never-proposed into skipped-by-limit", () => {
   };
   /** The state of the missing pair under the given analysis. */
   const state = (analysis) => candidateRecallForCase(baseCase(), withAnalysis(analysis)).discarded[0].state;
-  assert.equal(state({ truncated: false, skippedCandidateComparisons: 0, truncatedStructuralClasses: 0 }), "never-proposed");
-  assert.equal(state({ truncated: true, skippedCandidateComparisons: 0, truncatedStructuralClasses: 0 }), "skipped-by-limit");
-  assert.equal(state({ truncated: false, skippedCandidateComparisons: 2, truncatedStructuralClasses: 0 }), "skipped-by-limit");
-  assert.equal(state({ truncated: false, skippedCandidateComparisons: 0, truncatedStructuralClasses: 1 }), "skipped-by-limit");
-  assert.equal(state(undefined), "skipped-by-limit");
+  // The census fixture's matcher overlap skips and sets `truncated`, which must not blame a limit for a missing pair.
+  assert.equal(state(census()), "never-proposed");
+  assert.equal(state(census({ skipped: 2 })), "skipped-by-limit");
+  assert.equal(state(census({ structural: 1 })), "skipped-by-limit");
+  // A census that cannot be read blames neither candidate generation nor a limit: the case is not observable.
+  /** The result for a run whose report carries `analysis`. */
+  const unreadable = (analysis) => candidateRecallForCase(baseCase(), withAnalysis(analysis));
+  // A pair file that holds more or fewer records than the census counts is not observable either.
+  const mismatched = candidateRecallForCase(baseCase(), { ...observed([], [pair(1, 2)], [definition(1, "a"), definition(2, "a")]), report: { findings: [], analysis: census() } });
+  assert.equal(mismatched.observable, false);
+  assert.match(mismatched.runFailure, /the pair file holds 1 records, the report's pair-source census counts 0/);
+  for (const analysis of [undefined, { ...census(), truncatedStructuralClasses: undefined }, { ...census(), candidateSources: { ...census().candidateSources, futureSource: { evaluated: 0, skipped: 0 } } }]) {
+    const result = unreadable(analysis);
+    assert.equal(result.observable, false);
+    assert.match(result.runFailure, /the report's candidate census/);
+  }
+  assert.match(unreadable({ ...census(), candidateSources: { ...census().candidateSources, futureSource: { evaluated: 0, skipped: 0 } } }).runFailure, /futureSource/);
 });
 
 /** Checks a counted shortfall is diagnosed from pairs other than the ones already reported. */
@@ -150,7 +182,7 @@ test("a cluster with truncated related locations is an anomaly, not a positive",
 test("a path the report sanitized joins to its raw record path", () => {
   const raw = "ste\u200bps.ts";
   const sanitized = { ...finding("duplicate-matcher", 1, 2) };
-  const rawPair = { left: { path: raw, line: 1, column: 1 }, right: { path: raw, line: 2, column: 1 }, candidateSources: ["identicalHandler"], rules: ["duplicate-matcher"] };
+  const rawPair = between({ path: raw, line: 1, column: 1 }, { path: raw, line: 2, column: 1 }, ["identicalHandler"]);
   const joined = candidateRecallForCase(baseCase(), observed([sanitized], [rawPair]));
   assert.deepEqual(joined.positives[0].sources, ["identicalHandler"]);
   // Control: a path that only looks similar is not joined, and tabs and line breaks are kept as the report keeps them.
@@ -266,6 +298,10 @@ test("a run with no report, no pair records or a tool failure is unobservable", 
   // A process error with a report, pairs and an allowed exit is unobservable; the control without one is observable.
   assert.equal(candidateRecallForCase(baseCase(), { ...ok, spawnFailure: "spawnSync ENOBUFS" }).runFailure, "spawnSync ENOBUFS");
   assert.equal(candidateRecallForCase(baseCase(), ok).observable, true);
+  // A pair file cut short is unobservable with its own cause; the control above parses.
+  const cut = candidateRecallForCase(baseCase(), { ...ok, pairsText: '{"left":' });
+  assert.equal(cut.observable, false);
+  assert.match(cut.runFailure, /the pair file does not parse/);
   const failed = await recallForCase(baseCase(), async () => { throw new Error("bad JSON"); });
   assert.match(failed.runFailure, /observation failed: bad JSON/);
 });

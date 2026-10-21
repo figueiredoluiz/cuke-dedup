@@ -4,6 +4,7 @@
 // verification miss. It reads `--emit-pairs` records and asserts nothing.
 
 import { parseRecords } from "../../check/lib/negative-isolation.mjs";
+import { assertPairFile, assertPairRecords, definitionKey, recordLabel, setKey } from "../../check/lib/pair-join.mjs";
 import { partitionAmbiguous } from "../../check/lib/manifest-schema.mjs";
 import { countMatches } from "../../check/lib/recall-oracle.mjs";
 import { isOperationalExit } from "./classify.mjs";
@@ -16,26 +17,6 @@ export const PAIR_RULES = Object.freeze([
   "near-duplicate-step",
   "parameterization-candidate",
 ]);
-
-/** The unordered key of a set of definition keys. */
-function setKey(keys) {
-  return [...keys].sort().join("|");
-}
-
-/**
- * The path as the JSON report writes it. Reports drop control characters other than line breaks and
- * tabs, plus bidirectional and invisible-format characters (`report_safe` in the reporters), while
- * `--emit-pairs` and `--emit-fingerprints` keep them raw; keys are compared in the report's form.
- * Two paths that differ only by such characters share a key.
- */
-function reportPath(path) {
-  return path.replace(/(?![\n\r\t])[\p{Cc}\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/gu, "");
-}
-
-/** The key of a definition: path, line and column, since several registrations can share a line. */
-export function definitionKey({ path, line, column }) {
-  return `${reportPath(path)}:${line}:${column}`;
-}
 
 /**
  * The definitions that could stand at each end of an expected pair: the ones at its declared
@@ -55,24 +36,13 @@ function endpointsOf(expected, records) {
   if (expected.messageIncludes || expected.cluster !== undefined || expected.relatedCount !== undefined || (hasLocation && !located)) return null;
   if (located) {
     const labels = [`${expected.primaryPath}:${expected.primaryLine}`, expected.relatedLocations[0]];
-    return { ends: labels.map((label) => keysWhere((record) => `${reportPath(record.path)}:${record.line}` === label)) };
+    return { ends: labels.map((label) => keysWhere((record) => recordLabel(record) === label)) };
   }
   if (Array.isArray(expected.matchers) && expected.matchers.length === 2) {
     const [left, right] = expected.matchers;
     return { ends: [keysWhere((record) => record.matcher === left), keysWhere((record) => record.matcher === right)] };
   }
   return null;
-}
-
-/**
- * Whether the run evaluated every candidate pair it generated. When a limit stopped candidate
- * generation or verification, a pair with no record may have been skipped rather than never
- * proposed, because `--emit-pairs` records only the pairs that were evaluated.
- * @param {object|undefined} analysis The report's `analysis` section.
- * @returns {boolean}
- */
-function complete(analysis) {
-  return analysis?.truncated === false && analysis.skippedCandidateComparisons === 0 && analysis.truncatedStructuralClasses === 0;
 }
 
 /**
@@ -84,7 +54,10 @@ function complete(analysis) {
  * @param {object[]} context.records Parsed `--emit-fingerprints` records.
  * @param {Map<string, object>} context.pairsByKey Pair records by endpoint key.
  * @param {Set<string>} context.reported `rule|pair` keys credited to reported findings.
- * @param {boolean} context.complete Whether the run evaluated every pair it generated.
+ * @param {boolean} context.complete Whether the run evaluated every pair it generated. When a limit stopped
+ *   candidate generation or verification, a pair with no record may have been skipped rather than never
+ *   proposed, because `--emit-pairs` records only the pairs that were evaluated. Only the pair-proposing
+ *   sources count: matcher overlap has its own limits and cannot drop a pair.
  * @returns {"definitions-not-extracted"|"never-proposed"|"skipped-by-limit"|"evaluated-no-finding"|"unresolved"}
  */
 function pairState(expected, { records, pairsByKey, reported, complete: exhaustive }) {
@@ -121,7 +94,21 @@ export function candidateRecallForCase(testCase, observation) {
     const cause = spawnFailure ?? `exit ${status}${report === null ? " wrote no JSON report" : pairsText === null ? " wrote no pair records" : ""}: ${observation.stderr}`.trim();
     return { name: testCase.name, observable: false, runFailure: cause, positives: [], discarded: [], anomalies: [] };
   }
-  const pairs = parseRecords(pairsText);
+  // A pair file that does not parse, a census this join cannot read, or a pair file that does not
+  // match it, says nothing about what was skipped or never proposed, so the case is not observable.
+  let pairs;
+  let census;
+  try {
+    try {
+      pairs = parseRecords(pairsText);
+    } catch (error) {
+      throw new Error(`the pair file does not parse: ${error.message}`);
+    }
+    census = assertPairFile(pairs, report.analysis);
+    assertPairRecords(pairs);
+  } catch (error) {
+    return { name: testCase.name, observable: false, runFailure: error.message, positives: [], discarded: [], anomalies: [] };
+  }
   const records = parseRecords(observation.fingerprintsText ?? "");
   const pairsByKey = new Map(pairs.map((pair) => [setKey([definitionKey(pair.left), definitionKey(pair.right)]), pair]));
   // Ownership is decided as the classifier decides it: ambiguous findings are set aside, and one pass
@@ -146,7 +133,7 @@ export function candidateRecallForCase(testCase, observation) {
   const discarded = [];
   // Pairs credited to a reported finding, so a counted shortfall is diagnosed from the others.
   const reported = new Set();
-  const context = { records, pairsByKey, reported, complete: complete(report.analysis) };
+  const context = { records, pairsByKey, reported, complete: !census.limited };
   for (const [{ expected, miss }, findings] of attributed) {
     for (const finding of findings.slice(0, miss ? 1 : expected.count ?? 1)) {
       // The report keeps a bounded number of related locations. A cluster beyond it has members the

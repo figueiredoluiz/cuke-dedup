@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cp } from "node:fs/promises";
 import { join } from "node:path";
-import { checkIsolation, isolatable, parseRecords } from "./negative-isolation.mjs";
+import { checkIsolation, isolatable, pairFileReader, parseRecords, readsPairs } from "./negative-isolation.mjs";
 import { readOptional } from "./read-optional.mjs";
 import {
   exitAcceptable,
@@ -53,6 +53,15 @@ export function assertCaseWellFormed(testCase, today) {
 }
 
 /**
+ * Whether the case needs the run's `--emit-pairs` records: the isolation of a handler rule reads them.
+ * @param {object} testCase Recall manifest case.
+ * @returns {boolean}
+ */
+export function usesPairs(testCase) {
+  return (testCase.expectedAbsent || []).some((expected) => expected.isolation !== undefined && readsPairs(expected.rule));
+}
+
+/**
  * Runs one recall case through the binary and returns what it produced. Nothing is asserted: a
  * failed run still returns its status and whatever outputs exist. A report that exists but is not
  * valid JSON throws, since the run is then not observable.
@@ -61,14 +70,15 @@ export function assertCaseWellFormed(testCase, today) {
  * @param {string} options.recallRoot Directory holding the recall case directories.
  * @param {string} options.scratch Directory the case's copy and outputs are written under.
  * @param {object} options.testCase Recall manifest case.
- * @param {boolean} [options.emitPairs] Also write `--emit-pairs` records; the gate does not.
+ * @param {boolean} [options.emitPairs] Whether to write `--emit-pairs` records; by default when the case's
+ *   isolations read them ({@link usesPairs}).
  * @returns {Promise<{status: number|null, stderr: string, spawnFailure: string|null,
  *   report: object|null, fingerprintsText: string|null, pairsText: string|null}>} The run's exit
  *   status, stderr, why it did not run to an exit status (a spawn error or a signal, else `null`),
  *   JSON report, raw `--emit-fingerprints` text and raw `--emit-pairs` text (`null` unless
  *   requested); the report and the texts are `null` when the run wrote none.
  */
-export async function observeRecallCase({ binary, recallRoot, scratch, testCase, emitPairs = false }) {
+export async function observeRecallCase({ binary, recallRoot, scratch, testCase, emitPairs = usesPairs(testCase) }) {
   const caseRoot = join(scratch, "case");
   const output = join(scratch, "report");
   const fingerprints = join(scratch, "fingerprints.jsonl");
@@ -102,7 +112,7 @@ export async function observeRecallCase({ binary, recallRoot, scratch, testCase,
  *   check that must not stop the case when it fails.
  */
 export async function judgeRecallCase(testCase, observation, { totals, knownIds, attemptCheck }) {
-  const { status, stderr, spawnFailure, report, fingerprintsText } = observation;
+  const { status, stderr, spawnFailure, report, fingerprintsText, pairsText } = observation;
   assert.ok(
     exitAcceptable(status, testCase.expectedExit || 0, testCase),
     `${testCase.name}: exit ${status}, expected ${testCase.expectedExit || 0}: ${spawnFailure ?? stderr}`,
@@ -165,6 +175,9 @@ export async function judgeRecallCase(testCase, observation, { totals, knownIds,
   }
 
   const records = parseRecords(fingerprintsText ?? "");
+  // Only a handler rule's isolation reads the pair file: one cut short fails those isolations, and a
+  // missing one is rejected by the isolation that needs it.
+  const readPairs = pairFileReader(pairsText);
   validateAgainstRecords(testCase, records);
   for (const expected of testCase.expectedAbsent || []) {
     assertFindingCount(activeFindings, expected, 0, `${testCase.name}: deliberate non-finding`);
@@ -172,7 +185,7 @@ export async function judgeRecallCase(testCase, observation, { totals, knownIds,
     if (expected.isolation !== undefined) {
       await attemptCheck(
         `recall ${testCase.name}: isolation ${JSON.stringify(expected.matchers ?? expected.isolation.participants)}`,
-        () => checkIsolation(records, expected, report.analysis),
+        () => checkIsolation(records, expected, report.analysis, readPairs),
       );
     } else if (isolatable(expected.rule)) {
       totals.unisolated += 1;
