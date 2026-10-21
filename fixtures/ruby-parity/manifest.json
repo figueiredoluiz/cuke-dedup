@@ -1734,6 +1734,7 @@
     "equivalent-assertions-cases.json",
     "equivalent-providers-cases.json",
     "equivalent-handlers-cases.json",
-    "equivalent-boundaries-cases.json"
+    "equivalent-boundaries-cases.json",
+    "string-escapes-cases.json"
   ]
 }

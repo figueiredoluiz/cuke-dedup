@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "groupOracles": {
+    "string-escapes-decoded": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-21",
+      "axes": ["matcher-normalization"],
+      "path": "string-escapes/decoded",
+      "definitions": 8,
+      "featureSteps": 4,
+      "complete": true,
+      "expectedExit": 1,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 6
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 8
+        },
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 10
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 4
+        },
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 5
+        },
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 12
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "duplicate-handler"
+        }
+      ]
+    }
+  },
+  "mappings": []
+}

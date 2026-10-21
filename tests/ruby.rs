@@ -11521,7 +11521,7 @@ fn ruby_parity_manifest_groups_match_their_scalar_oracles() {
             assert_eq!(evaluated, count, "{name}: {source} candidates");
         }
     }
-    assert_eq!(groups.len(), 140, "executed parity groups");
+    assert_eq!(groups.len(), 141, "executed parity groups");
 }
 
 /// Returns the `cuke-dedup:` stderr lines without the tool prefix, keeping `warning: ` so the
