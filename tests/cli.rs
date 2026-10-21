@@ -8017,3 +8017,140 @@ fn regression_gherkin_parse_error_token_order_is_deterministic() {
         "{line}"
     );
 }
+
+/// Runs `steps.rb` and `steps.feature` through the built binary with the Ruby definition pattern.
+fn ruby_escape_run(steps: &str, feature: &str) -> RubyReleaseRun {
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "steps.rb", steps);
+    write(directory.path(), "steps.feature", feature);
+    ruby_run(directory.path(), &["--definitions", "steps.rb"])
+}
+
+/// Every escape Ruby decodes in a double-quoted matcher gives the value Ruby builds: the escaped
+/// spelling duplicates its plain twin and matches the feature step, while a matcher that differs
+/// by one character does neither. Controls: unmodeled escapes (control and meta forms, bytes that
+/// are not UTF-8, `\x` without digits) keep the run incomplete, and a single-quoted literal keeps
+/// its backslash.
+#[test]
+fn regression_192_ruby_double_quoted_escapes_decode_to_ruby_values() {
+    for (escaped, twin, step) in [
+        (
+            r#""tab\sseparated""#,
+            "'tab separated'",
+            Some("tab separated"),
+        ),
+        (
+            r#""the \e[1mbold\e[0m step""#,
+            "'the \u{1b}[1mbold\u{1b}[0m step'",
+            None,
+        ),
+        (r#""bell\a\b\f\v""#, "'bell\u{7}\u{8}\u{c}\u{b}'", None),
+        (r#""item \x41""#, "'item A'", Some("item A")),
+        (r#""item \101""#, "'item A'", Some("item A")),
+        (r#""caf\xC3\xA9""#, "'café'", Some("café")),
+        (r#""caf\303\251""#, "'café'", Some("café")),
+        (r#""keep\d+""#, "'keepd+'", Some("keepd+")),
+        (r#""nul\0end""#, "'nul\u{0}end'", None),
+    ] {
+        let steps = format!("Given({escaped}) {{ first() }}\nGiven({twin}) {{ second() }}\n");
+        let feature = format!(
+            "Feature: escapes\n  Scenario: one\n    Given {}\n",
+            step.unwrap_or("unrelated")
+        );
+        let run = ruby_escape_run(&steps, &feature);
+        assert_eq!(run.definitions, 2, "{escaped}: {}", run.stderr);
+        assert!(!run.incomplete, "{escaped}: {}", run.stderr);
+        assert!(
+            run.active.iter().any(|rule| rule == "duplicate-matcher"),
+            "{escaped}: {:?}",
+            run.active
+        );
+        if step.is_some() {
+            // The decoded matchers match the feature step, so neither is unused.
+            assert!(
+                !run.active.iter().any(|rule| rule == "unused-definition"),
+                "{escaped}: {:?}",
+                run.active
+            );
+        }
+        // Control: against an unrelated matcher the escaped one is no duplicate.
+        let steps =
+            format!("Given({escaped}) {{ first() }}\nGiven('unrelated text') {{ second() }}\n");
+        let run = ruby_escape_run(&steps, &feature);
+        assert!(!run.incomplete, "{escaped}: {}", run.stderr);
+        assert!(
+            !run.active.iter().any(|rule| rule == "duplicate-matcher"),
+            "{escaped}: {:?}",
+            run.active
+        );
+    }
+    // A single-quoted literal keeps `\s`, so it is not the decoded double-quoted matcher.
+    let run = ruby_escape_run(
+        "Given(\"tab\\sseparated\") { first() }\nGiven('tab\\\\sseparated') { second() }\n",
+        "Feature: escapes\n  Scenario: one\n    Given tab separated\n",
+    );
+    assert!(!run.incomplete, "{}", run.stderr);
+    assert!(
+        !run.active.iter().any(|rule| rule == "duplicate-matcher"),
+        "{:?}",
+        run.active
+    );
+    // Unmodeled controls: the matcher is indeterminate and the run incomplete at its own line.
+    for unmodeled in [
+        r#""a\cAb""#,
+        r#""a\C-ab""#,
+        r#""a\M-ab""#,
+        r#""bad \xFF byte""#,
+        r#""bad \351 byte""#,
+    ] {
+        let run = ruby_escape_run(
+            &format!("Given('first') {{ first() }}\n\nGiven({unmodeled}) {{ second() }}\n"),
+            "Feature: escapes\n  Scenario: one\n    Given first\n",
+        );
+        assert_eq!(run.definitions, 1, "{unmodeled}: {}", run.stderr);
+        assert!(run.incomplete, "{unmodeled}: {}", run.stderr);
+        assert!(
+            run.stderr.contains("steps.rb:3:1"),
+            "{unmodeled}: {}",
+            run.stderr
+        );
+    }
+}
+
+/// A `ParameterType` name and regexp written with escapes resolve like their plain spelling, so
+/// the `{channel}` registrations compare; an unmodeled escape in the regexp keeps the parameter
+/// type unresolved and the run incomplete.
+#[test]
+fn regression_192_ruby_parameter_type_escapes_decode_like_plain_text() {
+    let run = |parameter: &str| {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "a.rb", parameter);
+        write(
+            directory.path(),
+            "steps.rb",
+            "Given('channel {channel}') { first() }\nThen('channel {channel}') { second() }\n",
+        );
+        write(
+            directory.path(),
+            "steps.feature",
+            "Feature: channels\n Scenario: output\n  Given channel stdout\n",
+        );
+        ruby_run(directory.path(), &["--definitions", "*.rb"])
+    };
+    let plain = run("ParameterType(name: 'channel', regexp: 'stdout|stderr', transformer: ->(value) { value })\n");
+    let escaped = run(
+        r#"ParameterType(name: "chan\x6eel", regexp: "std\x6fut|stderr", transformer: ->(value) { value })"#,
+    );
+    assert!(!plain.incomplete, "{}", plain.stderr);
+    assert!(
+        plain.active.iter().any(|rule| rule == "duplicate-matcher"),
+        "{:?}",
+        plain.active
+    );
+    assert_eq!(escaped.incomplete, plain.incomplete, "{}", escaped.stderr);
+    assert_eq!(escaped.active, plain.active, "{}", escaped.stderr);
+    let unmodeled = run(
+        r#"ParameterType(name: "channel", regexp: "std\cAut|stderr", transformer: ->(value) { value })"#,
+    );
+    assert!(unmodeled.incomplete, "{}", unmodeled.stderr);
+}

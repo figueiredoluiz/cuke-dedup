@@ -928,3 +928,354 @@ fn percent_r_flags_and_unmodeled_literals_fail_closed() {
         assert!(!extract_matcher(literal).1, "{literal}");
     }
 }
+
+/// Assert each raw Ruby literal decodes to the expected value (None when Ruby rejects it or the decoder leaves it undecoded).
+fn assert_literal_rows(rows: &[(&str, Option<&str>)]) {
+    for (raw, expected) in rows {
+        assert_eq!(super::literal_string(raw).as_deref(), *expected, "{raw:?}");
+    }
+}
+
+/// Verify literal forms other than plain quotes stay undecoded, even when they hold only plain text.
+#[test]
+fn ruby_non_quote_string_forms_stay_undecoded() {
+    assert_literal_rows(&[
+        ("%q(plain)", None),
+        ("%Q(plain)", None),
+        ("%(plain)", None),
+        ("%q(a\\sb)", None),
+        ("%Q(a\\sb)", None),
+        (":\"plain\"", None),
+        ("<<~TEXT", None),
+        ("?a", None),
+        ("`plain`", None),
+        // Control: the same text in plain quotes decodes.
+        ("\"plain\"", Some("plain")),
+        ("'plain'", Some("plain")),
+    ]);
+}
+
+/// Parse `source` and return its first string node's text through `read`.
+fn first_string<T>(source: &str, read: impl Fn(tree_sitter::Node<'_>, &str) -> T) -> T {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_ruby::LANGUAGE.into())
+        .unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let node = super::descendants(tree.root_node())
+        .into_iter()
+        .find(|node| node.kind() == "string")
+        .unwrap();
+    read(node, source)
+}
+
+/// Verify an escaped `#` is not interpolation, so its string decodes, while a real interpolation and an unmodeled escape stay undecoded.
+#[test]
+fn ruby_escaped_hash_is_text_but_interpolation_is_not() {
+    for (source, expected) in [
+        ("x = \"\\#{x}\"", Some("#{x}")),
+        ("x = \"\\#$x\"", Some("#$x")),
+        ("x = \"fo\\x6f\"", Some("foo")),
+        // Controls: interpolation and an unmodeled escape have no static value.
+        ("x = \"#{x}\"", None),
+        ("x = \"a#{x}\\sb\"", None),
+        ("x = \"a\\cAb\"", None),
+    ] {
+        let name = first_string(source, super::static_method_name);
+        assert_eq!(name.as_deref(), expected, "{source}");
+    }
+}
+
+/// Extract the definitions and diagnostics of one Ruby source.
+fn extract_ruby(source: &str) -> crate::source_adapter::Extraction {
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    super::RUBY_ADAPTER
+        .extract(
+            source,
+            &SourceFile {
+                path: "steps.rb".into(),
+                language: SourceLanguage::Ruby,
+            },
+        )
+        .unwrap()
+}
+
+/// Verify matchers with decodable escapes register under every step keyword with Ruby's value.
+#[test]
+fn ruby_escaped_matchers_register_with_their_ruby_value() {
+    for keyword in ["Given", "When", "Then"] {
+        for (literal, expected) in [
+            (r#""tab\sseparated""#, "tab separated"),
+            (r#""caf\xC3\xA9""#, "caf\u{e9}"),
+            ("\"joined \\\nline\"", "joined line"),
+            // Control: a plain single-quoted matcher registers unchanged.
+            (r#"'tab separated'"#, "tab separated"),
+        ] {
+            let source =
+                format!("Given('first') {{ work() }}\n{keyword}({literal}) {{ other() }}\n");
+            let extraction = extract_ruby(&source);
+            assert_eq!(extraction.definitions.len(), 2, "{source}");
+            assert!(extraction.diagnostics.is_empty(), "{source}");
+            assert_eq!(extraction.definitions[1].matcher, expected, "{source}");
+        }
+    }
+}
+
+/// Verify matchers with unmodeled escapes or bytes that are not UTF-8 are diagnosed at their own line and column, and register nothing.
+#[test]
+fn ruby_unmodeled_escape_matchers_are_diagnosed_where_they_start() {
+    for (literal, diagnostics) in [
+        (r#""a\cAb""#, 1),
+        (r#""a\C-ab""#, 1),
+        (r#""a\M-ab""#, 1),
+        (r#""a\M-\C-ab""#, 1),
+        (r#""bad \xFF byte""#, 1),
+        (r#""bad \351 byte""#, 1),
+        ("%q(a\\sb)", 1),
+        // Ruby rejects `\x` without a hex digit, so the file also carries a syntax error.
+        (r#""bad \xg""#, 2),
+        (r#""bad \x""#, 2),
+    ] {
+        let source = format!("\nGiven('first') {{ work() }}\n  When({literal}) {{ other() }}\n");
+        let extraction = extract_ruby(&source);
+        assert_eq!(extraction.definitions.len(), 1, "{source}");
+        assert_eq!(extraction.diagnostics.len(), diagnostics, "{source}");
+        let location = &extraction.diagnostics[0].location;
+        assert_eq!((location.line, location.column), (3, 3), "{source}");
+    }
+}
+
+/// Verify `step` calls use the decoded text, and that an unmodeled escape leaves usage unknown instead of dropping the call.
+#[test]
+fn ruby_step_usage_text_decodes_escapes() {
+    let usage = |literal: &str| {
+        extract_ruby(&format!("Given('outer') {{ step {literal} }}\n"))
+            .indirect_usage
+            .unwrap()
+    };
+    let decoded = usage(r#""tab\sseparated""#);
+    assert!(!decoded.unknown);
+    assert_eq!(
+        decoded.texts.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["tab separated"]
+    );
+    // Control: an unmodeled escape yields no text and unknown usage.
+    let unmodeled = usage(r#""tab\csseparated""#);
+    assert!(unmodeled.unknown);
+    assert!(unmodeled.texts.is_empty());
+}
+
+/// Verify `\a \b \e \f \s \v` and the existing `\n \r \t` decode at the start, middle, end and next to each other, with values taken from `ruby -e`.
+#[test]
+fn ruby_single_char_escapes_decode_to_their_ruby_values() {
+    assert_literal_rows(&[
+        (r##""a\sb""##, Some(r##"a b"##)),
+        (r##""\sb""##, Some(r##" b"##)),
+        (r##""a\s""##, Some(r##"a "##)),
+        (r##""\s\s""##, Some(r##"  "##)),
+        (r##""tab\sseparated""##, Some(r##"tab separated"##)),
+        (r##""\a""##, Some("\u{7}")),
+        (r##""x\ay""##, Some("x\u{7}y")),
+        (r##""\b""##, Some("\u{8}")),
+        (r##""x\by""##, Some("x\u{8}y")),
+        (r##""\e""##, Some("\u{1b}")),
+        (
+            r##""the \e[1mbold\e[0m step""##,
+            Some("the \u{1b}[1mbold\u{1b}[0m step"),
+        ),
+        (r##""\f""##, Some("\u{c}")),
+        (r##""x\fy""##, Some("x\u{c}y")),
+        (r##""\v""##, Some("\u{b}")),
+        (r##""x\vy""##, Some("x\u{b}y")),
+        (r##""\n""##, Some("\n")),
+        (r##""\r""##, Some("\r")),
+        (r##""\t""##, Some(r##"	"##)),
+        (r##""\a\b\e\f\s\v""##, Some("\u{7}\u{8}\u{1b}\u{c} \u{b}")),
+    ]);
+}
+
+/// Verify `\0`, `\nn` and `\nnn` octal escapes: digit count, trailing digits, the low eight bits of `\400` and `\777`, and `\8`/`\9` as plain characters.
+#[test]
+fn ruby_octal_escapes_take_up_to_three_digits_and_keep_the_low_byte() {
+    assert_literal_rows(&[
+        (r##""\0""##, Some("\u{0}")),
+        (r##""a\0b""##, Some("a\u{0}b")),
+        (r##""\00""##, Some("\u{0}")),
+        (r##""\000""##, Some("\u{0}")),
+        (r##""\0000""##, Some("\u{0}0")),
+        (r##""\01""##, Some("\u{1}")),
+        (r##""\0a""##, Some("\u{0}a")),
+        (r##""\08""##, Some("\u{0}8")),
+        (r##""\1""##, Some("\u{1}")),
+        (r##""\7""##, Some("\u{7}")),
+        (r##""\12""##, Some("\n")),
+        (r##""\101""##, Some(r##"A"##)),
+        (r##""\123""##, Some(r##"S"##)),
+        (r##""\1234""##, Some(r##"S4"##)),
+        (r##""\377""##, None), // invalid UTF-8: ff
+        (r##""\400""##, Some("\u{0}")),
+        (r##""\777""##, None), // invalid UTF-8: ff
+        (r##""\401""##, Some("\u{1}")),
+        (r##""\441""##, Some("!")),
+        (r##""\378""##, Some("\u{1f}8")),
+        (r##""\8""##, Some(r##"8"##)),
+        (r##""\9""##, Some(r##"9"##)),
+        (r##""a\101b""##, Some(r##"aAb"##)),
+        (r##""\101\102""##, Some(r##"AB"##)),
+    ]);
+}
+
+/// Verify `\xH` and `\xHH` decode, a third digit stays literal, and `\x` without a hex digit or an uppercase `\X` follow Ruby.
+#[test]
+fn ruby_hex_escapes_take_one_or_two_digits() {
+    assert_literal_rows(&[
+        (r##""\x41""##, Some(r##"A"##)),
+        (r##""\x4""##, Some("\u{4}")),
+        (r##""\x411""##, Some(r##"A1"##)),
+        (r##""\x4g""##, Some("\u{4}g")),
+        (r##""\xaB""##, None), // invalid UTF-8: ab
+        (r##""\x7f""##, Some("\u{7f}")),
+        (r##""\x00""##, Some("\u{0}")),
+        (r##""\x1B[1mbold\x1B[0m""##, Some("\u{1b}[1mbold\u{1b}[0m")),
+        (r##""a\x41b""##, Some(r##"aAb"##)),
+        (r##""\x41\x42""##, Some(r##"AB"##)),
+        (r##""\x""##, None),  // ruby: syntax error
+        (r##""\xg""##, None), // ruby: syntax error
+        (r##""\X41""##, Some(r##"X41"##)),
+    ]);
+}
+
+/// Verify escapes decode as bytes: pairs that form UTF-8 decode, and a lone high byte or any other invalid sequence returns no value instead of a lossy conversion.
+#[test]
+fn ruby_escapes_that_do_not_form_utf8_fail_closed() {
+    assert_literal_rows(&[
+        (r##""\xC3\xA9""##, Some("\u{e9}")),
+        (r##""\303\251""##, Some("\u{e9}")),
+        (r##""\xc3\xa9\u00e9""##, Some("\u{e9}\u{e9}")),
+        (r##""\u{e9}\xC3\xA9""##, Some("\u{e9}\u{e9}")),
+        ("\"\u{e9}\\xC3\\xA9\"", Some("\u{e9}\u{e9}")),
+        (r##""\xFF""##, None),       // invalid UTF-8: ff
+        (r##""\xff""##, None),       // invalid UTF-8: ff
+        (r##""\xE9""##, None),       // invalid UTF-8: e9
+        (r##""\xC3""##, None),       // invalid UTF-8: c3
+        (r##""\xC3(""##, None),      // invalid UTF-8: c328
+        (r##""\351""##, None),       // invalid UTF-8: e9
+        (r##""\u00e9\x80""##, None), // invalid UTF-8: c3a980
+        (r##""\x80\u0041""##, None), // invalid UTF-8: 8041
+        (r##""\u0041\x80""##, None), // invalid UTF-8: 4180
+        (r##""\xC3\u00e9""##, None), // invalid UTF-8: c3c3a9
+        (r##""\u00e9\351""##, None), // invalid UTF-8: c3a9e9
+        (r##""\x80""##, None),       // invalid UTF-8: 80
+    ]);
+}
+
+/// Verify an escape Ruby does not define yields the escaped character, including `\#`, `\d`, `\.` and a multibyte character.
+#[test]
+fn ruby_unknown_double_quoted_escapes_yield_the_escaped_character() {
+    assert_literal_rows(&[
+        (r##""\q""##, Some(r##"q"##)),
+        (r##""\z""##, Some(r##"z"##)),
+        (r##""\Q""##, Some(r##"Q"##)),
+        (r##""\#""##, Some(r##"#"##)),
+        (r##""\#{x}""##, Some(r##"#{x}"##)),
+        (r##""\#$x""##, Some(r##"#$x"##)),
+        (r##""\#@x""##, Some(r##"#@x"##)),
+        (r##""\ ""##, Some(r##" "##)),
+        (r##""\%""##, Some(r##"%"##)),
+        (r##""\/""##, Some(r##"/"##)),
+        (r##""\.""##, Some(r##"."##)),
+        (r##""\d+""##, Some(r##"d+"##)),
+        (r##""\w""##, Some(r##"w"##)),
+        (r##""\{""##, Some(r##"{"##)),
+        ("\"\\\u{e9}\"", Some("\u{e9}")),
+        (r##""\U0041""##, Some(r##"U0041"##)),
+        (r##""\'""##, Some(r##"'"##)),
+        (r##""\"""##, Some(r##"""##)),
+        (r##""\\""##, Some(r##"\"##)),
+        (r##""\\n""##, Some(r##"\n"##)),
+    ]);
+}
+
+/// Verify `\u` escapes keep their Ruby values and the forms Ruby rejects return no value, alone and mixed with byte escapes.
+#[test]
+fn ruby_unicode_escapes_match_ruby_and_reject_its_syntax_errors() {
+    assert_literal_rows(&[
+        ("\"\u{e9}\"", Some("\u{e9}")),
+        (r##""\u00e9""##, Some("\u{e9}")),
+        (r##""\u{e9}""##, Some("\u{e9}")),
+        (r##""\u{1F600}""##, Some("\u{1f600}")),
+        (r##""\u{1F600 1F601}""##, Some("\u{1f600}\u{1f601}")),
+        (r##""\u{ 41 }""##, Some(r##"A"##)),
+        (r##""\u{}""##, Some(r##""##)),
+        (r##""\u0041\u0042""##, Some(r##"AB"##)),
+        (r##""\u{41}\x42""##, Some(r##"AB"##)),
+        (r##""\u041""##, None),       // ruby: syntax error
+        (r##""\uD800""##, None),      // ruby: syntax error
+        (r##""\u{D800}""##, None),    // ruby: syntax error
+        (r##""\u{110000}""##, None),  // ruby: syntax error
+        (r##""\u{41,42}""##, None),   // ruby: syntax error
+        (r##""\u{0000041}""##, None), // ruby: syntax error
+    ]);
+}
+
+/// Verify backslash-newline joins lines in double quotes, a source CRLF reads as LF in both quote styles, and a lone CR is kept.
+#[test]
+fn ruby_line_continuation_and_source_crlf_follow_the_ruby_lexer() {
+    assert_literal_rows(&[
+        ("\"a\\\nb\"", Some(r##"ab"##)),
+        ("\"a\\\r\nb\"", Some(r##"ab"##)),
+        ("\"a\\\n\"", Some(r##"a"##)),
+        ("\"\\\n\"", Some(r##""##)),
+        ("\"a\\\n  b\"", Some(r##"a  b"##)),
+        ("\"a\\\rb\"", Some("a\rb")),
+        ("\"a\nb\"", Some("a\nb")),
+        ("\"a\r\nb\"", Some("a\nb")),
+        ("'a\\\nb'", Some("a\\\nb")),
+        ("'a\r\nb'", Some("a\nb")),
+        ("'a\\\r\nb'", Some("a\\\nb")),
+        ("\"\\\\\n\"", Some("\\\n")),
+    ]);
+}
+
+/// Verify single-quoted strings unescape only `\\` and `\'` and keep every other backslash.
+#[test]
+fn ruby_single_quoted_strings_decode_only_backslash_and_quote_escapes() {
+    assert_literal_rows(&[
+        (r##"'a\sb'"##, Some(r##"a\sb"##)),
+        (r##"'\\'"##, Some(r##"\"##)),
+        (r##"'\''"##, Some(r##"'"##)),
+        (r##"'\n'"##, Some(r##"\n"##)),
+        (r##"'\q'"##, Some(r##"\q"##)),
+        (r##"'\"'"##, Some(r##"\""##)),
+        (r##"'\e'"##, Some(r##"\e"##)),
+        (r##"'a\\\'b'"##, Some(r##"a\'b"##)),
+        (r##"'\u0041'"##, Some(r##"\u0041"##)),
+        (r##"'\x41'"##, Some(r##"\x41"##)),
+        (r##"'\101'"##, Some(r##"\101"##)),
+        (r##"'\0'"##, Some(r##"\0"##)),
+        (r##"'\c'"##, Some(r##"\c"##)),
+        (r##"'\M-a'"##, Some(r##"\M-a"##)),
+        (r##"'\\n'"##, Some(r##"\n"##)),
+        ("'\u{e9}'", Some("\u{e9}")),
+    ]);
+}
+
+/// Verify `\cX`, `\C-X` and `\M-X` forms return no value even where Ruby accepts them, so the matcher stays indeterminate.
+#[test]
+fn ruby_control_and_meta_escapes_stay_undecoded() {
+    assert_literal_rows(&[
+        (r##""\c?""##, None),      // ruby: 7f
+        (r##""\C-?""##, None),     // ruby: 7f
+        (r##""\ca""##, None),      // ruby: 01
+        (r##""\C-a""##, None),     // ruby: 01
+        (r##""\M-a""##, None),     // ruby: e1
+        (r##""\M-\C-a""##, None),  // ruby: 81
+        (r##""\M-\ca""##, None),   // ruby: 81
+        (r##""\c\M-a""##, None),   // ruby: 81
+        (r##""\C-\M-a""##, None),  // ruby: 81
+        (r##""\c\e""##, None),     // ruby: 1b
+        (r##""\M-C\M-)""##, None), // ruby: c3a9
+        (r##""x\cAy""##, None),    // ruby: 780179
+        (r##""\M-\xC3""##, None),  // ruby: c3
+    ]);
+}

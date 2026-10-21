@@ -5849,6 +5849,24 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`regression 190 non ecmascript import targets are not parsed`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_192_ruby_double_quoted_escapes_decode_to_ruby_values",
+          "requiredStatus": "covered",
+          "fixtureGroup": "string-escapes-decoded",
+          "oracleClause": "requiredFindings[0]",
+          "rationale": "`regression_192_ruby_double_quoted_escapes_decode_to_ruby_values` runs double-quoted matchers written with `\\s`, `\\e`, `\\a\\b\\f\\v`, hex, octal, UTF-8 byte pairs, `\\0` and an unknown escape through the built binary, requires each to duplicate its plain twin and match its feature step, and keeps unrelated matchers, a single-quoted backslash and unmodeled escapes (control, meta, invalid UTF-8) as controls. The `string-escapes-decoded` group pins the decoded duplicates, ambiguity and the one distinct escaped matcher.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_192_ruby_parameter_type_escapes_decode_like_plain_text",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_192_ruby_parameter_type_escapes_decode_like_plain_text"
+          },
+          "rationale": "`regression_192_ruby_parameter_type_escapes_decode_like_plain_text` runs a `ParameterType` whose name and regexp use hex escapes through the built binary and requires the same findings as its plain spelling, with an unmodeled escape in the regexp as the incomplete control.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },

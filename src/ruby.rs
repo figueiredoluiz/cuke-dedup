@@ -1286,35 +1286,90 @@ fn regex_literal(raw: &str) -> Option<(String, String)> {
     None
 }
 
-/// Decode supported quoted-string escapes, returning None for unsupported or incomplete literals.
+/// Decode a plain `'…'` or `"…"` literal to the bytes Ruby builds; None for other literal forms, malformed or unmodeled escapes, and values that are not valid UTF-8.
 fn literal_string(raw: &str) -> Option<String> {
     let quote = raw.chars().next()?;
     if raw.len() < 2 || !matches!(quote, '\'' | '"') || !raw.ends_with(quote) {
         return None;
     }
-    let mut chars = raw[1..raw.len() - 1].chars().peekable();
-    let mut value = String::new();
+    // Ruby's lexer reads a source CRLF as LF, including after a backslash.
+    let mut body = std::borrow::Cow::Borrowed(&raw[1..raw.len() - 1]);
+    if body.contains("\r\n") {
+        body = body.replace("\r\n", "\n").into();
+    }
+    let mut chars = body.chars().peekable();
+    let mut value = Vec::new();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
-            value.push(ch);
+            push_char(&mut value, ch);
             continue;
         }
         let escaped = chars.next()?;
-        match escaped {
-            '\\' => value.push('\\'),
-            c if c == quote => value.push(c),
-            'n' if quote == '"' => value.push('\n'),
-            'r' if quote == '"' => value.push('\r'),
-            't' if quote == '"' => value.push('\t'),
-            'u' if quote == '"' => value.push_str(&unicode_escape(&mut chars)?),
-            c if quote == '\'' => {
-                value.push('\\');
-                value.push(c);
+        if quote == '"' {
+            double_quoted_escape(escaped, &mut chars, &mut value)?;
+        } else {
+            if !matches!(escaped, '\\' | '\'') {
+                value.push(b'\\');
             }
-            _ => return None,
+            push_char(&mut value, escaped);
         }
     }
-    Some(value)
+    String::from_utf8(value).ok()
+}
+
+/// Append the UTF-8 bytes of one character.
+fn push_char(value: &mut Vec<u8>, ch: char) {
+    value.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+}
+
+/// Append the bytes of one double-quoted escape, whose backslash is consumed; None when unmodeled or malformed.
+fn double_quoted_escape(
+    escaped: char,
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    value: &mut Vec<u8>,
+) -> Option<()> {
+    let byte = match escaped {
+        // Backslash-newline continues the line and adds nothing.
+        '\n' => return Some(()),
+        'n' => b'\n',
+        'r' => b'\r',
+        't' => b'\t',
+        'a' => 0x07,
+        'b' => 0x08,
+        'e' => 0x1b,
+        'f' => 0x0c,
+        's' => b' ',
+        'v' => 0x0b,
+        'u' => {
+            value.extend_from_slice(unicode_escape(chars)?.as_bytes());
+            return Some(());
+        }
+        // Up to three octal digits; Ruby keeps the low eight bits (`"\400"` is NUL).
+        '0'..='7' => {
+            let mut code = escaped as u32 - '0' as u32;
+            for digit in std::iter::from_fn(|| chars.next_if(|c| matches!(c, '0'..='7'))).take(2) {
+                code = code * 8 + (digit as u32 - '0' as u32);
+            }
+            (code & 0xff) as u8
+        }
+        // One or two hex digits; none is a Ruby syntax error.
+        'x' => {
+            let digits: String = std::iter::from_fn(|| chars.next_if(char::is_ascii_hexdigit))
+                .take(2)
+                .collect();
+            u8::from_str_radix(&digits, 16).ok()?
+        }
+        // fail-closed: control and meta escapes (`\cX`, `\C-X`, `\M-X`, `\M-\C-X`) build bytes by
+        // bit arithmetic over a following escape; they stay undecoded and the matcher indeterminate.
+        'c' | 'C' | 'M' => return None,
+        other => {
+            // Any other escape yields the escaped character itself.
+            push_char(value, other);
+            return Some(());
+        }
+    };
+    value.push(byte);
+    Some(())
 }
 
 /// Decodes Unicode scalar escapes; Ruby does not use UTF-16 surrogate pairs.
