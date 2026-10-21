@@ -7759,6 +7759,221 @@ fn regression_191_ruby_percent_r_delimiters_are_recognized() {
     assert!(run.incomplete, "{}", run.stderr);
 }
 
+/// A stray `<` before a placeholder does not hide it: `the <a<b> value` expands to `the <a7 value`
+/// and uses the definition for that text, leaving the one for the unexpanded text unused. Controls:
+/// a plain placeholder and an unknown name expand or stay as the table says, so the unused line
+/// moves with the expansion instead of being fixed by a blanket "never substitute".
+#[test]
+fn regression_186_outline_placeholder_after_a_stray_angle_bracket_is_substituted() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('the <a7 value', () => first());\nGiven('the <a<b> value', () => second());\nGiven('plain 7 and <z>', () => third());\n",
+    );
+    write(
+        directory.path(),
+        "a.feature",
+        "Feature: f\n  Scenario Outline: s\n    Given the <a<b> value\n    And plain <b> and <z>\n    Examples:\n      | b |\n      | 7 |\n",
+    );
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(directory.path())
+        .args(["--reporters", "jsonl", "--no-metrics"])
+        .output()
+        .unwrap();
+    let unused: Vec<u64> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["type"] == "finding" && row["rule"] == "unused-definition")
+        .map(|row| row["primary"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(unused, [3], "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+/// An ambiguous feature step reports an end column one past its last character whatever whitespace
+/// follows the keyword, identically in JSON and SARIF. Controls: the one-space step keeps the old
+/// column, and the Markdown and outline steps report the converted and source lines.
+#[test]
+fn regression_187_step_end_column_follows_the_source_line() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven(/^the /, () => first());\nGiven(/panel/, () => second());\n",
+    );
+    write(
+        directory.path(),
+        "a.feature",
+        "Feature: f\n  Scenario Outline: s\n    Given the panel opens\n    When   the panel opens\n    Then \t the panel <n>\n    And    the panel 日本\n    Examples:\n      | n |\n      | 1 |\n",
+    );
+    write(
+        directory.path(),
+        "b.feature.md",
+        "# Feature: f\n\n## Scenario: s\n\n* Given   the panel opens\n",
+    );
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(directory.path())
+        .args(["--reporters", "json,sarif", "--no-metrics"])
+        .output()
+        .unwrap();
+    let reports = directory.path().join("reports/cuke-dedup");
+    let json: Value =
+        serde_json::from_str(&fs::read_to_string(reports.join("cuke-dedup.json")).unwrap())
+            .unwrap();
+    let sarif: Value =
+        serde_json::from_str(&fs::read_to_string(reports.join("cuke-dedup.sarif")).unwrap())
+            .unwrap();
+    let mut json_spans: Vec<_> = json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == "ambiguous-step")
+        .map(|finding| {
+            let primary = &finding["primary"];
+            (
+                primary["path"].as_str().unwrap().to_owned(),
+                primary["line"].as_u64().unwrap(),
+                primary["column"].as_u64().unwrap(),
+                primary["endColumn"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    json_spans.sort();
+    let expected = [
+        ("a.feature", 3, 5, 26),
+        ("a.feature", 4, 5, 27),
+        ("a.feature", 5, 5, 25),
+        ("a.feature", 6, 5, 24),
+        ("b.feature.md", 5, 3, 26),
+    ];
+    assert_eq!(
+        json_spans,
+        expected.map(|(path, line, column, end)| (path.to_owned(), line, column, end)),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut sarif_spans: Vec<_> = sarif["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|result| result["ruleId"] == "ambiguous-step")
+        .map(|result| {
+            let region = &result["locations"][0]["physicalLocation"]["region"];
+            (
+                result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                region["startLine"].as_u64().unwrap(),
+                region["startColumn"].as_u64().unwrap(),
+                region["endColumn"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    sarif_spans.sort();
+    assert_eq!(sarif_spans, json_spans);
+}
+
+/// An import of a non-ECMAScript file is not parsed with another grammar. A barrel that re-exports
+/// a Ruby, JSON, CSS or feature file keeps the registration it also re-exports, and direct imports
+/// from such a file are reported unresolved without a syntax-error cause. Control: a malformed
+/// TypeScript module still fails closed with its syntax-error cause.
+#[test]
+fn regression_190_non_ecmascript_import_targets_are_not_parsed() {
+    let esm = "export { When } from '@cucumber/cucumber';\n";
+    for (target, body) in [
+        ("support.rb", esm),
+        ("support.rb", "# ruby\nGiven(/a/) { }\n"),
+        ("support.json", "{}\n"),
+        ("support.css", "a {}\n"),
+        ("support.feature", "Feature: f\n"),
+        ("support.d.ts", esm),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "package.json", "{}");
+        write(directory.path(), target, body);
+        write(
+            directory.path(),
+            "barrel.ts",
+            &format!(
+                "export * from './{target}';\nexport {{ Given }} from '@cucumber/cucumber';\n"
+            ),
+        );
+        write(
+            directory.path(),
+            "steps.ts",
+            "import { Given } from './barrel';\nGiven('s', () => work());\n",
+        );
+        write(
+            directory.path(),
+            "a.feature",
+            "Feature: f\n  Scenario: s\n    Given s\n",
+        );
+        let run = ruby_run(directory.path(), &[]);
+        assert_eq!(run.definitions, 1, "{target}: {}", run.stderr);
+        assert!(!run.incomplete, "{target}: {}", run.stderr);
+        assert!(
+            !run.stderr.contains("syntax errors"),
+            "{target}: {}",
+            run.stderr
+        );
+    }
+    for import in [
+        "import { When } from './support.rb';\nWhen('s', () => work());\n",
+        "import * as bdd from './support.rb';\nbdd.When('s', () => work());\n",
+        "import bdd from './support.rb';\nbdd.When('s', () => work());\n",
+        "import bdd = require('./support.rb');\nbdd.When('s', () => work());\n",
+        "const { When } = require('./support.rb');\nWhen('s', () => work());\n",
+        "const bdd = require('./support.rb');\nbdd.When('s', () => work());\n",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "package.json", "{}");
+        write(
+            directory.path(),
+            "support.rb",
+            "export { When } from '@cucumber/cucumber';\n",
+        );
+        write(directory.path(), "steps.ts", import);
+        write(
+            directory.path(),
+            "a.feature",
+            "Feature: f\n  Scenario: s\n    Given s\n",
+        );
+        let run = ruby_run(directory.path(), &[]);
+        assert_eq!(run.definitions, 0, "{import}: {}", run.stderr);
+        assert!(run.incomplete, "{import}: {}", run.stderr);
+        assert!(
+            !run.stderr.contains("syntax errors"),
+            "{import}: {}",
+            run.stderr
+        );
+    }
+    // Control: the same barrel over a malformed TypeScript module is refused with its cause.
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), "package.json", "{}");
+    write(directory.path(), "support.ts", "const broken = ;\n");
+    write(
+        directory.path(),
+        "barrel.ts",
+        "export * from './support.ts';\nexport { Given } from '@cucumber/cucumber';\n",
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from './barrel';\nGiven('s', () => work());\n",
+    );
+    write(
+        directory.path(),
+        "a.feature",
+        "Feature: f\n  Scenario: s\n    Given s\n",
+    );
+    let run = ruby_run(directory.path(), &[]);
+    assert!(run.incomplete, "{}", run.stderr);
+    assert!(run.stderr.contains("syntax errors"), "{}", run.stderr);
+}
+
 /// Checks a Gherkin parse error lists its expected tokens in one order across process runs.
 #[test]
 fn regression_gherkin_parse_error_token_order_is_deterministic() {

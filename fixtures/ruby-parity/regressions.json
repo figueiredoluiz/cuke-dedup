@@ -30,6 +30,7 @@
     "spanish-classic-gherkin-dialect": {"status":"pass","digest":"2d30639fa6ed561bf05ff3b806f5f1e089061a5eda390c9e9175166b0a13f3d8"},
     "gherkin-backgrounds-and-rules": {"status":"pass","digest":"48e1a0afd30e357ffff9acc542ec3f54f30803f11953d0cf319b10165071c324"},
     "gherkin-outline-examples-rows": {"status":"pass","digest":"ef7cbbd96b5e3c080999d882539bb968142b0b06eb3cab600a8d77b0d82c9013"},
+    "gherkin-outline-stray-angle-placeholder": {"status":"pass","digest":"cfffb779fb5ae493c61eb21ea87bfde13ee20ad8847533999e40ec4dac614983"},
     "gherkin-continuation-keywords": {"status":"pass","digest":"bfa1445344611d3303b14ad091295bdecdb657bd4faca6567e0b05af7eed39af"},
     "gherkin-classic-and-markdown-files": {"status":"pass","digest":"be3f334f675da36bcf722e34e11c7f5c2d883a99e174aafd47c84eeef275faed"},
     "gherkin-attachments-do-not-create-steps": {"status":"pass","digest":"91c1458fa8850f760e57b5311a3c435300863795fb8dc4467196a74d5dc420cf"},

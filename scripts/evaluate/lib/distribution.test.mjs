@@ -147,7 +147,7 @@ test("the overview compares corpora and names the gaps", () => {
 /** Checks every case of every corpus carries valid labels, and the corpora hold the counts the gates assert. */
 test("every corpus case is labelled and the corpora are complete", async () => {
   const corpora = await loadCorpora();
-  assert.deepEqual(corpora.map((corpus) => [corpus.name, corpus.items.length]), [["recall", 64], ["behavior", 23], ["language-parity", 30], ["ruby-parity", 139]]);
+  assert.deepEqual(corpora.map((corpus) => [corpus.name, corpus.items.length]), [["recall", 65], ["behavior", 23], ["language-parity", 30], ["ruby-parity", 140]]);
   for (const { name, items } of corpora) {
     const names = items.map((item) => item.name ?? item.id);
     assert.equal(new Set(names).size, names.length, `${name}: duplicate names`);

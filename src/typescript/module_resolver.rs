@@ -9,13 +9,13 @@ use super::frameworks::{
     registration_exports_for_module, RegistrationExports,
 };
 use super::node_text;
-use super::project_resolution::ProjectResolution;
+use super::project_resolution::{ecmascript_language, ProjectResolution};
 use crate::model::Framework;
 use crate::resource_limits::{
     read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
     MAX_REGISTRATION_RESOLUTION_STATES,
 };
-use crate::source_adapter::{grammar_for_language, language_for_path};
+use crate::source_adapter::grammar_for_language;
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1090,7 +1090,7 @@ fn project_boundary(importer: &Path) -> Option<PathBuf> {
 
 /// Parses a supported source language, returning `None` when language selection, grammar setup, or parsing fails.
 fn parse_module(source: &str, path: &Path) -> Option<tree_sitter::Tree> {
-    let language = language_for_path(path)?;
+    let language = ecmascript_language(path)?;
     let mut parser = Parser::new();
     parser.set_language(&grammar_for_language(language)).ok()?;
     parser.parse(source, None)

@@ -2214,6 +2214,49 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent stage `gherkin-parser`: Gherkin/Markdown text parsing (sort expected tokens sorts literals and fails closed); feature text carries no adapter data and the parser runs before any adapter.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "outline_placeholders_replace_each_header_wherever_it_appears",
+          "requiredStatus": "covered",
+          "fixtureGroup": "gherkin-outline-stray-angle-placeholder",
+          "oracleClause": "requiredFindings[0]",
+          "rationale": "Covered by `gherkin-outline-stray-angle-placeholder` requiredFindings[0]: an Examples header after a stray `<` is substituted, so the definition for the expanded text is used and the one for the unexpanded text is reported unused; the test pins the remaining placeholder shapes at the parser stage.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "outline_placeholder_scan_stays_linear_on_stray_angle_brackets",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: placeholder scanning is per-step-text work done before any adapter runs; a run of stray `<` and a long header that shares a prefix with every candidate name take linear time.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "outline_step_arguments_do_not_change_step_text",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: outline expansion replaces placeholders only in the step line; doc strings and data tables are not part of the reported step, for every adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "step_end_column_follows_the_source_line",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: step spans come from the parsed feature line before any adapter runs; the end column is one past the last character of the step text for any spaces or tabs after the keyword.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "outline_and_background_end_columns_describe_the_source_line",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: expanded outline steps and background steps keep the span of their source line, computed from feature text alone.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "markdown_step_end_columns_follow_the_converted_line",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: Markdown list items are converted to Gherkin before parsing, and step spans are measured on the converted line, independent of any adapter.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -3251,6 +3294,12 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`commonjs identifier exports follow a const to its value`). Semantic residue: Ruby load-path resolution and cycles are pinned by the `load-provider-root` and `load-cycle` groups.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "non_ecmascript_import_targets_resolve_to_nothing_without_a_reason",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`non ecmascript import targets resolve to nothing without a reason`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     },
@@ -3434,6 +3483,18 @@
           "name": "package_extends_refuse_a_symlink_out_of_the_workspace_package",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: CommonJS/ESM export and re-export resolution (`package extends refuse a symlink out of the workspace package`). Semantic residue: Ruby provider re-exports and load roots are covered by the equivalent-provider-* groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "resolution_follows_only_ecmascript_source_suffixes",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`resolution follows only ecmascript source suffixes`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "every_resolution_route_rejects_non_ecmascript_targets",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`every resolution route rejects non ecmascript targets`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
           "behaviorClass": "language-specific-api"
         }
       ]
@@ -5761,6 +5822,27 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent stage `gherkin-parser`: the built binary prints one Gherkin parse-error line with the expected tokens in sorted order across repeated runs; feature parsing runs before any adapter.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_186_outline_placeholder_after_a_stray_angle_bracket_is_substituted",
+          "requiredStatus": "covered",
+          "fixtureGroup": "gherkin-outline-stray-angle-placeholder",
+          "oracleClause": "requiredAbsent[0]",
+          "rationale": "Covered by `gherkin-outline-stray-angle-placeholder` requiredAbsent[0]: the definition matching the expanded text `the <a7 value` is used; the built binary shows the same with TypeScript definitions and a plain and an unknown placeholder as controls.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_187_step_end_column_follows_the_source_line",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent stage `gherkin-parser`: the built binary reports the step end column in JSON and SARIF for ambiguous steps from the parsed feature line; feature parsing runs before any adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_190_non_ecmascript_import_targets_are_not_parsed",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`regression 190 non ecmascript import targets are not parsed`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     },
