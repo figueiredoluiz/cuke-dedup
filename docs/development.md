@@ -148,13 +148,15 @@ cargo build --release --locked
 npm run corpus:check
 ```
 
+The corpus check runs every recall case with `--emit-fingerprints`, and the cases that declare a handler-rule isolation also with `--emit-pairs`. A handler-rule `isolation` is held against both: the fingerprint records show how the participants differ, and the pair records show whether the analyzer evaluated, excluded, never proposed or skipped the pair (the `compared` states in the [recall README](../fixtures/recall/README.md)). A missing or cut-short pair file, a record count that differs from the census of the pair-proposing sources, an ambiguous join or a record shape the check does not model rejects the case. `unisolatedNegativeBaseline` is 0.
+
 `CUKE_DEDUP_MATCHER_WINDOW=1` forces one definition per matcher-compilation window so every
 definition pair is cross-window; it changes memory and time, never findings. The full gate runs the
 corpus once normally and once this way.
 
 `npm run corpus:evaluate` runs the recall, behavior, language-parity and Ruby-parity corpora without asserting
 and reports, per corpus and rule, true and false positives and negatives, known misses, precision,
-recall and F1, plus each entry that disagrees with its expectation. It is a report, not a gate. Exit
+recall and F1, plus each entry that disagrees with its expectation. A recall absence with an `isolation` is scored a true negative only when the same checks as the gate hold, pair records included; otherwise it is listed as `isolation-failed`. It is a report, not a gate. Exit
 codes: 0 when every selected case was scored, 1 when a case could not be observed or scored, 2 for
 an unknown case or corpus. `--corpus NAME` (`recall`, `behavior`, `language-parity` or `ruby-parity`) and `--case
 NAME` limit the run; `--json FILE` and `--markdown FILE` write the report (markdown goes to stdout
@@ -221,8 +223,9 @@ source would lose), and names each declared pair that was never reported with wh
   already had credited.
 - `never-proposed`: the definitions exist, no pair record covers them, and the run evaluated every
   pair it generated.
-- `skipped-by-limit`: as above, but a candidate or verification limit applied, and only evaluated
-  pairs are recorded, so generation cannot be blamed.
+- `skipped-by-limit`: as above, but a candidate or verification limit applied to a pair-proposing
+  source (matcher overlap's own limit does not count), and only evaluated pairs are recorded, so
+  generation cannot be blamed.
 - `evaluated-no-finding`: a pair record exists and no finding was reported.
 - `unresolved`: the expectation names a selector the join cannot apply (a message, a cluster shape, a
   related count, or only part of its locations).
@@ -231,7 +234,7 @@ A counted expectation is diagnosed from the pairs not already credited to a find
 cluster finding counts as reached through the pairs among its members that produced its rule. A
 finding claimed by more than one expectation, or a cluster whose related locations the report truncated, joins no positive and is listed separately. Paths are compared in the form the JSON report writes them (control and invisible-format characters removed). Pairs of
 `ambiguous-step`, `overlapping-matcher` and `unused-definition` have no pair record and are not
-covered. Options are `--binary`, `--case`, `--json` and `--markdown`; it exits 1 when a case cannot be
+covered. A case cannot be observed when its report names a candidate source the join does not model or holds a census count it cannot read, when its pair file holds a different number of records than the census counts, or when a pair record is malformed or two records join one pair. Options are `--binary`, `--case`, `--json` and `--markdown`; it exits 1 when a case cannot be
 observed and 2 for an unknown case, and reads the recall corpus only. On the synthetic corpus every positive is reached, because a reported finding was necessarily evaluated; the report is informative for known
 misses and for labelled real projects.
 

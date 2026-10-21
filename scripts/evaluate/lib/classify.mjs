@@ -4,7 +4,7 @@
 // to the one `expectedFindings` entry that owns it, exactly as the gate attributes it.
 
 import { partitionAmbiguous } from "../../check/lib/manifest-schema.mjs";
-import { checkIsolation, parseRecords } from "../../check/lib/negative-isolation.mjs";
+import { checkIsolation, pairFileReader, parseRecords } from "../../check/lib/negative-isolation.mjs";
 import { countMatches, locationLabel } from "../../check/lib/recall-oracle.mjs";
 
 /** Counts for one rule, all zero. */
@@ -39,12 +39,13 @@ function extractionMismatches(testCase, report) {
  * @param {object[]} records Parsed fingerprint records of the run.
  * @param {object} absent An `expectedAbsent` entry.
  * @param {object} analysis The report's `analysis` section.
+ * @param {() => object[]|null} readPairs The run's parsed pair records, `null` when it wrote none; throws when the file does not parse.
  * @returns {string|null}
  */
-function isolationFailure(records, absent, analysis) {
+function isolationFailure(records, absent, analysis, readPairs) {
   if (absent.isolation === undefined) return null;
   try {
-    checkIsolation(records, absent, analysis);
+    checkIsolation(records, absent, analysis, readPairs);
     return null;
   } catch (error) {
     return error.message;
@@ -135,7 +136,8 @@ function participantsOf(expected, records) {
  * a finding two expectations both claim is reported as an anomaly rather than counted.
  * @param {object} testCase Recall manifest case.
  * @param {{status: number|null, stderr: string, spawnFailure: string|null, report: object|null,
- *   fingerprintsText: string|null}} observation Result of `observeRecallCase`.
+ *   fingerprintsText: string|null, pairsText: string|null}} observation Result of `observeRecallCase`
+ *   with `emitPairs`.
  * @returns {{corpus: string, lane: null, name: string, observable: boolean, runFailure: string|null,
  *   rules: object, entries: object[], ambiguous: number}} Per-rule counts and the entries worth reviewing.
  */
@@ -156,6 +158,8 @@ export function classifyCase(testCase, observation) {
   const counts = (rule) => (rules[rule] ??= emptyCounts());
   const entries = [];
   const records = parseRecords(observation.fingerprintsText ?? "");
+  // Parsed on first use: a pair file that does not parse fails the handler-rule isolations that read it, not the case.
+  const readPairs = pairFileReader(observation.pairsText);
   /** Records an entry to review for this case. */
   const entry = (kind, rule, extra) => entries.push({
     corpus: "recall", case: testCase.name, rule, kind, candidateSources: report.analysis?.candidateSources ?? null, ...extra,
@@ -210,7 +214,7 @@ export function classifyCase(testCase, observation) {
     if (matched.length === 0) {
       // A declared isolation says why the finding is absent; when the run does not show that, the
       // absence is not credited, as the gate would reject it.
-      const failure = isolationFailure(records, absent, report.analysis);
+      const failure = isolationFailure(records, absent, report.analysis, readPairs);
       if (failure === null) counts(absent.rule).tn += 1;
       else entry("isolation-failed", absent.rule, { expected: absent, error: failure });
     }

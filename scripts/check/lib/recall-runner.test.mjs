@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./recall-runner.mjs";
+import { census } from "./pair-census-fixture.mjs";
+import { assertCaseWellFormed, judgeRecallCase, observeRecallCase, usesPairs } from "./recall-runner.mjs";
 
 const TODAY = "2026-10-19";
 
@@ -156,6 +157,61 @@ test("isolation checks are delegated and their failures do not stop the case", a
   assert.deepEqual(totals, { detected: 1, knownMisses: 0, unisolated: 0 });
 });
 
+/** Checks the isolation check reads the run's pair file and a missing, cut-short or contradicting one is rejected. */
+test("the isolation check is held against the pair file", async () => {
+  /** A fingerprint record with every field an isolation reads. */
+  const fingerprint = (line, matcher, behavior) => ({
+    schemaVersion: "1", path: "steps.ts", line, column: 1, domain: "ecmascript", framework: "cucumber-js", registration: "Given",
+    definitionFingerprint: `definition-${line}`, matcher, matcherKind: "cucumber-expression", matcherFlags: "", normalizedMatcher: matcher,
+    handler: { exact: "e", normalized: "n", alphaNormalized: "a", structural: "s", behavior, comparable: true, trivial: false },
+  });
+  const [left, right] = [fingerprint(1, "a", "x"), fingerprint(2, "b", "y")];
+  /** The pair record of the two definitions, as the analyzer writes it for an evaluated pair. */
+  const evaluated = {
+    schemaVersion: "1",
+    left: { path: "steps.ts", line: 1, column: 1, definitionFingerprint: "definition-1" },
+    right: { path: "steps.ts", line: 2, column: 1, definitionFingerprint: "definition-2" },
+    relationships: { exactMatcher: false, normalizedMatcher: false, sameHandler: false, sameHandlerStructure: true, sameStructure: false, sameDeferredAssertions: true },
+    meaningfulHandlers: true,
+    positional: false,
+    rules: [],
+  };
+  const isolated = baseCase({
+    expectedAbsent: [{
+      rule: "duplicate-handler",
+      matchers: ["a", "b"],
+      isolation: { compared: "not-proposed", reason: "behavior-differs", differs: ["matcher", "normalizedMatcher", "handler.behavior"] },
+    }],
+  });
+  /** An observation of the two definitions whose census counts `evaluated` pairs and whose pair file is `pairsText`. */
+  const run = (pairsText, count = 0) => {
+    const base = observed();
+    return {
+      ...base,
+      report: { ...base.report, analysis: census({ evaluated: count }) },
+      fingerprintsText: [left, right].map((record) => JSON.stringify(record)).join("\n"),
+      pairsText,
+    };
+  };
+  // Not proposed: an empty pair file and a census of none holds.
+  await judge(isolated, run(""));
+  // Opposite answers: a missing file, a file cut mid-record and a record for the pair each reject.
+  await assert.rejects(judge(isolated, run(null)), /wrote no --emit-pairs file/);
+  await assert.rejects(judge(isolated, run('{"schemaVersion":"1","left":', 1)), /the pair file does not parse/);
+  await assert.rejects(judge(isolated, run(JSON.stringify(evaluated), 1)), /has a record/);
+  // Control: only an isolation reads the file, so a case without one is not rejected for a damaged file.
+  await judge(baseCase(), run('{"schemaVersion":"1","left":', 1));
+  // A matcher rule's isolation never reads the file, so a file cut short does not touch it.
+  const matcherIsolated = baseCase({
+    expectedAbsent: [{ rule: "normalized-matcher", matchers: ["a", "b"], isolation: { differs: ["matcher", "normalizedMatcher", "handler.behavior"] } }],
+  });
+  await judge(matcherIsolated, run('{"schemaVersion":"1","left":', 1));
+  assert.equal(usesPairs(isolated), true);
+  assert.equal(usesPairs(baseCase()), false);
+  // A matcher rule's isolation is decided by the fingerprint records alone and does not ask for the file.
+  assert.equal(usesPairs(baseCase({ expectedAbsent: [{ rule: "duplicate-matcher", matchers: ["a", "b"], isolation: { differs: [] } }] })), false);
+});
+
 /** Checks the labels are held against the fingerprint records the run wrote. */
 test("language and framework labels are checked against the records", async () => {
   await assert.rejects(judge(baseCase({ language: "ruby" }), observed()), /language label/);
@@ -215,6 +271,12 @@ test("observing a failed run returns its status and no outputs", { skip: process
     assert.equal(withPairs.pairsText, null);
     const args = (await readFile(`${binary}.args`, "utf8")).split("\n");
     assert.equal(args[args.indexOf("--emit-pairs") + 1], join(directory, "scratch-pairs", "pairs.jsonl"));
+    // A case with a handler-rule isolation asks for them by default, and the option still overrides.
+    const isolated = { path: "case", expectedAbsent: [{ rule: "duplicate-handler", isolation: { differs: [] } }] };
+    await observeRecallCase({ binary, recallRoot: join(directory, "cases"), scratch: join(directory, "scratch-default"), testCase: isolated });
+    assert.equal((await readFile(`${binary}.args`, "utf8")).includes("--emit-pairs"), true);
+    await observeRecallCase({ binary, recallRoot: join(directory, "cases"), scratch: join(directory, "scratch-off"), testCase: isolated, emitPairs: false });
+    assert.equal((await readFile(`${binary}.args`, "utf8")).includes("--emit-pairs"), false);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

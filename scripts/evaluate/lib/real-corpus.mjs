@@ -11,7 +11,8 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseRecords } from "../../check/lib/negative-isolation.mjs";
-import { PAIR_RULES, definitionKey } from "./candidate-recall.mjs";
+import { definitionKey } from "../../check/lib/pair-join.mjs";
+import { PAIR_RULES } from "./candidate-recall.mjs";
 
 /** Framework labels a suite may declare; they are the labels the analyzer writes per definition. The lane starts with Playwright-BDD and Cucumber.js; another suite kind is added here and in the docs. */
 export const FRAMEWORKS = Object.freeze(["playwright-bdd", "cucumber-js"]);
