@@ -415,6 +415,53 @@ fn modules_without_a_supported_grammar_contribute_no_exports() {
     );
 }
 
+/// A non-ECMAScript import target is not parsed with another grammar: it resolves to nothing and
+/// reports no reason, so completeness is unchanged. The `.ts` rows are the opposite-answer
+/// controls: a valid module resolves, and a malformed one still reports its syntax errors. The ESM
+/// body fails a Ruby parse (it used to surface as a "syntax errors" reason) and the Ruby body
+/// parses cleanly (it used to resolve to an empty module with a path).
+#[test]
+fn non_ecmascript_import_targets_resolve_to_nothing_without_a_reason() {
+    let esm = "export { Given } from '@cucumber/cucumber';\n";
+    let ruby = "# steps\nGiven(/a/) { }\n";
+    // (file, body, resolves to a module, reports a reason)
+    for (name, body, resolves, reports) in [
+        ("support.ts", esm, true, false),
+        ("support.ts", "const broken = ;\n", false, true),
+        ("support.rb", esm, false, false),
+        ("support.rb", ruby, false, false),
+        ("support.json", esm, false, false),
+        ("support.css", esm, false, false),
+        ("support.feature", esm, false, false),
+        ("support.d.ts", esm, false, false),
+    ] {
+        let outcome = resolve_barrel(&[(name, body)], &format!("./{name}"));
+        assert_eq!(outcome.resolution.is_some(), resolves, "{name}");
+        assert_eq!(
+            outcome.reason.is_some(),
+            reports,
+            "{name}: {:?}",
+            outcome.reason
+        );
+    }
+    // A barrel re-exporting a Ruby file keeps its other re-exports and stays complete.
+    let outcome = resolve_barrel(
+        &[
+            (
+                "barrel.ts",
+                "export * from './support.rb';\nexport { When } from '@cucumber/cucumber';\n",
+            ),
+            ("support.rb", esm),
+        ],
+        "./barrel",
+    );
+    assert!(outcome.reason.is_none(), "{:?}", outcome.reason);
+    assert_eq!(
+        exported_names(&outcome),
+        [("When".to_owned(), "When".to_owned())]
+    );
+}
+
 /// Pins the boundary chosen for an importer that no package manifest encloses: its own directory.
 /// The boundary is what every relative specifier is checked against, so falling back to something
 /// wider would let a loose step file reach modules outside the tree it lives in.

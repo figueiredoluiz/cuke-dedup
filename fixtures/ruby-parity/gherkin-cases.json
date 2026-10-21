@@ -92,6 +92,41 @@
       ],
       "expectedExit": 0
     },
+    "gherkin-outline-stray-angle-placeholder": {
+      "role": "positive",
+      "origin": "regression",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-21",
+      "axes": ["gherkin-structure"],
+      "sourceCase": "gherkin-outline-stray-angle-placeholder",
+      "path": "gherkin/outline-stray-angle",
+      "arguments": [
+        "--definitions",
+        "**/*.rb",
+        "--features",
+        "features/outline.feature"
+      ],
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": true,
+      "requiredFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 4
+        }
+      ],
+      "requiredAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.rb",
+          "primaryLine": 3
+        }
+      ],
+      "expectedExit": 0
+    },
     "gherkin-continuation-keywords": {
       "role": "positive",
       "origin": "synthetic",
@@ -658,6 +693,11 @@
       "source": "fixtures/recall/manifest.json",
       "case": "gherkin-outline-examples-rows",
       "fixtureGroup": "gherkin-outline-examples-rows"
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-outline-stray-angle-placeholder",
+      "fixtureGroup": "gherkin-outline-stray-angle-placeholder"
     },
     {
       "source": "fixtures/recall/manifest.json",

@@ -7,6 +7,12 @@ Registration imports can be resolved through:
 - The nearest package's `imports` mappings.
 - Packages declared by the analysis root's `workspaces`.
 
+Resolution follows only ECMAScript source suffixes (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`,
+`.mjs`, `.cjs`). An import of any other file (`.rb`, `.json`, `.css`, `.feature`), of a declaration
+file (`.d.ts`) or of a directory with no ECMAScript index resolves to nothing: the file is not read
+or parsed, a barrel that re-exports it keeps its other re-exports, and a registration name imported
+from it is reported as an unresolved import, as for any other unresolved module.
+
 A resolved barrel re-exports registrations through either module system:
 
 - ESM `export { X } from './a'`, `export * from './a'`, aliased re-exports, and a split

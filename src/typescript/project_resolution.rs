@@ -4,7 +4,7 @@ use crate::resource_limits::{
     MAX_PROJECT_METADATA_BYTES, MAX_PROJECT_METADATA_FILES, MAX_PROJECT_MODULE_MAPPINGS,
     MAX_WORKSPACE_SCAN_ENTRIES,
 };
-use crate::source_adapter::language_for_path;
+use crate::source_adapter::{language_for_path, SourceLanguage};
 use anyhow::{bail, Context, Result};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_json::{Map, Value};
@@ -12,6 +12,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const MODULE_SUFFIXES: [&str; 8] = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+
+/// Returns the grammar for an ECMAScript module path, or `None` for declaration files, source maps,
+/// Ruby and every unregistered suffix: only ECMAScript sources can register steps through an import.
+pub(super) fn ecmascript_language(path: &Path) -> Option<SourceLanguage> {
+    language_for_path(path).filter(|language| match language {
+        SourceLanguage::JavaScript | SourceLanguage::TypeScript | SourceLanguage::Tsx => true,
+        SourceLanguage::Ruby => false,
+    })
+}
 
 #[derive(Clone, Debug, Default)]
 struct EffectiveProjectConfig {
@@ -676,7 +685,7 @@ impl ProjectResolution {
             candidates.push(base.join(format!("index{suffix}")));
         }
         for candidate in candidates {
-            if language_for_path(&candidate).is_none() || !candidate.is_file() {
+            if ecmascript_language(&candidate).is_none() || !candidate.is_file() {
                 continue;
             }
             let canonical = candidate.canonicalize().with_context(|| {

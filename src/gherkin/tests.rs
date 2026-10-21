@@ -810,3 +810,193 @@ fn sort_expected_tokens_sorts_literals_and_fails_closed() {
         assert_eq!(sort_expected_tokens(message), expected, "{message}");
     }
 }
+
+/// Extracts the single outline step in `step` with one `Examples` row and returns its text.
+fn outline_text(step: &str, headers: &[&str], values: &[&str]) -> String {
+    let source = format!(
+        "Feature: f\n  Scenario Outline: s\n    Given {step}\n    Examples:\n      | {} |\n      | {} |\n",
+        headers.join(" | "),
+        values.join(" | ")
+    );
+    let steps = extract(&source, Path::new("outline.feature")).unwrap();
+    assert_eq!(steps.len(), 1, "{step}");
+    steps[0].text.clone()
+}
+
+/// Pins `<name>` substitution across stray, nested, adjacent, repeated and unknown placeholder
+/// shapes. Rows marked "reference" match `@cucumber/gherkin` 42 pickles; every verbatim claim
+/// sits beside a replaced `<b>` so a blanket "never substitute" cannot pass.
+#[test]
+fn outline_placeholders_replace_each_header_wherever_it_appears() {
+    // (step text, headers, values, expected)
+    let cases: [(&str, &[&str], &[&str], &str); 20] = [
+        // Stray `<` before a placeholder (reference).
+        ("the <a<b> value", &["b"], &["7"], "the <a7 value"),
+        ("<<b>>", &["b"], &["7"], "<7>"),
+        ("<<<b>", &["b"], &["7"], "<<7"),
+        // Plain, adjacent and repeated placeholders (reference).
+        ("<a> <b>", &["a", "b"], &["1", "2"], "1 2"),
+        ("<b><b>", &["b"], &["7"], "77"),
+        ("<b>x<b>", &["b"], &["7"], "7x7"),
+        // `<` and `>` at the ends and out of order (reference).
+        ("<b> <", &["b"], &["7"], "7 <"),
+        ("< <b>", &["b"], &["7"], "< 7"),
+        ("> <b>", &["b"], &["7"], "> 7"),
+        ("a> b> <b>", &["b"], &["7"], "a> b> 7"),
+        // Unknown names and unclosed `<` stay verbatim (reference).
+        ("<z> <b>", &["b"], &["7"], "<z> 7"),
+        ("<b> <z", &["b"], &["7"], "7 <z"),
+        ("<b> <b", &["b"], &["7"], "7 <b"),
+        ("<B> <b>", &["b"], &["7"], "<B> 7"),
+        // Headers with spaces and an empty header (reference).
+        ("<my col> <b>", &["my col", "b"], &["V", "7"], "V 7"),
+        ("<> <b>", &["", "b"], &["E", "7"], "E 7"),
+        // The first of equal headers supplies the value (reference).
+        ("<a> <b>", &["a", "a", "b"], &["1", "2", "7"], "1 7"),
+        // A value is not scanned again, whatever the header order.
+        ("<a> <b>", &["a", "b"], &["<b>", "7"], "<b> 7"),
+        ("<b> <a>", &["b", "a"], &["<a>", "7"], "<a> 7"),
+        // Unmodeled: a header name containing `>` ends at the first `>`, so it stays verbatim
+        // while the ordinary header still resolves.
+        ("<a>b> <b>", &["a>b", "b"], &["V", "7"], "<a>b> 7"),
+    ];
+    for (step, headers, values, expected) in cases {
+        assert_eq!(outline_text(step, headers, values), expected, "{step}");
+    }
+}
+
+/// A run of stray `<` ahead of one placeholder is scanned once, not once per `<`.
+#[test]
+fn outline_placeholder_scan_stays_linear_on_stray_angle_brackets() {
+    let values = BTreeMap::from([("b", "7")]);
+    let text = format!("{}b>", "<".repeat(200_000));
+    assert_eq!(
+        substitute_outline_values(&text, &values),
+        format!("{}7", "<".repeat(199_999))
+    );
+    let unclosed = "<".repeat(200_000);
+    assert_eq!(substitute_outline_values(&unclosed, &values), unclosed);
+    // A header that shares a long prefix with every candidate name is compared once per length
+    // match, not once per `<`: per-`<` comparison takes seconds at this size, this takes
+    // milliseconds.
+    let started = std::time::Instant::now();
+    let long_header = format!("{}b", "<".repeat(800_000));
+    let long_values = BTreeMap::from([(long_header.as_str(), "7")]);
+    let miss = format!("{}a>", "<".repeat(800_001));
+    assert_eq!(substitute_outline_values(&miss, &long_values), miss);
+    let hit = format!("{}b>", "<".repeat(800_001));
+    assert_eq!(substitute_outline_values(&hit, &long_values), "7");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+/// Substitution reaches only the step line: a doc string or data table under an outline step
+/// keeps the step's own text and is not part of the reported step.
+#[test]
+fn outline_step_arguments_do_not_change_step_text() {
+    let source = "Feature: f\n  Scenario Outline: s\n    Given the <a<b> value\n      \"\"\"\n      <b>\n      \"\"\"\n    And the <b> table\n      | <b> |\n    Examples:\n      | b |\n      | 7 |\n";
+    let steps = extract(source, Path::new("args.feature")).unwrap();
+    let texts: Vec<_> = steps.iter().map(|step| step.text.as_str()).collect();
+    assert_eq!(texts, ["the <a7 value", "the 7 table"]);
+}
+
+/// Extracts `source` and returns each step's `(keyword, line, column, end column)`.
+fn step_columns(source: &str, format: FeatureFormat) -> Vec<(String, usize, usize, usize)> {
+    extract_with_format(source, Path::new("columns.feature"), format)
+        .unwrap()
+        .into_iter()
+        .map(|step| {
+            assert_eq!(step.location.line, step.location.end_line);
+            (
+                step.keyword,
+                step.location.line,
+                step.location.column,
+                step.location.end_column,
+            )
+        })
+        .collect()
+}
+
+/// The end column is one past the last character of the step text as written, for any spaces or
+/// tabs between keyword and text, any keyword form, trailing whitespace, multi-byte text and
+/// CRLF. The one-space row pins the unchanged common path; the wider rows fail on the old
+/// `keyword + 1 + text` arithmetic.
+#[test]
+fn step_end_column_follows_the_source_line() {
+    // (step line, keyword, column, end column)
+    let cases = [
+        ("    Given the panel opens", "Given", 5, 26),
+        ("    Given   the panel opens", "Given", 5, 28),
+        ("    Given \tthe panel opens", "Given", 5, 27),
+        ("    Given \t  the panel opens", "Given", 5, 29),
+        ("    Given   the panel opens   ", "Given", 5, 28),
+        ("\tGiven   x", "Given", 2, 11),
+        ("    *   star step", "*", 5, 18),
+        ("    And    more", "And", 5, 16),
+        ("    But  less", "But", 5, 14),
+        ("    Given   crème brûlée 日本", "Given", 5, 28),
+        ("    Given  🙂 ok", "Given", 5, 16),
+    ];
+    for (line, keyword, column, end_column) in cases {
+        for newline in ["\n", "\r\n"] {
+            let source = format!("Feature: f\n  Scenario: s\n{line}\n").replace('\n', newline);
+            assert_eq!(
+                step_columns(&source, FeatureFormat::Gherkin),
+                [(keyword.to_owned(), 3, column, end_column)],
+                "{line:?}"
+            );
+        }
+    }
+    // Localized keyword: `Dado` is four characters.
+    let source = "# language: pt\nFuncionalidade: f\n  Cenário: s\n    Dado   algo\n";
+    assert_eq!(
+        step_columns(source, FeatureFormat::Gherkin),
+        [("Dado".to_owned(), 4, 5, 16)]
+    );
+    // Unmodeled: a tab straight after the keyword is not a step in the parser, so it reports no
+    // step instead of a wrong column; the space-and-tab row above is the control.
+    let source = "Feature: f\n  Scenario: s\n    Given\tthe panel opens\n";
+    assert!(step_columns(source, FeatureFormat::Gherkin).is_empty());
+    // Indentation other than spaces and tabs does not start a step either, which keeps the
+    // keyword's byte offset equal to its character offset.
+    for indent in ["\u{3000}", "\u{a0}", "  \u{2003}"] {
+        let source = format!("Feature: f\n  Scenario: s\n{indent}Given   the panel\n");
+        assert!(
+            step_columns(&source, FeatureFormat::Gherkin).is_empty(),
+            "{indent:?}"
+        );
+    }
+    // A keyword with no text never yields a step with an empty span: bare, the line is not a
+    // step; with a trailing space, the parser rejects the file.
+    let bare = "Feature: f\n  Scenario: s\n    Given\n";
+    assert!(step_columns(bare, FeatureFormat::Gherkin).is_empty());
+    let spaced = "Feature: f\n  Scenario: s\n    Given \n";
+    assert!(extract(spaced, Path::new("empty.feature")).is_err());
+}
+
+/// Outline expansions and backgrounds report the source line's end column, not the expanded
+/// text's: the value is shorter than the placeholder in one row and longer in the other.
+#[test]
+fn outline_and_background_end_columns_describe_the_source_line() {
+    let source = "Feature: f\n  Background:\n    Given   a  background\n  Scenario Outline: s\n    Given   the <n> panel\n    Examples:\n      | n |\n      | 1 |\n      | 12345678901234 |\n";
+    assert_eq!(
+        step_columns(source, FeatureFormat::Gherkin),
+        [
+            ("Given".to_owned(), 3, 5, 26),
+            ("Given".to_owned(), 5, 5, 26),
+            ("Given".to_owned(), 5, 5, 26),
+        ]
+    );
+}
+
+/// Markdown list items keep their column and report the end column of the converted line.
+#[test]
+fn markdown_step_end_columns_follow_the_converted_line() {
+    let source = "# Feature: f\n\n## Scenario: s\n\n* Given   the panel\n- When \t the tab\n";
+    assert_eq!(
+        step_columns(source, FeatureFormat::GherkinMarkdown),
+        [
+            ("Given".to_owned(), 5, 3, 20),
+            ("When".to_owned(), 6, 3, 17),
+        ]
+    );
+}

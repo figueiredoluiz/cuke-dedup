@@ -1068,6 +1068,17 @@
     },
     {
       "source": "fixtures/recall/manifest.json",
+      "case": "gherkin-outline-stray-angle-placeholder",
+      "path": "gherkin-outline-stray-angle",
+      "sourceCaseSha256": "9aec4a39c4c0f8175689d7660ad3f4877e85a3a02fb79e8f38a80e61d7c4fe01",
+      "behaviorClass": "gherkin-outline-stray-angle-placeholder",
+      "requiredStatus": "covered",
+      "fixtureGroup": "gherkin-outline-stray-angle-placeholder",
+      "requiredBehavior": "Preserve the source final findings for unused-definition and every listed absent control under Ruby-native syntax.",
+      "rationale": "Ruby-native definitions exercise the shared Gherkin, identity or grouping contract; execution is checked independently."
+    },
+    {
+      "source": "fixtures/recall/manifest.json",
       "case": "gherkin-continuation-keywords",
       "path": "gherkin-axes",
       "sourceCaseSha256": "ff0e23e332d03ff02f6145e5b7e40d247e3690551c54613b84cc992a9f1f8b89",

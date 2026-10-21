@@ -3,7 +3,7 @@
   "knownMissBaseline": 1,
   "unisolatedNegativeBaseline": 0,
   "minimumRecall": 0.6,
-  "minimumCases": 64,
+  "minimumCases": 65,
   "cases": [
     {
       "name": "ambient-global-registration-case-sensitivity",
@@ -1315,6 +1315,38 @@
         {
           "rule": "unused-definition",
           "count": 3
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 5
+        }
+      ]
+    },
+    {
+      "name": "gherkin-outline-stray-angle-placeholder",
+      "path": "gherkin-outline-stray-angle",
+      "role": "positive",
+      "origin": "regression",
+      "language": "ecmascript",
+      "frameworks": ["cucumber-js"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-10-21",
+      "axes": ["gherkin-structure"],
+      "arguments": [
+        "--features",
+        "features/outline.feature"
+      ],
+      "expectedDefinitions": 2,
+      "expectedFeatureSteps": 1,
+      "expectedExit": 0,
+      "expectedFindings": [
+        {
+          "rule": "unused-definition",
+          "primaryPath": "steps.ts",
+          "primaryLine": 6
         }
       ],
       "expectedAbsent": [

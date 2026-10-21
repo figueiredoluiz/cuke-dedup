@@ -11,7 +11,7 @@ use crate::resource_limits::{
 use anyhow::{bail, Context, Result};
 use gherkin::{Background, Feature, GherkinEnv, Scenario, Step};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod table_escapes;
@@ -92,7 +92,11 @@ pub fn extract_with_format(
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
     table_escapes::finish(&mut feature, &parsed_source, marker)
         .with_context(|| format!("failed to parse Gherkin feature {}", path.display()))?;
-    Ok(extract_feature(&feature, path))
+    let source = StepSource {
+        path,
+        lines: parsed_source.lines().collect(),
+    };
+    Ok(extract_feature(&feature, &source))
 }
 
 /// Sorts the expected-token set in the gherkin crate's `Error at L:C: {..}` message. The crate
@@ -585,23 +589,29 @@ fn is_table_separator(line: &str) -> bool {
     found
 }
 
+/// The parsed document's path and lines, which step locations are measured against.
+struct StepSource<'a> {
+    path: &'a Path,
+    lines: Vec<&'a str>,
+}
+
 /// Collects steps from the feature's and each rule's background and scenarios, then stable-sorts
 /// them by line and column. Background steps appear once; outline expansions of one step share a
 /// position and keep their example-row order.
-fn extract_feature(feature: &Feature, path: &Path) -> Vec<FeatureStep> {
+fn extract_feature(feature: &Feature, source: &StepSource) -> Vec<FeatureStep> {
     let mut steps = Vec::new();
     if let Some(background) = &feature.background {
-        collect_background(background, path, &mut steps);
+        collect_background(background, source, &mut steps);
     }
     for scenario in &feature.scenarios {
-        collect_scenario(scenario, path, &mut steps);
+        collect_scenario(scenario, source, &mut steps);
     }
     for rule in &feature.rules {
         if let Some(background) = &rule.background {
-            collect_background(background, path, &mut steps);
+            collect_background(background, source, &mut steps);
         }
         for scenario in &rule.scenarios {
-            collect_scenario(scenario, path, &mut steps);
+            collect_scenario(scenario, source, &mut steps);
         }
     }
     steps.sort_by(|left, right| {
@@ -614,20 +624,25 @@ fn extract_feature(feature: &Feature, path: &Path) -> Vec<FeatureStep> {
 }
 
 /// Appends the background's steps with their source text.
-fn collect_background(background: &Background, path: &Path, output: &mut Vec<FeatureStep>) {
-    output.extend(background.steps.iter().map(|step| convert_step(step, path)));
+fn collect_background(background: &Background, source: &StepSource, output: &mut Vec<FeatureStep>) {
+    output.extend(
+        background
+            .steps
+            .iter()
+            .map(|step| convert_step(step, source)),
+    );
 }
 
 /// Appends a scenario's steps, once per example data row with `<placeholders>` substituted.
 /// Examples without a table or header row are skipped; when no data row exists at all, the steps
 /// are appended once unsubstituted.
-fn collect_scenario(scenario: &Scenario, path: &Path, output: &mut Vec<FeatureStep>) {
-    if scenario.examples.is_empty() {
-        output.extend(scenario.steps.iter().map(|step| convert_step(step, path)));
-        return;
-    }
-
+fn collect_scenario(scenario: &Scenario, source: &StepSource, output: &mut Vec<FeatureStep>) {
     let output_start = output.len();
+    let locations: Vec<_> = scenario
+        .steps
+        .iter()
+        .map(|step| step_location(step, source))
+        .collect();
     for examples in &scenario.examples {
         let Some(table) = &examples.table else {
             continue;
@@ -636,68 +651,109 @@ fn collect_scenario(scenario: &Scenario, path: &Path, output: &mut Vec<FeatureSt
             continue;
         };
         for row in table.rows.iter().skip(1) {
-            let values: BTreeMap<_, _> = headers
-                .iter()
-                .zip(row)
-                .map(|(header, value)| (header.as_str(), value.as_str()))
-                .collect();
-            output.extend(scenario.steps.iter().map(|step| {
-                let text = substitute_outline_values(&step.value, &values);
-                convert_step_with_text(step, path, text)
-            }));
+            let mut values = BTreeMap::new();
+            for (header, value) in headers.iter().zip(row) {
+                values.entry(header.as_str()).or_insert(value.as_str());
+            }
+            output.extend(
+                scenario
+                    .steps
+                    .iter()
+                    .zip(&locations)
+                    .map(|(step, location)| {
+                        let text = substitute_outline_values(&step.value, &values);
+                        feature_step(step, location.clone(), text)
+                    }),
+            );
         }
     }
     if output.len() == output_start {
-        output.extend(scenario.steps.iter().map(|step| convert_step(step, path)));
+        output.extend(
+            scenario
+                .steps
+                .iter()
+                .zip(&locations)
+                .map(|(step, location)| feature_step(step, location.clone(), step.value.clone())),
+        );
     }
 }
 
-/// Replaces each `<name>` with its example value, where the name runs from `<` to the next `>`.
-/// Unknown names and an unclosed `<` stay verbatim; substituted values are not rescanned.
+/// Replaces each `<name>` with its example value, where `name` is a header and runs from a `<`
+/// to the next `>`. A `<` that does not open a header name stays verbatim and scanning resumes
+/// right after it, so a stray `<` before a placeholder does not hide it. Unknown names, an
+/// unclosed `<` and a header name containing `>` stay verbatim; substituted values are not
+/// rescanned. The first of several equal headers supplies the value.
 fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> String {
     let mut output = String::with_capacity(text.len());
-    let mut remaining = text;
-    while let Some(start) = remaining.find('<') {
-        output.push_str(&remaining[..start]);
-        let placeholder = &remaining[start..];
-        let Some(relative_end) = placeholder.find('>') else {
-            output.push_str(placeholder);
-            return output;
-        };
-        let end = start + relative_end;
-        let name = &remaining[start + 1..end];
-        if let Some(value) = values.get(name) {
-            output.push_str(value);
-        } else {
-            output.push_str(&remaining[start..=end]);
+    let mut position = 0;
+    // Only a name as long as some header is compared, so overlapping candidates that share a long
+    // prefix with a header cost one comparison each instead of one per start.
+    let lengths: BTreeSet<usize> = values.keys().map(|name| name.len()).collect();
+    // The next `>` is looked up once per stretch of `<`, so a run of stray `<` stays linear.
+    let mut close = text.find('>');
+    while let Some(start) = text[position..].find('<').map(|offset| position + offset) {
+        if close.is_some_and(|end| end < start) {
+            close = text[start..].find('>').map(|offset| start + offset);
         }
-        remaining = &remaining[end + 1..];
+        let Some(end) = close else {
+            break;
+        };
+        output.push_str(&text[position..start]);
+        let name = &text[start + 1..end];
+        if let Some(value) = lengths
+            .contains(&name.len())
+            .then(|| values.get(name))
+            .flatten()
+        {
+            output.push_str(value);
+            position = end + 1;
+        } else {
+            output.push('<');
+            position = start + 1;
+        }
     }
-    output.push_str(remaining);
+    output.push_str(&text[position..]);
     output
 }
 
 /// Converts a step, keeping its source text.
-fn convert_step(step: &Step, path: &Path) -> FeatureStep {
-    convert_step_with_text(step, path, step.value.clone())
+fn convert_step(step: &Step, source: &StepSource) -> FeatureStep {
+    feature_step(step, step_location(step, source), step.value.clone())
 }
 
-/// Builds a `FeatureStep` with `text` and a one-line location whose end column counts the
-/// trimmed keyword, one space and the source `step.value`, not `text`.
-fn convert_step_with_text(step: &Step, path: &Path, text: String) -> FeatureStep {
-    let keyword = step.keyword.trim().to_owned();
-    let end_column = step.position.col + keyword.chars().count() + 1 + step.value.chars().count();
+/// Builds a `FeatureStep` from the step's keyword, a location and the (possibly expanded) text.
+fn feature_step(step: &Step, location: SourceLocation, text: String) -> FeatureStep {
     FeatureStep {
-        keyword,
+        keyword: step.keyword.trim().to_owned(),
         text,
-        location: SourceLocation::new(
-            path,
-            step.position.line,
-            step.position.col,
-            step.position.line,
-            end_column,
-        ),
+        location,
     }
+}
+
+/// Returns the step's one-line location. The end column is one past the last character of the
+/// source `step.value` on its line, whatever whitespace separates it from the keyword. The parser
+/// yields no step with empty text and only spaces and tabs may precede the keyword, so the value
+/// is always present on its line and the keyword's byte offset equals its character offset.
+fn step_location(step: &Step, source: &StepSource) -> SourceLocation {
+    let keyword = step.keyword.trim();
+    let after_keyword = source
+        .lines
+        .get(step.position.line - 1)
+        .and_then(|line| line.get(step.position.col - 1 + keyword.len()..))
+        .unwrap_or_default();
+    let separator = after_keyword
+        .split(step.value.as_str())
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .count();
+    SourceLocation::new(
+        source.path,
+        step.position.line,
+        step.position.col,
+        step.position.line,
+        step.position.col + keyword.chars().count() + separator + step.value.chars().count(),
+    )
 }
 
 #[cfg(test)]

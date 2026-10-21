@@ -1370,3 +1370,132 @@ fn package_extends_refuse_a_symlink_out_of_the_workspace_package() {
         );
     }
 }
+
+/// The file name `specifier` resolves to from `root`, or `None` when it stays unresolved.
+fn resolved_file_name(root: &std::path::Path, specifier: &str) -> Option<String> {
+    resolve_from_root_step(root, specifier)
+        .unwrap()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+}
+
+/// Resolution follows only ECMAScript source suffixes. Every module suffix resolves (the
+/// control that the check is not "resolve nothing"); Ruby, JSON, CSS, feature files, declaration
+/// files, an uppercase suffix and a Ruby-only directory index do not, and a Ruby neighbour never
+/// shadows the ECMAScript source an extensionless import selects.
+#[test]
+fn resolution_follows_only_ecmascript_source_suffixes() {
+    let files = [
+        ("package.json", "{}"),
+        ("t.ts", ""),
+        ("t.tsx", ""),
+        ("t.mts", ""),
+        ("t.cts", ""),
+        ("t.js", ""),
+        ("t.jsx", ""),
+        ("t.mjs", ""),
+        ("t.cjs", ""),
+        ("t.rb", "# ruby\n"),
+        ("t.json", "{}"),
+        ("t.css", "a {}"),
+        ("t.feature", "Feature: f\n"),
+        ("t.d.ts", ""),
+        ("U.TS", ""),
+        ("both.rb", ""),
+        ("both.ts", ""),
+        ("only/index.rb", ""),
+        ("mixed/index.rb", ""),
+        ("mixed/index.js", ""),
+        ("ts/index.ts", ""),
+    ];
+    let directory = write_project(&files);
+    let resolve = |specifier: &str| resolved_file_name(directory.path(), specifier);
+    for (specifier, expected) in [
+        ("./t.ts", Some("t.ts")),
+        ("./t.tsx", Some("t.tsx")),
+        ("./t.mts", Some("t.mts")),
+        ("./t.cts", Some("t.cts")),
+        ("./t.js", Some("t.js")),
+        ("./t.jsx", Some("t.jsx")),
+        ("./t.mjs", Some("t.mjs")),
+        ("./t.cjs", Some("t.cjs")),
+        ("./both", Some("both.ts")),
+        ("./ts", Some("index.ts")),
+        ("./mixed", Some("index.js")),
+        ("./t.rb", None),
+        ("./t.json", None),
+        ("./t.css", None),
+        ("./t.feature", None),
+        ("./t.d.ts", None),
+        ("./U.TS", None),
+        ("./both.rb", None),
+        ("./only", None),
+    ] {
+        assert_eq!(resolve(specifier).as_deref(), expected, "{specifier}");
+    }
+}
+
+/// An import of `./s.rb` resolves to `s.rb.ts` when that file exists, as TypeScript does (checked
+/// with `tsc --traceResolution`: the `.rb` is stripped, then `s.rb.ts` is used); with no such
+/// ECMAScript file the same specifier stays unresolved.
+#[test]
+fn an_appended_ecmascript_suffix_resolves_like_typescript() {
+    let directory = write_project(&[
+        ("package.json", "{}"),
+        ("s.rb", "# ruby\n"),
+        ("s.rb.ts", ""),
+        ("u.rb", "# ruby\n"),
+    ]);
+    let resolve = |specifier: &str| resolved_file_name(directory.path(), specifier);
+    assert_eq!(resolve("./s.rb").as_deref(), Some("s.rb.ts"));
+    assert_eq!(resolve("./u.rb"), None);
+}
+
+/// Every route that ends in `resolve_path` applies the same suffix rule: a tsconfig alias, a
+/// `package.json` import, a workspace package export and `main` each resolve an ECMAScript
+/// target and leave a Ruby or JSON target unresolved.
+#[test]
+fn every_resolution_route_rejects_non_ecmascript_targets() {
+    let directory = write_project(&[
+        (
+            "package.json",
+            r##"{"name":"root","workspaces":["packages/*"],"imports":{"#ts":"./lib/x.ts","#rb":"./lib/x.rb","#json":"./lib/x.json"}}"##,
+        ),
+        (
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["lib/*"]}}}"#,
+        ),
+        ("lib/x.ts", ""),
+        ("lib/x.rb", ""),
+        ("lib/x.json", "{}"),
+        (
+            "packages/good/package.json",
+            r#"{"name":"@ex/good","exports":{".":"./index.ts"}}"#,
+        ),
+        ("packages/good/index.ts", ""),
+        (
+            "packages/ruby/package.json",
+            r#"{"name":"@ex/ruby","exports":{".":"./index.rb"}}"#,
+        ),
+        ("packages/ruby/index.rb", ""),
+        (
+            "packages/main/package.json",
+            r#"{"name":"@ex/main","main":"./main.rb"}"#,
+        ),
+        ("packages/main/main.rb", ""),
+    ]);
+    for (specifier, resolves) in [
+        ("@lib/x", true),
+        ("@lib/x.ts", true),
+        ("@lib/x.rb", false),
+        ("@lib/x.json", false),
+        ("#ts", true),
+        ("#rb", false),
+        ("#json", false),
+        ("@ex/good", true),
+        ("@ex/ruby", false),
+        ("@ex/main", false),
+    ] {
+        let resolved = resolve_from_root_step(directory.path(), specifier).unwrap();
+        assert_eq!(resolved.is_some(), resolves, "{specifier}");
+    }
+}
