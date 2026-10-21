@@ -227,12 +227,12 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
 /** Checks syntax the scanner cannot model throws, so the check fails instead of passing silently. */
 test("unmodeled shapes fail closed, with modeled siblings as controls", () => {
   for (const source of [
-    "use crate::model::Framework::*;", "use crate::*;", "use crate::ruby::*;", "use crate::typescript::*;",
+    "use crate::model::Framework::*;", "use crate::*;", "use super::*;", "use super::super::*;", "use super as parent; use parent::*;", "use super::foo::*;", "mod tests { use super::foo::*; }", "use crate as root; mod tests { use super::root::*; }", "mod a { use super::super::*; }", "fn f() { use super::*; }", "impl X { fn f() { use super::*; } }", "use self::super::*;", "use crate::ruby::*;", "use crate::typescript::*;",
     'let _ = "unterminated;', "/* unterminated", 'let _ = r#"unterminated;', "use crate::ruby",
     "use crate::ruby as x; use other as x; x::f();", "use a as b; use b as a; a::f();",
     "use crate::a::SourceLanguage as S; type L = S;", "type L = SourceLanguage;", "type A = ([u8; 2], SourceLanguage);", "type A = [SourceLanguage; 2];", "impl X for Y { type Out = Framework; }", "type R = crate::ruby::Handler;", "pub type T<A> = Option<Framework>;", "type G = tree_sitter_ruby::Language;",
   ]) assert.throws(() => full("src/analysis.rs", source), /src\/analysis\.rs/, source);
-  for (const source of ["use crate::model::*;", "use super::*;", "use crate::analysis::*;", 'let _ = "terminated";', "type Id = u32; type Out<T> = Result<T, Error>; type Arr = [u8; 2];", "use crate::a::SourceLanguage; trait T { type Item; }", "use crate::ruby; type X = other::ruby::T;", "macro_rules! m { ($type:ty = SourceLanguage) => {} }", "type X = Box<dyn Fn()>; let tree_sitter_ = 1;", "// type L = SourceLanguage;", "fn r#type() {} let _ = SourceLanguage::Ruby;"]) {
+  for (const source of ["use crate::model::*;", "use crate::analysis::*;", "mod tests { use super::*; }", "mod a { mod b { use super::super::*; } }", "use self::*;", 'let _ = "terminated";', "type Id = u32; type Out<T> = Result<T, Error>; type Arr = [u8; 2];", "use crate::a::SourceLanguage; trait T { type Item; }", "use crate::ruby; type X = other::ruby::T;", "macro_rules! m { ($type:ty = SourceLanguage) => {} }", "type X = Box<dyn Fn()>; let tree_sitter_ = 1;", "// type L = SourceLanguage;", "fn r#type() {} let _ = SourceLanguage::Ruby;"]) {
     assert.doesNotThrow(() => full("src/analysis.rs", source), source);
   }
 });

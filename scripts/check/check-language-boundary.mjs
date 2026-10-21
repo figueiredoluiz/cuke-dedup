@@ -160,6 +160,15 @@ function selfVariants(input, open) {
   }
   return found.filter((name) => !declared.has(name));
 }
+/** Count the inline `mod name {` blocks that enclose the token at `at`. */
+function moduleDepth(input, at) {
+  const stack = [];
+  for (let n = 0; n < at; n++) {
+    if (input[n] === "{") stack.push(input[n - 2] === "mod" && !input.rawIdentifiers.has(n - 2));
+    else if (input[n] === "}") stack.pop();
+  }
+  return stack.filter(Boolean).length;
+}
 /** Parse lexical use-tree leaves and aliases, rejecting unsupported or malformed import syntax. */
 function imports(input, rawIdentifiers, offset) {
   /** Recognize a keyword token only when its original spelling was not a raw identifier. */
@@ -232,7 +241,7 @@ export function inventorySources(sources) {
         // All import syntax is parsed: forward aliases must not hide unsupported targeted forms.
         const parsed = imports(input.slice(i + 1, end), input.rawIdentifiers, i + 1);
         for (const leaf of parsed) {
-          leaves.push(leaf);
+          leaves.push({ ...leaf, at: i });
           // `use tree_sitter_ruby;` binds a name to itself; recording it would read as an alias cycle.
           if (leaf.path.length === 1 && leaf.path[0] === leaf.alias) continue;
           const origins = aliases.get(leaf.alias) ?? [];
@@ -257,9 +266,12 @@ export function inventorySources(sources) {
         }
         return path;
       }
-      for (const { path } of leaves) {
+      for (const { path, at } of leaves) {
         const resolved = canonical(path);
         if (resolved.includes("*") && (edge(resolved) || resolved.join("::") === "crate::*")) throw Error("unsupported targeted wildcard import");
+        // A wildcard that climbs out of the file's own module imports names this scan cannot see (a parent's `use crate::ruby;`), and a path that continues after `super` may go through a parent's alias (`use crate as root;`). Only `super::*` chains that stay inside inline modules (`mod tests { use super::*; }`) are accepted.
+        const relative = resolved.slice(resolved[0] === "self" ? 1 : 0), climbs = relative.findIndex((part) => part !== "super");
+        if (resolved.at(-1) === "*" && climbs > 0 && (climbs > moduleDepth(input, at) || relative.length !== climbs + 1)) throw Error("unsupported wildcard import beyond the file module");
         add(resolved, true);
       }
       for (let i = 0; i < input.length; i++) {
