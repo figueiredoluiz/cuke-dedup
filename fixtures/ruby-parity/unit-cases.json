@@ -204,6 +204,13 @@
           },
           "rationale": "Configured-assertion Ruby handlers: complete-event versus exact-policy (untrusted `expect`) with different handlers gives no finding, also with 10,002-character matchers; two complete streams give a near finding; two identical exact-policy handlers give a finding. Every row, in both orders, evaluates one candidate with no truncation and no diagnostic beyond the two missing-feature warnings.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "action_only_stream_on_either_side_excludes_identical_event_streams",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: identical event streams behind different handlers are value-only differences, never near duplicates, when either side declares an action-only stream; synthetic definitions differ in the stream regime of one side at a time.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -2963,6 +2970,53 @@
             "name": "public_session_finalization_applies_late_ruby_effects_in_either_order"
           },
           "rationale": "`public_session_finalization_applies_late_ruby_effects_in_either_order` extracts `.rb` sources through the shared extraction session beside ECMAScript ones (registry uncertainty isolation, late Ruby finalization effects) in-process.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "adapter_policies_resolve_to_their_declared_capabilities",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "adapter_policies_resolve_to_their_declared_capabilities"
+          },
+          "rationale": "Policy matrix `adapter_policies_resolve_to_their_declared_capabilities` resolves the Ruby policy over all three effect-stream regimes and every ECMAScript framework policy to their capability and flag values and pins that the six outcomes stay distinct; the Ruby rows are executable Ruby evidence.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "extraction_attaches_the_policy_of_the_registering_framework",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "extraction_attaches_the_policy_of_the_registering_framework"
+          },
+          "rationale": "Extraction matrix `extraction_attaches_the_policy_of_the_registering_framework` extracts a Ruby definition and one definition per supported JS/TS framework and checks each carries its adapter's policy while a hand-built definition keeps the default; the Ruby arm is executable Ruby evidence.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "language_domains_follow_the_registered_adapters",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "language_domains_follow_the_registered_adapters"
+          },
+          "rationale": "Registry matrix `language_domains_follow_the_registered_adapters` extracts one definition per registered language, including Ruby, and checks the domain its adapter declares is the one the definition carries and that a reused label does not merge domains; the Ruby arm is executable Ruby evidence.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "positional_steps_pair_by_wording_with_text_matched_steps",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: a positional step pairs with a text-matched step of the same matcher by near wording, never as an exact matcher or a parameterization; synthetic definitions differ in the attached policy of one side at a time.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "attached_policy_decides_outcomes_not_the_framework_label",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "attached_policy_decides_outcomes_not_the_framework_label"
+          },
+          "rationale": "Outcome matrix `attached_policy_decides_outcomes_not_the_framework_label` flips only the attached policy of otherwise identical definitions and checks usage, duplicate-handler and mixed-domain outcomes in-process; the Ruby arm anchors a regex per line and is executable Ruby evidence.",
           "behaviorClass": "ruby-behavior"
         }
       ]

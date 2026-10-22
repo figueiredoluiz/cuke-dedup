@@ -2,7 +2,6 @@
 
 use super::evidence::definition_semantic_fingerprint;
 use crate::model::{stable_fingerprint, MatcherKind, StepDefinition};
-use crate::source_adapter::semantics::ComparisonDomain;
 use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
@@ -61,10 +60,7 @@ fn record<'a>(definition: &'a StepDefinition, root: &Path) -> impl Serialize + '
         path: relative_path(definition, root),
         line: location.line,
         column: location.column,
-        domain: match definition.analysis_profile().comparison_domain {
-            ComparisonDomain::EcmaScript => "ecmascript",
-            ComparisonDomain::Ruby => "ruby",
-        },
+        domain: definition.analysis_profile().domain.label,
         framework: &definition.framework,
         registration: &definition.registration,
         matcher: &definition.matcher,

@@ -760,7 +760,7 @@ fn witness_for(
             // sample that can be derived soundly, so both leave the matcher without a witness.
             name => definition
                 .analysis_profile()
-                .dialect
+                .dialect()
                 .parameter_sample(parameter_types.get(name)?)?,
         };
         witness.push_str(&sample);
@@ -833,7 +833,7 @@ pub(super) fn apply_indirect_usage(
 ) {
     if !definitions
         .iter()
-        .any(|d| d.analysis_profile().indirect_usage)
+        .any(|d| d.analysis_profile().step_invocation)
     {
         return;
     }
@@ -879,7 +879,7 @@ pub(super) fn analyze_unused(
         return;
     }
     for (index, definition) in definitions.iter().enumerate() {
-        if used.contains(&index) || !definition.analysis_profile().global_matchers {
+        if used.contains(&index) || !definition.analysis_profile().matches_by_text() {
             continue;
         }
         findings.push(Finding {
@@ -920,7 +920,7 @@ fn compile_matcher(
     parameter_types: &BTreeMap<String, String>,
 ) -> (CompiledMatcher, Option<String>) {
     match (
-        definition.analysis_profile().global_matchers,
+        definition.analysis_profile().matches_by_text(),
         definition.matcher_kind,
     ) {
         (false, _) | (_, MatcherKind::Literal) => (
@@ -944,7 +944,7 @@ fn compile_matcher(
             }
             let expression = definition
                 .analysis_profile()
-                .dialect
+                .dialect()
                 .expression(&definition.matcher, &definition.matcher_flags);
             let Some(expression) = expression else {
                 return (

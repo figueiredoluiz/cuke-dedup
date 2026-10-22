@@ -92,7 +92,7 @@ fn matchers_compatible(
     left.matcher_kind == right.matcher_kind
         && left
             .analysis_profile()
-            .dialect
+            .dialect()
             .similarity_flags_match(&left.matcher_flags, &right.matcher_flags)
         && !has_polarity_conflict(left_words, right_words)
 }
@@ -192,7 +192,7 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
         left.handler.alpha_normalized == right.handler.alpha_normalized,
         left.handler.structural == right.handler.structural
             && left.handler.behavior_identity() == right.handler.behavior_identity(),
-        event_similarity_available(left, right),
+        event_overlap_available(left, right),
         &left_events,
         &right_events,
     )
@@ -200,8 +200,8 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
 
 // Partial streams preserve identity checks but cannot measure whole-handler overlap.
 /// Whether both definitions' profiles allow event-overlap scoring.
-pub(super) fn event_similarity_available(left: &StepDefinition, right: &StepDefinition) -> bool {
-    left.analysis_profile().event_similarity && right.analysis_profile().event_similarity
+pub(super) fn event_overlap_available(left: &StepDefinition, right: &StepDefinition) -> bool {
+    left.analysis_profile().scores_event_overlap && right.analysis_profile().scores_event_overlap
 }
 
 /// Whether two handlers can run in the same runtime context. Rejects differing paths when either
@@ -215,7 +215,7 @@ pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefi
     {
         return false;
     }
-    if left.analysis_profile().handler_domain != right.analysis_profile().handler_domain {
+    if left.analysis_profile().handler_scope != right.analysis_profile().handler_scope {
         return false;
     }
     match (left.runtime_context(), right.runtime_context()) {
@@ -311,6 +311,7 @@ mod tests {
                 capture_scope: None,
             },
             framework: Framework::Unknown,
+            analysis_policy: Default::default(),
             registration: "Given".to_owned(),
             location: SourceLocation::new("steps.ts", 1, 1, 1, 1),
             inline_suppressions: Vec::new(),

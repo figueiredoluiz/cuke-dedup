@@ -20,6 +20,7 @@ fn definition(line: usize) -> StepDefinition {
             capture_scope: None,
         },
         framework: Framework::Unknown,
+        analysis_policy: Default::default(),
         registration: "Given".to_owned(),
         location: SourceLocation::new("steps.ts", line, 1, line, 10),
         inline_suppressions: Vec::new(),

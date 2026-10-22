@@ -52,6 +52,13 @@
 //! field to any of those is a breaking change: it ships in a major release, or, before 1.0, in the
 //! next minor release.
 //!
+//! [`model::StepDefinition::analysis_policy`] holds the comparison policy the extracting adapter
+//! attached, an opaque [`source_adapter::AnalysisPolicy`]. A definition built by hand or
+//! deserialized has [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript
+//! baseline, whatever its `framework`; a hand-built Ruby definition takes
+//! `adapter_for_language(SourceLanguage::Ruby).analysis_policy()`, and framework-specific policies
+//! (Jest-Cucumber, vitest-cucumber-plugin) come only from extraction. The field is not serialized.
+//!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,
 //! and give it a constructor if it travels both ways.

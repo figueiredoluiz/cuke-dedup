@@ -11,6 +11,16 @@ use crate::model::{DuplicationThreshold, Rule};
 use crate::typescript;
 use std::path::{Path, PathBuf};
 
+/// Sets a definition's framework together with the policy its adapter attaches for that framework.
+pub(super) fn set_framework(definition: &mut StepDefinition, framework: crate::model::Framework) {
+    definition.framework = framework;
+    definition.analysis_policy = if framework == crate::model::Framework::CucumberRuby {
+        crate::ruby::semantics::policy()
+    } else {
+        crate::typescript::semantics::policy(framework)
+    };
+}
+
 /// Builds one synthetic Given feature step for adapter contract tests.
 fn contract_steps(text: &str) -> Vec<FeatureStep> {
     vec![FeatureStep {
@@ -63,7 +73,7 @@ fn adapter_contracts_preserve_global_and_positional_outcomes() {
         for matching in [true, false] {
             let mut defs = definitions("Given(/^a user exists$/, () => { load(); save(); }); Given(/^a user exists$/, () => { create(); save(); });");
             for def in &mut defs {
-                def.framework = framework;
+                set_framework(def, framework);
             }
             let steps = contract_steps(if matching {
                 "a user exists"
@@ -125,8 +135,8 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
         (CucumberRuby, CucumberRuby, true, true, false),
     ] {
         let mut defs = definitions("Given('a user exists', () => { load(); save(); }); Given('the basket is empty', () => { load(); save(); });");
-        defs[0].framework = left;
-        defs[1].framework = right;
+        set_framework(&mut defs[0], left);
+        set_framework(&mut defs[1], right);
         if different_file {
             defs[1].location.path = "other.ts".into();
         }
@@ -150,7 +160,7 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
         }
     }
     let mut mixed = definitions("Given('a user exists', () => { load(); save(); }); Given('a cart exists', () => { load(); save(); });");
-    mixed[0].framework = CucumberRuby;
+    set_framework(&mut mixed[0], CucumberRuby);
     assert!(analyze(mixed, vec![], &config)
         .unwrap_err()
         .to_string()
@@ -172,7 +182,7 @@ fn adapter_contracts_preserve_regex_execution_and_identity() {
         (CucumberRuby, "^alice$", "n", "alice", true),
     ] {
         let mut defs = definitions("Given(/^placeholder$/, () => { load(); save(); });");
-        defs[0].framework = framework;
+        set_framework(&mut defs[0], framework);
         defs[0].matcher = pattern.into();
         defs[0].matcher_flags = flags.into();
         let steps = contract_steps(text);
@@ -196,7 +206,7 @@ fn adapter_contracts_preserve_regex_execution_and_identity() {
     ] {
         let mut defs = definitions("Given(/^alice$/, () => { load(); save(); }); Given(/^alice$/, () => { load(); save(); });");
         for def in &mut defs {
-            def.framework = framework;
+            set_framework(def, framework);
         }
         defs[1].matcher_flags = flags.into();
         if framework != CucumberRuby && flags == "i" {
@@ -236,7 +246,7 @@ fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
                 let extra = if same { "" } else { "save();" };
                 let mut defs = definitions(&format!("Given('I am on login page', () => {{ load(); }}); Given('I am on the login page', () => {{ load(); {extra} }});"));
                 for def in &mut defs {
-                    def.framework = framework;
+                    set_framework(def, framework);
                 }
                 defs[1].matcher_flags = flags.into();
                 assert!(definition_pair_candidates(&defs, &config).contains_pair(0, 1));
@@ -254,7 +264,7 @@ fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
                 "Given(/^alpha$/, () => { load(); }); Given(/^beta$/, () => { save(); });",
             );
             for def in &mut defs {
-                def.framework = framework;
+                set_framework(def, framework);
                 def.matcher_flags = flags.into();
             }
             let steps = contract_steps("alpha");

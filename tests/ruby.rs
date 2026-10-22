@@ -12074,8 +12074,9 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
             .map(|error| error.to_string());
         let refusal = "Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots";
         assert_eq!(mixed.as_deref(), Some(refusal), "{order:?}");
-        // `Framework::CucumberRuby` is the routing key of the Ruby comparison domain, so the
-        // partition holds in every order and never depends on which definition comes first.
+        // The Ruby framework label and the attached Ruby policy always agree on extracted
+        // definitions, so partitioning on the label yields the policy's domains in every order and
+        // never depends on which definition comes first.
         let ruby_framework = cuke_dedup::model::Framework::CucumberRuby;
         let domains: [Vec<_>; 2] = [true, false].map(|in_ruby| {
             let domain = definitions

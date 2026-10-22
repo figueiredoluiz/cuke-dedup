@@ -129,10 +129,10 @@ fn analyze_internal(
     config.validate_analysis_limits()?;
     let mut findings = Vec::new();
     if let Some(first) = definitions.first() {
-        let domain = first.analysis_profile().comparison_domain;
+        let domain = first.analysis_profile().domain;
         if definitions
             .iter()
-            .any(|d| d.analysis_profile().comparison_domain != domain)
+            .any(|d| d.analysis_profile().domain != domain)
         {
             bail!("Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots");
         }

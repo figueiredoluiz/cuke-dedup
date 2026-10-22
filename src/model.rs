@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use self::sha256::Sha256;
+use crate::source_adapter::AnalysisPolicy;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 /// Source span with one-based starts and one-based, exclusive end coordinates.
@@ -150,6 +151,10 @@ pub struct StepDefinition {
     pub handler: HandlerFingerprint,
     /// Framework that registered the definition.
     pub framework: Framework,
+    /// How the analyzer compares this definition, attached by the adapter that extracted it. A
+    /// hand-built or deserialized definition uses [`AnalysisPolicy::default`]. Not serialized.
+    #[serde(skip)]
+    pub analysis_policy: AnalysisPolicy,
     /// Registration name resolved from direct, aliased, or namespaced usage.
     pub registration: String,
     /// Full registration call location.
