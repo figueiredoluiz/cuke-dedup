@@ -8,8 +8,8 @@ use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
 use crate::model::{
-    BehaviorEventRef, DefinitionCluster, Finding, FindingEvidence, MatcherKind, Rule, Severity,
-    SourceLocation, StepDefinition, Suppression,
+    BehaviorEventRef, BehaviorIdentity, DefinitionCluster, Finding, FindingEvidence, MatcherKind,
+    Rule, Severity, SourceLocation, StepDefinition, Suppression,
 };
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -517,7 +517,7 @@ fn cached_words<'a>(
 /// Estimated cost of one similarity stage for a pair. Matcher: a matrix over normalized-matcher
 /// character counts, zero for normalization-equal matchers. Handler: a matrix over
 /// behaviour-signature lengths, only when the pair shares neither its alpha-form class nor its
-/// structure class (each including the behaviour signature) and both sides support event
+/// structure class (each including the behaviour identity) and both sides support event
 /// similarity, zero otherwise. Evidence: combined comparison bytes times the linear-scan
 /// multiplier.
 fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> u64 {
@@ -581,7 +581,7 @@ fn charge_matrix_work(total: &mut u64, work: u64) -> bool {
 
 /// Assigns each definition a class id per comparison axis: deferred-assertion events, exact matcher
 /// (kind, source text, effective identity flags), normalized-matcher partition, alpha-normalized
-/// handler with behaviour signature, structural handler, and structure with behaviour signature.
+/// handler with behaviour identity, structural handler, and structure with behaviour identity.
 fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
     let mut exact_matchers = HashMap::new();
     let mut normalized_matchers = HashMap::new();
@@ -633,7 +633,7 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
             &mut alpha_handlers,
             (
                 definition.handler.alpha_normalized.as_str(),
-                definition.handler.behavior_signature.as_slice(),
+                definition.handler.behavior_identity(),
             ),
         ));
         classes.structural_handler.push(intern_class(
@@ -644,7 +644,7 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
             &mut structures_and_behavior,
             (
                 definition.handler.structural.as_str(),
-                definition.handler.behavior_signature.as_slice(),
+                definition.handler.behavior_identity(),
             ),
         ));
     }
@@ -780,8 +780,8 @@ pub(super) fn definition_pair_candidates(
     let behavior_events = behavior_event_ids(definitions);
     let behavior_anchor_events = behavior_anchor_event_ids(definitions);
     let mut normalized_matchers: HashMap<MatcherPartition<'_>, Vec<usize>> = HashMap::new();
-    let mut handlers: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
-    let mut structures: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
+    let mut handlers: HashMap<(&str, BehaviorIdentity<'_>), Vec<usize>> = HashMap::new();
+    let mut structures: HashMap<(&str, BehaviorIdentity<'_>), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
         if definition.analysis_profile().global_matchers {
@@ -794,14 +794,14 @@ pub(super) fn definition_pair_candidates(
             handlers
                 .entry((
                     &definition.handler.alpha_normalized,
-                    &definition.handler.behavior_signature,
+                    definition.handler.behavior_identity(),
                 ))
                 .or_default()
                 .push(index);
             structures
                 .entry((
                     &definition.handler.structural,
-                    &definition.handler.behavior_signature,
+                    definition.handler.behavior_identity(),
                 ))
                 .or_default()
                 .push(index);
@@ -1236,7 +1236,7 @@ fn meaningful_handler(definition: &StepDefinition) -> bool {
     definition.handler.comparable && !definition.handler.trivial
 }
 
-/// True for pairs the structural-handler source owns: same structure and behaviour signature,
+/// True for pairs the structural-handler source owns: same structure and behaviour identity,
 /// different alpha-normalized handler.
 fn covered_by_structural_source(relationships: PairRelationships) -> bool {
     !relationships.same_handler && relationships.same_structure

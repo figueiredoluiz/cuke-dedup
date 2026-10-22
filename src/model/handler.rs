@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Evidence regime of a handler's behaviour events; selects which event-overlap comparisons the
 /// events can support. Non-exhaustive so that a later regime is not another breaking change.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum EffectStream {
@@ -19,9 +19,59 @@ pub enum EffectStream {
 }
 
 impl EffectStream {
+    /// The regime's serialized name.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Partial => "partial",
+            Self::Complete => "complete",
+            Self::ActionOnly => "action-only",
+        }
+    }
+
     /// Whether this is the default regime; serialization omits it.
     pub(crate) fn is_partial(&self) -> bool {
         *self == Self::Partial
+    }
+}
+
+/// What makes two handlers' behaviour equal: the ordered events, the effect-stream regime and the
+/// capture scope. Events alone would equate handlers that the events cannot tell apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BehaviorIdentity<'a> {
+    events: &'a [String],
+    stream: EffectStream,
+    scope: Option<&'a str>,
+}
+
+impl HandlerFingerprint {
+    /// The key under which two handlers count as behaving identically.
+    pub(crate) fn behavior_identity(&self) -> BehaviorIdentity<'_> {
+        BehaviorIdentity {
+            events: &self.behavior_signature,
+            stream: self.effect_stream,
+            scope: self.capture_scope.as_deref(),
+        }
+    }
+
+    /// Stable digest of the behaviour identity. A handler with a partial stream and no capture
+    /// scope digests as its events alone; any other handler digests its events together with the
+    /// regime and scope under a distinct frame, so handlers that differ in either digest
+    /// differently.
+    pub(crate) fn behavior_digest(&self) -> String {
+        let events =
+            super::stable_fingerprint_parts(self.behavior_signature.iter().map(String::as_str));
+        if self.effect_stream.is_partial() && self.capture_scope.is_none() {
+            return events;
+        }
+        let scope = self.capture_scope.as_deref();
+        super::stable_fingerprint_parts([
+            "behavior-identity",
+            &events,
+            self.effect_stream.name(),
+            // An absent scope and the bare scope (empty key) are different identities.
+            if scope.is_some() { "scope" } else { "no-scope" },
+            scope.unwrap_or_default(),
+        ])
     }
 }
 

@@ -1249,11 +1249,11 @@ mod tests {
             );
         }
     }
-    /// Every producer path writes the effect-stream and capture-scope markers together with the
-    /// typed fields: ordinary and unmodeled handlers, `__FILE__` captures, configured assertion
-    /// streams and bound-instance handlers (a parameterized scope that may sit beside a bare one).
+    /// Every producer path writes the effect-stream and capture-scope typed fields and no marker
+    /// event: ordinary and unmodeled handlers, `__FILE__` captures, configured assertion streams
+    /// and bound-instance handlers (a parameterized scope that replaces a bare one).
     #[test]
-    fn typed_handler_facts_agree_with_markers_on_every_producer_path() {
+    fn typed_handler_facts_are_the_only_carriers_on_every_producer_path() {
         use crate::model::EffectStream::{ActionOnly, Complete, Partial};
         /// One extracted source and what each of its definitions must carry.
         struct Row {
@@ -1262,8 +1262,6 @@ mod tests {
             stream: crate::model::EffectStream,
             scope: Option<String>,
             definitions: usize,
-            /// A bare scope marker survives behind a bound scope's marker.
-            bare_behind: bool,
         }
         let bound = |body: &str| {
             format!("class Bound; def handle; work({body}); end; end\ninstance = Bound.new; Given('same', &instance.method(:handle)); Then('same', &instance.method(:handle))")
@@ -1279,7 +1277,6 @@ mod tests {
             stream,
             scope: scope.map(str::to_owned),
             definitions: 1,
-            bare_behind: false,
         };
         let (bound_plain, bound_bare) = (bound(""), bound("__FILE__"));
         let rows = [
@@ -1307,7 +1304,6 @@ mod tests {
             Row {
                 definitions: 2,
                 scope: allocation(&bound_bare),
-                bare_behind: true,
                 ..row("bound instance with bare scope", &bound_bare, ActionOnly, None)
             },
         ];
@@ -1323,15 +1319,16 @@ mod tests {
             assert_eq!(definitions.len(), row.definitions, "{}", row.context);
             for definition in &definitions {
                 let handler = &definition.handler;
-                super::super::handler::agreement::assert_agree(handler, row.context);
                 assert_eq!(handler.effect_stream, row.stream, "{}", row.context);
                 assert_eq!(handler.capture_scope, row.scope, "{}", row.context);
-                assert_eq!(
-                    handler.behavior_signature.get(1).map(String::as_str)
-                        == Some("method:ruby:lexical-file"),
-                    row.bare_behind,
-                    "{}",
-                    row.context
+                assert!(
+                    handler
+                        .behavior_signature
+                        .iter()
+                        .all(|event| !event.starts_with("method:")),
+                    "{}: {:?}",
+                    row.context,
+                    handler.behavior_signature
                 );
             }
         }

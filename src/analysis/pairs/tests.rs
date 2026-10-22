@@ -1017,9 +1017,6 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
     ] {
         let mut left = definition();
         left.framework = crate::model::Framework::CucumberRuby;
-        left.handler
-            .behavior_signature
-            .push("method:ruby:complete-events".into());
         left.handler.effect_stream = crate::model::EffectStream::Complete;
         let mut right = left.clone();
         right.location.line += 1;
@@ -1036,16 +1033,9 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
         left.normalized_matcher = left.matcher.clone();
         right.normalized_matcher = right.matcher.clone();
         if !complete {
-            right
-                .handler
-                .behavior_signature
-                .retain(|event| event != "method:ruby:complete-events");
             right.handler.effect_stream = crate::model::EffectStream::Partial;
         }
         if !complete && same_handler {
-            left.handler
-                .behavior_signature
-                .retain(|event| event != "method:ruby:complete-events");
             left.handler.effect_stream = crate::model::EffectStream::Partial;
         }
         if !same_handler {
@@ -1071,5 +1061,43 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
                 complete || same_handler
             );
         }
+    }
+}
+
+/// Handlers that share alpha form, structure and events fall into one handler class only while
+/// effect stream and capture scope also agree; the structural class ignores both.
+#[test]
+fn handler_classes_follow_behavior_identity() {
+    use crate::model::EffectStream::{ActionOnly, Complete};
+    let mut base = definition();
+    base.handler.effect_stream = ActionOnly;
+    base.handler.capture_scope = Some("4:9".to_owned());
+    let with = |stream, scope: Option<&str>| {
+        let mut other = base.clone();
+        other.handler.effect_stream = stream;
+        other.handler.capture_scope = scope.map(str::to_owned);
+        other
+    };
+    let definitions = [
+        base.clone(),
+        with(ActionOnly, Some("4:9")),
+        with(Complete, Some("4:9")),
+        with(ActionOnly, Some("7:12")),
+        with(ActionOnly, None),
+    ];
+    let classes = comparison_classes(&definitions);
+    for (index, same) in [(1, true), (2, false), (3, false), (4, false)] {
+        assert_eq!(
+            classes.alpha_handler[0] == classes.alpha_handler[index],
+            same
+        );
+        assert_eq!(
+            classes.structure_and_behavior[0] == classes.structure_and_behavior[index],
+            same
+        );
+        assert_eq!(
+            classes.structural_handler[0],
+            classes.structural_handler[index]
+        );
     }
 }

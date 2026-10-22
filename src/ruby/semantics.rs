@@ -65,35 +65,16 @@ mod tests {
         definition
     }
 
-    /// Each stream regime selects its own flag combination; a marker alone, without the typed
-    /// field, selects nothing.
+    /// Each stream regime selects its own flag combination.
     #[test]
     fn profile_flags_follow_the_typed_effect_stream() {
-        for (stream, marker, same_handler, event_similarity, distinct_events) in [
-            (EffectStream::Partial, None, true, false, false),
-            (EffectStream::Complete, None, false, true, false),
-            (EffectStream::ActionOnly, None, false, true, true),
-            (
-                EffectStream::Partial,
-                Some("complete-events"),
-                true,
-                false,
-                false,
-            ),
-            (
-                EffectStream::Partial,
-                Some("action-events"),
-                true,
-                false,
-                false,
-            ),
+        for (stream, same_handler, event_similarity, distinct_events) in [
+            (EffectStream::Partial, true, false, false),
+            (EffectStream::Complete, false, true, false),
+            (EffectStream::ActionOnly, false, true, true),
         ] {
             let mut definition = plain_definition();
             definition.handler.effect_stream = stream;
-            definition.handler.behavior_signature = marker
-                .map(|name| format!("method:ruby:{name}"))
-                .into_iter()
-                .collect();
             let profile = profile(&definition);
             assert_eq!(
                 (
@@ -102,30 +83,22 @@ mod tests {
                     profile.near_requires_distinct_events
                 ),
                 (same_handler, event_similarity, distinct_events),
-                "{stream:?} {marker:?}"
+                "{stream:?}"
             );
         }
     }
 
     /// The capture context is lexical-file exactly when a capture scope is declared, whatever the
-    /// key and whatever the signature says.
+    /// key.
     #[test]
     fn capture_context_follows_the_typed_capture_scope() {
-        for (scope, marker, lexical) in [
-            (None, None, false),
-            (Some(""), None, true),
-            (Some("4:9"), None, true),
-            (None, Some("method:ruby:lexical-file"), false),
-            (None, Some("method:ruby:lexical-file:4:9"), false),
-            (Some("4:9"), Some("method:ruby:lexical-file:4:9"), true),
-        ] {
+        for (scope, lexical) in [(None, false), (Some(""), true), (Some("4:9"), true)] {
             let mut definition = plain_definition();
             definition.handler.capture_scope = scope.map(str::to_owned);
-            definition.handler.behavior_signature = marker.map(str::to_owned).into_iter().collect();
             assert_eq!(
                 definition.capture_context() == CaptureContext::LexicalFile,
                 lexical,
-                "{scope:?} {marker:?}"
+                "{scope:?}"
             );
         }
     }

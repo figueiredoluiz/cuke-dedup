@@ -40,6 +40,13 @@
     "src/analysis/pairs/tests.rs": {
       "tests": [
         {
+          "name": "handler_classes_follow_behavior_identity",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: handler comparison classes key on behaviour identity (events, effect stream, capture scope); synthetic definitions differ in one fact at a time.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -203,6 +210,13 @@
     "src/analysis/similarity.rs": {
       "tests": [
         {
+          "name": "structural_handler_similarity_requires_equal_behavior_identity",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: structural handler similarity compares effect stream and capture scope with the events; synthetic definitions differ in one fact at a time.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "matcher_gate_rejects_mixed_syntax_and_polarity_conflicts",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -227,6 +241,16 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: decorated-method runtime metadata (async/static/generator/getter) exists only for JS/TS class-method handlers. Semantic residue: none; Ruby registers blocks and methods without such modifiers.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "runtime_context_gates_handler_compatibility",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_capture_scopes_gate_handler_similarity"
+          },
+          "rationale": "Ruby handlers bound to distinct allocations, or a bare `__FILE__` handler against a bound one, report handlerSimilarity 0.0 with equal bodies; one shared scope, or a scope against an unscoped handler, report 1.0. The unit table adds the cases a finding cannot show: an effect stream that observed no events, and an unmodelled handler.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "cached_word_helpers_keep_pre_cache_answers",
@@ -257,6 +281,13 @@
     },
     "src/analysis/tests.rs": {
       "tests": [
+        {
+          "name": "fingerprint_behavior_digest_covers_effect_stream_and_capture_scope",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: the fingerprint record's behavior digest covers the effect stream and capture scope; synthetic definitions differ in one at a time.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "fingerprint_records_serialize_every_field_in_schema_order",
           "requiredStatus": "engine-invariant",
@@ -2287,6 +2318,13 @@
     },
     "src/model/tests.rs": {
       "tests": [
+        {
+          "name": "behavior_identity_separates_what_events_cannot",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: handler behaviour identity covers events, effect stream and capture scope; synthetic handlers differ in one of them at a time.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "rule_names_are_stable_kebab_case",
           "requiredStatus": "engine-invariant",

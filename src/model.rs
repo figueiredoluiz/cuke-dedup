@@ -3,7 +3,9 @@
 mod behavior;
 mod handler;
 pub use handler::EffectStream;
-pub(crate) use handler::{bounded_source_snippet, HandlerSemantics, RepresentationEncoding};
+pub(crate) use handler::{
+    bounded_source_snippet, BehaviorIdentity, HandlerSemantics, RepresentationEncoding,
+};
 mod sha256;
 
 pub(crate) use behavior::{BehaviorEvent, BehaviorEventRef, ControlFlowOperation};

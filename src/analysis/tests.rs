@@ -112,17 +112,17 @@ fn adapter_contracts_preserve_global_and_positional_outcomes() {
 fn adapter_contracts_preserve_handler_domains_and_capture_context() {
     use crate::model::Framework::*;
     let (_directory, config) = config();
-    for (left, right, marker, different_file, expected) in [
-        (CucumberJs, PlaywrightBdd, "", true, true),
-        (Unknown, CypressCucumber, "", true, true),
-        (JestCucumber, JestCucumber, "", true, true),
-        (VitestCucumber, VitestCucumber, "", true, true),
-        (JestCucumber, CucumberJs, "", false, false),
-        (VitestCucumber, CucumberJs, "", false, false),
-        (JestCucumber, VitestCucumber, "", false, false),
-        (CucumberRuby, CucumberRuby, "", true, true),
-        (CucumberRuby, CucumberRuby, "ruby:lexical-file", false, true),
-        (CucumberRuby, CucumberRuby, "ruby:lexical-file", true, false),
+    for (left, right, lexical, different_file, expected) in [
+        (CucumberJs, PlaywrightBdd, false, true, true),
+        (Unknown, CypressCucumber, false, true, true),
+        (JestCucumber, JestCucumber, false, true, true),
+        (VitestCucumber, VitestCucumber, false, true, true),
+        (JestCucumber, CucumberJs, false, false, false),
+        (VitestCucumber, CucumberJs, false, false, false),
+        (JestCucumber, VitestCucumber, false, false, false),
+        (CucumberRuby, CucumberRuby, false, true, true),
+        (CucumberRuby, CucumberRuby, true, false, true),
+        (CucumberRuby, CucumberRuby, true, true, false),
     ] {
         let mut defs = definitions("Given('a user exists', () => { load(); save(); }); Given('the basket is empty', () => { load(); save(); });");
         defs[0].framework = left;
@@ -130,28 +130,21 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
         if different_file {
             defs[1].location.path = "other.ts".into();
         }
-        if !marker.is_empty() {
+        if lexical {
             for def in &mut defs {
-                def.handler
-                    .behavior_signature
-                    .insert(0, format!("method:{marker}"));
                 def.handler.capture_scope = Some(String::new());
             }
         }
         let mut one_capture = defs.clone();
-        if !marker.is_empty() {
-            one_capture[1].handler.behavior_signature.remove(0);
+        if lexical {
             one_capture[1].handler.capture_scope = None;
         }
-        for (defs, expected) in [
-            (defs, expected),
-            (one_capture, expected && marker.is_empty()),
-        ] {
+        for (defs, expected) in [(defs, expected), (one_capture, expected && !lexical)] {
             for pair in [defs.clone(), defs.into_iter().rev().collect()] {
                 assert_eq!(
                     contract_finding(pair, &config, Rule::DuplicateHandler),
                     expected,
-                    "{left:?}/{right:?}/{marker}/{different_file}"
+                    "{left:?}/{right:?}/{lexical}/{different_file}"
                 );
             }
         }
@@ -5781,4 +5774,37 @@ fn fingerprint_records_serialize_every_field_in_schema_order() {
         )
     );
     assert!(lines[1].ends_with(r#""comparable":true,"trivial":true}}"#));
+}
+
+/// Checks the fingerprint record's behavior digest follows the handler's effect stream and capture scope.
+#[test]
+fn fingerprint_behavior_digest_covers_effect_stream_and_capture_scope() {
+    let mut defs = definitions("Given('a', () => { work(); });");
+    let mut scoped = defs[0].clone();
+    scoped.handler.capture_scope = Some("4:9".to_owned());
+    let mut streamed = defs[0].clone();
+    streamed.handler.effect_stream = crate::model::EffectStream::ActionOnly;
+    defs.extend([scoped, streamed]);
+    let mut out = Vec::new();
+    fingerprints::write_fingerprints(&defs, Path::new("/elsewhere"), &mut out).unwrap();
+    let digests: Vec<_> = std::str::from_utf8(&out)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()["handler"]["behavior"]
+                .to_string()
+        })
+        .collect();
+    let expected: Vec<_> = defs
+        .iter()
+        .map(|def| format!("\"{}\"", def.handler.behavior_digest()))
+        .collect();
+    assert_eq!(digests, expected);
+    assert_eq!(
+        digests
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        3
+    );
 }

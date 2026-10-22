@@ -1,6 +1,6 @@
 //! Internal compatibility profiles for extracted and caller-constructed definitions.
 
-use crate::model::{BehaviorEventRef, Framework, StepDefinition};
+use crate::model::{BehaviorEventRef, EffectStream, Framework, StepDefinition};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComparisonDomain {
@@ -19,6 +19,18 @@ pub(crate) enum HandlerDomain {
 pub(crate) enum CaptureContext {
     Unrestricted,
     LexicalFile,
+}
+
+/// What pins a handler to one runtime context; two handlers with different contexts cannot run
+/// together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeContext<'a> {
+    /// The key of the handler's declared capture scope.
+    Scope(&'a str),
+    /// The payload of the handler's leading `method:` event.
+    Method(&'a str),
+    /// The modelled effect-stream regime of a handler that observed no events.
+    Stream(EffectStream),
 }
 
 pub(crate) trait RegexDialect: Sync {
@@ -134,10 +146,21 @@ impl StepDefinition {
         }
     }
 
-    /// Payload of the first behaviour event when it is a `method:` event; `None` otherwise,
-    /// including for an empty signature.
-    pub(crate) fn method_semantics(&self) -> Option<&str> {
-        BehaviorEventRef::from_legacy(self.handler.behavior_signature.first()?).method_semantics()
+    /// The context that pins the handler: its capture scope; else the payload of a leading
+    /// `method:` event; else, for a handler without events, a modelled effect-stream regime. `None`
+    /// when nothing pins it.
+    pub(crate) fn runtime_context(&self) -> Option<RuntimeContext<'_>> {
+        let handler = &self.handler;
+        if let Some(key) = handler.capture_scope.as_deref() {
+            return Some(RuntimeContext::Scope(key));
+        }
+        match handler.behavior_signature.first() {
+            Some(event) => BehaviorEventRef::from_legacy(event)
+                .method_semantics()
+                .map(RuntimeContext::Method),
+            None => (!handler.effect_stream.is_partial())
+                .then_some(RuntimeContext::Stream(handler.effect_stream)),
+        }
     }
 }
 
