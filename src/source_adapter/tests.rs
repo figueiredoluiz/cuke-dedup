@@ -359,6 +359,12 @@ fn adapter_session_default_preserves_existing_extract_implementations() {
     let adapter = DefaultSessionAdapter;
     assert_eq!(adapter.name(), "default-session-test");
     assert_eq!(adapter.language(), SourceLanguage::JavaScript);
+    // An adapter that declares no policy inherits the baseline; Ruby's own differs from it.
+    assert_eq!(adapter.analysis_policy(), AnalysisPolicy::default());
+    assert_ne!(
+        adapter_for_language(SourceLanguage::Ruby).analysis_policy(),
+        adapter.analysis_policy()
+    );
 
     let error = adapter
         .extract_with_session("", &file, &mut session)
@@ -715,6 +721,8 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
         AnalysisPolicy::default(),
         crate::typescript::semantics::policy(Framework::Unknown)
     );
+    // The debug form names the domain label, so a failing assertion shows which domain differed.
+    assert!(format!("{:?}", AnalysisPolicy::default()).contains("DomainSpec(ecmascript)"));
     // Every definition carries one policy; keep it to a pointer plus packed flags.
     assert!(std::mem::size_of::<AnalysisPolicy>() <= 16);
     for (source, framework) in [
