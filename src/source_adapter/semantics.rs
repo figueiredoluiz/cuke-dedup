@@ -112,7 +112,6 @@ pub(crate) struct AnalysisProfile {
     pub(crate) near_requires_distinct_events: bool,
     pub(crate) indirect_usage: bool,
     pub(crate) dialect: &'static dyn RegexDialect,
-    pub(crate) capture_context: fn(&StepDefinition) -> CaptureContext,
 }
 
 impl StepDefinition {
@@ -126,11 +125,13 @@ impl StepDefinition {
         }
     }
 
-    /// Capture context from the language profile: Ruby reports `LexicalFile` when the first event's
-    /// method semantics is `ruby:lexical-file` or starts with `ruby:lexical-file:`; JavaScript and
-    /// TypeScript report `Unrestricted`.
+    /// `LexicalFile` when the handler declares a capture scope, else `Unrestricted`.
     pub(crate) fn capture_context(&self) -> CaptureContext {
-        (self.analysis_profile().capture_context)(self)
+        if self.handler.capture_scope.is_some() {
+            CaptureContext::LexicalFile
+        } else {
+            CaptureContext::Unrestricted
+        }
     }
 
     /// Payload of the first behaviour event when it is a `method:` event; `None` otherwise,

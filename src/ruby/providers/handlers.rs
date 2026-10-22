@@ -293,13 +293,9 @@ impl Graph<'_> {
                     ] {
                         representation.insert_str(0, &context);
                     }
-                    fingerprint.behavior_signature.insert(
-                        0,
-                        format!(
-                            "method:ruby:lexical-file:{}:{}",
-                            allocation.start_byte(),
-                            allocation.end_byte()
-                        ),
+                    super::super::handler::bind_capture_scope(
+                        &mut fingerprint,
+                        format!("{}:{}", allocation.start_byte(), allocation.end_byte()),
                     );
                 }
                 if body_unit != unit

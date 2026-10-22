@@ -1,6 +1,29 @@
 //! Shared completion of frontend representations and ordered semantic evidence.
 
 use super::{BehaviorEvent, HandlerFingerprint};
+use serde::{Deserialize, Serialize};
+
+/// Evidence regime of a handler's behaviour events; selects which event-overlap comparisons the
+/// events can support. Non-exhaustive so that a later regime is not another breaking change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum EffectStream {
+    /// Effects are not fully modelled: only identity comparisons apply, never event overlap.
+    #[default]
+    Partial,
+    /// Every observable effect, assertions included, is in the events.
+    Complete,
+    /// Action calls are in the events but assertions are not.
+    ActionOnly,
+}
+
+impl EffectStream {
+    /// Whether this is the default regime; serialization omits it.
+    pub(crate) fn is_partial(&self) -> bool {
+        *self == Self::Partial
+    }
+}
 
 /// How `HandlerSemantics::finish` turns the textual representations into comparison identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +67,9 @@ pub(crate) struct HandlerSemantics {
     pub(crate) comparable: bool,
     pub(crate) trivial: bool,
     pub(crate) encoding: RepresentationEncoding,
+    pub(crate) stream: EffectStream,
+    /// Key of the file-bound capture scope, or `None` when captures are unrestricted.
+    pub(crate) capture_scope: Option<String>,
 }
 
 impl HandlerSemantics {
@@ -73,6 +99,8 @@ impl HandlerSemantics {
                 .map(BehaviorEvent::into_legacy)
                 .collect(),
             source_snippet: self.source_snippet,
+            effect_stream: self.stream,
+            capture_scope: self.capture_scope,
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Exact Ruby handler trees with explicit lexical capture identity.
 use super::{descendants, text};
 use crate::model::{
-    bounded_source_snippet, BehaviorEvent, ControlFlowOperation, HandlerFingerprint,
+    bounded_source_snippet, BehaviorEvent, ControlFlowOperation, EffectStream, HandlerFingerprint,
     HandlerSemantics, RepresentationEncoding,
 };
 use std::borrow::Cow;
@@ -86,11 +86,13 @@ pub(super) fn fingerprint(
                 .and_then(|assertions| assertions.ordinary_structural(block, source, &bindings))
         })
         .or_else(|| assertions.map(|_| structural_tokens(&alpha, captures)));
-    let mut behavior_signature = if bindings.lexical {
-        vec![BehaviorEvent::Method("ruby:lexical-file".to_owned())]
-    } else {
-        vec![]
-    };
+    let capture_scope = bindings.lexical.then(String::new);
+    let mut behavior_signature: Vec<_> = capture_scope
+        .as_deref()
+        .map(capture_scope_marker)
+        .into_iter()
+        .collect();
+    let mut stream = EffectStream::Partial;
     let events = assertions.map(|assertions| assertions.events(block, source, &bindings));
     let assertion_evidence = events.as_ref().is_some_and(|events| {
         events
@@ -103,18 +105,19 @@ pub(super) fn fingerprint(
         // Configured assertion evidence keeps the complete-syntax stream bound to its values.
         behavior_signature.extend(events.unwrap_or_default());
         if !exact_policy {
-            behavior_signature.push(BehaviorEvent::Method("ruby:complete-events".to_owned()));
+            stream = EffectStream::Complete;
         }
     } else if let Some(actions) = (!exact_policy)
         .then(|| action_stream(block, source, &bindings))
         .flatten()
     {
         behavior_signature.extend(actions);
-        behavior_signature.push(BehaviorEvent::Method("ruby:action-events".to_owned()));
+        stream = EffectStream::ActionOnly;
     } else {
         // An unmodeled construct keeps the exact-handler policy: no marker, no near overlap.
         behavior_signature.extend(events.unwrap_or_default());
     }
+    behavior_signature.extend(stream_marker(stream));
     let trivial = (bindings.calls.is_empty()
         && !nodes
             .iter()
@@ -132,8 +135,39 @@ pub(super) fn fingerprint(
         comparable,
         trivial,
         encoding: RepresentationEncoding::Verbatim { exact_len },
+        stream,
+        capture_scope,
     }
     .finish()
+}
+
+/// Legacy marker for a capture scope key: bare for the empty key, else suffixed with the key. The
+/// marker and `capture_scope` are always written together from the same key.
+fn capture_scope_marker(key: &str) -> BehaviorEvent {
+    BehaviorEvent::Method(if key.is_empty() {
+        "ruby:lexical-file".to_owned()
+    } else {
+        format!("ruby:lexical-file:{key}")
+    })
+}
+
+/// Legacy marker for an effect-stream regime; `Partial` has none. The marker and `effect_stream`
+/// are always written together from the same value.
+fn stream_marker(stream: EffectStream) -> Option<BehaviorEvent> {
+    match stream {
+        EffectStream::Partial => None,
+        EffectStream::Complete => Some(BehaviorEvent::Method("ruby:complete-events".to_owned())),
+        EffectStream::ActionOnly => Some(BehaviorEvent::Method("ruby:action-events".to_owned())),
+    }
+}
+
+/// Puts a finished handler into the capture scope `key`, in front of its events. Replaces any scope
+/// the handler already had; the earlier marker stays behind the new one.
+pub(super) fn bind_capture_scope(fingerprint: &mut HandlerFingerprint, key: String) {
+    fingerprint
+        .behavior_signature
+        .insert(0, capture_scope_marker(&key).into_legacy());
+    fingerprint.capture_scope = Some(key);
 }
 
 /// Raw handler spelling without a named method's declaration name, which is registration plumbing.
@@ -633,4 +667,88 @@ fn stub_label(text: &str) -> bool {
         .flat_map(char::to_lowercase)
         .collect();
     matches!(normalized.as_str(), "pending" | "notimplemented" | "todo")
+}
+
+/// Test support: the typed handler facts must agree with the legacy markers.
+#[cfg(test)]
+pub(super) mod agreement {
+    use super::{bind_capture_scope, capture_scope_marker, stream_marker};
+    use crate::model::RepresentationEncoding;
+    use crate::model::{BehaviorEvent, EffectStream, HandlerFingerprint, HandlerSemantics};
+
+    /// Complete/action markers found anywhere in the signature and the key of the leading
+    /// lexical-file marker, if any.
+    fn markers(handler: &HandlerFingerprint) -> (Vec<&'static str>, Option<String>) {
+        let signature = &handler.behavior_signature;
+        let streams = ["complete-events", "action-events"]
+            .into_iter()
+            .filter(|name| {
+                signature
+                    .iter()
+                    .any(|event| *event == format!("method:ruby:{name}"))
+            })
+            .collect();
+        let scope = signature.first().and_then(|event| {
+            let rest = event.strip_prefix("method:ruby:lexical-file")?;
+            rest.strip_prefix(':')
+                .or(rest.is_empty().then_some(""))
+                .map(str::to_owned)
+        });
+        (streams, scope)
+    }
+
+    /// Asserts the typed fields equal what the markers say.
+    pub(in crate::ruby) fn assert_agree(handler: &HandlerFingerprint, context: &str) {
+        let (streams, scope) = markers(handler);
+        let expected = match handler.effect_stream {
+            EffectStream::Partial => vec![],
+            EffectStream::Complete => vec!["complete-events"],
+            EffectStream::ActionOnly => vec!["action-events"],
+        };
+        assert_eq!(streams, expected, "stream: {context}");
+        assert_eq!(scope, handler.capture_scope, "scope: {context}");
+    }
+
+    /// The marker builders spell each typed value exactly once and `bind_capture_scope` writes
+    /// marker and field together, in front of existing events.
+    #[test]
+    fn marker_builders_spell_each_typed_value() {
+        for (stream, marker) in [
+            (EffectStream::Partial, None),
+            (EffectStream::Complete, Some("method:ruby:complete-events")),
+            (EffectStream::ActionOnly, Some("method:ruby:action-events")),
+        ] {
+            assert_eq!(
+                stream_marker(stream).map(BehaviorEvent::into_legacy),
+                marker.map(str::to_owned)
+            );
+        }
+        for (key, marker) in [
+            ("", "method:ruby:lexical-file"),
+            ("4:9", "method:ruby:lexical-file:4:9"),
+        ] {
+            assert_eq!(capture_scope_marker(key).into_legacy(), marker);
+        }
+        let mut handler = HandlerSemantics {
+            exact: String::new(),
+            normalized: String::new(),
+            alpha: String::new(),
+            structural: None,
+            events: vec![BehaviorEvent::Call("x".to_owned())],
+            source_snippet: String::new(),
+            comparable: true,
+            trivial: false,
+            encoding: RepresentationEncoding::Digest,
+            stream: EffectStream::Partial,
+            capture_scope: None,
+        }
+        .finish();
+        bind_capture_scope(&mut handler, "4:9".to_owned());
+        assert_eq!(
+            handler.behavior_signature,
+            ["method:ruby:lexical-file:4:9", "call:x"]
+        );
+        assert_eq!(handler.capture_scope.as_deref(), Some("4:9"));
+        assert_agree(&handler, "bound");
+    }
 }

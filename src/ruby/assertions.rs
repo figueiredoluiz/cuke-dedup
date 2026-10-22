@@ -1226,18 +1226,8 @@ mod tests {
             ),
         ] {
             let source = "require_relative 'assertions'\nGiven('one') { Assertions.expect(page).to_be(UNKNOWN) }; Then('two') { Assertions.expect(page).to_be(UNKNOWN) }; Given('ordinary one') { work() }; Then('ordinary two') { work() }; Given('block one') { Assertions.expect(page) { first() }.to_be(true) }; Then('block two') { Assertions.expect(page) { second() }.to_be(true) }; Given('dispatch one') { Assertions.expect(page).to_be(true) }; Then('dispatch two') { Assertions&.expect(page).to_be(true) }";
-            std::fs::write(&files[0].path, source).unwrap();
             std::fs::write(&files[1].path, provider).unwrap();
-            let edges = [SourceDependency::new(
-                crate::model::SourceLocation::new(files[0].path.clone(), 1, 1, 1, 30),
-                crate::config::canonical_platform_path(&files[1].path).unwrap(),
-            )];
-            let mut session =
-                SourceExtractionSession::with_options(root.path(), &[], &["./assertions".into()])
-                    .with_dependencies(&edges);
-            let adapter = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby);
-            adapter.prepare_session(&files, &mut session).unwrap();
-            let (definitions, finalized) = finish(source, &files, &mut session);
+            let (definitions, finalized) = extract_configured(root.path(), &files, source);
             assert!(finalized.uncertainties.is_empty());
             assert_eq!(finalized.advisories.len(), usize::from(!trusted));
             if trusted {
@@ -1259,6 +1249,117 @@ mod tests {
             );
         }
     }
+    /// Every producer path writes the effect-stream and capture-scope markers together with the
+    /// typed fields: ordinary and unmodeled handlers, `__FILE__` captures, configured assertion
+    /// streams and bound-instance handlers (a parameterized scope that may sit beside a bare one).
+    #[test]
+    fn typed_handler_facts_agree_with_markers_on_every_producer_path() {
+        use crate::model::EffectStream::{ActionOnly, Complete, Partial};
+        /// One extracted source and what each of its definitions must carry.
+        struct Row {
+            context: &'static str,
+            source: String,
+            stream: crate::model::EffectStream,
+            scope: Option<String>,
+            definitions: usize,
+            /// A bare scope marker survives behind a bound scope's marker.
+            bare_behind: bool,
+        }
+        let bound = |body: &str| {
+            format!("class Bound; def handle; work({body}); end; end\ninstance = Bound.new; Given('same', &instance.method(:handle)); Then('same', &instance.method(:handle))")
+        };
+        // The scope key of a bound handler is the receiver allocation's byte span.
+        let allocation = |source: &str| {
+            let start = source.find("Bound.new").unwrap();
+            Some(format!("{start}:{}", start + "Bound.new".len()))
+        };
+        let row = |context, source: &str, stream, scope: Option<&str>| Row {
+            context,
+            source: source.to_owned(),
+            stream,
+            scope: scope.map(str::to_owned),
+            definitions: 1,
+            bare_behind: false,
+        };
+        let (bound_plain, bound_bare) = (bound(""), bound("__FILE__"));
+        let rows = [
+            row("ordinary calls", "Given('a') { work() }", ActionOnly, None),
+            row("unmodeled construct", "Given('a') { foo { |x| x } }", Partial, None),
+            row("bare scope", "Given('a') { puts __FILE__ }", ActionOnly, Some("")),
+            row("scope without a stream", "Given('a') { foo { |x| __FILE__ } }", Partial, Some("")),
+            row(
+                "configured assertions",
+                "require_relative 'assertions'\nGiven('a') { Assertions.expect(page).to_be(true) }",
+                Complete,
+                None,
+            ),
+            row(
+                "assertions with scope",
+                "require_relative 'assertions'\nGiven('a') { Assertions.expect(page).to_be(__FILE__) }",
+                Complete,
+                Some(""),
+            ),
+            Row {
+                definitions: 2,
+                scope: allocation(&bound_plain),
+                ..row("bound instance", &bound_plain, ActionOnly, None)
+            },
+            Row {
+                definitions: 2,
+                scope: allocation(&bound_bare),
+                bare_behind: true,
+                ..row("bound instance with bare scope", &bound_bare, ActionOnly, None)
+            },
+        ];
+        let root = tempfile::tempdir().unwrap();
+        let files = provider_files(root.path());
+        std::fs::write(
+            &files[1].path,
+            "module Assertions; def self.expect(actual); actual; end; end",
+        )
+        .unwrap();
+        for row in rows {
+            let (definitions, _) = extract_configured(root.path(), &files, &row.source);
+            assert_eq!(definitions.len(), row.definitions, "{}", row.context);
+            for definition in &definitions {
+                let handler = &definition.handler;
+                super::super::handler::agreement::assert_agree(handler, row.context);
+                assert_eq!(handler.effect_stream, row.stream, "{}", row.context);
+                assert_eq!(handler.capture_scope, row.scope, "{}", row.context);
+                assert_eq!(
+                    handler.behavior_signature.get(1).map(String::as_str)
+                        == Some("method:ruby:lexical-file"),
+                    row.bare_behind,
+                    "{}",
+                    row.context
+                );
+            }
+        }
+    }
+
+    /// Writes `source` as the entry file, declares `./assertions` as an assertion module reached
+    /// from it, and extracts and finalizes the entry file.
+    fn extract_configured(
+        root: &Path,
+        files: &[SourceFile],
+        source: &str,
+    ) -> (
+        Vec<crate::model::StepDefinition>,
+        crate::source_adapter::SourceFinalization,
+    ) {
+        std::fs::write(&files[0].path, source).unwrap();
+        let edges = [SourceDependency::new(
+            crate::model::SourceLocation::new(files[0].path.clone(), 1, 1, 1, 30),
+            crate::config::canonical_platform_path(&files[1].path).unwrap(),
+        )];
+        let mut session =
+            SourceExtractionSession::with_options(root, &[], &["./assertions".into()])
+                .with_dependencies(&edges);
+        let adapter = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby);
+        adapter.prepare_session(files, &mut session).unwrap();
+        finish(source, files, &mut session)
+    }
+
     /// Extract the entry file, finalize its session, and return definitions with the finalization result.
     fn finish(
         source: &str,
