@@ -1,18 +1,60 @@
 //! Internal compatibility profiles for extracted and caller-constructed definitions.
 
-use crate::model::{BehaviorEventRef, EffectStream, Framework, StepDefinition};
+use crate::model::{BehaviorEventRef, EffectStream, StepDefinition};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ComparisonDomain {
-    EcmaScript,
-    Ruby,
+/// A set of definitions that may be compared with one another, with the regex dialect they share.
+/// Definitions of different domains are never compared; an adapter owns one static spec, and two
+/// specs are equal only when they are the same static, so a reused label cannot merge domains.
+pub(crate) struct DomainSpec {
+    /// Stable label reported in `--emit-fingerprints` records.
+    pub(crate) label: &'static str,
+    /// Regex semantics of the domain's matchers.
+    pub(crate) dialect: &'static dyn RegexDialect,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HandlerDomain {
+impl PartialEq for DomainSpec {
+    /// Domains are equal when they are the same static spec.
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for DomainSpec {}
+
+impl std::fmt::Debug for DomainSpec {
+    /// Prints the domain label.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DomainSpec({})", self.label)
+    }
+}
+
+/// Which handlers can run together: handlers of different scopes never share a runtime context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandlerScope {
+    /// Registered in the common pool every other shared handler runs in.
     Shared,
-    ScenarioLocal,
-    PluginGlobal,
+    /// Bound to the scenario callback that declares it.
+    Local,
+    /// Registered in a global registry that no other scope shares.
+    Isolated,
+}
+
+/// How a definition's matcher is selected for a feature step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepMatching {
+    /// Any feature step in the corpus can select the definition by its text.
+    ByText,
+    /// Only the step at the definition's own position selects it.
+    Positional,
+}
+
+/// Where the evidence regime of a handler's event stream comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamEvidence {
+    /// Read the regime from the handler's declared [`EffectStream`].
+    Declared,
+    /// Treat every handler's events as a complete stream, whatever it declares.
+    Complete,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -110,31 +152,110 @@ pub(crate) fn legacy_identity_flags(flags: &str) -> String {
         .collect()
 }
 
+/// How the analyzer compares one definition with others, declared by the adapter that extracted
+/// it. The fields are opaque: only an adapter chooses them, and an embedder that builds a
+/// [`StepDefinition`] by hand gets [`AnalysisPolicy::default`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnalysisPolicy {
+    domain: &'static DomainSpec,
+    handler_scope: HandlerScope,
+    step_matching: StepMatching,
+    stream_evidence: StreamEvidence,
+    step_invocation: bool,
+}
+
+impl AnalysisPolicy {
+    /// Builds a policy from an adapter's declared capabilities.
+    pub(crate) const fn new(
+        domain: &'static DomainSpec,
+        handler_scope: HandlerScope,
+        step_matching: StepMatching,
+        stream_evidence: StreamEvidence,
+        step_invocation: bool,
+    ) -> Self {
+        Self {
+            domain,
+            handler_scope,
+            step_matching,
+            stream_evidence,
+            step_invocation,
+        }
+    }
+
+    /// The comparison domain this policy declares.
+    pub(crate) fn domain(self) -> &'static DomainSpec {
+        self.domain
+    }
+
+    /// Combines the declared capabilities with the handler's own stream regime.
+    pub(crate) fn profile(self, stream: EffectStream) -> AnalysisProfile {
+        let stream = match self.stream_evidence {
+            StreamEvidence::Declared => stream,
+            StreamEvidence::Complete => EffectStream::Complete,
+        };
+        let (requires_identical_handler, scores_event_overlap, excludes_identical_event_streams) =
+            match stream {
+                EffectStream::Partial => (true, false, false),
+                EffectStream::Complete => (false, true, false),
+                EffectStream::ActionOnly => (false, true, true),
+            };
+        AnalysisProfile {
+            domain: self.domain,
+            handler_scope: self.handler_scope,
+            step_matching: self.step_matching,
+            step_invocation: self.step_invocation,
+            requires_identical_handler,
+            scores_event_overlap,
+            excludes_identical_event_streams,
+        }
+    }
+}
+
+impl Default for AnalysisPolicy {
+    /// The policy of a definition nobody attached one to: the shared-scope, text-matched,
+    /// complete-stream policy of the JavaScript/TypeScript adapter.
+    fn default() -> Self {
+        crate::typescript::semantics::default_policy()
+    }
+}
+
+/// An [`AnalysisPolicy`] resolved against one handler's effect stream.
 #[derive(Clone, Copy)]
 pub(crate) struct AnalysisProfile {
-    pub(crate) comparison_domain: ComparisonDomain,
-    pub(crate) handler_domain: HandlerDomain,
-    pub(crate) global_matchers: bool,
-    // Wording findings may require exact handler identity, even for structural matches.
-    pub(crate) near_requires_same_handler: bool,
-    // Partial event streams cannot measure overlap between distinct handler trees.
-    pub(crate) event_similarity: bool,
-    // Identical event streams with different handlers differ only in values the events omit;
-    // such pairs are parameterization material, never wording findings.
-    pub(crate) near_requires_distinct_events: bool,
-    pub(crate) indirect_usage: bool,
-    pub(crate) dialect: &'static dyn RegexDialect,
+    /// Definitions compare only within one domain.
+    pub(crate) domain: &'static DomainSpec,
+    /// Handlers of different scopes never run together.
+    pub(crate) handler_scope: HandlerScope,
+    /// How feature steps select the definition.
+    pub(crate) step_matching: StepMatching,
+    /// Handlers may invoke other steps by text, so usage needs the invocation evidence.
+    pub(crate) step_invocation: bool,
+    /// Wording findings need identical handlers, even for structural matches.
+    pub(crate) requires_identical_handler: bool,
+    /// Event overlap between distinct handler trees can be measured; partial streams cannot.
+    pub(crate) scores_event_overlap: bool,
+    /// Identical event streams behind different handlers differ only in values the events omit;
+    /// such pairs are parameterization material, never wording findings.
+    pub(crate) excludes_identical_event_streams: bool,
+}
+
+impl AnalysisProfile {
+    /// The regex dialect of the definition's domain.
+    pub(crate) fn dialect(&self) -> &'static dyn RegexDialect {
+        self.domain.dialect
+    }
+
+    /// Whether any feature step in the corpus can select the definition by its text.
+    pub(crate) fn matches_by_text(&self) -> bool {
+        self.step_matching == StepMatching::ByText
+    }
 }
 
 impl StepDefinition {
-    // Routing is the only place that interprets framework identity for core analysis. Keeping
-    // this derived preserves exhaustive public structs and legacy serialized definitions.
-    /// Routes each framework to its language-owned comparison policy.
+    /// The policy the adapter attached, resolved against this handler's effect stream.
     pub(crate) fn analysis_profile(&self) -> AnalysisProfile {
-        match self.framework {
-            Framework::CucumberRuby => crate::ruby::semantics::profile(self),
-            framework => crate::typescript::semantics::profile(framework),
-        }
+        self.analysis_policy.profile(self.handler.effect_stream)
     }
 
     /// `LexicalFile` when the handler declares a capture scope, else `Unrestricted`.
@@ -165,12 +286,8 @@ impl StepDefinition {
 }
 
 impl super::SourceLanguage {
-    /// Comparison domain of this language's definitions: Ruby alone, or ECMAScript shared by
-    /// JavaScript, TypeScript and TSX.
-    pub(crate) fn comparison_domain(self) -> ComparisonDomain {
-        match self {
-            Self::Ruby => ComparisonDomain::Ruby,
-            Self::JavaScript | Self::TypeScript | Self::Tsx => ComparisonDomain::EcmaScript,
-        }
+    /// Comparison domain of this language's definitions, as its registered adapter declares it.
+    pub(crate) fn comparison_domain(self) -> &'static DomainSpec {
+        super::adapter_for_language(self).analysis_policy().domain()
     }
 }

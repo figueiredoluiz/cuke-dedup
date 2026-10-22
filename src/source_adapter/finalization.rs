@@ -61,7 +61,7 @@ impl SourceUncertainty {
             UncertaintyScope::Definition(location) => &definition.location == location,
             UncertaintyScope::File(path) => &definition.location.path == path,
             UncertaintyScope::Registry(language) => {
-                definition.analysis_profile().comparison_domain == language.comparison_domain()
+                definition.analysis_profile().domain == language.comparison_domain()
             }
         }
     }

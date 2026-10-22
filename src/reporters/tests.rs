@@ -28,6 +28,7 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
             capture_scope: None,
         },
         framework: Framework::Unknown,
+        analysis_policy: Default::default(),
         registration: "Given".to_owned(),
         location,
         inline_suppressions: Vec::new(),

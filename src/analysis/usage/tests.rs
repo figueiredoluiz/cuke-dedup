@@ -318,6 +318,7 @@ fn scan_windows_stop_at_a_break() {
             exact: String::new(),
         },
         framework: crate::model::Framework::Unknown,
+        analysis_policy: Default::default(),
         registration: "Given".to_owned(),
         location: crate::model::SourceLocation::new("synthetic", 1, 1, 1, 1),
         inline_suppressions: Vec::new(),
@@ -588,11 +589,11 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
             crate::model::Framework::CucumberJs,
             crate::model::Framework::CucumberRuby,
         ] {
-            definitions[0].framework = framework;
+            crate::analysis::tests::set_framework(&mut definitions[0], framework);
             assert_eq!(
                 definitions[0]
                     .analysis_profile()
-                    .dialect
+                    .dialect()
                     .parameter_sample(pattern)
                     .as_deref(),
                 expected,

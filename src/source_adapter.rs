@@ -8,6 +8,7 @@ pub(crate) mod suppression;
 pub use finalization::{
     SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
 };
+pub use semantics::AnalysisPolicy;
 
 use crate::model::{SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
@@ -530,6 +531,12 @@ pub trait SourceAdapter: Sync {
         _registrations: &[String],
     ) -> Option<SourceExclusion> {
         None
+    }
+
+    /// The comparison policy this adapter attaches to the definitions it extracts. The default is
+    /// [`AnalysisPolicy::default`]; a framework-specific policy is attached per definition.
+    fn analysis_policy(&self) -> AnalysisPolicy {
+        AnalysisPolicy::default()
     }
 
     /// Whether missing source metadata or reads leave indirect step usage unknown.

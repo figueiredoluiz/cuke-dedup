@@ -94,6 +94,10 @@ impl SourceAdapter for RubyAdapter {
     fn discover_by_default(&self) -> bool {
         false
     }
+    /// Declares the Ruby comparison policy.
+    fn analysis_policy(&self) -> crate::source_adapter::AnalysisPolicy {
+        semantics::policy()
+    }
     /// Enable accounting for Ruby step delegation and unresolved dynamic usage.
     fn supports_indirect_usage(&self) -> bool {
         true
@@ -611,6 +615,7 @@ fn extract_with_proof(
             matcher_flags: flags,
             handler,
             framework: Framework::CucumberRuby,
+            analysis_policy: semantics::policy(),
             registration: name.to_owned(),
             location: location(file, node, source),
             inline_suppressions: crate::source_adapter::suppression::inline_suppressions(

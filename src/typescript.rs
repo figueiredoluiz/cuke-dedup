@@ -116,6 +116,12 @@ impl SourceAdapter for TreeSitterSourceAdapter {
         self.language
     }
 
+    /// Declares the baseline JavaScript/TypeScript comparison policy; each definition carries the
+    /// policy of its own framework.
+    fn analysis_policy(&self) -> crate::source_adapter::AnalysisPolicy {
+        semantics::default_policy()
+    }
+
     /// Checks whether a file can be excluded before parsing using registration evidence.
     fn inspect_source(
         &self,
@@ -737,13 +743,15 @@ fn step_definition<'tree>(
     (matcher, matcher_kind, matcher_flags): (String, MatcherKind, String),
     handler: HandlerFingerprint,
 ) -> StepDefinition {
+    let framework = effective_registration_framework(registration_framework, context.framework);
     StepDefinition {
         normalized_matcher: normalize_matcher_with_flags(&matcher, matcher_kind, &matcher_flags),
         matcher,
         matcher_kind,
         matcher_flags,
         handler,
-        framework: effective_registration_framework(registration_framework, context.framework),
+        framework,
+        analysis_policy: semantics::policy(framework),
         registration: if registration.is_empty() {
             callee
         } else {

@@ -1,9 +1,9 @@
 //! Ruby comparison policy and native regex execution contract.
 
-use crate::model::EffectStream;
 use crate::source_adapter::semantics::{
-    AnalysisProfile, ComparisonDomain, HandlerDomain, RegexDialect,
+    DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
+use crate::source_adapter::AnalysisPolicy;
 
 struct RubyRegex;
 static REGEX: RubyRegex = RubyRegex;
@@ -23,31 +23,26 @@ impl RegexDialect for RubyRegex {
     }
 }
 
-/// Selects the comparison policy from the handler's effect stream: event overlap for complete and
-/// action-only streams, exact handler identity for partial ones.
-pub(crate) fn profile(definition: &crate::model::StepDefinition) -> AnalysisProfile {
-    let (near_requires_same_handler, event_similarity, near_requires_distinct_events) =
-        match definition.handler.effect_stream {
-            EffectStream::Partial => (true, false, false),
-            EffectStream::Complete => (false, true, false),
-            EffectStream::ActionOnly => (false, true, true),
-        };
-    AnalysisProfile {
-        comparison_domain: ComparisonDomain::Ruby,
-        handler_domain: HandlerDomain::Shared,
-        global_matchers: true,
-        near_requires_same_handler,
-        event_similarity,
-        near_requires_distinct_events,
-        indirect_usage: true,
-        dialect: &REGEX,
-    }
+static DOMAIN: DomainSpec = DomainSpec {
+    label: "ruby",
+    dialect: &REGEX,
+};
+
+/// The Ruby comparison policy: one shared handler scope, text-matched steps, step invocation by
+/// text, and the effect-stream regime each handler declares.
+pub(crate) const fn policy() -> AnalysisPolicy {
+    AnalysisPolicy::new(
+        &DOMAIN,
+        HandlerScope::Shared,
+        StepMatching::ByText,
+        StreamEvidence::Declared,
+        true,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::Rule;
+    use crate::model::{EffectStream, Rule};
     use crate::source_adapter::semantics::CaptureContext;
     use crate::source_adapter::{SourceFile, SourceLanguage};
 
@@ -75,12 +70,12 @@ mod tests {
         ] {
             let mut definition = plain_definition();
             definition.handler.effect_stream = stream;
-            let profile = profile(&definition);
+            let profile = definition.analysis_profile();
             assert_eq!(
                 (
-                    profile.near_requires_same_handler,
-                    profile.event_similarity,
-                    profile.near_requires_distinct_events
+                    profile.requires_identical_handler,
+                    profile.scores_event_overlap,
+                    profile.excludes_identical_event_streams
                 ),
                 (same_handler, event_similarity, distinct_events),
                 "{stream:?}"
@@ -118,8 +113,8 @@ mod tests {
             for definition in &mut extracted.definitions {
                 definition.handler.behavior_signature = vec!["call:shared".into()];
                 definition.handler.effect_stream = EffectStream::Partial;
-                assert!(!profile(definition).event_similarity);
-                assert!(profile(definition).near_requires_same_handler);
+                assert!(!definition.analysis_profile().scores_event_overlap);
+                assert!(definition.analysis_profile().requires_identical_handler);
             }
             let outcome = crate::analysis::analyze_with_step_usage(
                 extracted.definitions,

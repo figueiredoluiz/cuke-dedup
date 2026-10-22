@@ -2,8 +2,9 @@
 
 use crate::model::Framework;
 use crate::source_adapter::semantics::{
-    AnalysisProfile, ComparisonDomain, HandlerDomain, RegexDialect,
+    DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
+use crate::source_adapter::AnalysisPolicy;
 
 struct JavaScriptRegex;
 static REGEX: JavaScriptRegex = JavaScriptRegex;
@@ -23,20 +24,31 @@ impl RegexDialect for JavaScriptRegex {
     }
 }
 
-/// Comparison policy of a JavaScript or TypeScript framework.
-pub(crate) fn profile(framework: Framework) -> AnalysisProfile {
-    AnalysisProfile {
-        comparison_domain: ComparisonDomain::EcmaScript,
-        handler_domain: match framework {
-            Framework::JestCucumber => HandlerDomain::ScenarioLocal,
-            Framework::VitestCucumber => HandlerDomain::PluginGlobal,
-            _ => HandlerDomain::Shared,
-        },
-        global_matchers: framework != Framework::JestCucumber,
-        near_requires_same_handler: false,
-        event_similarity: true,
-        near_requires_distinct_events: false,
-        indirect_usage: false,
-        dialect: &REGEX,
-    }
+static DOMAIN: DomainSpec = DomainSpec {
+    label: "ecmascript",
+    dialect: &REGEX,
+};
+
+/// The comparison policy of a JavaScript or TypeScript framework: Jest-Cucumber steps are local to
+/// their scenario callback and matched by position, vitest-cucumber-plugin registers into its own
+/// global registry, and every other framework shares one text-matched pool. Every handler's event
+/// stream counts as complete.
+pub(crate) const fn policy(framework: Framework) -> AnalysisPolicy {
+    let (handler_scope, step_matching) = match framework {
+        Framework::JestCucumber => (HandlerScope::Local, StepMatching::Positional),
+        Framework::VitestCucumber => (HandlerScope::Isolated, StepMatching::ByText),
+        _ => (HandlerScope::Shared, StepMatching::ByText),
+    };
+    AnalysisPolicy::new(
+        &DOMAIN,
+        handler_scope,
+        step_matching,
+        StreamEvidence::Complete,
+        false,
+    )
+}
+
+/// The policy of a definition with no framework-specific scope: [`Framework::Unknown`]'s.
+pub(crate) const fn default_policy() -> AnalysisPolicy {
+    policy(Framework::Unknown)
 }

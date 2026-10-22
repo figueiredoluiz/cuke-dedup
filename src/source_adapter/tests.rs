@@ -586,3 +586,328 @@ fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
         assert_eq!(definitions, once);
     }
 }
+
+use crate::model::{EffectStream, FeatureStep, Framework, Rule, SourceLocation};
+use crate::source_adapter::semantics::{DomainSpec, HandlerScope, StepMatching, StreamEvidence};
+
+/// Extracts TypeScript definitions from `source` in `steps.ts`, panicking on failure.
+fn ts_definitions(source: &str) -> Vec<StepDefinition> {
+    crate::typescript::extract(
+        source,
+        &SourceFile {
+            path: "steps.ts".into(),
+            language: SourceLanguage::TypeScript,
+        },
+    )
+    .unwrap()
+}
+
+/// One feature step with the given text.
+fn feature_step(text: &str) -> Vec<FeatureStep> {
+    vec![FeatureStep {
+        keyword: "Given".into(),
+        text: text.into(),
+        location: SourceLocation::new("steps.feature", 1, 1, 1, 10),
+    }]
+}
+
+/// Analyzes `definitions` against `steps` with default limits.
+fn analyze_policy_case(
+    definitions: Vec<StepDefinition>,
+    steps: Vec<FeatureStep>,
+) -> Result<crate::model::AnalysisResult> {
+    let root = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
+    crate::analysis::analyze_with_step_usage(definitions, steps, &config, &Default::default())
+        .map(|outcome| outcome.result)
+}
+
+/// Whether analyzing `definitions` against `steps` reports `rule`; panics when analysis fails.
+fn reports(definitions: Vec<StepDefinition>, steps: Vec<FeatureStep>, rule: Rule) -> bool {
+    analyze_policy_case(definitions, steps)
+        .unwrap()
+        .findings
+        .iter()
+        .any(|finding| finding.rule == rule)
+}
+
+/// Every adapter-declared policy resolves to the capabilities and stream flags its adapter owns;
+/// no two policies that differ today collapse into one.
+#[test]
+fn adapter_policies_resolve_to_their_declared_capabilities() {
+    use crate::typescript::semantics::policy;
+    use Framework::*;
+    use HandlerScope::{Isolated, Local, Shared};
+    use StepMatching::{ByText, Positional};
+    let ruby = adapter_for_language(SourceLanguage::Ruby).analysis_policy();
+    let ecmascript = [
+        (CucumberJs, Shared, ByText),
+        (PlaywrightBdd, Shared, ByText),
+        (CypressCucumber, Shared, ByText),
+        (Unknown, Shared, ByText),
+        (JestCucumber, Local, Positional),
+        (VitestCucumber, Isolated, ByText),
+    ];
+    let flags = |profile: &crate::source_adapter::semantics::AnalysisProfile| {
+        (
+            profile.requires_identical_handler,
+            profile.scores_event_overlap,
+            profile.excludes_identical_event_streams,
+        )
+    };
+    let mut regimes = BTreeSet::new();
+    for (stream, expected) in [
+        (EffectStream::Partial, (true, false, false)),
+        (EffectStream::Complete, (false, true, false)),
+        (EffectStream::ActionOnly, (false, true, true)),
+    ] {
+        let profile = ruby.profile(stream);
+        assert_eq!(profile.domain.label, "ruby");
+        assert_eq!(
+            (
+                profile.handler_scope,
+                profile.step_matching,
+                profile.step_invocation
+            ),
+            (Shared, ByText, true)
+        );
+        assert_eq!(flags(&profile), expected, "{stream:?}");
+        regimes.insert(expected);
+        // A complete-stream policy ignores what the handler declares.
+        for (framework, scope, matching) in ecmascript {
+            let profile = policy(framework).profile(stream);
+            assert_eq!(profile.domain.label, "ecmascript");
+            assert_eq!(
+                (
+                    profile.handler_scope,
+                    profile.step_matching,
+                    profile.step_invocation
+                ),
+                (scope, matching, false),
+                "{framework:?}/{stream:?}"
+            );
+            assert_eq!(
+                flags(&profile),
+                (false, true, false),
+                "{framework:?}/{stream:?}"
+            );
+        }
+    }
+    assert_eq!(regimes.len(), 3);
+    let shapes = ecmascript.map(|(_, scope, matching)| format!("{scope:?}/{matching:?}"));
+    assert_eq!(shapes.iter().collect::<BTreeSet<_>>().len(), 3);
+    // `Complete` evidence overrides what a handler declares; `Declared` follows it.
+    for (evidence, identical) in [
+        (StreamEvidence::Complete, false),
+        (StreamEvidence::Declared, true),
+    ] {
+        let policy = AnalysisPolicy::new(ruby.domain(), Shared, ByText, evidence, true);
+        let profile = policy.profile(EffectStream::Partial);
+        assert_eq!(profile.requires_identical_handler, identical);
+    }
+}
+
+/// An unconfigured definition keeps the baseline JavaScript/TypeScript policy; extraction attaches
+/// the policy of the framework that registered each definition, and Ruby its own.
+#[test]
+fn extraction_attaches_the_policy_of_the_registering_framework() {
+    assert_eq!(
+        AnalysisPolicy::default(),
+        crate::typescript::semantics::policy(Framework::Unknown)
+    );
+    // Every definition carries one policy; keep it to a pointer plus packed flags.
+    assert!(std::mem::size_of::<AnalysisPolicy>() <= 16);
+    for (source, framework) in [
+        (
+            "import { Given } from '@cucumber/cucumber'; Given('a', () => work());",
+            Framework::CucumberJs,
+        ),
+        (
+            "import { Given } from 'playwright-bdd'; Given('a', () => work());",
+            Framework::PlaywrightBdd,
+        ),
+        (
+            "import { Given } from '@badeball/cypress-cucumber-preprocessor'; Given('a', () => work());",
+            Framework::CypressCucumber,
+        ),
+        (
+            "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('t', ({ given }) => { given('a', () => work()); }));",
+            Framework::JestCucumber,
+        ),
+        (
+            "import { Given } from 'vitest-cucumber-plugin'; Given('a', () => work());",
+            Framework::VitestCucumber,
+        ),
+    ] {
+        let definitions = ts_definitions(source);
+        assert_eq!(definitions.len(), 1, "{framework:?}");
+        assert_eq!(definitions[0].framework, framework);
+        assert_eq!(
+            definitions[0].analysis_policy,
+            crate::typescript::semantics::policy(framework),
+            "{framework:?}"
+        );
+    }
+    let ruby = adapter_for_language(SourceLanguage::Ruby)
+        .extract(
+            "Given('a') { work() }",
+            &SourceFile {
+                path: "steps.rb".into(),
+                language: SourceLanguage::Ruby,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        ruby.definitions[0].analysis_policy,
+        crate::ruby::semantics::policy()
+    );
+    assert_ne!(
+        ruby.definitions[0].analysis_policy,
+        AnalysisPolicy::default()
+    );
+    // The policy is not serialized: a round trip yields the default.
+    let restored: StepDefinition =
+        serde_json::from_str(&serde_json::to_string(&ruby.definitions[0]).unwrap()).unwrap();
+    assert_eq!(restored.analysis_policy, AnalysisPolicy::default());
+}
+
+/// A language's comparison domain is the one its registered adapter declares, and the definitions
+/// that adapter extracts carry it.
+#[test]
+fn language_domains_follow_the_registered_adapters() {
+    let ruby = "Given('a') { work() }";
+    let ecmascript = "import { Given } from '@cucumber/cucumber'; Given('a', () => work());";
+    for (language, label, suffix, source) in [
+        (SourceLanguage::Ruby, "ruby", "rb", ruby),
+        (SourceLanguage::JavaScript, "ecmascript", "js", ecmascript),
+        (SourceLanguage::TypeScript, "ecmascript", "ts", ecmascript),
+        (SourceLanguage::Tsx, "ecmascript", "tsx", ecmascript),
+    ] {
+        let domain = language.comparison_domain();
+        assert_eq!(domain.label, label, "{language:?}");
+        let extracted = adapter_for_language(language)
+            .extract(
+                source,
+                &SourceFile {
+                    path: format!("steps.{suffix}").into(),
+                    language,
+                },
+            )
+            .unwrap();
+        assert_eq!(extracted.definitions.len(), 1, "{language:?}");
+        assert_eq!(
+            extracted.definitions[0].analysis_policy.domain(),
+            domain,
+            "{language:?}"
+        );
+    }
+    assert_ne!(
+        SourceLanguage::Ruby.comparison_domain(),
+        SourceLanguage::Tsx.comparison_domain()
+    );
+    // Domains are identified by their static spec: a reused label does not merge them.
+    let ruby = SourceLanguage::Ruby.comparison_domain();
+    let alias: &'static DomainSpec = Box::leak(Box::new(DomainSpec {
+        label: ruby.label,
+        dialect: ruby.dialect,
+    }));
+    assert_ne!(alias, ruby);
+}
+
+/// The attached policy, not the framework label, selects the comparison behaviour: flipping only
+/// the policy of an otherwise identical definition flips the outcome, and a framework label that
+/// disagrees with the policy changes nothing.
+#[test]
+fn attached_policy_decides_outcomes_not_the_framework_label() {
+    let ruby = crate::ruby::semantics::policy();
+    let ecmascript = crate::typescript::semantics::policy(Framework::CucumberJs);
+    let positional = crate::typescript::semantics::policy(Framework::JestCucumber);
+    let isolated = crate::typescript::semantics::policy(Framework::VitestCucumber);
+
+    let unused = |policy: AnalysisPolicy, label| {
+        let mut definitions = ts_definitions("Given(/^placeholder$/, () => { load(); save(); });");
+        definitions[0].matcher = "^alice$".into();
+        definitions[0].framework = label;
+        definitions[0].analysis_policy = policy;
+        reports(
+            definitions,
+            feature_step("before\nalice\nafter"),
+            Rule::UnusedDefinition,
+        )
+    };
+    for label in [Framework::CucumberJs, Framework::CucumberRuby] {
+        // Ruby anchors match per line, so the step selects the definition; ECMAScript anchors do
+        // not. Positional steps are never reported unused: only their own position selects them.
+        assert!(!unused(ruby, label), "{label:?}");
+        assert!(unused(ecmascript, label), "{label:?}");
+        assert!(!unused(positional, label), "{label:?}");
+    }
+
+    let duplicate_handlers = |left: AnalysisPolicy, right: AnalysisPolicy| {
+        let mut definitions = ts_definitions(
+            "Given('a user exists', () => { load(); save(); }); Given('the basket is empty', () => { load(); save(); });",
+        );
+        definitions[0].analysis_policy = left;
+        definitions[1].analysis_policy = right;
+        definitions[1].location.path = "other.ts".into();
+        reports(definitions, vec![], Rule::DuplicateHandler)
+    };
+    assert!(duplicate_handlers(ecmascript, ecmascript));
+    assert!(duplicate_handlers(isolated, isolated));
+    assert!(duplicate_handlers(positional, positional));
+    assert!(!duplicate_handlers(positional, ecmascript));
+    assert!(!duplicate_handlers(isolated, ecmascript));
+    assert!(!duplicate_handlers(positional, isolated));
+
+    // Domains come from the policy: a Ruby label on an ECMAScript policy mixes nothing, and an
+    // ECMAScript label on a Ruby policy does.
+    let mixed = |left_label, left: AnalysisPolicy, right: AnalysisPolicy| {
+        let mut definitions = ts_definitions(
+            "Given('a user exists', () => { load(); save(); }); Given('a cart exists', () => { load(); save(); });",
+        );
+        definitions[0].framework = left_label;
+        definitions[0].analysis_policy = left;
+        definitions[1].analysis_policy = right;
+        analyze_policy_case(definitions, vec![])
+    };
+    assert!(mixed(Framework::CucumberRuby, ecmascript, ecmascript).is_ok());
+    assert!(mixed(Framework::CucumberJs, ruby, ecmascript)
+        .unwrap_err()
+        .to_string()
+        .contains("separate analysis runs"));
+}
+
+/// A positional step pairs with a text-matched step of the same matcher by near wording, never as
+/// an exact matcher or a parameterization of it, even when their handler scopes agree; two
+/// text-matched steps of that matcher are an exact duplicate.
+#[test]
+fn positional_steps_pair_by_wording_with_text_matched_steps() {
+    let text = crate::typescript::semantics::policy(Framework::CucumberJs);
+    let positional = AnalysisPolicy::new(
+        text.domain(),
+        HandlerScope::Shared,
+        StepMatching::Positional,
+        StreamEvidence::Complete,
+        false,
+    );
+    let rules = |left: AnalysisPolicy, right: AnalysisPolicy| {
+        let mut definitions = ts_definitions(
+            "Given('the parcel is ready', () => { work(1); }); Given('the parcel is ready', () => { work(2); });",
+        );
+        definitions[0].analysis_policy = left;
+        definitions[1].analysis_policy = right;
+        analyze_policy_case(definitions, feature_step("the parcel is ready"))
+            .unwrap()
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        rules(text, text),
+        BTreeSet::from([Rule::DuplicateMatcher, Rule::AmbiguousStep])
+    );
+    for pair in [rules(positional, text), rules(text, positional)] {
+        assert_eq!(pair, BTreeSet::from([Rule::NearDuplicateStep]));
+    }
+}

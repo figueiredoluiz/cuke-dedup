@@ -701,7 +701,10 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
         let mut partial = pair.clone();
         for (definition, partial_stream) in partial.iter_mut().zip([left_partial, right_partial]) {
             if partial_stream {
-                definition.framework = crate::model::Framework::CucumberRuby;
+                crate::analysis::tests::set_framework(
+                    definition,
+                    crate::model::Framework::CucumberRuby,
+                );
             }
         }
         assert_eq!(work(&partial, unrelated, PairSimilarityWork::Handler), 0);
@@ -1016,7 +1019,7 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
         (false, true, false),
     ] {
         let mut left = definition();
-        left.framework = crate::model::Framework::CucumberRuby;
+        crate::analysis::tests::set_framework(&mut left, crate::model::Framework::CucumberRuby);
         left.handler.effect_stream = crate::model::EffectStream::Complete;
         let mut right = left.clone();
         right.location.line += 1;
@@ -1059,6 +1062,46 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
                     Rule::NearDuplicateStep | Rule::DuplicateHandler
                 )),
                 complete || same_handler
+            );
+        }
+    }
+}
+
+/// An action-only stream on either side turns identical event streams behind different handlers
+/// into value-only differences, never near duplicates; two complete streams stay near.
+#[test]
+fn action_only_stream_on_either_side_excludes_identical_event_streams() {
+    use crate::model::EffectStream::{ActionOnly, Complete};
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), Default::default()).unwrap();
+    for (left_stream, right_stream, near) in [
+        (Complete, Complete, true),
+        (ActionOnly, Complete, false),
+        (Complete, ActionOnly, false),
+        (ActionOnly, ActionOnly, false),
+    ] {
+        let mut left = definition();
+        crate::analysis::tests::set_framework(&mut left, crate::model::Framework::CucumberRuby);
+        let mut right = left.clone();
+        right.location.line += 1;
+        left.matcher = "the parcel status is verified".into();
+        right.matcher = "the parcel status is now verified".into();
+        left.normalized_matcher = left.matcher.clone();
+        right.normalized_matcher = right.matcher.clone();
+        left.handler.effect_stream = left_stream;
+        right.handler.effect_stream = right_stream;
+        right.handler.alpha_normalized = "different-alpha".into();
+        right.handler.structural = "different-structure".into();
+        for definitions in [[left.clone(), right.clone()], [right.clone(), left.clone()]] {
+            let suppressions = SuppressionIndex::new(&config, &definitions);
+            let mut findings = Vec::new();
+            analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
+            assert_eq!(
+                findings
+                    .iter()
+                    .any(|finding| finding.rule == Rule::NearDuplicateStep),
+                near,
+                "{left_stream:?}/{right_stream:?}"
             );
         }
     }

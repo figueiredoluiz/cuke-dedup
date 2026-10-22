@@ -1,7 +1,7 @@
 use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
 use super::pair_records::PairRecord;
 use super::similarity::{
-    event_similarity_available, handler_runtime_compatible, handler_similarity_with_relationship,
+    event_overlap_available, handler_runtime_compatible, handler_similarity_with_relationship,
     is_near_matcher, is_parameterizable_matcher, matcher_similarity, matcher_words, round_score,
 };
 use super::suppression::SuppressionIndex;
@@ -188,8 +188,8 @@ pub(super) fn analyze_definition_pairs(
         let right_index = candidate.right;
         let left = &definitions[left_index];
         let right = &definitions[right_index];
-        let positional =
-            !left.analysis_profile().global_matchers || !right.analysis_profile().global_matchers;
+        let positional = !left.analysis_profile().matches_by_text()
+            || !right.analysis_profile().matches_by_text();
         let relationships = classes.relationships(left_index, right_index);
         let exact_matcher = relationships.exact_matcher;
         let normalized_matcher = relationships.normalized_matcher && !positional;
@@ -233,9 +233,9 @@ pub(super) fn analyze_definition_pairs(
             && !(positional && exact_matcher)
             && same_structure
             && meaningful_handlers;
-        let near_requires_same_handler = left.analysis_profile().near_requires_same_handler
-            || right.analysis_profile().near_requires_same_handler;
-        let near_handler = (!near_requires_same_handler || same_handler)
+        let requires_identical_handler = left.analysis_profile().requires_identical_handler
+            || right.analysis_profile().requires_identical_handler;
+        let near_handler = (!requires_identical_handler || same_handler)
             && !value_only_difference(
                 left,
                 right,
@@ -306,7 +306,7 @@ pub(super) fn analyze_definition_pairs(
             handler_similarity_with_relationship(
                 same_handler,
                 relationships.same_structure,
-                event_similarity_available(left, right),
+                event_overlap_available(left, right),
                 &behavior_events[left_index],
                 &behavior_events[right_index],
             )
@@ -528,7 +528,7 @@ fn pair_similarity_work(input: &PairWorkInput<'_>, work: PairSimilarityWork) -> 
         PairSimilarityWork::Handler
             if !input.relationships.same_handler
                 && !input.relationships.same_structure
-                && event_similarity_available(input.left, input.right) =>
+                && event_overlap_available(input.left, input.right) =>
         {
             matrix_work(
                 input.left.handler.behavior_signature.len(),
@@ -621,7 +621,7 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 // contract.
                 definition
                     .analysis_profile()
-                    .dialect
+                    .dialect()
                     .identity_flags(&definition.matcher_flags),
             ),
         ));
@@ -664,9 +664,9 @@ fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartit
         // Language-specific regex identity belongs in the key, never in comparison/report text.
         definition
             .analysis_profile()
-            .dialect
+            .dialect()
             .normalized_flags(&definition.matcher_flags),
-        (!definition.analysis_profile().global_matchers).then_some(index),
+        (!definition.analysis_profile().matches_by_text()).then_some(index),
     )
 }
 
@@ -784,7 +784,7 @@ pub(super) fn definition_pair_candidates(
     let mut structures: HashMap<(&str, BehaviorIdentity<'_>), Vec<usize>> = HashMap::new();
 
     for (index, definition) in definitions.iter().enumerate() {
-        if definition.analysis_profile().global_matchers {
+        if definition.analysis_profile().matches_by_text() {
             normalized_matchers
                 .entry(matcher_partition(definition, index))
                 .or_default()
@@ -1225,8 +1225,8 @@ fn value_only_difference(
     left_events: &[usize],
     right_events: &[usize],
 ) -> bool {
-    (left.analysis_profile().near_requires_distinct_events
-        || right.analysis_profile().near_requires_distinct_events)
+    (left.analysis_profile().excludes_identical_event_streams
+        || right.analysis_profile().excludes_identical_event_streams)
         && !same_handler
         && left_events == right_events
 }
