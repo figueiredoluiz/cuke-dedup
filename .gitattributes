@@ -1,3 +1,7 @@
+# Every text file is LF in the index and in the working tree, so a Windows checkout cannot change
+# what tests, fixtures and snapshots read. Binary files are detected and left alone.
+* text=auto eol=lf
+
 # Tests read these files and match them with LF-only patterns; a Windows checkout must not turn them into CRLF.
 *.yml text eol=lf
 *.yaml text eol=lf
