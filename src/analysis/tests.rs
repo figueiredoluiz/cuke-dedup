@@ -135,11 +135,13 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
                 def.handler
                     .behavior_signature
                     .insert(0, format!("method:{marker}"));
+                def.handler.capture_scope = Some(String::new());
             }
         }
         let mut one_capture = defs.clone();
         if !marker.is_empty() {
             one_capture[1].handler.behavior_signature.remove(0);
+            one_capture[1].handler.capture_scope = None;
         }
         for (defs, expected) in [
             (defs, expected),

@@ -24,6 +24,8 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
             source_snippet: String::new(),
             comparable: false,
             trivial: true,
+            effect_stream: Default::default(),
+            capture_scope: None,
         },
         framework: Framework::Unknown,
         registration: "Given".to_owned(),

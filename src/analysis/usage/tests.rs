@@ -308,6 +308,8 @@ fn scan_windows_stop_at_a_break() {
         handler: crate::model::HandlerFingerprint {
             comparable: false,
             trivial: true,
+            effect_stream: Default::default(),
+            capture_scope: None,
             source_snippet: String::new(),
             behavior_signature: Vec::new(),
             structural: String::new(),

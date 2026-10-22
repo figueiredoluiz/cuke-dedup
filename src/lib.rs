@@ -49,7 +49,8 @@
 //! [`source_adapter::SourceFile`], [`model::SourceLocation`], [`model::StepDefinition`],
 //! [`model::HandlerFingerprint`], [`model::InlineSuppression`], [`model::FeatureStep`],
 //! [`config::Config`], [`config::ConfigOverrides`] and [`config::SuppressionConfig`]. Adding a
-//! field to any of those is a breaking change and needs a major release.
+//! field to any of those is a breaking change: it ships in a major release, or, before 1.0, in the
+//! next minor release.
 //!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,

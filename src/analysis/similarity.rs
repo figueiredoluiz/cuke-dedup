@@ -307,6 +307,8 @@ mod tests {
                 source_snippet: String::new(),
                 comparable: true,
                 trivial: false,
+                effect_stream: Default::default(),
+                capture_scope: None,
             },
             framework: Framework::Unknown,
             registration: "Given".to_owned(),

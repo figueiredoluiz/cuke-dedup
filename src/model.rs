@@ -2,6 +2,7 @@
 
 mod behavior;
 mod handler;
+pub use handler::EffectStream;
 pub(crate) use handler::{bounded_source_snippet, HandlerSemantics, RepresentationEncoding};
 mod sha256;
 
@@ -111,6 +112,14 @@ pub struct HandlerFingerprint {
     #[serde(default)]
     /// Whether the handler lacks enough behavior for duplication analysis.
     pub trivial: bool,
+    /// Evidence regime of `behavior_signature`. Adapters whose analysis policy does not consult it
+    /// leave the default, `Partial`.
+    #[serde(default, skip_serializing_if = "EffectStream::is_partial")]
+    pub effect_stream: EffectStream,
+    /// Key of the file-bound scope that limits where this handler's captures are comparable;
+    /// `None` when captures are unrestricted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_scope: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

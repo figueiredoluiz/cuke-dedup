@@ -2,7 +2,7 @@
 
 use crate::model::Framework;
 use crate::source_adapter::semantics::{
-    AnalysisProfile, CaptureContext, ComparisonDomain, HandlerDomain, RegexDialect,
+    AnalysisProfile, ComparisonDomain, HandlerDomain, RegexDialect,
 };
 
 struct JavaScriptRegex;
@@ -38,6 +38,5 @@ pub(crate) fn profile(framework: Framework) -> AnalysisProfile {
         near_requires_distinct_events: false,
         indirect_usage: false,
         dialect: &REGEX,
-        capture_context: |_| CaptureContext::Unrestricted,
     }
 }

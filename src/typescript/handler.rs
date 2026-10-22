@@ -3,7 +3,7 @@ use super::ast::push_named_children_reverse;
 use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee};
 use crate::model::{
-    bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation,
+    bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation, EffectStream,
     HandlerFingerprint, HandlerSemantics, RepresentationEncoding,
 };
 use std::borrow::Cow;
@@ -557,6 +557,8 @@ fn fingerprint_from_events(
         comparable: flags.comparable,
         trivial: flags.trivial,
         encoding: RepresentationEncoding::Digest,
+        stream: EffectStream::default(),
+        capture_scope: None,
     }
     .finish()
 }

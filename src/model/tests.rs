@@ -16,6 +16,8 @@ fn definition(line: usize) -> StepDefinition {
             source_snippet: String::new(),
             comparable: false,
             trivial: true,
+            effect_stream: Default::default(),
+            capture_scope: None,
         },
         framework: Framework::Unknown,
         registration: "Given".to_owned(),
@@ -185,6 +187,8 @@ fn semantics(encoding: RepresentationEncoding, events: Vec<BehaviorEvent>) -> Ha
         comparable: true,
         trivial: false,
         encoding,
+        stream: EffectStream::default(),
+        capture_scope: None,
     }
 }
 
@@ -274,4 +278,50 @@ fn finish_encodes_events_and_withdraws_comparability_on_unresolved_assertions() 
         input.comparable = false;
         assert!(!input.finish().comparable);
     }
+}
+
+/// `finish` carries the effect stream and capture scope through unchanged: the default is partial
+/// and unrestricted, and every other value survives under both encodings.
+#[test]
+fn finish_carries_effect_stream_and_capture_scope() {
+    let default = semantics(RepresentationEncoding::Digest, Vec::new()).finish();
+    assert_eq!(default.effect_stream, EffectStream::Partial);
+    assert_eq!(default.capture_scope, None);
+    for encoding in [
+        RepresentationEncoding::Digest,
+        RepresentationEncoding::Verbatim { exact_len: 3 },
+    ] {
+        for (stream, scope) in [
+            (EffectStream::Complete, Some("")),
+            (EffectStream::ActionOnly, Some("4:9")),
+        ] {
+            let mut input = semantics(encoding, Vec::new());
+            input.stream = stream;
+            input.capture_scope = scope.map(str::to_owned);
+            let finished = input.finish();
+            assert_eq!(finished.effect_stream, stream);
+            assert_eq!(finished.capture_scope.as_deref(), scope);
+        }
+    }
+}
+
+/// Default-valued typed fields are omitted from serialized handlers and absent fields
+/// deserialize to the defaults; other values round-trip.
+#[test]
+fn typed_handler_fields_serialize_only_when_set() {
+    let mut handler = semantics(RepresentationEncoding::Digest, Vec::new()).finish();
+    let plain = serde_json::to_value(&handler).unwrap();
+    assert!(plain.get("effect_stream").is_none() && plain.get("capture_scope").is_none());
+    assert_eq!(
+        serde_json::from_value::<HandlerFingerprint>(plain).unwrap(),
+        handler
+    );
+    handler.effect_stream = EffectStream::ActionOnly;
+    handler.capture_scope = Some("4:9".to_owned());
+    let tagged = serde_json::to_value(&handler).unwrap();
+    assert_eq!(tagged["effect_stream"], "action-only");
+    assert_eq!(
+        serde_json::from_value::<HandlerFingerprint>(tagged).unwrap(),
+        handler
+    );
 }

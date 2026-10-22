@@ -2385,6 +2385,20 @@
           "stage": "model-codec",
           "rationale": "Adapter-independent stage `model-codec`: Location display normalizes separators on a constructed location; pure model codec.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "finish_carries_effect_stream_and_capture_scope",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Typed effect-stream and capture-scope fields survive finishing under both encodings; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "typed_handler_fields_serialize_only_when_set",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Default typed handler fields stay out of serialized handlers and round-trip; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

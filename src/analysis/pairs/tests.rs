@@ -1020,6 +1020,7 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
         left.handler
             .behavior_signature
             .push("method:ruby:complete-events".into());
+        left.handler.effect_stream = crate::model::EffectStream::Complete;
         let mut right = left.clone();
         right.location.line += 1;
         left.matcher = if oversized {
@@ -1039,11 +1040,13 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
                 .handler
                 .behavior_signature
                 .retain(|event| event != "method:ruby:complete-events");
+            right.handler.effect_stream = crate::model::EffectStream::Partial;
         }
         if !complete && same_handler {
             left.handler
                 .behavior_signature
                 .retain(|event| event != "method:ruby:complete-events");
+            left.handler.effect_stream = crate::model::EffectStream::Partial;
         }
         if !same_handler {
             right.handler.alpha_normalized = "different-alpha".into();

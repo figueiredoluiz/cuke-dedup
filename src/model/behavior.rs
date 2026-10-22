@@ -299,6 +299,8 @@ mod tests {
             source_snippet: String::new(),
             comparable: true,
             trivial: false,
+            effect_stream: Default::default(),
+            capture_scope: None,
         };
         let serialized = serde_json::to_string(&fingerprint).unwrap();
         assert_eq!(
