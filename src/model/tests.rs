@@ -325,3 +325,79 @@ fn typed_handler_fields_serialize_only_when_set() {
         handler
     );
 }
+
+/// Handlers have one behaviour identity only when events, effect stream and capture scope all
+/// agree; events alone do not separate handlers that differ in the other two.
+#[test]
+fn behavior_identity_separates_what_events_cannot() {
+    let handler = |events: &[&str], stream, scope: Option<&str>| {
+        let mut handler = definition(1).handler;
+        handler.behavior_signature = events.iter().map(|event| (*event).to_owned()).collect();
+        handler.effect_stream = stream;
+        handler.capture_scope = scope.map(str::to_owned);
+        handler
+    };
+    let base = handler(&["call:work"], EffectStream::ActionOnly, Some("4:9"));
+    for (name, other, same) in [
+        (
+            "identical",
+            handler(&["call:work"], EffectStream::ActionOnly, Some("4:9")),
+            true,
+        ),
+        (
+            "other events",
+            handler(&["call:rest"], EffectStream::ActionOnly, Some("4:9")),
+            false,
+        ),
+        (
+            "other stream",
+            handler(&["call:work"], EffectStream::Complete, Some("4:9")),
+            false,
+        ),
+        (
+            "other scope key",
+            handler(&["call:work"], EffectStream::ActionOnly, Some("7:12")),
+            false,
+        ),
+        (
+            "bare scope",
+            handler(&["call:work"], EffectStream::ActionOnly, Some("")),
+            false,
+        ),
+        (
+            "no scope",
+            handler(&["call:work"], EffectStream::ActionOnly, None),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            base.behavior_identity() == other.behavior_identity(),
+            same,
+            "{name}"
+        );
+        assert_eq!(
+            base.behavior_digest() == other.behavior_digest(),
+            same,
+            "{name}: digest"
+        );
+    }
+    // The digest spells each regime as the serialized name.
+    for stream in [
+        EffectStream::Partial,
+        EffectStream::Complete,
+        EffectStream::ActionOnly,
+    ] {
+        assert_eq!(serde_json::to_value(stream).unwrap(), stream.name());
+    }
+    // The bare scope (empty key) and no scope are different identities.
+    let unscoped = handler(&["call:work"], EffectStream::ActionOnly, None);
+    let bare = handler(&["call:work"], EffectStream::ActionOnly, Some(""));
+    assert_ne!(unscoped.behavior_identity(), bare.behavior_identity());
+    assert_ne!(unscoped.behavior_digest(), bare.behavior_digest());
+    // A handler with neither fact digests as its events alone.
+    let plain = handler(&["call:work"], EffectStream::Partial, None);
+    assert_eq!(
+        plain.behavior_digest(),
+        stable_fingerprint_parts(["call:work"])
+    );
+}

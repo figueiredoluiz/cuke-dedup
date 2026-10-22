@@ -198,7 +198,6 @@ mod tests {
     fn legacy_signatures_round_trip_known_and_unknown_events() {
         let signatures = [
             "method:instance sync",
-            "method:ruby:lexical-file",
             "call:v0#click",
             "call:(subscript_expression:dynamic-key)",
             "assert:expect.not#toBe:subject:expected",

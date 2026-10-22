@@ -293,10 +293,11 @@ impl Graph<'_> {
                     ] {
                         representation.insert_str(0, &context);
                     }
-                    super::super::handler::bind_capture_scope(
-                        &mut fingerprint,
-                        format!("{}:{}", allocation.start_byte(), allocation.end_byte()),
-                    );
+                    fingerprint.capture_scope = Some(format!(
+                        "{}:{}",
+                        allocation.start_byte(),
+                        allocation.end_byte()
+                    ));
                 }
                 if body_unit != unit
                     && !super::super::bindings::Bindings::collect(

@@ -1,7 +1,7 @@
 //! Per-definition comparison evidence written by `--emit-fingerprints` for test oracles.
 
 use super::evidence::definition_semantic_fingerprint;
-use crate::model::{stable_fingerprint, stable_fingerprint_parts, MatcherKind, StepDefinition};
+use crate::model::{stable_fingerprint, MatcherKind, StepDefinition};
 use crate::source_adapter::semantics::ComparisonDomain;
 use serde::Serialize;
 use std::io::Write;
@@ -77,9 +77,7 @@ fn record<'a>(definition: &'a StepDefinition, root: &Path) -> impl Serialize + '
             normalized: stable_fingerprint(&handler.normalized),
             alpha_normalized: stable_fingerprint(&handler.alpha_normalized),
             structural: stable_fingerprint(&handler.structural),
-            behavior: stable_fingerprint_parts(
-                handler.behavior_signature.iter().map(String::as_str),
-            ),
+            behavior: handler.behavior_digest(),
             comparable: handler.comparable,
             trivial: handler.trivial,
         },

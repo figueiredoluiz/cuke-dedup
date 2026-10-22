@@ -191,7 +191,7 @@ pub(super) fn handler_similarity(left: &StepDefinition, right: &StepDefinition) 
     handler_similarity_with_relationship(
         left.handler.alpha_normalized == right.handler.alpha_normalized,
         left.handler.structural == right.handler.structural
-            && left.handler.behavior_signature == right.handler.behavior_signature,
+            && left.handler.behavior_identity() == right.handler.behavior_identity(),
         event_similarity_available(left, right),
         &left_events,
         &right_events,
@@ -205,8 +205,8 @@ pub(super) fn event_similarity_available(left: &StepDefinition, right: &StepDefi
 }
 
 /// Whether two handlers can run in the same runtime context. Rejects differing paths when either
-/// captures lexical file context, differing handler domains, and differing method semantics when
-/// both signatures start with a method event; otherwise method semantics do not gate.
+/// captures lexical file context, differing handler domains, and differing runtime contexts when
+/// both handlers have one; a handler without a runtime context does not gate.
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
     use crate::source_adapter::semantics::CaptureContext;
     if (left.capture_context() == CaptureContext::LexicalFile
@@ -218,7 +218,7 @@ pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefi
     if left.analysis_profile().handler_domain != right.analysis_profile().handler_domain {
         return false;
     }
-    match (left.method_semantics(), right.method_semantics()) {
+    match (left.runtime_context(), right.runtime_context()) {
         (Some(left), Some(right)) => left == right,
         _ => true,
     }
@@ -488,5 +488,114 @@ mod tests {
         function_handler.handler.structural = "function-structure".to_owned();
         function_handler.handler.behavior_signature.remove(0);
         assert_eq!(handler_similarity(&left, &function_handler), 1.0);
+    }
+
+    /// Equal structure and events score 0.95 only while the effect stream and capture scope also
+    /// agree; with either differing, the pair falls through to event overlap (1.0 here).
+    #[test]
+    fn structural_handler_similarity_requires_equal_behavior_identity() {
+        let mut left = definition("left", MatcherKind::CucumberExpression);
+        left.handler.alpha_normalized = "left-alpha".to_owned();
+        left.handler.structural = "structure".to_owned();
+        left.handler.behavior_signature = vec!["call:work".to_owned()];
+        let mut same = left.clone();
+        same.handler.alpha_normalized = "right-alpha".to_owned();
+        assert_eq!(handler_similarity(&left, &same), 0.95);
+        let mut other_stream = same.clone();
+        other_stream.handler.effect_stream = crate::model::EffectStream::ActionOnly;
+        let mut other_scope = same.clone();
+        other_scope.handler.capture_scope = Some("4:9".to_owned());
+        for other in [other_stream, other_scope] {
+            assert_eq!(handler_similarity(&left, &other), 1.0);
+        }
+    }
+
+    /// Handlers are runtime-compatible unless both are pinned to different contexts: capture
+    /// scopes, leading method events, or an effect stream that observed no events. A handler
+    /// without a pin, including an unmodelled one, never gates.
+    #[test]
+    fn runtime_context_gates_handler_compatibility() {
+        use crate::model::EffectStream::{self, ActionOnly, Complete, Partial};
+        /// Scope key, events and effect stream of one handler.
+        type Handler = (Option<&'static str>, &'static [&'static str], EffectStream);
+        let called: &[&str] = &["call:work"];
+        let (bare, bound, unscoped) = (
+            (Some(""), called, ActionOnly),
+            (Some("4:9"), called, ActionOnly),
+            (None, called, ActionOnly),
+        );
+        let (empty, unmodelled): (Handler, Handler) =
+            ((None, &[], ActionOnly), (None, &[], Partial));
+        for (name, left, right, compatible) in [
+            ("one bare scope", bare, bare, true),
+            ("bare against bound scope", bare, bound, false),
+            ("one bound scope", bound, bound, true),
+            (
+                "two bound scopes",
+                bound,
+                (Some("7:12"), called, ActionOnly),
+                false,
+            ),
+            ("bound against unscoped", bound, unscoped, true),
+            ("two unscoped", unscoped, unscoped, true),
+            ("scope against modelled empty stream", bound, empty, false),
+            ("two modelled empty streams", empty, empty, true),
+            (
+                "modelled against unmodelled empty stream",
+                empty,
+                unmodelled,
+                true,
+            ),
+            (
+                "scope against unmodelled empty stream",
+                bound,
+                unmodelled,
+                true,
+            ),
+            (
+                "modelled empty stream against events",
+                empty,
+                unscoped,
+                true,
+            ),
+            (
+                "complete against action-only empty stream",
+                (None, &[], Complete),
+                empty,
+                false,
+            ),
+            (
+                "method against other method",
+                (None, &["method:async"], Partial),
+                (None, &["method:sync"], Partial),
+                false,
+            ),
+            (
+                "method against itself",
+                (None, &["method:async"], Partial),
+                (None, &["method:async"], Partial),
+                true,
+            ),
+        ] {
+            let build = |(scope, events, stream): Handler| {
+                let mut definition = definition("matcher", MatcherKind::CucumberExpression);
+                definition.handler.capture_scope = scope.map(str::to_owned);
+                definition.handler.behavior_signature =
+                    events.iter().map(|event| (*event).to_owned()).collect();
+                definition.handler.effect_stream = stream;
+                definition
+            };
+            let (left, right) = (build(left), build(right));
+            assert_eq!(
+                handler_runtime_compatible(&left, &right),
+                compatible,
+                "{name}"
+            );
+            assert_eq!(
+                handler_runtime_compatible(&right, &left),
+                compatible,
+                "{name}, reversed"
+            );
+        }
     }
 }

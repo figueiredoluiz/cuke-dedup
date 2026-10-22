@@ -34,7 +34,6 @@
     ["src/model.rs","name:playwright",1],
     ["src/model.rs","name:ruby",1],
     ["src/model.rs","name:vitest",1],
-    ["src/model/behavior.rs","marker:method:ruby",1],
     ["src/source_adapter/config.rs","crate::ruby",1],
     ["src/source_adapter/config.rs","name:ruby",7],
     ["src/source_adapter/finalization.rs","SourceLanguage",2],

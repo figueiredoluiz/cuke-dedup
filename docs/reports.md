@@ -91,7 +91,7 @@ permissions.
 
 Fields, in this order: `schemaVersion` (`"1"`), `path` (root-relative, `/`-separated), `line`, `column`, `domain` (`ecmascript` or `ruby`), `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher`, `definitionFingerprint` (the value reports use as `leftFingerprint`/`rightFingerprint`), and `handler` with `exact`, `normalized`, `alphaNormalized`, `structural`, `behavior`, `comparable` and `trivial`.
 
-Each `handler` representation is a 32-hex digest of the analyzer's comparison key: equal digests mean the analyzer treats that representation as equal. Digests are comparable within one build only. `duplicate-handler`, `parameterization-candidate` and `near-duplicate-step` consider a pair only when both definitions have `comparable: true` and `trivial: false`. Matcher text is written verbatim, without report sanitization or bounds.
+Each `handler` representation is a 32-hex digest of the analyzer's comparison key: equal digests mean the analyzer treats that representation as equal. Digests are comparable within one build only. `behavior` digests the ordered behaviour events together with the handler's effect-stream regime and capture scope when it has them. `duplicate-handler`, `parameterization-candidate` and `near-duplicate-step` consider a pair only when both definitions have `comparable: true` and `trivial: false`. Matcher text is written verbatim, without report sanitization or bounds.
 
 ## Pair evidence
 

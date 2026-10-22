@@ -2750,6 +2750,55 @@ fn ruby_near_exact_respects_handler_threshold_and_capture_context() {
     }
 }
 
+/// Handlers bound to different capture scopes (distinct allocations of one class, or a bare
+/// `__FILE__` handler against a bound one) never share handler evidence even with equal bodies;
+/// handlers in one scope, or one with a scope against an unscoped one, do.
+#[test]
+fn ruby_capture_scopes_gate_handler_similarity() {
+    let classes = "class Bound; def handle; work(1); end; end\nclass BoundFile; def handle; work(__FILE__); end; end\nSHARED = Bound.new\n";
+    let matcher = "the parcel status is verified";
+    let bound = |variable: &str, class: &str| {
+        format!("{variable} = {class}.new; Given('{matcher}', &{variable}.method(:handle))")
+    };
+    let given = |body: &str| format!("Given('{matcher}') {{ {body} }}");
+    for (name, first, second, expected) in [
+        (
+            "distinct allocations",
+            bound("one", "Bound"),
+            bound("two", "Bound"),
+            0.0,
+        ),
+        (
+            "bare scope against bound scope",
+            given("work(__FILE__)"),
+            bound("one", "BoundFile"),
+            0.0,
+        ),
+        (
+            "bare scope against bare scope",
+            given("work(__FILE__)"),
+            given("work(__FILE__)"),
+            1.0,
+        ),
+        (
+            "bound scope against no scope",
+            bound("one", "Bound"),
+            given("work(1)"),
+            1.0,
+        ),
+    ] {
+        let source = format!("{classes}{first}\n{second}\n");
+        let (_, report, stderr) = ruby_pair_report(&[("steps.rb", &source)], "*.rb", &[]);
+        let similarities: Vec<_> = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|finding| finding["evidence"]["handlerSimilarity"].as_f64())
+            .collect();
+        assert_eq!(similarities, [expected], "{name}: {stderr}");
+    }
+}
+
 /// Runs the binary over `files` written to a fresh project with the JSON reporter, returning the
 /// exit code, the parsed report and stderr; a run that writes no report fails with both.
 fn ruby_pair_report(files: &[(&str, &str)], pattern: &str, extra: &[&str]) -> (i32, Value, String) {
@@ -3983,7 +4032,7 @@ fn ruby_pair_verification_fails_closed_at_the_total_similarity_budget() {
     // duplicate-handler and near-duplicate-step findings. One more literal character pushes the
     // last pair past the limit; the unmodeled array argument keeps the exact-handler policy, and
     // identical handlers charge no handler matrix.
-    for (length, truncated) in [(58_484, 0), (58_485, 1)] {
+    for (length, truncated) in [(58_490, 0), (58_491, 1)] {
         let literal = "x".repeat(length);
         let definition = |index| {
             let source = format!(
