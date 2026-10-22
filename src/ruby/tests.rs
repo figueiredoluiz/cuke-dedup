@@ -1279,3 +1279,37 @@ fn ruby_control_and_meta_escapes_stay_undecoded() {
         (r##""\M-\xC3""##, None),  // ruby: c3
     ]);
 }
+
+/// Ruby keeps normalized and alpha text for similarity while the exact identity is a digest
+/// repeated to the legacy comparison-work length; an empty handler and non-ASCII text follow the
+/// same encoding, and identical spelling keeps equal identities.
+#[test]
+fn handler_representations_stay_verbatim_with_a_padded_exact_digest() {
+    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    let file = SourceFile {
+        path: "steps.rb".into(),
+        language: SourceLanguage::Ruby,
+    };
+    let definitions = super::RUBY_ADAPTER
+        .extract(
+            "Given('a') { }\nGiven('b') { puts 'caf\u{e9}' }\nGiven('c') { puts 'caf\u{e9}' }",
+            &file,
+        )
+        .unwrap()
+        .definitions;
+    assert_eq!(definitions.len(), 3);
+    for definition in &definitions {
+        let handler = &definition.handler;
+        assert!(handler.normalized.starts_with('['));
+        assert!(handler.alpha_normalized.starts_with('['));
+        // One-line handlers lose no bytes to snippet normalization, so the charge equals this.
+        assert_eq!(handler.exact.len(), handler.normalized.len());
+        assert!(handler.exact.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+    assert_eq!(definitions[1].handler.exact, definitions[2].handler.exact);
+    assert_ne!(definitions[0].handler.exact, definitions[1].handler.exact);
+    assert_ne!(
+        definitions[0].handler.normalized,
+        definitions[1].handler.normalized
+    );
+}

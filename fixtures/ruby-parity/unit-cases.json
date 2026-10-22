@@ -2352,6 +2352,34 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "digest_encoding_hashes_every_representation",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Digest encoding of every handler representation; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_encoding_keeps_text_and_pads_the_exact_digest",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Verbatim encoding keeps text and pads the exact digest; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "missing_structural_reuses_the_encoded_exact_identity",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Absent structural representation reuses the exact identity; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "finish_encodes_events_and_withdraws_comparability_on_unresolved_assertions",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Event encoding and comparability of finished handler semantics; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "displayed_locations_use_portable_path_separators",
           "requiredStatus": "engine-invariant",
           "stage": "model-codec",
@@ -3507,6 +3535,16 @@
     },
     "src/typescript/tests.rs": {
       "tests": [
+        {
+          "name": "handler_representations_are_digests_for_every_handler_shape",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/ruby/tests.rs",
+            "name": "handler_representations_stay_verbatim_with_a_padded_exact_digest"
+          },
+          "rationale": "Each adapter's handler representations follow the core encoding: TypeScript digests every representation, Ruby keeps text with a padded exact digest; equal spelling gives equal identities in both.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "framework_entrypoints_preserve_duplicate_findings_and_attribution",
           "requiredStatus": "language-inapplicable",

@@ -172,3 +172,106 @@ fn displayed_locations_use_portable_path_separators() {
     let location = SourceLocation::new("steps\\checkout.ts", 3, 4, 3, 10);
     assert_eq!(location.display(Path::new(".")), "steps/checkout.ts:3:4");
 }
+
+/// Builds semantics with the given encoding and events; the exact text is non-ASCII.
+fn semantics(encoding: RepresentationEncoding, events: Vec<BehaviorEvent>) -> HandlerSemantics {
+    HandlerSemantics {
+        exact: "exact \u{e9}".to_owned(),
+        normalized: "normalized".to_owned(),
+        alpha: "alpha".to_owned(),
+        structural: Some("structural".to_owned()),
+        events,
+        source_snippet: "snippet".to_owned(),
+        comparable: true,
+        trivial: false,
+        encoding,
+    }
+}
+
+/// `Digest` replaces every representation with its stable digest; equal text maps to equal
+/// digests and different text to different ones.
+#[test]
+fn digest_encoding_hashes_every_representation() {
+    let finished = semantics(RepresentationEncoding::Digest, Vec::new()).finish();
+    assert_eq!(finished.exact, stable_fingerprint("exact \u{e9}"));
+    assert_eq!(finished.normalized, stable_fingerprint("normalized"));
+    assert_eq!(finished.alpha_normalized, stable_fingerprint("alpha"));
+    assert_eq!(finished.structural, stable_fingerprint("structural"));
+    assert_eq!(finished.source_snippet, "snippet");
+    let mut other = semantics(RepresentationEncoding::Digest, Vec::new());
+    other.alpha = "alpha2".to_owned();
+    let other = other.finish();
+    assert_eq!(finished.exact, other.exact);
+    assert_ne!(finished.alpha_normalized, other.alpha_normalized);
+}
+
+/// `Verbatim` keeps text for normalized, alpha and structural and pads the exact digest to the
+/// requested length: zero, below, at and above one digest.
+#[test]
+fn verbatim_encoding_keeps_text_and_pads_the_exact_digest() {
+    let digest = stable_fingerprint("exact \u{e9}");
+    for (exact_len, expected) in [
+        (0, String::new()),
+        (5, digest[..5].to_owned()),
+        (32, digest.clone()),
+        (40, format!("{digest}{}", &digest[..8])),
+    ] {
+        let finished =
+            semantics(RepresentationEncoding::Verbatim { exact_len }, Vec::new()).finish();
+        assert_eq!(finished.exact, expected);
+        assert_eq!(finished.normalized, "normalized");
+        assert_eq!(finished.alpha_normalized, "alpha");
+        assert_eq!(finished.structural, "structural");
+    }
+}
+
+/// An absent structural representation reuses the encoded exact identity under both encodings;
+/// a present one is encoded like any other representation, even when it equals the exact text.
+#[test]
+fn missing_structural_reuses_the_encoded_exact_identity() {
+    for encoding in [
+        RepresentationEncoding::Digest,
+        RepresentationEncoding::Verbatim { exact_len: 12 },
+    ] {
+        let mut missing = semantics(encoding, Vec::new());
+        missing.structural = None;
+        let missing = missing.finish();
+        assert_eq!(missing.structural, missing.exact);
+    }
+    let mut same_text = semantics(
+        RepresentationEncoding::Verbatim { exact_len: 12 },
+        Vec::new(),
+    );
+    same_text.structural = Some("exact \u{e9}".to_owned());
+    assert_eq!(same_text.finish().structural, "exact \u{e9}");
+}
+
+/// Events encode as legacy signatures in order; an unresolved assertion withdraws comparability
+/// under both encodings, a resolved one does not, and an incomparable input stays incomparable.
+#[test]
+fn finish_encodes_events_and_withdraws_comparability_on_unresolved_assertions() {
+    let resolved = vec![
+        BehaviorEvent::Method("async".to_owned()),
+        BehaviorEvent::Call("work".to_owned()),
+        BehaviorEvent::assertion("q", "m", "s", "e").deferred(),
+        BehaviorEvent::ControlFlow(ControlFlowOperation::If),
+    ];
+    for encoding in [
+        RepresentationEncoding::Digest,
+        RepresentationEncoding::Verbatim { exact_len: 3 },
+    ] {
+        let finished = semantics(encoding, resolved.clone()).finish();
+        assert!(finished.comparable);
+        assert_eq!(finished.behavior_signature.len(), 4);
+        assert_eq!(finished.behavior_signature[0], "method:async");
+        assert_eq!(finished.behavior_signature[1], "call:work");
+        assert!(finished.behavior_signature[2].starts_with("deferred-assert:q#m:"));
+        assert_eq!(finished.behavior_signature[3], "if_statement");
+        let mut unresolved = resolved.clone();
+        unresolved.push(BehaviorEvent::unresolved_assertion(true));
+        assert!(!semantics(encoding, unresolved).finish().comparable);
+        let mut input = semantics(encoding, Vec::new());
+        input.comparable = false;
+        assert!(!input.finish().comparable);
+    }
+}

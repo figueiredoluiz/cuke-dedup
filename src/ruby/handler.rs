@@ -2,7 +2,7 @@
 use super::{descendants, text};
 use crate::model::{
     bounded_source_snippet, BehaviorEvent, ControlFlowOperation, HandlerFingerprint,
-    HandlerSemantics,
+    HandlerSemantics, RepresentationEncoding,
 };
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -69,13 +69,11 @@ pub(super) fn fingerprint(
     // Exact spelling selects equality while the opaque representation absorbs any bytes removed
     // by report-only snippet normalization. The combined comparison-work charge therefore remains
     // the normalized identity twice plus the legacy raw snippet prefix.
-    let exact_hash = crate::model::stable_fingerprint(&exact_key);
     let exact_len = normalized
         .len()
         .checked_add(legacy_snippet_bytes)
         .and_then(|total| total.checked_sub(source_snippet.len()))
         .expect("bounded snippet fits the legacy comparison-work charge");
-    let exact: String = exact_hash.chars().cycle().take(exact_len).collect();
     // An untrusted receiverless assertion factory must retain exact structural identity too.
     let exact_policy = untrusted_expect(&nodes, source, &bindings);
     // Literal abstraction needs the complete operation stream that configured assertion
@@ -87,8 +85,7 @@ pub(super) fn fingerprint(
             assertions
                 .and_then(|assertions| assertions.ordinary_structural(block, source, &bindings))
         })
-        .or_else(|| assertions.map(|_| structural_tokens(&alpha, captures)))
-        .unwrap_or_else(|| exact.clone());
+        .or_else(|| assertions.map(|_| structural_tokens(&alpha, captures)));
     let mut behavior_signature = if bindings.lexical {
         vec![BehaviorEvent::Method("ruby:lexical-file".to_owned())]
     } else {
@@ -126,7 +123,7 @@ pub(super) fn fingerprint(
     let alpha_normalized =
         serde_json::to_string(&(alpha, &captures)).expect("binding tokens serialize");
     HandlerSemantics {
-        exact,
+        exact: exact_key,
         normalized,
         alpha: alpha_normalized,
         structural,
@@ -134,8 +131,9 @@ pub(super) fn fingerprint(
         source_snippet,
         comparable,
         trivial,
+        encoding: RepresentationEncoding::Verbatim { exact_len },
     }
-    .finish(str::to_owned)
+    .finish()
 }
 
 /// Raw handler spelling without a named method's declaration name, which is registration plumbing.
