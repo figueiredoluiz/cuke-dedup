@@ -4844,3 +4844,33 @@ fn module_cache_holds_every_safe_alias_pair() {
     assert_eq!(counts(&generate("const")), (600, 0, 0));
     assert_eq!(counts(&generate("let")), (0, 600, 600));
 }
+
+/// Every TypeScript handler representation is a 32-character digest across handler shapes; equal
+/// spelling gives equal digests and different spelling does not.
+#[test]
+fn handler_representations_are_digests_for_every_handler_shape() {
+    let definitions = extract_ts(concat!(
+        "import { Given } from '@cucumber/cucumber';\n",
+        "Given('a', () => {});\n",
+        "Given('b', function () { work(); });\n",
+        "Given('c', async () => { work(); });\n",
+        "Given('d', function () { work(); });\n",
+        "Given('e', () => 'caf\u{e9}');\n",
+    ));
+    assert_eq!(definitions.len(), 5);
+    for definition in &definitions {
+        let handler = &definition.handler;
+        for digest in [
+            &handler.exact,
+            &handler.normalized,
+            &handler.alpha_normalized,
+            &handler.structural,
+        ] {
+            assert_eq!(digest.len(), 32);
+            assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        }
+    }
+    assert_eq!(definitions[1].handler.exact, definitions[3].handler.exact);
+    assert_ne!(definitions[1].handler.exact, definitions[0].handler.exact);
+    assert_ne!(definitions[1].handler.exact, definitions[2].handler.exact);
+}

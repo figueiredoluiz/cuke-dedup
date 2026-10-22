@@ -2,28 +2,65 @@
 
 use super::{BehaviorEvent, HandlerFingerprint};
 
+/// How `HandlerSemantics::finish` turns the textual representations into comparison identities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepresentationEncoding {
+    /// Every representation becomes its stable digest; comparison work no longer depends on text
+    /// length.
+    Digest,
+    /// Normalized, alpha and structural text stay as supplied so similarity can read it. The exact
+    /// identity is the digest of the exact text repeated to `exact_len` characters, which keeps
+    /// the comparison-work charge the frontend budgeted for.
+    Verbatim { exact_len: usize },
+}
+
+impl RepresentationEncoding {
+    /// Encodes the exact representation.
+    fn exact(self, exact: &str) -> String {
+        let digest = super::stable_fingerprint(exact);
+        match self {
+            Self::Digest => digest,
+            Self::Verbatim { exact_len } => digest.chars().cycle().take(exact_len).collect(),
+        }
+    }
+
+    /// Encodes a non-exact representation.
+    fn other(self, text: String) -> String {
+        match self {
+            Self::Digest => super::stable_fingerprint(&text),
+            Self::Verbatim { .. } => text,
+        }
+    }
+}
+
 pub(crate) struct HandlerSemantics {
     pub(crate) exact: String,
     pub(crate) normalized: String,
     pub(crate) alpha: String,
-    pub(crate) structural: String,
+    /// `None` reuses the encoded exact identity: the frontend found no structure beyond spelling.
+    pub(crate) structural: Option<String>,
     pub(crate) events: Vec<BehaviorEvent>,
     pub(crate) source_snippet: String,
     pub(crate) comparable: bool,
     pub(crate) trivial: bool,
+    pub(crate) encoding: RepresentationEncoding,
 }
 
 impl HandlerSemantics {
-    // Frontends retain syntax/value proofs and legacy identity encoding. The shared boundary
-    // owns uncertainty removal and the lossless event protocol; it cannot manufacture provenance.
-    /// Encodes the four representations with `encode` and the events as legacy signatures; the
+    // Frontends retain syntax/value proofs. The shared boundary owns representation encoding,
+    // uncertainty removal and the lossless event protocol; it cannot manufacture provenance.
+    /// Encodes the four representations per `encoding` and the events as legacy signatures; the
     /// result is comparable only if the input is and no event is an unresolved assertion.
-    pub(crate) fn finish(self, encode: fn(&str) -> String) -> HandlerFingerprint {
+    pub(crate) fn finish(self) -> HandlerFingerprint {
+        let encoding = self.encoding;
+        let exact = encoding.exact(&self.exact);
         HandlerFingerprint {
-            exact: encode(&self.exact),
-            normalized: encode(&self.normalized),
-            alpha_normalized: encode(&self.alpha),
-            structural: encode(&self.structural),
+            structural: self
+                .structural
+                .map_or_else(|| exact.clone(), |text| encoding.other(text)),
+            exact,
+            normalized: encoding.other(self.normalized),
+            alpha_normalized: encoding.other(self.alpha),
             comparable: self.comparable
                 && !self
                     .events

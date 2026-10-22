@@ -4,7 +4,7 @@ use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee};
 use crate::model::{
     bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation,
-    HandlerFingerprint, HandlerSemantics,
+    HandlerFingerprint, HandlerSemantics, RepresentationEncoding,
 };
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -551,13 +551,14 @@ fn fingerprint_from_events(
         exact,
         normalized,
         alpha,
-        structural,
+        structural: Some(structural),
         events: signature,
         source_snippet: bounded_source_snippet(&source_snippet, MAX_HANDLER_SNIPPET_CHARS, false),
         comparable: flags.comparable,
         trivial: flags.trivial,
+        encoding: RepresentationEncoding::Digest,
     }
-    .finish(stable_fingerprint)
+    .finish()
 }
 
 /// Maps supported control-flow syntax to typed events and retains other kinds as legacy events.
