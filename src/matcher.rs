@@ -1,5 +1,9 @@
 //! Shared Cucumber-expression comparison policy, independent of source language.
 
+mod comparison_key;
+
+pub(crate) use comparison_key::{normalized_matcher, FlagIdentity, RegexKey, TranslatedRegex};
+
 use regex::Regex;
 use std::sync::LazyLock;
 use unicode_normalization::UnicodeNormalization;

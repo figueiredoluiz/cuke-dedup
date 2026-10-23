@@ -1,6 +1,7 @@
 //! Internal compatibility profiles for extracted and caller-constructed definitions.
 
-use crate::model::{BehaviorEventRef, EffectStream, StepDefinition};
+use crate::matcher::{RegexKey, TranslatedRegex};
+use crate::model::{BehaviorEventRef, EffectStream, MatcherKind, StepDefinition};
 
 /// A set of definitions that may be compared with one another, with the regex dialect they share.
 /// Definitions of different domains are never compared; an adapter owns one static spec, and two
@@ -80,18 +81,11 @@ pub(crate) trait RegexDialect: Sync {
     /// semantics, or `None` when no faithful translation exists; usage analysis then treats the
     /// matcher as non-authoritative.
     fn expression(&self, matcher: &str, flags: &str) -> Option<String>;
-    /// Flags that partition normalized-matcher classes, or `None` when flags never separate them.
-    /// Ruby returns the raw flags; JavaScript returns `None`.
-    fn normalized_flags<'a>(&self, flags: &'a str) -> Option<&'a str>;
+    /// How this dialect's regex matchers are keyed for normalized-matcher comparison.
+    fn regex_key(&self) -> RegexKey;
     /// Whether two matchers' flags allow treating them as wording variants of one step. Ruby
     /// requires equal flag strings; JavaScript accepts any pair.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool;
-
-    /// Projects flags onto those that count toward exact-duplicate identity; the default applies
-    /// [`legacy_identity_flags`].
-    fn identity_flags(&self, flags: &str) -> String {
-        legacy_identity_flags(flags)
-    }
 
     /// One text that parameter-type `pattern` matches, used as a usage witness, or `None`. The
     /// default takes the first `|` alternative after stripping enclosing groups, accepted only when
@@ -142,16 +136,6 @@ pub(crate) trait RegexDialect: Sync {
     }
 }
 
-// This is the existing exact-identity protocol, including its projection for legacy Ruby
-// inputs. Dialect-specific corrections must be a separately contracted behavior change.
-/// Keeps the flags `i`, `m`, `s`, `u` and `v` present in `flags`, in that order; drops any other.
-pub(crate) fn legacy_identity_flags(flags: &str) -> String {
-    ['i', 'm', 's', 'u', 'v']
-        .into_iter()
-        .filter(|f| flags.contains(*f))
-        .collect()
-}
-
 /// How the analyzer compares one definition with others, declared by the adapter that extracted
 /// it. The fields are opaque: only an adapter chooses them, and an embedder that builds a
 /// [`StepDefinition`] by hand gets [`AnalysisPolicy::default`].
@@ -186,6 +170,23 @@ impl AnalysisPolicy {
     /// The comparison domain this policy declares.
     pub(crate) fn domain(self) -> &'static DomainSpec {
         self.domain
+    }
+
+    /// The comparison text of a matcher, keyed as this policy's regex dialect declares.
+    pub(crate) fn normalized_matcher(
+        self,
+        kind: MatcherKind,
+        matcher: &str,
+        flags: &str,
+        translated: Option<&TranslatedRegex>,
+    ) -> String {
+        crate::matcher::normalized_matcher(
+            kind,
+            matcher,
+            flags,
+            translated,
+            self.domain.dialect.regex_key(),
+        )
     }
 
     /// Combines the declared capabilities with the handler's own stream regime.

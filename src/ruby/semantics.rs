@@ -1,5 +1,6 @@
 //! Ruby comparison policy and native regex execution contract.
 
+use crate::matcher::RegexKey;
 use crate::source_adapter::semantics::{
     DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
@@ -13,9 +14,9 @@ impl RegexDialect for RubyRegex {
     fn expression(&self, matcher: &str, flags: &str) -> Option<String> {
         super::regex_expression(matcher, flags)
     }
-    /// Preserve the Ruby flag string as supplied by extraction.
-    fn normalized_flags<'a>(&self, flags: &'a str) -> Option<&'a str> {
-        Some(flags)
+    /// Keys on the translated pattern; the raw Ruby flag string partitions the keys.
+    fn regex_key(&self) -> RegexKey {
+        RegexKey::TranslatedBody
     }
     /// Require identical Ruby flag strings before matcher similarity comparison.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool {

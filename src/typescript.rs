@@ -20,10 +20,8 @@ use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
     resolve_handler, HandlerBinding, ModuleScope,
 };
-#[cfg(test)]
-use self::matcher::normalize_regular_expression;
+use self::matcher::matcher_value;
 pub(crate) use self::matcher::rust_regex_expression;
-use self::matcher::{matcher_value, normalize_matcher_with_flags};
 use self::matcher::{rust_regex_support, RegexSupport};
 use self::module_resolver::RegistrationResolver;
 use self::registrations::{
@@ -744,14 +742,21 @@ fn step_definition<'tree>(
     handler: HandlerFingerprint,
 ) -> StepDefinition {
     let framework = effective_registration_framework(registration_framework, context.framework);
+    let analysis_policy = semantics::policy(framework);
     StepDefinition {
-        normalized_matcher: normalize_matcher_with_flags(&matcher, matcher_kind, &matcher_flags),
+        // The JavaScript dialect keys on the source pattern, so no translation is passed.
+        normalized_matcher: analysis_policy.normalized_matcher(
+            matcher_kind,
+            &matcher,
+            &matcher_flags,
+            None,
+        ),
         matcher,
         matcher_kind,
         matcher_flags,
         handler,
         framework,
-        analysis_policy: semantics::policy(framework),
+        analysis_policy,
         registration: if registration.is_empty() {
             callee
         } else {

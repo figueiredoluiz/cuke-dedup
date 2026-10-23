@@ -211,6 +211,13 @@
           "stage": "model-codec",
           "rationale": "Adapter-independent stage `model-codec`: identical event streams behind different handlers are value-only differences, never near duplicates, when either side declares an action-only stream; synthetic definitions differ in the stream regime of one side at a time.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "exact_matcher_class_keys_on_effective_flags",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: exact-matcher identity keys on the effective flag set, not the raw flag string; synthetic definitions with equal normalized text.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -2298,6 +2305,59 @@
         }
       ]
     },
+    "src/matcher/comparison_key.rs": {
+      "tests": [
+        {
+          "name": "regex_key_text_follows_the_declared_policy",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: canonical and translated regex keys over flag, translation and pattern rows, each with the other policy as control.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "non_regex_kinds_ignore_policy_and_flags",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: Cucumber expression and literal keys ignore the regex policy and flags.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "untranslatable_patterns_keep_distinct_keys",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: an untranslatable regex is keyed on its source under both policies and never collapses.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "flag_identity_keeps_accepted_language_flags_only",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: identity flags keep `i`, `m`, `s`, `u`, `v` in canonical order and drop every other flag.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "raw_flags_partition_only_under_the_translated_policy",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: only the translated-body policy partitions keys on raw flags, as given.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "translated_expression_wraps_only_with_flags",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: a translated expression gets a flag group only when it has inline flags.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regular_expression_normalization_preserves_matching_semantics",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: regex canonicalization preserves anchors, alternatives, backreferences and classes while folding capture names and whitespace forms.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
     "src/model/sha256/tests.rs": {
       "tests": [
         {
@@ -3252,9 +3312,9 @@
           "behaviorClass": "language-specific-api"
         },
         {
-          "name": "regex_normalization_preserves_semantics_while_canonicalizing_equivalence",
+          "name": "translation_keeps_shared_flags_and_refuses_unicode_sets",
           "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JavaScript regex/string literal semantics (`regex normalization preserves semantics while canonicalizing equivalence`). Semantic residue: Ruby regex and string literal matcher semantics are covered by the regex-* and matcher groups.",
+          "rationale": "JS/TS-only: JavaScript regex flags and the `v` flag's lack of a Rust equivalent (`translation keeps shared flags and refuses unicode sets`). Semantic residue: Ruby regex translation is covered by the regex-* groups.",
           "behaviorClass": "language-specific-api"
         }
       ]
@@ -4169,12 +4229,6 @@
           "name": "lowercase_registrations_require_supported_import_evidence",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: CommonJS/ESM module forms (barrels, re-exports, `require`, import specifiers) (`lowercase registrations require supported import evidence`). Semantic residue: Ruby `require`, `require_relative` and `load` provenance is pinned by the `load-relative`, `load-cycle`, `load-unresolved` and `load-provider-root` groups.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
-          "name": "regular_expression_normalization_preserves_matching_semantics",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: `typescript::matcher::normalize_regular_expression` rewrites JavaScript regex literals. Semantic residue: Ruby regex matcher identity is pinned by the `regex-classes-ascii-word`, `regex-braces-literal` and `regex-punctuation-quoted` groups.",
           "behaviorClass": "language-specific-api"
         },
         {

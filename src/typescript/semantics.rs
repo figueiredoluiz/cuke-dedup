@@ -1,5 +1,6 @@
 //! Framework policy and regex execution owned by the JS/TS frontend.
 
+use crate::matcher::RegexKey;
 use crate::model::Framework;
 use crate::source_adapter::semantics::{
     DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
@@ -14,9 +15,9 @@ impl RegexDialect for JavaScriptRegex {
     fn expression(&self, matcher: &str, flags: &str) -> Option<String> {
         super::rust_regex_expression(matcher, flags)
     }
-    /// Returns no separate flag normalization for the JavaScript comparison profile.
-    fn normalized_flags<'a>(&self, _: &'a str) -> Option<&'a str> {
-        None
+    /// Keys on the canonical source pattern, with the identity flags written into the key text.
+    fn regex_key(&self) -> RegexKey {
+        RegexKey::CanonicalSource
     }
     /// Allows similarity comparisons regardless of the supplied flag strings.
     fn similarity_flags_match(&self, _: &str, _: &str) -> bool {

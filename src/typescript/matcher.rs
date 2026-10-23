@@ -1,8 +1,8 @@
 use super::node_text;
+use crate::matcher::TranslatedRegex;
 use crate::model::MatcherKind;
 use crate::resource_limits::compile_regex;
 use tree_sitter::Node;
-use unicode_normalization::UnicodeNormalization;
 
 /// Extracts matcher text, kind and flags from strings, static templates or regex literals.
 pub(super) fn matcher_value(
@@ -152,26 +152,29 @@ pub(super) enum RegexSupport {
     ResourceLimit,
 }
 
-/// Builds the Rust regular expression for a JavaScript matcher and its flags.
+/// Translates a JavaScript matcher and its flags to the Rust regex dialect.
 ///
-/// Extraction and usage analysis must agree on this text exactly: extraction uses it to decide
-/// whether a definition is analyzable, and usage analysis uses it to match feature steps. Two
-/// copies could drift and report a limitation the analyzer did not actually hit.
-pub(crate) fn rust_regex_expression(matcher: &str, flags: &str) -> Option<String> {
+/// Extraction and usage analysis must agree on this translation exactly: extraction uses it to
+/// decide whether a definition is analyzable, and usage analysis uses it to match feature steps.
+/// Two copies could drift and report a limitation the analyzer did not actually hit.
+fn translate_regex(matcher: &str, flags: &str) -> Option<TranslatedRegex> {
     // JavaScript's `v` flag enables Unicode set notation and changes character-class semantics.
     // Rust's regex engine has no equivalent, so no Rust expression is authoritative for it.
     if flags.contains('v') {
         return None;
     }
-    let flags: String = flags
-        .chars()
-        .filter(|flag| matches!(flag, 'i' | 'm' | 's' | 'u'))
-        .collect();
-    if flags.is_empty() {
-        Some(matcher.to_owned())
-    } else {
-        Some(format!("(?{flags}:{matcher})"))
-    }
+    Some(TranslatedRegex {
+        inline_flags: flags
+            .chars()
+            .filter(|flag| matches!(flag, 'i' | 'm' | 's' | 'u'))
+            .collect(),
+        body: matcher.to_owned(),
+    })
+}
+
+/// Builds the Rust regular expression for a JavaScript matcher and its flags.
+pub(crate) fn rust_regex_expression(matcher: &str, flags: &str) -> Option<String> {
+    translate_regex(matcher, flags).map(|translated| translated.expression())
 }
 
 /// Distinguishes supported regexes, unsupported syntax and compiled-size resource limits.
@@ -184,158 +187,6 @@ pub(super) fn rust_regex_support(matcher: &str, flags: &str) -> RegexSupport {
         Err(regex::Error::CompiledTooBig(_)) => RegexSupport::ResourceLimit,
         Err(_) => RegexSupport::Unsupported,
     }
-}
-
-/// Canonicalizes matcher text for stable equivalence comparisons.
-pub fn normalize_matcher(matcher: &str, kind: MatcherKind) -> String {
-    let normalized = match kind {
-        MatcherKind::Literal => return matcher.to_owned(),
-        MatcherKind::CucumberExpression => {
-            return crate::matcher::normalize_cucumber_expression(matcher);
-        }
-        MatcherKind::RegularExpression => {
-            normalize_regular_expression(&matcher.nfkc().collect::<String>())
-        }
-    };
-    normalized.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Adds semantic regex flags to the normalized identity while leaving other matcher kinds unflagged.
-pub(super) fn normalize_matcher_with_flags(
-    matcher: &str,
-    kind: MatcherKind,
-    flags: &str,
-) -> String {
-    let normalized = normalize_matcher(matcher, kind);
-    let semantic_flags = semantic_regex_flags(flags);
-    if kind == MatcherKind::RegularExpression {
-        format!("[regex-flags:{semantic_flags}] {normalized}")
-    } else {
-        normalized
-    }
-}
-
-/// The flags that change what a matcher matches, and therefore belong to its identity.
-///
-/// `v` is included: it enables Unicode set notation and changes character-class semantics, so it is
-/// at least as significant as `u`, which it implies. Leaving it out made `/x/v` normalize to the
-/// text of `/x/` and reported the two as equivalent. `g`, `y` and `d` affect only how a match is
-/// executed or reported, never which inputs match, so they stay out.
-/// The flags that change what a matcher accepts, in a fixed order.
-///
-/// `g`, `y` and `d` affect how a caller drives the regex, not the language it accepts, so two
-/// matchers differing only in those are the same matcher. `docs/rules.md` calls this the
-/// "effective" flag set and both the exact-duplicate class and normalization key on it.
-pub(crate) fn semantic_regex_flags(flags: &str) -> String {
-    crate::source_adapter::semantics::legacy_identity_flags(flags)
-}
-
-/// Canonicalizes named capture spelling and selected regex whitespace forms for comparison.
-pub(super) fn normalize_regular_expression(expression: &str) -> String {
-    normalize_regex_whitespace(&normalize_capture_groups(expression))
-}
-
-/// Folds escaped spaces and `\s+` outside character classes while preserving other escapes.
-fn normalize_regex_whitespace(expression: &str) -> String {
-    let characters: Vec<_> = expression.chars().collect();
-    let mut output = String::with_capacity(expression.len());
-    let mut offset = 0;
-    let mut in_class = false;
-    while offset < characters.len() {
-        match characters[offset] {
-            '[' => {
-                in_class = true;
-                output.push('[');
-                offset += 1;
-            }
-            ']' => {
-                in_class = false;
-                output.push(']');
-                offset += 1;
-            }
-            '\\' if !in_class && characters.get(offset + 1) == Some(&' ') => {
-                output.push(' ');
-                offset += 2;
-            }
-            '\\' if !in_class
-                && characters.get(offset + 1) == Some(&'s')
-                && characters.get(offset + 2) == Some(&'+') =>
-            {
-                output.push(' ');
-                offset += 3;
-            }
-            '\\' => {
-                output.push('\\');
-                offset += 1;
-                if let Some(character) = characters.get(offset) {
-                    output.push(*character);
-                    offset += 1;
-                }
-            }
-            character => {
-                output.push(character);
-                offset += 1;
-            }
-        }
-    }
-    output
-}
-
-/// Removes recognized capture names outside character classes while preserving escapes and group bodies.
-fn normalize_capture_groups(expression: &str) -> String {
-    let characters: Vec<_> = expression.chars().collect();
-    let mut output = String::new();
-    let mut offset = 0;
-    let mut in_class = false;
-    while offset < characters.len() {
-        match characters[offset] {
-            '\\' => {
-                output.push('\\');
-                offset += 1;
-                if let Some(character) = characters.get(offset) {
-                    output.push(*character);
-                    offset += 1;
-                }
-            }
-            '[' => {
-                in_class = true;
-                output.push('[');
-                offset += 1;
-            }
-            ']' => {
-                in_class = false;
-                output.push(']');
-                offset += 1;
-            }
-            '(' if !in_class => {
-                output.push('(');
-                offset += 1;
-                // Named and unnamed captures have the same matching semantics. Strip only a
-                // syntactically valid name; preserve the group expression itself, non-capturing
-                // groups, lookarounds, and backreferences.
-                if characters.get(offset) == Some(&'?') && characters.get(offset + 1) == Some(&'<')
-                {
-                    let name_start = offset + 2;
-                    if characters
-                        .get(name_start)
-                        .is_some_and(|character| character.is_alphabetic() || *character == '_')
-                    {
-                        if let Some(end) = characters[name_start..]
-                            .iter()
-                            .position(|character| *character == '>')
-                        {
-                            offset = name_start + end + 1;
-                        }
-                    }
-                }
-            }
-            character => {
-                output.push(character);
-                offset += 1;
-            }
-        }
-    }
-    output
 }
 
 #[cfg(test)]
@@ -351,7 +202,12 @@ mod tests {
     #[test]
     fn unicode_sets_flag_belongs_to_matcher_identity() {
         let normalized = |flags: &str| {
-            normalize_matcher_with_flags("^the gauge$", MatcherKind::RegularExpression, flags)
+            crate::typescript::semantics::default_policy().normalized_matcher(
+                MatcherKind::RegularExpression,
+                "^the gauge$",
+                flags,
+                None,
+            )
         };
 
         // The defect: these three were indistinguishable from the unflagged spelling.
@@ -418,9 +274,9 @@ mod tests {
         }
     }
 
-    /// Verify regex normalization retains semantic flags and syntax while canonicalizing supported equivalent forms.
+    /// Verify the JavaScript translation keeps only the flags Rust shares and refuses `v`.
     #[test]
-    fn regex_normalization_preserves_semantics_while_canonicalizing_equivalence() {
+    fn translation_keeps_shared_flags_and_refuses_unicode_sets() {
         assert_eq!(
             rust_regex_expression("^value$", "gymi").as_deref(),
             Some("(?mi:^value$)")
@@ -429,26 +285,17 @@ mod tests {
             rust_regex_expression("^value$", "gy").as_deref(),
             Some("^value$")
         );
+        // A pattern that begins like a flag group is a body, not a wrapper, when no flag applies.
+        assert_eq!(
+            translate_regex("(?i:a)", ""),
+            Some(TranslatedRegex {
+                inline_flags: String::new(),
+                body: "(?i:a)".to_owned()
+            })
+        );
         assert_eq!(rust_regex_expression("[a&&b]", "v"), None);
         assert_eq!(rust_regex_support("^value$", ""), RegexSupport::Supported);
         assert_eq!(rust_regex_support("(", ""), RegexSupport::Unsupported);
         assert_eq!(rust_regex_support("[a&&b]", "v"), RegexSupport::Unsupported);
-        assert_eq!(semantic_regex_flags("uugmisy"), "imsu");
-        assert_eq!(
-            normalize_matcher_with_flags("(?<name>a)\\s+b", MatcherKind::RegularExpression, "mi"),
-            "[regex-flags:im] (a) b"
-        );
-        assert_eq!(
-            normalize_matcher_with_flags("I have { int }", MatcherKind::CucumberExpression, "i"),
-            "I have {int}"
-        );
-        assert_eq!(
-            normalize_regular_expression(r"[a\ ]\s+\ value"),
-            r"[a\ ]  value"
-        );
-        assert_eq!(normalize_regular_expression(r"\(literal\)"), r"\(literal\)");
-        assert_eq!(normalize_regular_expression("(?<1bad>a)"), "(?<1bad>a)");
-        assert_eq!(normalize_regular_expression("(?<open"), "(?<open");
-        assert_eq!(normalize_regular_expression("[(?<name>)]"), "[(?<name>)]");
     }
 }

@@ -551,8 +551,8 @@ fn extract_with_proof(
             continue;
         };
         let translated_regex = if matcher_kind == MatcherKind::RegularExpression {
-            match regex_expression_result(&matcher, &flags) {
-                Ok(expression) => Some(expression),
+            match regex_translation(&matcher, &flags) {
+                Ok(translated) => Some(translated),
                 Err(RegexConversionError::Unsupported) => {
                     result.diagnostics.push(diagnostic(
                         file,
@@ -597,17 +597,15 @@ fn extract_with_proof(
                 "Ruby handler comparison has unresolved syntax, captures or receiver identity",
             ));
         }
-        let comparison = if matcher_kind == MatcherKind::CucumberExpression {
-            crate::matcher::normalize_cucumber_expression(&matcher)
-        } else {
-            // Translation preserves Ruby capture arity. Flags have their own comparison
-            // partition, so strip only the generated outer flag group from this key.
-            translated_regex
-                .map(|expression| {
-                    expression[expression.find(':').unwrap() + 1..expression.len() - 1].to_owned()
-                })
-                .unwrap_or_else(|| matcher.clone())
-        };
+        // Translation preserves Ruby capture arity. Flags have their own comparison partition,
+        // so the key carries the translated body without its flag group.
+        let analysis_policy = semantics::policy();
+        let comparison = analysis_policy.normalized_matcher(
+            matcher_kind,
+            &matcher,
+            &flags,
+            translated_regex.as_ref(),
+        );
         result.definitions.push(StepDefinition {
             normalized_matcher: comparison,
             matcher,
@@ -615,7 +613,7 @@ fn extract_with_proof(
             matcher_flags: flags,
             handler,
             framework: Framework::CucumberRuby,
-            analysis_policy: semantics::policy(),
+            analysis_policy,
             registration: name.to_owned(),
             location: location(file, node, source),
             inline_suppressions: crate::source_adapter::suppression::inline_suppressions(
@@ -1423,7 +1421,9 @@ fn compatible_ignorecase_literal(pattern: &str) -> bool {
 
 /// Ruby line anchors are multiline by default; unsupported constructs never reach JS conversion.
 pub(crate) fn regex_expression(pattern: &str, flags: &str) -> Option<String> {
-    regex_expression_result(pattern, flags).ok()
+    regex_translation(pattern, flags)
+        .ok()
+        .map(|translated| translated.expression())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1434,7 +1434,10 @@ enum RegexConversionError {
 }
 
 /// Translate the supported Ruby regex subset and compile-check it under shared resource limits.
-fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexConversionError> {
+fn regex_translation(
+    pattern: &str,
+    flags: &str,
+) -> Result<crate::matcher::TranslatedRegex, RegexConversionError> {
     if pattern.len() > crate::resource_limits::MAX_REGEX_PATTERN_BYTES {
         return Err(RegexConversionError::PatternTooLong);
     }
@@ -1455,6 +1458,7 @@ fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexCo
     if flags.contains('i') {
         result.insert(2, 'i');
     }
+    let group_prefix_len = result.len();
     let mut chars = pattern.chars().peekable();
     let mut class_depth = 0;
     let mut first_class_member = false;
@@ -1565,7 +1569,11 @@ fn regex_expression_result(pattern: &str, flags: &str) -> Result<String, RegexCo
     }
     result.push(')');
     match crate::resource_limits::compile_regex(&result) {
-        Ok(_) => Ok(result),
+        Ok(_) => Ok(crate::matcher::TranslatedRegex {
+            // `(?` + flags + `:` is the group prefix and the final `)` closes it.
+            inline_flags: result[2..group_prefix_len - 1].to_owned(),
+            body: result[group_prefix_len..result.len() - 1].to_owned(),
+        }),
         Err(regex::Error::CompiledTooBig(_)) => Err(RegexConversionError::CompiledTooBig),
         Err(_) => Err(RegexConversionError::Unsupported),
     }
