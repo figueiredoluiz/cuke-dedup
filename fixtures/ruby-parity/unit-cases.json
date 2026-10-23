@@ -216,7 +216,7 @@
           "name": "exact_matcher_class_keys_on_effective_flags",
           "requiredStatus": "engine-invariant",
           "stage": "matcher-text",
-          "rationale": "Adapter-independent stage `matcher-text`: exact-matcher identity keys on the effective flag set, not the raw flag string; synthetic definitions with equal normalized text.",
+          "rationale": "Adapter-independent stage `matcher-text`: exact-matcher identity keys on the flags the dialect declares effective, not the raw flag string; synthetic definitions with equal normalized text.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -2329,17 +2329,24 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "flag_identity_keeps_accepted_language_flags_only",
+          "name": "flag_identity_keeps_the_declared_flags_only",
           "requiredStatus": "engine-invariant",
           "stage": "matcher-text",
-          "rationale": "Adapter-independent stage `matcher-text`: identity flags keep `i`, `m`, `s`, `u`, `v` in canonical order and drop every other flag.",
+          "rationale": "Adapter-independent stage `matcher-text`: a listed identity keeps only its flags, the full identity keeps every flag; both sort and deduplicate.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "raw_flags_partition_only_under_the_translated_policy",
+          "name": "canonical_key_carries_the_declared_identity_flags",
           "requiredStatus": "engine-invariant",
           "stage": "matcher-text",
-          "rationale": "Adapter-independent stage `matcher-text`: only the translated-body policy partitions keys on raw flags, as given.",
+          "rationale": "Adapter-independent stage `matcher-text`: a canonical key writes the declared identity flags into its text.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "identity_flags_partition_only_under_the_translated_policy",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: only the translated-body policy partitions keys, on the declared identity flags.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -6075,6 +6082,16 @@
             "name": "regression_192_ruby_parameter_type_escapes_decode_like_plain_text"
           },
           "rationale": "`regression_192_ruby_parameter_type_escapes_decode_like_plain_text` runs a `ParameterType` whose name and regexp use hex escapes through the built binary and requires the same findings as its plain spelling, with an unmodeled escape in the regexp as the incomplete control.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_ruby_exact_matcher_evidence_keeps_encoding_flags",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_ruby_exact_matcher_evidence_keeps_encoding_flags"
+          },
+          "rationale": "`regression_ruby_exact_matcher_evidence_keeps_encoding_flags` requires `--emit-pairs` to report `/x/n` against `/x/` as not an exact matcher, with reordered flags as the exact-matcher control.",
           "behaviorClass": "ruby-behavior"
         }
       ]

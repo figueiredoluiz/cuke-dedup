@@ -2,7 +2,9 @@
 
 mod comparison_key;
 
-pub(crate) use comparison_key::{normalized_matcher, FlagIdentity, RegexKey, TranslatedRegex};
+pub(crate) use comparison_key::{
+    normalized_matcher, FlagIdentity, IdentityFlags, RegexKey, TranslatedRegex,
+};
 
 use regex::Regex;
 use std::sync::LazyLock;

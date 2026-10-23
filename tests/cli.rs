@@ -8154,3 +8154,40 @@ fn regression_192_ruby_parameter_type_escapes_decode_like_plain_text() {
     );
     assert!(unmodeled.incomplete, "{}", unmodeled.stderr);
 }
+
+/// Ruby pair evidence keys `exactMatcher` on every native flag, as the normalized partition does:
+/// `/x/n` against `/x/` once reported an exact matcher that was not normalized-equal. The
+/// handlers are identical so the pair has a record through the handler path; the reordered-flag
+/// pair is the opposite-answer control, and findings stay those of the handler and matcher rules.
+#[test]
+fn regression_ruby_exact_matcher_evidence_keeps_encoding_flags() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "features/step_definitions/steps.rb",
+        "Given(/^the panel opens$/n) { open_panel(1) }\n\
+         When(/^the panel opens$/) { open_panel(1) }\n\
+         Given(/^a lamp glows$/im) { glow(3) }\n\
+         When(/^a lamp glows$/mi) { glow(3) }\n",
+    );
+    let records = emitted_pairs(root, &["--definitions", "features/**/*.rb"]);
+    let relationships: Vec<_> = records
+        .iter()
+        .map(|record| {
+            serde_json::json!([
+                record["left"]["line"],
+                record["relationships"]["exactMatcher"],
+                record["relationships"]["normalizedMatcher"],
+                record["rules"]
+            ])
+        })
+        .collect();
+    assert_eq!(
+        relationships,
+        [
+            serde_json::json!([1, false, false, ["duplicate-handler"]]),
+            serde_json::json!([3, true, true, ["duplicate-matcher"]]),
+        ]
+    );
+}

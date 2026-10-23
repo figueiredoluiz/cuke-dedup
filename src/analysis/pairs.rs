@@ -616,11 +616,14 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 definition.matcher_kind,
                 definition.matcher.as_str(),
                 // Effective flags, not the raw string: `docs/rules.md` defines an exact duplicate
-                // as the same kind, source text and *effective* flags, and `g`/`y`/`d` do not
-                // change what a matcher accepts. Keying on the raw string classified `/x/` against
+                // as the same kind, source text and *effective* flags, and the dialect declares
+                // which flags are effective. Keying on the raw string classified `/x/` against
                 // `/x/g` as merely normalization-equivalent, which contradicted the documented
                 // contract.
-                FlagIdentity::new(&definition.matcher_flags),
+                FlagIdentity::new(
+                    &definition.matcher_flags,
+                    definition.analysis_profile().dialect().identity_flags(),
+                ),
             ),
         ));
         classes.normalized_matcher.push(intern_class(
@@ -651,20 +654,21 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
 
 /// Positional steps never belong to one global matcher class. Keeping their partitions
 /// distinct also lets equal-text handlers reach all three handler candidate sources.
-type MatcherPartition<'a> = (MatcherKind, &'a str, Option<&'a str>, Option<usize>);
+type MatcherPartition<'a> = (MatcherKind, &'a str, Option<FlagIdentity>, Option<usize>);
 
-/// Normalized-matcher key: kind, normalized text and dialect-normalized flags. Definitions without
+/// Normalized-matcher key: kind, normalized text and the dialect's identity flags. Definitions without
 /// global matchers also carry their index, so each forms its own partition.
 fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartition<'_> {
     (
         definition.matcher_kind,
         &definition.normalized_matcher,
         // Language-specific regex identity belongs in the key, never in comparison/report text.
-        definition
-            .analysis_profile()
-            .dialect()
-            .regex_key()
-            .partition_flags(&definition.matcher_flags),
+        {
+            let dialect = definition.analysis_profile().dialect();
+            dialect
+                .regex_key()
+                .partition_flags(&definition.matcher_flags, dialect.identity_flags())
+        },
         (!definition.analysis_profile().matches_by_text()).then_some(index),
     )
 }

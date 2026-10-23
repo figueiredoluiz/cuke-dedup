@@ -1,6 +1,6 @@
 //! Ruby comparison policy and native regex execution contract.
 
-use crate::matcher::RegexKey;
+use crate::matcher::{IdentityFlags, RegexKey};
 use crate::source_adapter::semantics::{
     DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
@@ -17,6 +17,10 @@ impl RegexDialect for RubyRegex {
     /// Keys on the translated pattern; the raw Ruby flag string partitions the keys.
     fn regex_key(&self) -> RegexKey {
         RegexKey::TranslatedBody
+    }
+    /// Every native flag is identity: the encoding flags `n` and `u` keep two matchers apart.
+    fn identity_flags(&self) -> IdentityFlags {
+        IdentityFlags::All
     }
     /// Require identical Ruby flag strings before matcher similarity comparison.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool {

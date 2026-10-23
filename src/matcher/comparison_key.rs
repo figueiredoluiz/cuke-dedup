@@ -29,22 +29,33 @@ impl TranslatedRegex {
     }
 }
 
-/// The flags that change which inputs a matcher accepts: `i`, `m`, `s`, `u` and `v`, as a sorted,
-/// duplicate-free set. `g`, `y`, `d` and every other flag drive a match or name an encoding
-/// without changing the accepted language, so they never separate two exact-identity classes.
-/// [`RegexKey::TranslatedBody`] partitions normalized keys on the raw flags instead.
+/// Which source flags count toward a matcher's identity, declared by its regex dialect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdentityFlags {
+    /// Only these flags count (JavaScript drops `g`, `y` and `d`).
+    Listed(&'static str),
+    /// Every flag counts, including the ones that name an encoding (Ruby `n`, `u`).
+    All,
+}
+
+/// The flags of a matcher that count toward its identity, as a sorted, duplicate-free set: flag
+/// order and repetition never separate two matchers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct FlagIdentity(String);
 
 impl FlagIdentity {
-    /// Projects raw source flags onto the identity set.
-    pub(crate) fn new(flags: &str) -> Self {
-        Self(
-            ['i', 'm', 's', 'u', 'v']
-                .into_iter()
-                .filter(|flag| flags.contains(*flag))
-                .collect(),
-        )
+    /// Projects raw source flags onto the identity set the dialect declares.
+    pub(crate) fn new(flags: &str, identity: IdentityFlags) -> Self {
+        let mut kept: Vec<char> = flags
+            .chars()
+            .filter(|flag| match identity {
+                IdentityFlags::Listed(listed) => listed.contains(*flag),
+                IdentityFlags::All => true,
+            })
+            .collect();
+        kept.sort_unstable();
+        kept.dedup();
+        Self(kept.into_iter().collect())
     }
 
     /// The set as letters in canonical order.
@@ -61,19 +72,22 @@ pub(crate) enum RegexKey {
     /// key text. A translation is ignored. Raw flags never partition keys.
     CanonicalSource,
     /// Key on the translated pattern as written, or on the source pattern when there is no
-    /// translation, without canonicalization. The key text carries no flags; the flag string the
-    /// adapter extracted partitions keys instead, so a flag outside [`FlagIdentity`] (Ruby's `n`)
-    /// still separates two keys.
+    /// translation, without canonicalization. The key text carries no flags; the identity flags
+    /// partition keys instead.
     TranslatedBody,
 }
 
 impl RegexKey {
-    /// The raw flags that partition keys of equal text, or `None` when the key text already
+    /// The identity flags that partition keys of equal text, or `None` when the key text already
     /// carries them.
-    pub(crate) fn partition_flags(self, raw: &str) -> Option<&str> {
+    pub(crate) fn partition_flags(
+        self,
+        raw: &str,
+        identity: IdentityFlags,
+    ) -> Option<FlagIdentity> {
         match self {
             Self::CanonicalSource => None,
-            Self::TranslatedBody => Some(raw),
+            Self::TranslatedBody => Some(FlagIdentity::new(raw, identity)),
         }
     }
 }
@@ -81,13 +95,15 @@ impl RegexKey {
 /// The comparison text of a matcher.
 ///
 /// Cucumber expressions fold placeholders and whitespace; literals stay as written. A regular
-/// expression is keyed as `key` declares.
+/// expression is keyed as `key` declares, with `identity` choosing the flags a canonical key
+/// carries.
 pub(crate) fn normalized_matcher(
     kind: MatcherKind,
     matcher: &str,
     flags: &str,
     translated: Option<&TranslatedRegex>,
     key: RegexKey,
+    identity: IdentityFlags,
 ) -> String {
     match kind {
         MatcherKind::Literal => matcher.to_owned(),
@@ -95,7 +111,7 @@ pub(crate) fn normalized_matcher(
         MatcherKind::RegularExpression => match key {
             RegexKey::CanonicalSource => format!(
                 "[regex-flags:{}] {}",
-                FlagIdentity::new(flags).as_str(),
+                FlagIdentity::new(flags, identity).as_str(),
                 canonical_regular_expression(matcher)
             ),
             RegexKey::TranslatedBody => translated
@@ -227,6 +243,7 @@ mod tests {
     use super::*;
 
     const KEYS: [RegexKey; 2] = [RegexKey::CanonicalSource, RegexKey::TranslatedBody];
+    const JS: IdentityFlags = IdentityFlags::Listed("imsuv");
 
     /// A translation whose body is `body` and whose inline flags are `flags`.
     fn translated(body: &str, flags: &str) -> TranslatedRegex {
@@ -291,6 +308,7 @@ mod tests {
                     flags,
                     translation.as_ref(),
                     policy,
+                    JS,
                 )
             };
             assert_eq!(key(RegexKey::CanonicalSource), canonical, "{pattern:?}");
@@ -309,12 +327,13 @@ mod tests {
                         "I have { int }  items",
                         flags,
                         None,
-                        key
+                        key,
+                        JS
                     ),
                     "I have {int} items"
                 );
                 assert_eq!(
-                    normalized_matcher(MatcherKind::Literal, "a  { b }", flags, None, key),
+                    normalized_matcher(MatcherKind::Literal, "a  { b }", flags, None, key, JS),
                     "a  { b }"
                 );
             }
@@ -327,45 +346,75 @@ mod tests {
     fn untranslatable_patterns_keep_distinct_keys() {
         for key in KEYS {
             let of = |pattern: &str| {
-                normalized_matcher(MatcherKind::RegularExpression, pattern, "v", None, key)
+                normalized_matcher(MatcherKind::RegularExpression, pattern, "v", None, key, JS)
             };
             assert_ne!(of("[a&&b]"), of("[a&&c]"), "{key:?}");
             assert_eq!(of("[a&&b]"), of("[a&&b]"), "{key:?}");
         }
     }
 
-    /// Identity keeps `i`, `m`, `s`, `u`, `v` in canonical order and drops everything else; the
-    /// controls are that dropped flags and order never separate two sets.
+    /// A listed identity keeps only its flags; the full identity keeps every flag. Both sort and
+    /// deduplicate. Each row's opposite-answer control is the other column: `n`, `x`, `o` and the
+    /// JavaScript execution flags count only under the full identity.
     #[test]
-    fn flag_identity_keeps_accepted_language_flags_only() {
-        for (raw, identity) in [
-            ("uugmisy", "imsu"),
-            ("vi", "iv"),
-            ("", ""),
-            ("gyd", ""),
-            ("nxo", ""),
-            ("ms", "ms"),
+    fn flag_identity_keeps_the_declared_flags_only() {
+        for (raw, listed, all) in [
+            ("uugmisy", "imsu", "gimsuy"),
+            ("vi", "iv", "iv"),
+            ("", "", ""),
+            ("gyd", "", "dgy"),
+            ("nxo", "", "nox"),
+            ("ms", "ms", "ms"),
+            ("mii", "im", "im"),
         ] {
-            assert_eq!(FlagIdentity::new(raw).as_str(), identity, "{raw:?}");
+            assert_eq!(FlagIdentity::new(raw, JS).as_str(), listed, "{raw:?}");
+            assert_eq!(
+                FlagIdentity::new(raw, IdentityFlags::All).as_str(),
+                all,
+                "{raw:?}"
+            );
         }
-        assert_eq!(FlagIdentity::new("iv"), FlagIdentity::new("vi"));
-        assert_ne!(FlagIdentity::new("v"), FlagIdentity::new("u"));
-        assert_ne!(FlagIdentity::new("i"), FlagIdentity::new(""));
-        assert_eq!(FlagIdentity::new("g"), FlagIdentity::new(""));
+        let all = |flags| FlagIdentity::new(flags, IdentityFlags::All);
+        assert_eq!(FlagIdentity::new("iv", JS), FlagIdentity::new("vi", JS));
+        assert_ne!(FlagIdentity::new("v", JS), FlagIdentity::new("u", JS));
+        assert_ne!(FlagIdentity::new("i", JS), FlagIdentity::new("", JS));
+        assert_eq!(FlagIdentity::new("g", JS), FlagIdentity::new("", JS));
+        assert_eq!(FlagIdentity::new("n", JS), FlagIdentity::new("", JS));
+        assert_ne!(all("n"), all(""));
+        assert_ne!(all("u"), all("n"));
+        assert_eq!(all("im"), all("mii"));
     }
 
-    /// Only the translated-body policy partitions on the extracted flags, so a flag outside the
-    /// identity set separates its keys while the canonical policy never does.
+    /// A canonical key writes the declared identity flags into its text.
     #[test]
-    fn raw_flags_partition_only_under_the_translated_policy() {
-        assert_eq!(RegexKey::CanonicalSource.partition_flags("mi"), None);
-        assert_eq!(RegexKey::CanonicalSource.partition_flags("n"), None);
-        assert_eq!(RegexKey::TranslatedBody.partition_flags("mi"), Some("mi"));
-        assert_eq!(RegexKey::TranslatedBody.partition_flags(""), Some(""));
-        assert_ne!(
-            RegexKey::TranslatedBody.partition_flags("n"),
-            RegexKey::TranslatedBody.partition_flags("")
-        );
+    fn canonical_key_carries_the_declared_identity_flags() {
+        let key = |identity| {
+            normalized_matcher(
+                MatcherKind::RegularExpression,
+                "x",
+                "ng",
+                None,
+                RegexKey::CanonicalSource,
+                identity,
+            )
+        };
+        assert_eq!(key(JS), "[regex-flags:] x");
+        assert_eq!(key(IdentityFlags::All), "[regex-flags:gn] x");
+    }
+
+    /// Only the translated-body policy partitions, on the declared identity flags: order and
+    /// repetition merge, a flag outside a listed identity merges, and under the full identity `n`
+    /// separates. The canonical policy never partitions.
+    #[test]
+    fn identity_flags_partition_only_under_the_translated_policy() {
+        let all = IdentityFlags::All;
+        let part = |flags, identity| RegexKey::TranslatedBody.partition_flags(flags, identity);
+        assert_eq!(RegexKey::CanonicalSource.partition_flags("mi", all), None);
+        assert_eq!(RegexKey::CanonicalSource.partition_flags("n", all), None);
+        assert_eq!(part("mi", all), Some(FlagIdentity::new("im", all)));
+        assert_eq!(part("mi", all), part("imm", all));
+        assert_ne!(part("n", all), part("", all));
+        assert_eq!(part("n", JS), part("", JS));
     }
 
     /// The expression wraps only when there are inline flags.

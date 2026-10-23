@@ -1,6 +1,6 @@
 //! Internal compatibility profiles for extracted and caller-constructed definitions.
 
-use crate::matcher::{RegexKey, TranslatedRegex};
+use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
 use crate::model::{BehaviorEventRef, EffectStream, MatcherKind, StepDefinition};
 
 /// A set of definitions that may be compared with one another, with the regex dialect they share.
@@ -83,6 +83,9 @@ pub(crate) trait RegexDialect: Sync {
     fn expression(&self, matcher: &str, flags: &str) -> Option<String>;
     /// How this dialect's regex matchers are keyed for normalized-matcher comparison.
     fn regex_key(&self) -> RegexKey;
+    /// Which flags count toward a matcher's identity, for exact-duplicate classes and canonical
+    /// keys alike.
+    fn identity_flags(&self) -> IdentityFlags;
     /// Whether two matchers' flags allow treating them as wording variants of one step. Ruby
     /// requires equal flag strings; JavaScript accepts any pair.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool;
@@ -186,6 +189,7 @@ impl AnalysisPolicy {
             flags,
             translated,
             self.domain.dialect.regex_key(),
+            self.domain.dialect.identity_flags(),
         )
     }
 
