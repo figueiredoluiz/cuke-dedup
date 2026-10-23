@@ -6,6 +6,7 @@ use crate::model::{
     bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation, EffectStream,
     HandlerFingerprint, HandlerSemantics, RepresentationEncoding,
 };
+use crate::stub_vocabulary::is_stub_label;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -656,13 +657,7 @@ fn is_stub_expression(node: Node<'_>, source: &[u8]) -> bool {
     let Some(function) = node.child_by_field_name("function") else {
         return false;
     };
-    let name = callee_terminal_name(function, source)
-        .unwrap_or_default()
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .collect::<String>()
-        .to_lowercase();
-    if matches!(name.as_str(), "pending" | "notimplemented" | "todo") {
+    if callee_terminal_name(function, source).is_some_and(is_stub_label) {
         return true;
     }
     if function.kind() == "member_expression"
@@ -688,19 +683,6 @@ fn callee_terminal_name<'a>(function: Node<'_>, source: &'a [u8]) -> Option<&'a 
             .map(|property| node_text(property, source)),
         _ => None,
     }
-}
-
-/// Matches normalized pending, not-implemented or todo labels after removing quoting and punctuation.
-fn is_stub_label(value: &str) -> bool {
-    let value = value
-        .trim()
-        .trim_matches(|character| matches!(character, '\'' | '"' | '`'));
-    let normalized = value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .collect::<String>()
-        .to_lowercase();
-    matches!(normalized.as_str(), "pending" | "notimplemented" | "todo")
 }
 
 /// Searches a subtree for an identifier or string carrying an explicit supported stub label.

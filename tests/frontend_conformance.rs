@@ -140,3 +140,56 @@ fn ruby_configuration_keeps_flat_compatibility_key() {
         serde_json::json!(["lib"])
     );
 }
+
+/// Whether the handler of the only definition `source` registers counts as a stub.
+fn handler_is_stub(language: SourceLanguage, path: &str, source: &str) -> bool {
+    let adapter = SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|entry| entry.adapter)
+        .find(|adapter| adapter.language() == language)
+        .unwrap();
+    let file = SourceFile {
+        path: path.into(),
+        language,
+    };
+    let mut extraction = adapter.extract(source, &file).unwrap();
+    assert_eq!(extraction.definitions.len(), 1, "{source}");
+    extraction.definitions.remove(0).handler.trivial
+}
+
+/// Both adapters apply one stub vocabulary: a spelling that marks a stub in one listed syntax marks
+/// it in every listed syntax of both languages, and a near miss marks none. Each row is (Ruby identifier,
+/// TypeScript identifier, string spelling, is a stub); the controls are the rows that are not.
+#[test]
+fn adapters_share_one_stub_vocabulary() {
+    let rows = [
+        ("pending", "pending", "PENDING", true),
+        ("not_implemented", "notImplemented", "Not implemented", true),
+        ("todo", "TODO", "to-do", true),
+        ("pending_review", "pendingReview", "pending review", false),
+        ("done", "done", "done", false),
+    ];
+    for (ruby, typescript, label, stub) in rows {
+        for source in [
+            format!("Given('a') {{ {ruby}() }}"),
+            format!("Given('a') {{ raise \"{label}\" }}"),
+        ] {
+            assert_eq!(
+                handler_is_stub(SourceLanguage::Ruby, "steps.rb", &source),
+                stub,
+                "{source}"
+            );
+        }
+        for source in [
+            format!("Given('a', () => {typescript}());"),
+            format!("Given('a', () => {{ throw new Error('{label}'); }});"),
+            format!("Given('a', () => '{label}');"),
+        ] {
+            assert_eq!(
+                handler_is_stub(SourceLanguage::TypeScript, "steps.ts", &source),
+                stub,
+                "{source}"
+            );
+        }
+    }
+}

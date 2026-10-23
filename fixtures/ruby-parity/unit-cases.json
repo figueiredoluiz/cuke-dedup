@@ -3081,6 +3081,17 @@
         }
       ]
     },
+    "src/stub_vocabulary.rs": {
+      "tests": [
+        {
+          "name": "labels_fold_punctuation_quotes_and_case",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: stub labels fold punctuation, quoting and case; near misses do not match.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
     "src/typescript/source_filter/tests.rs": {
       "tests": [
         {
@@ -6394,6 +6405,16 @@
             "name": "ruby_configuration_keeps_flat_compatibility_key"
           },
           "rationale": "Asserts the flat `rubyLoadPaths` compatibility key through the public configuration API; Ruby-specific, in-process, run under completion.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "adapters_share_one_stub_vocabulary",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/frontend_conformance.rs",
+            "name": "adapters_share_one_stub_vocabulary"
+          },
+          "rationale": "Ruby and TypeScript handlers written with the same pending, not-implemented and todo spellings are stubs in each listed syntax (Ruby call and `raise`; TypeScript call, `throw new Error` and string body); near misses are not.",
           "behaviorClass": "ruby-behavior"
         }
       ]

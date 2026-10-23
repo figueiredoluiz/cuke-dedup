@@ -86,4 +86,5 @@ pub mod reporters;
 mod resource_limits;
 mod ruby;
 pub mod source_adapter;
+mod stub_vocabulary;
 pub mod typescript;
