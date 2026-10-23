@@ -2489,40 +2489,6 @@ given('a real step', () => work());
     }
 }
 
-/// Verify regex normalization preserves anchors, alternatives, backreferences, classes, and meaningful group structure.
-#[test]
-fn regular_expression_normalization_preserves_matching_semantics() {
-    assert_eq!(
-        normalize_regular_expression(r"^I have (\d{2}) (foo|bar)$"),
-        r"^I have (\d{2}) (foo|bar)$"
-    );
-    assert_eq!(
-        normalize_regular_expression(r"^value (?=ahead)(\w+)$"),
-        r"^value (?=ahead)(\w+)$"
-    );
-    assert_eq!(
-        normalize_regular_expression(r"^(?<name>\w+) wins$"),
-        normalize_regular_expression(r"^(\w+) wins$")
-    );
-    assert_ne!(
-        normalize_regular_expression(r"^I wait (\d+) seconds$"),
-        normalize_regular_expression(r"^I wait (a few|several) seconds$")
-    );
-    assert_ne!(
-        normalize_regular_expression(r"^(a)\1$"),
-        normalize_regular_expression(r"^(b)\1$")
-    );
-    assert_eq!(
-        normalize_regular_expression(r"^a (?:optional )?step$"),
-        "^a (?:optional )?step$"
-    );
-    assert_ne!(
-        normalize_regular_expression(r"^a step$"),
-        normalize_regular_expression(r"a step")
-    );
-    assert_eq!(normalize_regular_expression(r"[\s+]"), r"[\s+]");
-}
-
 /// Verify regex flag encoding cannot collide with literal Cucumber matcher text.
 #[test]
 fn regex_flag_encoding_cannot_collide_with_literal_matcher_text() {

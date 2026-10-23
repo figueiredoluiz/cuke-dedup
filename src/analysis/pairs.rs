@@ -7,6 +7,7 @@ use super::similarity::{
 use super::suppression::SuppressionIndex;
 use super::{AnalysisCensus, CandidateSourceCensus};
 use crate::config::Config;
+use crate::matcher::FlagIdentity;
 use crate::model::{
     BehaviorEventRef, BehaviorIdentity, DefinitionCluster, Finding, FindingEvidence, MatcherKind,
     Rule, Severity, SourceLocation, StepDefinition, Suppression,
@@ -619,10 +620,7 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
                 // change what a matcher accepts. Keying on the raw string classified `/x/` against
                 // `/x/g` as merely normalization-equivalent, which contradicted the documented
                 // contract.
-                definition
-                    .analysis_profile()
-                    .dialect()
-                    .identity_flags(&definition.matcher_flags),
+                FlagIdentity::new(&definition.matcher_flags),
             ),
         ));
         classes.normalized_matcher.push(intern_class(
@@ -665,7 +663,8 @@ fn matcher_partition(definition: &StepDefinition, index: usize) -> MatcherPartit
         definition
             .analysis_profile()
             .dialect()
-            .normalized_flags(&definition.matcher_flags),
+            .regex_key()
+            .partition_flags(&definition.matcher_flags),
         (!definition.analysis_profile().matches_by_text()).then_some(index),
     )
 }
