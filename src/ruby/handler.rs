@@ -4,6 +4,7 @@ use crate::model::{
     bounded_source_snippet, BehaviorEvent, ControlFlowOperation, EffectStream, HandlerFingerprint,
     HandlerSemantics, RepresentationEncoding,
 };
+use crate::stub_vocabulary::is_stub_label;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use tree_sitter::Node;
@@ -593,7 +594,7 @@ fn stub_body(handler: Node<'_>, source: &str) -> bool {
                                         call.child_by_field_name("receiver").is_some()
                                             && call.child_by_field_name("method") == Some(*node)
                                     })
-                                    && stub_label(text(*node, source))
+                                    && is_stub_label(text(*node, source))
                             })
                         })
                 }
@@ -609,10 +610,10 @@ fn stub_body(handler: Node<'_>, source: &str) -> bool {
 fn stub_expression(node: Node<'_>, source: &str) -> bool {
     let node = unparenthesized(node);
     match node.kind() {
-        "identifier" => stub_label(text(node, source)),
+        "identifier" => is_stub_label(text(node, source)),
         "call" => node
             .child_by_field_name("method")
-            .is_some_and(|method| stub_label(text(method, source))),
+            .is_some_and(|method| is_stub_label(text(method, source))),
         _ => false, // fail-closed: any other expression is ordinary behaviour and stays compared
     }
 }
@@ -623,14 +624,4 @@ fn unparenthesized(mut node: Node<'_>) -> Node<'_> {
         node = node.named_child(0).unwrap();
     }
     node
-}
-
-/// Whether text names a pending marker once punctuation and case are dropped.
-fn stub_label(text: &str) -> bool {
-    let normalized: String = text
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect();
-    matches!(normalized.as_str(), "pending" | "notimplemented" | "todo")
 }
