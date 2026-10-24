@@ -1145,30 +1145,45 @@ fn handler_classes_follow_behavior_identity() {
     }
 }
 
-/// Exact-matcher identity keys on effective flags: execution-only and reordered flags do not
-/// separate two definitions of one matcher, accepted-language flags do. The normalized text is
-/// held equal, so the exact class alone decides.
+/// Exact-matcher identity keys on the flags the dialect declares effective: reordered and
+/// repeated flags never separate two definitions, JavaScript execution-only flags do not, and
+/// Ruby encoding flags do. The normalized text is held equal, so the exact class alone decides.
 #[test]
 fn exact_matcher_class_keys_on_effective_flags() {
-    let same_class = |left: &str, right: &str| {
+    let same_class = |ruby: bool, left: &str, right: &str| {
         let mut definitions = located_definitions(2);
         for (definition, flags) in definitions.iter_mut().zip([left, right]) {
             definition.matcher = "^step$".to_owned();
             definition.normalized_matcher = "^step$".to_owned();
             definition.matcher_kind = MatcherKind::RegularExpression;
             definition.matcher_flags = flags.to_owned();
+            if ruby {
+                definition.analysis_policy = crate::ruby::semantics::policy();
+            }
         }
         let classes = comparison_classes(&definitions);
         classes.exact_matcher[0] == classes.exact_matcher[1]
     };
-    for (left, right, same) in [
-        ("", "g", true),
-        ("yd", "", true),
-        ("im", "mi", true),
-        ("", "i", false),
-        ("s", "u", false),
-        ("v", "u", false),
+    // (Ruby dialect, left, right, same class): JavaScript drops `g`, `y`, `d` and `n`; Ruby keeps
+    // every native flag, so its `n` and `u` rows are the opposite-answer controls.
+    for (ruby, left, right, same) in [
+        (false, "", "g", true),
+        (false, "yd", "", true),
+        (false, "im", "mi", true),
+        (false, "", "i", false),
+        (false, "s", "u", false),
+        (false, "v", "u", false),
+        (false, "n", "", true),
+        (true, "n", "", false),
+        (true, "u", "n", false),
+        (true, "im", "mii", true),
+        (true, "", "", true),
+        (true, "", "i", false),
     ] {
-        assert_eq!(same_class(left, right), same, "{left:?} against {right:?}");
+        assert_eq!(
+            same_class(ruby, left, right),
+            same,
+            "{left:?} against {right:?} (ruby: {ruby})"
+        );
     }
 }
