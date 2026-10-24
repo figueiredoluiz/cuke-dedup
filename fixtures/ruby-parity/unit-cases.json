@@ -2907,6 +2907,20 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "work_budget_admit_charges_only_what_fits",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Core `WorkBudget::admit` arithmetic over plain integers: an amount is committed only while the total stays within the limit. `optional_provider_proofs_respect_both_resource_limits` pins the Ruby file and byte boundaries built on it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "pass_budget_latches_exhaustion_across_passes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Core `PassBudget` latch over plain integers: run and pass totals share one limit and exhaustion survives `begin_pass`. `optional_passes_share_exhaustion_without_resetting_load_work` pins the Ruby graph that uses it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "release_resource_limits_match_the_documented_policy",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {

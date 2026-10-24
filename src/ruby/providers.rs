@@ -1,7 +1,7 @@
 //! Closed constant registration exports over resolved, preceding source loads.
 use super::registration_aliases::{closed_call, identifier_references};
 use super::{descendants, registration, static_method_name, text};
-use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
+use crate::resource_limits::{read_utf8, PassBudget, WorkBudget, MAX_PROJECT_INPUT_BYTES};
 #[cfg(test)]
 use crate::resource_limits::{MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES};
 use crate::source_adapter::{SourceDependency, SourceFile, SourceLanguage};
@@ -63,11 +63,8 @@ struct Graph<'a> {
     loads: BTreeSet<Position>,
     unit_ids: BTreeMap<PathBuf, usize>,
     available_proofs: RefCell<BTreeSet<(Position, Position)>>,
-    load_work: Cell<usize>,
-    proof_exhausted: Cell<bool>,
-    proof_work: Cell<usize>,
-    #[cfg(test)]
-    proof_limit: usize,
+    /// Load-resolution work spans the run; proof work restarts with each collector pass.
+    budget: Cell<PassBudget>,
     outgoing: BTreeMap<usize, Vec<(usize, Position)>>,
     incoming: BTreeMap<usize, Vec<(Position, bool)>>,
 }
@@ -105,9 +102,9 @@ pub(super) fn load_proof_sources(
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
     let mut units = Vec::new();
-    let mut bytes = 0;
+    let (mut modules, mut bytes) = (WorkBudget::new(budget.0), WorkBudget::new(budget.1));
     for file in files.iter().filter(|f| f.language == SourceLanguage::Ruby) {
-        if units.len() >= budget.0 {
+        if !modules.admit(1) {
             return Ok(ProofSources::OverBudget);
         }
         let Ok(source) = read_utf8(&file.path, "Ruby provider source", MAX_PROJECT_INPUT_BYTES)
@@ -115,8 +112,7 @@ pub(super) fn load_proof_sources(
             // Extraction reports per-file failures and preserves trustworthy neighbors.
             return Ok(ProofSources::Untrusted);
         };
-        bytes += source.len();
-        if bytes > budget.1 {
+        if !bytes.admit(source.len()) {
             return Ok(ProofSources::OverBudget);
         }
         let source = super::prepare_nuls(&source).into_owned();
@@ -553,11 +549,9 @@ impl<'a> Graph<'a> {
             loads: BTreeSet::new(),
             unit_ids: BTreeMap::new(),
             available_proofs: RefCell::default(),
-            load_work: Cell::new(0),
-            proof_exhausted: Cell::new(false),
-            proof_work: Cell::new(0),
-            #[cfg(test)]
-            proof_limit: crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
+            budget: Cell::new(PassBudget::new(
+                crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK,
+            )),
             outgoing: BTreeMap::new(),
             incoming: BTreeMap::new(),
         }
@@ -693,35 +687,32 @@ impl<'a> Graph<'a> {
         }
     }
 
-    /// Check shared exhaustion and the accumulated load-resolution work limit.
+    /// Applies `charge` to the shared budget and returns its result.
+    fn with_budget<T>(&self, charge: impl FnOnce(&mut PassBudget) -> T) -> T {
+        let mut budget = self.budget.get();
+        let result = charge(&mut budget);
+        self.budget.set(budget);
+        result
+    }
+
+    /// Check shared exhaustion, including the accumulated load-resolution work.
     fn budget_exhausted(&self) -> bool {
-        self.proof_exhausted.get() || self.proof_budget_exhausted(self.load_work.get())
+        self.budget.get().exhausted()
+    }
+
+    /// Charge saturating load-resolution work, which spans every pass, and report exhaustion.
+    fn charge_load_work(&self, additional: usize) -> bool {
+        self.with_budget(|budget| budget.charge_run(additional))
     }
 
     /// Charge saturating work to the current proof pass and report sticky budget exhaustion.
     fn charge_proof_work(&self, additional: usize) -> bool {
-        self.proof_work
-            .set(self.proof_work.get().saturating_add(additional));
-        self.proof_budget_exhausted(self.proof_work.get())
+        self.with_budget(|budget| budget.charge_pass(additional))
     }
 
-    // Each collector retains its established limit; exhaustion is shared and sticky.
     /// Reset per-pass work while preserving shared exhaustion and prior load-resolution work.
     fn begin_proof_pass(&self) -> bool {
-        self.proof_work.set(0);
-        self.budget_exhausted()
-    }
-
-    /// Latch exhaustion when work exceeds the configured limit and report the shared state.
-    fn proof_budget_exhausted(&self, work: usize) -> bool {
-        #[cfg(test)]
-        let limit = self.proof_limit;
-        #[cfg(not(test))]
-        let limit = crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK;
-        if work > limit {
-            self.proof_exhausted.set(true);
-        }
-        self.proof_exhausted.get()
+        self.with_budget(PassBudget::begin_pass)
     }
 
     /// Memoizes proven load contexts and bounds unsuccessful graph searches.
@@ -751,12 +742,7 @@ impl<'a> Graph<'a> {
             .get(&unit)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        self.load_work.set(
-            self.load_work
-                .get()
-                .saturating_add(outgoing.len() + callers.len() + 1),
-        );
-        if self.budget_exhausted() {
+        if self.charge_load_work(outgoing.len() + callers.len() + 1) {
             return false;
         }
         let direct = outgoing.iter().any(|(next, position)| {
@@ -934,6 +920,13 @@ fn test_unit(source: &str) -> Unit {
 mod tests {
     use super::*;
 
+    impl Graph<'_> {
+        /// Replaces the shared work limit the release build fixes at the assertion-resolution limit.
+        pub(super) fn set_proof_limit(&self, limit: usize) {
+            self.with_budget(|budget| budget.set_limit(limit));
+        }
+    }
+
     /// Verify isolated constructor proofs require a closed class owner and non-escaping ordinary method use.
     #[test]
     fn isolated_owner_shapes_retain_only_closed_constructor_proofs() {
@@ -1043,8 +1036,8 @@ mod tests {
             let mut exhausted = false;
             let mut complete = false;
             for limit in (0..=size * 20).step_by((size / 4).max(1)) {
-                let mut graph = Graph::new(&units, &[]);
-                graph.proof_limit = limit;
+                let graph = Graph::new(&units, &[]);
+                graph.set_proof_limit(limit);
                 let (providers, assertions) = Providers::collect_proofs(&units, &[], graph);
                 let incomplete = providers.work_exhausted();
                 exhausted |= incomplete;
@@ -1082,16 +1075,22 @@ mod tests {
             .child_by_field_name("body")
             .unwrap();
         for prior in [false, true] {
-            let mut graph = Graph::new(&units, &[]);
-            graph.proof_limit = nodes.len() * 2
-                + 2
-                + descendants(first_body).len()
-                + descendants(first_body)
-                    .iter()
-                    .find(|n| matches!(n.kind(), "block" | "do_block"))
-                    .map(|n| descendants(*n).len())
-                    .unwrap();
-            graph.proof_exhausted.set(prior);
+            let graph = Graph::new(&units, &[]);
+            graph.set_proof_limit(
+                nodes.len() * 2
+                    + 2
+                    + descendants(first_body).len()
+                    + descendants(first_body)
+                        .iter()
+                        .find(|n| matches!(n.kind(), "block" | "do_block"))
+                        .map(|n| descendants(*n).len())
+                        .unwrap(),
+            );
+            // A pass charged past any limit latches exhaustion that the next pass inherits.
+            assert_eq!(
+                graph.charge_proof_work(if prior { usize::MAX } else { 0 }),
+                prior
+            );
             let mut result = Providers::default();
             graph.closed_execution(&mut result);
             assert!(graph.budget_exhausted());
@@ -1115,15 +1114,14 @@ mod tests {
     fn optional_passes_share_exhaustion_without_resetting_load_work() {
         let source = "module Local; def self.safe; end; end; register = method(:Given); register.call('step') { work() }";
         let units = [test_unit(source)];
-        let mut graph = Graph::new(&units, &[]);
-        graph.proof_limit = 2;
+        let graph = Graph::new(&units, &[]);
+        graph.set_proof_limit(2);
         assert!(!graph.charge_proof_work(1));
-        graph.load_work.set(1);
+        assert!(!graph.charge_load_work(1));
         assert!(!graph.budget_exhausted());
         assert!(graph.charge_proof_work(2));
         assert!(graph.begin_proof_pass());
-        assert_eq!(graph.proof_work.get(), 0);
-        assert_eq!(graph.load_work.get(), 1);
+        assert_eq!(graph.budget.get().spent(), (1, 0));
         assert!(graph.budget_exhausted());
         let nodes = descendants(units[0].tree.root_node());
         let references = identifier_references(&nodes, source);
@@ -1145,8 +1143,8 @@ mod tests {
         assert!(result.0.is_empty());
     }
 
-    #[test]
     /// Exercises every optional collector at both exhausted and completed work limits.
+    #[test]
     fn optional_proof_collectors_fail_closed_at_each_work_boundary() {
         let source = "def handler; work(); end; callable = proc { work() }; Given('one', &method(:handler)); Then('two', &callable); register = method(:Given); register.call('three') { work() }; module Local; def self.safe; end; end; Local.safe; factory = -> { Given('four') { work() }; Then('five') { work() } }; factory.call; class LocalInstance; def safe; end; end; instance = LocalInstance.new; instance.safe # binding";
         let units = [test_unit(source)];
@@ -1157,8 +1155,8 @@ mod tests {
         let mut completed = [false; 5];
         for limit in 0..nodes.len() * 4 {
             for collector in 0..5 {
-                let mut graph = Graph::new(&units, &[]);
-                graph.proof_limit = limit;
+                let graph = Graph::new(&units, &[]);
+                graph.set_proof_limit(limit);
                 let mut result = Providers::default();
                 match collector {
                     0 => graph.named_handlers(&mut result, Some(&assertions)),
@@ -1204,14 +1202,10 @@ mod tests {
     #[test]
     fn load_proof_work_exhaustion_withdraws_optional_trust() {
         let graph = Graph::new(&[], &[]);
-        graph
-            .load_work
-            .set(crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK);
+        let limit = crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK;
+        assert!(!graph.charge_load_work(limit));
         assert!(!graph.available((0, 1, 1), (1, 1, 1), &mut BTreeSet::new()));
-        assert_eq!(
-            graph.load_work.get(),
-            crate::resource_limits::MAX_ASSERTION_RESOLUTION_WORK + 1
-        );
+        assert_eq!(graph.budget.get().spent(), (limit + 1, 0));
         assert!(graph.available_proofs.borrow().is_empty());
         assert!(graph.budget_exhausted());
         let edge = SourceDependency::new(

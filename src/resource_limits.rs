@@ -33,6 +33,103 @@ pub(crate) const MAX_STRUCTURAL_CLASS_COMPARISONS: usize = 250_000;
 pub(crate) const SOURCE_CLASSIFICATION_PREFIX_BYTES: usize = 64 * 1024;
 pub(crate) const MINIFIED_MEAN_LINE_BYTES: usize = 200;
 
+/// Work admitted against a limit: a charge is taken only when the total stays within it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WorkBudget {
+    limit: usize,
+    spent: usize,
+}
+
+impl WorkBudget {
+    /// A budget of `limit` with nothing spent.
+    pub(crate) const fn new(limit: usize) -> Self {
+        Self { limit, spent: 0 }
+    }
+
+    /// Charges `amount` only when the total stays within the limit, and reports whether it did.
+    /// A refusal does not latch: a smaller later amount may still fit, so a caller that must not
+    /// admit anything after a cut stops at the first refusal or records it itself.
+    pub(crate) fn admit(&mut self, amount: usize) -> bool {
+        let spent = self.spent.saturating_add(amount);
+        let fits = spent <= self.limit;
+        if fits {
+            self.spent = spent;
+        }
+        fits
+    }
+
+    /// The total charged so far.
+    #[cfg(test)]
+    pub(crate) const fn spent(&self) -> usize {
+        self.spent
+    }
+}
+
+/// Work counted against one limit across a whole run and within the current pass. Exhaustion
+/// latches: once either total exceeds the limit every later check reports it, including after a
+/// new pass restarts the per-pass total.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PassBudget {
+    limit: usize,
+    run: usize,
+    pass: usize,
+    exhausted: bool,
+}
+
+impl PassBudget {
+    /// A budget of `limit` for the run and for each pass, not yet exhausted.
+    pub(crate) const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            run: 0,
+            pass: 0,
+            exhausted: false,
+        }
+    }
+
+    /// Charges work that spans every pass and reports latched exhaustion.
+    pub(crate) fn charge_run(&mut self, amount: usize) -> bool {
+        self.run = self.run.saturating_add(amount);
+        self.latch()
+    }
+
+    /// Charges work to the current pass and reports latched exhaustion.
+    pub(crate) fn charge_pass(&mut self, amount: usize) -> bool {
+        self.pass = self.pass.saturating_add(amount);
+        self.latch()
+    }
+
+    /// Restarts the per-pass total, keeping run work and the latch, and reports exhaustion.
+    pub(crate) fn begin_pass(&mut self) -> bool {
+        self.pass = 0;
+        self.latch()
+    }
+
+    /// Reports latched exhaustion.
+    pub(crate) const fn exhausted(&self) -> bool {
+        self.exhausted
+    }
+
+    /// Latches either total exceeding the limit and reports the latched state.
+    fn latch(&mut self) -> bool {
+        self.exhausted |= self.run > self.limit || self.pass > self.limit;
+        self.exhausted
+    }
+
+    /// Replaces the limit, keeping the work already charged, and latches a total now over it.
+    #[cfg(test)]
+    pub(crate) fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        self.latch();
+    }
+
+    /// Work charged across the run and within the current pass.
+    #[cfg(test)]
+    pub(crate) const fn spent(&self) -> (usize, usize) {
+        (self.run, self.pass)
+    }
+}
+
 #[derive(Debug)]
 struct InputLimitExceeded {
     path: PathBuf,
@@ -195,6 +292,72 @@ mod tests {
             .join("|");
         let error = compile_regex_with_limits(&pattern, 128, 128).unwrap_err();
         assert!(matches!(error, regex::Error::CompiledTooBig(128)));
+    }
+
+    /// `admit` charges only amounts that keep the total within the limit, so one-unit admissions
+    /// stop at exactly `limit` units, like a `count >= limit` check before charging.
+    #[test]
+    fn work_budget_admit_charges_only_what_fits() {
+        for limit in 0..4 {
+            let mut budget = WorkBudget::new(limit);
+            let admitted = (0..8).take_while(|_| budget.admit(1)).count();
+            assert_eq!((admitted, budget.spent()), (limit, limit));
+            assert!(!budget.admit(1), "a refused admission charges nothing");
+            assert_eq!(budget.spent(), limit);
+        }
+        let mut bytes = WorkBudget::new(4);
+        assert!(bytes.admit(3));
+        assert!(!bytes.admit(2));
+        assert!(
+            bytes.admit(1),
+            "a smaller amount still fits after a refusal"
+        );
+        assert!(bytes.admit(0));
+        assert!(!bytes.admit(usize::MAX));
+        assert_eq!(bytes.spent(), 4);
+    }
+
+    /// Exhaustion from either total latches across passes, a new pass restarts only pass work,
+    /// and work within the limit never latches.
+    #[test]
+    fn pass_budget_latches_exhaustion_across_passes() {
+        let mut budget = PassBudget::new(2);
+        assert!(!budget.charge_pass(2));
+        assert!(!budget.begin_pass());
+        assert!(!budget.charge_pass(2), "pass work restarts with each pass");
+        assert!(!budget.charge_run(2));
+        assert_eq!(budget.spent(), (2, 2));
+        assert!(budget.charge_pass(1));
+        assert!(budget.begin_pass(), "pass exhaustion survives a new pass");
+        assert_eq!(budget.spent(), (2, 0));
+        assert!(budget.charge_pass(0) && budget.exhausted());
+
+        let mut run = PassBudget::new(2);
+        assert!(run.charge_run(3));
+        assert!(run.begin_pass() && run.charge_pass(0));
+        run.set_limit(usize::MAX);
+        assert!(run.exhausted(), "a raised limit does not clear the latch");
+
+        let mut lowered = PassBudget::new(4);
+        assert!(!lowered.charge_run(2) && !lowered.charge_pass(2));
+        lowered.set_limit(1);
+        assert!(
+            lowered.exhausted(),
+            "a lowered limit latches work already over it"
+        );
+
+        let mut raised = PassBudget::new(0);
+        raised.set_limit(3);
+        assert!(!raised.charge_run(3) && !raised.charge_pass(3));
+        assert_eq!(raised.spent(), (3, 3));
+
+        // Totals saturate instead of wrapping, so work past `usize::MAX` stays exhausted.
+        let mut saturated = PassBudget::new(usize::MAX - 1);
+        assert!(saturated.charge_run(usize::MAX) && saturated.charge_run(1));
+        assert!(saturated.charge_pass(usize::MAX) && saturated.charge_pass(usize::MAX));
+        assert_eq!(saturated.spent(), (usize::MAX, usize::MAX));
+        let mut at_limit = PassBudget::new(usize::MAX);
+        assert!(!at_limit.charge_run(usize::MAX) && !at_limit.charge_pass(usize::MAX));
     }
 
     /// Pins each release limit constant except `MAX_ASSERTION_RESOLUTION_WORK` to its value.
