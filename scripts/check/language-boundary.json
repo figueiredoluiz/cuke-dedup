@@ -7,7 +7,7 @@
     ["src/analysis/evidence.rs","name:typescript",2],
     ["src/analysis/similarity.rs","Framework",1],
     ["src/analysis/similarity.rs","Framework::Unknown",1],
-    ["src/cli.rs","SourceLanguage",3],
+    ["src/cli.rs","SourceLanguage",2],
     ["src/cli.rs","SourceLanguage::TypeScript",2],
     ["src/cli.rs","name:typescript",2],
     ["src/config.rs","name:ruby",5],

@@ -1,4 +1,4 @@
-use cuke_dedup::analysis::{analyze, analyze_with_diagnostics};
+use cuke_dedup::analysis::{analyze, analyze_with_diagnostics, merge_parameter_types};
 use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
 use cuke_dedup::model::SourceLocation;
@@ -26,7 +26,7 @@ fn registered_adapter(language: SourceLanguage) -> &'static dyn SourceAdapter {
         .expect("an adapter is registered for the language")
 }
 
-/// Checks external adapters retain session constructors, auto traits, default capabilities, and legacy extraction delegation.
+/// Checks external adapters retain session constructors, auto traits, default capabilities, the core parameter-type merge, and legacy extraction delegation.
 #[test]
 fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults() {
     use cuke_dedup::source_adapter::SourceExtractionSession;
@@ -61,7 +61,7 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
     assert_eq!(adapter.inspect_source(&file, &[]), None);
     let configured = BTreeMap::from([("custom".to_owned(), "[a-z]+".to_owned())]);
     assert_eq!(
-        adapter.resolve_parameter_types(Vec::new(), &configured),
+        merge_parameter_types(Vec::new(), &configured),
         (configured.clone(), Vec::new())
     );
     let declaration = SourceParameterType::new(
@@ -69,9 +69,9 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
         Some(".+".to_owned()),
         SourceLocation::new(PathBuf::from("steps.js"), 1, 1, 1, 2),
     );
-    let (patterns, diagnostics) = adapter.resolve_parameter_types(vec![declaration], &configured);
-    assert!(patterns.is_empty());
-    assert!(!diagnostics.is_empty());
+    let (patterns, diagnostics) = merge_parameter_types(vec![declaration], &configured);
+    assert_eq!(patterns["custom"], ".+");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     for mut session in [
         SourceExtractionSession::default(),
         SourceExtractionSession::new(project.path()),

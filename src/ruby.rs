@@ -102,14 +102,6 @@ impl SourceAdapter for RubyAdapter {
     fn supports_indirect_usage(&self) -> bool {
         true
     }
-    /// Merge source parameter types with configured patterns using Ruby registry rules.
-    fn resolve_parameter_types(
-        &self,
-        declarations: Vec<crate::source_adapter::SourceParameterType>,
-        configured: &std::collections::BTreeMap<String, String>,
-    ) -> (std::collections::BTreeMap<String, String>, Vec<String>) {
-        parameters::merge(declarations, configured)
-    }
     /// Loads provider and assertion proofs, recording when the selection exceeds their budget.
     fn prepare_session(
         &self,

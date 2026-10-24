@@ -263,8 +263,10 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
 
 ## Language adapters and parity
 
-- `SourceAdapter` owns default source selection, input filtering, indirect-usage policy and
-  parameter-type resolution. Later hooks have defaults, so existing adapters stay compatible.
+- `SourceAdapter` owns default source selection, input filtering and indirect-usage policy.
+  Adapters return parameter-type declarations in `Extraction.parameter_types`; the core merges
+  them with configured patterns (`analysis::merge_parameter_types`), whatever the language of the
+  first definition file. Optional hooks have defaults.
   Dependency expansion uses private registry callbacks and exposes no glob types or discovery
   mutation.
 - An adapter not discovered by default is selected only by definition patterns that depend on its

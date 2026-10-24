@@ -221,6 +221,30 @@
         }
       ]
     },
+    "src/analysis/parameter_types.rs": {
+      "tests": [
+        {
+          "name": "a_registry_invalidating_declaration_withdraws_every_pattern_in_any_order",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_parameter_type_uncertainty_never_preserves_manual_pattern_trust"
+          },
+          "rationale": "A Ruby `ParameterType` with a dynamic name or the built-in name `int` invalidates every registration, so no ambiguous-step or unused-definition finding appears and `--fail-on-incomplete` exits 2. Extraction already drops the definitions, so the merge's own withdrawal of every pattern is not observable through the CLI; the unit test pins it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "declarations_supersede_configured_patterns_and_conflicts_remove_the_name",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_parameter_types_are_static_and_suite_scoped"
+          },
+          "rationale": "A Ruby `ParameterType` declared in `a.rb` or `z.rb` decides whether `channel stdout` matches, and an unresolved pattern removes the name and marks the corpus incomplete; duplicate declarations across files are pinned by `ruby_parameter_type_uncertainty_never_preserves_manual_pattern_trust`.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
     "src/analysis/similarity.rs": {
       "tests": [
         {

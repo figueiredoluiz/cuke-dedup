@@ -199,7 +199,6 @@ struct Diagnostics {
 
 struct ExtractedCorpus {
     parameter_types: Vec<source_adapter::SourceParameterType>,
-    parameter_language: Option<source_adapter::SourceLanguage>,
     indirect_usage: source_adapter::IndirectStepUsage,
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
@@ -459,8 +458,7 @@ fn skipped_definitions_warning(skipped: &[source_adapter::SourceFile]) -> String
     )
 }
 
-/// Extracts definitions, then feature steps, into a corpus whose parameter-type language is that
-/// of the first discovered definition file.
+/// Extracts definitions, then feature steps, into a corpus.
 fn extract_corpus(
     config: &Config,
     files: &discovery::DiscoveredFiles,
@@ -469,7 +467,6 @@ fn extract_corpus(
 ) -> ExtractedCorpus {
     let mut corpus = ExtractedCorpus {
         parameter_types: Vec::new(),
-        parameter_language: files.definitions.first().map(|file| file.language),
         indirect_usage: source_adapter::IndirectStepUsage::default(),
         definitions: Vec::new(),
         feature_steps: Vec::new(),
@@ -788,8 +785,8 @@ fn extract_feature_steps(
     });
 }
 
-/// Resolves parameter types with the first definition language's adapter (their diagnostics mark
-/// the corpus incomplete), analyzes the corpus and warns on unmatched suppressions. Under
+/// Merges parameter-type declarations with configured patterns (their diagnostics mark the corpus
+/// incomplete), analyzes the corpus and warns on unmatched suppressions. Under
 /// `fail_on_incomplete`, analysis gaps and an incomplete corpus are errors; otherwise analysis
 /// gaps are warnings. Analysis failures are returned.
 fn analyze_corpus(
@@ -800,7 +797,6 @@ fn analyze_corpus(
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
         parameter_types,
-        parameter_language,
         indirect_usage,
         definitions,
         feature_steps,
@@ -812,11 +808,8 @@ fn analyze_corpus(
         incomplete: mut corpus_incomplete,
     } = extracted;
     let mut effective_config = config.clone();
-    let (patterns, type_diagnostics) = match parameter_language {
-        Some(language) => source_adapter::adapter_for_language(language)
-            .resolve_parameter_types(parameter_types, &config.parameter_types),
-        None => (config.parameter_types.clone(), Vec::new()),
-    };
+    let (patterns, type_diagnostics) =
+        analysis::merge_parameter_types(parameter_types, &config.parameter_types);
     effective_config.parameter_types = patterns;
     corpus_incomplete |= !type_diagnostics.is_empty();
     diagnostics.warnings.extend(type_diagnostics);
