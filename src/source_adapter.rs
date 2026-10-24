@@ -300,7 +300,8 @@ impl SourceParameterType {
 pub struct Extraction {
     /// Successfully extracted definitions.
     pub definitions: Vec<StepDefinition>,
-    /// Parameter declarations; merge the complete source registry before matching expressions.
+    /// Parameter declarations; merge them across every definition file, in order, with
+    /// [`crate::analysis::merge_parameter_types`] before matching expressions.
     pub parameter_types: Vec<SourceParameterType>,
     /// Optional indirect usage metadata; merge across every selected Ruby source.
     pub indirect_usage: Option<IndirectStepUsage>,
@@ -542,22 +543,6 @@ pub trait SourceAdapter: Sync {
     /// Whether missing source metadata or reads leave indirect step usage unknown.
     fn supports_indirect_usage(&self) -> bool {
         false
-    }
-
-    /// Resolves source parameter declarations without granting unknown matcher authority.
-    fn resolve_parameter_types(
-        &self,
-        declarations: Vec<SourceParameterType>,
-        configured: &std::collections::BTreeMap<String, String>,
-    ) -> (std::collections::BTreeMap<String, String>, Vec<String>) {
-        if declarations.is_empty() {
-            (configured.clone(), Vec::new())
-        } else {
-            (
-                Default::default(),
-                vec!["frontend does not support source parameter declarations".into()],
-            )
-        }
     }
 
     /// Prepares selected-source evidence before extraction, without executing source code.

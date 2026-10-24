@@ -77,6 +77,6 @@ Closed, unchanged, unescaped local instances may dispatch literal methods declar
 
 Direct top-level `ParameterType` supports literal names, string/regex/array patterns and deferred lambda/proc transformers. Direct inline transformer bodies are deferred; dynamic property access there preserves adjacent registrations but establishes neither transformer equivalence nor assertion trust. Unsupported forms and dynamic indirect usage remain incomplete.
 
-Source patterns supersede configured fallbacks. Duplicate names and unresolved declarations remove matching authority and mark incompleteness; unknown names and built-in redefinitions invalidate registration trust. Regex flags, nested arrays, immediate transformer invocation and preferential-regex registration are unsupported. Library consumers receive `Extraction.parameter_types` separately from handlers; the CLI merges the selected registry before expression matching.
+Source patterns supersede configured fallbacks. Duplicate names and unresolved declarations remove matching authority and mark incompleteness; unknown names and built-in redefinitions invalidate registration trust. Regex flags, nested arrays, immediate transformer invocation and preferential-regex registration are unsupported. Library consumers receive `Extraction.parameter_types` separately from handlers and merge them, in definition-file order, with `analysis::merge_parameter_types`; the CLI applies the same merge before expression matching.
 
 Back to [Discovery and frameworks](../discovery-and-frameworks.md).

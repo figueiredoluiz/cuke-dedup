@@ -4,10 +4,13 @@ mod evidence;
 pub(crate) mod fingerprints;
 pub(crate) mod pair_records;
 mod pairs;
+pub(crate) mod parameter_types;
 mod similarity;
 mod string_metrics;
 mod suppression;
 mod usage;
+
+pub use parameter_types::merge_parameter_types;
 
 use crate::config::Config;
 use crate::model::{AnalysisResult, FeatureStep, StepDefinition};
