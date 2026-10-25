@@ -1966,12 +1966,6 @@
           "behaviorClass": "language-specific-api"
         },
         {
-          "name": "cucumber_config_filename_order_decides_which_file_is_inspected",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`cucumber config filename order decides which file is inspected`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
           "name": "cucumber_files_match_regardless_of_contents_and_errors_propagate",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JS framework configuration detection (`cucumber files match regardless of contents and errors propagate`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
@@ -2005,6 +1999,32 @@
           "name": "static_object_queries_cover_absent_and_dynamic_shapes",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JS framework configuration detection (`static object queries cover absent and dynamic shapes`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "discovery_origins_and_warning_texts_are_exact",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/framework_config/tests.rs",
+            "name": "discovery_origins_and_warning_texts_are_exact"
+          },
+          "rationale": "Pins the exact discovery origin and warning texts through `Config::load`, including the origin label and dynamic-paths warning for `cucumber.yml`, the file Ruby projects use, in the `paths` profile shape the reader supports.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "every_config_filename_keeps_its_precedence",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/framework_config/tests.rs",
+            "name": "every_config_filename_keeps_its_precedence"
+          },
+          "rationale": "Pins the precedence of every framework configuration filename, including `cucumber.yml`, the Cucumber-Ruby configuration file, below `cucumber.json` and `cucumber.yaml`.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "static_object_reader_skips_unsupported_entries",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: static object reader for scripted JavaScript/TypeScript configuration. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
           "behaviorClass": "language-specific-api"
         }
       ]

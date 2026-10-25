@@ -256,36 +256,6 @@ fn same_provider_filename_fallthrough_continues_after_a_non_match() {
     );
 }
 
-/// Checks Cucumber filename precedence and promotion after the preferred file is removed.
-#[test]
-fn cucumber_config_filename_order_decides_which_file_is_inspected() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(
-        directory.path().join("cucumber.yaml"),
-        "default:\n  paths:\n    - from-yaml\n",
-    )
-    .unwrap();
-    fs::write(
-        directory.path().join("cucumber.cjs"),
-        "module.exports = { paths: ['from-cjs'] };",
-    )
-    .unwrap();
-    let detected = detect(directory.path(), None).unwrap().unwrap();
-    assert_eq!(
-        detected.patterns,
-        ["from-yaml/**/*.{feature,feature.md}"],
-        "the first existing filename in cucumber order wins"
-    );
-
-    fs::remove_file(directory.path().join("cucumber.yaml")).unwrap();
-    let detected = detect(directory.path(), None).unwrap().unwrap();
-    assert_eq!(
-        detected.patterns,
-        ["from-cjs/**/*.{feature,feature.md}"],
-        "removing the higher-precedence file promotes the next one"
-    );
-}
-
 /// Checks a Cucumber filename supplies defaults without literal paths while malformed JSON surfaces an error.
 #[test]
 fn cucumber_files_match_regardless_of_contents_and_errors_propagate() {
@@ -489,4 +459,250 @@ fn static_object_queries_cover_absent_and_dynamic_shapes() {
     );
     assert_eq!(unquote("'a\\/b'"), Some("a/b".to_owned()));
     assert_eq!(unquote("dynamic"), None);
+}
+
+/// Pins the exact discovery origin and warning texts each framework configuration form produces,
+/// with literal-path controls that produce no warning. Rows pin today's behaviour, not a target.
+#[test]
+fn discovery_origins_and_warning_texts_are_exact() {
+    let cypress = r#"{"devDependencies":{"@badeball/cypress-cucumber-preprocessor":"1"}}"#;
+    let cucumber = r#"{"devDependencies":{"@cucumber/cucumber":"1"}}"#;
+    let negated = concat!(
+        "negated framework path `!skip/**` is not a discovery input; ",
+        "use `exclude` in .cuke-dedup.json"
+    );
+    let deterministic = |what: &str| {
+        format!(
+            "{{path}} uses {what}; configure `features` in .cuke-dedup.json to make discovery deterministic"
+        )
+    };
+    let cucumber_dynamic = concat!(
+        "{path} uses dynamic Cucumber paths; ",
+        "falling back to Cucumber's default `features/**/*.{feature,feature.md}`"
+    );
+    let malformed = concat!(
+        "could not inspect framework configuration (failed to parse framework config {path}: ",
+        "expected ident at line 1 column 2); using built-in feature patterns"
+    );
+    let cy = "Cypress Cucumber configuration cypress.config.ts";
+    let pw = "Playwright-BDD configuration playwright.config.ts";
+    for (file, source, package, origin, warning) in [
+        (
+            "cypress.config.ts",
+            "defineConfig({ e2e: { specPattern: p } });",
+            Some(cypress),
+            cy,
+            Some(deterministic("a dynamic Cypress e2e.specPattern")),
+        ),
+        (
+            "cypress.config.ts",
+            "defineConfig({ e2e: { specPattern: 'cy/*.feature' } });",
+            Some(cypress),
+            cy,
+            None,
+        ),
+        (
+            "playwright.config.ts",
+            "defineBddConfig({ features: f() });",
+            None,
+            pw,
+            Some(deterministic("dynamic Playwright-BDD feature paths")),
+        ),
+        (
+            "playwright.config.ts",
+            "defineBddConfig({ featuresRoot: r });",
+            None,
+            pw,
+            Some(deterministic("a dynamic Playwright-BDD featuresRoot")),
+        ),
+        (
+            "playwright.config.ts",
+            "defineBddConfig({ features: ['pw', '!skip/**'] });",
+            None,
+            pw,
+            Some(negated.to_owned()),
+        ),
+        (
+            "playwright.config.ts",
+            "defineBddConfig({ features: ['pw'] });",
+            None,
+            pw,
+            None,
+        ),
+        (
+            "cucumber.mjs",
+            "export default { paths: p };",
+            None,
+            "Cucumber.js configuration cucumber.mjs",
+            Some(cucumber_dynamic.to_owned()),
+        ),
+        (
+            "cucumber.yml",
+            "default:\n  paths: {a: 1}\n",
+            None,
+            "Cucumber.js configuration cucumber.yml",
+            Some(cucumber_dynamic.to_owned()),
+        ),
+        (
+            "cucumber.yml",
+            "default:\n  paths: [specs]\n",
+            None,
+            "Cucumber.js configuration cucumber.yml",
+            None,
+        ),
+        (
+            "cucumber.json",
+            r#"{"paths":["cu","!skip/**"]}"#,
+            None,
+            "Cucumber.js configuration cucumber.json",
+            Some(negated.to_owned()),
+        ),
+        (
+            "cucumber.json",
+            "not json",
+            None,
+            "built-in defaults",
+            Some(malformed.to_owned()),
+        ),
+        (
+            "unrelated.txt",
+            "",
+            Some(cucumber),
+            "Cucumber.js configuration package.json",
+            None,
+        ),
+        ("unrelated.txt", "", None, "built-in defaults", None),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join(file), source).unwrap();
+        if let Some(package) = package {
+            fs::write(directory.path().join("package.json"), package).unwrap();
+        }
+        let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
+        let path = config.root.join(file).display().to_string();
+        let expected: Vec<String> = warning
+            .map(|text| text.replace("{path}", &path))
+            .into_iter()
+            .collect();
+        assert_eq!(config.feature_pattern_origin, origin, "{file}: {source}");
+        assert_eq!(config.config_warnings, expected, "{file}: {source}");
+    }
+}
+
+/// Checks every filename of each framework in precedence order: with all present the first is
+/// inspected and its own paths decide the patterns, and removing it promotes the next.
+#[test]
+fn every_config_filename_keeps_its_precedence() {
+    let cypress = serde_json::json!({"devDependencies": {"cypress-cucumber-preprocessor": "1"}});
+    let scripted = |stem: &str| {
+        ["ts", "js", "mts", "mjs", "cts", "cjs"].map(|extension| format!("{stem}.{extension}"))
+    };
+    let cucumber = [
+        "cucumber.json",
+        "cucumber.yaml",
+        "cucumber.yml",
+        "cucumber.js",
+        "cucumber.cjs",
+        "cucumber.mjs",
+        "cucumber.ts",
+        "cucumber.cts",
+        "cucumber.mts",
+    ]
+    .map(String::from);
+    /// Writes configuration naming `dir` and returns the pattern discovery must report for it.
+    type Case = fn(&str, &str) -> (String, String);
+    let cucumber_case: Case = |name, dir| {
+        let source = match name.rsplit('.').next() {
+            Some("json") => format!(r#"{{"paths":["{dir}"]}}"#),
+            Some("yaml" | "yml") => format!("paths: [{dir}]"),
+            _ => format!("module.exports = {{ paths: ['{dir}'] }};"),
+        };
+        (source, format!("{dir}/**/*.{{feature,feature.md}}"))
+    };
+    let playwright_case: Case = |_, dir| {
+        let source = format!("defineBddConfig({{ features: ['{dir}'] }});");
+        (source, format!("{dir}/**/*.feature"))
+    };
+    let cypress_case: Case = |_, dir| {
+        let source = format!("defineConfig({{ e2e: {{ specPattern: '{dir}/*.feature' }} }});");
+        (source, format!("{dir}/*.feature"))
+    };
+    for (names, case, package) in [
+        (cucumber.to_vec(), cucumber_case, None),
+        (
+            scripted("playwright.config").to_vec(),
+            playwright_case,
+            None,
+        ),
+        (
+            scripted("cypress.config").to_vec(),
+            cypress_case,
+            Some(&cypress),
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = |name: &str| name.replace('.', "_");
+        for name in &names {
+            fs::write(directory.path().join(name), case(name, &dir(name)).0).unwrap();
+        }
+        for name in &names {
+            let detected = detect(directory.path(), package).unwrap().unwrap();
+            assert_eq!(detected.source, directory.path().join(name));
+            assert_eq!(detected.patterns, [case(name, &dir(name)).1]);
+            fs::remove_file(directory.path().join(name)).unwrap();
+        }
+        assert!(detect(directory.path(), package).unwrap().is_none());
+    }
+}
+
+/// Checks object shapes the static reader skips or rejects: a non-object `default`, a call without
+/// an object argument, spread and shorthand entries, and arrays with non-string items.
+#[test]
+fn static_object_reader_skips_unsupported_entries() {
+    let strings = |values: &[&str]| {
+        LiteralProperty::Strings(values.iter().map(|value| (*value).to_owned()).collect())
+    };
+    for (source, call, expected) in [
+        (
+            "export default { default: 'x', paths: ['a'] };",
+            None,
+            strings(&["a"]),
+        ),
+        (
+            "export default { default: { paths: ['d'] }, paths: ['a'] };",
+            None,
+            strings(&["d"]),
+        ),
+        (
+            "const base = {}; export default { ...base, base, paths: ['a'] };",
+            None,
+            strings(&["a"]),
+        ),
+        (
+            "export default { paths: ['a', b] };",
+            None,
+            LiteralProperty::Dynamic,
+        ),
+        (
+            "export default { paths: ['a', 'b'] };",
+            None,
+            strings(&["a", "b"]),
+        ),
+        (
+            "defineBddConfig(options); defineBddConfig({ paths: ['a'] });",
+            Some("defineBddConfig"),
+            strings(&["a"]),
+        ),
+        (
+            "defineBddConfig(options);",
+            Some("defineBddConfig"),
+            LiteralProperty::Missing,
+        ),
+    ] {
+        assert_eq!(
+            static_object_property(source, "js", call, "paths").unwrap(),
+            expected,
+            "{source}"
+        );
+    }
 }
