@@ -241,7 +241,7 @@ test("unmodeled shapes fail closed, with modeled siblings as controls", () => {
 test("path classes: core, registry, adapter, exempt, test, asset; unknown fails closed", () => {
   for (const [path, expected] of [
     ["src/analysis/", "core"], ["src/ruby/", "adapter"], ["src/analysis/tests/", "test"], ["src/analysis/pairs.rs", "core"], ["src/ruby_helpers.rs", "core"], ["src/source_adapter/config.rs", "core"],
-    ["src/source_adapter.rs", "registry"],
+    ["src/source_adapter.rs", "registry"], ["src/framework_registry.rs", "registry"], ["src/framework_registry/x.rs", "core"], ["src/framework_descriptor.rs", "core"],
     ["src/ruby.rs", "adapter"], ["src/ruby/bindings.rs", "adapter"], ["src/ruby/data.bin", "adapter"],
     ["src/typescript.rs", "adapter"], ["src/typescript/handler/x.rs", "adapter"],
     ["src/lib.rs", "exempt"], ["src/main.rs", "exempt"],
@@ -341,19 +341,26 @@ test("CLI: adapter, composition, test and asset paths are not scanned", async ()
   });
 });
 
-/** Checks the registry file has its own baseline and a core baseline cannot absorb its edges. */
-test("CLI: source_adapter.rs is ratcheted in its own section", async () => {
+/** Checks each registry file has its own baseline, a core baseline cannot absorb its edges, and a core file beside it stays core. */
+test("CLI: registry files are ratcheted in their own section", async () => {
   const text = "use tree_sitter_ruby; let _ = SourceLanguage::Ruby;";
-  const registry = [["src/source_adapter.rs", "SourceLanguage::Ruby", 1], ["src/source_adapter.rs", "grammar:tree_sitter_ruby", 1], ["src/source_adapter.rs", "name:ruby", 2]];
-  await withRepo({ "src/source_adapter.rs": text }, { registry }, async ({ run, put }) => {
-    const passing = run();
-    assert.equal(passing.status, 0, passing.stderr);
-    assert.match(passing.stdout, /registry: 1 files with edges; module 0, framework 0, language 1, domain 0, marker 0, name 2, key 0, grammar 1\./);
-    await put("src/source_adapter.rs", `${text} crate::typescript::x();`);
-    assert.match(run().stderr, /registry src\/source_adapter\.rs: module crate::typescript: baseline 0, found 1/);
-  });
-  await withRepo({ "src/source_adapter.rs": text }, { core: registry }, async ({ run }) => {
-    assert.match(run().stderr, /core src\/source_adapter\.rs: .*stale baseline/);
+  for (const file of ["src/source_adapter.rs", "src/framework_registry.rs"]) {
+    const registry = [[file, "SourceLanguage::Ruby", 1], [file, "grammar:tree_sitter_ruby", 1], [file, "name:ruby", 2]];
+    await withRepo({ [file]: text }, { registry }, async ({ run, put }) => {
+      const passing = run();
+      assert.equal(passing.status, 0, passing.stderr);
+      assert.match(passing.stdout, /registry: 1 files with edges; module 0, framework 0, language 1, domain 0, marker 0, name 2, key 0, grammar 1\./);
+      await put(file, `${text} crate::typescript::x();`);
+      const { stderr } = run();
+      assert.ok(stderr.includes(`registry ${file}: module crate::typescript: baseline 0, found 1`), stderr);
+    });
+    await withRepo({ [file]: text }, { core: registry }, async ({ run }) => {
+      const { stderr } = run();
+      assert.ok(stderr.includes(`core ${file}: `) && stderr.includes("stale baseline"), stderr);
+    });
+  }
+  await withRepo({ "src/framework_descriptor.rs": "crate::typescript::x();" }, { registry: [["src/framework_descriptor.rs", "crate::typescript", 1], ["src/framework_descriptor.rs", "name:typescript", 1]] }, async ({ run }) => {
+    assert.match(run().stderr, /core src\/framework_descriptor\.rs: module crate::typescript: baseline 0, found 1/);
   });
 });
 

@@ -1,65 +1,7 @@
 use super::*;
 use std::fs;
 
-/// Checks static Cucumber path extraction selects the default profile instead of other profiles.
-#[test]
-fn extracts_cucumber_default_profile_paths() {
-    let source = "export default { default: { paths: ['specs', 'acceptance/**/*.feature.md'] }, ci: { paths: ['wrong'] } }";
-    assert_eq!(
-        static_object_property(source, "js", None, "paths").unwrap(),
-        LiteralProperty::Strings(vec![
-            "specs".to_owned(),
-            "acceptance/**/*.feature.md".to_owned()
-        ])
-    );
-}
-
-/// Checks Playwright-BDD feature extraction ignores unrelated object properties.
-#[test]
-fn extracts_only_define_bdd_config_features() {
-    let source = "const unrelated = { features: ['wrong'] }; const testDir = defineBddConfig({ features: ['tests/**/*.spec'] });";
-    assert_eq!(
-        static_object_property(source, "ts", Some("defineBddConfig"), "features").unwrap(),
-        LiteralProperty::Strings(vec!["tests/**/*.spec".to_owned()])
-    );
-}
-
-/// Checks framework directories expand to the appropriate native feature extensions.
-#[test]
-fn maps_framework_directories_to_their_native_defaults() {
-    let mut warnings = Vec::new();
-    assert_eq!(
-        framework_pattern("features", FrameworkKind::Cucumber, &mut warnings),
-        Some("features/**/*.{feature,feature.md}".to_owned())
-    );
-    assert_eq!(
-        framework_pattern("specs", FrameworkKind::Playwright, &mut warnings),
-        Some("specs/**/*.feature".to_owned())
-    );
-    assert_eq!(
-        framework_pattern("./", FrameworkKind::Playwright, &mut warnings),
-        Some("**/*.feature".to_owned())
-    );
-}
-
-/// Checks Cypress feature patterns come from e2e configuration rather than component settings.
-#[test]
-fn extracts_cypress_e2e_spec_pattern_from_project_config() {
-    let source = r#"
-        export default defineConfig({
-            component: { specPattern: '**/*.cy.ts' },
-            e2e: { specPattern: ['cypress/e2e/**/*.feature', 'acceptance/**/*.feature.md'] }
-        });
-    "#;
-    assert_eq!(
-        static_object_property_path(source, "ts", Some("defineConfig"), &["e2e", "specPattern"])
-            .unwrap(),
-        LiteralProperty::Strings(vec![
-            "cypress/e2e/**/*.feature".to_owned(),
-            "acceptance/**/*.feature.md".to_owned()
-        ])
-    );
-}
+const CUCUMBER_DEFAULT: &str = "features/**/*.{feature,feature.md}";
 
 /// Checks recognized framework files and current or legacy dependency names enable the expected discovery defaults.
 #[test]
@@ -274,50 +216,6 @@ fn cucumber_files_match_regardless_of_contents_and_errors_propagate() {
     );
 }
 
-/// Checks Playwright and Cypress distinguish absent configuration from dynamic paths and framework defaults.
-#[test]
-fn framework_files_cover_missing_dynamic_and_default_paths() {
-    let directory = tempfile::tempdir().unwrap();
-
-    let playwright = directory.path().join("playwright.config.js");
-    fs::write(&playwright, "export default { testDir: 'tests' }").unwrap();
-    assert!(playwright_config(&playwright).unwrap().is_none());
-    fs::write(
-        &playwright,
-        "const root = dynamic(); defineBddConfig({ featuresRoot: root });",
-    )
-    .unwrap();
-    let dynamic = playwright_config(&playwright).unwrap().unwrap();
-    assert_eq!(dynamic.patterns, ["**/*.{feature,feature.md}"]);
-    assert_eq!(dynamic.warnings.len(), 1);
-    fs::write(&playwright, "defineBddConfig({});").unwrap();
-    assert_eq!(
-        playwright_config(&playwright).unwrap().unwrap().patterns,
-        ["features/**/*.feature"]
-    );
-    fs::write(&playwright, "defineBddConfig({ features: dynamic() });").unwrap();
-    assert_eq!(
-        playwright_config(&playwright)
-            .unwrap()
-            .unwrap()
-            .warnings
-            .len(),
-        1
-    );
-
-    let cypress = directory.path().join("cypress.config.ts");
-    fs::write(&cypress, "defineConfig({ component: {} });").unwrap();
-    assert!(cypress_config(&cypress).unwrap().is_none());
-    fs::write(
-        &cypress,
-        "const pattern = dynamic(); defineConfig({ e2e: { specPattern: pattern } });",
-    )
-    .unwrap();
-    let dynamic = cypress_config(&cypress).unwrap().unwrap();
-    assert_eq!(dynamic.patterns, ["**/*.{feature,feature.md}"]);
-    assert_eq!(dynamic.warnings.len(), 1);
-}
-
 /// Checks JSON, YAML, and JavaScript Cucumber formats preserve literals and warn only for dynamic paths.
 #[test]
 fn cucumber_file_formats_cover_literal_dynamic_and_missing_paths() {
@@ -350,115 +248,11 @@ fn cucumber_file_formats_cover_literal_dynamic_and_missing_paths() {
     ] {
         let path = directory.path().join(name);
         fs::write(&path, source).unwrap();
-        let detected = cucumber_config(&path).unwrap();
+        let detected = detect(directory.path(), None).unwrap().unwrap();
         assert_eq!(detected.patterns, expected, "{name}");
         assert_eq!(detected.warnings.len(), warnings, "{name}");
         fs::remove_file(path).unwrap();
     }
-}
-
-/// Checks path normalization handles root directories, line suffixes, Windows separators, and unsupported negation.
-#[test]
-fn framework_pattern_normalization_is_explicit() {
-    let mut warnings = Vec::new();
-    for (input, expected) in [
-        ("", None),
-        ("././", Some("**/*.{feature,feature.md}")),
-        (
-            "./features/login.feature:42",
-            Some("features/login.feature"),
-        ),
-        ("features/**/*.feature", Some("features/**/*.feature")),
-        (
-            "windows\\features",
-            Some("windows/features/**/*.{feature,feature.md}"),
-        ),
-        ("!generated/**", None),
-    ] {
-        assert_eq!(
-            framework_pattern(input, FrameworkKind::Cucumber, &mut warnings).as_deref(),
-            expected,
-            "{input}"
-        );
-    }
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(directory_pattern(".", "feature"), "**/*.feature");
-    assert!(is_glob("features/{a,b}.feature"));
-    assert!(!has_extension("features"));
-    assert!(has_extension("features/a.feature"));
-}
-
-/// Checks JSON and YAML path extraction distinguishes missing values, literal strings, and mixed dynamic lists.
-#[test]
-fn structured_config_values_distinguish_missing_dynamic_and_strings() {
-    assert_eq!(json_strings(None), LiteralProperty::Missing);
-    assert_eq!(
-        json_strings(Some(&JsonValue::String("a".to_owned()))),
-        LiteralProperty::Strings(vec!["a".to_owned()])
-    );
-    assert_eq!(
-        json_strings(Some(&serde_json::json!(["a", "b"]))),
-        LiteralProperty::Strings(vec!["a".to_owned(), "b".to_owned()])
-    );
-    assert_eq!(
-        json_strings(Some(&serde_json::json!(["a", 1]))),
-        LiteralProperty::Dynamic
-    );
-    assert_eq!(
-        cucumber_json_paths(r#"{"paths":"root.feature"}"#).unwrap(),
-        LiteralProperty::Strings(vec!["root.feature".to_owned()])
-    );
-    assert_eq!(
-        cucumber_yaml_paths("paths: dynamic").unwrap(),
-        LiteralProperty::Strings(vec!["dynamic".to_owned()])
-    );
-    assert_eq!(
-        cucumber_yaml_paths("paths: [one, 2]").unwrap(),
-        LiteralProperty::Dynamic
-    );
-    assert_eq!(
-        cucumber_yaml_paths("default: {}").unwrap(),
-        LiteralProperty::Missing
-    );
-}
-
-/// Checks static object queries distinguish absent and dynamic paths and decode supported quoted strings.
-#[test]
-fn static_object_queries_cover_absent_and_dynamic_shapes() {
-    assert_eq!(
-        static_object_property("const value = {};", "js", Some("missing"), "paths").unwrap(),
-        LiteralProperty::Missing
-    );
-    assert_eq!(
-        static_object_property("export default { paths: 42 };", "js", None, "paths").unwrap(),
-        LiteralProperty::Dynamic
-    );
-    assert_eq!(
-        static_object_property_path(
-            "defineConfig({ e2e: dynamic() })",
-            "js",
-            Some("defineConfig"),
-            &["e2e", "specPattern"]
-        )
-        .unwrap(),
-        LiteralProperty::Dynamic
-    );
-    assert_eq!(
-        static_object_property_path(
-            "defineConfig({ e2e: {} })",
-            "js",
-            Some("defineConfig"),
-            &["e2e", "specPattern"]
-        )
-        .unwrap(),
-        LiteralProperty::Missing
-    );
-    assert_eq!(
-        static_object_property_path("const x = {};", "js", None, &[]).unwrap(),
-        LiteralProperty::Missing
-    );
-    assert_eq!(unquote("'a\\/b'"), Some("a/b".to_owned()));
-    assert_eq!(unquote("dynamic"), None);
 }
 
 /// Pins the exact discovery origin and warning texts each framework configuration form produces,
@@ -655,54 +449,34 @@ fn every_config_filename_keeps_its_precedence() {
     }
 }
 
-/// Checks object shapes the static reader skips or rejects: a non-object `default`, a call without
-/// an object argument, spread and shorthand entries, and arrays with non-string items.
+/// Checks every descriptor's configuration read is bounded: one byte over the limit is a fatal
+/// input-limit error for structured, scripted and adapter files, and a file at the limit loads.
 #[test]
-fn static_object_reader_skips_unsupported_entries() {
-    let strings = |values: &[&str]| {
-        LiteralProperty::Strings(values.iter().map(|value| (*value).to_owned()).collect())
-    };
-    for (source, call, expected) in [
-        (
-            "export default { default: 'x', paths: ['a'] };",
-            None,
-            strings(&["a"]),
-        ),
-        (
-            "export default { default: { paths: ['d'] }, paths: ['a'] };",
-            None,
-            strings(&["d"]),
-        ),
-        (
-            "const base = {}; export default { ...base, base, paths: ['a'] };",
-            None,
-            strings(&["a"]),
-        ),
-        (
-            "export default { paths: ['a', b] };",
-            None,
-            LiteralProperty::Dynamic,
-        ),
-        (
-            "export default { paths: ['a', 'b'] };",
-            None,
-            strings(&["a", "b"]),
-        ),
-        (
-            "defineBddConfig(options); defineBddConfig({ paths: ['a'] });",
-            Some("defineBddConfig"),
-            strings(&["a"]),
-        ),
-        (
-            "defineBddConfig(options);",
-            Some("defineBddConfig"),
-            LiteralProperty::Missing,
-        ),
+fn framework_configuration_reads_are_input_limited() {
+    let cypress = r#"{"devDependencies":{"cypress-cucumber-preprocessor":"1"}}"#;
+    for (file, package) in [
+        ("cucumber.yml", None),
+        ("cucumber.js", None),
+        ("cypress.config.ts", Some(cypress)),
     ] {
-        assert_eq!(
-            static_object_property(source, "js", call, "paths").unwrap(),
-            expected,
-            "{source}"
-        );
+        for (size, fatal) in [(1024 * 1024, false), (1024 * 1024 + 1, true)] {
+            let directory = tempfile::tempdir().unwrap();
+            fs::write(directory.path().join(file), " ".repeat(size)).unwrap();
+            if let Some(package) = package {
+                fs::write(directory.path().join("package.json"), package).unwrap();
+            }
+            let loaded = crate::config::Config::load(directory.path(), Default::default());
+            assert_eq!(loaded.is_err(), fatal, "{file} at {size} bytes");
+            // The root prints in its platform form (no verbatim `\\?\` prefix on Windows),
+            // so only the kind, the file name and the limit are compared.
+            if let Err(error) = loaded {
+                let message = error.to_string();
+                let tail = format!("{file} exceeds the 1048576-byte input limit");
+                assert!(
+                    message.starts_with("framework configuration ") && message.contains(&tail),
+                    "{file}: {error:#}"
+                );
+            }
+        }
     }
 }

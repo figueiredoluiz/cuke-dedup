@@ -43,9 +43,9 @@ Run it directly: `node scripts/check/check-docstrings.mjs --base origin/main`.
 
 ### Language boundary
 
-`npm run check:boundaries` counts how much language and framework knowledge the language-neutral core still holds and compares each count with `scripts/check/language-boundary.json`. The `core` section of the baseline is meant to shrink to empty; the `registry` section (`src/source_adapter.rs`, the one place that registers languages) keeps its rows, because it may name languages; its counts are still compared with the baseline, so a change there also needs a baseline update.
+`npm run check:boundaries` counts how much language and framework knowledge the language-neutral core still holds and compares each count with `scripts/check/language-boundary.json`. The `core` section of the baseline is meant to shrink to empty; the `registry` section (`src/source_adapter.rs`, which registers languages, and `src/framework_registry.rs`, which registers framework descriptors) keeps its rows, because those files may name languages and frameworks; its counts are still compared with the baseline, so a change there also needs a baseline update.
 
-- Scope: every Rust file under `src/`; hidden non-Rust files such as `.DS_Store` and hidden symbolic links such as Emacs lock files (`.#a.rs`) are skipped. `src/ruby.rs`, `src/ruby/`, `src/typescript.rs` and `src/typescript/` (adapters), `src/lib.rs` and `src/main.rs` (composition), dedicated `tests` files and `src/reporters/templates/` are not scanned. `src/source_adapter.rs` is the registry and has its own `registry` section; every other file is `core`. The check fails closed on an unknown file type, a symbolic link that is not hidden, Rust the scanner cannot tokenize, an unsupported `use` form (wildcard import of `crate::*` or a tracked path, a `super::` wildcard other than a plain `super::*` chain that stays inside the file's inline modules, ambiguous or cyclic alias) and a `type` item that names a tracked path.
+- Scope: every Rust file under `src/`; hidden non-Rust files such as `.DS_Store` and hidden symbolic links such as Emacs lock files (`.#a.rs`) are skipped. `src/ruby.rs`, `src/ruby/`, `src/typescript.rs` and `src/typescript/` (adapters), `src/lib.rs` and `src/main.rs` (composition), dedicated `tests` files and `src/reporters/templates/` are not scanned. `src/source_adapter.rs` and `src/framework_registry.rs` are registries and have their own `registry` section; every other file is `core`. The check fails closed on an unknown file type, a symbolic link that is not hidden, Rust the scanner cannot tokenize, an unsupported `use` form (wildcard import of `crate::*` or a tracked path, a `super::` wildcard other than a plain `super::*` chain that stays inside the file's inline modules, ambiguous or cyclic alias) and a `type` item that names a tracked path.
 - Edge kinds: `module` (`crate::ruby`, `crate::typescript`), `framework`, `language` (`SourceLanguage`) and `domain` (`ComparisonDomain`) type and variant uses, `marker` (`method:<name>:` string literals, any name), `name` (identifiers with a snake_case, camelCase or digit-delimited segment spelling ruby, typescript, javascript, jest, vitest, playwright, cypress or cucumberjs; `TypeScript`, `java_script` and `cucumber_js` match as two adjacent segments), `key` (whole-token string literals such as `"rubyLoadPaths"` containing those words) and `grammar` (`tree_sitter_<lang>` crates).
 - Lexical, not name resolution: comments and prose strings are ignored, file-wide `use` aliases are resolved, inline `#[cfg(test)]` modules count, `Self::Variant` inside an `impl` whose header names a tracked type counts as that type's variant (an upper bound: every tracked type in the header gets it, and associated items declared elsewhere may count), macro-generated impls, markers built at runtime (`format!`) and run-together lowercase names (`rubyist`) are not seen, and kinds overlap (`SourceLanguage::Ruby` counts as `language` and as `name:ruby`).
 - Baseline rows are `[file, edge, count]`, sorted, one per line. An added edge fails as growth; a removed edge or lowered count fails as stale until the baseline is lowered.
@@ -137,9 +137,10 @@ Fire only on inputs far beyond test-practical size:
 ### Failing-I/O propagation
 
 - `src/main.rs` (BrokenPipe arm), `src/reporters/terminal.rs`, `src/cli.rs`, `src/modes.rs`,
-  `src/framework_config.rs`, `src/config.rs`: `?` paths that propagate failed writes, git
-  subprocess output or configuration reads. The suite exercises one terminal footer write returning
-  `BrokenPipe`; the others need external conditions such as a vanished file.
+  `src/framework_descriptor.rs`, `src/typescript/framework_config.rs`, `src/config.rs`: `?` paths
+  that propagate failed writes, git subprocess output or configuration reads. The suite exercises
+  one terminal footer write returning `BrokenPipe`; the others need external conditions such as a
+  vanished file.
 
 ### Reachable residual
 

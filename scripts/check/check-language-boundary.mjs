@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // First match wins; a trailing `/` matches a directory prefix. `core` and `registry` are scanned.
 const classes = [
   ["src/lib.rs", "exempt"], ["src/main.rs", "exempt"],
-  ["src/source_adapter.rs", "registry"],
+  ["src/source_adapter.rs", "registry"], ["src/framework_registry.rs", "registry"],
   ["src/typescript.rs", "adapter"], ["src/typescript/", "adapter"],
   ["src/ruby.rs", "adapter"], ["src/ruby/", "adapter"],
   ["src/reporters/templates/", "asset"],
