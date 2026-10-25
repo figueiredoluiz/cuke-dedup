@@ -2918,6 +2918,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "work_budget_charge_exceeds_only_past_the_limit_and_saturates",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Core `WorkBudget::charge` arithmetic over plain integers: saturating commit and the strict `>` comparator. `assertion_work_boundary_is_decided_by_its_own_counter` and `origin_work_limits_never_publish_partial_authority` pin the exact work boundaries of the Ruby collectors built on it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "work_budget_admit_charges_only_what_fits",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
