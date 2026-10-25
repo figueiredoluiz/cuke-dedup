@@ -52,12 +52,11 @@ impl Origins {
         {
             return Some(BTreeMap::new());
         }
-        let mut work = 0usize;
+        let mut work = WorkBudget::new(budget);
         let mut declarations = BTreeMap::<String, Vec<(usize, Node<'_>)>>::new();
         for (unit, input) in units.iter().enumerate() {
             let nodes = descendants(input.tree.root_node());
-            work = work.saturating_add(nodes.len());
-            if work > budget {
+            if work.charge(nodes.len()) {
                 return None;
             }
             for module in nodes.into_iter().filter(|node| {
@@ -194,8 +193,7 @@ impl Origins {
         let mut remaining: BTreeSet<_> = (0..units.len()).collect();
         let mut order = Vec::new();
         while !remaining.is_empty() {
-            work = work.saturating_add(units.len().saturating_mul(edges.len().max(1)));
-            if work > budget {
+            if work.charge(units.len().saturating_mul(edges.len().max(1))) {
                 return None;
             }
             let unit = remaining.iter().copied().find(|index| {
@@ -238,17 +236,16 @@ impl Origins {
                 let mut initialized = BTreeMap::new();
                 let mut exported = BTreeMap::new();
                 if round == 1 {
-                    work = work.saturating_add(
+                    if work.charge(
                         units
                             .len()
                             .saturating_mul(edges.len().max(1))
                             .saturating_mul(32),
-                    );
-                    if work > budget {
+                    ) {
                         return None;
                     }
                     let (namespaces, exports) =
-                        preceding_context(unit_id, units, edges, &summaries, 0, &mut work, budget)
+                        preceding_context(unit_id, units, edges, &summaries, 0, &mut work)
                             .unwrap_or_default();
                     available.extend(namespaces);
                     for (name, value) in exports {
@@ -295,8 +292,7 @@ impl Origins {
                                                 && Path::new(item) == edge.target
                                         }))
                                 {
-                                    work = work.saturating_add(nodes.len());
-                                    if work > budget {
+                                    if work.charge(nodes.len()) {
                                         return None;
                                     }
                                     for call in &nodes {
@@ -322,8 +318,7 @@ impl Origins {
                                     && declarations[0].0 == provider
                                 {
                                     let module = declarations[0].1;
-                                    work = work.saturating_add(descendants(module).len());
-                                    if work > budget {
+                                    if work.charge(descendants(module).len()) {
                                         return None;
                                     }
                                     if descriptor(module, &units[provider].source).is_some() {
@@ -374,8 +369,7 @@ impl Origins {
                                             )
                                     }) {
                                         for assignment in assignments {
-                                            work = work.saturating_add(resolution_work);
-                                            if work > budget {
+                                            if work.charge(resolution_work) {
                                                 return None;
                                             }
                                             let left = assignment.child_by_field_name("left")?;
@@ -418,8 +412,7 @@ impl Origins {
                                 if values.contains_key(text(left, &input.source)) {
                                     values.insert(text(left, &input.source).to_owned(), None);
                                 } else {
-                                    work = work.saturating_add(resolution_work);
-                                    if work > budget {
+                                    if work.charge(resolution_work) {
                                         return None;
                                     }
                                     let value = resolve(
@@ -452,7 +445,7 @@ impl Origins {
                         }
                     }
                 }
-                work = work.saturating_add(
+                if work.charge(
                     nodes.len().saturating_mul(
                         nodes
                             .iter()
@@ -460,8 +453,7 @@ impl Origins {
                             .count()
                             .max(1),
                     ),
-                );
-                if work > budget {
+                ) {
                     return None;
                 }
                 let (injected_arguments, injected_factories) =
@@ -615,18 +607,14 @@ impl Origins {
                     }
                 }
                 for node in nodes {
-                    work = work.saturating_add(1);
-                    if work > budget {
+                    if work.charge(1) {
                         return None;
                     }
                     if node.kind() != "call" {
                         continue;
                     }
                     let children = descendants(node);
-                    work = work
-                        .saturating_add(children.len())
-                        .saturating_add(resolution_work);
-                    if work > budget {
+                    if work.charge(children.len().saturating_add(resolution_work)) {
                         return None;
                     }
                     if children.iter().any(|part| {
@@ -779,11 +767,10 @@ fn preceding_context<'a>(
     edges: &[SourceDependency],
     summaries: &BTreeMap<usize, Summary<'a>>,
     depth: usize,
-    work: &mut usize,
-    budget: usize,
+    work: &mut WorkBudget,
 ) -> Option<Summary<'a>> {
-    *work = work.saturating_add(units.len()).saturating_add(edges.len());
-    if depth >= 32 || *work > budget {
+    let exceeded = work.charge(units.len().saturating_add(edges.len()));
+    if depth >= 32 || exceeded {
         return None;
     }
     let mut contexts = Vec::new();
@@ -797,8 +784,7 @@ fn preceding_context<'a>(
         let root = units[parent].tree.root_node();
         let source = &units[parent].source;
         let nodes = descendants(root);
-        *work = work.saturating_add(nodes.len().saturating_mul(edges.len().max(1)));
-        if *work > budget {
+        if work.charge(nodes.len().saturating_mul(edges.len().max(1))) {
             return None;
         }
         let load = nodes.iter().find(|node| {
@@ -808,7 +794,7 @@ fn preceding_context<'a>(
             return None;
         }
         let (mut namespaces, mut exports) =
-            preceding_context(parent, units, edges, summaries, depth + 1, work, budget)?;
+            preceding_context(parent, units, edges, summaries, depth + 1, work)?;
         for previous in edges
             .iter()
             .filter(|previous| previous.location.path == units[parent].file.path)
@@ -1530,17 +1516,20 @@ mod tests {
             })
             .collect();
         let mut exhausted = false;
-        let mut complete = false;
+        let mut complete_from = None;
         for budget in 0..4000 {
             match Origins::collect(&units, &edges, &["provider".into()], None, budget) {
                 None => exhausted = true,
                 Some(origins) => {
-                    complete = true;
+                    complete_from.get_or_insert(budget);
                     assert_eq!(origins[&files[2].path].factories.len(), 1);
                 }
             }
         }
-        assert!(exhausted && complete);
+        assert!(exhausted);
+        // The first complete budget is the total charge on this graph, so a dropped or moved
+        // charge shifts it.
+        assert_eq!(complete_from, Some(3148));
         let absolute = units[0].canonical_path.to_string_lossy().into_owned();
         let origins = Origins::collect(&units, &edges, &[absolute], None, usize::MAX).unwrap();
         assert!(origins[&files[2].path]
@@ -1556,8 +1545,7 @@ mod tests {
             &[edges[1].clone(), missing_call],
             &BTreeMap::new(),
             0,
-            &mut 0,
-            usize::MAX,
+            &mut WorkBudget::new(usize::MAX),
         )
         .unwrap();
         assert!(contexts.0.is_empty() && contexts.1.is_empty());
@@ -1582,15 +1570,18 @@ mod tests {
             &[nested_edge],
             &BTreeMap::new(),
             0,
-            &mut 0,
-            usize::MAX
+            &mut WorkBudget::new(usize::MAX)
         )
         .is_none());
         for (depth, budget) in [(32, usize::MAX), (0, 0), (0, 8)] {
+            let mut work = WorkBudget::new(budget);
             assert!(
-                preceding_context(1, &units, &edges, &BTreeMap::new(), depth, &mut 0, budget)
-                    .is_none()
+                preceding_context(1, &units, &edges, &BTreeMap::new(), depth, &mut work).is_none()
             );
+            if depth == 32 {
+                // The depth cut still charges its visit, so a deep chain cannot hide work.
+                assert_eq!(work.spent(), units.len() + edges.len());
+            }
         }
         let node = units[2].tree.root_node().named_child(1).unwrap();
         assert!(resolve(

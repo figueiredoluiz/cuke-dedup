@@ -2,6 +2,7 @@
 
 use super::{descendants, literal_string, location, text};
 use crate::model::BehaviorEvent;
+use crate::resource_limits::WorkBudget;
 
 #[cfg(test)]
 use crate::source_adapter::SourceFile;
@@ -146,13 +147,12 @@ impl AssertionProviders {
             .map(|(_, _, tree)| descendants(tree.root_node()))
             .collect();
         let total_nodes: usize = nodes.iter().map(Vec::len).sum();
-        let mut work = total_nodes.saturating_mul(2);
-        if work > work_budget {
+        let mut work = WorkBudget::new(work_budget);
+        if work.charge(total_nodes.saturating_mul(2)) {
             return Self::unavailable();
         }
         // A configured JS/TS-only module cannot make an unrelated Ruby graph incomplete.
-        work = work.saturating_add(total_nodes);
-        if work > work_budget {
+        if work.charge(total_nodes) {
             return Self::unavailable();
         }
         if !units.iter().zip(&nodes).any(|((_, source, tree), nodes)| {
@@ -199,8 +199,7 @@ impl AssertionProviders {
                 .map(|(position, _)| *position)
                 .collect::<BTreeSet<_>>();
             for edge in edges.iter().filter(|edge| edge.location.path == file.path) {
-                work = work.saturating_add(nodes[unit].len());
-                if work > work_budget {
+                if work.charge(nodes[unit].len()) {
                     return Self::unavailable();
                 }
                 let Some(load) = nodes[unit].iter().copied().find(|node| {
@@ -217,8 +216,7 @@ impl AssertionProviders {
                 let Some(provider) = canonical.iter().position(|path| path == &edge.target) else {
                     continue;
                 };
-                work = work.saturating_add(nodes[provider].len().saturating_mul(2));
-                if work > work_budget {
+                if work.charge(nodes[provider].len().saturating_mul(2)) {
                     return Self::unavailable();
                 }
                 let mut trusted = resolved.factories.values().any(|callable| {
@@ -251,10 +249,11 @@ impl AssertionProviders {
                     {
                         continue;
                     }
-                    work = work
-                        .saturating_add(total_nodes.saturating_mul(2))
-                        .saturating_add(nodes[unit].len());
-                    if work > work_budget {
+                    if work.charge(
+                        total_nodes
+                            .saturating_mul(2)
+                            .saturating_add(nodes[unit].len()),
+                    ) {
                         return Self::unavailable();
                     }
                     // Any escape, alias, replacement, or unknown member use removes trust globally.
@@ -1162,6 +1161,54 @@ mod tests {
                 .get(&files[0].path, source)
                 .is_none_or(|bindings| bindings.factories.is_empty()));
         }
+    }
+
+    /// Many closed providers make this collector's own counter, not the origins pass that runs first
+    /// with a separate counter under the same limit, decide where proofs become available.
+    #[test]
+    fn assertion_work_boundary_is_decided_by_its_own_counter() {
+        let root = tempfile::tempdir().unwrap();
+        let files = provider_files(root.path());
+        let source =
+            "require_relative 'assertions'\nGiven('one') { Assertions0.expect(page).to_be(1) }";
+        std::fs::write(&files[0].path, source).unwrap();
+        // Discriminating shape: each closed `expect` module charges the whole graph twice here,
+        // while origins charge it about once.
+        let provider: String = (0..20)
+            .map(|index| {
+                format!("module Assertions{index}; def self.expect(actual); actual; end; end\n")
+            })
+            .collect();
+        std::fs::write(&files[1].path, provider).unwrap();
+        let units = super::super::providers::load_units(&files, (2, 1 << 20))
+            .unwrap()
+            .unwrap();
+        let load = units[0].tree.root_node().named_child(0).unwrap();
+        let edges = [SourceDependency::new(
+            location(&files[0], load, source),
+            units[1].canonical_path.clone(),
+        )];
+        let configured = ["./assertions".into()];
+        let first_complete = |complete: &dyn Fn(usize) -> bool| {
+            let (mut low, mut high) = (0, 100_000);
+            while low < high {
+                let middle = (low + high) / 2;
+                if complete(middle) {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            low
+        };
+        let origins = first_complete(&|work| {
+            origins::Origins::collect(&units, &edges, &configured, None, work).is_some()
+        });
+        let assertions = first_complete(&|work| {
+            !AssertionProviders::from_units(&units, &edges, &configured, work).incomplete()
+        });
+        assert!(origins < assertions, "{origins} {assertions}");
+        assert_eq!(assertions, 10453);
     }
 
     /// Session proofs survive source deletion without reloading and are keyed by current source bytes.

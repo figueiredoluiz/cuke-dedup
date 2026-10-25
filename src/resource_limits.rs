@@ -33,7 +33,8 @@ pub(crate) const MAX_STRUCTURAL_CLASS_COMPARISONS: usize = 250_000;
 pub(crate) const SOURCE_CLASSIFICATION_PREFIX_BYTES: usize = 64 * 1024;
 pub(crate) const MINIFIED_MEAN_LINE_BYTES: usize = 200;
 
-/// Work admitted against a limit: a charge is taken only when the total stays within it.
+/// Work counted against a limit. `charge` always takes the work and reports a total past the limit;
+/// `admit` takes it only when the total stays within the limit.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WorkBudget {
     limit: usize,
@@ -46,6 +47,13 @@ impl WorkBudget {
         Self { limit, spent: 0 }
     }
 
+    /// Charges `amount`, saturating, and reports whether the total now exceeds the limit. The total
+    /// never decreases, so once it exceeds the limit every later charge reports it too.
+    pub(crate) fn charge(&mut self, amount: usize) -> bool {
+        self.spent = self.spent.saturating_add(amount);
+        self.spent > self.limit
+    }
+
     /// Charges `amount` only when the total stays within the limit, and reports whether it did.
     /// A refusal does not latch: a smaller later amount may still fit, so a caller that must not
     /// admit anything after a cut stops at the first refusal or records it itself.
@@ -56,6 +64,11 @@ impl WorkBudget {
             self.spent = spent;
         }
         fits
+    }
+
+    /// The limit this budget was created with.
+    pub(crate) const fn limit(&self) -> usize {
+        self.limit
     }
 
     /// The total charged so far.
@@ -292,6 +305,36 @@ mod tests {
             .join("|");
         let error = compile_regex_with_limits(&pattern, 128, 128).unwrap_err();
         assert!(matches!(error, regex::Error::CompiledTooBig(128)));
+    }
+
+    /// `charge` takes every amount, saturating, and reports exceeded only once work passes the
+    /// limit; reaching the limit exactly is not exhaustion, and exhaustion persists.
+    #[test]
+    fn work_budget_charge_exceeds_only_past_the_limit_and_saturates() {
+        for (limit, charges, expected) in [
+            (0, &[0][..], &[false][..]),
+            (0, &[1, 0], &[true, true]),
+            (2, &[1, 1], &[false, false]),
+            (2, &[2, 1, 0], &[false, true, true]),
+            (usize::MAX, &[usize::MAX, usize::MAX], &[false, false]),
+            (usize::MAX - 1, &[usize::MAX, 1], &[true, true]),
+        ] {
+            let mut budget = WorkBudget::new(limit);
+            let answers: Vec<_> = charges
+                .iter()
+                .map(|amount| budget.charge(*amount))
+                .collect();
+            assert_eq!(answers, expected, "{limit} {charges:?}");
+            let total = charges
+                .iter()
+                .fold(0usize, |sum, amount| sum.saturating_add(*amount));
+            assert_eq!(
+                budget.spent(),
+                total,
+                "a charge past the limit is still taken"
+            );
+            assert_eq!(budget.limit(), limit);
+        }
     }
 
     /// `admit` charges only amounts that keep the total within the limit, so one-unit admissions

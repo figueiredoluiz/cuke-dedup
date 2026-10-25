@@ -4,8 +4,8 @@ use super::{descendants, literal_string, location, syntax_error, text};
 use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::resource_limits::{
-    known_input_limit_exceeded, read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES,
-    MAX_REGISTRATION_MODULE_BYTES,
+    known_input_limit_exceeded, read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES,
+    MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
 };
 use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile, SourceLanguage};
 use globset::GlobSet;
@@ -31,37 +31,44 @@ pub(crate) fn resolve(config: &Config, excludes: &GlobSet, files: &mut Discovere
 }
 
 /// Dependency-only modules admitted so far and their bytes, plus the sticky refusal reason.
-#[derive(Default)]
 struct Expansion {
-    modules: usize,
-    bytes: usize,
+    modules: WorkBudget,
+    bytes: WorkBudget,
     refused: Option<String>,
 }
 
 impl Expansion {
-    /// Charges a new dependency-only target against `(modules, bytes)`. Selected entry points are
-    /// never charged. Once a limit refuses a target every later new target is refused with the
-    /// same reason, so a smaller file cannot slip in after the graph was cut.
-    fn admit(&mut self, target: &Path, (max_modules, max_bytes): (usize, usize)) -> Option<String> {
+    /// An expansion with nothing admitted against `(modules, bytes)`.
+    fn new((max_modules, max_bytes): (usize, usize)) -> Self {
+        Self {
+            modules: WorkBudget::new(max_modules),
+            bytes: WorkBudget::new(max_bytes),
+            refused: None,
+        }
+    }
+
+    /// Charges a new dependency-only target. Selected entry points are never charged. Once a limit
+    /// refuses a target every later new target is refused with the same reason, so a smaller file
+    /// cannot slip in after the graph was cut.
+    fn admit(&mut self, target: &Path) -> Option<String> {
         if self.refused.is_none() {
-            // A target whose metadata vanishes after `is_file` is charged nothing here; reading it
-            // fails next and extraction reports the file, so no false limit is blamed.
+            // A target whose metadata vanishes after `is_file` is charged no bytes here; reading it
+            // fails next and extraction reports the file, so no false byte limit is blamed.
             let size = std::fs::metadata(target)
                 .map_or(0, |meta| usize::try_from(meta.len()).unwrap_or(usize::MAX));
-            let bytes = self.bytes.saturating_add(size);
-            if self.modules >= max_modules {
+            // `admit` does not latch, so `refused` is the latch; it also carries this adapter's
+            // reason. A target refused for bytes leaves its module charged, but nothing is
+            // charged after a refusal.
+            if !self.modules.admit(1) {
                 self.refused = Some(format!(
                     "the source graph exceeds the {}-file limit",
-                    grouped(max_modules)
+                    grouped(self.modules.limit())
                 ));
-            } else if bytes > max_bytes {
+            } else if !self.bytes.admit(size) {
                 self.refused = Some(format!(
                     "the source graph exceeds the {} limit",
-                    byte_limit(max_bytes)
+                    byte_limit(self.bytes.limit())
                 ));
-            } else {
-                self.modules += 1;
-                self.bytes = bytes;
             }
         }
         self.refused.clone()
@@ -130,7 +137,7 @@ fn resolve_graph(
         .filter_map(|file| Some((canonical_platform_path(&file.path).ok()?, file.path.clone())))
         .collect();
     let mut promoted = BTreeSet::new();
-    let mut expansion = Expansion::default();
+    let mut expansion = Expansion::new(budget);
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
     while let Some(file) = queue.pop_front() {
@@ -217,7 +224,7 @@ fn resolve_graph(
                         .push(DependencyGap::new(location(&file, node, &source), reason));
                     continue;
                 }
-                if let Some(reason) = expansion.admit(&target, budget) {
+                if let Some(reason) = expansion.admit(&target) {
                     files
                         .dependency_gaps
                         .push(DependencyGap::new(location(&file, node, &source), reason));
