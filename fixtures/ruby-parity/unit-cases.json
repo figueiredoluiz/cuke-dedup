@@ -1903,32 +1903,43 @@
         }
       ]
     },
-    "src/framework_config/tests.rs": {
+    "src/framework_descriptor/tests.rs": {
       "tests": [
         {
-          "name": "extracts_cucumber_default_profile_paths",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`extracts cucumber default profile paths`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
-          "name": "extracts_only_define_bdd_config_features",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`extracts only define bdd config features`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
           "name": "maps_framework_directories_to_their_native_defaults",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`maps framework directories to their native defaults`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Cucumber path normalization and JSON/YAML path classification in the core descriptor, which read configuration text and no adapter output; cucumber.yml discovery for Ruby is covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "extracts_cypress_e2e_spec_pattern_from_project_config",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`extracts cypress e2e spec pattern from project config`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
+          "name": "framework_pattern_normalization_is_explicit",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Cucumber path normalization and JSON/YAML path classification in the core descriptor, which read configuration text and no adapter output; cucumber.yml discovery for Ruby is covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "shared-engine-invariant"
         },
+        {
+          "name": "structured_config_values_distinguish_missing_dynamic_and_strings",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Cucumber path normalization and JSON/YAML path classification in the core descriptor, which read configuration text and no adapter output; cucumber.yml discovery for Ruby is covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "structured_cucumber_discovery_needs_no_script_reader",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/framework_descriptor/tests.rs",
+            "name": "structured_cucumber_discovery_needs_no_script_reader"
+          },
+          "rationale": "Discovers a Ruby project's `cucumber.yml` with no scripted-configuration reader registered; a scripted `cucumber.js` is the control that needs the reader.",
+          "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
+    "src/framework_registry/tests.rs": {
+      "tests": [
         {
           "name": "detects_supported_frameworks_and_dependency_fallbacks",
           "requiredStatus": "language-inapplicable",
@@ -1972,40 +1983,16 @@
           "behaviorClass": "language-specific-api"
         },
         {
-          "name": "framework_files_cover_missing_dynamic_and_default_paths",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`framework files cover missing dynamic and default paths`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
           "name": "cucumber_file_formats_cover_literal_dynamic_and_missing_paths",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JS framework configuration detection (`cucumber file formats cover literal dynamic and missing paths`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
           "behaviorClass": "language-specific-api"
         },
         {
-          "name": "framework_pattern_normalization_is_explicit",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`framework pattern normalization is explicit`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
-          "name": "structured_config_values_distinguish_missing_dynamic_and_strings",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`structured config values distinguish missing dynamic and strings`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
-          "name": "static_object_queries_cover_absent_and_dynamic_shapes",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: JS framework configuration detection (`static object queries cover absent and dynamic shapes`): Playwright-BDD, Cypress, Jest-Cucumber files and dependencies. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
-        },
-        {
           "name": "discovery_origins_and_warning_texts_are_exact",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
-            "file": "src/framework_config/tests.rs",
+            "file": "src/framework_registry/tests.rs",
             "name": "discovery_origins_and_warning_texts_are_exact"
           },
           "rationale": "Pins the exact discovery origin and warning texts through `Config::load`, including the origin label and dynamic-paths warning for `cucumber.yml`, the file Ruby projects use, in the `paths` profile shape the reader supports.",
@@ -2015,17 +2002,21 @@
           "name": "every_config_filename_keeps_its_precedence",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
-            "file": "src/framework_config/tests.rs",
+            "file": "src/framework_registry/tests.rs",
             "name": "every_config_filename_keeps_its_precedence"
           },
           "rationale": "Pins the precedence of every framework configuration filename, including `cucumber.yml`, the Cucumber-Ruby configuration file, below `cucumber.json` and `cucumber.yaml`.",
           "behaviorClass": "ruby-behavior"
         },
         {
-          "name": "static_object_reader_skips_unsupported_entries",
-          "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: static object reader for scripted JavaScript/TypeScript configuration. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
-          "behaviorClass": "language-specific-api"
+          "name": "framework_configuration_reads_are_input_limited",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/framework_registry/tests.rs",
+            "name": "framework_configuration_reads_are_input_limited"
+          },
+          "rationale": "Pins the fatal input-limit error, with an at-limit control, for `cucumber.yml`, the Cucumber-Ruby configuration file, and for scripted and adapter configuration files.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },
@@ -3154,6 +3145,46 @@
           "stage": "matcher-text",
           "rationale": "Adapter-independent stage `matcher-text`: stub labels fold punctuation, quoting and case; near misses do not match.",
           "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/typescript/framework_config/tests.rs": {
+      "tests": [
+        {
+          "name": "extracts_cucumber_default_profile_paths",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: scripted JavaScript/TypeScript configuration reader and the Playwright-BDD and Cypress descriptors (`extracts cucumber default profile paths`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "extracts_only_define_bdd_config_features",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: scripted JavaScript/TypeScript configuration reader and the Playwright-BDD and Cypress descriptors (`extracts only define bdd config features`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "extracts_cypress_e2e_spec_pattern_from_project_config",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: scripted JavaScript/TypeScript configuration reader and the Playwright-BDD and Cypress descriptors (`extracts cypress e2e spec pattern from project config`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "framework_files_cover_missing_dynamic_and_default_paths",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: scripted JavaScript/TypeScript configuration reader and the Playwright-BDD and Cypress descriptors (`framework files cover missing dynamic and default paths`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "static_object_queries_cover_absent_and_dynamic_shapes",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: scripted JavaScript/TypeScript configuration reader and the Playwright-BDD and Cypress descriptors (`static object queries cover absent and dynamic shapes`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "static_object_reader_skips_unsupported_entries",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: static object reader for scripted JavaScript/TypeScript configuration. Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     },

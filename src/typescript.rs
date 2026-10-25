@@ -5,6 +5,7 @@ pub(crate) mod semantics;
 mod assertions;
 mod ast;
 mod framework_callbacks;
+pub(crate) mod framework_config;
 pub(crate) mod frameworks;
 mod handler;
 mod matcher;

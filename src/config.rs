@@ -1,6 +1,6 @@
 //! Configuration loading and precedence.
 
-use crate::framework_config;
+use crate::framework_registry;
 use crate::model::{Rule, Severity};
 use crate::resource_limits::{
     is_input_limit_error, read_utf8, MAX_CANDIDATE_COMPARISONS, MAX_CONFIG_INPUT_BYTES,
@@ -311,7 +311,7 @@ impl Config {
         let mut config = Self::defaults(root);
         config.config_warnings = config_warnings;
         if !has_explicit_features {
-            match framework_config::detect(&config.root, package_json.as_ref()) {
+            match framework_registry::detect(&config.root, package_json.as_ref()) {
                 Ok(Some(framework)) => {
                     config.features = framework.patterns;
                     config.feature_pattern_origin = format!(
