@@ -573,7 +573,7 @@ mod tests {
                 .unwrap();
             for limited in [false, true] {
                 if limited {
-                    graph.proof_limit = 0;
+                    graph.set_proof_limit(0);
                 }
                 let proof =
                     graph.bound_instance_method(0, receiver, "handle", (&assignments, &references));
