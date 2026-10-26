@@ -10,7 +10,7 @@ Start with an exploratory run. It reports findings from the supported subset and
 cuke-dedup path/to/project --definitions 'features/**/*.rb' --features 'features/**/*.feature'
 ```
 
-For a CI gate, also require both corpora and fail on incompleteness. Unresolved requires, autoloads, dynamic `step` calls and DSL changes are common in Ruby suites, so this command fails until the suite stays inside the supported subset or the gaps are configured away, for example with `rubyLoadPaths`:
+For a CI gate, also require both corpora and fail on incompleteness. Unresolved requires, autoloads, dynamic `step` calls and DSL changes are common in Ruby suites, so this command fails until the suite stays inside the supported subset or the gaps are configured away, for example with `ruby.loadPaths`:
 
 ```sh
 cuke-dedup path/to/project --definitions 'features/**/*.rb' --features 'features/**/*.feature' --require-definitions --require-features --fail-on-incomplete

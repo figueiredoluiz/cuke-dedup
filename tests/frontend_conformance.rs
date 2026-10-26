@@ -114,7 +114,10 @@ fn source_exclusion_stays_with_javascript_adapter() {
     );
 }
 
-/// Checks Ruby load paths retain their flat serialized configuration key and omit it when empty.
+/// Checks both Ruby load-path forms (`ruby.loadPaths` and the flat `rubyLoadPaths` alias) in a
+/// standalone file and in `package.json`, the one-form-per-source rule, section validation,
+/// top-level unknown keys, and that the effective config still serializes the flat key only when
+/// set.
 #[test]
 fn ruby_configuration_keeps_flat_compatibility_key() {
     let root = tempfile::tempdir().unwrap();
@@ -124,20 +127,103 @@ fn ruby_configuration_keeps_flat_compatibility_key() {
         .unwrap()
         .get("rubyLoadPaths")
         .is_none());
-    fs::create_dir(root.path().join("lib")).unwrap();
+
+    // (package.json `cukeDedup`, standalone `.cuke-dedup.json`) -> load paths. The standalone file
+    // is read by `from_str` and the package by `from_value`; both go through the flattened keys.
+    let lib = || vec![PathBuf::from("lib")];
+    for (package, standalone, expected) in [
+        (None, Some(r#"{"rubyLoadPaths":["lib"]}"#), lib()),
+        (None, Some(r#"{"ruby":{"loadPaths":["lib"]}}"#), lib()),
+        (Some(r#"{"ruby":{"loadPaths":["lib"]}}"#), None, lib()),
+        (Some(r#"{"rubyLoadPaths":["lib"]}"#), None, lib()),
+        // A section without `loadPaths`, or a null one, sets nothing.
+        (None, Some(r#"{"ruby":{}}"#), Vec::new()),
+        (None, Some(r#"{"ruby":null}"#), Vec::new()),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        if let Some(package) = package {
+            fs::write(
+                root.path().join("package.json"),
+                format!(r#"{{"cukeDedup":{package}}}"#),
+            )
+            .unwrap();
+        }
+        if let Some(standalone) = standalone {
+            fs::write(root.path().join(".cuke-dedup.json"), standalone).unwrap();
+        }
+        let config = Config::load(root.path(), ConfigOverrides::default())
+            .unwrap_or_else(|error| panic!("{package:?} {standalone:?}: {error:#}"));
+        // An auto-discovered file that fails to parse only warns and falls back to defaults, which
+        // would pass the empty rows; a parsed source leaves no warning.
+        assert!(
+            config.config_warnings.is_empty(),
+            "{standalone:?}: {:?}",
+            config.config_warnings
+        );
+        assert_eq!(
+            config.ruby_load_paths(),
+            expected.as_slice(),
+            "{package:?} {standalone:?}"
+        );
+        let printed = serde_json::to_value(&config).unwrap();
+        assert!(
+            printed.get("ruby").is_none(),
+            "only the flat key is printed"
+        );
+        assert_eq!(
+            printed.get("rubyLoadPaths").is_some(),
+            !expected.is_empty(),
+            "{package:?} {standalone:?}"
+        );
+    }
+
+    // Rejected sources, each with the error text that names the cause. Errors go through
+    // `--config` so an invalid file fails the run instead of falling back with a warning.
+    for (source, error) in [
+        (
+            r#"{"rubyLoadPaths":["lib"],"ruby":{"loadPaths":["lib"]}}"#,
+            // The file is named as written or relative to the root, depending on how the root resolves.
+            "config.json: set Ruby load paths with `ruby.loadPaths` or `rubyLoadPaths`, not both",
+        ),
+        (
+            r#"{"ruby":{"loadpaths":["lib"]}}"#,
+            "unknown field `loadpaths`",
+        ),
+        (r#"{"ruby":["lib"]}"#, "invalid type"),
+        (
+            r#"{"rubyLoadPath":["lib"]}"#,
+            "unknown field `rubyLoadPath`",
+        ),
+        // A core key error keeps its position although the frontend keys are flattened in.
+        ("{\n\"threshold\": \"x\"}", "line 2 column"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.json");
+        fs::write(&path, source).unwrap();
+        let overrides = ConfigOverrides {
+            config_file: Some(path),
+            ..ConfigOverrides::default()
+        };
+        let message = format!(
+            "{:#}",
+            Config::load(root.path(), overrides).expect_err(source)
+        );
+        assert!(message.contains(error), "{source}: {message}");
+    }
+    // The conflict names `package.json` when that is the source.
+    let root = tempfile::tempdir().unwrap();
     fs::write(
-        root.path().join(".cuke-dedup.json"),
-        r#"{"rubyLoadPaths":["lib"]}"#,
+        root.path().join("package.json"),
+        r#"{"cukeDedup":{"rubyLoadPaths":["lib"],"ruby":{"loadPaths":["lib"]}}}"#,
     )
     .unwrap();
-    let config_with_load_path = Config::load(root.path(), ConfigOverrides::default()).unwrap();
-    assert_eq!(
-        config_with_load_path.ruby_load_paths(),
-        &[PathBuf::from("lib")]
+    let message = format!(
+        "{:#}",
+        Config::load(root.path(), ConfigOverrides::default()).unwrap_err()
     );
-    assert_eq!(
-        serde_json::to_value(config_with_load_path).unwrap()["rubyLoadPaths"],
-        serde_json::json!(["lib"])
+    assert!(
+        message.starts_with("invalid configuration in package.json#cukeDedup: "),
+        "{message}"
     );
 }
 

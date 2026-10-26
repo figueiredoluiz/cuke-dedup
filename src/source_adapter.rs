@@ -3,6 +3,11 @@
 mod config;
 mod finalization;
 pub(crate) use config::FrontendConfig;
+// Every frontend's keys of one configuration source, flattened into the core config. Only Ruby
+// has keys today. A wrapper struct flattening it would nest two flattens, and serde then rejects
+// every frontend key under the core's `deny_unknown_fields`, so a second frontend's keys need a
+// single flattened struct, not a wrapper.
+pub(crate) use crate::ruby::config::RawRubyConfig as RawFrontendConfig;
 pub(crate) mod semantics;
 pub(crate) mod suppression;
 pub use finalization::{
