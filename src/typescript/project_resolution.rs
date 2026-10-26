@@ -1,6 +1,6 @@
 use super::ast::is_relative_module;
 use crate::resource_limits::{
-    read_utf8, MAX_CONFIG_INPUT_BYTES, MAX_PROJECT_CONFIG_EXTENDS_DEPTH,
+    read_utf8, WorkBudget, MAX_CONFIG_INPUT_BYTES, MAX_PROJECT_CONFIG_EXTENDS_DEPTH,
     MAX_PROJECT_METADATA_BYTES, MAX_PROJECT_METADATA_FILES, MAX_PROJECT_MODULE_MAPPINGS,
     MAX_WORKSPACE_SCAN_ENTRIES,
 };
@@ -59,7 +59,6 @@ struct PackageInfo {
     workspaces: Vec<String>,
 }
 
-#[derive(Default)]
 pub(super) struct ProjectResolution {
     root: Option<PathBuf>,
     config_for_directory: BTreeMap<PathBuf, Option<PathBuf>>,
@@ -67,9 +66,26 @@ pub(super) struct ProjectResolution {
     config_active: BTreeSet<PathBuf>,
     packages: BTreeMap<PathBuf, PackageInfo>,
     workspace_packages: Option<BTreeMap<String, PackageInfo>>,
-    metadata_files: usize,
-    metadata_bytes: usize,
-    mappings: usize,
+    metadata_files: WorkBudget,
+    metadata_bytes: WorkBudget,
+    mappings: WorkBudget,
+}
+
+impl Default for ProjectResolution {
+    /// No root, empty caches and the release metadata and mapping limits.
+    fn default() -> Self {
+        Self {
+            root: None,
+            config_for_directory: BTreeMap::new(),
+            configs: BTreeMap::new(),
+            config_active: BTreeSet::new(),
+            packages: BTreeMap::new(),
+            workspace_packages: None,
+            metadata_files: WorkBudget::new(MAX_PROJECT_METADATA_FILES),
+            metadata_bytes: WorkBudget::new(MAX_PROJECT_METADATA_BYTES),
+            mappings: WorkBudget::new(MAX_PROJECT_MODULE_MAPPINGS),
+        }
+    }
 }
 
 impl ProjectResolution {
@@ -596,11 +612,10 @@ impl ProjectResolution {
                         matches!(name, ".git" | "node_modules" | "target" | ".features-gen")
                     })
             });
-        let mut visited = 0_usize;
+        let mut visited = WorkBudget::new(MAX_WORKSPACE_SCAN_ENTRIES);
         for entry in builder.build() {
             let entry = entry.context("failed while scanning declared workspace packages")?;
-            visited = visited.saturating_add(1);
-            if visited > MAX_WORKSPACE_SCAN_ENTRIES {
+            if visited.charge(1) {
                 bail!(
                     "workspace scan exceeds the {}-entry limit",
                     MAX_WORKSPACE_SCAN_ENTRIES
@@ -730,35 +745,32 @@ impl ProjectResolution {
 
     /// Reads UTF-8 metadata within per-file and aggregate byte limits, charging successful reads against the file limit.
     fn read_metadata(&mut self, path: &Path, kind: &'static str) -> Result<String> {
-        if self.metadata_files >= MAX_PROJECT_METADATA_FILES {
+        if !self.metadata_files.fits(1) {
             bail!(
                 "project module metadata exceeds the {}-file limit",
-                MAX_PROJECT_METADATA_FILES
+                self.metadata_files.limit()
             );
         }
         let text = read_utf8(path, kind, MAX_CONFIG_INPUT_BYTES)?;
-        let total = self.metadata_bytes.saturating_add(text.len());
-        if total > MAX_PROJECT_METADATA_BYTES {
+        if !self.metadata_bytes.admit(text.len()) {
             bail!(
                 "project module metadata exceeds the {}-byte aggregate limit",
-                MAX_PROJECT_METADATA_BYTES
+                self.metadata_bytes.limit()
             );
         }
-        self.metadata_files += 1;
-        self.metadata_bytes = total;
+        // Checked by `fits` above; charged only now so a failed or refused read costs no file.
+        self.metadata_files.charge(1);
         Ok(text)
     }
 
     /// Adds mapping work to the aggregate budget, returning an error rather than exceeding the limit.
     fn charge_mappings(&mut self, count: usize) -> Result<()> {
-        let total = self.mappings.saturating_add(count);
-        if total > MAX_PROJECT_MODULE_MAPPINGS {
+        if !self.mappings.admit(count) {
             bail!(
                 "project module metadata exceeds the {}-mapping limit",
-                MAX_PROJECT_MODULE_MAPPINGS
+                self.mappings.limit()
             );
         }
-        self.mappings = total;
         Ok(())
     }
 }

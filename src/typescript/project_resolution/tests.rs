@@ -615,10 +615,16 @@ fn canonical_paths_and_mapping_limits_fail_closed() {
     let nested = canonicalize_existing_ancestor(&root.join("missing/deeper"), &root).unwrap();
     assert_eq!(nested, root.join("missing/deeper"));
 
-    let mut resolver = ProjectResolution {
-        mappings: MAX_PROJECT_MODULE_MAPPINGS,
-        ..ProjectResolution::for_root(&root)
-    };
+    // A refused charge takes nothing, so the exact remainder still fits.
+    let mut resolver = ProjectResolution::for_root(&root);
+    resolver
+        .charge_mappings(MAX_PROJECT_MODULE_MAPPINGS - 1)
+        .unwrap();
+    let error = resolver.charge_mappings(2).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains(&format!("{MAX_PROJECT_MODULE_MAPPINGS}-mapping limit")));
+    resolver.charge_mappings(1).unwrap();
     assert!(resolver.charge_mappings(1).is_err());
 
     let outside = tempfile::tempdir().unwrap();
@@ -628,7 +634,7 @@ fn canonical_paths_and_mapping_limits_fail_closed() {
         .is_err());
 }
 
-/// Verify cached bases cannot bypass extends-depth, metadata-file, or aggregate-byte limits.
+/// Verify cached bases cannot bypass extends-depth, metadata-file, or aggregate-byte limits, and that a failed or refused read costs no file.
 #[test]
 fn cached_configs_cannot_bypass_extends_depth_or_metadata_limits() {
     let directory = tempfile::tempdir().unwrap();
@@ -655,19 +661,39 @@ fn cached_configs_cannot_bypass_extends_depth_or_metadata_limits() {
         .unwrap_err();
     assert!(error.to_string().contains("16-file depth limit"));
 
-    let mut file_limited = ProjectResolution {
-        metadata_files: MAX_PROJECT_METADATA_FILES,
-        ..ProjectResolution::for_root(&root)
-    };
+    // One file and one byte of room left: a missing file and a byte-refused read cost no file
+    // and no bytes, so a one-byte read still takes the last slot and the read after it hits the
+    // file limit.
+    let one_byte = root.join("one.json");
+    fs::write(&one_byte, "0").unwrap();
+    let mut file_limited = ProjectResolution::for_root(&root);
+    file_limited
+        .metadata_files
+        .charge(MAX_PROJECT_METADATA_FILES - 1);
+    file_limited
+        .metadata_bytes
+        .charge(MAX_PROJECT_METADATA_BYTES - 1);
+    assert!(file_limited
+        .read_metadata(&root.join("missing.json"), "project config")
+        .is_err());
+    let error = file_limited
+        .read_metadata(&shared, "project config")
+        .unwrap_err();
+    assert!(error.to_string().contains(&format!(
+        "{MAX_PROJECT_METADATA_BYTES}-byte aggregate limit"
+    )));
+    file_limited
+        .read_metadata(&one_byte, "project config")
+        .unwrap();
     let error = file_limited
         .read_metadata(&shared, "project config")
         .unwrap_err();
     assert!(error.to_string().contains("1024-file limit"));
 
-    let mut byte_limited = ProjectResolution {
-        metadata_bytes: MAX_PROJECT_METADATA_BYTES,
-        ..ProjectResolution::for_root(&root)
-    };
+    let mut byte_limited = ProjectResolution::for_root(&root);
+    byte_limited
+        .metadata_bytes
+        .charge(MAX_PROJECT_METADATA_BYTES);
     let error = byte_limited
         .read_metadata(&shared, "project config")
         .unwrap_err();
