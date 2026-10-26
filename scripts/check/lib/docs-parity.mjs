@@ -29,6 +29,8 @@ export const camel = (field) => field.replace(/_([a-z])/g, (_, c) => c.toUpperCa
 
 // A struct field declaration, tolerating an optional `pub` / `pub(crate)` visibility.
 const FIELD = /^(?:pub(?:\([^)]*\))?\s+)?([a-z][a-z0-9_]*)\s*:/;
+// Capitalized config value types that are not sections.
+const SCALAR_TYPES = new Set(["PathBuf", "String"]);
 /** Return the opening-minus-closing square-bracket count in an attribute line. */
 const netBrackets = (line) =>
   (line.match(/\[/g) || []).length - (line.match(/\]/g) || []).length;
@@ -76,17 +78,75 @@ export function cliFlags(structBodyText) {
 }
 
 /**
- * Every camelCased config key declared on the given struct body (serde `rename_all = "camelCase"`).
- * @param {string} structBodyText Body from `structBody(configSource, "RawConfig")`.
+ * Every field of a config struct body with its camelCased key, declared type and whether a
+ * `#[serde(flatten)]` attribute precedes it (its keys then sit at this level, not under its name).
+ * @param {string} structBodyText A struct body.
+ * @returns {{key: string, type: string, flatten: boolean}[]}
+ */
+export function configFields(structBodyText) {
+  const fields = [];
+  let flatten = false;
+  for (const raw of structBodyText.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("#[")) {
+      flatten ||= /^#\[serde\([^)]*\bflatten\b/.test(line);
+      continue;
+    }
+    const field = line.match(FIELD);
+    if (!field) continue;
+    const type = line.slice(line.indexOf(":") + 1).replace(/,\s*$/, "").trim();
+    fields.push({ key: camel(field[1]), type, flatten });
+    flatten = false;
+  }
+  return fields;
+}
+
+/**
+ * Every config key reachable from struct `name`: flattened fields contribute their struct's keys at
+ * the same level, and a field typed `Option<Section>` contributes `key.sectionKey` entries beside
+ * `key`. A flattened or section type `findStruct` cannot resolve throws, so a moved struct fails
+ * the gate instead of dropping its keys.
+ * @param {(name: string) => string | null} findStruct Body of a struct by name, or null.
+ * @param {string} name Struct to start from.
+ * @param {string} [prefix] Dotted section path for nested keys.
  * @returns {string[]}
  */
-export function configKeys(structBodyText) {
+export function configSurface(findStruct, name, prefix = "") {
+  const body = findStruct(name);
+  if (body === null) throw new Error(`config struct ${name} not found`);
   const keys = [];
-  for (const raw of structBodyText.split("\n")) {
-    const field = raw.trim().match(FIELD);
-    if (field) keys.push(camel(field[1]));
+  for (const field of configFields(body)) {
+    if (field.flatten) {
+      keys.push(...configSurface(findStruct, field.type.split("::").pop(), prefix));
+      continue;
+    }
+    keys.push(prefix + field.key);
+    // A capitalized `Option<T>` is a section unless it is a known scalar; an unresolved one throws
+    // like a lost flattened type, so a renamed section cannot drop its keys.
+    const section = field.type.match(/^Option<([A-Z]\w*)>$/);
+    if (section && !SCALAR_TYPES.has(section[1])) {
+      keys.push(...configSurface(findStruct, section[1], `${prefix}${field.key}.`));
+    }
   }
   return keys;
+}
+
+/**
+ * Body of struct `name` in any of `sources`, following `type Name = path::Target;` aliases and
+ * `use path::Target as Name;` declarations to the target; null when no source declares it.
+ * @param {string[]} sources Rust source texts.
+ * @param {string} name A struct or alias name.
+ * @returns {string | null}
+ */
+export function findConfigStruct(sources, name) {
+  for (const source of sources) {
+    const alias =
+      source.match(new RegExp(`\\btype ${name}\\s*=\\s*([\\w:]+)\\s*;`)) ||
+      source.match(new RegExp(`\\buse\\s+[\\w:]*?(\\w+)\\s+as\\s+${name}\\s*;`));
+    if (alias) return findConfigStruct(sources, alias[1].split("::").pop());
+    if (new RegExp(`\\bstruct ${name} \\{`).test(source)) return structBody(source, name);
+  }
+  return null;
 }
 
 /**
