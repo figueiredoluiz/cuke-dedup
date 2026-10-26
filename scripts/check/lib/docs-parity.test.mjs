@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   camel,
   cliFlags,
-  configKeys,
+  configFields,
+  configSurface,
+  findConfigStruct,
   flagDocumented,
   kebab,
   structBody,
@@ -79,19 +81,81 @@ test("flagDocumented matches a whole flag token, not a prefix of a longer flag",
   assert.equal(flagDocumented("Pass --baseline to reuse.", "--baseline"), true);
 });
 
-/** Checks configuration field names convert from snake case to camel case. */
-test("configKeys camelCases every field of the struct body", () => {
+/** Checks configuration field names convert from snake case to camel case with their types and flatten flag. */
+test("configFields camelCases every field of the struct body", () => {
   const body = `
     #[serde(default)]
     fail_on_unparseable: Option<bool>,
+    #[serde(flatten)]
+    frontend: crate::source_adapter::RawFrontendConfig,
     #[serde(default)]
     max_candidate_comparisons: Option<usize>,
   `;
-  assert.deepEqual(configKeys(body), ["failOnUnparseable", "maxCandidateComparisons"]);
+  assert.deepEqual(configFields(body), [
+    { key: "failOnUnparseable", type: "Option<bool>", flatten: false },
+    { key: "frontend", type: "crate::source_adapter::RawFrontendConfig", flatten: true },
+    { key: "maxCandidateComparisons", type: "Option<usize>", flatten: false },
+  ]);
 });
 
 /** Checks snake-case field names convert to their expected kebab and camel spellings. */
 test("kebab and camel are inverse spellings of a snake_case field", () => {
   assert.equal(kebab("fail_on_new"), "fail-on-new");
   assert.equal(camel("fail_on_new"), "failOnNew");
+});
+
+/** Checks flattened frontend structs, aliases and nested sections join the config surface. */
+test("configSurface follows flatten, aliases and sections, and fails closed on a lost struct", () => {
+  const sources = [
+    `struct RawConfig {
+      #[serde(default)]
+      threshold: Option<f64>,
+      #[serde(flatten)]
+      frontend: crate::source_adapter::RawFrontendConfig,
+      #[serde(default)]
+      output: Option<PathBuf>,
+    }`,
+    "pub(crate) type RawFrontendConfig = crate::ruby::config::RawRubyConfig;",
+    `struct RawRubyConfig {
+      #[serde(default)]
+      ruby: Option<RawRubySection>,
+      #[serde(default)]
+      ruby_load_paths: Option<Vec<PathBuf>>,
+    }
+    struct RawRubySection {
+      #[serde(default)]
+      load_paths: Option<Vec<PathBuf>>,
+    }`,
+  ];
+  /** Looks a config struct up in the sample sources. */
+  const find = (name) => findConfigStruct(sources, name);
+  assert.deepEqual(configSurface(find, "RawConfig"), [
+    "threshold",
+    "ruby",
+    "ruby.loadPaths",
+    "rubyLoadPaths",
+    "output",
+  ]);
+  assert.equal(find("Missing"), null);
+  assert.throws(
+    () => configSurface((name) => (name === "RawConfig" ? find(name) : null), "RawConfig"),
+    /config struct RawFrontendConfig not found/,
+  );
+  // A lost section type throws too; `Option<PathBuf>` above is a scalar, not a section.
+  const lostSection = sources.map((text) => text.replace("struct RawRubySection {", "struct Renamed {"));
+  assert.throws(
+    () => configSurface((name) => findConfigStruct(lostSection, name), "RawConfig"),
+    /config struct RawRubySection not found/,
+  );
+});
+
+/** Checks a `use … as Name;` rename resolves while `as Name` in prose or a cast does not. */
+test("findConfigStruct follows use renames, not every `as Name` text", () => {
+  const target = "struct Target {\n  load_paths: Option<Vec<PathBuf>>,\n}";
+  assert.match(findConfigStruct(["pub(crate) use crate::a::Target as Renamed;", target], "Renamed"), /load_paths/);
+  // Prose or a cast saying `as Target` in an earlier file must not divert the lookup of a struct
+  // that exists: misread as a rename, each would resolve to a missing name and return null.
+  for (const decoy of ["// stored as Target in the registry", "let x = y as Target;"]) {
+    assert.match(findConfigStruct([decoy, target], "Target"), /load_paths/, decoy);
+  }
 });

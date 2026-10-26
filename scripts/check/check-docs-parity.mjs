@@ -11,17 +11,22 @@
 // `docs/`.** A new flag or key that nobody documented fails the gate before a reviewer ever sees it.
 //
 // The source of truth is the code, not a hand-maintained list: flags come from clap's `#[arg(long)]`
-// on `CheckOptions`, keys from the `RawConfig` deserialize struct (serde `rename_all = "camelCase"`).
+// on `CheckOptions`, keys from the `RawConfig` deserialize struct (serde `rename_all = "camelCase"`),
+// including frontend sections flattened into it.
 // The parsing lives in ./lib/docs-parity.mjs and is unit-tested there.
 
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { cliFlags, configKeys, flagDocumented, structBody } from "./lib/docs-parity.mjs";
+import { cliFlags, configSurface, findConfigStruct, flagDocumented, structBody } from "./lib/docs-parity.mjs";
 
 const root = resolve(process.argv[2] || ".");
 const cliSource = readFileSync(join(root, "src/cli.rs"), "utf8");
-const configSource = readFileSync(join(root, "src/config.rs"), "utf8");
+// Frontend config sections are flattened into `RawConfig` from their own modules, so every source
+// file is searched for the structs the walk reaches.
+const rustSources = readdirSync(join(root, "src"), { recursive: true })
+  .filter((name) => String(name).endsWith(".rs"))
+  .map((name) => readFileSync(join(root, "src", String(name)), "utf8"));
 
 // Surfaces intentionally not documented per flag/key. Each entry needs a reason: the gate ratchets
 // forward — a new flag or key must be documented or explicitly justified here, never silently
@@ -41,7 +46,7 @@ const docs = readdirSync(join(root, "docs"), { recursive: true })
   .join("\n");
 
 const flags = cliFlags(structBody(cliSource, "CheckOptions"));
-const keys = configKeys(structBody(configSource, "RawConfig"));
+const keys = configSurface((name) => findConfigStruct(rustSources, name), "RawConfig");
 // Floors guard the parser itself: if a refactor makes the struct scan silently return fewer
 // surfaces, that must fail loudly rather than pass by checking nothing.
 assert.ok(flags.length >= 22, `expected to parse the CheckOptions flags, found only ${flags.length}`);
@@ -54,9 +59,10 @@ for (const flag of flags) {
   missing.push(`CLI flag ${flag}`);
 }
 // A config key is matched as a quoted or code-spanned JSON key so a coincidental prose word does not
-// satisfy it.
+// satisfy it. A section key (`ruby.loadPaths`) needs its dotted path in a code span.
 for (const key of keys) {
-  if (docs.includes(`"${key}"`) || docs.includes(`\`${key}\``)) continue;
+  if (!key.includes(".") && docs.includes(`"${key}"`)) continue;
+  if (docs.includes(`\`${key}\``)) continue;
   if (UNDOCUMENTED_ALLOWED.has(key)) continue;
   missing.push(`config key ${key}`);
 }

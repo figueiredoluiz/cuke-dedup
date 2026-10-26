@@ -159,7 +159,7 @@ identifier, but the Ruby adapter does not read the names; Ruby forwarding helper
 
 `assertionModules` names module specifiers whose `expect` export is a real assertion factory.
 
-For Ruby, trust requires a preceding resolved source load and a unique, closed assertion namespace. `require_relative`, configured `rubyLoadPaths`, immutable Method/hash/factory aliases and closed fixture re-exports are supported. Configuration may name the load specifier or a project-relative provider path. Source proofs check lookup and forwarding; names alone grant no authority. Reopening, replacement, unknown effects, escapes and shared mutations remove trust. Installed gems and unselected runtime sources are not analyzed.
+For Ruby, trust requires a preceding resolved source load and a unique, closed assertion namespace. `require_relative`, configured `ruby.loadPaths`, immutable Method/hash/factory aliases and closed fixture re-exports are supported. Configuration may name the load specifier or a project-relative provider path. Source proofs check lookup and forwarding; names alone grant no authority. Reopening, replacement, unknown effects, escapes and shared mutations remove trust. Installed gems and unselected runtime sources are not analyzed.
 
 Supported terminals are `to_be`, `to_equal`, `equal_to`, `to_have_class`, `to_have_value` and `to_be_visible`, with `not`/`to` modifiers and literal dispatch. Expected values support scalar literals, regexes, arrays/hashes, supported source-bound matchers, and binding-sensitive local reads/member access. Unary expressions, ranges, rationals, character literals and mutable values remain unsupported and remove handler-comparison authority. Provider parse errors, relevant cycles and file/byte/read/work limits retain conservative incompleteness. TypeScript-only configuration does not affect unrelated Ruby loads. No project code executes.
 
@@ -262,10 +262,12 @@ incomplete-corpus behavior, and [Rules](rules.md) for severity configuration.
 
 Ruby dependency paths are a configuration trust boundary: absolute paths, paths containing `..`, and relative paths through symlinks may resolve outside the analysis root. A configured load-path directory is an explicitly trusted root after canonicalization, including when it is a symlink to an external directory. Only analyze trusted path configuration; discovered registration bodies from those sources may appear in report snippets. Sources are read statically, never executed.
 
-`rubyLoadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
+`ruby.loadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
 
 ```json
-{ "rubyLoadPaths": ["lib", "vendor/aruba/lib"] }
+{ "ruby": { "loadPaths": ["lib", "vendor/aruba/lib"] } }
 ```
+
+The flat `rubyLoadPaths` key is an alias for `ruby.loadPaths`. One configuration source sets either form, not both; setting both in one file is a configuration error. Other keys inside `ruby` are rejected. `--print-config` prints the effective list as `rubyLoadPaths`.
 
 Resolved files can contribute definitions outside the entrypoint globs, but cannot escape the project or explicitly declared load-path roots. An unresolved dependency must not be interpreted as a clean complete corpus.

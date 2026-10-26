@@ -56,8 +56,8 @@ impl FromStr for ReporterKind {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawConfig {
-    #[serde(default)]
-    ruby_load_paths: Option<Vec<PathBuf>>,
+    #[serde(flatten)]
+    frontend: crate::source_adapter::RawFrontendConfig,
     #[serde(default)]
     definitions: Option<Vec<String>>,
     #[serde(default)]
@@ -334,7 +334,7 @@ impl Config {
         }
         if let Some(raw) = package_config {
             let replaces_features = raw.features.is_some();
-            config.apply_raw(raw)?;
+            config.apply_raw(raw, "package.json#cukeDedup")?;
             config.config_source = "package.json#cukeDedup".to_owned();
             if replaces_features {
                 config.feature_pattern_origin = "package.json#cukeDedup".to_owned();
@@ -342,11 +342,12 @@ impl Config {
         }
         if let Some(raw) = standalone_config {
             let replaces_features = raw.features.is_some();
-            config.apply_raw(raw)?;
-            config.config_source = standalone_path
+            let source = standalone_path
                 .as_ref()
                 .map(|path| config_source_name(path, &config.root))
                 .unwrap_or_else(|| ".cuke-dedup.json".to_owned());
+            config.apply_raw(raw, &source)?;
+            config.config_source = source;
             if replaces_features {
                 config.feature_pattern_origin = config.config_source.clone();
             }
@@ -423,11 +424,12 @@ impl Config {
     }
 
     /// Replaces each field `raw` sets and merges its rule severities into the current map; fails on
-    /// an unknown rule name. A set `output` is marked for project-output containment checks.
-    fn apply_raw(&mut self, raw: RawConfig) -> Result<()> {
-        if let Some(paths) = raw.ruby_load_paths {
-            self.frontend.set_ruby_load_paths(paths);
-        }
+    /// an unknown rule name or a frontend key conflict, naming `source` for the latter. A set
+    /// `output` is marked for project-output containment checks.
+    fn apply_raw(&mut self, raw: RawConfig, source: &str) -> Result<()> {
+        self.frontend
+            .apply_raw(raw.frontend)
+            .with_context(|| format!("invalid configuration in {source}"))?;
         if let Some(value) = raw.definitions {
             self.definitions = value;
         }

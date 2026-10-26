@@ -271,8 +271,10 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   Dependency expansion uses private registry callbacks and exposes no glob types or discovery
   mutation.
 - An adapter not discovered by default is selected only by definition patterns that depend on its
-  suffix. `rubyLoadPaths` keeps its flat JSON key, precedence and public getter while Ruby owns the
-  storage.
+  suffix. Ruby owns its configuration keys: the `ruby`
+  section and the flat `rubyLoadPaths` alias are flattened into the core config from
+  `ruby::config::RawRubyConfig`, which rejects both forms in one source; `--print-config` keeps the
+  flat key.
 - Ruby preparation parses one bounded source snapshot for registration and assertion proofs; a
   later source-byte mismatch withdraws the optional proof. File-count, byte, per-source and
   proof-work limits fall back conservatively; exhausting any collector withdraws every optional
