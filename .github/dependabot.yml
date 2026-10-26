@@ -1,4 +1,9 @@
 version: 2
+# One pull request per group per week. Minor and patch updates are grouped; a major update stays on
+# its own pull request because it can break the build. Dependabot reads 0.x versions literally, so a
+# 0.y bump counts as minor although Cargo treats it as breaking: the tree-sitter crates, whose
+# grammars must match the runtime ABI, get their own group (listed first, so it wins) and move
+# together without blocking other Cargo updates.
 updates:
   - package-ecosystem: cargo
     directory: /
@@ -8,6 +13,14 @@ updates:
       - dependencies
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      tree-sitter:
+        patterns:
+          - "tree-sitter*"
+      cargo:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -16,6 +29,11 @@ updates:
       - dependencies
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      npm:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -25,6 +43,9 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      codeql-action:
+      github-actions:
         patterns:
-          - "github/codeql-action/*"
+          - "*"
+        update-types:
+          - minor
+          - patch
