@@ -90,7 +90,7 @@ fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
         Some("Given")
     );
     assert_eq!(state.modules.len(), 1 + layers * 2);
-    assert_eq!(state.resolutions_started, 1 + layers * 2);
+    assert_eq!(state.resolutions_started.spent(), 1 + layers * 2);
 }
 
 /// Verify importing the same module from separate files reuses cached parsing and export resolution.
@@ -113,11 +113,14 @@ fn resolver_reuses_cached_modules_across_importing_files() {
     let mut resolver = RegistrationResolver::for_root(directory.path());
     let _ = resolver.registration_exports(&first, "../support");
     let modules_after_first = resolver.state.modules.len();
-    let resolutions_after_first = resolver.state.resolutions_started;
+    let resolutions_after_first = resolver.state.resolutions_started.spent();
     let _ = resolver.registration_exports(&second, "../support");
 
     assert_eq!(resolver.state.modules.len(), modules_after_first);
-    assert_eq!(resolver.state.resolutions_started, resolutions_after_first);
+    assert_eq!(
+        resolver.state.resolutions_started.spent(),
+        resolutions_after_first
+    );
 }
 
 /// Verify an explicit analysis root permits registration re-exports across nested package boundaries.
@@ -205,7 +208,7 @@ fn depth_diverse_graphs_cache_each_module_depth_within_the_state_budget() {
     );
     assert_eq!(exports.framework, Framework::CucumberJs);
     assert_eq!(shared_states, chain_depth + 1);
-    assert!(resolver.state.resolutions_started < MAX_REGISTRATION_RESOLUTION_STATES);
+    assert!(resolver.state.resolutions_started.fits(1));
 }
 
 /// Verify resolving one side of a cycle does not suppress exports when resolving the other side later.
@@ -246,7 +249,7 @@ fn cycles_do_not_poison_context_dependent_export_results() {
     );
 }
 
-/// Verify module-count, aggregate-byte, and resolution-state limits reject excess work while allowing the exact byte boundary.
+/// Verify module-count, aggregate-byte, and resolution-state limits reject excess work at their exact boundaries without charging or latching a refusal.
 #[test]
 fn aggregate_module_graph_limits_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
@@ -266,28 +269,56 @@ fn aggregate_module_graph_limits_fail_closed() {
     let error = load_module(&module, &mut module_count_state).unwrap_err();
     assert!(error.to_string().contains("module resolution limit"));
 
-    let mut byte_state = ResolutionState {
-        module_bytes: MAX_REGISTRATION_MODULE_BYTES,
-        ..ResolutionState::default()
-    };
+    // One byte short of room: the module is refused, charges nothing and is not cached, so a
+    // smaller module still fits afterwards (resolution errors degrade to warnings and the state
+    // lives on, so a refusal must not latch).
+    let small = directory.path().join("small.ts");
+    let small_source = "export {};\n";
+    fs::write(&small, small_source).unwrap();
+    let mut byte_state = ResolutionState::default();
+    byte_state
+        .module_bytes
+        .charge(MAX_REGISTRATION_MODULE_BYTES - module_source.len() + 1);
     let error = load_module(&module, &mut byte_state).unwrap_err();
-    assert!(error.to_string().contains("aggregate resolution limit"));
+    assert!(error.to_string().contains(&format!(
+        "{MAX_REGISTRATION_MODULE_BYTES}-byte aggregate resolution limit"
+    )));
+    assert!(byte_state.modules.is_empty());
+    assert!(load_module(&small, &mut byte_state).unwrap().is_some());
 
-    let mut exact_byte_state = ResolutionState {
-        module_bytes: MAX_REGISTRATION_MODULE_BYTES - module_source.len(),
-        ..ResolutionState::default()
-    };
+    let mut exact_byte_state = ResolutionState::default();
+    exact_byte_state
+        .module_bytes
+        .charge(MAX_REGISTRATION_MODULE_BYTES - module_source.len());
     assert!(load_module(&module, &mut exact_byte_state)
         .unwrap()
         .is_some());
-    assert_eq!(exact_byte_state.module_bytes, MAX_REGISTRATION_MODULE_BYTES);
+    assert_eq!(
+        exact_byte_state.module_bytes.spent(),
+        MAX_REGISTRATION_MODULE_BYTES
+    );
 
+    // The last state below the limit is admitted; the state at the limit is refused.
     let boundary = project_boundary(&importer).unwrap();
     let mut project = ProjectResolution::for_root(directory.path());
-    let mut resolution_state = ResolutionState {
-        resolutions_started: MAX_REGISTRATION_RESOLUTION_STATES,
-        ..ResolutionState::default()
-    };
+    let mut resolution_state = ResolutionState::default();
+    resolution_state
+        .resolutions_started
+        .charge(MAX_REGISTRATION_RESOLUTION_STATES - 1);
+    assert!(resolve_exports(
+        &importer,
+        "./module",
+        &boundary,
+        &mut project,
+        &mut resolution_state,
+        0,
+    )
+    .is_ok());
+    assert_eq!(
+        resolution_state.resolutions_started.spent(),
+        MAX_REGISTRATION_RESOLUTION_STATES
+    );
+    resolution_state.exports.clear();
     let error = resolve_exports(
         &importer,
         "./module",
@@ -297,7 +328,9 @@ fn aggregate_module_graph_limits_fail_closed() {
         0,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("state resolution limit"));
+    assert!(error.to_string().contains(&format!(
+        "{MAX_REGISTRATION_RESOLUTION_STATES}-state resolution limit"
+    )));
 }
 
 /// Verify malformed barrels return an explanatory unresolved outcome instead of recovered registrations or a fatal error.

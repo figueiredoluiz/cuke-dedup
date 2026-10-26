@@ -58,12 +58,17 @@ impl WorkBudget {
     /// A refusal does not latch: a smaller later amount may still fit, so a caller that must not
     /// admit anything after a cut stops at the first refusal or records it itself.
     pub(crate) fn admit(&mut self, amount: usize) -> bool {
-        let spent = self.spent.saturating_add(amount);
-        let fits = spent <= self.limit;
+        let fits = self.fits(amount);
         if fits {
-            self.spent = spent;
+            self.spent = self.spent.saturating_add(amount);
         }
         fits
+    }
+
+    /// Reports whether `amount` would keep the total within the limit, charging nothing. A caller
+    /// that charges only after later work succeeds checks here first.
+    pub(crate) const fn fits(&self, amount: usize) -> bool {
+        self.spent.saturating_add(amount) <= self.limit
     }
 
     /// The limit this budget was created with.
@@ -338,7 +343,8 @@ mod tests {
     }
 
     /// `admit` charges only amounts that keep the total within the limit, so one-unit admissions
-    /// stop at exactly `limit` units, like a `count >= limit` check before charging.
+    /// stop at exactly `limit` units, like a `count >= limit` check before charging; `fits`
+    /// answers the same question without charging.
     #[test]
     fn work_budget_admit_charges_only_what_fits() {
         for limit in 0..4 {
@@ -349,6 +355,8 @@ mod tests {
             assert_eq!(budget.spent(), limit);
         }
         let mut bytes = WorkBudget::new(4);
+        assert!(bytes.fits(4) && !bytes.fits(5) && !bytes.fits(usize::MAX));
+        assert_eq!(bytes.spent(), 0, "`fits` charges nothing");
         assert!(bytes.admit(3));
         assert!(!bytes.admit(2));
         assert!(

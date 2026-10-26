@@ -12,8 +12,8 @@ use super::node_text;
 use super::project_resolution::{ecmascript_language, ProjectResolution};
 use crate::model::Framework;
 use crate::resource_limits::{
-    read_utf8, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
-    MAX_REGISTRATION_RESOLUTION_STATES,
+    read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES,
+    MAX_REGISTRATION_MODULE_BYTES, MAX_REGISTRATION_RESOLUTION_STATES,
 };
 use crate::source_adapter::grammar_for_language;
 use anyhow::{bail, Result};
@@ -56,13 +56,26 @@ struct ModuleFacts {
     exports_incomplete: bool,
 }
 
-#[derive(Default)]
+/// Resolution caches and work. The module count is the cache's own size, so it needs no budget.
 struct ResolutionState {
     active: BTreeSet<PathBuf>,
     exports: BTreeMap<(PathBuf, usize), CachedExports>,
     modules: BTreeMap<PathBuf, Option<ModuleFacts>>,
-    module_bytes: usize,
-    resolutions_started: usize,
+    module_bytes: WorkBudget,
+    resolutions_started: WorkBudget,
+}
+
+impl Default for ResolutionState {
+    /// Empty caches with the release byte and resolution-state limits.
+    fn default() -> Self {
+        Self {
+            active: BTreeSet::new(),
+            exports: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            module_bytes: WorkBudget::new(MAX_REGISTRATION_MODULE_BYTES),
+            resolutions_started: WorkBudget::new(MAX_REGISTRATION_RESOLUTION_STATES),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -234,13 +247,12 @@ fn resolve_active_exports(
     state: &mut ResolutionState,
     depth: usize,
 ) -> Result<ResolvedExports> {
-    if state.resolutions_started >= MAX_REGISTRATION_RESOLUTION_STATES {
+    if !state.resolutions_started.admit(1) {
         bail!(
             "registration module graph exceeds the {}-state resolution limit",
-            MAX_REGISTRATION_RESOLUTION_STATES
+            state.resolutions_started.limit()
         );
     }
-    state.resolutions_started += 1;
 
     let Some(module) = load_module(path, state)? else {
         return Ok(ResolvedExports {
@@ -323,14 +335,12 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
         );
     }
     let source = read_utf8(path, "registration module", MAX_PROJECT_INPUT_BYTES)?;
-    let module_bytes = state.module_bytes.saturating_add(source.len());
-    if module_bytes > MAX_REGISTRATION_MODULE_BYTES {
+    if !state.module_bytes.admit(source.len()) {
         bail!(
             "registration module graph exceeds the {}-byte aggregate resolution limit",
-            MAX_REGISTRATION_MODULE_BYTES
+            state.module_bytes.limit()
         );
     }
-    state.module_bytes = module_bytes;
     let module = if let Some(tree) = parse_module(&source, path) {
         if tree.root_node().has_error() {
             bail!(
