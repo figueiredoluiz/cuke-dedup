@@ -84,7 +84,7 @@ impl Framework {
     pub const UNKNOWN: Self = Self("unknown");
 
     /// A framework with the given report id. Serialized definitions read back only when a
-    /// registered adapter declares the id through `SourceAdapter::frameworks`.
+    /// registered adapter declares the id through `SourceAdapter::framework_contracts`.
     pub const fn new(id: &'static str) -> Self {
         Self(id)
     }
