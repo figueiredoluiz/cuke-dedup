@@ -9,7 +9,7 @@ fn framework_entrypoints_preserve_export_kinds() {
     {
         let exports = registration_exports_for_module(module);
         if matches!(module, "jest-cucumber" | "vitest-cucumber-plugin") {
-            continue; // Their distinct contracts are exercised by framework_callbacks.
+            continue; // Their callback models are pinned below.
         }
         let decorators = module == PLAYWRIGHT_DECORATORS_MODULE;
         let expected_kind = if decorators {
@@ -108,4 +108,74 @@ fn default_registrations_are_a_subset_of_every_known_registration() {
     );
     assert!(!registration_exports_for_framework(Framework::UNKNOWN).contains_key("Step"));
     assert!(registration_exports_for_module(PLAYWRIGHT_DECORATORS_MODULE).contains_key("Step"));
+}
+
+/// Only Jest-Cucumber and vitest-cucumber-plugin declare a callback model, each with its own
+/// scoping, CommonJS and matcher facts; every other id takes the ordinary registration path.
+#[test]
+fn callback_models_are_declared_only_by_callback_frameworks() {
+    let facts = |framework| {
+        callback_model(framework)
+            .map(|model| (model.scenario_scoped, model.commonjs, model.literal_strings))
+    };
+    assert_eq!(facts(JEST_CUCUMBER), Some((true, true, true)));
+    assert_eq!(facts(VITEST_CUCUMBER), Some((false, false, false)));
+    for framework in [
+        CUCUMBER_JS,
+        PLAYWRIGHT_BDD,
+        CYPRESS_CUCUMBER,
+        Framework::UNKNOWN,
+        crate::ruby::CUCUMBER_RUBY,
+        Framework::new("undeclared"),
+    ] {
+        assert_eq!(facts(framework), None, "{framework:?}");
+    }
+    // Steps that register only inside their scenario are compared only within it.
+    for framework in [JEST_CUCUMBER, VITEST_CUCUMBER] {
+        let scoped = callback_model(framework).is_some_and(|model| model.scenario_scoped);
+        assert_eq!(
+            super::super::semantics::policy(framework) == SCENARIO_LOCAL,
+            scoped,
+            "{framework:?}"
+        );
+    }
+    // A framework with several entrypoints uses callbacks on all of them or on none.
+    for entry in FRAMEWORK_REGISTRY {
+        assert_eq!(
+            matches!(entry.exports, ExportStyle::Callbacks(_)),
+            callback_model(entry.framework).is_some(),
+            "{:?}",
+            entry.modules
+        );
+    }
+}
+
+/// Callback entrypoints export exactly their declared names, with their kinds and framework.
+#[test]
+fn callback_entrypoints_export_their_declared_kinds() {
+    let jest = [
+        ("defineFeature", Feature),
+        ("autoBindSteps", Unsupported),
+        ("loadFeature", NonRegistration),
+        ("loadFeatures", NonRegistration),
+        ("parseFeature", NonRegistration),
+        ("setJestCucumberConfiguration", NonRegistration),
+        ("generateCodeFromFeature", NonRegistration),
+        (
+            "generateCodeWithSeparateFunctionsFromFeature",
+            NonRegistration,
+        ),
+    ];
+    let vitest = [("Given", Call), ("When", Call), ("Then", Call)];
+    for (module, framework, expected) in [
+        ("jest-cucumber", JEST_CUCUMBER, &jest[..]),
+        ("vitest-cucumber-plugin", VITEST_CUCUMBER, &vitest[..]),
+    ] {
+        let exports = registration_exports_for_module(module);
+        let expected: RegistrationExports = expected
+            .iter()
+            .map(|&(name, kind)| (name.to_owned(), export(name, kind, framework)))
+            .collect();
+        assert_eq!(exports, expected, "{module}");
+    }
 }

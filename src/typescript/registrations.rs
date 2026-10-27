@@ -123,12 +123,12 @@ impl RegistrationNames {
             self.scoped.alias(node, name)
         };
         registration
-            .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
+            .is_some_and(|export| !super::framework_callbacks::uses_callbacks(export.framework))
     }
 
     /// Checks the selected framework and discovered alias or namespace exports for callback-framework evidence.
     pub(super) fn has_callback_framework(&self) -> bool {
-        super::framework_callbacks::is_new_framework(self.framework)
+        super::framework_callbacks::uses_callbacks(self.framework)
             || self
                 .aliases
                 .values()
@@ -137,7 +137,7 @@ impl RegistrationNames {
                         .values()
                         .flat_map(|exports| exports.values()),
                 )
-                .any(|export| super::framework_callbacks::is_new_framework(export.framework))
+                .any(|export| super::framework_callbacks::uses_callbacks(export.framework))
     }
 
     /// Checks root-scope aliases for registrations outside the callback-framework extraction path.
@@ -145,7 +145,7 @@ impl RegistrationNames {
         self.scoped
             .aliases
             .get(&(self.scoped.root, name.to_owned()))
-            .is_some_and(|export| !super::framework_callbacks::is_new_framework(export.framework))
+            .is_some_and(|export| !super::framework_callbacks::uses_callbacks(export.framework))
     }
 
     /// Checks whether a root namespace contains any registration outside the callback-framework extraction path.
@@ -156,7 +156,7 @@ impl RegistrationNames {
             .is_some_and(|exports| {
                 exports
                     .values()
-                    .any(|export| !super::framework_callbacks::is_new_framework(export.framework))
+                    .any(|export| !super::framework_callbacks::uses_callbacks(export.framework))
             })
     }
 }
