@@ -601,7 +601,11 @@ fn extract_with_proof(
         }
         // Translation preserves Ruby capture arity. Flags have their own comparison partition,
         // so the key carries the translated body without its flag group.
-        let analysis_policy = semantics::policy();
+        let analysis_policy = crate::source_adapter::FrameworkContract::policy_of(
+            &FRAMEWORK_CONTRACTS,
+            CUCUMBER_RUBY,
+            semantics::policy(),
+        );
         let comparison = analysis_policy.normalized_matcher(
             matcher_kind,
             &matcher,

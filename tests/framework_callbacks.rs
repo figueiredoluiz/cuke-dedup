@@ -372,6 +372,20 @@ fn jest_literal_text_is_preserved_in_reports_and_handler_comparisons() {
     }
     let (_, rules, _) = outcomes(source, SourceLanguage::TypeScript);
     assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
+    // The opposite answer: vitest-cucumber-plugin keeps Cucumber expressions.
+    let vitest = typescript::extract_detailed(
+        "import { Given } from 'vitest-cucumber-plugin'; Given('literal {int}', () => work());",
+        &SourceFile {
+            path: "steps.ts".into(),
+            language: SourceLanguage::TypeScript,
+        },
+    )
+    .unwrap();
+    assert_eq!(vitest.definitions.len(), 1);
+    assert_eq!(
+        serde_json::to_value(vitest.definitions[0].matcher_kind).unwrap(),
+        "cucumber-expression"
+    );
 }
 
 /// Checks trusted assertion conflicts block handler findings while custom assertions remain ordinary parameterizable calls.
@@ -511,6 +525,44 @@ fn jest_callback_shapes_extract_only_when_synchronous_and_statically_resolved() 
             "{label} must mark extraction incomplete"
         );
     }
+}
+
+/// Checks every Jest steps-object registration and scenario modifier registers, and that a step
+/// called from a nested callback inside the steps callback stays unregistered and incomplete.
+#[test]
+fn jest_steps_vocabulary_and_modifiers_register_only_inside_the_steps_callback() {
+    let jest = declared_framework("jest-cucumber");
+    for step in ["given", "when", "then", "and", "but", "defineStep"] {
+        let source = format!(
+            "import {{ defineFeature }} from 'jest-cucumber'; defineFeature(feature, test => test('one', steps => steps.{step}('action', () => work())));"
+        );
+        let (frameworks, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        assert_eq!(frameworks, [jest], "{step}: {diagnostics:?}");
+        assert!(diagnostics.is_empty(), "{step}: {diagnostics:?}");
+    }
+    for modifier in ["only", "skip", "concurrent"] {
+        let source = format!(
+            "import {{ defineFeature }} from 'jest-cucumber'; defineFeature(feature, test => test.{modifier}('one', ({{ given }}) => given('action', () => work())));"
+        );
+        let (frameworks, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        assert_eq!(frameworks, [jest], "{modifier}: {diagnostics:?}");
+        assert!(diagnostics.is_empty(), "{modifier}: {diagnostics:?}");
+    }
+    // The opposite answer: an unknown modifier and an unknown steps property register nothing.
+    for source in [
+        "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test.todo('one', ({ given }) => given('action', () => work())));",
+        "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', steps => steps.also('action', () => work())));",
+    ] {
+        let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+        assert!(frameworks.is_empty(), "{source}: {frameworks:?}");
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+    // `given` keeps its steps provenance, but the nested callback's call is not proven to run
+    // while the scenario callback does.
+    let nested = "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', ({ given }) => { [1].forEach(() => given('action', () => work())); }));";
+    let (frameworks, _, diagnostics) = outcomes(nested, SourceLanguage::TypeScript);
+    assert!(frameworks.is_empty(), "{frameworks:?}");
+    assert!(!diagnostics.is_empty());
 }
 
 /// Checks erased, unknown, shadowed, and reassigned Jest setup bindings cannot invent definitions.

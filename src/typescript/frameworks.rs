@@ -1,17 +1,20 @@
 //! Framework registration vocabulary for the JavaScript/TypeScript adapter.
 //!
 //! FRAMEWORK_REGISTRY supports entrypoints sharing the existing call exports (optionally with
-//! a createBdd-style factory) or the fixed Given/When/Then/Step decorator exports. Different
-//! export sets or registration syntax require extraction support and fixtures, not just a row.
+//! a createBdd-style factory), the fixed Given/When/Then/Step decorator exports, or a
+//! `CallbackModel` whose steps are proven through callback provenance. Different export sets or
+//! registration syntax require extraction support and fixtures, not just a row.
 //! Framework configuration discovery and user-facing compatibility docs are maintained separately.
 //! Package recognition alone must not invent bindings or confer assertion-library trust.
 
 use super::framework_config::{
     CUCUMBER_JS_DISCOVERY, CYPRESS_CUCUMBER_DISCOVERY, PLAYWRIGHT_BDD_DISCOVERY,
 };
+use super::semantics::{ISOLATED, SCENARIO_LOCAL};
 use crate::model::Framework;
 use crate::source_adapter::FrameworkContract;
 use std::collections::BTreeMap;
+use RegistrationExportKind::{Call, Feature, NonRegistration, Unsupported};
 
 /// Cucumber.js registration APIs.
 pub(crate) const CUCUMBER_JS: Framework = Framework::new("cucumber-js");
@@ -26,27 +29,17 @@ pub(crate) const VITEST_CUCUMBER: Framework = Framework::new("vitest-cucumber");
 /// Every framework this adapter attributes definitions to, in precedence order: feature
 /// discovery tries them in this order, and evidence for two frameworks resolves to the earlier.
 pub(crate) static FRAMEWORK_CONTRACTS: [FrameworkContract; 5] = [
-    FrameworkContract {
-        framework: PLAYWRIGHT_BDD,
-        discovery: Some(PLAYWRIGHT_BDD_DISCOVERY),
-        excludes: &[
+    FrameworkContract::new(PLAYWRIGHT_BDD)
+        .with_discovery(PLAYWRIGHT_BDD_DISCOVERY)
+        .with_excludes(&[
             "**/.features-gen/**",
             "**/test-results/**",
             "**/playwright-report/**",
-        ],
-    },
-    FrameworkContract {
-        framework: CYPRESS_CUCUMBER,
-        discovery: Some(CYPRESS_CUCUMBER_DISCOVERY),
-        excludes: &[],
-    },
-    FrameworkContract {
-        framework: CUCUMBER_JS,
-        discovery: Some(CUCUMBER_JS_DISCOVERY),
-        excludes: &[],
-    },
-    FrameworkContract::new(JEST_CUCUMBER),
-    FrameworkContract::new(VITEST_CUCUMBER),
+        ]),
+    FrameworkContract::new(CYPRESS_CUCUMBER).with_discovery(CYPRESS_CUCUMBER_DISCOVERY),
+    FrameworkContract::new(CUCUMBER_JS).with_discovery(CUCUMBER_JS_DISCOVERY),
+    FrameworkContract::new(JEST_CUCUMBER).with_policy(SCENARIO_LOCAL),
+    FrameworkContract::new(VITEST_CUCUMBER).with_policy(ISOLATED),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,9 +98,64 @@ struct FrameworkRegistration {
 enum ExportStyle {
     Calls { factory: Option<&'static str> },
     Decorators,
-    Jest,
-    Vitest,
+    Callbacks(&'static CallbackModel),
 }
+
+/// How a framework whose steps are proven through callback provenance registers them.
+pub(super) struct CallbackModel {
+    /// The entrypoint's exports and their kinds.
+    exports: &'static [(&'static str, RegistrationExportKind)],
+    /// Properties of a scenario function that return the same scenario function.
+    pub(super) scenario_modifiers: &'static [&'static str],
+    /// Properties of the steps object a scenario callback receives.
+    pub(super) steps: &'static [(&'static str, RegistrationExportKind)],
+    /// Step calls register only inside a proven steps callback.
+    pub(super) scenario_scoped: bool,
+    /// A CommonJS `require` of the entrypoint is a supported runtime import.
+    pub(super) commonjs: bool,
+    /// String matchers are literal text, not Cucumber expressions.
+    pub(super) literal_strings: bool,
+}
+
+/// Jest-Cucumber: `defineFeature` passes a scenario function whose callback receives the steps.
+const JEST_CALLBACKS: CallbackModel = CallbackModel {
+    exports: &[
+        ("defineFeature", Feature),
+        ("autoBindSteps", Unsupported),
+        ("loadFeature", NonRegistration),
+        ("loadFeatures", NonRegistration),
+        ("parseFeature", NonRegistration),
+        ("setJestCucumberConfiguration", NonRegistration),
+        ("generateCodeFromFeature", NonRegistration),
+        (
+            "generateCodeWithSeparateFunctionsFromFeature",
+            NonRegistration,
+        ),
+    ],
+    scenario_modifiers: &["only", "skip", "concurrent"],
+    steps: &[
+        ("given", Call),
+        ("when", Call),
+        ("then", Call),
+        ("and", Call),
+        ("but", Call),
+        ("defineStep", Call),
+        ("pending", NonRegistration),
+    ],
+    scenario_scoped: true,
+    commonjs: true,
+    literal_strings: true,
+};
+
+/// vitest-cucumber-plugin: ESM-only global registrations.
+const VITEST_CALLBACKS: CallbackModel = CallbackModel {
+    exports: &[("Given", Call), ("When", Call), ("Then", Call)],
+    scenario_modifiers: &[],
+    steps: &[],
+    scenario_scoped: false,
+    commonjs: false,
+    literal_strings: false,
+};
 
 // Match exact entrypoints, never prefixes: lookalike packages/subpaths are not trusted.
 // The legacy Cypress root exports a preprocessor, not step registrations.
@@ -115,12 +163,12 @@ const FRAMEWORK_REGISTRY: &[FrameworkRegistration] = &[
     FrameworkRegistration {
         modules: &["jest-cucumber"],
         framework: JEST_CUCUMBER,
-        exports: ExportStyle::Jest,
+        exports: ExportStyle::Callbacks(&JEST_CALLBACKS),
     },
     FrameworkRegistration {
         modules: &["vitest-cucumber-plugin"],
         framework: VITEST_CUCUMBER,
-        exports: ExportStyle::Vitest,
+        exports: ExportStyle::Callbacks(&VITEST_CALLBACKS),
     },
     FrameworkRegistration {
         modules: &[CUCUMBER_MODULE, LEGACY_CUCUMBER_MODULE],
@@ -173,6 +221,30 @@ pub(super) fn framework_for_module(module: &str) -> Framework {
     registration_for_module(module).map_or(Framework::UNKNOWN, |entry| entry.framework)
 }
 
+/// The callback model of `framework`, when its steps need callback provenance.
+pub(super) fn callback_model(framework: Framework) -> Option<&'static CallbackModel> {
+    FRAMEWORK_REGISTRY
+        .iter()
+        .filter(|entry| entry.framework == framework)
+        .find_map(|entry| match entry.exports {
+            ExportStyle::Callbacks(model) => Some(model),
+            ExportStyle::Calls { .. } | ExportStyle::Decorators => None,
+        })
+}
+
+/// Builds the export `canonical` of `kind` attributed to `framework`.
+pub(super) fn export(
+    canonical: &str,
+    kind: RegistrationExportKind,
+    framework: Framework,
+) -> RegistrationExport {
+    RegistrationExport {
+        canonical: canonical.to_owned(),
+        kind,
+        framework,
+    }
+}
+
 /// Returns the ordinary registration exports attributed to one framework.
 pub(super) fn registration_exports_for_framework(framework: Framework) -> RegistrationExports {
     REGISTRATIONS
@@ -202,42 +274,11 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
         return registration_exports_for_framework(Framework::UNKNOWN);
     };
     let framework = entry.framework;
-    let special = match entry.exports {
-        ExportStyle::Jest => Some((
-            &[
-                "defineFeature",
-                "autoBindSteps",
-                "loadFeature",
-                "loadFeatures",
-                "parseFeature",
-                "setJestCucumberConfiguration",
-                "generateCodeFromFeature",
-                "generateCodeWithSeparateFunctionsFromFeature",
-            ][..],
-            RegistrationExportKind::Feature,
-        )),
-        ExportStyle::Vitest => Some((&["Given", "When", "Then"][..], RegistrationExportKind::Call)),
-        _ => None,
-    };
-    if let Some((names, kind)) = special {
-        return names
+    if let ExportStyle::Callbacks(model) = entry.exports {
+        return model
+            .exports
             .iter()
-            .map(|name| {
-                (
-                    (*name).to_owned(),
-                    RegistrationExport {
-                        canonical: (*name).to_owned(),
-                        kind: if *name == "autoBindSteps" {
-                            RegistrationExportKind::Unsupported
-                        } else if framework == JEST_CUCUMBER && *name != "defineFeature" {
-                            RegistrationExportKind::NonRegistration
-                        } else {
-                            kind
-                        },
-                        framework,
-                    },
-                )
-            })
+            .map(|&(name, kind)| (name.to_owned(), export(name, kind, framework)))
             .collect();
     }
     if let ExportStyle::Calls { factory } = entry.exports {

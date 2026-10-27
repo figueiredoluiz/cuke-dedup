@@ -611,13 +611,16 @@ type DependencyDiscovery =
     fn(&crate::config::Config, &globset::GlobSet, &mut crate::discovery::DiscoveredFiles);
 
 /// A framework an adapter recognizes: its report id, the feature discovery its configuration
-/// supports and the generated or report directories it writes. An adapter lists its contracts in
-/// precedence order; shared code reads them in registry order and never names a framework.
+/// supports, the generated or report directories it writes and the comparison policy its
+/// definitions carry. An adapter lists its contracts in precedence order; shared code reads them in
+/// registry order and never names a framework.
 pub struct FrameworkContract {
     /// The id definitions attributed to this framework carry in reports.
     pub framework: Framework,
     pub(crate) discovery: Option<FrameworkDescriptor>,
     pub(crate) excludes: &'static [&'static str],
+    /// `None` keeps the adapter's [`SourceAdapter::analysis_policy`].
+    pub(crate) policy: Option<AnalysisPolicy>,
 }
 
 impl FrameworkContract {
@@ -627,12 +630,43 @@ impl FrameworkContract {
             framework,
             discovery: None,
             excludes: &[],
+            policy: None,
         }
     }
 
     /// This contract with `excludes` as the framework's default exclude globs.
     pub const fn with_excludes(self, excludes: &'static [&'static str]) -> Self {
         Self { excludes, ..self }
+    }
+
+    /// This contract with `discovery` as its feature discovery.
+    pub(crate) const fn with_discovery(self, discovery: FrameworkDescriptor) -> Self {
+        Self {
+            discovery: Some(discovery),
+            ..self
+        }
+    }
+
+    /// This contract with `policy` in place of the adapter's default comparison policy.
+    pub(crate) const fn with_policy(self, policy: AnalysisPolicy) -> Self {
+        Self {
+            policy: Some(policy),
+            ..self
+        }
+    }
+
+    /// The comparison policy of `framework` among `contracts`, or `default` when no contract
+    /// declares that framework or its contract keeps the adapter's policy.
+    pub(crate) fn policy_of(
+        contracts: &[Self],
+        framework: Framework,
+        default: AnalysisPolicy,
+    ) -> AnalysisPolicy {
+        contracts
+            .iter()
+            .find(|contract| contract.framework == framework)
+            .and_then(|contract| contract.policy)
+            .unwrap_or(default)
     }
 }
 

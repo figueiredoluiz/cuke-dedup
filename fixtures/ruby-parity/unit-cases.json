@@ -3168,6 +3168,13 @@
           },
           "rationale": "Outcome matrix `attached_policy_decides_outcomes_not_the_framework_label` flips only the attached policy of otherwise identical definitions and checks usage, duplicate-handler and mixed-domain outcomes in-process; the Ruby arm anchors a regex per line and is executable Ruby evidence.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "contract_builders_attach_discovery_and_policy",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: the crate-internal `FrameworkContract` builders and `policy_of` fallback over a caller-built id; no adapter declares or produces the values.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -3434,6 +3441,18 @@
           "name": "default_registrations_are_a_subset_of_every_known_registration",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JS framework entrypoint table (`default registrations are a subset of every known registration`). Semantic residue: the Ruby provider table is pinned by the `provider-context-world-module-given` and `provider-context-uninstalled-module-given` groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "callback_models_are_declared_only_by_callback_frameworks",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JS framework entrypoint table (`callback models are declared only by callback frameworks`). Semantic residue: the Ruby provider table is pinned by the `provider-context-world-module-given` and `provider-context-uninstalled-module-given` groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "callback_entrypoints_export_their_declared_kinds",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JS framework entrypoint table (`callback entrypoints export their declared kinds`). Semantic residue: the Ruby provider table is pinned by the `provider-context-world-module-given` and `provider-context-uninstalled-module-given` groups.",
           "behaviorClass": "language-specific-api"
         }
       ]
@@ -6379,6 +6398,12 @@
           "name": "deep_alias_cli_rejects_incomplete_setup_and_mutated_root_findings",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: Jest/Vitest callback-convention registrations (`deep alias cli rejects incomplete setup and mutated root findings`). Semantic residue: Cucumber Ruby has one global registration convention; its provenance is covered by the registration and equivalent-provider groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "jest_steps_vocabulary_and_modifiers_register_only_inside_the_steps_callback",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Jest/Vitest callback-convention registrations (`jest steps vocabulary and modifiers register only inside the steps callback`). Semantic residue: Cucumber Ruby has one global registration convention; its provenance is covered by the registration and equivalent-provider groups.",
           "behaviorClass": "language-specific-api"
         }
       ]

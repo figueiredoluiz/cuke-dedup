@@ -12,8 +12,8 @@ use super::ast::{
     is_const_declaration, push_named_children_reverse,
 };
 use super::frameworks::{
-    is_supported_module, registration_exports_for_module, RegistrationExport,
-    RegistrationExportKind, RegistrationExports,
+    callback_model, export, is_supported_module, registration_exports_for_module,
+    RegistrationExport, RegistrationExportKind, RegistrationExports,
 };
 use super::module_resolver::RegistrationResolver;
 use super::node_text;
@@ -22,7 +22,6 @@ use super::registrations::{
     RegistrationCallee,
 };
 use crate::model::Framework;
-use crate::typescript::frameworks::{JEST_CUCUMBER, VITEST_CUCUMBER};
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -47,8 +46,13 @@ impl FrameworkCalls {
 }
 
 /// Identifies frameworks whose calls require the callback-aware provenance model.
-pub(super) fn is_new_framework(framework: Framework) -> bool {
-    matches!(framework, JEST_CUCUMBER | VITEST_CUCUMBER)
+pub(super) fn uses_callbacks(framework: Framework) -> bool {
+    callback_model(framework).is_some()
+}
+
+/// Whether `framework` supports a CommonJS `require` of its entrypoint.
+fn supports_commonjs(framework: Framework) -> bool {
+    callback_model(framework).is_some_and(|model| model.commonjs)
 }
 
 #[derive(Clone)]
@@ -56,8 +60,10 @@ enum Value {
     Export(RegistrationExport),
     Fallback(RegistrationExport),
     Namespace(RegistrationExports),
-    Scenario,
-    Steps,
+    /// The scenario function a framework's feature export passes to its callback.
+    Scenario(Framework),
+    /// The steps object a framework's scenario callback receives.
+    Steps(Framework),
     /// Framework-derived or depth-limited value whose callable origin remains unproved.
     Unknown,
 }
@@ -72,25 +78,17 @@ impl Value {
     fn property(self, name: &str) -> Option<Self> {
         match self {
             Self::Namespace(exports) => exports.get(name).cloned().map(Self::Export),
-            Self::Scenario if matches!(name, "only" | "skip" | "concurrent") => {
-                Some(Self::Scenario)
-            }
-            Self::Steps
-                if matches!(
-                    name,
-                    "given" | "when" | "then" | "and" | "but" | "defineStep" | "pending"
-                ) =>
+            Self::Scenario(framework)
+                if callback_model(framework)
+                    .is_some_and(|model| model.scenario_modifiers.contains(&name)) =>
             {
-                Some(Self::Export(RegistrationExport {
-                    canonical: name.to_owned(),
-                    kind: if name == "pending" {
-                        RegistrationExportKind::NonRegistration
-                    } else {
-                        RegistrationExportKind::Call
-                    },
-                    framework: JEST_CUCUMBER,
-                }))
+                Some(Self::Scenario(framework))
             }
+            Self::Steps(framework) => callback_model(framework)?
+                .steps
+                .iter()
+                .find(|(step, _)| *step == name)
+                .map(|&(step, kind)| Self::Export(export(step, kind, framework))),
             _ => None,
         }
     }
@@ -503,9 +501,9 @@ impl<'tree> Bindings<'tree, '_> {
             ignore_writes,
         )? {
             Value::Export(export) if export.kind == RegistrationExportKind::Feature => {
-                Some(Value::Scenario)
+                Some(Value::Scenario(export.framework))
             }
-            Value::Scenario => Some(Value::Steps),
+            Value::Scenario(framework) => Some(Value::Steps(framework)),
             _ => None,
         }
     }
@@ -613,14 +611,14 @@ pub(super) fn discover<'tree>(
                             exports
                                 .get(exported)
                                 .cloned()
-                                .filter(|export| is_new_framework(export.framework))
+                                .filter(|export| uses_callbacks(export.framework))
                                 .map(Value::Export),
                         ),
                         ImportBinding::Namespace(name) => (
                             name,
                             exports
                                 .values()
-                                .any(|export| is_new_framework(export.framework))
+                                .any(|export| uses_callbacks(export.framework))
                                 .then(|| Value::Namespace(exports.clone())),
                         ),
                         ImportBinding::Default(name) => (name, None),
@@ -629,7 +627,7 @@ pub(super) fn discover<'tree>(
                         !requires_loader
                             || exports
                                 .values()
-                                .any(|export| export.framework == JEST_CUCUMBER)
+                                .any(|export| supports_commonjs(export.framework))
                     });
                     bindings
                         .bindings
@@ -663,10 +661,9 @@ pub(super) fn discover<'tree>(
                                 .map(|value| value.exports)
                                 .unwrap_or_default()
                         };
-                        // The Vitest plugin is ESM-only; a require is not a supported runtime entry.
                         if exports
                             .values()
-                            .any(|export| export.framework == JEST_CUCUMBER)
+                            .any(|export| supports_commonjs(export.framework))
                         {
                             bindings
                                 .requires
@@ -808,7 +805,7 @@ pub(super) fn discover<'tree>(
             .filter(|value| !value.is_non_registration());
         if matches!(
             known,
-            Some(Value::Export(_) | Value::Fallback(_) | Value::Scenario)
+            Some(Value::Export(_) | Value::Fallback(_) | Value::Scenario(_))
         ) {
             continue;
         }
@@ -854,11 +851,11 @@ pub(super) fn discover<'tree>(
                     continue;
                 }
                 let executes = fallback
-                    || export.framework != JEST_CUCUMBER
+                    || !callback_model(export.framework).is_some_and(|model| model.scenario_scoped)
                     || nearest_function_scope(call.parent()).is_some_and(|callback| {
                         matches!(
                             bindings.callback_value(callback, 0, false),
-                            Some(Value::Steps)
+                            Some(Value::Steps(steps)) if steps == export.framework
                         )
                     });
                 if executes {
@@ -874,7 +871,7 @@ pub(super) fn discover<'tree>(
                     result.incomplete.insert(function.start_byte());
                 }
             }
-            Some(Value::Export(_)) | Some(Value::Scenario) if !non_registration => {
+            Some(Value::Export(_)) | Some(Value::Scenario(_)) if !non_registration => {
                 result.handled.insert(function.start_byte());
                 let callback = call.child_by_field_name("arguments").and_then(|arguments| {
                     arguments

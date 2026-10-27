@@ -42,7 +42,6 @@ use crate::source_adapter::{
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
-use crate::typescript::frameworks::JEST_CUCUMBER;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
@@ -572,7 +571,7 @@ fn unresolved_registration_call<'a>(
         return None;
     }
     if registration_name(function, context.source, context.registrations)
-        .is_some_and(|(_, _, framework)| framework_callbacks::is_new_framework(framework))
+        .is_some_and(|(_, _, framework)| framework_callbacks::uses_callbacks(framework))
     {
         return Some(UnresolvedRegistration::Generic);
     }
@@ -644,7 +643,7 @@ fn extract_call<'tree>(
     let (callee, registration, registration_framework) =
         context.framework_calls.registration(function).or_else(|| {
             registration_name(function, source, context.registrations)
-                .filter(|(_, _, framework)| !framework_callbacks::is_new_framework(*framework))
+                .filter(|(_, _, framework)| !framework_callbacks::uses_callbacks(*framework))
         })?;
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
@@ -658,7 +657,10 @@ fn extract_call<'tree>(
     if arguments.len() < 2 {
         return None;
     }
-    if registration_framework == JEST_CUCUMBER && matcher_kind == MatcherKind::CucumberExpression {
+    if matcher_kind == MatcherKind::CucumberExpression
+        && frameworks::callback_model(registration_framework)
+            .is_some_and(|model| model.literal_strings)
+    {
         matcher_kind = MatcherKind::Literal;
     }
     let handler = arguments.iter().rev().copied().find(|node| {

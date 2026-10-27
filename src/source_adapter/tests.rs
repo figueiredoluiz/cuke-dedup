@@ -664,6 +664,9 @@ fn adapter_policies_resolve_to_their_declared_capabilities() {
         (PLAYWRIGHT_BDD, Shared, ByText),
         (CYPRESS_CUCUMBER, Shared, ByText),
         (UNKNOWN, Shared, ByText),
+        // Ids no JavaScript/TypeScript contract declares keep the adapter's default policy.
+        (crate::ruby::CUCUMBER_RUBY, Shared, ByText),
+        (Framework::new("undeclared"), Shared, ByText),
         (JEST_CUCUMBER, Local, Positional),
         (VITEST_CUCUMBER, Isolated, ByText),
     ];
@@ -967,4 +970,28 @@ fn public_framework_contracts_start_without_discovery_or_excludes() {
         (contract.framework, contract.excludes),
         (framework, &["**/reports/**"][..])
     );
+}
+
+/// The crate-internal builders attach discovery and a policy, and `policy_of` falls back to the
+/// adapter default for a contract without one and for an id no contract declares.
+#[test]
+fn contract_builders_attach_discovery_and_policy() {
+    let framework = Framework::new("external-framework");
+    let discovery = crate::typescript::framework_config::CUCUMBER_JS_DISCOVERY;
+    let default = crate::typescript::semantics::default_policy();
+    let local = crate::typescript::semantics::policy(JEST_CUCUMBER);
+    let plain = FrameworkContract::new(framework).with_discovery(discovery);
+    assert!(plain.discovery.is_some() && plain.policy.is_none());
+    let scoped = FrameworkContract::new(framework).with_policy(local);
+    assert_eq!(scoped.policy, Some(local));
+    for (contracts, expected) in [([plain], default), ([scoped], local)] {
+        assert_eq!(
+            FrameworkContract::policy_of(&contracts, framework, default),
+            expected
+        );
+        assert_eq!(
+            FrameworkContract::policy_of(&contracts, Framework::UNKNOWN, default),
+            default
+        );
+    }
 }
