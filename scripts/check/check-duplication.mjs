@@ -32,19 +32,24 @@
 // (CONTRIBUTING.md). Fetching it per-run with `npx` was the other option and was rejected: it pins
 // only the top-level version, leaving transitive versions and integrity unlocked in CI.
 //
-// ## Known limitation
+// ## Scopes are split by file
 //
-// Scopes are split by file: `tests.rs` files and `tests/` are the test scope, everything else in
-// `src/` is production. Eight `#[cfg(test)] mod tests` blocks remain inline in production files and
-// are therefore counted in the production figure. Splitting those needs a Rust-aware scanner with a
-// partition invariant; until then the production number is an upper bound, which fails safe.
+// Files under a `tests` path segment (`tests/`, `src/x/tests/`), `tests.rs` files and `fuzz/` are the
+// test scope, as in the language-boundary check; everything else in `src/` is production. That is
+// exact only while production files hold no test modules, so a test module lives in its own
+// `tests.rs` (`#[cfg(test)] mod tests;`). `lib/rust-scopes.mjs` fails the gate on a test-only module
+// written inline, one loaded from a file not named `tests.rs`, an inner test-only `#![cfg]`, a
+// `mod tests` that is not test-only, and attribute shapes it does not model.
+// Test-only helpers declared directly in a production file (`#[cfg(test)] fn …`, `use`, `const`)
+// still count as production, so that figure is an upper bound.
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { filterExisting, parseGitSources } from "./lib/rust-sources.mjs";
+import { misplacedTestModules } from "./lib/rust-scopes.mjs";
 
 /// Every Rust source in the repository, which the scopes below must account for exactly once.
 ///
@@ -98,17 +103,21 @@ const MINIMUM_REPORTABLE_BYTES = 4_096;
 /// the file grows faster. Roughly 7,200 unique lines would currently mask 50 new duplicated ones.
 /// The absolute ceiling is the one that actually says "no more copy-paste than today"; the
 /// percentage keeps the figure comparable as the codebase grows.
+/**
+ * Whether a path is test code by layout: a `tests` directory segment or a `tests.rs` file. Whole
+ * segments, not `endsWith`: `endsWith("tests.rs")` would also match a production file named
+ * `contests.rs`.
+ */
+const isTestPath = (path) => path.split("/").some((segment) => segment === "tests" || segment === "tests.rs");
+
 const SCOPES = [
   {
     name: "production",
-    // `basename`, not `endsWith`: `endsWith("tests.rs")` would also exclude a production file
-    // named `contests.rs`, which the test glob does not match either, so it would be measured by
-    // neither scope. The partition assertion below is the backstop for that whole class.
-    files: () => ALL_RUST_SOURCES.filter(
-      (path) => path.startsWith("src/") && basename(path) !== "tests.rs",
-    ),
-    maximumPercentage: 0.31,
-    maximumDuplicatedLines: 109,
+    // `mod tests;` may load `tests/mod.rs`, and a `tests.rs` loads its children from `tests/`. The
+    // partition assertion below is the backstop for a file neither scope selects.
+    files: () => ALL_RUST_SOURCES.filter((path) => path.startsWith("src/") && !isTestPath(path)),
+    maximumPercentage: 0.27,
+    maximumDuplicatedLines: 96,
     minimumFiles: 30,
     minimumLines: 15_000,
   },
@@ -117,13 +126,10 @@ const SCOPES = [
     // Fuzz targets are harnesses, not shipped code, so they are measured here rather than with
     // production sources.
     files: () => ALL_RUST_SOURCES.filter(
-      (path) =>
-        basename(path) === "tests.rs"
-        || path.startsWith("tests/")
-        || path.startsWith("fuzz/"),
+      (path) => isTestPath(path) || path.startsWith("fuzz/"),
     ),
-    maximumPercentage: 2.59,
-    maximumDuplicatedLines: 1222,
+    maximumPercentage: 2.44,
+    maximumDuplicatedLines: 1266,
     minimumFiles: 12,
     minimumLines: 15_000,
   },
@@ -140,6 +146,23 @@ assert.deepEqual(
   unclaimed,
   [],
   `Rust sources measured by no scope: ${unclaimed.join(", ")} — add them to a scope or the gate silently ignores them`,
+);
+
+// File-level scopes are exact only if every test module in a production file loads a `tests.rs`;
+// a test module written inline, or loaded from a file with another name, would count its test code
+// as production without any other assertion noticing.
+const productionFiles = SCOPES.find((scope) => scope.name === "production").files();
+const misplaced = productionFiles.flatMap((path) => {
+  try {
+    return misplacedTestModules(readFileSync(path, "utf8")).map(({ line, problem }) => `${path}:${line}: ${problem}`);
+  } catch (error) {
+    throw new Error(`${path}: ${error.message}`);
+  }
+});
+assert.deepEqual(
+  misplaced,
+  [],
+  `test code in production files — move it to a tests.rs loaded by \`#[cfg(test)] mod tests;\`:\n  ${misplaced.join("\n  ")}`,
 );
 
 /// Resolved from the isolated tool manifest, never from the ambient environment.

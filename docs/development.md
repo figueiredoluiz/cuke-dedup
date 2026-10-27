@@ -299,7 +299,16 @@ Parity lanes compare language-neutral counts, completeness, strict exits and fin
 
 - `npm run duplication:check` ratchets production and test scopes against percentage and absolute
   duplicated-line ceilings; it rejects growth and stale slack, so record improvements. Every Rust
-  source belongs to exactly one scope. Review jscpd warnings about skipped oversized files.
+  source belongs to exactly one scope, by file: `tests.rs` files, files under a `tests` directory and
+  `fuzz/` are tests, the rest of `src/` is production. A test module therefore lives in its own
+  `tests.rs` (`#[cfg(test)] mod tests;`). The check fails on a test-only module in a production file
+  that is written inline, declared under another name or with `#[path]`, or made test-only by an
+  inner `#![cfg(…)]`, and on a `mod tests` that is not test-only; "test-only" means its `cfg` cannot
+  hold without `test`, so `cfg(not(test))` and `cfg(any(windows, test))` modules are not affected.
+  It also fails on shapes it does not evaluate: `cfg_attr` or a path-qualified `cfg` on a module or
+  inner attribute, and a test-only module named by a macro fragment. Test-only helpers such as
+  `#[cfg(test)] fn` stay in the production figure. Review jscpd warnings about skipped oversized
+  files.
 - `npm run memory:check` compiles a deterministic corpus at two sizes and holds the marginal bytes
   per definition under a budget, with a work floor. Lower the budget when a change improves the
   figure; never raise it. Re-pin from CI, since peak resident memory is platform-dependent.
