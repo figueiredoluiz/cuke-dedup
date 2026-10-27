@@ -413,15 +413,16 @@ fn framework_ids_keep_their_serialized_form_and_reject_undeclared_ids() {
     // An adapter type's registrations share one declaration list (the JavaScript, TypeScript and
     // TSX adapters return the same named static); each distinct list, keyed by address, counts
     // once, so an id repeated within a list or across two lists survives as a duplicate.
-    let mut lists: Vec<&'static [Framework]> = SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .map(|registration| registration.adapter.frameworks())
-        .collect();
+    let mut lists: Vec<&'static [crate::source_adapter::FrameworkContract]> =
+        SOURCE_ADAPTER_REGISTRY
+            .iter()
+            .map(|registration| registration.adapter.framework_contracts())
+            .collect();
     lists.sort_unstable_by_key(|list| list.as_ptr() as usize);
     lists.dedup_by_key(|list| list.as_ptr() as usize);
     let mut declared: Vec<&'static str> = lists
         .iter()
-        .flat_map(|list| list.iter().map(|framework| framework.id()))
+        .flat_map(|list| list.iter().map(|contract| contract.framework.id()))
         .collect();
     declared.sort_unstable();
     let ids = declared;

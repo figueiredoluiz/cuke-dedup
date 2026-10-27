@@ -1,5 +1,7 @@
 use super::*;
-use crate::typescript::frameworks::{CUCUMBER_JS, PLAYWRIGHT_BDD};
+use crate::typescript::frameworks::{
+    CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
+};
 use std::fs;
 
 /// Verify relative resolution infers extensions and indexes while rejecting paths outside the analysis boundary.
@@ -1070,4 +1072,37 @@ fn commonjs_identifier_exports_follow_a_const_to_its_value() {
         [("Given".to_owned(), "Given".to_owned())]
     );
     assert_eq!(commented.reason, None);
+}
+
+/// Merging two pieces of framework evidence keeps the one earlier in the fixed precedence
+/// Playwright-BDD, Cypress Cucumber, Cucumber.js, Jest-Cucumber, vitest-cucumber-plugin, in either
+/// argument order; unknown and another adapter's framework never win and merge to unknown alone.
+#[test]
+fn framework_evidence_merges_by_contract_precedence() {
+    let precedence = [
+        PLAYWRIGHT_BDD,
+        CYPRESS_CUCUMBER,
+        CUCUMBER_JS,
+        JEST_CUCUMBER,
+        VITEST_CUCUMBER,
+    ];
+    let foreign = crate::ruby::CUCUMBER_RUBY;
+    let inputs = precedence
+        .iter()
+        .copied()
+        .chain([Framework::UNKNOWN, foreign]);
+    for current in inputs.clone() {
+        for evidence in inputs.clone() {
+            let expected = precedence
+                .iter()
+                .copied()
+                .find(|framework| *framework == current || *framework == evidence)
+                .unwrap_or(Framework::UNKNOWN);
+            assert_eq!(
+                merge_framework(current, evidence),
+                expected,
+                "{current:?} + {evidence:?}"
+            );
+        }
+    }
 }

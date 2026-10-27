@@ -3049,6 +3049,23 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "registered_framework_contracts_list_each_framework_once_in_registry_order",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_fingerprints_records_each_ruby_definition_outcome"
+          },
+          "rationale": "The list is read from each adapter's `framework_contracts()`, so it is adapter-declared data. `emit_fingerprints_records_each_ruby_definition_outcome` extracts Ruby source and asserts the Ruby contract's `cucumber-ruby` id on every record.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "public_framework_contracts_start_without_discovery_or_excludes",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: the public `FrameworkContract` constructor over a caller-built id; no adapter declares or produces the values.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "language_lookup_and_suffix_routing_agree_on_one_adapter_table",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -3461,6 +3478,12 @@
           "name": "resolver_reuses_cached_modules_across_importing_files",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`resolver reuses cached modules across importing files`). Semantic residue: Ruby relative, cyclic and unresolved loads are covered by the load-* groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "framework_evidence_merges_by_contract_precedence",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: precedence between JavaScript framework packages imported by one module (`framework evidence merges by contract precedence`). Semantic residue: none",
           "behaviorClass": "language-specific-api"
         },
         {

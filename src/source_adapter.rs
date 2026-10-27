@@ -15,6 +15,7 @@ pub use finalization::{
 };
 pub use semantics::AnalysisPolicy;
 
+use crate::framework_descriptor::FrameworkDescriptor;
 use crate::model::{Framework, SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
 use anyhow::{Context, Result};
@@ -545,9 +546,15 @@ pub trait SourceAdapter: Sync {
         AnalysisPolicy::default()
     }
 
-    /// The frameworks this adapter attributes definitions to. Their ids are the only ones, besides
-    /// [`Framework::UNKNOWN`], that a serialized definition may carry.
-    fn frameworks(&self) -> &'static [Framework] {
+    /// The frameworks this adapter attributes definitions to, in precedence order. Their ids are
+    /// the only ones, besides [`Framework::UNKNOWN`], that a serialized definition may carry.
+    fn framework_contracts(&self) -> &'static [FrameworkContract] {
+        &[]
+    }
+
+    /// Default exclude globs this adapter's ecosystem needs whatever the framework, such as a
+    /// package-manager directory. Framework-specific globs belong to [`FrameworkContract`].
+    fn default_excludes(&self) -> &'static [&'static str] {
         &[]
     }
 
@@ -602,6 +609,66 @@ pub trait SourceAdapter: Sync {
 
 type DependencyDiscovery =
     fn(&crate::config::Config, &globset::GlobSet, &mut crate::discovery::DiscoveredFiles);
+
+/// A framework an adapter recognizes: its report id, the feature discovery its configuration
+/// supports and the generated or report directories it writes. An adapter lists its contracts in
+/// precedence order; shared code reads them in registry order and never names a framework.
+pub struct FrameworkContract {
+    /// The id definitions attributed to this framework carry in reports.
+    pub framework: Framework,
+    pub(crate) discovery: Option<FrameworkDescriptor>,
+    pub(crate) excludes: &'static [&'static str],
+}
+
+impl FrameworkContract {
+    /// A contract for `framework` with no feature discovery and no exclude globs.
+    pub const fn new(framework: Framework) -> Self {
+        Self {
+            framework,
+            discovery: None,
+            excludes: &[],
+        }
+    }
+
+    /// This contract with `excludes` as the framework's default exclude globs.
+    pub const fn with_excludes(self, excludes: &'static [&'static str]) -> Self {
+        Self { excludes, ..self }
+    }
+}
+
+/// Every registered framework contract, in registry order and then each adapter's precedence
+/// order. Adapter types serving several suffixes are read once: a repeated id is skipped.
+pub(crate) fn registered_framework_contracts() -> impl Iterator<Item = &'static FrameworkContract> {
+    let mut seen = Vec::new();
+    SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .flat_map(|registration| registration.adapter.framework_contracts())
+        .filter(move |contract| {
+            let first = !seen.contains(&contract.framework);
+            seen.push(contract.framework);
+            first
+        })
+}
+
+/// `core` followed by the default exclude globs every registered adapter declares, its own before
+/// its frameworks', in registry order without repeats.
+pub(crate) fn registered_default_excludes(core: &[&'static str]) -> Vec<&'static str> {
+    let mut excludes = core.to_vec();
+    for registration in SOURCE_ADAPTER_REGISTRY {
+        let adapter = registration.adapter;
+        let own = adapter.default_excludes().iter();
+        let frameworks = adapter
+            .framework_contracts()
+            .iter()
+            .flat_map(|contract| contract.excludes);
+        for glob in own.chain(frameworks) {
+            if !excludes.contains(glob) {
+                excludes.push(*glob);
+            }
+        }
+    }
+    excludes
+}
 
 /// One suffix-to-adapter registration.
 #[non_exhaustive]

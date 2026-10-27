@@ -108,9 +108,8 @@ impl<'de> Deserialize<'de> for Framework {
         let id = String::deserialize(deserializer)?;
         let known = || {
             std::iter::once(Self::UNKNOWN).chain(
-                crate::source_adapter::SOURCE_ADAPTER_REGISTRY
-                    .iter()
-                    .flat_map(|registration| registration.adapter.frameworks().iter().copied()),
+                crate::source_adapter::registered_framework_contracts()
+                    .map(|contract| contract.framework),
             )
         };
         known().find(|framework| framework.0 == id).ok_or_else(|| {

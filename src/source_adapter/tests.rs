@@ -365,10 +365,15 @@ fn adapter_session_default_preserves_existing_extract_implementations() {
         adapter_for_language(SourceLanguage::Ruby).analysis_policy(),
         adapter.analysis_policy()
     );
-    // An adapter that declares no framework attributes definitions to none; Ruby declares one.
-    assert!(adapter.frameworks().is_empty());
+    // An adapter that declares no framework attributes definitions to none and excludes nothing;
+    // Ruby declares one framework, JavaScript one ecosystem exclude.
+    assert!(adapter.framework_contracts().is_empty());
+    assert!(adapter.default_excludes().is_empty());
     assert!(!adapter_for_language(SourceLanguage::Ruby)
-        .frameworks()
+        .framework_contracts()
+        .is_empty());
+    assert!(!adapter_for_language(SourceLanguage::JavaScript)
+        .default_excludes()
         .is_empty());
 
     let error = adapter
@@ -926,4 +931,40 @@ fn positional_steps_pair_by_wording_with_text_matched_steps() {
     for pair in [rules(positional, text), rules(text, positional)] {
         assert_eq!(pair, BTreeSet::from([Rule::NearDuplicateStep]));
     }
+}
+
+/// The JavaScript, TypeScript and TSX registrations share one adapter type, so the registered
+/// contracts list each framework once, Ruby's first, then the JavaScript/TypeScript contracts in
+/// their precedence order.
+#[test]
+fn registered_framework_contracts_list_each_framework_once_in_registry_order() {
+    let ids: Vec<&str> = registered_framework_contracts()
+        .map(|contract| contract.framework.id())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "cucumber-ruby",
+            "playwright-bdd",
+            "cypress-cucumber",
+            "cucumber-js",
+            "jest-cucumber",
+            "vitest-cucumber",
+        ]
+    );
+}
+
+/// An adapter outside the crate builds a contract from its id alone: no discovery, no excludes
+/// until it supplies them.
+#[test]
+fn public_framework_contracts_start_without_discovery_or_excludes() {
+    let framework = Framework::new("external-framework");
+    let contract = FrameworkContract::new(framework);
+    assert_eq!(contract.framework, framework);
+    assert!(contract.discovery.is_none() && contract.excludes.is_empty());
+    let contract = contract.with_excludes(&["**/reports/**"]);
+    assert_eq!(
+        (contract.framework, contract.excludes),
+        (framework, &["**/reports/**"][..])
+    );
 }

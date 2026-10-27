@@ -6,7 +6,11 @@
 //! Framework configuration discovery and user-facing compatibility docs are maintained separately.
 //! Package recognition alone must not invent bindings or confer assertion-library trust.
 
+use super::framework_config::{
+    CUCUMBER_JS_DISCOVERY, CYPRESS_CUCUMBER_DISCOVERY, PLAYWRIGHT_BDD_DISCOVERY,
+};
 use crate::model::Framework;
+use crate::source_adapter::FrameworkContract;
 use std::collections::BTreeMap;
 
 /// Cucumber.js registration APIs.
@@ -19,13 +23,30 @@ pub(crate) const CYPRESS_CUCUMBER: Framework = Framework::new("cypress-cucumber"
 pub(crate) const JEST_CUCUMBER: Framework = Framework::new("jest-cucumber");
 /// Global registrations exported by vitest-cucumber-plugin.
 pub(crate) const VITEST_CUCUMBER: Framework = Framework::new("vitest-cucumber");
-/// Every framework this adapter attributes definitions to.
-pub(crate) static FRAMEWORKS: [Framework; 5] = [
-    CUCUMBER_JS,
-    PLAYWRIGHT_BDD,
-    CYPRESS_CUCUMBER,
-    JEST_CUCUMBER,
-    VITEST_CUCUMBER,
+/// Every framework this adapter attributes definitions to, in precedence order: feature
+/// discovery tries them in this order, and evidence for two frameworks resolves to the earlier.
+pub(crate) static FRAMEWORK_CONTRACTS: [FrameworkContract; 5] = [
+    FrameworkContract {
+        framework: PLAYWRIGHT_BDD,
+        discovery: Some(PLAYWRIGHT_BDD_DISCOVERY),
+        excludes: &[
+            "**/.features-gen/**",
+            "**/test-results/**",
+            "**/playwright-report/**",
+        ],
+    },
+    FrameworkContract {
+        framework: CYPRESS_CUCUMBER,
+        discovery: Some(CYPRESS_CUCUMBER_DISCOVERY),
+        excludes: &[],
+    },
+    FrameworkContract {
+        framework: CUCUMBER_JS,
+        discovery: Some(CUCUMBER_JS_DISCOVERY),
+        excludes: &[],
+    },
+    FrameworkContract::new(JEST_CUCUMBER),
+    FrameworkContract::new(VITEST_CUCUMBER),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
