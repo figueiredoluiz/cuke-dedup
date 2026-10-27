@@ -14,6 +14,7 @@ use super::matcher::static_string_key;
 use super::module_resolver::{merge_framework, RegistrationResolver};
 use super::node_text;
 use crate::model::Framework;
+use crate::typescript::frameworks::PLAYWRIGHT_BDD;
 use anyhow::Result;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -346,7 +347,7 @@ pub(super) fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<
 /// Merges framework evidence from runtime module references and available static `require` calls.
 pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
     let mut stack = vec![root];
-    let mut framework = Framework::Unknown;
+    let mut framework = Framework::UNKNOWN;
     let loader = RequireBindings::discover(root, source);
     while let Some(node) = stack.pop() {
         let runtime_module_reference = match node.kind() {
@@ -1117,7 +1118,7 @@ fn collect_variable_registration<'tree>(
                     None => None,
                 }
             } else if create_bdd {
-                Some(registration_exports_for_framework(Framework::PlaywrightBdd))
+                Some(registration_exports_for_framework(PLAYWRIGHT_BDD))
             } else {
                 None
             };

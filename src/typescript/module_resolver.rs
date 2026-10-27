@@ -16,6 +16,9 @@ use crate::resource_limits::{
     MAX_REGISTRATION_MODULE_BYTES, MAX_REGISTRATION_RESOLUTION_STATES,
 };
 use crate::source_adapter::grammar_for_language;
+use crate::typescript::frameworks::{
+    CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
+};
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -189,7 +192,7 @@ fn resolve_exports(
     if depth >= MAX_REEXPORT_DEPTH {
         return Ok(ResolvedExports {
             exports: None,
-            framework: Framework::Unknown,
+            framework: Framework::UNKNOWN,
             cacheable: true,
             exports_incomplete: false,
         });
@@ -197,7 +200,7 @@ fn resolve_exports(
     let Some(path) = project.resolve(importer, specifier, boundary)? else {
         return Ok(ResolvedExports {
             exports: None,
-            framework: Framework::Unknown,
+            framework: Framework::UNKNOWN,
             cacheable: true,
             exports_incomplete: false,
         });
@@ -215,7 +218,7 @@ fn resolve_exports(
     if !state.active.insert(path.clone()) {
         return Ok(ResolvedExports {
             exports: None,
-            framework: Framework::Unknown,
+            framework: Framework::UNKNOWN,
             cacheable: false,
             exports_incomplete: false,
         });
@@ -257,7 +260,7 @@ fn resolve_active_exports(
     let Some(module) = load_module(path, state)? else {
         return Ok(ResolvedExports {
             exports: None,
-            framework: Framework::Unknown,
+            framework: Framework::UNKNOWN,
             cacheable: true,
             exports_incomplete: false,
         });
@@ -310,16 +313,12 @@ fn is_io_failure(error: &anyhow::Error) -> bool {
 /// Combines framework evidence using a fixed precedence, retaining unknown only when neither input is recognized.
 pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framework {
     match (current, evidence) {
-        (Framework::PlaywrightBdd, _) | (_, Framework::PlaywrightBdd) => Framework::PlaywrightBdd,
-        (Framework::CypressCucumber, _) | (_, Framework::CypressCucumber) => {
-            Framework::CypressCucumber
-        }
-        (Framework::CucumberJs, _) | (_, Framework::CucumberJs) => Framework::CucumberJs,
-        (Framework::JestCucumber, _) | (_, Framework::JestCucumber) => Framework::JestCucumber,
-        (Framework::VitestCucumber, _) | (_, Framework::VitestCucumber) => {
-            Framework::VitestCucumber
-        }
-        _ => Framework::Unknown,
+        (PLAYWRIGHT_BDD, _) | (_, PLAYWRIGHT_BDD) => PLAYWRIGHT_BDD,
+        (CYPRESS_CUCUMBER, _) | (_, CYPRESS_CUCUMBER) => CYPRESS_CUCUMBER,
+        (CUCUMBER_JS, _) | (_, CUCUMBER_JS) => CUCUMBER_JS,
+        (JEST_CUCUMBER, _) | (_, JEST_CUCUMBER) => JEST_CUCUMBER,
+        (VITEST_CUCUMBER, _) | (_, VITEST_CUCUMBER) => VITEST_CUCUMBER,
+        _ => Framework::UNKNOWN,
     }
 }
 
@@ -468,7 +467,7 @@ fn collect_module_facts(tree: &tree_sitter::Tree, source: &str) -> ModuleFacts {
     }
     let framework = direct_exports
         .values()
-        .fold(Framework::Unknown, |current, export| {
+        .fold(Framework::UNKNOWN, |current, export| {
             merge_framework(current, export.framework)
         });
     ModuleFacts {
@@ -1019,7 +1018,7 @@ fn collect_create_bdd_bindings(
     }
 
     let directly_exported = is_directly_exported_variable(declarator);
-    let available = registration_exports_for_framework(Framework::PlaywrightBdd);
+    let available = registration_exports_for_framework(PLAYWRIGHT_BDD);
     let mut cursor = pattern.walk();
     for binding in pattern.named_children(&mut cursor) {
         let (registration, local) = match binding.kind() {

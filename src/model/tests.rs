@@ -19,7 +19,7 @@ fn definition(line: usize) -> StepDefinition {
             effect_stream: Default::default(),
             capture_scope: None,
         },
-        framework: Framework::Unknown,
+        framework: Framework::UNKNOWN,
         analysis_policy: Default::default(),
         registration: "Given".to_owned(),
         location: SourceLocation::new("steps.ts", line, 1, line, 10),
@@ -401,4 +401,75 @@ fn behavior_identity_separates_what_events_cannot() {
         plain.behavior_digest(),
         stable_fingerprint_parts(["call:work"])
     );
+}
+
+/// Every framework a registered adapter declares round-trips through its id, is declared by one
+/// adapter type only and never reuses the reserved `unknown`; the former closed enum's ids stay
+/// declared; `unknown` maps to [`Framework::UNKNOWN`] and any undeclared id is rejected with the
+/// declared ids listed.
+#[test]
+fn framework_ids_keep_their_serialized_form_and_reject_undeclared_ids() {
+    use crate::source_adapter::SOURCE_ADAPTER_REGISTRY;
+    // An adapter type's registrations share one declaration list (the JavaScript, TypeScript and
+    // TSX adapters return the same named static); each distinct list, keyed by address, counts
+    // once, so an id repeated within a list or across two lists survives as a duplicate.
+    let mut lists: Vec<&'static [Framework]> = SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter.frameworks())
+        .collect();
+    lists.sort_unstable_by_key(|list| list.as_ptr() as usize);
+    lists.dedup_by_key(|list| list.as_ptr() as usize);
+    let mut declared: Vec<&'static str> = lists
+        .iter()
+        .flat_map(|list| list.iter().map(|framework| framework.id()))
+        .collect();
+    declared.sort_unstable();
+    let ids = declared;
+    assert!(
+        ids.windows(2).all(|pair| pair[0] != pair[1]),
+        "each id is declared once, by one adapter type: {ids:?}"
+    );
+    // A declared `unknown` would deserialize as `Framework::UNKNOWN` and lose its adapter.
+    assert!(!ids.contains(&Framework::UNKNOWN.id()), "{ids:?}");
+    // The kebab-case strings of the former enum variants; reports and fingerprints keep them.
+    for legacy in [
+        "cucumber-js",
+        "cucumber-ruby",
+        "cypress-cucumber",
+        "jest-cucumber",
+        "playwright-bdd",
+        "vitest-cucumber",
+    ] {
+        assert!(
+            ids.contains(&legacy),
+            "{legacy} is no longer declared: {ids:?}"
+        );
+    }
+    for id in ids.iter().copied().chain(["unknown"]) {
+        let framework: Framework = serde_json::from_value(serde_json::json!(id)).unwrap();
+        assert_eq!(framework, Framework::new(id));
+        assert_eq!(
+            serde_json::to_value(framework).unwrap(),
+            serde_json::json!(id)
+        );
+    }
+    assert_eq!(
+        serde_json::from_value::<Framework>(serde_json::json!("unknown")).unwrap(),
+        Framework::UNKNOWN
+    );
+    for undeclared in ["cucumber", "Cucumber-JS", "", "jest"] {
+        let error = serde_json::from_value::<Framework>(serde_json::json!(undeclared))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with(&format!(
+                "unknown framework `{undeclared}`, expected one of "
+            )),
+            "{error}"
+        );
+        assert!(
+            error.contains("cucumber-js") && error.contains("unknown"),
+            "{error}"
+        );
+    }
 }

@@ -2456,6 +2456,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "framework_ids_keep_their_serialized_form_and_reject_undeclared_ids",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: framework id serde over the ids every registered adapter declares, including `cucumber-ruby`; pure model codec.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "threshold_rules_exclude_correctness_and_usage_findings",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {

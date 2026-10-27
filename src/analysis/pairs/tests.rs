@@ -701,10 +701,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
         let mut partial = pair.clone();
         for (definition, partial_stream) in partial.iter_mut().zip([left_partial, right_partial]) {
             if partial_stream {
-                crate::analysis::tests::set_framework(
-                    definition,
-                    crate::model::Framework::CucumberRuby,
-                );
+                crate::analysis::tests::set_framework(definition, crate::ruby::CUCUMBER_RUBY);
             }
         }
         assert_eq!(work(&partial, unrelated, PairSimilarityWork::Handler), 0);
@@ -1019,7 +1016,7 @@ fn mixed_near_profiles_preserve_outcomes_and_budget_in_both_orders() {
         (false, true, false),
     ] {
         let mut left = definition();
-        crate::analysis::tests::set_framework(&mut left, crate::model::Framework::CucumberRuby);
+        crate::analysis::tests::set_framework(&mut left, crate::ruby::CUCUMBER_RUBY);
         left.handler.effect_stream = crate::model::EffectStream::Complete;
         let mut right = left.clone();
         right.location.line += 1;
@@ -1081,7 +1078,7 @@ fn action_only_stream_on_either_side_excludes_identical_event_streams() {
         (ActionOnly, ActionOnly, false),
     ] {
         let mut left = definition();
-        crate::analysis::tests::set_framework(&mut left, crate::model::Framework::CucumberRuby);
+        crate::analysis::tests::set_framework(&mut left, crate::ruby::CUCUMBER_RUBY);
         let mut right = left.clone();
         right.location.line += 1;
         left.matcher = "the parcel status is verified".into();

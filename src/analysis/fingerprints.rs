@@ -1,7 +1,7 @@
 //! Per-definition comparison evidence written by `--emit-fingerprints` for test oracles.
 
 use super::evidence::definition_semantic_fingerprint;
-use crate::model::{stable_fingerprint, MatcherKind, StepDefinition};
+use crate::model::{stable_fingerprint, Framework, MatcherKind, StepDefinition};
 use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
@@ -9,17 +9,16 @@ use std::path::Path;
 /// Schema version written into every fingerprint record.
 const FINGERPRINT_SCHEMA_VERSION: &str = "1";
 
-// Field order is the serialized order and part of the schema contract. `F` passes the framework
-// through without naming its type, which the language-boundary ratchet keeps out of analysis.
+// Field order is the serialized order and part of the schema contract.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FingerprintRecord<'a, F> {
+struct FingerprintRecord<'a> {
     schema_version: &'static str,
     path: String,
     line: usize,
     column: usize,
     domain: &'static str,
-    framework: &'a F,
+    framework: &'a Framework,
     registration: &'a str,
     matcher: &'a str,
     matcher_kind: MatcherKind,

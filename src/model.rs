@@ -73,25 +73,56 @@ pub enum MatcherKind {
     RegularExpression,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-/// Step-definition framework inferred from a source file.
-#[non_exhaustive]
-pub enum Framework {
-    /// Direct Cucumber-Ruby block registrations.
-    CucumberRuby,
-    /// Cucumber.js registration APIs.
-    CucumberJs,
-    /// Playwright BDD registration APIs.
-    PlaywrightBdd,
-    /// Cypress step definitions registered through the Badeball Cucumber preprocessor.
-    CypressCucumber,
-    /// Jest-Cucumber's positional, scenario-local step callbacks.
-    JestCucumber,
-    /// Global registrations exported by vitest-cucumber-plugin.
-    VitestCucumber,
-    /// No supported framework import could be inferred.
-    Unknown,
+/// Step-definition framework inferred from a source file: an open id that the language adapter
+/// declaring the framework defines. It serializes as the id (`"cucumber-js"`); deserialization
+/// accepts [`Framework::UNKNOWN`] and the ids registered adapters declare, and rejects any other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Framework(&'static str);
+
+impl Framework {
+    /// No framework could be attributed.
+    pub const UNKNOWN: Self = Self("unknown");
+
+    /// A framework with the given report id. Serialized definitions read back only when a
+    /// registered adapter declares the id through `SourceAdapter::frameworks`.
+    pub const fn new(id: &'static str) -> Self {
+        Self(id)
+    }
+
+    /// The id written to reports.
+    pub const fn id(self) -> &'static str {
+        self.0
+    }
+}
+
+impl Serialize for Framework {
+    /// Writes the framework id.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Framework {
+    /// Reads an id declared by a registered adapter, or `unknown`; any other id is an error.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        let known = || {
+            std::iter::once(Self::UNKNOWN).chain(
+                crate::source_adapter::SOURCE_ADAPTER_REGISTRY
+                    .iter()
+                    .flat_map(|registration| registration.adapter.frameworks().iter().copied()),
+            )
+        };
+        known().find(|framework| framework.0 == id).ok_or_else(|| {
+            let mut expected: Vec<&str> = known().map(Self::id).collect();
+            expected.sort_unstable();
+            expected.dedup();
+            serde::de::Error::custom(format!(
+                "unknown framework `{id}`, expected one of {}",
+                expected.join(", ")
+            ))
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

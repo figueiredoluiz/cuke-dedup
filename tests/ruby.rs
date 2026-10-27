@@ -12077,7 +12077,10 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
         // The Ruby framework label and the attached Ruby policy always agree on extracted
         // definitions, so partitioning on the label yields the policy's domains in every order and
         // never depends on which definition comes first.
-        let ruby_framework = cuke_dedup::model::Framework::CucumberRuby;
+        let ruby_framework = serde_json::from_value::<cuke_dedup::model::Framework>(
+            serde_json::json!("cucumber-ruby"),
+        )
+        .expect("declared framework id");
         let domains: [Vec<_>; 2] = [true, false].map(|in_ruby| {
             let domain = definitions
                 .iter()

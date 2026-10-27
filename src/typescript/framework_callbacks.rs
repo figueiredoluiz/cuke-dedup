@@ -22,6 +22,7 @@ use super::registrations::{
     RegistrationCallee,
 };
 use crate::model::Framework;
+use crate::typescript::frameworks::{JEST_CUCUMBER, VITEST_CUCUMBER};
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -47,10 +48,7 @@ impl FrameworkCalls {
 
 /// Identifies frameworks whose calls require the callback-aware provenance model.
 pub(super) fn is_new_framework(framework: Framework) -> bool {
-    matches!(
-        framework,
-        Framework::JestCucumber | Framework::VitestCucumber
-    )
+    matches!(framework, JEST_CUCUMBER | VITEST_CUCUMBER)
 }
 
 #[derive(Clone)]
@@ -90,7 +88,7 @@ impl Value {
                     } else {
                         RegistrationExportKind::Call
                     },
-                    framework: Framework::JestCucumber,
+                    framework: JEST_CUCUMBER,
                 }))
             }
             _ => None,
@@ -631,7 +629,7 @@ pub(super) fn discover<'tree>(
                         !requires_loader
                             || exports
                                 .values()
-                                .any(|export| export.framework == Framework::JestCucumber)
+                                .any(|export| export.framework == JEST_CUCUMBER)
                     });
                     bindings
                         .bindings
@@ -668,7 +666,7 @@ pub(super) fn discover<'tree>(
                         // The Vitest plugin is ESM-only; a require is not a supported runtime entry.
                         if exports
                             .values()
-                            .any(|export| export.framework == Framework::JestCucumber)
+                            .any(|export| export.framework == JEST_CUCUMBER)
                         {
                             bindings
                                 .requires
@@ -856,7 +854,7 @@ pub(super) fn discover<'tree>(
                     continue;
                 }
                 let executes = fallback
-                    || export.framework != Framework::JestCucumber
+                    || export.framework != JEST_CUCUMBER
                     || nearest_function_scope(call.parent()).is_some_and(|callback| {
                         matches!(
                             bindings.callback_value(callback, 0, false),

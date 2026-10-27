@@ -15,7 +15,7 @@ pub use finalization::{
 };
 pub use semantics::AnalysisPolicy;
 
-use crate::model::{SourceLocation, StepDefinition};
+use crate::model::{Framework, SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
 use anyhow::{Context, Result};
 use std::any::{Any, TypeId};
@@ -543,6 +543,12 @@ pub trait SourceAdapter: Sync {
     /// [`AnalysisPolicy::default`]; a framework-specific policy is attached per definition.
     fn analysis_policy(&self) -> AnalysisPolicy {
         AnalysisPolicy::default()
+    }
+
+    /// The frameworks this adapter attributes definitions to. Their ids are the only ones, besides
+    /// [`Framework::UNKNOWN`], that a serialized definition may carry.
+    fn frameworks(&self) -> &'static [Framework] {
+        &[]
     }
 
     /// Whether missing source metadata or reads leave indirect step usage unknown.

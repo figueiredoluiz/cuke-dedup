@@ -9,6 +9,25 @@
 use crate::model::Framework;
 use std::collections::BTreeMap;
 
+/// Cucumber.js registration APIs.
+pub(crate) const CUCUMBER_JS: Framework = Framework::new("cucumber-js");
+/// Playwright BDD registration APIs.
+pub(crate) const PLAYWRIGHT_BDD: Framework = Framework::new("playwright-bdd");
+/// Cypress step definitions registered through the Badeball Cucumber preprocessor.
+pub(crate) const CYPRESS_CUCUMBER: Framework = Framework::new("cypress-cucumber");
+/// Jest-Cucumber's positional, scenario-local step callbacks.
+pub(crate) const JEST_CUCUMBER: Framework = Framework::new("jest-cucumber");
+/// Global registrations exported by vitest-cucumber-plugin.
+pub(crate) const VITEST_CUCUMBER: Framework = Framework::new("vitest-cucumber");
+/// Every framework this adapter attributes definitions to.
+pub(crate) static FRAMEWORKS: [Framework; 5] = [
+    CUCUMBER_JS,
+    PLAYWRIGHT_BDD,
+    CYPRESS_CUCUMBER,
+    JEST_CUCUMBER,
+    VITEST_CUCUMBER,
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RegistrationExport {
     pub(super) canonical: String,
@@ -74,34 +93,34 @@ enum ExportStyle {
 const FRAMEWORK_REGISTRY: &[FrameworkRegistration] = &[
     FrameworkRegistration {
         modules: &["jest-cucumber"],
-        framework: Framework::JestCucumber,
+        framework: JEST_CUCUMBER,
         exports: ExportStyle::Jest,
     },
     FrameworkRegistration {
         modules: &["vitest-cucumber-plugin"],
-        framework: Framework::VitestCucumber,
+        framework: VITEST_CUCUMBER,
         exports: ExportStyle::Vitest,
     },
     FrameworkRegistration {
         modules: &[CUCUMBER_MODULE, LEGACY_CUCUMBER_MODULE],
-        framework: Framework::CucumberJs,
+        framework: CUCUMBER_JS,
         exports: ExportStyle::Calls { factory: None },
     },
     FrameworkRegistration {
         modules: &[PLAYWRIGHT_MODULE],
-        framework: Framework::PlaywrightBdd,
+        framework: PLAYWRIGHT_BDD,
         exports: ExportStyle::Calls {
             factory: Some("createBdd"),
         },
     },
     FrameworkRegistration {
         modules: &[PLAYWRIGHT_DECORATORS_MODULE],
-        framework: Framework::PlaywrightBdd,
+        framework: PLAYWRIGHT_BDD,
         exports: ExportStyle::Decorators,
     },
     FrameworkRegistration {
         modules: &[CYPRESS_MODULE, LEGACY_CYPRESS_STEPS_MODULE],
-        framework: Framework::CypressCucumber,
+        framework: CYPRESS_CUCUMBER,
         exports: ExportStyle::Calls { factory: None },
     },
 ];
@@ -130,7 +149,7 @@ pub(super) fn is_supported_module(module: &str) -> bool {
 
 /// Returns the framework a supported module identifies.
 pub(super) fn framework_for_module(module: &str) -> Framework {
-    registration_for_module(module).map_or(Framework::Unknown, |entry| entry.framework)
+    registration_for_module(module).map_or(Framework::UNKNOWN, |entry| entry.framework)
 }
 
 /// Returns the ordinary registration exports attributed to one framework.
@@ -159,7 +178,7 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
     let Some(entry) = registration_for_module(module) else {
         // Preserve the existing fallback; callers must establish package/project provenance
         // before using these names to recognize registrations.
-        return registration_exports_for_framework(Framework::Unknown);
+        return registration_exports_for_framework(Framework::UNKNOWN);
     };
     let framework = entry.framework;
     let special = match entry.exports {
@@ -189,7 +208,7 @@ pub(super) fn registration_exports_for_module(module: &str) -> RegistrationExpor
                         canonical: (*name).to_owned(),
                         kind: if *name == "autoBindSteps" {
                             RegistrationExportKind::Unsupported
-                        } else if framework == Framework::JestCucumber && *name != "defineFeature" {
+                        } else if framework == JEST_CUCUMBER && *name != "defineFeature" {
                             RegistrationExportKind::NonRegistration
                         } else {
                             kind
@@ -275,7 +294,7 @@ mod tests {
             if module == PLAYWRIGHT_MODULE {
                 assert_eq!(exports["createBdd"].kind, RegistrationExportKind::Factory);
                 assert_eq!(exports["createBdd"].canonical, "createBdd");
-                assert_eq!(exports["createBdd"].framework, Framework::PlaywrightBdd);
+                assert_eq!(exports["createBdd"].framework, PLAYWRIGHT_BDD);
             }
         }
     }
@@ -284,20 +303,14 @@ mod tests {
     #[test]
     fn framework_entrypoints_are_unique_and_have_exact_attribution() {
         let expected = [
-            ("@cucumber/cucumber", Framework::CucumberJs),
-            ("cucumber", Framework::CucumberJs),
-            ("jest-cucumber", Framework::JestCucumber),
-            ("vitest-cucumber-plugin", Framework::VitestCucumber),
-            ("playwright-bdd", Framework::PlaywrightBdd),
-            ("playwright-bdd/decorators", Framework::PlaywrightBdd),
-            (
-                "@badeball/cypress-cucumber-preprocessor",
-                Framework::CypressCucumber,
-            ),
-            (
-                "cypress-cucumber-preprocessor/steps",
-                Framework::CypressCucumber,
-            ),
+            ("@cucumber/cucumber", CUCUMBER_JS),
+            ("cucumber", CUCUMBER_JS),
+            ("jest-cucumber", JEST_CUCUMBER),
+            ("vitest-cucumber-plugin", VITEST_CUCUMBER),
+            ("playwright-bdd", PLAYWRIGHT_BDD),
+            ("playwright-bdd/decorators", PLAYWRIGHT_BDD),
+            ("@badeball/cypress-cucumber-preprocessor", CYPRESS_CUCUMBER),
+            ("cypress-cucumber-preprocessor/steps", CYPRESS_CUCUMBER),
         ];
         let mut modules = std::collections::BTreeSet::new();
         for module in FRAMEWORK_REGISTRY
@@ -324,7 +337,7 @@ mod tests {
             assert!(!is_supported_module(unsupported), "{unsupported}");
             assert_eq!(
                 framework_for_module(unsupported),
-                Framework::Unknown,
+                Framework::UNKNOWN,
                 "{unsupported}"
             );
         }
@@ -342,10 +355,10 @@ mod tests {
             assert!(!DEFAULT_REGISTRATIONS.contains(&name));
         }
         assert_eq!(
-            registration_exports_for_framework(Framework::Unknown).len() + 1,
+            registration_exports_for_framework(Framework::UNKNOWN).len() + 1,
             REGISTRATIONS.len()
         );
-        assert!(!registration_exports_for_framework(Framework::Unknown).contains_key("Step"));
+        assert!(!registration_exports_for_framework(Framework::UNKNOWN).contains_key("Step"));
         assert!(registration_exports_for_module(PLAYWRIGHT_DECORATORS_MODULE).contains_key("Step"));
     }
 }

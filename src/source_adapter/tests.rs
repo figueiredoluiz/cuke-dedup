@@ -365,6 +365,11 @@ fn adapter_session_default_preserves_existing_extract_implementations() {
         adapter_for_language(SourceLanguage::Ruby).analysis_policy(),
         adapter.analysis_policy()
     );
+    // An adapter that declares no framework attributes definitions to none; Ruby declares one.
+    assert!(adapter.frameworks().is_empty());
+    assert!(!adapter_for_language(SourceLanguage::Ruby)
+        .frameworks()
+        .is_empty());
 
     let error = adapter
         .extract_with_session("", &file, &mut session)
@@ -595,6 +600,9 @@ fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
 
 use crate::model::{EffectStream, FeatureStep, Framework, Rule, SourceLocation};
 use crate::source_adapter::semantics::{DomainSpec, HandlerScope, StepMatching, StreamEvidence};
+use crate::typescript::frameworks::{
+    CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
+};
 
 /// Extracts TypeScript definitions from `source` in `steps.ts`, panicking on failure.
 fn ts_definitions(source: &str) -> Vec<StepDefinition> {
@@ -642,17 +650,17 @@ fn reports(definitions: Vec<StepDefinition>, steps: Vec<FeatureStep>, rule: Rule
 #[test]
 fn adapter_policies_resolve_to_their_declared_capabilities() {
     use crate::typescript::semantics::policy;
-    use Framework::*;
+    const UNKNOWN: Framework = Framework::UNKNOWN;
     use HandlerScope::{Isolated, Local, Shared};
     use StepMatching::{ByText, Positional};
     let ruby = adapter_for_language(SourceLanguage::Ruby).analysis_policy();
     let ecmascript = [
-        (CucumberJs, Shared, ByText),
-        (PlaywrightBdd, Shared, ByText),
-        (CypressCucumber, Shared, ByText),
-        (Unknown, Shared, ByText),
-        (JestCucumber, Local, Positional),
-        (VitestCucumber, Isolated, ByText),
+        (CUCUMBER_JS, Shared, ByText),
+        (PLAYWRIGHT_BDD, Shared, ByText),
+        (CYPRESS_CUCUMBER, Shared, ByText),
+        (UNKNOWN, Shared, ByText),
+        (JEST_CUCUMBER, Local, Positional),
+        (VITEST_CUCUMBER, Isolated, ByText),
     ];
     let flags = |profile: &crate::source_adapter::semantics::AnalysisProfile| {
         (
@@ -719,7 +727,7 @@ fn adapter_policies_resolve_to_their_declared_capabilities() {
 fn extraction_attaches_the_policy_of_the_registering_framework() {
     assert_eq!(
         AnalysisPolicy::default(),
-        crate::typescript::semantics::policy(Framework::Unknown)
+        crate::typescript::semantics::policy(Framework::UNKNOWN)
     );
     // The debug form names the domain label, so a failing assertion shows which domain differed.
     assert!(format!("{:?}", AnalysisPolicy::default()).contains("DomainSpec(ecmascript)"));
@@ -728,23 +736,23 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
     for (source, framework) in [
         (
             "import { Given } from '@cucumber/cucumber'; Given('a', () => work());",
-            Framework::CucumberJs,
+            CUCUMBER_JS,
         ),
         (
             "import { Given } from 'playwright-bdd'; Given('a', () => work());",
-            Framework::PlaywrightBdd,
+            PLAYWRIGHT_BDD,
         ),
         (
             "import { Given } from '@badeball/cypress-cucumber-preprocessor'; Given('a', () => work());",
-            Framework::CypressCucumber,
+            CYPRESS_CUCUMBER,
         ),
         (
             "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('t', ({ given }) => { given('a', () => work()); }));",
-            Framework::JestCucumber,
+            JEST_CUCUMBER,
         ),
         (
             "import { Given } from 'vitest-cucumber-plugin'; Given('a', () => work());",
-            Framework::VitestCucumber,
+            VITEST_CUCUMBER,
         ),
     ] {
         let definitions = ts_definitions(source);
@@ -828,9 +836,9 @@ fn language_domains_follow_the_registered_adapters() {
 #[test]
 fn attached_policy_decides_outcomes_not_the_framework_label() {
     let ruby = crate::ruby::semantics::policy();
-    let ecmascript = crate::typescript::semantics::policy(Framework::CucumberJs);
-    let positional = crate::typescript::semantics::policy(Framework::JestCucumber);
-    let isolated = crate::typescript::semantics::policy(Framework::VitestCucumber);
+    let ecmascript = crate::typescript::semantics::policy(CUCUMBER_JS);
+    let positional = crate::typescript::semantics::policy(JEST_CUCUMBER);
+    let isolated = crate::typescript::semantics::policy(VITEST_CUCUMBER);
 
     let unused = |policy: AnalysisPolicy, label| {
         let mut definitions = ts_definitions("Given(/^placeholder$/, () => { load(); save(); });");
@@ -843,7 +851,7 @@ fn attached_policy_decides_outcomes_not_the_framework_label() {
             Rule::UnusedDefinition,
         )
     };
-    for label in [Framework::CucumberJs, Framework::CucumberRuby] {
+    for label in [CUCUMBER_JS, crate::ruby::CUCUMBER_RUBY] {
         // Ruby anchors match per line, so the step selects the definition; ECMAScript anchors do
         // not. Positional steps are never reported unused: only their own position selects them.
         assert!(!unused(ruby, label), "{label:?}");
@@ -878,8 +886,8 @@ fn attached_policy_decides_outcomes_not_the_framework_label() {
         definitions[1].analysis_policy = right;
         analyze_policy_case(definitions, vec![])
     };
-    assert!(mixed(Framework::CucumberRuby, ecmascript, ecmascript).is_ok());
-    assert!(mixed(Framework::CucumberJs, ruby, ecmascript)
+    assert!(mixed(crate::ruby::CUCUMBER_RUBY, ecmascript, ecmascript).is_ok());
+    assert!(mixed(CUCUMBER_JS, ruby, ecmascript)
         .unwrap_err()
         .to_string()
         .contains("separate analysis runs"));
@@ -890,7 +898,7 @@ fn attached_policy_decides_outcomes_not_the_framework_label() {
 /// text-matched steps of that matcher are an exact duplicate.
 #[test]
 fn positional_steps_pair_by_wording_with_text_matched_steps() {
-    let text = crate::typescript::semantics::policy(Framework::CucumberJs);
+    let text = crate::typescript::semantics::policy(CUCUMBER_JS);
     let positional = AnalysisPolicy::new(
         text.domain(),
         HandlerScope::Shared,

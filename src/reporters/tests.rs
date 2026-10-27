@@ -27,7 +27,7 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
             effect_stream: Default::default(),
             capture_scope: None,
         },
-        framework: Framework::Unknown,
+        framework: Framework::UNKNOWN,
         analysis_policy: Default::default(),
         registration: "Given".to_owned(),
         location,

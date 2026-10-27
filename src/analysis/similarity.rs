@@ -291,7 +291,7 @@ mod tests {
         Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition,
     };
 
-    /// An `Unknown`-framework definition using `matcher` as raw and normalized text, empty handler.
+    /// A `Framework::UNKNOWN` definition using `matcher` as raw and normalized text, empty handler.
     fn definition(matcher: &str, kind: MatcherKind) -> StepDefinition {
         StepDefinition {
             matcher: matcher.to_owned(),
@@ -310,7 +310,7 @@ mod tests {
                 effect_stream: Default::default(),
                 capture_scope: None,
             },
-            framework: Framework::Unknown,
+            framework: Framework::UNKNOWN,
             analysis_policy: Default::default(),
             registration: "Given".to_owned(),
             location: SourceLocation::new("steps.ts", 1, 1, 1, 1),

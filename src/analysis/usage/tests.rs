@@ -317,7 +317,7 @@ fn scan_windows_stop_at_a_break() {
             normalized: String::new(),
             exact: String::new(),
         },
-        framework: crate::model::Framework::Unknown,
+        framework: crate::model::Framework::UNKNOWN,
         analysis_policy: Default::default(),
         registration: "Given".to_owned(),
         location: crate::model::SourceLocation::new("synthetic", 1, 1, 1, 1),
@@ -586,8 +586,8 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
         ("(red", None),
     ] {
         for framework in [
-            crate::model::Framework::CucumberJs,
-            crate::model::Framework::CucumberRuby,
+            crate::typescript::frameworks::CUCUMBER_JS,
+            crate::ruby::CUCUMBER_RUBY,
         ] {
             crate::analysis::tests::set_framework(&mut definitions[0], framework);
             assert_eq!(

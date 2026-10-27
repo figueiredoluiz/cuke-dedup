@@ -19,25 +19,25 @@ const full = (path, source) => inventorySources({ [path]: source })[path];
 const inventory = (path, source) => Object.fromEntries(Object.entries(full(path, source)).filter(([key]) => !/^(name|key):/.test(key)));
 
 /** Checks qualified adapter and framework references produce canonical dependency counts. */
-test("qualified references record canonical adapter and framework edges", () => {
+test("qualified references record canonical adapter and language edges", () => {
   assert.deepEqual(inventory("src/analysis.rs", `
     fn analyze() {
       crate::ruby::extract();
       crate::typescript::extract();
-      let _framework = Framework::CucumberRuby;
+      let _framework = SourceLanguage::Ruby;
     }
   `), {
-    "Framework::CucumberRuby": 1,
+    "SourceLanguage::Ruby": 1,
     "crate::ruby": 1,
     "crate::typescript": 1,
   });
 });
 
-/** Checks raw identifiers and aliases retain canonical adapter and framework edges. */
+/** Checks raw identifiers and aliases retain canonical adapter and language edges. */
 test("raw identifiers in tracked path segments and aliases retain canonical edges", () => {
   const cases = [
     ["crate::r#ruby::extract();", { "crate::ruby": 1 }],
-    ["crate::model::r#Framework::CucumberRuby;", { "Framework::CucumberRuby": 1 }],
+    ["crate::model::r#SourceLanguage::Ruby;", { "SourceLanguage::Ruby": 1 }],
     ["use crate::r#ruby as r#adapter; r#adapter::extract();", { "crate::ruby": 2 }],
   ];
   for (const [source, expected] of cases) {
@@ -57,16 +57,16 @@ test("raw keyword import components remain identifiers", () => {
   ]) assert.deepEqual(inventory("src/analysis.rs", source), expected, source);
 });
 
-/** Checks relative paths and aliases cannot hide adapter or framework dependencies at different source depths. */
-test("relative paths cannot hide adapter or framework dependencies", () => {
+/** Checks relative paths and aliases cannot hide adapter or language dependencies at different source depths. */
+test("relative paths cannot hide adapter or language dependencies", () => {
   const cases = [
     ["super::ruby::extract();", { "crate::ruby": 1 }],
     ["self::typescript::extract();", { "crate::typescript": 1 }],
     ["use super::ruby as rb; rb::extract();", { "crate::ruby": 2 }],
     ["use super as parent; parent::ruby::extract();", { "crate::ruby": 1 }],
     ["mod nested { super::super::ruby::extract(); }", { "crate::ruby": 1 }],
-    ["use super::model::Framework as F; F::CucumberRuby;", { "Framework": 1, "Framework::CucumberRuby": 1 }],
-    ["self::Framework::JestCucumber;", { "Framework::JestCucumber": 1 }],
+    ["use super::model::SourceLanguage as F; F::Ruby;", { "SourceLanguage": 1, "SourceLanguage::Ruby": 1 }],
+    ["self::SourceLanguage::TypeScript;", { "SourceLanguage::TypeScript": 1 }],
     ["super::utilities::helper();", {}],
   ];
   for (const path of ["src/cli.rs", "src/analysis/mod.rs", "src/analysis/pairs.rs"]) {
@@ -79,8 +79,8 @@ test("grouped imports and aliases count each imported leaf and each alias use", 
   const edges = inventory("src/analysis.rs", `
     use crate::ruby::{self as ruby, assertions::trust as trust_assertions};
     use crate::typescript::{self as ts, semantic::extract as extract_ts};
-    use Framework as F;
-    use Framework::{CucumberRuby as Ruby, JestCucumber};
+    use SourceLanguage as F;
+    use SourceLanguage::{Ruby as RubyLanguage, TypeScript};
 
     fn analyze(framework: F) {
       ruby::extract();
@@ -88,15 +88,15 @@ test("grouped imports and aliases count each imported leaf and each alias use", 
       ts::extract();
       extract_ts();
       match framework {
-        F::CucumberRuby | Ruby | JestCucumber => {}
+        F::Ruby | RubyLanguage | TypeScript => {}
         _ => {}
       }
     }
   `);
   assert.deepEqual(edges, {
-    "Framework": 2,
-    "Framework::CucumberRuby": 3,
-    "Framework::JestCucumber": 2,
+    "SourceLanguage": 2,
+    "SourceLanguage::Ruby": 3,
+    "SourceLanguage::TypeScript": 2,
     "crate::ruby": 4,
     "crate::typescript": 4,
   });
@@ -108,9 +108,9 @@ test("ancestor aliases resolve through crate and model namespaces", () => {
     use crate as root;
     use crate::model as m;
     root::ruby::extract();
-    let _framework = m::Framework::CucumberRuby;
+    let _framework = m::SourceLanguage::Ruby;
   `), {
-    "Framework::CucumberRuby": 1,
+    "SourceLanguage::Ruby": 1,
     "crate::ruby": 1,
   });
 });
@@ -140,9 +140,9 @@ test("only import items treat use as a keyword", () => {
 test("comments, ordinary strings, raw strings and chars do not create edges", () => {
   const edges = inventory("src/analysis.rs", String.raw`
     // crate::ruby::commented(); crate::typescript::commented();
-    /* Framework::JestCucumber */
+    /* SourceLanguage::TypeScript */
     const TEXT: &str = "crate::ruby::string crate::typescript::string";
-    const RAW: &str = r###"Framework::CucumberRuby"###;
+    const RAW: &str = r###"SourceLanguage::Ruby"###;
     const CHAR: char = 'x';
     fn accepts<'a>(value: &'a str) { let _ = value; }
   `);
@@ -161,8 +161,9 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
     ["module: raw string", 'let _ = r#"call crate::ruby::extract();"#;', {}],
     ["module: nested module path", "mod a { mod b { super::super::ruby::extract(); } }", ruby],
     ["module: inline cfg(test) module is counted", "#[cfg(test)] mod tests { use super::*; fn t() { crate::ruby::extract(); } }", ruby],
-    ["framework: code", "let _ = Framework::CucumberRuby;", { "Framework::CucumberRuby": 1, "name:ruby": 1 }],
-    ["framework: prose string", 'let _ = "Framework::CucumberRuby is gone";', {}],
+    // The open `Framework` id type is neutral; a framework id spelled in core still counts as a key.
+    ["framework: neutral id type", "fn f(framework: Framework) -> Framework { Framework::UNKNOWN }", {}],
+    ["framework: id literal in core", 'let _ = Framework::new("jest-cucumber");', { "key:jest": 1 }],
     ["language: code", "let _ = SourceLanguage::Ruby;", { "SourceLanguage::Ruby": 1, "name:ruby": 1 }],
     ["language: alias", "use SourceLanguage as L; let _ = L::Ruby;", { SourceLanguage: 1, "SourceLanguage::Ruby": 1, "name:ruby": 1 }],
     ["language: grouped alias", "use crate::a::{SourceLanguage as L}; match x { L::Tsx => {} }", { SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
@@ -171,12 +172,12 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
     ["language: Self in impl of an adapter module type", "impl crate::ruby::Handler { fn f() { Self::Ruby; } }", { "crate::ruby": 1, "name:ruby": 2 }],
     ["language: raw impl identifier is not an impl block", "fn f() {} r#impl SourceLanguage { Self::Ruby; }", { SourceLanguage: 1, "name:ruby": 1 }],
     ["language: Self in impl naming a tracked generic argument is counted (upper bound)", "impl From<SourceLanguage> for Wrapper { fn f() { Self::Ruby; } }", { SourceLanguage: 1, "SourceLanguage::Ruby": 1, "name:ruby": 1 }],
-    ["language: Self in impl naming two tracked types counts under each", "impl From<SourceLanguage> for Framework { fn f() { Self::Jest; } }", { SourceLanguage: 1, Framework: 1, "SourceLanguage::Jest": 1, "Framework::Jest": 1, "name:jest": 1 }],
+    ["language: Self in impl naming two tracked types counts under each", "impl From<ComparisonDomain> for SourceLanguage { fn f() { Self::Jest; } }", { ComparisonDomain: 1, SourceLanguage: 1, "ComparisonDomain::Jest": 1, "SourceLanguage::Jest": 1, "name:jest": 1 }],
     ["language: Self in argument-position impl", "fn f(x: impl SourceLanguage) { Self::Ruby; }", { SourceLanguage: 1, "name:ruby": 1 }],
     ["language: function-local type does not hide a variant", "impl SourceLanguage { fn f() -> Self { type Tsx = u8; Self::Tsx } }", { SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
-    ["language: nested impl resolves against its own target", "impl Framework { fn f() { impl SourceLanguage { fn g() -> Self { Self::Tsx } } } }", { Framework: 1, SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
-    ["language: Self in a nested impl is counted once", "impl Display for Framework { fn f() { impl Z for Framework { fn g() { Self::Q; } } Self::P; } }", { Framework: 2, "Framework::Q": 1, "Framework::P": 1 }],
-    ["language: Self in an impl after a tracked impl is counted", "impl A for Framework { fn f() { Self::P; } } impl B for Framework { fn g() { Self::Q; } }", { Framework: 2, "Framework::P": 1, "Framework::Q": 1 }],
+    ["language: nested impl resolves against its own target", "impl ComparisonDomain { fn f() { impl SourceLanguage { fn g() -> Self { Self::Tsx } } } }", { ComparisonDomain: 1, SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
+    ["language: Self in a nested impl is counted once", "impl Display for SourceLanguage { fn f() { impl Z for SourceLanguage { fn g() { Self::Q; } } Self::P; } }", { SourceLanguage: 2, "SourceLanguage::Q": 1, "SourceLanguage::P": 1 }],
+    ["language: Self in an impl after a tracked impl is counted", "impl A for SourceLanguage { fn f() { Self::P; } } impl B for SourceLanguage { fn g() { Self::Q; } }", { SourceLanguage: 2, "SourceLanguage::P": 1, "SourceLanguage::Q": 1 }],
     ["language: Self in impl for a reference to a tracked type", "impl Tr for &SourceLanguage { fn f() { Self::Tsx; } }", { SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
     ["language: Self in impl with where clause and fn bound", "impl<F: Fn() -> u8> Tr for SourceLanguage where F: for<'a> B<'a> { fn f() { Self::Tsx; } }", { SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
     ["language: Self in generic inherent impl", "impl<T> SourceLanguage { fn f() { Self::Tsx; } }", { SourceLanguage: 1, "SourceLanguage::Tsx": 1 }],
@@ -227,10 +228,10 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
 /** Checks syntax the scanner cannot model throws, so the check fails instead of passing silently. */
 test("unmodeled shapes fail closed, with modeled siblings as controls", () => {
   for (const source of [
-    "use crate::model::Framework::*;", "use crate::*;", "use super::*;", "use super::super::*;", "use super as parent; use parent::*;", "use super::foo::*;", "mod tests { use super::foo::*; }", "use crate as root; mod tests { use super::root::*; }", "mod a { use super::super::*; }", "fn f() { use super::*; }", "impl X { fn f() { use super::*; } }", "use self::super::*;", "use crate::ruby::*;", "use crate::typescript::*;",
+    "use crate::model::SourceLanguage::*;", "use crate::*;", "use super::*;", "use super::super::*;", "use super as parent; use parent::*;", "use super::foo::*;", "mod tests { use super::foo::*; }", "use crate as root; mod tests { use super::root::*; }", "mod a { use super::super::*; }", "fn f() { use super::*; }", "impl X { fn f() { use super::*; } }", "use self::super::*;", "use crate::ruby::*;", "use crate::typescript::*;",
     'let _ = "unterminated;', "/* unterminated", 'let _ = r#"unterminated;', "use crate::ruby",
     "use crate::ruby as x; use other as x; x::f();", "use a as b; use b as a; a::f();",
-    "use crate::a::SourceLanguage as S; type L = S;", "type L = SourceLanguage;", "type A = ([u8; 2], SourceLanguage);", "type A = [SourceLanguage; 2];", "impl X for Y { type Out = Framework; }", "type R = crate::ruby::Handler;", "pub type T<A> = Option<Framework>;", "type G = tree_sitter_ruby::Language;",
+    "use crate::a::SourceLanguage as S; type L = S;", "type L = SourceLanguage;", "type A = ([u8; 2], SourceLanguage);", "type A = [SourceLanguage; 2];", "impl X for Y { type Out = SourceLanguage; }", "type R = crate::ruby::Handler;", "pub type T<A> = Option<SourceLanguage>;", "type G = tree_sitter_ruby::Language;",
   ]) assert.throws(() => full("src/analysis.rs", source), /src\/analysis\.rs/, source);
   for (const source of ["use crate::model::*;", "use crate::analysis::*;", "mod tests { use super::*; }", "mod a { mod b { use super::super::*; } }", "use self::*;", 'let _ = "terminated";', "type Id = u32; type Out<T> = Result<T, Error>; type Arr = [u8; 2];", "use crate::a::SourceLanguage; trait T { type Item; }", "use crate::ruby; type X = other::ruby::T;", "macro_rules! m { ($type:ty = SourceLanguage) => {} }", "type X = Box<dyn Fn()>; let tree_sitter_ = 1;", "// type L = SourceLanguage;", "fn r#type() {} let _ = SourceLanguage::Ruby;"]) {
     assert.doesNotThrow(() => full("src/analysis.rs", source), source);
@@ -267,7 +268,7 @@ test("diffRows reports every baseline movement and nothing for equal counts", ()
 test("rows sort by code unit and totals sum per kind", () => {
   const list = rows({ "src/b.rs": { "crate::ruby": 1, "SourceLanguage::Ruby": 2 }, "src/a.rs": { "name:ruby": 3 } });
   assert.deepEqual(list.map(([file, key]) => `${file} ${key}`), ["src/a.rs name:ruby", "src/b.rs SourceLanguage::Ruby", "src/b.rs crate::ruby"]);
-  assert.deepEqual(totals(list), { module: 1, framework: 0, language: 2, domain: 0, marker: 0, name: 3, key: 0, grammar: 0 });
+  assert.deepEqual(totals(list), { module: 1, language: 2, domain: 0, marker: 0, name: 3, key: 0, grammar: 0 });
 });
 
 /** Checks the baseline validator accepts a rendered baseline and rejects each malformed shape. */
@@ -316,7 +317,7 @@ test("CLI: matching baseline passes; added edge fails naming file, kind, counts 
   await withRepo({ "src/analysis.rs": "let _ = SourceLanguage::Ruby;", "src/cli.rs": "" }, baseline, async ({ run, put }) => {
     const passing = run();
     assert.equal(passing.status, 0, passing.stderr);
-    assert.match(passing.stdout, /core: 1 files with edges; module 0, framework 0, language 1, domain 0, marker 0, name 1, key 0, grammar 0\./);
+    assert.match(passing.stdout, /core: 1 files with edges; module 0, language 1, domain 0, marker 0, name 1, key 0, grammar 0\./);
     assert.match(passing.stdout, /registry: 0 files with edges/);
     await put("src/cli.rs", "crate::ruby::extract();");
     const added = run();
@@ -349,7 +350,7 @@ test("CLI: registry files are ratcheted in their own section", async () => {
     await withRepo({ [file]: text }, { registry }, async ({ run, put }) => {
       const passing = run();
       assert.equal(passing.status, 0, passing.stderr);
-      assert.match(passing.stdout, /registry: 1 files with edges; module 0, framework 0, language 1, domain 0, marker 0, name 2, key 0, grammar 1\./);
+      assert.match(passing.stdout, /registry: 1 files with edges; module 0, language 1, domain 0, marker 0, name 2, key 0, grammar 1\./);
       await put(file, `${text} crate::typescript::x();`);
       const { stderr } = run();
       assert.ok(stderr.includes(`registry ${file}: module crate::typescript: baseline 0, found 1`), stderr);

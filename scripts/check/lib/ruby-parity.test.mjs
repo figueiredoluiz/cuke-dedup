@@ -125,6 +125,10 @@ test("a test body counts as Ruby evidence only when it exercises Ruby input", ()
   assert.ok(testBodyMentionsRuby(content, "lang_case"));
   assert.ok(!testBodyMentionsRuby(content, "missing"));
   assert.ok(!testBodyMentionsRuby("fn prose() {\n  // mentions Ruby in a comment only\n}", "prose"));
+  // Ruby's framework id names Ruby input; another adapter's framework does not.
+  assert.ok(testBodyMentionsRuby("fn f() {\n  set_framework(def, CUCUMBER_RUBY);\n}", "f"));
+  assert.ok(testBodyMentionsRuby("fn f() {\n  Framework::new(\"cucumber-ruby\")\n}", "f"));
+  assert.ok(!testBodyMentionsRuby("fn f() {\n  set_framework(def, CUCUMBER_JS);\n}", "f"));
   // Braces inside strings, raw strings and comments do not end or extend the body.
   const malformed = "fn writes_broken() {\n  write(\"Given('broken', () => {\\n\");\n  let raw = r#\"fn x() { \"#; // } not a close\n}\nfn ruby_next() {\n  write(\"steps.rb\", s);\n}\n";
   assert.equal(functionBody(malformed, "writes_broken").endsWith("// } not a close\n}"), true);
