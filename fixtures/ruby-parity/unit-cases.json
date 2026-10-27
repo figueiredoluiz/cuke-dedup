@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "purpose": "Superset census of existing non-Ruby Rust tests. Unmapped is pending behavioral classification, not proof of a missing capability. Several tests may map to one Ruby fixture; shared contracts need an explicit rationale.",
   "files": {
-    "src/analysis/evidence.rs": {
+    "src/analysis/evidence/tests.rs": {
       "tests": [
         {
           "name": "matcher_diffs_cover_empty_identical_disjoint_and_unicode_inputs",
@@ -221,7 +221,7 @@
         }
       ]
     },
-    "src/analysis/parameter_types.rs": {
+    "src/analysis/parameter_types/tests.rs": {
       "tests": [
         {
           "name": "a_registry_invalidating_declaration_withdraws_every_pattern_in_any_order",
@@ -245,7 +245,7 @@
         }
       ]
     },
-    "src/analysis/similarity.rs": {
+    "src/analysis/similarity/tests.rs": {
       "tests": [
         {
           "name": "structural_handler_similarity_requires_equal_behavior_identity",
@@ -299,7 +299,7 @@
         }
       ]
     },
-    "src/analysis/string_metrics.rs": {
+    "src/analysis/string_metrics/tests.rs": {
       "tests": [
         {
           "name": "edge_cases_equal_strsim_and_take_the_expected_path",
@@ -1508,7 +1508,7 @@
         }
       ]
     },
-    "src/cli.rs": {
+    "src/cli/tests.rs": {
       "tests": [
         {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
@@ -1785,7 +1785,7 @@
         }
       ]
     },
-    "src/discovery.rs": {
+    "src/discovery/tests.rs": {
       "tests": [
         {
           "name": "discovers_sources_and_features_but_uses_gitignore",
@@ -2340,7 +2340,7 @@
         }
       ]
     },
-    "src/matcher/comparison_key.rs": {
+    "src/matcher/comparison_key/tests.rs": {
       "tests": [
         {
           "name": "regex_key_text_follows_the_declared_policy",
@@ -2890,7 +2890,7 @@
         }
       ]
     },
-    "src/resource_limits.rs": {
+    "src/resource_limits/tests.rs": {
       "tests": [
         {
           "name": "bounded_reader_accepts_exact_limit_and_rejects_next_byte",
@@ -3171,7 +3171,7 @@
         }
       ]
     },
-    "src/stub_vocabulary.rs": {
+    "src/stub_vocabulary/tests.rs": {
       "tests": [
         {
           "name": "labels_fold_punctuation_quotes_and_case",
@@ -3394,7 +3394,7 @@
         }
       ]
     },
-    "src/typescript/ast.rs": {
+    "src/typescript/ast/tests.rs": {
       "tests": [
         {
           "name": "relative_specifiers_are_distinguished_from_packages_and_aliases",
@@ -3416,7 +3416,7 @@
         }
       ]
     },
-    "src/typescript/frameworks.rs": {
+    "src/typescript/frameworks/tests.rs": {
       "tests": [
         {
           "name": "framework_entrypoints_preserve_export_kinds",
@@ -3438,7 +3438,7 @@
         }
       ]
     },
-    "src/typescript/matcher.rs": {
+    "src/typescript/matcher/tests.rs": {
       "tests": [
         {
           "name": "unicode_sets_flag_belongs_to_matcher_identity",
@@ -6489,7 +6489,7 @@
         }
       ]
     },
-    "src/model/behavior.rs": {
+    "src/model/behavior/tests.rs": {
       "tests": [
         {
           "name": "legacy_signatures_round_trip_known_and_unknown_events",

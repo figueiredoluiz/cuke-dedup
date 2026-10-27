@@ -1,13 +1,6 @@
 {
   "schemaVersion": 2,
   "core": [
-    ["src/analysis/evidence.rs","SourceLanguage",1],
-    ["src/analysis/evidence.rs","SourceLanguage::TypeScript",1],
-    ["src/analysis/evidence.rs","crate::typescript",1],
-    ["src/analysis/evidence.rs","name:typescript",2],
-    ["src/cli.rs","SourceLanguage",2],
-    ["src/cli.rs","SourceLanguage::TypeScript",2],
-    ["src/cli.rs","name:typescript",2],
     ["src/config.rs","name:ruby",2],
     ["src/discovery.rs","SourceLanguage",2],
     ["src/source_adapter/config.rs","crate::ruby",1],
