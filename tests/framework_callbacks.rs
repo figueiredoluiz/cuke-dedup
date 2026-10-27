@@ -5,6 +5,11 @@ use cuke_dedup::typescript::{self, SourceFile, SourceLanguage};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// Looks up a framework id through deserialization, which rejects ids no adapter declares.
+fn declared_framework(id: &str) -> Framework {
+    serde_json::from_value(serde_json::json!(id)).expect("declared framework id")
+}
+
 /// Extracts and analyzes source without feature steps, returning frameworks, finding rules, and diagnostics.
 fn outcomes(
     source: &str,
@@ -291,7 +296,7 @@ fn jest_import_and_binding_forms_preserve_handler_findings_but_skip_matcher_rule
         assert!(
             frameworks
                 .iter()
-                .all(|framework| *framework == Framework::JestCucumber),
+                .all(|framework| *framework == declared_framework("jest-cucumber")),
             "{label}"
         );
         assert!(has(&rules, Rule::DuplicateHandler), "{label}: {rules:?}");
@@ -326,7 +331,7 @@ fn matcher_rules_stay_inapplicable_for_identical_matchers_in_one_scenario() {
     assert_eq!(frameworks.len(), 2);
     assert!(frameworks
         .iter()
-        .all(|framework| *framework == Framework::JestCucumber));
+        .all(|framework| *framework == declared_framework("jest-cucumber")));
     assert!(!has(&rules, Rule::DuplicateMatcher));
     assert!(!has(&rules, Rule::NormalizedMatcher));
     assert!(!has(&rules, Rule::AmbiguousStep));
@@ -340,7 +345,7 @@ fn matcher_rules_stay_inapplicable_for_identical_matchers_in_one_scenario() {
 fn jest_equal_text_keeps_handler_candidates_without_redundant_near_findings() {
     let source = "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', ({given}) => { given('same', () => work()); given('same', () => work()); }));";
     let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
-    assert_eq!(frameworks, [Framework::JestCucumber; 2]);
+    assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
     assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
     assert!(diagnostics.is_empty());
 }
@@ -382,7 +387,7 @@ fn jest_assertion_conflicts_depend_on_trusted_provenance() {
       });
     "#.replace("ASSERTION_MODULE", module);
         let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
-        assert_eq!(frameworks, [Framework::JestCucumber; 2]);
+        assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         if trusted {
             assert_no_handler_findings(&rules);
@@ -409,7 +414,7 @@ fn ordinary_vitest_registrations_keep_matcher_rules_and_duplicate_handler_contro
     assert_eq!(frameworks.len(), 4);
     assert!(frameworks
         .iter()
-        .all(|framework| *framework == Framework::VitestCucumber));
+        .all(|framework| *framework == declared_framework("vitest-cucumber")));
     assert!(has(&rules, Rule::DuplicateMatcher), "{rules:?}");
     assert!(has(&rules, Rule::DuplicateHandler), "{rules:?}");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -427,8 +432,8 @@ fn jest_and_vitest_handlers_are_not_compared_across_callback_conventions() {
     let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
 
     assert_eq!(frameworks.len(), 2);
-    assert!(frameworks.contains(&Framework::JestCucumber));
-    assert!(frameworks.contains(&Framework::VitestCucumber));
+    assert!(frameworks.contains(&declared_framework("jest-cucumber")));
+    assert!(frameworks.contains(&declared_framework("vitest-cucumber")));
     assert_no_handler_findings(&rules);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
@@ -469,7 +474,11 @@ fn jest_callback_shapes_extract_only_when_synchronous_and_statically_resolved() 
     for (label, source) in supported {
         let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
         assert_eq!(frameworks.len(), 1, "{label}: {diagnostics:?}");
-        assert_eq!(frameworks[0], Framework::JestCucumber, "{label}");
+        assert_eq!(
+            frameworks[0],
+            declared_framework("jest-cucumber"),
+            "{label}"
+        );
         assert!(diagnostics.is_empty(), "{label}: {diagnostics:?}");
     }
 
@@ -515,7 +524,7 @@ fn jest_resolution_fails_closed_for_type_only_unknown_and_shadowed_bindings() {
       defineFeature(feature, test => test('one', ({ given }) => given('action', () => work())));
     "#;
     let (positive_frameworks, _, _) = outcomes(positive, SourceLanguage::TypeScript);
-    assert_eq!(positive_frameworks, [Framework::JestCucumber]);
+    assert_eq!(positive_frameworks, [declared_framework("jest-cucumber")]);
 
     let negative = [
         (
@@ -591,7 +600,11 @@ fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
             "{setup}\n{registration}('first action', () => work()); {registration}('second action', () => work());"
         );
         let (frameworks, rules, _) = outcomes(&source, SourceLanguage::TypeScript);
-        assert_eq!(frameworks, [Framework::VitestCucumber; 2], "{label}");
+        assert_eq!(
+            frameworks,
+            [declared_framework("vitest-cucumber"); 2],
+            "{label}"
+        );
         assert!(has(&rules, Rule::DuplicateHandler), "{label}: {rules:?}");
     }
 
@@ -627,7 +640,7 @@ fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
     assert_eq!(frameworks.len(), 2);
     assert!(frameworks
         .iter()
-        .all(|framework| *framework != Framework::VitestCucumber));
+        .all(|framework| *framework != declared_framework("vitest-cucumber")));
     assert!(
         has(&rules, Rule::DuplicateHandler),
         "ambient fallback changed: {rules:?}"
@@ -660,7 +673,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
       });
     "#;
     let (frameworks, rules, _) = outcomes(aliases, SourceLanguage::TypeScript);
-    assert_eq!(frameworks, [Framework::JestCucumber; 2]);
+    assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
     assert!(has(&rules, Rule::DuplicateHandler), "{rules:?}");
 
     let writes = r#"
@@ -688,7 +701,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
       escapedTest('outside setup', ({ given }) => given('escaped action', () => work()));
     "#;
     let (frameworks, rules, _) = outcomes(escaped, SourceLanguage::TypeScript);
-    assert_eq!(frameworks, [Framework::JestCucumber; 2]);
+    assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
     assert!(has(&rules, Rule::DuplicateHandler), "{rules:?}");
 }
 

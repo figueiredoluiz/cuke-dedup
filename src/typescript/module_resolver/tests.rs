@@ -1,4 +1,5 @@
 use super::*;
+use crate::typescript::frameworks::{CUCUMBER_JS, PLAYWRIGHT_BDD};
 use std::fs;
 
 /// Verify relative resolution infers extensions and indexes while rejecting paths outside the analysis boundary.
@@ -151,7 +152,7 @@ fn configured_analysis_root_allows_cross_package_reexports() {
             .map(|export| export.canonical.as_str()),
         Some("Given")
     );
-    assert_eq!(exports.framework, Framework::CucumberJs);
+    assert_eq!(exports.framework, CUCUMBER_JS);
 }
 
 /// Verify shared modules retain distinct cached depth states within the resolution-state budget.
@@ -206,7 +207,7 @@ fn depth_diverse_graphs_cache_each_module_depth_within_the_state_budget() {
             .map(|export| export.canonical.as_str()),
         Some("Given")
     );
-    assert_eq!(exports.framework, Framework::CucumberJs);
+    assert_eq!(exports.framework, CUCUMBER_JS);
     assert_eq!(shared_states, chain_depth + 1);
     assert!(resolver.state.resolutions_started.fits(1));
 }
@@ -407,7 +408,7 @@ fn namespace_star_exports_are_not_flattened_into_direct_registrations() {
         .resolution
         .unwrap();
     assert!(namespace.exports.is_empty());
-    assert_eq!(namespace.framework, Framework::Unknown);
+    assert_eq!(namespace.framework, Framework::UNKNOWN);
 
     let types = resolver
         .registration_exports(&importer, "./types")
@@ -415,7 +416,7 @@ fn namespace_star_exports_are_not_flattened_into_direct_registrations() {
         .resolution
         .unwrap();
     assert!(types.exports.is_empty());
-    assert_eq!(types.framework, Framework::Unknown);
+    assert_eq!(types.framework, Framework::UNKNOWN);
 }
 
 /// Pins that a module whose path carries no supported grammar — a `.d.ts` declaration file is the
@@ -439,7 +440,7 @@ fn modules_without_a_supported_grammar_contribute_no_exports() {
         resolve_active_exports(&declarations, &boundary, &mut project, &mut state, 0).unwrap();
 
     assert!(resolved.exports.is_none());
-    assert_eq!(resolved.framework, Framework::Unknown);
+    assert_eq!(resolved.framework, Framework::UNKNOWN);
     assert!(resolved.cacheable);
     // The refusal is remembered, so a second importer does not re-read the same file.
     assert_eq!(
@@ -570,7 +571,7 @@ export { GivenEsm, World, CjsGiven, CjsWorld, rest, deepCjs, CjsWhen, fromDynami
             ("GivenEsm", "Given"),
         ]
     );
-    assert_eq!(resolution.framework, Framework::PlaywrightBdd);
+    assert_eq!(resolution.framework, PLAYWRIGHT_BDD);
 }
 
 /// Resolve `specifier` from a temp root holding the given `(filename, contents)` files.

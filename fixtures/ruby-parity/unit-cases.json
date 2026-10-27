@@ -2456,6 +2456,16 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "framework_ids_keep_their_serialized_form_and_reject_undeclared_ids",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "emit_fingerprints_records_each_ruby_definition_outcome"
+          },
+          "rationale": "The ids come from each adapter's `frameworks()` declaration, so the codec is not adapter-independent. `emit_fingerprints_records_each_ruby_definition_outcome` extracts Ruby source and asserts every record carries the serialized `cucumber-ruby` id; `ruby_library_routes_and_sessions_share_state_beside_ecmascript` deserializes that id and partitions extracted Ruby definitions on it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "threshold_rules_exclude_correctness_and_usage_findings",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {

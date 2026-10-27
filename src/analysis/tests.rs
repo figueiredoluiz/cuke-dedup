@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 /// Sets a definition's framework together with the policy its adapter attaches for that framework.
 pub(super) fn set_framework(definition: &mut StepDefinition, framework: crate::model::Framework) {
     definition.framework = framework;
-    definition.analysis_policy = if framework == crate::model::Framework::CucumberRuby {
+    definition.analysis_policy = if framework == crate::ruby::CUCUMBER_RUBY {
         crate::ruby::semantics::policy()
     } else {
         crate::typescript::semantics::policy(framework)
@@ -59,16 +59,21 @@ fn config() -> (tempfile::TempDir, Config) {
 /// Checks framework contracts preserve duplicate, ambiguity, and unused outcomes across definition order and feature usage.
 #[test]
 fn adapter_contracts_preserve_global_and_positional_outcomes() {
-    use crate::model::Framework::*;
+    use crate::model::Framework;
+    use crate::ruby::CUCUMBER_RUBY;
+    use crate::typescript::frameworks::{
+        CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
+    };
+    const UNKNOWN: Framework = Framework::UNKNOWN;
     let (_directory, config) = config();
     for framework in [
-        CucumberJs,
-        PlaywrightBdd,
-        CypressCucumber,
-        JestCucumber,
-        VitestCucumber,
-        Unknown,
-        CucumberRuby,
+        CUCUMBER_JS,
+        PLAYWRIGHT_BDD,
+        CYPRESS_CUCUMBER,
+        JEST_CUCUMBER,
+        VITEST_CUCUMBER,
+        UNKNOWN,
+        CUCUMBER_RUBY,
     ] {
         for matching in [true, false] {
             let mut defs = definitions("Given(/^a user exists$/, () => { load(); save(); }); Given(/^a user exists$/, () => { create(); save(); });");
@@ -95,17 +100,17 @@ fn adapter_contracts_preserve_global_and_positional_outcomes() {
                 };
                 assert_eq!(
                     count(Rule::DuplicateMatcher),
-                    usize::from(framework != JestCucumber),
+                    usize::from(framework != JEST_CUCUMBER),
                     "{framework:?}"
                 );
                 assert_eq!(
                     count(Rule::AmbiguousStep),
-                    usize::from(framework != JestCucumber && matching),
+                    usize::from(framework != JEST_CUCUMBER && matching),
                     "{framework:?}"
                 );
                 assert_eq!(
                     count(Rule::UnusedDefinition),
-                    if framework != JestCucumber && !matching {
+                    if framework != JEST_CUCUMBER && !matching {
                         2
                     } else {
                         0
@@ -120,19 +125,24 @@ fn adapter_contracts_preserve_global_and_positional_outcomes() {
 /// Checks handler comparisons respect framework domains and lexical-file captures, and mixed frontend analysis is rejected.
 #[test]
 fn adapter_contracts_preserve_handler_domains_and_capture_context() {
-    use crate::model::Framework::*;
+    use crate::model::Framework;
+    use crate::ruby::CUCUMBER_RUBY;
+    use crate::typescript::frameworks::{
+        CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
+    };
+    const UNKNOWN: Framework = Framework::UNKNOWN;
     let (_directory, config) = config();
     for (left, right, lexical, different_file, expected) in [
-        (CucumberJs, PlaywrightBdd, false, true, true),
-        (Unknown, CypressCucumber, false, true, true),
-        (JestCucumber, JestCucumber, false, true, true),
-        (VitestCucumber, VitestCucumber, false, true, true),
-        (JestCucumber, CucumberJs, false, false, false),
-        (VitestCucumber, CucumberJs, false, false, false),
-        (JestCucumber, VitestCucumber, false, false, false),
-        (CucumberRuby, CucumberRuby, false, true, true),
-        (CucumberRuby, CucumberRuby, true, false, true),
-        (CucumberRuby, CucumberRuby, true, true, false),
+        (CUCUMBER_JS, PLAYWRIGHT_BDD, false, true, true),
+        (UNKNOWN, CYPRESS_CUCUMBER, false, true, true),
+        (JEST_CUCUMBER, JEST_CUCUMBER, false, true, true),
+        (VITEST_CUCUMBER, VITEST_CUCUMBER, false, true, true),
+        (JEST_CUCUMBER, CUCUMBER_JS, false, false, false),
+        (VITEST_CUCUMBER, CUCUMBER_JS, false, false, false),
+        (JEST_CUCUMBER, VITEST_CUCUMBER, false, false, false),
+        (CUCUMBER_RUBY, CUCUMBER_RUBY, false, true, true),
+        (CUCUMBER_RUBY, CUCUMBER_RUBY, true, false, true),
+        (CUCUMBER_RUBY, CUCUMBER_RUBY, true, true, false),
     ] {
         let mut defs = definitions("Given('a user exists', () => { load(); save(); }); Given('the basket is empty', () => { load(); save(); });");
         set_framework(&mut defs[0], left);
@@ -160,7 +170,7 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
         }
     }
     let mut mixed = definitions("Given('a user exists', () => { load(); save(); }); Given('a cart exists', () => { load(); save(); });");
-    set_framework(&mut mixed[0], CucumberRuby);
+    set_framework(&mut mixed[0], CUCUMBER_RUBY);
     assert!(analyze(mixed, vec![], &config)
         .unwrap_err()
         .to_string()
@@ -170,16 +180,17 @@ fn adapter_contracts_preserve_handler_domains_and_capture_context() {
 /// Checks framework-specific regex execution and flag identity preserve matcher and unused-definition outcomes.
 #[test]
 fn adapter_contracts_preserve_regex_execution_and_identity() {
-    use crate::model::Framework::*;
+    use crate::ruby::CUCUMBER_RUBY;
+    use crate::typescript::frameworks::CUCUMBER_JS;
     let (_directory, config) = config();
     for (framework, pattern, flags, text, matched) in [
-        (CucumberJs, "^alice$", "", "before\nalice\nafter", false),
-        (CucumberJs, "^alice$", "m", "before\nalice\nafter", true),
-        (CucumberRuby, "^alice$", "", "before\nalice\nafter", true),
-        (CucumberJs, "^a.b$", "m", "a\nb", false),
-        (CucumberJs, "^a.b$", "s", "a\nb", true),
-        (CucumberRuby, "^a.b$", "m", "a\nb", true),
-        (CucumberRuby, "^alice$", "n", "alice", true),
+        (CUCUMBER_JS, "^alice$", "", "before\nalice\nafter", false),
+        (CUCUMBER_JS, "^alice$", "m", "before\nalice\nafter", true),
+        (CUCUMBER_RUBY, "^alice$", "", "before\nalice\nafter", true),
+        (CUCUMBER_JS, "^a.b$", "m", "a\nb", false),
+        (CUCUMBER_JS, "^a.b$", "s", "a\nb", true),
+        (CUCUMBER_RUBY, "^a.b$", "m", "a\nb", true),
+        (CUCUMBER_RUBY, "^alice$", "n", "alice", true),
     ] {
         let mut defs = definitions("Given(/^placeholder$/, () => { load(); save(); });");
         set_framework(&mut defs[0], framework);
@@ -199,17 +210,17 @@ fn adapter_contracts_preserve_regex_execution_and_identity() {
         );
     }
     for (framework, flags, normalized) in [
-        (CucumberJs, "gyd", true),
-        (CucumberJs, "i", false),
-        (CucumberRuby, "n", false),
-        (CucumberRuby, "u", false),
+        (CUCUMBER_JS, "gyd", true),
+        (CUCUMBER_JS, "i", false),
+        (CUCUMBER_RUBY, "n", false),
+        (CUCUMBER_RUBY, "u", false),
     ] {
         let mut defs = definitions("Given(/^alice$/, () => { load(); save(); }); Given(/^alice$/, () => { load(); save(); });");
         for def in &mut defs {
             set_framework(def, framework);
         }
         defs[1].matcher_flags = flags.into();
-        if framework != CucumberRuby && flags == "i" {
+        if framework != CUCUMBER_RUBY && flags == "i" {
             defs[1].normalized_matcher = "[regex-flags:i] ^alice$".into();
         }
         for pair in [defs.clone(), defs.into_iter().rev().collect()] {
@@ -238,9 +249,10 @@ fn adapter_contracts_preserve_regex_execution_and_identity() {
 /// Checks near-handler eligibility follows framework capabilities and unsupported regex semantics cannot prove usage findings.
 #[test]
 fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
-    use crate::model::Framework::*;
+    use crate::ruby::CUCUMBER_RUBY;
+    use crate::typescript::frameworks::CUCUMBER_JS;
     let (_directory, config) = config_with_near_floor(0.5);
-    for framework in [CucumberJs, CucumberRuby] {
+    for framework in [CUCUMBER_JS, CUCUMBER_RUBY] {
         for same in [true, false] {
             for flags in ["", "n"] {
                 let extra = if same { "" } else { "save();" };
@@ -253,13 +265,13 @@ fn adapter_contracts_preserve_near_handler_and_uncertain_regex_controls() {
                 for pair in [defs.clone(), defs.into_iter().rev().collect()] {
                     assert_eq!(
                         contract_finding(pair, &config, Rule::NearDuplicateStep),
-                        framework == CucumberJs || (same && flags.is_empty()),
+                        framework == CUCUMBER_JS || (same && flags.is_empty()),
                         "{framework:?}/{same}"
                     );
                 }
             }
         }
-        for flags in [if framework == CucumberJs { "v" } else { "x" }] {
+        for flags in [if framework == CUCUMBER_JS { "v" } else { "x" }] {
             let mut defs = definitions(
                 "Given(/^alpha$/, () => { load(); }); Given(/^beta$/, () => { save(); });",
             );

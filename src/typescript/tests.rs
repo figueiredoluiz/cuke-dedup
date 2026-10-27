@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::Rule;
+use crate::typescript::frameworks::{CUCUMBER_JS, CYPRESS_CUCUMBER, PLAYWRIGHT_BDD};
 use std::fs;
 use std::path::PathBuf;
 
@@ -52,22 +53,16 @@ fn framework_entrypoints_preserve_duplicate_findings_and_attribution() {
     let directory = tempfile::tempdir().unwrap();
     let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
     for (module, framework) in [
-        ("@cucumber/cucumber", Framework::CucumberJs),
-        ("cucumber", Framework::CucumberJs),
-        ("playwright-bdd", Framework::PlaywrightBdd),
-        ("playwright-bdd/decorators", Framework::PlaywrightBdd),
-        (
-            "@badeball/cypress-cucumber-preprocessor",
-            Framework::CypressCucumber,
-        ),
-        (
-            "cypress-cucumber-preprocessor/steps",
-            Framework::CypressCucumber,
-        ),
-        ("cypress-cucumber-preprocessor", Framework::Unknown),
-        ("playwright-bdd/decorators-extra", Framework::Unknown),
-        ("@cucumber/cucumber-extra", Framework::Unknown),
-        ("@cucumber/cucumber/unknown", Framework::Unknown),
+        ("@cucumber/cucumber", CUCUMBER_JS),
+        ("cucumber", CUCUMBER_JS),
+        ("playwright-bdd", PLAYWRIGHT_BDD),
+        ("playwright-bdd/decorators", PLAYWRIGHT_BDD),
+        ("@badeball/cypress-cucumber-preprocessor", CYPRESS_CUCUMBER),
+        ("cypress-cucumber-preprocessor/steps", CYPRESS_CUCUMBER),
+        ("cypress-cucumber-preprocessor", Framework::UNKNOWN),
+        ("playwright-bdd/decorators-extra", Framework::UNKNOWN),
+        ("@cucumber/cucumber-extra", Framework::UNKNOWN),
+        ("@cucumber/cucumber/unknown", Framework::UNKNOWN),
     ] {
         for binding in [
             format!("import {{ Given as Setup }} from '{module}';"),
@@ -83,7 +78,7 @@ fn framework_entrypoints_preserve_duplicate_findings_and_attribution() {
                  Setup('same step', () => secondAction());"
             };
             let definitions = extract_ts(&format!("{binding}\n{body}"));
-            let supported = framework != Framework::Unknown;
+            let supported = framework != Framework::UNKNOWN;
             assert_eq!(
                 definitions.len(),
                 if supported { 2 } else { 0 },
@@ -140,7 +135,7 @@ Setup(`a loaded page`, async ({ page }) => { await page.goto('/'); });
 "#;
     let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
     assert_eq!(definitions.len(), 1);
-    assert_eq!(definitions[0].framework, Framework::PlaywrightBdd);
+    assert_eq!(definitions[0].framework, PLAYWRIGHT_BDD);
     assert_eq!(definitions[0].registration, "Given");
 }
 
@@ -156,18 +151,15 @@ Then('the page is visible', () => cy.get('main').should('be.visible'));
     assert_eq!(definitions.len(), 2);
     assert!(definitions
         .iter()
-        .all(|definition| definition.framework == Framework::CypressCucumber));
+        .all(|definition| definition.framework == CYPRESS_CUCUMBER));
 }
 
 /// Verify supported legacy registration modules work through both ESM aliases and CommonJS namespaces.
 #[test]
 fn extracts_supported_legacy_cucumber_registration_modules_in_esm_and_cjs() {
     for (module, expected_framework) in [
-        ("cucumber", Framework::CucumberJs),
-        (
-            "cypress-cucumber-preprocessor/steps",
-            Framework::CypressCucumber,
-        ),
+        ("cucumber", CUCUMBER_JS),
+        ("cypress-cucumber-preprocessor/steps", CYPRESS_CUCUMBER),
     ] {
         for (syntax, matcher) in [
             (
@@ -248,7 +240,7 @@ export class TodoSteps {
     assert_eq!(definitions[1].registration, "Step");
     assert!(definitions
         .iter()
-        .all(|definition| definition.framework == Framework::PlaywrightBdd));
+        .all(|definition| definition.framework == PLAYWRIGHT_BDD));
     assert!(definitions
         .iter()
         .all(|definition| definition.handler.comparable));
@@ -278,7 +270,7 @@ class WorkspaceSteps {
     assert_eq!(definitions.len(), 1);
     assert_eq!(definitions[0].matcher, "a CJS decorator");
     assert_eq!(definitions[0].registration, "Given");
-    assert_eq!(definitions[0].framework, Framework::PlaywrightBdd);
+    assert_eq!(definitions[0].framework, PLAYWRIGHT_BDD);
 }
 
 /// Verify Playwright method decorators extract without diagnostics under both JavaScript file extensions.
@@ -300,7 +292,7 @@ class JavaScriptSteps {
         assert!(extracted.diagnostics.is_empty(), "{extension}");
         assert_eq!(extracted.definitions.len(), 1, "{extension}");
         assert_eq!(extracted.definitions[0].matcher, "a JavaScript decorator");
-        assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+        assert_eq!(extracted.definitions[0].framework, PLAYWRIGHT_BDD);
     }
 }
 
@@ -377,7 +369,7 @@ class WorkspaceSteps {
     assert!(extracted.diagnostics.is_empty());
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].registration, "Given");
-    assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+    assert_eq!(extracted.definitions[0].framework, PLAYWRIGHT_BDD);
 }
 
 /// Verify dynamic decorator matchers warn without creating definitions.
@@ -566,8 +558,8 @@ fn project_resolved_registrations_propagate_framework_metadata() {
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
     for (name, module, expected) in [
-        ("imports.ts", "#bdd", Framework::CucumberJs),
-        ("workspace.ts", "@example/bdd", Framework::PlaywrightBdd),
+        ("imports.ts", "#bdd", CUCUMBER_JS),
+        ("workspace.ts", "@example/bdd", PLAYWRIGHT_BDD),
     ] {
         let path = directory.path().join(name);
         fs::write(
@@ -594,17 +586,17 @@ fn mixed_framework_detection_is_scoped_to_each_source_file() {
         (
             "playwright.steps.ts",
             "import { createBdd } from 'playwright-bdd';\nconst { Given } = createBdd();\nGiven('playwright step', () => work());\n",
-            Framework::PlaywrightBdd,
+            PLAYWRIGHT_BDD,
         ),
         (
             "cucumber.steps.ts",
             "import { Given } from '@cucumber/cucumber';\nGiven('cucumber step', () => work());\n",
-            Framework::CucumberJs,
+            CUCUMBER_JS,
         ),
         (
             "cypress.steps.ts",
             "import { Given } from '@badeball/cypress-cucumber-preprocessor';\nGiven('cypress step', () => work());\n",
-            Framework::CypressCucumber,
+            CYPRESS_CUCUMBER,
         ),
     ];
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -635,7 +627,7 @@ fn playwright_bdd_factory_requires_import_evidence_and_supports_aliases() {
     ] {
         let definitions = extract_ts(source);
         assert_eq!(definitions.len(), 1, "{source}");
-        assert_eq!(definitions[0].framework, Framework::PlaywrightBdd);
+        assert_eq!(definitions[0].framework, PLAYWRIGHT_BDD);
     }
 
     let unrelated = extract_ts(
@@ -676,17 +668,11 @@ class MixedSteps {{
             .iter()
             .map(|definition| (definition.matcher.as_str(), definition.framework))
             .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(
-            frameworks.get("a Cypress step"),
-            Some(&Framework::CypressCucumber)
-        );
-        assert_eq!(
-            frameworks.get("a Cucumber step"),
-            Some(&Framework::CucumberJs)
-        );
+        assert_eq!(frameworks.get("a Cypress step"), Some(&CYPRESS_CUCUMBER));
+        assert_eq!(frameworks.get("a Cucumber step"), Some(&CUCUMBER_JS));
         assert_eq!(
             frameworks.get("a Playwright decorator"),
-            Some(&Framework::PlaywrightBdd)
+            Some(&PLAYWRIGHT_BDD)
         );
     }
 }
@@ -740,7 +726,7 @@ Then('the result is visible', () => verify());
     assert!(extracted
         .definitions
         .iter()
-        .all(|definition| definition.framework == Framework::PlaywrightBdd));
+        .all(|definition| definition.framework == PLAYWRIGHT_BDD));
 }
 
 /// Verify resolved framework facades trust direct assertion imports across equivalent specifiers while rejecting namespace and unrelated assertions.
@@ -863,7 +849,7 @@ fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
 
         assert!(extracted.diagnostics.is_empty(), "{name}");
         assert_eq!(extracted.definitions.len(), 1, "{name}");
-        assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+        assert_eq!(extracted.definitions[0].framework, PLAYWRIGHT_BDD);
     }
 }
 
@@ -895,7 +881,7 @@ fn project_resolves_reexported_runtime_registration_imports() {
 
         assert!(extracted.diagnostics.is_empty(), "{source}");
         assert_eq!(extracted.definitions.len(), 1, "{source}");
-        assert_eq!(extracted.definitions[0].framework, Framework::CucumberJs);
+        assert_eq!(extracted.definitions[0].framework, CUCUMBER_JS);
     }
 }
 
@@ -947,8 +933,8 @@ PlaywrightGiven('through a factory chain', () => act());
 
     assert!(extracted.diagnostics.is_empty());
     assert_eq!(extracted.definitions.len(), 2);
-    assert_eq!(extracted.definitions[0].framework, Framework::CucumberJs);
-    assert_eq!(extracted.definitions[1].framework, Framework::PlaywrightBdd);
+    assert_eq!(extracted.definitions[0].framework, CUCUMBER_JS);
+    assert_eq!(extracted.definitions[1].framework, PLAYWRIGHT_BDD);
 }
 
 /// Verify a recoverable module parse failure does not prevent later resolution after the source is repaired.
@@ -991,7 +977,7 @@ fn module_resolution_clears_active_paths_after_recoverable_errors() {
 
     assert!(second.diagnostics.is_empty());
     assert_eq!(second.definitions.len(), 1);
-    assert_eq!(second.definitions[0].framework, Framework::CucumberJs);
+    assert_eq!(second.definitions[0].framework, CUCUMBER_JS);
 }
 
 /// Verify explicit trusted factory-result exports resolve while local `createBdd` lookalikes remain untrusted.
@@ -1077,7 +1063,7 @@ export const { Given } = (createBdd(test) as ReturnType<typeof createBdd>)!;
     assert!(extracted.diagnostics.is_empty());
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].registration, "Given");
-    assert_eq!(extracted.definitions[0].framework, Framework::PlaywrightBdd);
+    assert_eq!(extracted.definitions[0].framework, PLAYWRIGHT_BDD);
 }
 
 /// Verify type-only factory imports cannot supply runtime registrations and produce unresolved diagnostics.
@@ -2571,18 +2557,15 @@ Given('ambient runtime registration', () => work());
         extracted.definitions[0].matcher,
         "ambient runtime registration"
     );
-    assert_eq!(extracted.definitions[0].framework, Framework::Unknown);
+    assert_eq!(extracted.definitions[0].framework, Framework::UNKNOWN);
 }
 
 /// Verify side-effect framework imports supply framework metadata to ambient registrations.
 #[test]
 fn side_effect_framework_imports_preserve_runtime_framework_metadata() {
     for (module, expected) in [
-        ("@cucumber/cucumber", Framework::CucumberJs),
-        (
-            "@badeball/cypress-cucumber-preprocessor",
-            Framework::CypressCucumber,
-        ),
+        ("@cucumber/cucumber", CUCUMBER_JS),
+        ("@badeball/cypress-cucumber-preprocessor", CYPRESS_CUCUMBER),
     ] {
         let definitions = extract_ts(&format!(
             "import '{module}';\nGiven('side effect framework', () => work());\n"
@@ -3129,7 +3112,7 @@ ExportedSpecifierTypeThen('exported specifier type only', () => work());
     assert_eq!(definitions.len(), 9);
     assert!(definitions
         .iter()
-        .all(|definition| definition.framework == Framework::CucumberJs));
+        .all(|definition| definition.framework == CUCUMBER_JS));
     for matcher in [
         "type only",
         "commented type only",

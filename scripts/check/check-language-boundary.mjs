@@ -18,10 +18,9 @@ const classes = [
 ];
 const sections = ["core", "registry"];
 const words = ["ruby", "typescript", "javascript", "jest", "vitest", "playwright", "cypress", "cucumberjs"];
-const types = { Framework: "framework", SourceLanguage: "language", ComparisonDomain: "domain" };
+const types = { SourceLanguage: "language", ComparisonDomain: "domain" };
 const shapes = {
   module: /^crate::(ruby|typescript)$/,
-  framework: /^Framework(::[A-Za-z_]\w*)?$/,
   language: /^SourceLanguage(::[A-Za-z_]\w*)?$/,
   domain: /^ComparisonDomain(::[A-Za-z_]\w*)?$/,
   marker: /^marker:method:[A-Za-z0-9_-]+$/,

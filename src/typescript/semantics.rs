@@ -6,6 +6,7 @@ use crate::source_adapter::semantics::{
     DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
 use crate::source_adapter::AnalysisPolicy;
+use crate::typescript::frameworks::{JEST_CUCUMBER, VITEST_CUCUMBER};
 
 struct JavaScriptRegex;
 static REGEX: JavaScriptRegex = JavaScriptRegex;
@@ -38,10 +39,10 @@ static DOMAIN: DomainSpec = DomainSpec {
 /// their scenario callback and matched by position, vitest-cucumber-plugin registers into its own
 /// global registry, and every other framework shares one text-matched pool. Every handler's event
 /// stream counts as complete.
-pub(crate) const fn policy(framework: Framework) -> AnalysisPolicy {
+pub(crate) fn policy(framework: Framework) -> AnalysisPolicy {
     let (handler_scope, step_matching) = match framework {
-        Framework::JestCucumber => (HandlerScope::Local, StepMatching::Positional),
-        Framework::VitestCucumber => (HandlerScope::Isolated, StepMatching::ByText),
+        JEST_CUCUMBER => (HandlerScope::Local, StepMatching::Positional),
+        VITEST_CUCUMBER => (HandlerScope::Isolated, StepMatching::ByText),
         _ => (HandlerScope::Shared, StepMatching::ByText),
     };
     AnalysisPolicy::new(
@@ -53,7 +54,7 @@ pub(crate) const fn policy(framework: Framework) -> AnalysisPolicy {
     )
 }
 
-/// The policy of a definition with no framework-specific scope: [`Framework::Unknown`]'s.
-pub(crate) const fn default_policy() -> AnalysisPolicy {
-    policy(Framework::Unknown)
+/// The policy of a definition with no framework-specific scope: [`Framework::UNKNOWN`]'s.
+pub(crate) fn default_policy() -> AnalysisPolicy {
+    policy(Framework::UNKNOWN)
 }

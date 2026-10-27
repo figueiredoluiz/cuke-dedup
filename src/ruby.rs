@@ -13,6 +13,11 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
+/// Direct Cucumber-Ruby block registrations, the framework Ruby definitions are attributed to.
+pub(crate) const CUCUMBER_RUBY: Framework = Framework::new("cucumber-ruby");
+/// Every framework this adapter attributes definitions to; a named static so its address is unique.
+static FRAMEWORKS: [Framework; 1] = [CUCUMBER_RUBY];
+
 mod assertions;
 mod bindings;
 pub(crate) mod config;
@@ -93,6 +98,10 @@ impl SourceAdapter for RubyAdapter {
     /// Require explicit opt-in for experimental Ruby discovery.
     fn discover_by_default(&self) -> bool {
         false
+    }
+    /// Declares Cucumber-Ruby as the one framework Ruby definitions are attributed to.
+    fn frameworks(&self) -> &'static [Framework] {
+        &FRAMEWORKS
     }
     /// Declares the Ruby comparison policy.
     fn analysis_policy(&self) -> crate::source_adapter::AnalysisPolicy {
@@ -604,7 +613,7 @@ fn extract_with_proof(
             matcher_kind,
             matcher_flags: flags,
             handler,
-            framework: Framework::CucumberRuby,
+            framework: CUCUMBER_RUBY,
             analysis_policy,
             registration: name.to_owned(),
             location: location(file, node, source),

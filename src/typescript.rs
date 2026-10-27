@@ -42,6 +42,7 @@ use crate::source_adapter::{
 pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
+use crate::typescript::frameworks::JEST_CUCUMBER;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
@@ -113,6 +114,11 @@ impl SourceAdapter for TreeSitterSourceAdapter {
     /// Returns the source language accepted by this adapter.
     fn language(&self) -> SourceLanguage {
         self.language
+    }
+
+    /// Declares the JavaScript/TypeScript frameworks definitions may be attributed to.
+    fn frameworks(&self) -> &'static [Framework] {
+        &frameworks::FRAMEWORKS
     }
 
     /// Declares the baseline JavaScript/TypeScript comparison policy; each definition carries the
@@ -647,9 +653,7 @@ fn extract_call<'tree>(
     if arguments.len() < 2 {
         return None;
     }
-    if registration_framework == Framework::JestCucumber
-        && matcher_kind == MatcherKind::CucumberExpression
-    {
+    if registration_framework == JEST_CUCUMBER && matcher_kind == MatcherKind::CucumberExpression {
         matcher_kind = MatcherKind::Literal;
     }
     let handler = arguments.iter().rev().copied().find(|node| {
@@ -796,7 +800,7 @@ fn decorated_method(call: Node<'_>) -> Option<Node<'_>> {
 
 /// Uses file-level attribution only when the registration binding has no known framework.
 fn effective_registration_framework(binding: Framework, file: Framework) -> Framework {
-    if binding == Framework::Unknown {
+    if binding == Framework::UNKNOWN {
         file
     } else {
         binding
