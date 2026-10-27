@@ -13,13 +13,15 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
-const DEFAULT_EXCLUDES: [&str; 5] = [
-    "**/node_modules/**",
-    "**/target/**",
-    "**/.features-gen/**",
-    "**/test-results/**",
-    "**/playwright-report/**",
-];
+/// Build output of any toolchain; adapters add their ecosystem's and frameworks' globs after it.
+const CORE_EXCLUDES: [&str; 1] = ["**/target/**"];
+
+/// The built-in exclude globs: the core's, then every registered adapter's, without repeats.
+fn default_excludes() -> impl Iterator<Item = String> {
+    crate::source_adapter::registered_default_excludes(&CORE_EXCLUDES)
+        .into_iter()
+        .map(ToString::to_string)
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 /// Destination format selected for analysis output.
@@ -399,7 +401,7 @@ impl Config {
             feature_pattern_origin: "built-in defaults".to_owned(),
             config_warnings: Vec::new(),
             config_source: "built-in defaults".to_owned(),
-            exclude: DEFAULT_EXCLUDES.iter().map(ToString::to_string).collect(),
+            exclude: default_excludes().collect(),
             exclude_defaults: true,
             include_hidden: false,
             reporters: vec![ReporterKind::Terminal],
@@ -543,8 +545,7 @@ impl Config {
     fn rebuild_excludes(&mut self) {
         self.exclude.clear();
         if self.exclude_defaults {
-            self.exclude
-                .extend(DEFAULT_EXCLUDES.iter().map(ToString::to_string));
+            self.exclude.extend(default_excludes());
         }
         self.exclude.extend(self.custom_exclude.iter().cloned());
     }

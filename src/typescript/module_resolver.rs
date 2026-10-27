@@ -16,9 +16,7 @@ use crate::resource_limits::{
     MAX_REGISTRATION_MODULE_BYTES, MAX_REGISTRATION_RESOLUTION_STATES,
 };
 use crate::source_adapter::grammar_for_language;
-use crate::typescript::frameworks::{
-    CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
-};
+use crate::typescript::frameworks::{FRAMEWORK_CONTRACTS, PLAYWRIGHT_BDD};
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -310,16 +308,19 @@ fn is_io_failure(error: &anyhow::Error) -> bool {
         .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
 }
 
-/// Combines framework evidence using a fixed precedence, retaining unknown only when neither input is recognized.
+/// Combines framework evidence: the input earlier in contract precedence wins, and the result is
+/// unknown only when neither input is a contract framework.
 pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framework {
-    match (current, evidence) {
-        (PLAYWRIGHT_BDD, _) | (_, PLAYWRIGHT_BDD) => PLAYWRIGHT_BDD,
-        (CYPRESS_CUCUMBER, _) | (_, CYPRESS_CUCUMBER) => CYPRESS_CUCUMBER,
-        (CUCUMBER_JS, _) | (_, CUCUMBER_JS) => CUCUMBER_JS,
-        (JEST_CUCUMBER, _) | (_, JEST_CUCUMBER) => JEST_CUCUMBER,
-        (VITEST_CUCUMBER, _) | (_, VITEST_CUCUMBER) => VITEST_CUCUMBER,
-        _ => Framework::UNKNOWN,
-    }
+    [current, evidence]
+        .into_iter()
+        .filter_map(|framework| {
+            FRAMEWORK_CONTRACTS
+                .iter()
+                .position(|contract| contract.framework == framework)
+                .map(|rank| (rank, framework))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map_or(Framework::UNKNOWN, |(_, framework)| framework)
 }
 
 /// Reads and caches module facts within count and byte limits, rejecting syntax-recovered exports.

@@ -10,7 +10,6 @@
     ["src/cli.rs","name:typescript",2],
     ["src/config.rs","name:ruby",2],
     ["src/discovery.rs","SourceLanguage",2],
-    ["src/framework_descriptor.rs","key:cucumberjs",1],
     ["src/source_adapter/config.rs","crate::ruby",1],
     ["src/source_adapter/config.rs","name:ruby",6],
     ["src/source_adapter/finalization.rs","SourceLanguage",2],
@@ -19,10 +18,6 @@
     ["src/source_adapter/semantics.rs","name:typescript",1]
   ],
   "registry": [
-    ["src/framework_registry.rs","crate::typescript",3],
-    ["src/framework_registry.rs","name:cypress",1],
-    ["src/framework_registry.rs","name:playwright",1],
-    ["src/framework_registry.rs","name:typescript",3],
     ["src/source_adapter.rs","SourceLanguage",7],
     ["src/source_adapter.rs","SourceLanguage::JavaScript",1],
     ["src/source_adapter.rs","SourceLanguage::Ruby",1],

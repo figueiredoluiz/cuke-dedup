@@ -354,18 +354,29 @@ fn suppression_reasons_have_a_bounded_payload() {
     assert!(error.to_string().contains("512-character limit"));
 }
 
-/// Checks configured exclusions retain the default node_modules exclusion.
+/// Checks the built-in exclusions are the core glob, then each adapter's ecosystem and framework
+/// globs once each (the JavaScript, TypeScript and TSX registrations share one adapter type), and
+/// that configured exclusions follow them.
 #[test]
 fn configured_excludes_extend_safety_defaults() {
+    let defaults = [
+        "**/target/**",
+        "**/node_modules/**",
+        "**/.features-gen/**",
+        "**/test-results/**",
+        "**/playwright-report/**",
+    ];
     let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    assert_eq!(config.exclude, defaults);
     fs::write(
         directory.path().join("cuke-dedup.config.json"),
         r#"{"exclude":["dist/**"]}"#,
     )
     .unwrap();
     let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
-    assert!(config.exclude.contains(&"**/node_modules/**".to_owned()));
-    assert!(config.exclude.contains(&"dist/**".to_owned()));
+    assert_eq!(config.exclude[..defaults.len()], defaults);
+    assert_eq!(config.exclude[defaults.len()..], ["dist/**"]);
 }
 
 /// Checks higher-precedence custom exclusions replace earlier patterns while retaining safety defaults.

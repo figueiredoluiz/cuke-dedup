@@ -242,7 +242,7 @@ test("unmodeled shapes fail closed, with modeled siblings as controls", () => {
 test("path classes: core, registry, adapter, exempt, test, asset; unknown fails closed", () => {
   for (const [path, expected] of [
     ["src/analysis/", "core"], ["src/ruby/", "adapter"], ["src/analysis/tests/", "test"], ["src/analysis/pairs.rs", "core"], ["src/ruby_helpers.rs", "core"], ["src/source_adapter/config.rs", "core"],
-    ["src/source_adapter.rs", "registry"], ["src/framework_registry.rs", "registry"], ["src/framework_registry/x.rs", "core"], ["src/framework_descriptor.rs", "core"],
+    ["src/source_adapter.rs", "registry"], ["src/framework_registry.rs", "core"], ["src/framework_registry/x.rs", "core"], ["src/framework_descriptor.rs", "core"],
     ["src/ruby.rs", "adapter"], ["src/ruby/bindings.rs", "adapter"], ["src/ruby/data.bin", "adapter"],
     ["src/typescript.rs", "adapter"], ["src/typescript/handler/x.rs", "adapter"],
     ["src/lib.rs", "exempt"], ["src/main.rs", "exempt"],
@@ -342,10 +342,10 @@ test("CLI: adapter, composition, test and asset paths are not scanned", async ()
   });
 });
 
-/** Checks each registry file has its own baseline, a core baseline cannot absorb its edges, and a core file beside it stays core. */
+/** Checks the registry file has its own baseline, a core baseline cannot absorb its edges, and core files beside it, including the framework discovery composer, stay core. */
 test("CLI: registry files are ratcheted in their own section", async () => {
   const text = "use tree_sitter_ruby; let _ = SourceLanguage::Ruby;";
-  for (const file of ["src/source_adapter.rs", "src/framework_registry.rs"]) {
+  for (const file of ["src/source_adapter.rs"]) {
     const registry = [[file, "SourceLanguage::Ruby", 1], [file, "grammar:tree_sitter_ruby", 1], [file, "name:ruby", 2]];
     await withRepo({ [file]: text }, { registry }, async ({ run, put }) => {
       const passing = run();
@@ -360,9 +360,11 @@ test("CLI: registry files are ratcheted in their own section", async () => {
       assert.ok(stderr.includes(`core ${file}: `) && stderr.includes("stale baseline"), stderr);
     });
   }
-  await withRepo({ "src/framework_descriptor.rs": "crate::typescript::x();" }, { registry: [["src/framework_descriptor.rs", "crate::typescript", 1], ["src/framework_descriptor.rs", "name:typescript", 1]] }, async ({ run }) => {
-    assert.match(run().stderr, /core src\/framework_descriptor\.rs: module crate::typescript: baseline 0, found 1/);
-  });
+  for (const file of ["src/framework_descriptor.rs", "src/framework_registry.rs"]) {
+    await withRepo({ [file]: "crate::typescript::x();" }, { registry: [[file, "crate::typescript", 1], [file, "name:typescript", 1]] }, async ({ run }) => {
+      assert.ok(run().stderr.includes(`core ${file}: module crate::typescript: baseline 0, found 1`));
+    });
+  }
 });
 
 /** Checks removed edges, emptied files and deleted files all fail until the baseline is lowered. */

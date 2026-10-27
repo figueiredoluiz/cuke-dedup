@@ -98,9 +98,8 @@ fn structured_cucumber_discovery_needs_no_script_reader() {
     let bare = DiscoveryInput {
         root: directory.path(),
         package: None,
-        script_readers: &[],
     };
-    let found = (CUCUMBER.discover)(&bare).unwrap().unwrap();
+    let found = cucumber_discovery(&bare, &[]).unwrap().unwrap();
     assert_eq!(found.patterns, ["features/ruby/**/*.{feature,feature.md}"]);
     assert_eq!(found.source, directory.path().join("cucumber.yml"));
 
@@ -110,17 +109,16 @@ fn structured_cucumber_discovery_needs_no_script_reader() {
         "module.exports = { paths: ['js'] };",
     )
     .unwrap();
-    assert!((CUCUMBER.discover)(&bare).unwrap().is_none());
+    assert!(cucumber_discovery(&bare, &[]).unwrap().is_none());
     let stub = ScriptConfigReader {
         extensions: &["js"],
         read_property: |_, _, _| Ok(LiteralProperty::Strings(vec!["js".to_owned()])),
     };
-    let scripted = DiscoveryInput {
-        script_readers: &[stub],
-        ..bare
-    };
     assert_eq!(
-        (CUCUMBER.discover)(&scripted).unwrap().unwrap().patterns,
+        cucumber_discovery(&bare, &[stub])
+            .unwrap()
+            .unwrap()
+            .patterns,
         ["js/**/*.{feature,feature.md}"]
     );
 }

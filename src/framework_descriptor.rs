@@ -1,9 +1,9 @@
 //! Framework descriptor contract: static feature-path discovery from framework configuration.
 //!
-//! A descriptor names a framework and discovers its feature patterns; the ordered registry in
-//! `framework_registry` decides precedence. Cucumber's descriptor lives here because its JSON and
-//! YAML forms are language-neutral; its scripted forms go through the [`ScriptConfigReader`]s
-//! that language adapters register.
+//! A descriptor names a framework and discovers its feature patterns; adapters attach descriptors
+//! to their framework contracts, whose order decides precedence. Cucumber configuration reading
+//! lives here because its JSON and YAML forms are language-neutral; the adapter whose contract
+//! uses it passes the [`ScriptConfigReader`]s for its scripted forms.
 
 use crate::resource_limits::{read_utf8, MAX_CONFIG_INPUT_BYTES};
 use anyhow::{Context, Result};
@@ -11,7 +11,6 @@ use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
 use yaml_serde::Value as YamlValue;
 
-const CUCUMBER_NAME: &str = "Cucumber.js";
 const CUCUMBER_STEM: &str = "cucumber";
 type StructuredPaths = fn(&str) -> Result<LiteralProperty>;
 const CUCUMBER_STRUCTURED_CONFIGS: [(&str, StructuredPaths); 3] = [
@@ -40,13 +39,11 @@ pub(crate) struct DiscoveredFeatures {
     pub(crate) warnings: Vec<String>,
 }
 
-/// What a descriptor may inspect: the project root, its `package.json`, and the scripted
-/// configuration readers that language adapters registered.
+/// What a descriptor may inspect: the project root and its `package.json`.
 #[derive(Clone, Copy)]
 pub(crate) struct DiscoveryInput<'a> {
     pub(crate) root: &'a Path,
     pub(crate) package: Option<&'a JsonValue>,
-    pub(crate) script_readers: &'a [ScriptConfigReader],
 }
 
 /// Static discovery contract for one framework. `discover` returns the feature patterns of the
@@ -76,9 +73,9 @@ pub(crate) enum LiteralProperty {
     Strings(Vec<String>),
 }
 
-/// Returns the first descriptor match in registry order, propagating configuration errors.
-pub(crate) fn detect(
-    descriptors: &[FrameworkDescriptor],
+/// Returns the first descriptor match in the given order, propagating configuration errors.
+pub(crate) fn detect<'d>(
+    descriptors: impl IntoIterator<Item = &'d FrameworkDescriptor>,
     input: &DiscoveryInput<'_>,
 ) -> Result<Option<FrameworkFeatures>> {
     for descriptor in descriptors {
@@ -94,14 +91,12 @@ pub(crate) fn detect(
     Ok(None)
 }
 
-/// Uses the first Cucumber configuration, or default feature paths when a Cucumber dependency is present.
-pub(crate) const CUCUMBER: FrameworkDescriptor = FrameworkDescriptor {
-    name: CUCUMBER_NAME,
-    discover: cucumber_discovery,
-};
-
-/// Inspects structured Cucumber files, then each registered scripted extension, then dependencies.
-fn cucumber_discovery(input: &DiscoveryInput<'_>) -> Result<Option<DiscoveredFeatures>> {
+/// Uses the first Cucumber configuration: structured files, then each extension of `script_readers`
+/// in order; else default feature paths when a Cucumber dependency is present.
+pub(crate) fn cucumber_discovery(
+    input: &DiscoveryInput<'_>,
+    script_readers: &[ScriptConfigReader],
+) -> Result<Option<DiscoveredFeatures>> {
     for (name, parse) in CUCUMBER_STRUCTURED_CONFIGS {
         let path = input.root.join(name);
         if path.is_file() {
@@ -109,7 +104,7 @@ fn cucumber_discovery(input: &DiscoveryInput<'_>) -> Result<Option<DiscoveredFea
             return cucumber_config(&path, |text, _| parse(text).with_context(context)).map(Some);
         }
     }
-    for reader in input.script_readers {
+    for reader in script_readers {
         for extension in reader.extensions {
             let path = input.root.join(format!("{CUCUMBER_STEM}.{extension}"));
             if path.is_file() {

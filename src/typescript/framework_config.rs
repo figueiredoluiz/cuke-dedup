@@ -1,9 +1,9 @@
 //! JavaScript/TypeScript framework descriptors and the scripted-configuration reader.
 
 use crate::framework_descriptor::{
-    directory_pattern, first_matching_config, framework_pattern, package_has_any_dependency,
-    read_config, DiscoveredFeatures, DiscoveryInput, FrameworkDescriptor, LiteralProperty,
-    ScriptConfigReader,
+    cucumber_discovery, directory_pattern, first_matching_config, framework_pattern,
+    package_has_any_dependency, read_config, DiscoveredFeatures, DiscoveryInput,
+    FrameworkDescriptor, LiteralProperty, ScriptConfigReader,
 };
 use crate::source_adapter::{grammar_for_language, SourceLanguage};
 use anyhow::{Context, Result};
@@ -33,19 +33,26 @@ const CYPRESS_PREPROCESSORS: [&str; 2] = [
 const BROAD_FEATURES: &str = "**/*.{feature,feature.md}";
 
 /// Recognized Playwright-BDD configuration.
-pub(crate) const PLAYWRIGHT_BDD: FrameworkDescriptor = FrameworkDescriptor {
+pub(crate) const PLAYWRIGHT_BDD_DISCOVERY: FrameworkDescriptor = FrameworkDescriptor {
     name: "Playwright-BDD",
     discover: playwright_discovery,
 };
 
 /// Cypress configuration, when a supported Cucumber preprocessor dependency is present.
-pub(crate) const CYPRESS_CUCUMBER: FrameworkDescriptor = FrameworkDescriptor {
+pub(crate) const CYPRESS_CUCUMBER_DISCOVERY: FrameworkDescriptor = FrameworkDescriptor {
     name: "Cypress Cucumber",
     discover: cypress_discovery,
 };
 
+/// Cucumber configuration files, scripted ones in the JavaScript and TypeScript extensions, else
+/// default paths when a Cucumber dependency is present.
+pub(crate) const CUCUMBER_JS_DISCOVERY: FrameworkDescriptor = FrameworkDescriptor {
+    name: "Cucumber.js",
+    discover: |input| cucumber_discovery(input, &[SCRIPT_CONFIG_READER]),
+};
+
 /// Reads scripted configuration in the JavaScript and TypeScript module extensions.
-pub(crate) const SCRIPT_CONFIG_READER: ScriptConfigReader = ScriptConfigReader {
+const SCRIPT_CONFIG_READER: ScriptConfigReader = ScriptConfigReader {
     extensions: &["js", "cjs", "mjs", "ts", "cts", "mts"],
     read_property: |source, extension, property| {
         static_object_property(source, extension, None, property)

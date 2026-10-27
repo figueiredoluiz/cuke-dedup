@@ -16,7 +16,8 @@ use tree_sitter::Node;
 /// Direct Cucumber-Ruby block registrations, the framework Ruby definitions are attributed to.
 pub(crate) const CUCUMBER_RUBY: Framework = Framework::new("cucumber-ruby");
 /// Every framework this adapter attributes definitions to; a named static so its address is unique.
-static FRAMEWORKS: [Framework; 1] = [CUCUMBER_RUBY];
+static FRAMEWORK_CONTRACTS: [crate::source_adapter::FrameworkContract; 1] =
+    [crate::source_adapter::FrameworkContract::new(CUCUMBER_RUBY)];
 
 mod assertions;
 mod bindings;
@@ -100,8 +101,8 @@ impl SourceAdapter for RubyAdapter {
         false
     }
     /// Declares Cucumber-Ruby as the one framework Ruby definitions are attributed to.
-    fn frameworks(&self) -> &'static [Framework] {
-        &FRAMEWORKS
+    fn framework_contracts(&self) -> &'static [crate::source_adapter::FrameworkContract] {
+        &FRAMEWORK_CONTRACTS
     }
     /// Declares the Ruby comparison policy.
     fn analysis_policy(&self) -> crate::source_adapter::AnalysisPolicy {

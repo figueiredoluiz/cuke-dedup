@@ -117,8 +117,13 @@ impl SourceAdapter for TreeSitterSourceAdapter {
     }
 
     /// Declares the JavaScript/TypeScript frameworks definitions may be attributed to.
-    fn frameworks(&self) -> &'static [Framework] {
-        &frameworks::FRAMEWORKS
+    fn framework_contracts(&self) -> &'static [crate::source_adapter::FrameworkContract] {
+        &frameworks::FRAMEWORK_CONTRACTS
+    }
+
+    /// Excludes installed packages, which every JavaScript/TypeScript framework shares.
+    fn default_excludes(&self) -> &'static [&'static str] {
+        &["**/node_modules/**"]
     }
 
     /// Declares the baseline JavaScript/TypeScript comparison policy; each definition carries the
