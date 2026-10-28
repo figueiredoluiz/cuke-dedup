@@ -3174,6 +3174,16 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "registered_languages_pass_the_extraction_entry_points",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "registered_languages_pass_the_extraction_entry_points"
+          },
+          "rationale": "`registered_languages_pass_the_extraction_entry_points` extracts and finalizes a `.rb` source under `ruby::RUBY` beside a TypeScript one through the entry points that reject an unregistered language, in-process.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "unregistered_languages_fail_at_extraction_entry_points",
           "requiredStatus": "engine-invariant",
           "stage": "session-plumbing",

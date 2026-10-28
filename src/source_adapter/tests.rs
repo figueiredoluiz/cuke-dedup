@@ -448,13 +448,29 @@ fn unregistered_languages_fail_at_extraction_entry_points() {
             "no source adapter is registered for language `python`"
         );
     }
-    // The control: the same source and path extract under the TypeScript language.
-    assert_eq!(
-        crate::typescript::extract(source, &file(TYPESCRIPT))
+}
+
+/// Checks registered languages pass the extraction and finalization entry points that reject an unregistered id.
+#[test]
+fn registered_languages_pass_the_extraction_entry_points() {
+    let project = session_project();
+    for (name, language, source) in [
+        ("steps.ts", TYPESCRIPT, "Given('a step', () => work());"),
+        ("steps.rb", crate::ruby::RUBY, "Given('a step') { work }"),
+    ] {
+        let file = SourceFile {
+            path: project.path().join(name),
+            language,
+        };
+        let extraction = registered_adapter(language)
             .unwrap()
-            .len(),
-        1
-    );
+            .extract(source, &file)
+            .unwrap();
+        assert_eq!(extraction.definitions.len(), 1, "{name}");
+        SourceExtractionSession::new(project.path())
+            .finalize(std::slice::from_ref(&file), &mut Vec::new())
+            .unwrap();
+    }
 }
 
 /// Checks either routing surface can warm shared session state without changing subsequent extraction.
