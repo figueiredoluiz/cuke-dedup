@@ -1,6 +1,6 @@
 use super::*;
 use crate::model::Rule;
-use crate::source_adapter::{SourceExtractionSession, SourceLanguage};
+use crate::source_adapter::SourceExtractionSession;
 
 /// Checks that optional proof failures retain ordinary findings and correct completeness.
 #[test]
@@ -8,12 +8,13 @@ fn proof_exhaustion_and_cycles_preserve_untrusted_baseline_findings() {
     let root = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let source = "require_relative './steps'\nGiven('same') { work() }; Then('same') { work() }; Then('other') { work() }";
     std::fs::write(&file.path, source).unwrap();
     let mut session = SourceExtractionSession::new(root.path());
     let definitions = crate::source_adapter::adapter_for_language(file.language)
+        .unwrap()
         .extract_with_session(source, &file, &mut session)
         .unwrap()
         .definitions;
@@ -399,7 +400,7 @@ fn extract_configured(
     )];
     let mut session = SourceExtractionSession::with_options(root, &[], &["./assertions".into()])
         .with_dependencies(&edges);
-    let adapter = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby);
+    let adapter = crate::source_adapter::adapter_for_language(crate::ruby::RUBY).unwrap();
     adapter.prepare_session(files, &mut session).unwrap();
     finish(source, files, &mut session)
 }
@@ -413,7 +414,8 @@ fn finish(
     Vec<crate::model::StepDefinition>,
     crate::source_adapter::SourceFinalization,
 ) {
-    let mut definitions = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby)
+    let mut definitions = crate::source_adapter::adapter_for_language(crate::ruby::RUBY)
+        .unwrap()
         .extract_with_session(source, &files[0], session)
         .unwrap()
         .definitions;
@@ -426,7 +428,7 @@ fn provider_files(root: &Path) -> Vec<SourceFile> {
     ["steps.rb", "assertions.rb"]
         .map(|name| SourceFile {
             path: root.join(name),
-            language: SourceLanguage::Ruby,
+            language: crate::ruby::RUBY,
         })
         .into()
 }
@@ -452,7 +454,7 @@ fn unavailable_snapshot_preserves_ordinary_findings_and_configured_uncertainty()
     let files = provider_files(root.path());
     let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
     let source = "Given('one') { work() }; Then('two') { work() }";
-    let adapter = crate::source_adapter::adapter_for_language(SourceLanguage::Ruby);
+    let adapter = crate::source_adapter::adapter_for_language(crate::ruby::RUBY).unwrap();
     for configured in [vec![], vec!["./assertions".into()]] {
         let mut session = SourceExtractionSession::with_options(root.path(), &[], &configured);
         adapter.prepare_session(&files, &mut session).unwrap();

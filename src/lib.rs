@@ -7,7 +7,7 @@
 //! use cuke_dedup::analysis::analyze;
 //! use cuke_dedup::config::{Config, ConfigOverrides};
 //! use cuke_dedup::gherkin;
-//! use cuke_dedup::source_adapter::{SourceFile, SourceLanguage};
+//! use cuke_dedup::source_adapter::SourceFile;
 //! use cuke_dedup::typescript;
 //! use std::path::Path;
 //!
@@ -16,7 +16,7 @@
 //! let config = Config::load(&root, ConfigOverrides::default())?;
 //! let definition_file = SourceFile {
 //!     path: root.join("steps.ts"),
-//!     language: SourceLanguage::TypeScript,
+//!     language: typescript::TYPESCRIPT,
 //! };
 //! let definitions = typescript::extract(
 //!     r#"import { Given } from "@cucumber/cucumber";
@@ -56,8 +56,15 @@
 //! attached, an opaque [`source_adapter::AnalysisPolicy`]. A definition built by hand or
 //! deserialized has [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript
 //! baseline, whatever its `framework`; a hand-built Ruby definition takes
-//! `adapter_for_language(SourceLanguage::Ruby).analysis_policy()`, and framework-specific policies
+//! `adapter_for_language(SourceLanguage::new("ruby")).map(|ruby| ruby.analysis_policy())`, and
+//! framework-specific policies
 //! (Jest-Cucumber, vitest-cucumber-plugin) come only from extraction. The field is not serialized.
+//!
+//! A source language is an open id that its adapter declares ([`source_adapter::SourceLanguage`]):
+//! the JavaScript/TypeScript ids are the [`typescript::JAVASCRIPT`], [`typescript::TYPESCRIPT`] and
+//! [`typescript::TSX`] constants, Ruby's is `SourceLanguage::new("ruby")`. A language no registered
+//! adapter declares has no adapter: [`source_adapter::adapter_for_language`] returns `None` and
+//! extraction entry points return an error.
 //!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,

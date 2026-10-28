@@ -8,7 +8,7 @@ fn resolve_with(root: &Path, selected: &[&str], budget: (usize, usize)) -> Disco
             .iter()
             .map(|name| SourceFile {
                 path: root.join(name),
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             })
             .collect(),
         ..DiscoveredFiles::default()
@@ -233,7 +233,7 @@ fn admitted_loads_remove_files_from_the_skipped_list() {
     let config = Config::load(&root, Default::default()).unwrap();
     let ruby = |name: &str| SourceFile {
         path: root.join(name),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let mut files = DiscoveredFiles {
         definitions: vec![ruby("entry.rb")],

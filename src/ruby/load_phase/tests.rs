@@ -69,9 +69,10 @@ fn session_less_extraction_keeps_the_conservative_rule() {
         "class Helper\n  def log(level)\n    logger.send(level)\n  end\nend\nGiven('x') { work }\n";
     let file = crate::source_adapter::SourceFile {
         path: std::path::PathBuf::from("helper.rb"),
-        language: crate::source_adapter::SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let extraction = crate::source_adapter::adapter_for_language(file.language)
+        .unwrap()
         .extract(source, &file)
         .unwrap();
     assert!(

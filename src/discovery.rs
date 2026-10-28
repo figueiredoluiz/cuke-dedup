@@ -108,8 +108,9 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
             continue;
         }
 
-        if let Some(language) = source_language(relative) {
-            let opt_in = !source_adapter::adapter_for_language(language).discover_by_default();
+        if let Some(adapter) = source_adapter::adapter_for_path(relative) {
+            let language = adapter.language();
+            let opt_in = !adapter.discover_by_default();
             let selection = match &definition_globs {
                 None => Some(!opt_in),
                 Some(globs) => {
@@ -197,12 +198,6 @@ fn compile_globs(patterns: &[String], kind: &str) -> Result<GlobSet> {
 /// pattern such as `features/**` keeps selecting the same files it did before the language existed.
 fn names_suffix(matcher: &GlobMatcher, path: &Path) -> bool {
     !matcher.is_match(path.with_extension("cuke-dedup-suffix-probe"))
-}
-
-/// Returns the registered frontend language for `path`'s extension; `None` for unregistered
-/// extensions, `.map` files and TypeScript declaration files.
-fn source_language(path: &Path) -> Option<SourceLanguage> {
-    source_adapter::language_for_path(path)
 }
 
 #[cfg(test)]

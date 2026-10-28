@@ -13,6 +13,7 @@ use cuke_dedup::source_adapter::{
     SourceAdapterRegistration, SourceParameterType, SOURCE_ADAPTER_REGISTRY,
 };
 use cuke_dedup::typescript;
+use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -43,7 +44,7 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
         }
         /// Identifies the external test adapter as JavaScript.
         fn language(&self) -> SourceLanguage {
-            SourceLanguage::JavaScript
+            JAVASCRIPT
         }
         /// Returns a sentinel failure to verify default session delegation reaches the external adapter.
         fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
@@ -53,7 +54,7 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
     let project = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: project.path().join("steps.js"),
-        language: SourceLanguage::JavaScript,
+        language: JAVASCRIPT,
     };
     let adapter: &dyn SourceAdapter = &ExternalAdapter;
     assert!(adapter.discover_by_default());
@@ -106,7 +107,7 @@ fn external_callers_can_preserve_partial_results_and_operational_diagnostics() {
         "Given(/a{1000000}/, () => work());",
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap();
@@ -142,7 +143,7 @@ fn sessionless_file_extraction_uses_the_nearest_package_boundary() {
 
     let definitions = typescript::extract_file(&SourceFile {
         path: steps,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     })
     .unwrap();
 
@@ -231,9 +232,9 @@ fn configured_registrations_enable_lowercase_global_step_names() {
     let project = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: project.path().join("steps.ts"),
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
-    let adapter = registered_adapter(SourceLanguage::TypeScript);
+    let adapter = registered_adapter(TYPESCRIPT);
     let source = "given('a lowercase global step', () => work());";
 
     // Lowercase `given`/`when`/`then` are not ambient globals: a bare call with no import and no
@@ -272,10 +273,10 @@ fn local_commonjs_and_esm_barrel_imports_resolve_registrations_in_process() {
         "const { Given } = require('@cucumber/cucumber');\nmodule.exports = { Given };\n",
     )
     .unwrap();
-    let adapter = registered_adapter(SourceLanguage::JavaScript);
+    let adapter = registered_adapter(JAVASCRIPT);
     let file = SourceFile {
         path: project.path().join("steps.js"),
-        language: SourceLanguage::JavaScript,
+        language: JAVASCRIPT,
     };
     let extract = |source: &str| {
         let mut session = SourceExtractionSession::new(project.path());
@@ -325,10 +326,10 @@ fn local_barrel_re_exporting_the_bdd_factory_resolves_through_require() {
         "const { createBdd } = require('playwright-bdd');\nmodule.exports = { createBdd };\n",
     )
     .unwrap();
-    let adapter = registered_adapter(SourceLanguage::JavaScript);
+    let adapter = registered_adapter(JAVASCRIPT);
     let file = SourceFile {
         path: project.path().join("steps.js"),
-        language: SourceLanguage::JavaScript,
+        language: JAVASCRIPT,
     };
     let mut session = SourceExtractionSession::new(project.path());
     let definitions = adapter
@@ -363,9 +364,9 @@ fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
     let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: SourceLanguage::new("ruby"),
     };
-    let extracted = registered_adapter(SourceLanguage::Ruby).extract(
+    let extracted = registered_adapter(SourceLanguage::new("ruby")).extract(
         "Given('target') { first() }; Then('unused') { second() }; def helper; step 'target'; end", &file).unwrap();
     let features = cuke_dedup::gherkin::extract(
         "Feature: usage\n Scenario: other\n  Given other\n",
@@ -412,18 +413,18 @@ fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api()
     let root = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: SourceLanguage::new("ruby"),
     };
     let source = format!(
         "Given('kept') {{ kept }}\nGiven('kept') {{ other }}\n\nGiven(/{}/) {{ work }}\n",
         "a".repeat(1024 * 1024 + 1)
     );
-    let extracted = registered_adapter(SourceLanguage::Ruby)
+    let extracted = registered_adapter(SourceLanguage::new("ruby"))
         .extract(&source, &file)
         .unwrap();
     assert_eq!(extracted.definitions.len(), 3);
     assert!(extracted.diagnostics.is_empty());
-    let unsupported = registered_adapter(SourceLanguage::Ruby)
+    let unsupported = registered_adapter(SourceLanguage::new("ruby"))
         .extract("Given(/^a++$/) { work }\n", &file)
         .unwrap();
     let diagnostic = unsupported.diagnostics.first().unwrap();

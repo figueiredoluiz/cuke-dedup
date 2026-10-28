@@ -1,6 +1,7 @@
 use cuke_dedup::analysis::analyze;
 use cuke_dedup::config::{Config, ConfigOverrides};
 use cuke_dedup::model::{FeatureStep, Framework, Rule, SourceLocation};
+use cuke_dedup::typescript::TYPESCRIPT;
 use cuke_dedup::typescript::{self, SourceFile, SourceLanguage};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -62,7 +63,7 @@ fn positional_regex_steps_do_not_enter_global_usage_but_plugin_steps_do() {
     for (setup, positional) in [(format!("import {{defineFeature}} from 'jest-cucumber'; defineFeature(feature, test => test('one', ({{given}}) => {{{body}}}));"), true),
         (format!("import {{Given as given}} from 'vitest-cucumber-plugin'; {body}"), false)] {
         let steps = vec![FeatureStep { keyword: "Given".into(), text: "the parcel is ready".into(), location: SourceLocation::new("steps.feature", 3, 1, 3, 24) }];
-        let (frameworks, rules, diagnostics) = outcomes_with_steps(&setup, SourceLanguage::TypeScript, steps);
+        let (frameworks, rules, diagnostics) = outcomes_with_steps(&setup, TYPESCRIPT, steps);
         assert_eq!(frameworks.len(), 2);
         assert_eq!(rules.contains(&Rule::AmbiguousStep), !positional, "{rules:?}");
         assert!(!rules.contains(&Rule::UnusedDefinition));
@@ -83,7 +84,7 @@ fn local_framework_barrels_resolve_without_granting_assertion_facade_trust() {
         let source = format!("import {{ defineFeature, Given, expect }} from './barrel'; {setup} defineFeature(feature, test => test('one', ({{given}}) => {{ given('first outcome', () => expect(value).toBe(1)); given('second outcome', () => expect(value).toBe(2)); }})); {callee}('plugin first', () => work()); {callee}('plugin second', () => work());");
         let file = SourceFile {
             path: directory.path().join("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         std::fs::write(&file.path, &source).unwrap();
         let extraction = typescript::extract_detailed(&source, &file).unwrap();
@@ -183,7 +184,7 @@ fn forwarding_wrappers_use_lexical_targets_and_immediate_execution() {
             format!("import {{defineFeature}} from 'jest-cucumber'; defineFeature(feature, test => test('one', ({{given}}) => {{{body}}}));"),
             format!("const {{defineFeature}} = require('jest-cucumber'); defineFeature(feature, test => test('one', ({{given}}) => {{{body}}}));"),
         ] {
-            let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+            let (frameworks, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
             assert_eq!(frameworks.len(), if supported { 2 } else { 0 }, "{source}: {diagnostics:?}");
             assert_eq!(has(&rules, Rule::DuplicateHandler), supported, "{source}: {rules:?}");
             assert_eq!(diagnostics.is_empty(), supported, "{source}: {diagnostics:?}");
@@ -197,7 +198,7 @@ fn ambient_jest_fallback_preserves_literal_kind_and_positional_rules() {
     let source = "import 'jest-cucumber'; Given('literal { int }', () => work()); Given('literal {int}', () => work());";
     let file = SourceFile {
         path: "steps.ts".into(),
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let extracted = typescript::extract_detailed(source, &file).unwrap();
     assert_eq!(extracted.definitions.len(), 2);
@@ -208,7 +209,7 @@ fn ambient_jest_fallback_preserves_literal_kind_and_positional_rules() {
         );
         assert_eq!(definition.matcher, definition.normalized_matcher);
     }
-    let (_, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+    let (_, rules, diagnostics) = outcomes(source, TYPESCRIPT);
     assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
     assert!(diagnostics.is_empty());
 }
@@ -233,7 +234,7 @@ fn fallback_scope_and_writes_never_gain_registration_trust() {
             ("", format!("{{ const Given = unrelated; {calls} }}"), false),
         ] {
             let source = format!("import '{package}'; {setup} {body}");
-            let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+            let (frameworks, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
             assert_eq!(frameworks.len(), if supported { 2 } else { 0 }, "{source}");
             assert_eq!(has(&rules, Rule::DuplicateHandler), supported, "{source}");
             assert_eq!(
@@ -291,7 +292,7 @@ fn jest_import_and_binding_forms_preserve_handler_findings_but_skip_matcher_rule
 
     for (label, import) in import_forms {
         let source = format!("{import}\n{JEST_SCENARIOS}");
-        let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (frameworks, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert_eq!(frameworks.len(), 2, "{label}");
         assert!(
             frameworks
@@ -326,7 +327,7 @@ fn matcher_rules_stay_inapplicable_for_identical_matchers_in_one_scenario() {
         given('same matcher', () => second());
       }));
     "#;
-    let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+    let (frameworks, rules, diagnostics) = outcomes(source, TYPESCRIPT);
 
     assert_eq!(frameworks.len(), 2);
     assert!(frameworks
@@ -344,7 +345,7 @@ fn matcher_rules_stay_inapplicable_for_identical_matchers_in_one_scenario() {
 #[test]
 fn jest_equal_text_keeps_handler_candidates_without_redundant_near_findings() {
     let source = "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', ({given}) => { given('same', () => work()); given('same', () => work()); }));";
-    let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+    let (frameworks, rules, diagnostics) = outcomes(source, TYPESCRIPT);
     assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
     assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
     assert!(diagnostics.is_empty());
@@ -358,7 +359,7 @@ fn jest_literal_text_is_preserved_in_reports_and_handler_comparisons() {
         source,
         &SourceFile {
             path: "steps.ts".into(),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap();
@@ -370,14 +371,14 @@ fn jest_literal_text_is_preserved_in_reports_and_handler_comparisons() {
         );
         assert_eq!(definition.matcher, definition.normalized_matcher);
     }
-    let (_, rules, _) = outcomes(source, SourceLanguage::TypeScript);
+    let (_, rules, _) = outcomes(source, TYPESCRIPT);
     assert_eq!(rules, BTreeSet::from([Rule::DuplicateHandler]));
     // The opposite answer: vitest-cucumber-plugin keeps Cucumber expressions.
     let vitest = typescript::extract_detailed(
         "import { Given } from 'vitest-cucumber-plugin'; Given('literal {int}', () => work());",
         &SourceFile {
             path: "steps.ts".into(),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap();
@@ -400,7 +401,7 @@ fn jest_assertion_conflicts_depend_on_trusted_provenance() {
         test('second scenario', ({ given }) => given('second outcome', () => expect(value).toBe(2)));
       });
     "#.replace("ASSERTION_MODULE", module);
-        let (frameworks, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (frameworks, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         if trusted {
@@ -423,7 +424,7 @@ fn ordinary_vitest_registrations_keep_matcher_rules_and_duplicate_handler_contro
       Given('different matcher', () => work());
       Given('another matcher', () => work());
     "#;
-    let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+    let (frameworks, rules, diagnostics) = outcomes(source, TYPESCRIPT);
 
     assert_eq!(frameworks.len(), 4);
     assert!(frameworks
@@ -443,7 +444,7 @@ fn jest_and_vitest_handlers_are_not_compared_across_callback_conventions() {
       defineFeature(feature, test => test('one scenario', ({ given }) => given('jest action', () => work())));
       Given('vitest action', () => work());
     "#;
-    let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+    let (frameworks, rules, diagnostics) = outcomes(source, TYPESCRIPT);
 
     assert_eq!(frameworks.len(), 2);
     assert!(frameworks.contains(&declared_framework("jest-cucumber")));
@@ -486,7 +487,7 @@ fn jest_callback_shapes_extract_only_when_synchronous_and_statically_resolved() 
         ),
     ];
     for (label, source) in supported {
-        let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, diagnostics) = outcomes(source, TYPESCRIPT);
         assert_eq!(frameworks.len(), 1, "{label}: {diagnostics:?}");
         assert_eq!(
             frameworks[0],
@@ -515,7 +516,7 @@ fn jest_callback_shapes_extract_only_when_synchronous_and_statically_resolved() 
         ),
     ];
     for (label, source) in unsupported {
-        let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, diagnostics) = outcomes(source, TYPESCRIPT);
         assert!(
             frameworks.is_empty(),
             "{label} unexpectedly yielded {frameworks:?}"
@@ -536,7 +537,7 @@ fn jest_steps_vocabulary_and_modifiers_register_only_inside_the_steps_callback()
         let source = format!(
             "import {{ defineFeature }} from 'jest-cucumber'; defineFeature(feature, test => test('one', steps => steps.{step}('action', () => work())));"
         );
-        let (frameworks, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (frameworks, _, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert_eq!(frameworks, [jest], "{step}: {diagnostics:?}");
         assert!(diagnostics.is_empty(), "{step}: {diagnostics:?}");
     }
@@ -544,7 +545,7 @@ fn jest_steps_vocabulary_and_modifiers_register_only_inside_the_steps_callback()
         let source = format!(
             "import {{ defineFeature }} from 'jest-cucumber'; defineFeature(feature, test => test.{modifier}('one', ({{ given }}) => given('action', () => work())));"
         );
-        let (frameworks, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (frameworks, _, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert_eq!(frameworks, [jest], "{modifier}: {diagnostics:?}");
         assert!(diagnostics.is_empty(), "{modifier}: {diagnostics:?}");
     }
@@ -553,14 +554,14 @@ fn jest_steps_vocabulary_and_modifiers_register_only_inside_the_steps_callback()
         "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test.todo('one', ({ given }) => given('action', () => work())));",
         "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', steps => steps.also('action', () => work())));",
     ] {
-        let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, diagnostics) = outcomes(source, TYPESCRIPT);
         assert!(frameworks.is_empty(), "{source}: {frameworks:?}");
         assert!(!diagnostics.is_empty(), "{source}");
     }
     // `given` keeps its steps provenance, but the nested callback's call is not proven to run
     // while the scenario callback does.
     let nested = "import { defineFeature } from 'jest-cucumber'; defineFeature(feature, test => test('one', ({ given }) => { [1].forEach(() => given('action', () => work())); }));";
-    let (frameworks, _, diagnostics) = outcomes(nested, SourceLanguage::TypeScript);
+    let (frameworks, _, diagnostics) = outcomes(nested, TYPESCRIPT);
     assert!(frameworks.is_empty(), "{frameworks:?}");
     assert!(!diagnostics.is_empty());
 }
@@ -575,7 +576,7 @@ fn jest_resolution_fails_closed_for_type_only_unknown_and_shadowed_bindings() {
       import { defineFeature } from 'jest-cucumber';
       defineFeature(feature, test => test('one', ({ given }) => given('action', () => work())));
     "#;
-    let (positive_frameworks, _, _) = outcomes(positive, SourceLanguage::TypeScript);
+    let (positive_frameworks, _, _) = outcomes(positive, TYPESCRIPT);
     assert_eq!(positive_frameworks, [declared_framework("jest-cucumber")]);
 
     let negative = [
@@ -609,7 +610,7 @@ fn jest_resolution_fails_closed_for_type_only_unknown_and_shadowed_bindings() {
         ),
     ];
     for (label, source) in negative {
-        let (frameworks, _, _) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, _) = outcomes(source, TYPESCRIPT);
         assert!(
             frameworks.is_empty(),
             "{label} unexpectedly yielded {frameworks:?}"
@@ -651,7 +652,7 @@ fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
         let source = format!(
             "{setup}\n{registration}('first action', () => work()); {registration}('second action', () => work());"
         );
-        let (frameworks, rules, _) = outcomes(&source, SourceLanguage::TypeScript);
+        let (frameworks, rules, _) = outcomes(&source, TYPESCRIPT);
         assert_eq!(
             frameworks,
             [declared_framework("vitest-cucumber"); 2],
@@ -676,7 +677,7 @@ fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
         "import { Given } from './unknown-setup'; Given('action', () => work());",
     ];
     for source in negative {
-        let (frameworks, _, _) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, _) = outcomes(source, TYPESCRIPT);
         assert!(
             frameworks.is_empty(),
             "unexpected Vitest definition for {source}: {frameworks:?}"
@@ -688,7 +689,7 @@ fn vitest_plugin_esm_bindings_have_positive_and_fail_closed_controls() {
       Given('ambient first', () => work());
       Given('ambient second', () => work());
     "#;
-    let (frameworks, rules, _) = outcomes(ambient, SourceLanguage::TypeScript);
+    let (frameworks, rules, _) = outcomes(ambient, TYPESCRIPT);
     assert_eq!(frameworks.len(), 2);
     assert!(frameworks
         .iter()
@@ -710,7 +711,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
         "class require {} const { defineFeature } = require('jest-cucumber'); defineFeature(feature, test => test('one', ({ given }) => given('action', () => work())));",
     ];
     for source in common_js_shadows {
-        let (frameworks, _, _) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, _) = outcomes(source, TYPESCRIPT);
         assert!(
             frameworks.is_empty(),
             "shadowed require yielded {frameworks:?}: {source}"
@@ -724,7 +725,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
         test('second', steps => steps.given('second action', () => work()));
       });
     "#;
-    let (frameworks, rules, _) = outcomes(aliases, SourceLanguage::TypeScript);
+    let (frameworks, rules, _) = outcomes(aliases, TYPESCRIPT);
     assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
     assert!(has(&rules, Rule::DuplicateHandler), "{rules:?}");
 
@@ -736,7 +737,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
         steps.given('must not register', () => work());
       }));
     "#;
-    let (frameworks, _, _) = outcomes(writes, SourceLanguage::TypeScript);
+    let (frameworks, _, _) = outcomes(writes, TYPESCRIPT);
     assert!(
         frameworks.is_empty(),
         "written callback property yielded {frameworks:?}"
@@ -752,7 +753,7 @@ fn jest_requires_and_scenario_callback_aliases_respect_shadowing_and_escape() {
       });
       escapedTest('outside setup', ({ given }) => given('escaped action', () => work()));
     "#;
-    let (frameworks, rules, _) = outcomes(escaped, SourceLanguage::TypeScript);
+    let (frameworks, rules, _) = outcomes(escaped, TYPESCRIPT);
     assert_eq!(frameworks, [declared_framework("jest-cucumber"); 2]);
     assert!(has(&rules, Rule::DuplicateHandler), "{rules:?}");
 }
@@ -765,7 +766,7 @@ fn jest_uncertain_setup_argument_positions_and_mixed_scope_never_register() {
         "import { Given } from '@cucumber/cucumber'; import { defineFeature } from 'jest-cucumber'; defineFeature(feature, function*(test) { test('one', ({ Given }) => Given('action', () => work())); });",
         "import * as jc from 'jest-cucumber'; const alias = jc; alias.defineFeature = fake; jc.defineFeature(feature, test => test('one', ({given}) => given('action', () => work())));",
     ] {
-        let (frameworks, rules, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, rules, diagnostics) = outcomes(source, TYPESCRIPT);
         assert!(frameworks.is_empty(), "{source}: {frameworks:?}");
         assert_no_handler_findings(&rules);
         assert!(!diagnostics.is_empty(), "{source} must remain incomplete");
@@ -782,7 +783,7 @@ fn unmodeled_aliases_keep_framework_evidence_without_registering_steps() {
         "import * as plugin from 'vitest-cucumber-plugin'; const register=plugin[key]; register('action',()=>work());",
         "import * as plugin from 'vitest-cucumber-plugin'; const {Given: register = fallback}=plugin; register('action',()=>work());",
     ] {
-        let (frameworks, _, diagnostics) = outcomes(source, SourceLanguage::TypeScript);
+        let (frameworks, _, diagnostics) = outcomes(source, TYPESCRIPT);
         assert!(frameworks.is_empty(), "{source}");
         assert!(!diagnostics.is_empty(), "silent unsupported alias: {source}");
     }
@@ -810,7 +811,7 @@ fn known_helpers_preserve_complete_handler_outcomes() {
                 for equal in [true, false] {
                     let right = if equal { 1 } else { 2 };
                     let source = format!("import {{expect}} from '@jest/globals'; {setup} help('example'); consume({{help}}); defineFeature(feature, test => test('one', {callback} {{ const {{given, pending: wait}}=steps; {pending}(); wait(); consume({{wait}}); given('first',()=>expect(value).toBe(1)); given('second',()=>expect(value).toBe({right})); }}));");
-                    let (definitions, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+                    let (definitions, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
                     assert_eq!(definitions.len(), 2, "{source}: {diagnostics:?}");
                     assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
                     assert_eq!(has(&rules, Rule::DuplicateHandler), equal, "{source}: {rules:?}");
@@ -842,14 +843,14 @@ fn helper_exemptions_do_not_hide_uncertain_or_escaped_registrations() {
         ("({value: jc}=source);", 0),
     ] {
         let source = format!("import * as jc from 'jest-cucumber'; {setup} jc.defineFeature(feature,t=>t('one',({{given}})=>{{given('first',()=>work());given('second',()=>work());}}));");
-        let (definitions, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (definitions, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert_eq!(definitions.len(), count, "{source}: {diagnostics:?}");
         assert_eq!(has(&rules, Rule::DuplicateHandler), count == 2, "{source}");
         assert!(!diagnostics.is_empty(), "{source}");
     }
     for callback in ["async steps =>", "function* (steps)"] {
         let source = format!("import {{defineFeature}} from 'jest-cucumber'; defineFeature(feature,t=>t('one',{callback} {{steps.pending();steps.given('first',()=>work());}}));");
-        let (definitions, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (definitions, _, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert!(definitions.is_empty());
         assert!(!diagnostics.is_empty());
     }
@@ -894,7 +895,7 @@ fn callback_discovery_preserves_outcomes_through_adjacent_syntax() {
         "factory().value = 1;",
     ] {
         let source = format!("import * as jc from 'jest-cucumber'; {setup} jc.defineFeature(feature,t=>t('one',({{given}})=>{{given('first',()=>work());given('second',()=>work());}}));");
-        let (definitions, rules, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (definitions, rules, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert_eq!(definitions.len(), 2, "{source}: {diagnostics:?}");
         assert!(has(&rules, Rule::DuplicateHandler), "{source}");
         assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
@@ -904,7 +905,7 @@ fn callback_discovery_preserves_outcomes_through_adjacent_syntax() {
         "const {loadFeature: help, ...rest}=jc; rest.missing();",
     ] {
         let source = format!("import * as jc from 'jest-cucumber'; {setup}");
-        let (definitions, _, diagnostics) = outcomes(&source, SourceLanguage::TypeScript);
+        let (definitions, _, diagnostics) = outcomes(&source, TYPESCRIPT);
         assert!(definitions.is_empty());
         assert!(!diagnostics.is_empty(), "{source}");
     }
@@ -915,7 +916,7 @@ fn callback_discovery_preserves_outcomes_through_adjacent_syntax() {
     for mutate in ["", "a39=unknown;"] {
         let (definitions, rules, diagnostics) = outcomes(
             &format!("{source} {mutate} a39.defineFeature(feature, setup);"),
-            SourceLanguage::TypeScript,
+            TYPESCRIPT,
         );
         assert!(definitions.is_empty());
         assert!(rules.is_empty());
@@ -949,7 +950,7 @@ fn deep_alias_writes_and_escapes_invalidate_roots_without_losing_uncertainty() {
                 ("function x(p,h){y(p,h);} function y(p,h){x(p,h);} x('unknown',()=>work());".into(), 2, true),
             ] {
                 let input = format!("{source} {effect} {control}");
-                let (definitions, rules, diagnostics) = outcomes(&input, SourceLanguage::TypeScript);
+                let (definitions, rules, diagnostics) = outcomes(&input, TYPESCRIPT);
                 assert_eq!(definitions.len(), count, "{input}: {diagnostics:?}");
                 assert_eq!(has(&rules, Rule::DuplicateHandler), count == 2, "{input}");
                 assert_eq!(!diagnostics.is_empty(), incomplete, "{input}: {diagnostics:?}");

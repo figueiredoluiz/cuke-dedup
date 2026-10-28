@@ -1,9 +1,10 @@
 #![no_main]
 #![forbid(unsafe_code)]
 
-use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+use cuke_dedup::discovery::SourceFile;
 use cuke_dedup::gherkin::{self, FeatureFormat};
 use cuke_dedup::typescript;
+use cuke_dedup::typescript::{JAVASCRIPT, TSX, TYPESCRIPT};
 use libfuzzer_sys::fuzz_target;
 use std::path::{Path, PathBuf};
 
@@ -15,11 +16,7 @@ fuzz_target!(|data: &[u8]| {
         Path::new("fuzz.feature.md"),
         FeatureFormat::GherkinMarkdown,
     );
-    for language in [
-        SourceLanguage::JavaScript,
-        SourceLanguage::TypeScript,
-        SourceLanguage::Tsx,
-    ] {
+    for language in [JAVASCRIPT, TYPESCRIPT, TSX] {
         let file = SourceFile {
             path: PathBuf::from("fuzz.steps.ts"),
             language,

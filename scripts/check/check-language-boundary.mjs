@@ -17,11 +17,10 @@ const classes = [
   ["src/reporters/templates/", "asset"],
 ];
 const sections = ["core", "registry"];
-const words = ["ruby", "typescript", "javascript", "jest", "vitest", "playwright", "cypress", "cucumberjs"];
-const types = { SourceLanguage: "language", ComparisonDomain: "domain" };
+const words = ["ruby", "typescript", "javascript", "tsx", "jest", "vitest", "playwright", "cypress", "cucumberjs"];
+const types = { ComparisonDomain: "domain" };
 const shapes = {
   module: /^crate::(ruby|typescript)$/,
-  language: /^SourceLanguage(::[A-Za-z_]\w*)?$/,
   domain: /^ComparisonDomain(::[A-Za-z_]\w*)?$/,
   marker: /^marker:method:[A-Za-z0-9_-]+$/,
   name: new RegExp(`^name:(${words.join("|")})$`),

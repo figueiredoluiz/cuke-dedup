@@ -1,4 +1,5 @@
 use super::*;
+use crate::typescript::{JAVASCRIPT, TSX, TYPESCRIPT};
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -42,7 +43,7 @@ const IMPORTED_STEP: &str =
 #[test]
 fn session_state_initializes_once_per_backend_and_per_run() {
     let ruby = SourceAdapterRegistration::with_session(".rb", &crate::ruby::RUBY_ADAPTER);
-    assert_eq!(ruby.adapter.language(), SourceLanguage::Ruby);
+    assert_eq!(ruby.adapter.language(), crate::ruby::RUBY);
     assert!(ruby.discover_dependencies.is_some());
 
     struct Counter(usize);
@@ -230,7 +231,7 @@ impl SourceAdapter for DefaultSessionAdapter {
 
     /// Identifies the default-delegation test adapter as JavaScript.
     fn language(&self) -> SourceLanguage {
-        SourceLanguage::JavaScript
+        JAVASCRIPT
     }
 
     /// Returns a sentinel error so tests can detect delegation to the legacy extraction method.
@@ -243,45 +244,25 @@ impl SourceAdapter for DefaultSessionAdapter {
 #[test]
 fn registry_routes_supported_suffixes() {
     let cases = [
-        ("steps.js", SourceLanguage::JavaScript),
-        ("steps.mjs", SourceLanguage::JavaScript),
-        ("steps.cjs", SourceLanguage::JavaScript),
-        ("steps.jsx", SourceLanguage::JavaScript),
-        ("steps.ts", SourceLanguage::TypeScript),
-        ("steps.mts", SourceLanguage::TypeScript),
-        ("steps.cts", SourceLanguage::TypeScript),
-        ("steps.tsx", SourceLanguage::Tsx),
-        ("steps.rb", SourceLanguage::Ruby),
+        ("steps.js", JAVASCRIPT),
+        ("steps.mjs", JAVASCRIPT),
+        ("steps.cjs", JAVASCRIPT),
+        ("steps.jsx", JAVASCRIPT),
+        ("steps.ts", TYPESCRIPT),
+        ("steps.mts", TYPESCRIPT),
+        ("steps.cts", TYPESCRIPT),
+        ("steps.tsx", TSX),
+        ("steps.rb", crate::ruby::RUBY),
     ];
     for (path, expected) in cases {
         let adapter = adapter_for_path(Path::new(path)).expect(path);
         assert_eq!(adapter.language(), expected, "{path}");
-        let by_language = adapter_for_language(expected);
+        let by_language = adapter_for_language(expected).unwrap();
         assert_eq!(by_language.language(), expected, "{path}");
         assert_eq!(by_language.name(), adapter.name(), "{path}");
         assert!(!adapter.name().is_empty());
     }
     assert_eq!(registered_suffixes().len(), cases.len());
-}
-
-/// Checks each registered language grammar parses a representative source without syntax errors.
-#[test]
-fn source_languages_select_their_registered_tree_sitter_grammar() {
-    let cases = [
-        (SourceLanguage::JavaScript, "const value = 1;"),
-        (SourceLanguage::TypeScript, "const value: number = 1;"),
-        (SourceLanguage::Tsx, "const value = <div />;"),
-        (SourceLanguage::Ruby, "Given('a') { work() }"),
-    ];
-
-    for (language, source) in cases {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&grammar_for_language(language))
-            .unwrap();
-        let tree = parser.parse(source, None).unwrap();
-        assert!(!tree.root_node().has_error(), "{language:?}");
-    }
 }
 
 /// Checks registry suffixes are unique, initialize sessions, and extract one definition into shared IR.
@@ -302,7 +283,7 @@ fn every_registration_has_a_unique_suffix_and_produces_shared_ir() {
         let extraction = registration
             .adapter
             .extract(
-                if file.language == SourceLanguage::Ruby {
+                if file.language == crate::ruby::RUBY {
                     "Given('a registered step') { run() }"
                 } else {
                     "Given('a registered step', () => run())"
@@ -340,7 +321,7 @@ fn registry_classifies_non_utf8_names_by_their_ascii_extension() {
     use std::os::unix::ffi::OsStringExt;
 
     let source = PathBuf::from(OsString::from_vec(b"steps-\xff.ts".to_vec()));
-    assert_eq!(language_for_path(&source), Some(SourceLanguage::TypeScript));
+    assert_eq!(language_for_path(&source), Some(TYPESCRIPT));
 
     let declaration = PathBuf::from(OsString::from_vec(b"types-\xff.d.ts".to_vec()));
     assert!(adapter_for_path(&declaration).is_none());
@@ -352,27 +333,31 @@ fn adapter_session_default_preserves_existing_extract_implementations() {
     let directory = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: directory.path().join("steps.js"),
-        language: SourceLanguage::JavaScript,
+        language: JAVASCRIPT,
     };
     let mut session = SourceExtractionSession::new(directory.path());
 
     let adapter = DefaultSessionAdapter;
     assert_eq!(adapter.name(), "default-session-test");
-    assert_eq!(adapter.language(), SourceLanguage::JavaScript);
+    assert_eq!(adapter.language(), JAVASCRIPT);
     // An adapter that declares no policy inherits the baseline; Ruby's own differs from it.
     assert_eq!(adapter.analysis_policy(), AnalysisPolicy::default());
     assert_ne!(
-        adapter_for_language(SourceLanguage::Ruby).analysis_policy(),
+        adapter_for_language(crate::ruby::RUBY)
+            .unwrap()
+            .analysis_policy(),
         adapter.analysis_policy()
     );
     // An adapter that declares no framework attributes definitions to none and excludes nothing;
     // Ruby declares one framework, JavaScript one ecosystem exclude.
     assert!(adapter.framework_contracts().is_empty());
     assert!(adapter.default_excludes().is_empty());
-    assert!(!adapter_for_language(SourceLanguage::Ruby)
+    assert!(!adapter_for_language(crate::ruby::RUBY)
+        .unwrap()
         .framework_contracts()
         .is_empty());
-    assert!(!adapter_for_language(SourceLanguage::JavaScript)
+    assert!(!adapter_for_language(JAVASCRIPT)
+        .unwrap()
         .default_excludes()
         .is_empty());
 
@@ -401,7 +386,7 @@ fn language_lookup_and_suffix_routing_agree_on_one_adapter_table() {
             "{}",
             registration.suffix
         );
-        let by_language = adapter_for_language(expected);
+        let by_language = adapter_for_language(expected).unwrap();
         assert!(
             std::ptr::addr_eq(
                 by_language as *const dyn SourceAdapter,
@@ -412,12 +397,79 @@ fn language_lookup_and_suffix_routing_agree_on_one_adapter_table() {
         );
         assert_eq!(language_for_path(Path::new(&name)), Some(expected));
     }
-    for language in [
-        SourceLanguage::JavaScript,
-        SourceLanguage::TypeScript,
-        SourceLanguage::Tsx,
+    for language in [JAVASCRIPT, TYPESCRIPT, TSX, crate::ruby::RUBY] {
+        assert_eq!(adapter_for_language(language).unwrap().language(), language);
+    }
+}
+
+/// A language is its id: a value built from the id names the adapter's language, every registered
+/// adapter declares one language, and an id no adapter declares routes nowhere.
+#[test]
+fn source_languages_are_open_ids_declared_by_adapters() {
+    assert_eq!(SourceLanguage::new("ruby"), crate::ruby::RUBY);
+    assert_eq!(crate::ruby::RUBY.id(), "ruby");
+    let mut declared = std::collections::BTreeMap::new();
+    for registration in SOURCE_ADAPTER_REGISTRY {
+        let adapter = registration.adapter;
+        let language = *declared
+            .entry(adapter.name())
+            .or_insert_with(|| adapter.language());
+        assert_eq!(adapter.language(), language, "{}", registration.suffix);
+    }
+    let ids: BTreeSet<_> = declared.values().map(|language| language.id()).collect();
+    assert_eq!(
+        ids,
+        BTreeSet::from(["javascript", "ruby", "tsx", "typescript"])
+    );
+    let python = SourceLanguage::new("python");
+    assert!(adapter_for_language(python).is_none());
+    assert_eq!(language_for_path(Path::new("steps.py")), None);
+}
+
+/// Extraction entry points reject a language no registered adapter declares, naming it.
+#[test]
+fn unregistered_languages_fail_at_extraction_entry_points() {
+    let project = session_project();
+    let file = |language| SourceFile {
+        path: project.path().join("steps.ts"),
+        language,
+    };
+    let python = file(SourceLanguage::new("python"));
+    let source = "Given('a step', () => work());";
+    for error in [
+        crate::typescript::extract(source, &python).unwrap_err(),
+        crate::typescript::extract_file(&python).unwrap_err(),
+        SourceExtractionSession::new(project.path())
+            .finalize(std::slice::from_ref(&python), &mut Vec::new())
+            .unwrap_err(),
     ] {
-        assert_eq!(adapter_for_language(language).language(), language);
+        assert_eq!(
+            error.to_string(),
+            "no source adapter is registered for language `python`"
+        );
+    }
+}
+
+/// Checks registered languages pass the extraction and finalization entry points that reject an unregistered id.
+#[test]
+fn registered_languages_pass_the_extraction_entry_points() {
+    let project = session_project();
+    for (name, language, source) in [
+        ("steps.ts", TYPESCRIPT, "Given('a step', () => work());"),
+        ("steps.rb", crate::ruby::RUBY, "Given('a step') { work }"),
+    ] {
+        let file = SourceFile {
+            path: project.path().join(name),
+            language,
+        };
+        let extraction = registered_adapter(language)
+            .unwrap()
+            .extract(source, &file)
+            .unwrap();
+        assert_eq!(extraction.definitions.len(), 1, "{name}");
+        SourceExtractionSession::new(project.path())
+            .finalize(std::slice::from_ref(&file), &mut Vec::new())
+            .unwrap();
     }
 }
 
@@ -434,7 +486,7 @@ fn language_routed_and_suffix_routed_extraction_share_session_state() {
             let language = language_for_path(&path).expect(suffix);
             let file = SourceFile { path, language };
             let suffix_routed = adapter_for_path(&file.path).expect(suffix);
-            let language_routed = adapter_for_language(language);
+            let language_routed = adapter_for_language(language).unwrap();
             let mut session = SourceExtractionSession::new(project.path());
             let (first, second) = if language_route_first {
                 (language_routed, suffix_routed)
@@ -498,7 +550,7 @@ fn finalization_scopes_preserve_independent_final_findings() {
     let config = crate::config::Config::load(root, Default::default()).unwrap();
     let definition = UncertaintyScope::Definition(definitions[4].location.clone());
     let file = UncertaintyScope::File(root.join("steps.js"));
-    let registry = UncertaintyScope::Registry(SourceLanguage::JavaScript);
+    let registry = UncertaintyScope::Registry(JAVASCRIPT);
     for (scope, cause, retained, matchers, handlers) in [
         (definition.clone(), Registration, 4, 2, 0),
         (file.clone(), Registration, 2, 1, 0),
@@ -524,7 +576,8 @@ fn finalization_scopes_preserve_independent_final_findings() {
     }
 }
 
-/// Checks registry uncertainty groups ECMAScript variants together while keeping Ruby findings independent.
+/// Checks registry uncertainty groups ECMAScript variants together while keeping Ruby findings
+/// independent, and covers every definition for a language no registered adapter declares.
 #[test]
 fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
     use crate::model::Rule;
@@ -542,10 +595,11 @@ fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
     }
     let config = crate::config::Config::load(root, Default::default()).unwrap();
     for (language, retained, matcher_findings) in [
-        (SourceLanguage::JavaScript, 2, 1),
-        (SourceLanguage::TypeScript, 2, 1),
-        (SourceLanguage::Tsx, 2, 1),
-        (SourceLanguage::Ruby, 3, 2),
+        (JAVASCRIPT, 2, 1),
+        (TYPESCRIPT, 2, 1),
+        (TSX, 2, 1),
+        (crate::ruby::RUBY, 3, 2),
+        (SourceLanguage::new("python"), 0, 0),
     ] {
         let mut actual = definitions.clone();
         let mut finalization = SourceFinalization::default();
@@ -576,7 +630,7 @@ fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
             .into_iter()
             .map(|name| SourceFile {
                 path: root.join(name),
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             })
             .collect();
         let sources = [
@@ -585,7 +639,8 @@ fn public_session_finalization_applies_late_ruby_effects_in_either_order() {
         ];
         let mut definitions = session_extract(&mut session, root, "ts", IMPORTED_STEP).definitions;
         for index in if mutation_first { [1, 0] } else { [0, 1] } {
-            let extracted = adapter_for_language(SourceLanguage::Ruby)
+            let extracted = adapter_for_language(crate::ruby::RUBY)
+                .unwrap()
                 .extract_with_session(sources[index], &files[index], &mut session)
                 .unwrap();
             definitions.extend(extracted.definitions);
@@ -615,7 +670,7 @@ fn ts_definitions(source: &str) -> Vec<StepDefinition> {
         source,
         &SourceFile {
             path: "steps.ts".into(),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()
@@ -658,7 +713,9 @@ fn adapter_policies_resolve_to_their_declared_capabilities() {
     const UNKNOWN: Framework = Framework::UNKNOWN;
     use HandlerScope::{Isolated, Local, Shared};
     use StepMatching::{ByText, Positional};
-    let ruby = adapter_for_language(SourceLanguage::Ruby).analysis_policy();
+    let ruby = adapter_for_language(crate::ruby::RUBY)
+        .unwrap()
+        .analysis_policy();
     let ecmascript = [
         (CUCUMBER_JS, Shared, ByText),
         (PLAYWRIGHT_BDD, Shared, ByText),
@@ -772,12 +829,13 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
             "{framework:?}"
         );
     }
-    let ruby = adapter_for_language(SourceLanguage::Ruby)
+    let ruby = adapter_for_language(crate::ruby::RUBY)
+        .unwrap()
         .extract(
             "Given('a') { work() }",
             &SourceFile {
                 path: "steps.rb".into(),
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             },
         )
         .unwrap();
@@ -802,14 +860,15 @@ fn language_domains_follow_the_registered_adapters() {
     let ruby = "Given('a') { work() }";
     let ecmascript = "import { Given } from '@cucumber/cucumber'; Given('a', () => work());";
     for (language, label, suffix, source) in [
-        (SourceLanguage::Ruby, "ruby", "rb", ruby),
-        (SourceLanguage::JavaScript, "ecmascript", "js", ecmascript),
-        (SourceLanguage::TypeScript, "ecmascript", "ts", ecmascript),
-        (SourceLanguage::Tsx, "ecmascript", "tsx", ecmascript),
+        (crate::ruby::RUBY, "ruby", "rb", ruby),
+        (JAVASCRIPT, "ecmascript", "js", ecmascript),
+        (TYPESCRIPT, "ecmascript", "ts", ecmascript),
+        (TSX, "ecmascript", "tsx", ecmascript),
     ] {
-        let domain = language.comparison_domain();
+        let domain = language.comparison_domain().unwrap();
         assert_eq!(domain.label, label, "{language:?}");
         let extracted = adapter_for_language(language)
+            .unwrap()
             .extract(
                 source,
                 &SourceFile {
@@ -826,11 +885,13 @@ fn language_domains_follow_the_registered_adapters() {
         );
     }
     assert_ne!(
-        SourceLanguage::Ruby.comparison_domain(),
-        SourceLanguage::Tsx.comparison_domain()
+        crate::ruby::RUBY.comparison_domain(),
+        TSX.comparison_domain()
     );
+    // A language no registered adapter declares has no comparison domain.
+    assert_eq!(SourceLanguage::new("python").comparison_domain(), None);
     // Domains are identified by their static spec: a reused label does not merge them.
-    let ruby = SourceLanguage::Ruby.comparison_domain();
+    let ruby = crate::ruby::RUBY.comparison_domain().unwrap();
     let alias: &'static DomainSpec = Box::leak(Box::new(DomainSpec {
         label: ruby.label,
         dialect: ruby.dialect,

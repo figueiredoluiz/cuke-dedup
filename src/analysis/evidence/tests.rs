@@ -1,5 +1,6 @@
 use super::*;
-use crate::discovery::{SourceFile, SourceLanguage};
+use crate::discovery::SourceFile;
+use crate::typescript::TYPESCRIPT;
 use std::path::PathBuf;
 
 /// Extracts TypeScript definitions from `source` as `steps.ts`; panics if extraction fails.
@@ -8,7 +9,7 @@ fn definitions(source: &str) -> Vec<StepDefinition> {
         source,
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()

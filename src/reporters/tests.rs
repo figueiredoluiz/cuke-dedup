@@ -870,9 +870,10 @@ fn ruby_analysis(source: &str, overrides: ConfigOverrides) -> RubyAnalysis {
     std::fs::write(&path, source).unwrap();
     let file = crate::source_adapter::SourceFile {
         path,
-        language: crate::source_adapter::SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let extracted = crate::source_adapter::adapter_for_language(file.language)
+        .unwrap()
         .extract(source, &file)
         .unwrap();
     let result =

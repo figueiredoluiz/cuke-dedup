@@ -5,7 +5,6 @@ use crate::framework_descriptor::{
     package_has_any_dependency, read_config, DiscoveredFeatures, DiscoveryInput,
     FrameworkDescriptor, LiteralProperty, ScriptConfigReader,
 };
-use crate::source_adapter::{grammar_for_language, SourceLanguage};
 use anyhow::{Context, Result};
 use std::path::Path;
 use tree_sitter::{Node, Parser};
@@ -205,13 +204,13 @@ fn static_object_property_path(
 /// Parses configuration text with the TypeScript or JavaScript grammar selected by extension, propagating parser setup or missing-tree errors.
 fn parse_config_source(source: &str, extension: &str) -> Result<tree_sitter::Tree> {
     let mut parser = Parser::new();
-    let language = if matches!(extension, "ts" | "mts" | "cts") {
-        SourceLanguage::TypeScript
+    let grammar: tree_sitter::Language = if matches!(extension, "ts" | "mts" | "cts") {
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
     } else {
-        SourceLanguage::JavaScript
+        tree_sitter_javascript::LANGUAGE.into()
     };
     parser
-        .set_language(&grammar_for_language(language))
+        .set_language(&grammar)
         .context("failed to initialize framework config parser")?;
     let tree = parser
         .parse(source, None)

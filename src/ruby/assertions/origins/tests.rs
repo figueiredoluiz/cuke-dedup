@@ -1,5 +1,5 @@
 use super::*;
-use crate::source_adapter::{SourceFile, SourceLanguage};
+use crate::source_adapter::SourceFile;
 
 /// Checks work exhaustion, dependency context, and configured-origin controls.
 #[test]
@@ -17,7 +17,7 @@ fn origin_work_limits_never_publish_partial_authority() {
             std::fs::write(&path, source).unwrap();
             SourceFile {
                 path,
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             }
         })
         .collect();

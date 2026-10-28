@@ -157,7 +157,7 @@ export function testBodyMentionsRuby(content, name, file = "") {
   const body = functionBody(content, name);
   if (body === null) return false;
   const statements = body.slice(body.indexOf("{"));
-  return /\.rb\b|SourceLanguage::Ruby|CUCUMBER_RUBY|"cucumber-ruby"|\bruby_|cucumber\.ya?ml/.test(statements);
+  return /\.rb\b|\bruby::RUBY\b|SourceLanguage::new\("ruby"\)|CUCUMBER_RUBY|"cucumber-ruby"|\bruby_|cucumber\.ya?ml/.test(statements);
 }
 
 /**

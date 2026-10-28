@@ -1,12 +1,12 @@
 use crate::model::{EffectStream, Rule};
 use crate::source_adapter::semantics::CaptureContext;
-use crate::source_adapter::{SourceFile, SourceLanguage};
+use crate::source_adapter::SourceFile;
 
 /// One Ruby definition whose typed handler facts are reset to the defaults.
 fn plain_definition() -> crate::model::StepDefinition {
     let file = SourceFile {
         path: "steps.rb".into(),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let (mut extracted, _) = super::super::extract("Given('a') { work() }", &file).unwrap();
     let mut definition = extracted.definitions.remove(0);
@@ -61,7 +61,7 @@ fn legacy_partial_events_keep_exact_policy_and_positive_controls() {
     let config = crate::config::Config::load(root.path(), Default::default()).unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     for (second, expected) in [("first", true), ("second", false)] {
         let source = format!("Given('the parcel status is verified') {{ first() }}; Then('the parcel status is now verified') {{ {second}() }}");

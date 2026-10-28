@@ -1,12 +1,13 @@
 use super::regex_expression;
+use crate::typescript::JAVASCRIPT;
 
 /// Verify Ruby fingerprints retain value and callee differences while normalizing superficial formatting and local renames.
 #[test]
 fn handler_fingerprints_preserve_superficial_value_and_callee_boundaries() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let file = SourceFile {
         path: "steps.rb".into(),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let extract = |source: &str| {
         super::RUBY_ADAPTER
@@ -116,11 +117,11 @@ fn handler_fingerprints_preserve_superficial_value_and_callee_boundaries() {
 #[test]
 fn local_registration_aliases_preserve_final_findings_without_granting_unknown_trust() {
     use crate::model::Rule;
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let dir = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: dir.path().join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let config = crate::config::Config::load(dir.path(), Default::default()).unwrap();
     let direct = "Given('same') { first() }; Given('same') { second() }";
@@ -327,13 +328,13 @@ fn local_registration_aliases_preserve_final_findings_without_granting_unknown_t
 /// Verify unresolved dependencies expose unknown usage through direct adapter extraction without dropping local definitions.
 #[test]
 fn unresolved_dependency_usage_is_exposed_by_the_direct_adapter_api() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let extraction = super::RUBY_ADAPTER
         .extract(
             "require 'external/provider'; Given('local') { work() }",
             &SourceFile {
                 path: "steps.rb".into(),
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             },
         )
         .unwrap();
@@ -382,14 +383,14 @@ fn ruby_regex_subset_preserves_line_anchors_and_ascii_digits() {
 /// Verify public analysis rejects mixed Ruby and JavaScript definitions in either order.
 #[test]
 fn public_analysis_rejects_mixed_languages_in_either_order() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let dir = tempfile::tempdir().unwrap();
     let ruby = super::RUBY_ADAPTER
         .extract(
             "Given('same') { work() }",
             &SourceFile {
                 path: dir.path().join("steps.rb"),
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             },
         )
         .unwrap()
@@ -399,7 +400,7 @@ fn public_analysis_rejects_mixed_languages_in_either_order() {
         "Given('same', () => work())",
         &SourceFile {
             path: dir.path().join("steps.js"),
-            language: SourceLanguage::JavaScript,
+            language: JAVASCRIPT,
         },
     )
     .unwrap()
@@ -436,9 +437,7 @@ fn ruby_ascii_punctuation_identity_escapes_remain_literal() {
 /// Verify unresolved owner effects report incompleteness even without neighboring registrations.
 #[test]
 fn unresolved_owner_effects_are_reported_without_adjacent_registrations() {
-    use crate::source_adapter::{
-        ExtractionDiagnosticKind, SourceAdapter, SourceFile, SourceLanguage,
-    };
+    use crate::source_adapter::{ExtractionDiagnosticKind, SourceAdapter, SourceFile};
     for source in [
         "module Ghost::Helpers; end",
         "autoload :Loader, 'provider'",
@@ -449,7 +448,7 @@ fn unresolved_owner_effects_are_reported_without_adjacent_registrations() {
                 source,
                 &SourceFile {
                     path: "support.rb".into(),
-                    language: SourceLanguage::Ruby,
+                    language: crate::ruby::RUBY,
                 },
             )
             .unwrap();
@@ -468,10 +467,10 @@ fn unresolved_owner_effects_are_reported_without_adjacent_registrations() {
 /// Verify static parameter-type metadata is extracted without running transformers and built-in name collisions produce diagnostics.
 #[test]
 fn parameter_type_metadata_is_available_without_running_a_transformer() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let file = SourceFile {
         path: "support.rb".into(),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     for source in [
         "ParameterType(name: 'channel', regexp: /stdout/, transformer: ->(value) { value })",
@@ -500,10 +499,10 @@ fn parameter_type_metadata_is_available_without_running_a_transformer() {
 /// including a nested pair and an escaped delimiter, and that an unterminated literal is rejected.
 #[test]
 fn parameter_type_regexps_accept_percent_r_delimiters() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let file = SourceFile {
         path: "support.rb".into(),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     for (literal, hit, miss) in [
         ("%r!std(out)!", "stdout", "std"),
@@ -567,10 +566,10 @@ fn malformed_ruby_literal_boundaries_preserve_valid_values() {
 /// Verify Ruby definitions and diagnostics each retain their source order.
 #[test]
 fn ruby_review_extraction_is_in_source_order() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let extraction = super::RUBY_ADAPTER.extract(
         "Given('first') { work() }\nGiven(dynamic) { work() }\nThen('last') { finish() }\nThen(other) { finish() }",
-        &SourceFile { path: "steps.rb".into(), language: SourceLanguage::Ruby },
+        &SourceFile { path: "steps.rb".into(), language: crate::ruby::RUBY },
     ).unwrap();
     assert_eq!(
         extraction
@@ -772,10 +771,10 @@ fn receiver_registration_counts_keywords_blocks_and_splats() {
 
 /// Extract one Ruby registration and return its matcher, flags and whether analysis stayed complete.
 fn extract_matcher(literal: &str) -> (Vec<(String, String)>, bool) {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let file = SourceFile {
         path: "steps.rb".into(),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let extraction = super::RUBY_ADAPTER
         .extract(&format!("Given({literal}) {{ work() }}"), &file)
@@ -988,13 +987,13 @@ fn ruby_escaped_hash_is_text_but_interpolation_is_not() {
 
 /// Extract the definitions and diagnostics of one Ruby source.
 fn extract_ruby(source: &str) -> crate::source_adapter::Extraction {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     super::RUBY_ADAPTER
         .extract(
             source,
             &SourceFile {
                 path: "steps.rb".into(),
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             },
         )
         .unwrap()
@@ -1285,10 +1284,10 @@ fn ruby_control_and_meta_escapes_stay_undecoded() {
 /// same encoding, and identical spelling keeps equal identities.
 #[test]
 fn handler_representations_stay_verbatim_with_a_padded_exact_digest() {
-    use crate::source_adapter::{SourceAdapter, SourceFile, SourceLanguage};
+    use crate::source_adapter::{SourceAdapter, SourceFile};
     let file = SourceFile {
         path: "steps.rb".into(),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let definitions = super::RUBY_ADAPTER
         .extract(

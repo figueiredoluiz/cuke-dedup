@@ -4,7 +4,7 @@ use super::{descendants, registration, static_method_name, text};
 use crate::resource_limits::{read_utf8, PassBudget, WorkBudget, MAX_PROJECT_INPUT_BYTES};
 #[cfg(test)]
 use crate::resource_limits::{MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES};
-use crate::source_adapter::{SourceDependency, SourceFile, SourceLanguage};
+use crate::source_adapter::{SourceDependency, SourceFile};
 use anyhow::{Context, Result};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,7 +103,7 @@ pub(super) fn load_proof_sources(
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
     let mut units = Vec::new();
     let (mut modules, mut bytes) = (WorkBudget::new(budget.0), WorkBudget::new(budget.1));
-    for file in files.iter().filter(|f| f.language == SourceLanguage::Ruby) {
+    for file in files.iter().filter(|f| f.language == super::RUBY) {
         if !modules.admit(1) {
             return Ok(ProofSources::OverBudget);
         }
@@ -908,7 +908,7 @@ fn test_unit(source: &str) -> Unit {
     Unit {
         file: SourceFile {
             path: PathBuf::from("steps.rb"),
-            language: SourceLanguage::Ruby,
+            language: super::RUBY,
         },
         canonical_path: PathBuf::from("steps.rb"),
         source: source.to_owned(),
