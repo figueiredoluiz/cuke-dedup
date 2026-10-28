@@ -15,11 +15,23 @@ use std::path::{Path, PathBuf};
 /// Sets a definition's framework together with the policy its adapter attaches for that framework.
 pub(super) fn set_framework(definition: &mut StepDefinition, framework: crate::model::Framework) {
     definition.framework = framework;
-    definition.analysis_policy = if framework == crate::ruby::CUCUMBER_RUBY {
-        crate::ruby::semantics::policy()
-    } else {
-        crate::typescript::semantics::policy(framework)
-    };
+    definition.analysis_policy = crate::source_adapter::SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| {
+            adapter
+                .framework_contracts()
+                .iter()
+                .any(|contract| contract.framework == framework)
+        })
+        .map(|adapter| {
+            crate::source_adapter::FrameworkContract::policy_of(
+                adapter.framework_contracts(),
+                framework,
+                adapter.analysis_policy(),
+            )
+        })
+        .unwrap_or_default();
 }
 
 /// Builds one synthetic Given feature step for adapter contract tests.

@@ -18,10 +18,8 @@ const classes = [
 ];
 const sections = ["core", "registry"];
 const words = ["ruby", "typescript", "javascript", "tsx", "jest", "vitest", "playwright", "cypress", "cucumberjs"];
-const types = { ComparisonDomain: "domain" };
 const shapes = {
   module: /^crate::(ruby|typescript)$/,
-  domain: /^ComparisonDomain(::[A-Za-z_]\w*)?$/,
   marker: /^marker:method:[A-Za-z0-9_-]+$/,
   name: new RegExp(`^name:(${words.join("|")})$`),
   key: new RegExp(`^key:(${words.join("|")})$`),
@@ -95,7 +93,7 @@ function tokens(source) {
   }
   return result;
 }
-/** Resolve relative prefixes and return the module, type or grammar edge key of a path, or null; a lone `tree_sitter_*` name is a grammar edge only when imported. */
+/** Resolve relative prefixes and return the module or grammar edge key of a path, or null; a lone `tree_sitter_*` name is a grammar edge only when imported. */
 function edge(path, imported = false) {
   // Relative paths are possible adapter references even inside inline modules.
   // Count conservatively; proving a local same-named module is outside this lexical guard.
@@ -103,9 +101,7 @@ function edge(path, imported = false) {
   while (["self", "super"].includes(path[relative])) relative++;
   if (relative) path = ["crate", ...path.slice(relative)];
   if (path[0] === "crate" && ["ruby", "typescript"].includes(path[1])) return path.slice(0, 2).join("::");
-  if (/^tree_sitter_\w+$/.test(path[0] ?? "") && (imported || path.length > 1)) return `grammar:${path[0]}`;
-  const at = path.findIndex((part) => Object.hasOwn(types, part));
-  return at < 0 ? null : path.slice(at, at + 2).join("::");
+  return /^tree_sitter_\w+$/.test(path[0] ?? "") && (imported || path.length > 1) ? `grammar:${path[0]}` : null;
 }
 /** Collect the `a::b::c` identifier chain starting at an index and return it with the index of its last token. */
 function chain(input, start) {
@@ -124,39 +120,6 @@ function itemSpan(input, from) {
     else if (input[n] === "=" && !depth && eq < 0) eq = n;
   }
   return { end: input.length, eq };
-}
-/** Return the tracked types named anywhere in the `impl` header at `from`; `Self` is not resolved, so every named type gets the block's variants (an upper bound). */
-function implTargets(input, from, canonical) {
-  const open = input.indexOf("{", from), found = new Set();
-  for (let n = from + 1; n < open; n++) {
-    if (!identifier.test(input[n])) continue;
-    const { path, end } = chain(input, n);
-    const key = edge(canonical(path));
-    if (Object.hasOwn(types, key)) found.add(key);
-    n = end;
-  }
-  return found;
-}
-/** Report whether the token at `i` starts an `impl` item rather than an argument-position `impl Trait`. */
-const isImpl = (input, i) => input[i] === "impl" && !input.rawIdentifiers.has(i) && (i === 0 || [";", "{", "}", "]", "unsafe"].includes(input[i - 1]));
-/** Return the index of the `}` matching the `{` at `open`, or the input length. */
-function closing(input, open) {
-  for (let n = open, depth = 0; n < input.length; n++) {
-    depth += input[n] === "{" ? 1 : input[n] === "}" ? -1 : 0;
-    if (!depth) return n;
-  }
-  return input.length;
-}
-/** List `Self::Variant` names in the impl block opening at `open`, skipping nested impl blocks and names the block itself declares as associated types or constants. */
-function selfVariants(input, open) {
-  const found = [], declared = new Set(), end = closing(input, open);
-  for (let n = open, depth = 0; n < end; n++) {
-    if (isImpl(input, n)) { n = closing(input, input.indexOf("{", n)); continue; }
-    depth += input[n] === "{" ? 1 : input[n] === "}" ? -1 : 0;
-    if (depth === 1 && (input[n] === "type" || input[n] === "const")) declared.add(input[n + 1]);
-    if (input[n] === "Self" && input[n + 1] === "::" && /^[A-Z]/.test(input[n + 2] ?? "")) found.push(input[n + 2]);
-  }
-  return found.filter((name) => !declared.has(name));
 }
 /** Count the inline `mod name {` blocks that enclose the token at `at`. */
 function moduleDepth(input, at) {
@@ -257,7 +220,7 @@ export function inventorySources(sources) {
           const choices = aliases.get(path[0]).map((origin) => canonical([...origin, ...path.slice(1)], new Set(visited)));
           /** Report whether every origin maps to one value. */
           const same = (key) => new Set(choices.map(key)).size === 1;
-          // Origins that differ in path but reach one edge (two test modules importing one type) are not ambiguous.
+          // Origins that differ in path but reach one edge (two leaves of one adapter module) are not ambiguous.
           if (same((choice) => choice.join("::")) || (edge(choices[0]) && same(edge))) return choices[0];
           if (choices.some((choice) => edge(choice) || choice.join("::") === "crate")) throw Error(`ambiguous targeted alias ${path[0]}`);
           return path;
@@ -279,10 +242,6 @@ export function inventorySources(sources) {
           for (let n = eq + 1; eq >= 0 && n < end; n++) {
             if (identifier.test(input[n]) && !(input[n - 1] === "::" && identifier.test(input[n - 2] ?? "")) && edge(canonical(chain(input, n).path))) throw Error("unsupported `type` item naming a tracked path (alias or associated type)");
           }
-        }
-        if (isImpl(input, i)) {
-          const targets = implTargets(input, i, canonical);
-          for (const variant of targets.size ? selfVariants(input, input.indexOf("{", i)) : []) for (const target of targets) bump(`${target}::${variant}`);
         }
       }
       for (const token of input) if (identifier.test(token)) for (const word of named(token)) bump(`name:${word}`);

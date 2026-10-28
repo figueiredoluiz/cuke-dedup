@@ -8,6 +8,7 @@ use cuke_dedup::reporters::{
     render_html, render_json, render_jsonl, render_sarif, write_terminal, ExecutionMetrics,
     ReportContext,
 };
+use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapter,
     SourceAdapterRegistration, SourceParameterType, SOURCE_ADAPTER_REGISTRY,
@@ -364,9 +365,9 @@ fn ruby_usage_metadata_and_legacy_analysis_remain_conservative() {
     let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::new("ruby"),
+        language: RUBY,
     };
-    let extracted = registered_adapter(SourceLanguage::new("ruby")).extract(
+    let extracted = registered_adapter(RUBY).extract(
         "Given('target') { first() }; Then('unused') { second() }; def helper; step 'target'; end", &file).unwrap();
     let features = cuke_dedup::gherkin::extract(
         "Feature: usage\n Scenario: other\n  Given other\n",
@@ -413,18 +414,16 @@ fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api()
     let root = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::new("ruby"),
+        language: RUBY,
     };
     let source = format!(
         "Given('kept') {{ kept }}\nGiven('kept') {{ other }}\n\nGiven(/{}/) {{ work }}\n",
         "a".repeat(1024 * 1024 + 1)
     );
-    let extracted = registered_adapter(SourceLanguage::new("ruby"))
-        .extract(&source, &file)
-        .unwrap();
+    let extracted = registered_adapter(RUBY).extract(&source, &file).unwrap();
     assert_eq!(extracted.definitions.len(), 3);
     assert!(extracted.diagnostics.is_empty());
-    let unsupported = registered_adapter(SourceLanguage::new("ruby"))
+    let unsupported = registered_adapter(RUBY)
         .extract("Given(/^a++$/) { work }\n", &file)
         .unwrap();
     let diagnostic = unsupported.diagnostics.first().unwrap();

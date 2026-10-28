@@ -150,10 +150,13 @@
         },
         {
           "name": "work_accounting_contract_charges_similarity_stages_and_enforces_boundaries",
-          "requiredStatus": "engine-invariant",
-          "stage": "bounded-analysis",
-          "rationale": "Adapter-independent stage `bounded-analysis`: `charge_work` checks `u64` overflow on already bounded counts, and the hand-built masked partial stream is not emitted by a Ruby adapter; neither has a reachable Ruby input. `ruby_pair_verification_fails_closed_at_the_total_similarity_budget` pins the production 1e9 boundary and evidence charging with final outcomes, while `ruby_matcher_blocking_fails_closed_at_every_work_budget` pins matcher-blocking budgets.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/pairs/tests.rs",
+            "name": "work_accounting_contract_charges_similarity_stages_and_enforces_boundaries"
+          },
+          "rationale": "`work_accounting_contract_charges_similarity_stages_and_enforces_boundaries` charges similarity work for `CUCUMBER_RUBY` partial-stream pairs beside complete ones and enforces the work boundaries in-process; `ruby_pair_verification_fails_closed_at_the_total_similarity_budget` and `ruby_matcher_blocking_fails_closed_at_every_work_budget` pin the production budgets end to end.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "work_accounting_contract_charges_only_rules_that_will_be_evaluated",
@@ -207,17 +210,23 @@
         },
         {
           "name": "action_only_stream_on_either_side_excludes_identical_event_streams",
-          "requiredStatus": "engine-invariant",
-          "stage": "model-codec",
-          "rationale": "Adapter-independent stage `model-codec`: identical event streams behind different handlers are value-only differences, never near duplicates, when either side declares an action-only stream; synthetic definitions differ in the stream regime of one side at a time.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/pairs/tests.rs",
+            "name": "action_only_stream_on_either_side_excludes_identical_event_streams"
+          },
+          "rationale": "`action_only_stream_on_either_side_excludes_identical_event_streams` pairs `CUCUMBER_RUBY` definitions whose stream regime differs on one side at a time; an action-only stream on either side excludes identical event streams from near duplicates, in-process.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "exact_matcher_class_keys_on_effective_flags",
-          "requiredStatus": "engine-invariant",
-          "stage": "matcher-text",
-          "rationale": "Adapter-independent stage `matcher-text`: exact-matcher identity keys on the flags the dialect declares effective, not the raw flag string; synthetic definitions with equal normalized text.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/pairs/tests.rs",
+            "name": "exact_matcher_class_keys_on_effective_flags"
+          },
+          "rationale": "`exact_matcher_class_keys_on_effective_flags` compares exact-matcher classes under the effective flags the `ruby::RUBY` adapter policy declares (Ruby keeps `n` and `u`) beside the JavaScript rows, in-process.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },
@@ -1337,7 +1346,7 @@
           "name": "regex_pattern_limit_is_inclusive",
           "requiredStatus": "engine-invariant",
           "stage": "regex-compiler",
-          "rationale": "Adapter-independent stage `regex-compiler`: Pattern limit boundary of the shared matcher compiler.",
+          "rationale": "Adapter-independent stage `regex-compiler`: pattern-byte limit boundary of the shared matcher compiler under a test identity dialect; the extracted scaffold has every field the compiler reads overwritten, and one byte over is the rejected control.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3012,10 +3021,13 @@
         },
         {
           "name": "every_registration_has_a_unique_suffix_and_produces_shared_ir",
-          "requiredStatus": "engine-invariant",
-          "stage": "session-plumbing",
-          "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "every_registration_has_a_unique_suffix_and_produces_shared_ir"
+          },
+          "rationale": "`every_registration_has_a_unique_suffix_and_produces_shared_ir` checks every registration carries its session and dependency hooks and extracts a step into the shared IR, `.rb` under `ruby::RUBY` included, in-process.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "registry_rejects_declarations_maps_and_unknown_languages",
@@ -3033,10 +3045,13 @@
         },
         {
           "name": "adapter_session_default_preserves_existing_extract_implementations",
-          "requiredStatus": "engine-invariant",
-          "stage": "session-plumbing",
-          "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "adapter_session_default_preserves_existing_extract_implementations"
+          },
+          "rationale": "`adapter_session_default_preserves_existing_extract_implementations` compares a default adapter with the policy and framework contracts the `ruby::RUBY` adapter declares, in-process.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "registered_framework_contracts_list_each_framework_once_in_registry_order",
@@ -3144,10 +3159,9 @@
         },
         {
           "name": "positional_steps_pair_by_wording_with_text_matched_steps",
-          "requiredStatus": "engine-invariant",
-          "stage": "model-codec",
-          "rationale": "Adapter-independent stage `model-codec`: a positional step pairs with a text-matched step of the same matcher by near wording, never as an exact matcher or a parameterization; synthetic definitions differ in the attached policy of one side at a time.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: positional step matching (`StepMatching::Positional`), which only JS/TS framework contracts declare, pairs with a text-matched step by near wording. Semantic residue: Ruby definitions are always text-matched; the text-matched duplicate-matcher and ambiguous-step outcome is pinned by the `load-relative` group.",
+          "behaviorClass": "language-specific-api"
         },
         {
           "name": "attached_policy_decides_outcomes_not_the_framework_label",
@@ -3163,7 +3177,7 @@
           "name": "contract_builders_attach_discovery_and_policy",
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
-          "rationale": "Adapter-independent stage `api-shape`: the crate-internal `FrameworkContract` builders and `policy_of` fallback over a caller-built id; no adapter declares or produces the values.",
+          "rationale": "Adapter-independent stage `api-shape`: the crate-internal `FrameworkContract` builders and `policy_of` fallback over a caller-built id, descriptor and policies (the engine default and a scope variant of it); no adapter declares or produces the values.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

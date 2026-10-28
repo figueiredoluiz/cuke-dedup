@@ -1156,7 +1156,10 @@ fn exact_matcher_class_keys_on_effective_flags() {
             definition.matcher_kind = MatcherKind::RegularExpression;
             definition.matcher_flags = flags.to_owned();
             if ruby {
-                definition.analysis_policy = crate::ruby::semantics::policy();
+                definition.analysis_policy =
+                    crate::source_adapter::adapter_for_language(crate::ruby::RUBY)
+                        .unwrap()
+                        .analysis_policy();
             }
         }
         let classes = comparison_classes(&definitions);

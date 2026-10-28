@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use cuke_dedup::config::{Config, ConfigOverrides};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{SourceExclusion, SOURCE_ADAPTER_REGISTRY};
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
 use serde_json::Value;
@@ -103,16 +104,13 @@ fn source_exclusion_stays_with_javascript_adapter() {
     };
     let ruby_file = SourceFile {
         path: ruby,
-        language: SourceLanguage::new("ruby"),
+        language: RUBY,
     };
     assert_eq!(
         adapter(JAVASCRIPT).inspect_source(&js_file, &[]),
         Some(SourceExclusion::Binary)
     );
-    assert_eq!(
-        adapter(SourceLanguage::new("ruby")).inspect_source(&ruby_file, &[]),
-        None
-    );
+    assert_eq!(adapter(RUBY).inspect_source(&ruby_file, &[]), None);
 }
 
 /// Checks both Ruby load-path forms (`ruby.loadPaths` and the flat `rubyLoadPaths` alias) in a
@@ -261,11 +259,7 @@ fn adapters_share_one_stub_vocabulary() {
             format!("Given('a') {{ {ruby}() }}"),
             format!("Given('a') {{ raise \"{label}\" }}"),
         ] {
-            assert_eq!(
-                handler_is_stub(SourceLanguage::new("ruby"), "steps.rb", &source),
-                stub,
-                "{source}"
-            );
+            assert_eq!(handler_is_stub(RUBY, "steps.rb", &source), stub, "{source}");
         }
         for source in [
             format!("Given('a', () => {typescript}());"),

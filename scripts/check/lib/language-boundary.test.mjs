@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { classify, diffRows, inventorySources, render, rows, totals, validateManifest } from "../check-language-boundary.mjs";
 
-// Matrix: edge kind (module, framework, language, domain, marker, name, key, grammar) x location
+// Matrix: edge kind (module, marker, name, key, grammar; neutral framework and language id types as
+// controls) x location
 // (code, line/doc/block comment, string, raw string, char, inline cfg(test) module, nested module,
 // alias, glob) -> counted or ignored, each ignored row paired with a counted control of the same
 // text. File classes (core, registry, adapter, exempt, test, asset, unclassified), baseline
@@ -15,29 +16,27 @@ import { classify, diffRows, inventorySources, render, rows, totals, validateMan
 
 /** Inventories every edge kind in one synthetic Rust source. */
 const full = (path, source) => inventorySources({ [path]: source })[path];
-/** Inventories module, framework, language, domain and grammar edges, dropping the overlapping name and key kinds. */
+/** Inventories module, marker and grammar edges, dropping the overlapping name and key kinds. */
 const inventory = (path, source) => Object.fromEntries(Object.entries(full(path, source)).filter(([key]) => !/^(name|key):/.test(key)));
 
-/** Checks qualified adapter and framework references produce canonical dependency counts. */
-test("qualified references record canonical adapter and language edges", () => {
+/** Checks qualified adapter references produce canonical module counts. */
+test("qualified references record canonical adapter edges", () => {
   assert.deepEqual(inventory("src/analysis.rs", `
     fn analyze() {
       crate::ruby::extract();
       crate::typescript::extract();
-      let _framework = ComparisonDomain::Ruby;
     }
   `), {
-    "ComparisonDomain::Ruby": 1,
     "crate::ruby": 1,
     "crate::typescript": 1,
   });
 });
 
-/** Checks raw identifiers and aliases retain canonical adapter and language edges. */
+/** Checks raw identifiers and aliases retain canonical module and grammar edges. */
 test("raw identifiers in tracked path segments and aliases retain canonical edges", () => {
   const cases = [
     ["crate::r#ruby::extract();", { "crate::ruby": 1 }],
-    ["crate::model::r#ComparisonDomain::Ruby;", { "ComparisonDomain::Ruby": 1 }],
+    ["r#tree_sitter_ruby::LANGUAGE;", { "grammar:tree_sitter_ruby": 1 }],
     ["use crate::r#ruby as r#adapter; r#adapter::extract();", { "crate::ruby": 2 }],
   ];
   for (const [source, expected] of cases) {
@@ -57,16 +56,14 @@ test("raw keyword import components remain identifiers", () => {
   ]) assert.deepEqual(inventory("src/analysis.rs", source), expected, source);
 });
 
-/** Checks relative paths and aliases cannot hide adapter or language dependencies at different source depths. */
-test("relative paths cannot hide adapter or language dependencies", () => {
+/** Checks relative paths and aliases cannot hide adapter dependencies at different source depths. */
+test("relative paths cannot hide adapter dependencies", () => {
   const cases = [
     ["super::ruby::extract();", { "crate::ruby": 1 }],
     ["self::typescript::extract();", { "crate::typescript": 1 }],
     ["use super::ruby as rb; rb::extract();", { "crate::ruby": 2 }],
     ["use super as parent; parent::ruby::extract();", { "crate::ruby": 1 }],
     ["mod nested { super::super::ruby::extract(); }", { "crate::ruby": 1 }],
-    ["use super::model::ComparisonDomain as F; F::Ruby;", { "ComparisonDomain": 1, "ComparisonDomain::Ruby": 1 }],
-    ["self::ComparisonDomain::TypeScript;", { "ComparisonDomain::TypeScript": 1 }],
     ["super::utilities::helper();", {}],
   ];
   for (const path of ["src/cli.rs", "src/analysis/mod.rs", "src/analysis/pairs.rs"]) {
@@ -78,41 +75,28 @@ test("relative paths cannot hide adapter or language dependencies", () => {
 test("grouped imports and aliases count each imported leaf and each alias use", () => {
   const edges = inventory("src/analysis.rs", `
     use crate::ruby::{self as ruby, assertions::trust as trust_assertions};
-    use crate::typescript::{self as ts, semantic::extract as extract_ts};
-    use ComparisonDomain as F;
-    use ComparisonDomain::{Ruby as RubyLanguage, TypeScript};
+    use crate::typescript::{self as ts, semantic::extract as extract_ts, parse};
 
-    fn analyze(framework: F) {
+    fn analyze() {
       ruby::extract();
       trust_assertions();
       ts::extract();
       extract_ts();
-      match framework {
-        F::Ruby | RubyLanguage | TypeScript => {}
-        _ => {}
-      }
+      parse();
     }
   `);
   assert.deepEqual(edges, {
-    "ComparisonDomain": 2,
-    "ComparisonDomain::Ruby": 3,
-    "ComparisonDomain::TypeScript": 2,
     "crate::ruby": 4,
-    "crate::typescript": 4,
+    "crate::typescript": 6,
   });
 });
 
-/** Checks crate and model namespace aliases resolve to canonical tracked edges. */
-test("ancestor aliases resolve through crate and model namespaces", () => {
+/** Checks a crate namespace alias resolves to the canonical module edge. */
+test("ancestor aliases resolve through the crate namespace", () => {
   assert.deepEqual(inventory("src/analysis.rs", `
     use crate as root;
-    use crate::model as m;
     root::ruby::extract();
-    let _framework = m::ComparisonDomain::Ruby;
-  `), {
-    "ComparisonDomain::Ruby": 1,
-    "crate::ruby": 1,
-  });
+  `), { "crate::ruby": 1 });
 });
 
 /** Checks alias resolution handles namespace imports declared later in the source. */
@@ -140,9 +124,9 @@ test("only import items treat use as a keyword", () => {
 test("comments, ordinary strings, raw strings and chars do not create edges", () => {
   const edges = inventory("src/analysis.rs", String.raw`
     // crate::ruby::commented(); crate::typescript::commented();
-    /* ComparisonDomain::TypeScript */
+    /* tree_sitter_typescript::LANGUAGE_TSX */
     const TEXT: &str = "crate::ruby::string crate::typescript::string";
-    const RAW: &str = r###"ComparisonDomain::Ruby"###;
+    const RAW: &str = r###"crate::ruby::raw"###;
     const CHAR: char = 'x';
     fn accepts<'a>(value: &'a str) { let _ = value; }
   `);
@@ -167,30 +151,8 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
     // The open `SourceLanguage` id type is neutral; a language id spelled in core counts as a key.
     ["language: neutral id type", "fn f(language: SourceLanguage) -> SourceLanguage { language }", {}],
     ["language: id literal in core", 'let _ = SourceLanguage::new("tsx");', { "key:tsx": 1 }],
-    ["tracked type: code", "let _ = ComparisonDomain::Ruby;", { "ComparisonDomain::Ruby": 1, "name:ruby": 1 }],
-    ["tracked type: alias", "use ComparisonDomain as L; let _ = L::Ruby;", { ComparisonDomain: 1, "ComparisonDomain::Ruby": 1, "name:ruby": 1 }],
-    ["tracked type: grouped alias", "use crate::a::{ComparisonDomain as L}; match x { L::Plain => {} }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: Self variants inside impl", "impl super::ComparisonDomain { fn d(self) { match self { Self::Ruby => 1, Self::Plain => 2 } } }", { ComparisonDomain: 1, "ComparisonDomain::Ruby": 1, "ComparisonDomain::Plain": 1, "name:ruby": 1 }],
-    ["tracked type: Self inside trait impl for tracked type", "impl Display for ComparisonDomain { fn f() { Self::Ruby; } } fn g() { Self::Plain; }", { ComparisonDomain: 1, "ComparisonDomain::Ruby": 1, "name:ruby": 1 }],
-    ["tracked type: Self in impl of an adapter module type", "impl crate::ruby::Handler { fn f() { Self::Ruby; } }", { "crate::ruby": 1, "name:ruby": 2 }],
-    ["tracked type: raw impl identifier is not an impl block", "fn f() {} r#impl ComparisonDomain { Self::Ruby; }", { ComparisonDomain: 1, "name:ruby": 1 }],
-    ["tracked type: Self in impl naming a tracked generic argument is counted (upper bound)", "impl From<ComparisonDomain> for Wrapper { fn f() { Self::Ruby; } }", { ComparisonDomain: 1, "ComparisonDomain::Ruby": 1, "name:ruby": 1 }],
-    ["tracked type: Self in argument-position impl", "fn f(x: impl ComparisonDomain) { Self::Ruby; }", { ComparisonDomain: 1, "name:ruby": 1 }],
-    ["tracked type: function-local type does not hide a variant", "impl ComparisonDomain { fn f() -> Self { type Plain = u8; Self::Plain } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: nested impl resolves against its own target", "impl Other { fn f() { impl ComparisonDomain { fn g() -> Self { Self::Plain } } } fn h() -> Self { Self::Plain } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: nested untracked impl overrides a tracked outer target", "impl ComparisonDomain { fn f() { impl Other { fn g() -> Self { Self::Plain } } } }", { ComparisonDomain: 1 }],
-    ["tracked type: Self in a nested impl is counted once", "impl Display for ComparisonDomain { fn f() { impl Z for ComparisonDomain { fn g() { Self::Q; } } Self::P; } }", { ComparisonDomain: 2, "ComparisonDomain::Q": 1, "ComparisonDomain::P": 1 }],
-    ["tracked type: Self in an impl after a tracked impl is counted", "impl A for ComparisonDomain { fn f() { Self::P; } } impl B for ComparisonDomain { fn g() { Self::Q; } }", { ComparisonDomain: 2, "ComparisonDomain::P": 1, "ComparisonDomain::Q": 1 }],
-    ["tracked type: Self in impl for a reference to a tracked type", "impl Tr for &ComparisonDomain { fn f() { Self::Plain; } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: Self in impl with where clause and fn bound", "impl<F: Fn() -> u8> Tr for ComparisonDomain where F: for<'a> B<'a> { fn f() { Self::Plain; } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: Self in generic inherent impl", "impl<T> ComparisonDomain { fn f() { Self::Plain; } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: Self in generic impl for tracked type", "impl<T> Tr<T> for ComparisonDomain { fn f() { Self::Plain; } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: Self associated types and consts are not variants", "impl FromStr for ComparisonDomain { type Err = E; const MAX: u8 = 1; fn f() -> Self::Err { Self::MAX; Self::new(); Self::Plain } }", { ComparisonDomain: 1, "ComparisonDomain::Plain": 1 }],
-    ["tracked type: Self in impl of an untracked type", "impl Other { fn f() { Self::Ruby; } }", { "name:ruby": 1 }],
-    ["tracked type: type mention", "fn f(language: ComparisonDomain) {}", { ComparisonDomain: 1 }],
-    ["tracked type: line comment", "// ComparisonDomain::Ruby", {}],
-    ["domain: code", "let _ = ComparisonDomain::EcmaScript;", { "ComparisonDomain::EcmaScript": 1 }],
-    ["domain: block comment", "/* ComparisonDomain::EcmaScript */", {}],
+    ["name: language-named variant", "let _ = Lang::Ruby;", { "name:ruby": 1 }],
+    ["name: non-language variant", "let _ = Lang::Plain;", {}],
     ["marker: string", 'let _ = "method:ruby:complete-events";', { "marker:method:ruby": 1 }],
     ["marker: raw string", 'let _ = r"method:ruby:lexical-file";', { "marker:method:ruby": 1 }],
     ["marker: two languages in one literal", 'let _ = "method:ruby:a method:typescript:b";', { "marker:method:ruby": 1, "marker:method:typescript": 1 }],
@@ -222,7 +184,7 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
     ["grammar: comment", "// use tree_sitter_ruby;", {}],
     ["grammar: local named like a grammar crate", "fn f(tree_sitter_ruby: u8) { let _ = tree_sitter_ruby; }", { "name:ruby": 2 }],
     ["grammar: bare tree_sitter_ prefix", "let tree_sitter_ = 1;", {}],
-    ["same origin through two aliases is not ambiguous", "use a::ComparisonDomain as x; use b::ComparisonDomain as x; let _ = x::Ruby;", { ComparisonDomain: 2, "ComparisonDomain::Ruby": 1, "name:ruby": 1 }],
+    ["two origins in one adapter module are not ambiguous", "use crate::ruby::extract as x; use crate::ruby::parse as x; x();", { "crate::ruby": 3, "name:ruby": 2 }],
     ["unrelated ambiguous alias is ignored", "use a::b as x; use c::d as x; x::f();", {}],
   ];
   for (const [label, source, expected] of table) assert.deepEqual(full("src/analysis.rs", source), expected, label);
@@ -231,12 +193,12 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
 /** Checks syntax the scanner cannot model throws, so the check fails instead of passing silently. */
 test("unmodeled shapes fail closed, with modeled siblings as controls", () => {
   for (const source of [
-    "use crate::model::ComparisonDomain::*;", "use crate::*;", "use super::*;", "use super::super::*;", "use super as parent; use parent::*;", "use super::foo::*;", "mod tests { use super::foo::*; }", "use crate as root; mod tests { use super::root::*; }", "mod a { use super::super::*; }", "fn f() { use super::*; }", "impl X { fn f() { use super::*; } }", "use self::super::*;", "use crate::ruby::*;", "use crate::typescript::*;",
+    "use tree_sitter_ruby::*;", "use crate::*;", "use super::*;", "use super::super::*;", "use super as parent; use parent::*;", "use super::foo::*;", "mod tests { use super::foo::*; }", "use crate as root; mod tests { use super::root::*; }", "mod a { use super::super::*; }", "fn f() { use super::*; }", "impl X { fn f() { use super::*; } }", "use self::super::*;", "use crate::ruby::*;", "use crate::typescript::*;",
     'let _ = "unterminated;', "/* unterminated", 'let _ = r#"unterminated;', "use crate::ruby",
     "use crate::ruby as x; use other as x; x::f();", "use a as b; use b as a; a::f();",
-    "use crate::a::ComparisonDomain as S; type L = S;", "type L = ComparisonDomain;", "type A = ([u8; 2], ComparisonDomain);", "type A = [ComparisonDomain; 2];", "impl X for Y { type Out = ComparisonDomain; }", "type R = crate::ruby::Handler;", "pub type T<A> = Option<ComparisonDomain>;", "type G = tree_sitter_ruby::Language;",
+    "use crate::ruby::Handler as S; type L = S;", "type A = ([u8; 2], crate::ruby::Handler);", "type A = [crate::ruby::Handler; 2];", "impl X for Y { type Out = crate::typescript::Handler; }", "type R = crate::ruby::Handler;", "pub type T<A> = Option<crate::ruby::Handler>;", "type G = tree_sitter_ruby::Language;",
   ]) assert.throws(() => full("src/analysis.rs", source), /src\/analysis\.rs/, source);
-  for (const source of ["use crate::model::*;", "use crate::analysis::*;", "mod tests { use super::*; }", "mod a { mod b { use super::super::*; } }", "use self::*;", 'let _ = "terminated";', "type Id = u32; type Out<T> = Result<T, Error>; type Arr = [u8; 2];", "use crate::a::ComparisonDomain; trait T { type Item; }", "use crate::ruby; type X = other::ruby::T;", "macro_rules! m { ($type:ty = ComparisonDomain) => {} }", "type X = Box<dyn Fn()>; let tree_sitter_ = 1;", "// type L = ComparisonDomain;", "fn r#type() {} let _ = ComparisonDomain::Ruby;"]) {
+  for (const source of ["use crate::model::*;", "use tree_sitter::*;", "use crate::analysis::*;", "mod tests { use super::*; }", "mod a { mod b { use super::super::*; } }", "use self::*;", 'let _ = "terminated";', "type Id = u32; type Out<T> = Result<T, Error>; type Arr = [u8; 2];", "use crate::ruby::Handler; trait T { type Item; }", "use crate::ruby; type X = other::ruby::T;", "macro_rules! m { ($type:ty = crate::ruby::Handler) => {} }", "type X = Box<dyn Fn()>; let tree_sitter_ = 1;", "// type L = crate::ruby::Handler;", "fn r#type() {} let _ = crate::ruby::Handler;"]) {
     assert.doesNotThrow(() => full("src/analysis.rs", source), source);
   }
 });
@@ -257,11 +219,11 @@ test("path classes: core, registry, adapter, exempt, test, asset; unknown fails 
 
 /** Checks row differences classify growth, new edges, stale counts, removed edges, removed files and new files. */
 test("diffRows reports every baseline movement and nothing for equal counts", () => {
-  const baseline = [["src/a.rs", "crate::ruby", 2], ["src/gone.rs", "ComparisonDomain", 1], ["src/same.rs", "name:jest", 1]];
+  const baseline = [["src/a.rs", "crate::ruby", 2], ["src/gone.rs", "crate::typescript", 1], ["src/same.rs", "name:jest", 1]];
   const actual = [["src/a.rs", "crate::ruby", 3], ["src/a.rs", "grammar:tree_sitter_ruby", 1], ["src/new.rs", "crate::ruby", 1], ["src/same.rs", "name:jest", 1]];
   assert.deepEqual(diffRows(actual, baseline).map(({ file, key, was, now }) => [file, key, was, now]), [
     ["src/a.rs", "crate::ruby", 2, 3], ["src/a.rs", "grammar:tree_sitter_ruby", 0, 1],
-    ["src/gone.rs", "ComparisonDomain", 1, 0], ["src/new.rs", "crate::ruby", 0, 1],
+    ["src/gone.rs", "crate::typescript", 1, 0], ["src/new.rs", "crate::ruby", 0, 1],
   ]);
   assert.deepEqual(diffRows(baseline, baseline), []);
   assert.deepEqual(diffRows([["src/a.rs", "crate::ruby", 1]], [["src/a.rs", "crate::ruby", 2]]).map(({ was, now }) => [was, now]), [[2, 1]]);
@@ -269,14 +231,14 @@ test("diffRows reports every baseline movement and nothing for equal counts", ()
 
 /** Checks rows sort deterministically and totals sum counts per kind. */
 test("rows sort by code unit and totals sum per kind", () => {
-  const list = rows({ "src/b.rs": { "crate::ruby": 1, "ComparisonDomain::Ruby": 2 }, "src/a.rs": { "name:ruby": 3 } });
-  assert.deepEqual(list.map(([file, key]) => `${file} ${key}`), ["src/a.rs name:ruby", "src/b.rs ComparisonDomain::Ruby", "src/b.rs crate::ruby"]);
-  assert.deepEqual(totals(list), { module: 1, domain: 2, marker: 0, name: 3, key: 0, grammar: 0 });
+  const list = rows({ "src/b.rs": { "marker:method:ruby": 1, "crate::ruby": 1, "marker:method:Zed": 2 }, "src/a.rs": { "name:ruby": 3 } });
+  assert.deepEqual(list.map(([file, key]) => `${file} ${key}`), ["src/a.rs name:ruby", "src/b.rs crate::ruby", "src/b.rs marker:method:Zed", "src/b.rs marker:method:ruby"]);
+  assert.deepEqual(totals(list), { module: 1, marker: 3, name: 3, key: 0, grammar: 0 });
 });
 
 /** Checks the baseline validator accepts a rendered baseline and rejects each malformed shape. */
 test("baseline validation rejects malformed manifests, with a valid one as control", () => {
-  const good = { schemaVersion: 2, core: [["src/a.rs", "crate::ruby", 1], ["src/b.rs", "name:jest", 2]], registry: [["src/source_adapter.rs", "ComparisonDomain", 1]] };
+  const good = { schemaVersion: 2, core: [["src/a.rs", "crate::ruby", 1], ["src/b.rs", "name:jest", 2]], registry: [["src/source_adapter.rs", "grammar:tree_sitter_ruby", 1]] };
   assert.doesNotThrow(() => validateManifest(good));
   assert.deepEqual(JSON.parse(render(good)), good);
   assert.match(render(good), /\n {4}\["src\/a\.rs","crate::ruby",1\],\n {4}\["src\/b\.rs","name:jest",2\]\n/);
@@ -316,25 +278,25 @@ async function withRepo(files, manifest, body) {
 
 /** Checks the CLI passes on a matching baseline, prints per-kind totals, and fails on growth with an actionable message. */
 test("CLI: matching baseline passes; added edge fails naming file, kind, counts and the remedy", async () => {
-  const baseline = { core: [["src/analysis.rs", "ComparisonDomain::Ruby", 1], ["src/analysis.rs", "name:ruby", 1]] };
-  await withRepo({ "src/analysis.rs": "let _ = ComparisonDomain::Ruby;", "src/cli.rs": "" }, baseline, async ({ run, put }) => {
+  const baseline = { core: [["src/analysis.rs", "grammar:tree_sitter_ruby", 1], ["src/analysis.rs", "name:ruby", 1]] };
+  await withRepo({ "src/analysis.rs": "let _ = tree_sitter_ruby::LANGUAGE;", "src/cli.rs": "" }, baseline, async ({ run, put }) => {
     const passing = run();
     assert.equal(passing.status, 0, passing.stderr);
-    assert.match(passing.stdout, /core: 1 files with edges; module 0, domain 1, marker 0, name 1, key 0, grammar 0\./);
+    assert.match(passing.stdout, /core: 1 files with edges; module 0, marker 0, name 1, key 0, grammar 1\./);
     assert.match(passing.stdout, /registry: 0 files with edges/);
     await put("src/cli.rs", "crate::ruby::extract();");
     const added = run();
     assert.equal(added.status, 1);
     assert.match(added.stderr, /core src\/cli\.rs: module crate::ruby: baseline 0, found 1; boundary growth: remove the edge/);
     assert.match(added.stderr, /record a reviewed increase with `--update --allow-growth`/);
-    await put("src/cli.rs", "let _ = ComparisonDomain::Ruby;");
-    assert.match(run().stderr, /core src\/cli\.rs: domain ComparisonDomain::Ruby: baseline 0, found 1/);
+    await put("src/cli.rs", "let _ = tree_sitter_typescript::LANGUAGE;");
+    assert.match(run().stderr, /core src\/cli\.rs: grammar:tree_sitter_typescript: baseline 0, found 1/);
   });
 });
 
 /** Checks the same text is ignored in adapter, exempt, test and asset paths, with a core file as the failing control. */
 test("CLI: adapter, composition, test and asset paths are not scanned", async () => {
-  const edges = "use crate::ruby; let _ = ComparisonDomain::Ruby; fn jest() {}";
+  const edges = "use crate::ruby; let _ = tree_sitter_ruby::LANGUAGE; fn jest() {}";
   await withRepo({ "src/analysis.rs": "" }, {}, async ({ run, put }) => {
     for (const name of ["src/ruby.rs", "src/ruby/x.rs", "src/ruby/data.bin", "src/typescript.rs", "src/typescript/x.rs", "src/lib.rs", "src/main.rs", "src/analysis/tests.rs", "src/reporters/templates/r.html"]) {
       await put(name, edges);
@@ -347,13 +309,13 @@ test("CLI: adapter, composition, test and asset paths are not scanned", async ()
 
 /** Checks the registry file has its own baseline, a core baseline cannot absorb its edges, and core files beside it, including the framework discovery composer, stay core. */
 test("CLI: registry files are ratcheted in their own section", async () => {
-  const text = "use tree_sitter_ruby; let _ = ComparisonDomain::Ruby;";
+  const text = "use tree_sitter_ruby; let _ = crate::ruby::Registry;";
   for (const file of ["src/source_adapter.rs"]) {
-    const registry = [[file, "ComparisonDomain::Ruby", 1], [file, "grammar:tree_sitter_ruby", 1], [file, "name:ruby", 2]];
+    const registry = [[file, "crate::ruby", 1], [file, "grammar:tree_sitter_ruby", 1], [file, "name:ruby", 2]];
     await withRepo({ [file]: text }, { registry }, async ({ run, put }) => {
       const passing = run();
       assert.equal(passing.status, 0, passing.stderr);
-      assert.match(passing.stdout, /registry: 1 files with edges; module 0, domain 1, marker 0, name 2, key 0, grammar 1\./);
+      assert.match(passing.stdout, /registry: 1 files with edges; module 1, marker 0, name 2, key 0, grammar 1\./);
       await put(file, `${text} crate::typescript::x();`);
       const { stderr } = run();
       assert.ok(stderr.includes(`registry ${file}: module crate::typescript: baseline 0, found 1`), stderr);

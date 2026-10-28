@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use cuke_dedup::ruby::RUBY;
 use cuke_dedup::typescript::JAVASCRIPT;
 use predicates::prelude::*;
 use serde_json::Value;
@@ -6749,14 +6750,14 @@ fn ruby_deep_handlers_and_unicode_locations_reach_final_analysis() {
     assert_discovery(rows.as_array().unwrap(), 1, false, &stderr);
 
     use cuke_dedup::model::Rule;
-    use cuke_dedup::source_adapter::{adapter_for_language, SourceFile, SourceLanguage};
+    use cuke_dedup::source_adapter::{adapter_for_language, SourceFile};
     let directory = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: directory.path().join("features/steps/unicode.rb"),
-        language: SourceLanguage::new("ruby"),
+        language: RUBY,
     };
     let source = "prefix = '日本語'; Given('same') { first() }\nThen('same') { second() }";
-    let extraction = adapter_for_language(SourceLanguage::new("ruby"))
+    let extraction = adapter_for_language(RUBY)
         .unwrap()
         .extract(source, &file)
         .unwrap();
@@ -9641,17 +9642,17 @@ fn ruby_suppression_lookups_share_the_pair_work_budget() {
 #[test]
 fn ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained() {
     use cuke_dedup::config::{Config, ConfigOverrides, SuppressionConfig};
-    use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+    use cuke_dedup::discovery::SourceFile;
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let file = SourceFile {
         path: root.join("steps.rb"),
-        language: SourceLanguage::new("ruby"),
+        language: RUBY,
     };
     let extracted = cuke_dedup::source_adapter::SOURCE_ADAPTER_REGISTRY
         .iter()
         .map(|registration| registration.adapter)
-        .find(|adapter| adapter.language() == SourceLanguage::new("ruby"))
+        .find(|adapter| adapter.language() == RUBY)
         .unwrap()
         .extract(RUBY_DUPLICATE_PAIR, &file)
         .unwrap();
@@ -11958,12 +11959,12 @@ fn ruby_session_extract(
 /// of routing context needed to diagnose the caller error.
 #[test]
 fn ruby_adapter_rejects_mislabeled_sources_with_context() {
-    use cuke_dedup::source_adapter::{adapter_for_language, SourceFile, SourceLanguage};
+    use cuke_dedup::source_adapter::{adapter_for_language, SourceFile};
     let file = SourceFile {
         path: "features/steps/example.js".into(),
         language: JAVASCRIPT,
     };
-    let error = adapter_for_language(SourceLanguage::new("ruby"))
+    let error = adapter_for_language(RUBY)
         .unwrap()
         .extract("Given('a step') { work() }", &file)
         .unwrap_err()
@@ -11995,6 +11996,7 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
         .collect();
     let ruby_path = Path::new("steps.rb");
     let ruby = SourceLanguage::new("ruby");
+    assert_eq!(ruby, RUBY);
     for adapter in [
         adapter_for_path(ruby_path).unwrap(),
         adapter_for_language(ruby).unwrap(),
@@ -12016,7 +12018,7 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
     let mutation = ("b.rb", "def Given(text); :replaced; end\n");
     let file = |name: &str| SourceFile {
         path: root.join(name),
-        language: SourceLanguage::new("ruby"),
+        language: RUBY,
     };
     let files = [file("a.rb"), file("b.rb")];
     for (language_first, shared) in [(true, true), (false, true), (true, false)] {
@@ -12136,7 +12138,7 @@ fn ruby_finalization_scopes_preserve_independent_final_findings() {
     let config = cuke_dedup::config::Config::load(root, Default::default()).unwrap();
     let blue = UncertaintyScope::Definition(definitions[4].location.clone());
     let panel_file = UncertaintyScope::File(root.join("steps.rb"));
-    let ruby = UncertaintyScope::Registry(SourceLanguage::new("ruby"));
+    let ruby = UncertaintyScope::Registry(RUBY);
     let javascript = UncertaintyScope::Registry(JAVASCRIPT);
     // Expected: [definitions retained, duplicate-matcher findings, duplicate-handler findings].
     for (cause, scope, expected) in [
