@@ -6,6 +6,7 @@ use crate::resource_limits::{
     is_input_limit_error, read_utf8, MAX_CANDIDATE_COMPARISONS, MAX_CONFIG_INPUT_BYTES,
     MAX_STRUCTURAL_CLASS_COMPARISONS, MAX_SUPPRESSION_REASON_CHARS,
 };
+use crate::source_adapter::AdapterRegistry;
 use anyhow::{bail, Context, Result};
 use globset::Glob;
 use serde::{Deserialize, Serialize};
@@ -16,9 +17,10 @@ use std::str::FromStr;
 /// Build output of any toolchain; adapters add their ecosystem's and frameworks' globs after it.
 const CORE_EXCLUDES: [&str; 1] = ["**/target/**"];
 
-/// The built-in exclude globs: the core's, then every registered adapter's, without repeats.
-fn default_excludes() -> impl Iterator<Item = String> {
-    crate::source_adapter::registered_default_excludes(&CORE_EXCLUDES)
+/// The default exclude globs: the core's, then every adapter's in `adapters`, without repeats.
+fn default_excludes(adapters: &AdapterRegistry) -> impl Iterator<Item = String> {
+    adapters
+        .default_excludes(&CORE_EXCLUDES)
         .into_iter()
         .map(ToString::to_string)
 }
@@ -173,6 +175,8 @@ pub(crate) struct CliConfigOverrides {
 pub struct Config {
     #[serde(flatten)]
     frontend: crate::source_adapter::FrontendConfig,
+    #[serde(skip)]
+    adapters: AdapterRegistry,
     /// Canonical repository root being analyzed.
     pub root: PathBuf,
     /// Globs selecting definition sources, or an empty list for automatic discovery.
@@ -240,7 +244,17 @@ impl Config {
     /// Loads framework, package, and standalone configuration beneath `root`, then applies
     /// `overrides` in precedence order.
     pub fn load(root: &Path, overrides: ConfigOverrides) -> Result<Self> {
-        Self::load_internal(root, overrides, CliConfigOverrides::default())
+        Self::load_with_adapters(root, overrides, AdapterRegistry::default())
+    }
+
+    /// Like [`Config::load`], routing definition sources, default excludes and framework
+    /// detection through `adapters`.
+    pub(crate) fn load_with_adapters(
+        root: &Path,
+        overrides: ConfigOverrides,
+        adapters: AdapterRegistry,
+    ) -> Result<Self> {
+        Self::load_internal(root, overrides, CliConfigOverrides::default(), adapters)
     }
 
     /// Like [`Config::load`], also applying CLI-only overrides after `overrides` and before
@@ -250,7 +264,7 @@ impl Config {
         overrides: ConfigOverrides,
         cli_overrides: CliConfigOverrides,
     ) -> Result<Self> {
-        Self::load_internal(root, overrides, cli_overrides)
+        Self::load_internal(root, overrides, cli_overrides, AdapterRegistry::default())
     }
 
     /// Loads the configuration for `root` with the given overrides, resolving `root` to its
@@ -259,6 +273,7 @@ impl Config {
         root: &Path,
         overrides: ConfigOverrides,
         cli_overrides: CliConfigOverrides,
+        adapters: AdapterRegistry,
     ) -> Result<Self> {
         let root = canonical_platform_path(root)
             .with_context(|| format!("cannot access target directory {}", root.display()))?;
@@ -310,10 +325,11 @@ impl Config {
             || package_config
                 .as_ref()
                 .is_some_and(|config| config.features.is_some());
-        let mut config = Self::defaults(root);
+        let mut config = Self::defaults(root, adapters);
         config.config_warnings = config_warnings;
         if !has_explicit_features {
-            match framework_registry::detect(&config.root, package_json.as_ref()) {
+            match framework_registry::detect(&config.adapters, &config.root, package_json.as_ref())
+            {
                 Ok(Some(framework)) => {
                     config.features = framework.patterns;
                     config.feature_pattern_origin = format!(
@@ -380,7 +396,7 @@ impl Config {
 
     /// Built-in configuration for `root`: terminal reporter, default excludes, zero threshold, and
     /// the default severity for each rule.
-    fn defaults(root: PathBuf) -> Self {
+    fn defaults(root: PathBuf, adapters: AdapterRegistry) -> Self {
         let rules = [
             (Rule::DuplicateMatcher, Severity::Error),
             (Rule::NormalizedMatcher, Severity::Error),
@@ -395,13 +411,15 @@ impl Config {
         .collect();
         Self {
             frontend: Default::default(),
+            // `apply_overrides` always rebuilds the excludes from `adapters`.
+            exclude: Vec::new(),
+            adapters,
             root,
             definitions: Vec::new(),
             features: vec!["**/*.{feature,feature.md}".to_owned()],
             feature_pattern_origin: "built-in defaults".to_owned(),
             config_warnings: Vec::new(),
             config_source: "built-in defaults".to_owned(),
-            exclude: default_excludes().collect(),
             exclude_defaults: true,
             include_hidden: false,
             reporters: vec![ReporterKind::Terminal],
@@ -541,11 +559,16 @@ impl Config {
         self.rules.extend(overrides.rules);
     }
 
+    /// The source adapters this configuration routes definition sources to.
+    pub(crate) fn adapters(&self) -> &AdapterRegistry {
+        &self.adapters
+    }
+
     /// Recomputes `exclude` as the default globs, when enabled, followed by the custom globs.
     fn rebuild_excludes(&mut self) {
         self.exclude.clear();
         if self.exclude_defaults {
-            self.exclude.extend(default_excludes());
+            self.exclude.extend(default_excludes(&self.adapters));
         }
         self.exclude.extend(self.custom_exclude.iter().cloned());
     }

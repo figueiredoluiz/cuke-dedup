@@ -55,14 +55,14 @@ impl SourceUncertainty {
     }
 
     /// Whether `definition` falls in this scope: an equal full location span, an equal file path,
-    /// or the comparison domain of the registry language. A language no registered adapter
-    /// declares has no known domain, so its registry scope covers every definition.
-    fn affects(&self, definition: &StepDefinition) -> bool {
+    /// or the comparison domain `adapters` declares for the registry language. A language no
+    /// registered adapter declares has no known domain, so its registry scope covers every definition.
+    fn affects(&self, adapters: &super::AdapterRegistry, definition: &StepDefinition) -> bool {
         match &self.scope {
             UncertaintyScope::Definition(location) => &definition.location == location,
             UncertaintyScope::File(path) => &definition.location.path == path,
-            UncertaintyScope::Registry(language) => language
-                .comparison_domain()
+            UncertaintyScope::Registry(language) => adapters
+                .comparison_domain(*language)
                 .is_none_or(|domain| definition.analysis_profile().domain == domain),
         }
     }
@@ -101,16 +101,27 @@ pub struct SourceFinalization {
 
 impl SourceFinalization {
     /// Applies only the authority removal declared by the frontend; uncertainty never grants trust.
+    /// Registry-scoped uncertainty resolves comparison domains through the built-in adapters.
     pub fn apply(&self, definitions: &mut Vec<StepDefinition>) {
+        self.apply_with(super::AdapterRegistry::builtin(), definitions);
+    }
+
+    /// Applies the authority removal, resolving registry-scoped comparison domains through
+    /// `adapters`.
+    pub(crate) fn apply_with(
+        &self,
+        adapters: &super::AdapterRegistry,
+        definitions: &mut Vec<StepDefinition>,
+    ) {
         for uncertainty in &self.uncertainties {
             match uncertainty.cause {
                 UncertaintyCause::Registration => {
-                    definitions.retain(|definition| !uncertainty.affects(definition))
+                    definitions.retain(|definition| !uncertainty.affects(adapters, definition))
                 }
                 UncertaintyCause::Handler => {
                     for definition in definitions
                         .iter_mut()
-                        .filter(|definition| uncertainty.affects(definition))
+                        .filter(|definition| uncertainty.affects(adapters, definition))
                     {
                         definition.handler.comparable = false;
                     }

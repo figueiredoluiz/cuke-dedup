@@ -402,9 +402,10 @@ fn discovery_diagnostics(
     if !files.skipped_definitions.is_empty()
         && (!config.definitions.is_empty() || files.definitions.is_empty())
     {
-        diagnostics
-            .warnings
-            .push(skipped_definitions_warning(&files.skipped_definitions));
+        diagnostics.warnings.push(skipped_definitions_warning(
+            config.adapters(),
+            &files.skipped_definitions,
+        ));
     }
     if files.definitions.is_empty() && config.definitions.is_empty() {
         diagnostics
@@ -432,8 +433,12 @@ fn discovery_diagnostics(
 }
 
 /// Warning naming the count, adapters and suffixes of opt-in sources that were not analyzed.
-fn skipped_definitions_warning(skipped: &[source_adapter::SourceFile]) -> String {
-    let registrations: Vec<_> = source_adapter::SOURCE_ADAPTER_REGISTRY
+fn skipped_definitions_warning(
+    adapters: &source_adapter::AdapterRegistry,
+    skipped: &[source_adapter::SourceFile],
+) -> String {
+    let registrations: Vec<_> = adapters
+        .registrations()
         .iter()
         .filter(|entry| {
             skipped
@@ -481,12 +486,15 @@ fn extract_corpus(
     corpus
 }
 
-/// The adapter of a discovered source: discovery selects only languages a registered adapter
+/// The adapter of a discovered source: discovery selects only languages an adapter of `config`
 /// declares.
 fn discovered_adapter(
+    config: &Config,
     file: &source_adapter::SourceFile,
 ) -> &'static dyn source_adapter::SourceAdapter {
-    source_adapter::adapter_for_language(file.language)
+    config
+        .adapters()
+        .adapter_for_language(file.language)
         .expect("discovery selects only registered languages")
 }
 
@@ -499,27 +507,25 @@ fn extract_definitions(
     corpus: &mut ExtractedCorpus,
 ) {
     if let Some(first) = files.definitions.first() {
-        let domain = first.language.comparison_domain();
+        let domain =
+            |file: &source_adapter::SourceFile| config.adapters().comparison_domain(file.language);
+        let first_domain = domain(first);
         if files
             .definitions
             .iter()
-            .any(|file| file.language.comparison_domain() != domain)
+            .any(|file| domain(file) != first_domain)
         {
             corpus.incomplete = true;
             diagnostics.errors.push("Ruby and JS/TS sources require separate analysis runs with explicit definition and feature roots".to_owned());
             return;
         }
     }
-    let mut extraction_session = source_adapter::SourceExtractionSession::with_options(
-        &config.root,
-        &config.registrations,
-        &config.assertion_modules,
-    )
-    .with_dependencies(&files.dependencies)
-    .with_dependency_gaps(&files.dependency_gaps);
+    let mut extraction_session = source_adapter::SourceExtractionSession::for_config(config)
+        .with_dependencies(&files.dependencies)
+        .with_dependency_gaps(&files.dependency_gaps);
     let mut prepared = BTreeSet::new();
     for file in &files.definitions {
-        let adapter = discovered_adapter(file);
+        let adapter = discovered_adapter(config, file);
         if prepared.insert(adapter.name()) {
             if let Err(error) = adapter.prepare_session(&files.definitions, &mut extraction_session)
             {
@@ -535,7 +541,7 @@ fn extract_definitions(
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
         // before parsing rather than analyzed and discarded.
-        let adapter = discovered_adapter(file);
+        let adapter = discovered_adapter(config, file);
         if let Some(excluded) = adapter.inspect_source(file, &config.registrations) {
             // Every one of these signals is a heuristic over file content, not a proof: a NUL
             // byte or an archive header can appear inside an authored comment or string, and

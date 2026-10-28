@@ -108,7 +108,7 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
             continue;
         }
 
-        if let Some(adapter) = source_adapter::adapter_for_path(relative) {
+        if let Some(adapter) = config.adapters().adapter_for_path(relative) {
             let language = adapter.language();
             let opt_in = !adapter.discover_by_default();
             let selection = match &definition_globs {
@@ -163,7 +163,9 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
         })
         .map(|(_, pattern)| pattern.clone())
         .collect();
-    source_adapter::discover_dependencies(config, &excludes, &mut files);
+    config
+        .adapters()
+        .discover_dependencies(config, &excludes, &mut files);
     Ok(files)
 }
 
