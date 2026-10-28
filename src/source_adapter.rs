@@ -333,6 +333,7 @@ pub struct SourceExtractionSession {
     registrations: Vec<String>,
     assertion_modules: Vec<String>,
     states: HashMap<TypeId, Box<dyn Any + Send + Sync + UnwindSafe + RefUnwindSafe>>,
+    adapters: AdapterRegistry,
 }
 
 /// Backend-owned state; related syntax variants can share the same state type.
@@ -392,14 +393,14 @@ impl SourceExtractionSession {
         let mut result = SourceFinalization::default();
         let mut completed = std::collections::BTreeSet::new();
         for file in files {
-            let adapter = registered_adapter(file.language)?;
+            let adapter = self.adapters.registered_adapter(file.language)?;
             if completed.insert(adapter.name()) {
                 let finalization = adapter.finalize_session(self)?;
                 result.uncertainties.extend(finalization.uncertainties);
                 result.advisories.extend(finalization.advisories);
             }
         }
-        result.apply(definitions);
+        result.apply_with(&self.adapters, definitions);
         Ok(result)
     }
 
@@ -460,18 +461,40 @@ impl SourceExtractionSession {
         registrations: &[String],
         assertion_modules: &[String],
     ) -> Self {
+        Self::with_adapters(
+            root,
+            registrations,
+            assertion_modules,
+            AdapterRegistry::default(),
+        )
+    }
+
+    /// Creates a session for `config`: its root, registrations, assertion modules and adapters.
+    pub(crate) fn for_config(config: &crate::config::Config) -> Self {
+        Self::with_adapters(
+            &config.root,
+            &config.registrations,
+            &config.assertion_modules,
+            config.adapters().clone(),
+        )
+    }
+
+    /// Creates a rooted session whose adapters come from `adapters`.
+    fn with_adapters(
+        root: &Path,
+        registrations: &[String],
+        assertion_modules: &[String],
+        adapters: AdapterRegistry,
+    ) -> Self {
         let mut session = Self {
             root: Some(root.to_owned()),
             registrations: registrations.to_vec(),
             assertion_modules: assertion_modules.to_vec(),
+            adapters: adapters.clone(),
             ..Self::default()
         };
         // Preserve construction-time root resolution, including a failed canonicalization.
-        for registration in SOURCE_ADAPTER_REGISTRY {
-            if let Some(initialize) = registration.initialize_session {
-                initialize(&mut session);
-            }
-        }
+        adapters.initialize_session(&mut session);
         session
     }
 
@@ -510,7 +533,7 @@ impl SourceExtractionSession {
 }
 
 /// Converts one supported definition-source language into the shared definition IR.
-pub trait SourceAdapter: Sync {
+pub trait SourceAdapter: Sync + RefUnwindSafe {
     /// Stable adapter name used in diagnostics and registry inspection.
     fn name(&self) -> &'static str;
 
@@ -664,40 +687,6 @@ impl FrameworkContract {
     }
 }
 
-/// Every registered framework contract, in registry order and then each adapter's precedence
-/// order. Adapter types serving several suffixes are read once: a repeated id is skipped.
-pub(crate) fn registered_framework_contracts() -> impl Iterator<Item = &'static FrameworkContract> {
-    let mut seen = Vec::new();
-    SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .flat_map(|registration| registration.adapter.framework_contracts())
-        .filter(move |contract| {
-            let first = !seen.contains(&contract.framework);
-            seen.push(contract.framework);
-            first
-        })
-}
-
-/// `core` followed by the default exclude globs every registered adapter declares, its own before
-/// its frameworks', in registry order without repeats.
-pub(crate) fn registered_default_excludes(core: &[&'static str]) -> Vec<&'static str> {
-    let mut excludes = core.to_vec();
-    for registration in SOURCE_ADAPTER_REGISTRY {
-        let adapter = registration.adapter;
-        let own = adapter.default_excludes().iter();
-        let frameworks = adapter
-            .framework_contracts()
-            .iter()
-            .flat_map(|contract| contract.excludes);
-        for glob in own.chain(frameworks) {
-            if !excludes.contains(glob) {
-                excludes.push(*glob);
-            }
-        }
-    }
-    excludes
-}
-
 /// One suffix-to-adapter registration.
 #[non_exhaustive]
 #[derive(Clone, Copy)]
@@ -759,34 +748,195 @@ register_source_adapters! {
     crate::typescript::TSX_ADAPTER : ".tsx";
 }
 
-/// Returns the registered adapter that declares `language`, or `None` when no adapter does.
-pub fn adapter_for_language(language: SourceLanguage) -> Option<&'static dyn SourceAdapter> {
-    SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .map(|registration| registration.adapter)
-        .find(|adapter| adapter.language() == language)
+/// A set of source-adapter registrations that routes paths and languages to adapters. Discovery,
+/// configuration defaults and extraction sessions read the registry they are given;
+/// [`AdapterRegistry::builtin`] holds the adapters this crate ships.
+#[derive(Clone)]
+pub(crate) struct AdapterRegistry {
+    registrations: std::borrow::Cow<'static, [SourceAdapterRegistration]>,
 }
 
-/// Returns the registered adapter that declares `language`, or an error naming the language.
-pub(crate) fn registered_adapter(language: SourceLanguage) -> Result<&'static dyn SourceAdapter> {
-    adapter_for_language(language).with_context(|| {
-        format!(
-            "no source adapter is registered for language `{}`",
-            language.0
-        )
-    })
-}
+static BUILTIN_REGISTRY: AdapterRegistry = AdapterRegistry {
+    registrations: std::borrow::Cow::Borrowed(SOURCE_ADAPTER_REGISTRY),
+};
 
-/// Returns the adapter registered for `path`, rejecting declaration and source-map files.
-pub fn adapter_for_path(path: &Path) -> Option<&'static dyn SourceAdapter> {
-    let extension = path.extension()?.to_str()?;
-    if extension == "map" || is_declaration_file(path, extension) {
-        return None;
+impl AdapterRegistry {
+    /// The adapters this crate ships, in [`SOURCE_ADAPTER_REGISTRY`] order.
+    pub(crate) fn builtin() -> &'static Self {
+        &BUILTIN_REGISTRY
     }
-    SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .find(|registration| extension == registration.suffix.trim_start_matches('.'))
-        .map(|registration| registration.adapter)
+
+    /// The registrations in lookup order.
+    pub(crate) fn registrations(&self) -> &[SourceAdapterRegistration] {
+        &self.registrations
+    }
+
+    /// The registered adapter that declares `language`, or `None` when no adapter does.
+    pub(crate) fn adapter_for_language(
+        &self,
+        language: SourceLanguage,
+    ) -> Option<&'static dyn SourceAdapter> {
+        self.registrations
+            .iter()
+            .map(|registration| registration.adapter)
+            .find(|adapter| adapter.language() == language)
+    }
+
+    /// The registered adapter that declares `language`, or an error naming the language.
+    pub(crate) fn registered_adapter(
+        &self,
+        language: SourceLanguage,
+    ) -> Result<&'static dyn SourceAdapter> {
+        self.adapter_for_language(language).with_context(|| {
+            format!(
+                "no source adapter is registered for language `{}`",
+                language.0
+            )
+        })
+    }
+
+    /// The adapter registered for `path`, rejecting declaration and source-map files.
+    pub(crate) fn adapter_for_path(&self, path: &Path) -> Option<&'static dyn SourceAdapter> {
+        let extension = path.extension()?.to_str()?;
+        if extension == "map" || is_declaration_file(path, extension) {
+            return None;
+        }
+        self.registrations
+            .iter()
+            .find(|registration| extension == registration.suffix.trim_start_matches('.'))
+            .map(|registration| registration.adapter)
+    }
+
+    /// The language of the adapter registered for `path`.
+    pub(crate) fn language_for_path(&self, path: &Path) -> Option<SourceLanguage> {
+        self.adapter_for_path(path).map(SourceAdapter::language)
+    }
+
+    /// The registered suffixes in lookup order.
+    pub(crate) fn suffixes(&self) -> Vec<&'static str> {
+        self.registrations
+            .iter()
+            .map(|registration| registration.suffix)
+            .collect()
+    }
+
+    /// Comparison domain of `language`'s definitions, as its registered adapter declares it;
+    /// `None` when no registered adapter declares the language.
+    pub(crate) fn comparison_domain(
+        &self,
+        language: SourceLanguage,
+    ) -> Option<&'static semantics::DomainSpec> {
+        self.adapter_for_language(language)
+            .map(|adapter| adapter.analysis_policy().domain())
+    }
+
+    /// Every registered framework contract, in registry order and then each adapter's precedence
+    /// order. Adapter types serving several suffixes are read once: a repeated id is skipped.
+    pub(crate) fn framework_contracts(
+        &self,
+    ) -> impl Iterator<Item = &'static FrameworkContract> + '_ {
+        let mut seen = Vec::new();
+        self.registrations
+            .iter()
+            .flat_map(|registration| registration.adapter.framework_contracts())
+            .filter(move |contract| {
+                let first = !seen.contains(&contract.framework);
+                seen.push(contract.framework);
+                first
+            })
+    }
+
+    /// `core` followed by the default exclude globs every registered adapter declares, its own
+    /// before its frameworks', in registry order without repeats.
+    pub(crate) fn default_excludes(&self, core: &[&'static str]) -> Vec<&'static str> {
+        let mut excludes = core.to_vec();
+        for registration in self.registrations.iter() {
+            let adapter = registration.adapter;
+            let own = adapter.default_excludes().iter();
+            let frameworks = adapter
+                .framework_contracts()
+                .iter()
+                .flat_map(|contract| contract.excludes);
+            for glob in own.chain(frameworks) {
+                if !excludes.contains(glob) {
+                    excludes.push(*glob);
+                }
+            }
+        }
+        excludes
+    }
+
+    /// Runs the session initializer of every registration on `session`.
+    fn initialize_session(&self, session: &mut SourceExtractionSession) {
+        for initialize in self
+            .registrations
+            .iter()
+            .filter_map(|registration| registration.initialize_session)
+        {
+            initialize(session);
+        }
+    }
+
+    /// Runs each selected adapter's dependency discovery once, in registry order.
+    pub(crate) fn discover_dependencies(
+        &self,
+        config: &crate::config::Config,
+        excludes: &globset::GlobSet,
+        files: &mut crate::discovery::DiscoveredFiles,
+    ) {
+        let mut completed = std::collections::BTreeSet::new();
+        let callbacks: Vec<_> = self
+            .registrations
+            .iter()
+            .filter(|entry| {
+                files
+                    .definitions
+                    .iter()
+                    .any(|file| file.language == entry.adapter.language())
+            })
+            .filter(|entry| completed.insert(entry.adapter.name()))
+            .filter_map(|entry| entry.discover_dependencies)
+            .collect();
+        for callback in callbacks {
+            callback(config, excludes, files);
+        }
+    }
+}
+
+impl Default for AdapterRegistry {
+    /// The built-in registry.
+    fn default() -> Self {
+        Self::builtin().clone()
+    }
+}
+
+impl std::fmt::Debug for AdapterRegistry {
+    /// Lists each registration as its suffix and adapter name.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_map()
+            .entries(
+                self.registrations
+                    .iter()
+                    .map(|registration| (registration.suffix, registration.adapter.name())),
+            )
+            .finish()
+    }
+}
+
+/// Returns the built-in adapter that declares `language`, or `None` when none does.
+pub fn adapter_for_language(language: SourceLanguage) -> Option<&'static dyn SourceAdapter> {
+    AdapterRegistry::builtin().adapter_for_language(language)
+}
+
+/// Returns the built-in adapter that declares `language`, or an error naming the language.
+pub(crate) fn registered_adapter(language: SourceLanguage) -> Result<&'static dyn SourceAdapter> {
+    AdapterRegistry::builtin().registered_adapter(language)
+}
+
+/// Returns the built-in adapter registered for `path`, rejecting declaration and source-map files.
+pub fn adapter_for_path(path: &Path) -> Option<&'static dyn SourceAdapter> {
+    AdapterRegistry::builtin().adapter_for_path(path)
 }
 
 /// Whether `path` is a TypeScript declaration file: extension `ts`, `mts` or `cts` and a stem that
@@ -801,41 +951,15 @@ fn is_declaration_file(path: &Path, extension: &str) -> bool {
         })
 }
 
-/// Classifies a path using the registered suffixes.
+/// Classifies a path using the built-in suffixes.
 pub fn language_for_path(path: &Path) -> Option<SourceLanguage> {
-    adapter_for_path(path).map(SourceAdapter::language)
+    AdapterRegistry::builtin().language_for_path(path)
 }
 
-/// Returns the registered suffixes for tooling and adapter conformance tests.
+/// Returns the built-in suffixes for tooling and adapter conformance tests.
 pub fn registered_suffixes() -> Vec<&'static str> {
-    SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .map(|registration| registration.suffix)
-        .collect()
+    AdapterRegistry::builtin().suffixes()
 }
 
 #[cfg(test)]
 mod tests;
-
-/// Runs each selected frontend's internal dependency policy once.
-pub(crate) fn discover_dependencies(
-    config: &crate::config::Config,
-    excludes: &globset::GlobSet,
-    files: &mut crate::discovery::DiscoveredFiles,
-) {
-    let mut completed = std::collections::BTreeSet::new();
-    let callbacks: Vec<_> = SOURCE_ADAPTER_REGISTRY
-        .iter()
-        .filter(|entry| {
-            files
-                .definitions
-                .iter()
-                .any(|file| file.language == entry.adapter.language())
-        })
-        .filter(|entry| completed.insert(entry.adapter.name()))
-        .filter_map(|entry| entry.discover_dependencies)
-        .collect();
-    for callback in callbacks {
-        callback(config, excludes, files);
-    }
-}

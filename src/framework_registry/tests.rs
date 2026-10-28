@@ -3,6 +3,11 @@ use std::fs;
 
 const CUCUMBER_DEFAULT: &str = "features/**/*.{feature,feature.md}";
 
+/// Detects through the built-in adapters' framework contracts.
+fn detect(root: &Path, package: Option<&JsonValue>) -> Result<Option<FrameworkFeatures>> {
+    super::detect(AdapterRegistry::builtin(), root, package)
+}
+
 /// Checks recognized framework files and current or legacy dependency names enable the expected discovery defaults.
 #[test]
 fn detects_supported_frameworks_and_dependency_fallbacks() {

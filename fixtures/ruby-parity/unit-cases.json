@@ -3191,6 +3191,26 @@
           "behaviorClass": "ruby-behavior"
         },
         {
+          "name": "builtin_registry_routes_suffixes_and_is_carried_by_reference",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "builtin_registry_routes_suffixes_and_is_carried_by_reference"
+          },
+          "rationale": "`builtin_registry_routes_suffixes_and_is_carried_by_reference` routes `.rb` to `ruby::RUBY` and its adapter beside the ECMAScript suffixes through the built-in registry value, in-process.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "registry_readers_use_the_registry_they_carry",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "registry_readers_use_the_registry_they_carry"
+          },
+          "rationale": "`registry_readers_use_the_registry_they_carry` finalizes, scopes uncertainty for and discovers `.rb` sources under `ruby::RUBY` through the registry each reader carries, with registries that drop Ruby or JavaScript as controls, in-process.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "registered_languages_pass_the_extraction_entry_points",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {

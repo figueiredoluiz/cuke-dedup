@@ -64,7 +64,8 @@
 //! the JavaScript/TypeScript ids are the [`typescript::JAVASCRIPT`], [`typescript::TYPESCRIPT`] and
 //! [`typescript::TSX`] constants, Ruby's is [`ruby::RUBY`]. A language no registered
 //! adapter declares has no adapter: [`source_adapter::adapter_for_language`] returns `None` and
-//! extraction entry points return an error.
+//! extraction entry points return an error. A [`source_adapter::SourceAdapter`] implementation is
+//! `Sync` and `RefUnwindSafe`.
 //!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,

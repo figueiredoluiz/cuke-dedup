@@ -451,6 +451,159 @@ fn unregistered_languages_fail_at_extraction_entry_points() {
     }
 }
 
+/// A registry of the built-in registrations whose adapter's language satisfies `keep`.
+fn builtin_where(keep: impl Fn(SourceLanguage) -> bool) -> AdapterRegistry {
+    AdapterRegistry {
+        registrations: std::borrow::Cow::Owned(
+            AdapterRegistry::builtin()
+                .registrations()
+                .iter()
+                .copied()
+                .filter(|registration| keep(registration.adapter.language()))
+                .collect(),
+        ),
+    }
+}
+
+/// Checks the built-in registry routes each suffix to its language and rejects unregistered,
+/// declaration and source-map paths; configuration, defaults and sessions carry the static table.
+#[test]
+fn builtin_registry_routes_suffixes_and_is_carried_by_reference() {
+    let builtin = AdapterRegistry::builtin();
+    assert_eq!(
+        builtin.suffixes(),
+        [".rb", ".mjs", ".cjs", ".jsx", ".js", ".mts", ".cts", ".ts", ".tsx"]
+    );
+    for (path, expected) in [
+        ("steps.rb", Some(crate::ruby::RUBY)),
+        ("steps.cjs", Some(JAVASCRIPT)),
+        ("steps.mts", Some(TYPESCRIPT)),
+        ("steps.tsx", Some(TSX)),
+        ("steps.py", None),
+        ("types.d.ts", None),
+        ("steps.js.map", None),
+    ] {
+        assert_eq!(
+            builtin.language_for_path(Path::new(path)),
+            expected,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        builtin
+            .adapter_for_language(crate::ruby::RUBY)
+            .map(|adapter| adapter.name()),
+        Some("cucumber-ruby")
+    );
+    assert!(builtin
+        .adapter_for_language(SourceLanguage::new("python"))
+        .is_none());
+    assert!(format!("{builtin:?}").starts_with(r#"{".rb": "cucumber-ruby""#));
+    let project = session_project();
+    let config = crate::config::Config::load(project.path(), Default::default()).unwrap();
+    for registry in [
+        config.adapters(),
+        &AdapterRegistry::default(),
+        &SourceExtractionSession::default().adapters,
+        &SourceExtractionSession::new(project.path()).adapters,
+        &SourceExtractionSession::for_config(&config).adapters,
+    ] {
+        assert!(std::ptr::eq(
+            registry.registrations(),
+            SOURCE_ADAPTER_REGISTRY
+        ));
+    }
+}
+
+/// Checks session finalization, registry-scoped uncertainty, discovery and framework detection
+/// read the registry they carry: removing an adapter from it changes each answer.
+#[test]
+fn registry_readers_use_the_registry_they_carry() {
+    let project = session_project();
+    let root = project.path();
+    let ruby = SourceFile {
+        path: root.join("steps.rb"),
+        language: crate::ruby::RUBY,
+    };
+    let mut session = SourceExtractionSession::new(root);
+    session
+        .finalize(std::slice::from_ref(&ruby), &mut Vec::new())
+        .unwrap();
+    session.adapters = builtin_where(|language| language != crate::ruby::RUBY);
+    assert_eq!(
+        session
+            .finalize(std::slice::from_ref(&ruby), &mut Vec::new())
+            .unwrap_err()
+            .to_string(),
+        "no source adapter is registered for language `ruby`"
+    );
+
+    let mut definitions = ts_definitions("Given('a step', () => work());");
+    definitions.extend(
+        registered_adapter(crate::ruby::RUBY)
+            .unwrap()
+            .extract("Given('a step') { work }", &ruby)
+            .unwrap()
+            .definitions,
+    );
+    let mut finalization = SourceFinalization::default();
+    finalization.uncertainties.push(SourceUncertainty::new(
+        UncertaintyScope::Registry(JAVASCRIPT),
+        UncertaintyCause::Registration,
+        "test evidence",
+    ));
+    for (registry, retained) in [
+        (AdapterRegistry::builtin().clone(), 1),
+        (builtin_where(|language| language != JAVASCRIPT), 0),
+    ] {
+        let mut actual = definitions.clone();
+        finalization.apply_with(&registry, &mut actual);
+        assert_eq!(actual.len(), retained, "{registry:?}");
+    }
+
+    fs::write(root.join("steps.rb"), "Given('a step') { work }").unwrap();
+    fs::write(root.join("steps.ts"), "Given('a step', () => work());").unwrap();
+    let overrides = crate::config::ConfigOverrides {
+        definitions: Some(vec!["steps.rb".to_owned(), "steps.ts".to_owned()]),
+        ..Default::default()
+    };
+    for (registry, expected, node_modules_excluded) in [
+        (
+            AdapterRegistry::builtin().clone(),
+            vec!["steps.rb", "steps.ts"],
+            true,
+        ),
+        (
+            builtin_where(|language| language == crate::ruby::RUBY),
+            vec!["steps.rb"],
+            false,
+        ),
+    ] {
+        let config =
+            crate::config::Config::load_with_adapters(root, overrides.clone(), registry).unwrap();
+        assert_eq!(
+            config.exclude.contains(&"**/node_modules/**".to_owned()),
+            node_modules_excluded
+        );
+        let discovered = crate::discovery::discover(&config).unwrap();
+        let names: Vec<_> = discovered
+            .definitions
+            .iter()
+            .map(|file| file.path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(names, expected);
+    }
+
+    let package = serde_json::json!({"devDependencies": {"@cucumber/cucumber": "1"}});
+    let empty = AdapterRegistry {
+        registrations: std::borrow::Cow::Owned(Vec::new()),
+    };
+    for (registry, detected) in [(AdapterRegistry::builtin(), true), (&empty, false)] {
+        let found = crate::framework_registry::detect(registry, root, Some(&package)).unwrap();
+        assert_eq!(found.is_some(), detected);
+    }
+}
+
 /// Checks registered languages pass the extraction and finalization entry points that reject an unregistered id.
 #[test]
 fn registered_languages_pass_the_extraction_entry_points() {
@@ -866,7 +1019,9 @@ fn language_domains_follow_the_registered_adapters() {
         (TYPESCRIPT, "ecmascript", "ts", ecmascript),
         (TSX, "ecmascript", "tsx", ecmascript),
     ] {
-        let domain = language.comparison_domain().unwrap();
+        let domain = AdapterRegistry::builtin()
+            .comparison_domain(language)
+            .unwrap();
         assert_eq!(domain.label, label, "{language:?}");
         let extracted = adapter_for_language(language)
             .unwrap()
@@ -886,13 +1041,18 @@ fn language_domains_follow_the_registered_adapters() {
         );
     }
     assert_ne!(
-        crate::ruby::RUBY.comparison_domain(),
-        TSX.comparison_domain()
+        AdapterRegistry::builtin().comparison_domain(crate::ruby::RUBY),
+        AdapterRegistry::builtin().comparison_domain(TSX)
     );
     // A language no registered adapter declares has no comparison domain.
-    assert_eq!(SourceLanguage::new("python").comparison_domain(), None);
+    assert_eq!(
+        AdapterRegistry::builtin().comparison_domain(SourceLanguage::new("python")),
+        None
+    );
     // Domains are identified by their static spec: a reused label does not merge them.
-    let ruby = crate::ruby::RUBY.comparison_domain().unwrap();
+    let ruby = AdapterRegistry::builtin()
+        .comparison_domain(crate::ruby::RUBY)
+        .unwrap();
     let alias: &'static DomainSpec = Box::leak(Box::new(DomainSpec {
         label: ruby.label,
         dialect: ruby.dialect,
@@ -1003,7 +1163,8 @@ fn positional_steps_pair_by_wording_with_text_matched_steps() {
 /// their precedence order.
 #[test]
 fn registered_framework_contracts_list_each_framework_once_in_registry_order() {
-    let ids: Vec<&str> = registered_framework_contracts()
+    let ids: Vec<&str> = AdapterRegistry::builtin()
+        .framework_contracts()
         .map(|contract| contract.framework.id())
         .collect();
     assert_eq!(
