@@ -42,10 +42,6 @@ const IMPORTED_STEP: &str =
 /// Checks backend state initializes once per session and invalid or missing state returns an error.
 #[test]
 fn session_state_initializes_once_per_backend_and_per_run() {
-    let ruby = SourceAdapterRegistration::with_session(".rb", &crate::ruby::RUBY_ADAPTER);
-    assert_eq!(ruby.adapter.language(), crate::ruby::RUBY);
-    assert!(ruby.discover_dependencies.is_some());
-
     struct Counter(usize);
     impl AdapterSessionState for Counter {
         /// Creates fresh state for the test backend without using project configuration.
@@ -274,6 +270,11 @@ fn every_registration_has_a_unique_suffix_and_produces_shared_ir() {
         assert!(
             registration.initialize_session.is_some(),
             "{} is missing session initialization",
+            registration.suffix
+        );
+        assert!(
+            registration.discover_dependencies.is_some(),
+            "{} is missing dependency discovery",
             registration.suffix
         );
         let file = SourceFile {
@@ -1038,9 +1039,19 @@ fn public_framework_contracts_start_without_discovery_or_excludes() {
 #[test]
 fn contract_builders_attach_discovery_and_policy() {
     let framework = Framework::new("external-framework");
-    let discovery = crate::typescript::framework_config::CUCUMBER_JS_DISCOVERY;
-    let default = crate::typescript::semantics::default_policy();
-    let local = crate::typescript::semantics::policy(JEST_CUCUMBER);
+    let discovery = crate::framework_descriptor::FrameworkDescriptor {
+        name: "External",
+        discover: |_| Ok(None),
+    };
+    let default = AnalysisPolicy::default();
+    let local = AnalysisPolicy::new(
+        default.domain(),
+        HandlerScope::Local,
+        StepMatching::ByText,
+        StreamEvidence::Complete,
+        false,
+    );
+    assert_ne!(local, default);
     let plain = FrameworkContract::new(framework).with_discovery(discovery);
     assert!(plain.discovery.is_some() && plain.policy.is_none());
     let scoped = FrameworkContract::new(framework).with_policy(local);

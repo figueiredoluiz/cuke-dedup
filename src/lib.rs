@@ -56,13 +56,13 @@
 //! attached, an opaque [`source_adapter::AnalysisPolicy`]. A definition built by hand or
 //! deserialized has [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript
 //! baseline, whatever its `framework`; a hand-built Ruby definition takes
-//! `adapter_for_language(SourceLanguage::new("ruby")).map(|ruby| ruby.analysis_policy())`, and
+//! `adapter_for_language(ruby::RUBY).map(|ruby| ruby.analysis_policy())`, and
 //! framework-specific policies
 //! (Jest-Cucumber, vitest-cucumber-plugin) come only from extraction. The field is not serialized.
 //!
 //! A source language is an open id that its adapter declares ([`source_adapter::SourceLanguage`]):
 //! the JavaScript/TypeScript ids are the [`typescript::JAVASCRIPT`], [`typescript::TYPESCRIPT`] and
-//! [`typescript::TSX`] constants, Ruby's is `SourceLanguage::new("ruby")`. A language no registered
+//! [`typescript::TSX`] constants, Ruby's is [`ruby::RUBY`]. A language no registered
 //! adapter declares has no adapter: [`source_adapter::adapter_for_language`] returns `None` and
 //! extraction entry points return an error.
 //!
@@ -92,7 +92,7 @@ pub mod model;
 pub mod modes;
 pub mod reporters;
 mod resource_limits;
-mod ruby;
+pub mod ruby;
 pub mod source_adapter;
 mod stub_vocabulary;
 pub mod typescript;

@@ -67,26 +67,64 @@ fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
     ));
 }
 
-/// Checks that a regex exactly at the pattern-byte limit still compiles.
+/// A dialect that passes the matcher through unchanged, so the shared compiler's limits apply to
+/// caller-built text with no adapter translation.
+struct IdentityDialect;
+
+impl crate::source_adapter::semantics::RegexDialect for IdentityDialect {
+    /// Returns the matcher as the expression, ignoring flags.
+    fn expression(&self, matcher: &str, _: &str) -> Option<String> {
+        Some(matcher.to_owned())
+    }
+    /// Keys on the canonical source pattern.
+    fn regex_key(&self) -> crate::matcher::RegexKey {
+        crate::matcher::RegexKey::CanonicalSource
+    }
+    /// Every flag counts toward identity.
+    fn identity_flags(&self) -> crate::matcher::IdentityFlags {
+        crate::matcher::IdentityFlags::All
+    }
+    /// Allows similarity comparisons regardless of flags.
+    fn similarity_flags_match(&self, _: &str, _: &str) -> bool {
+        true
+    }
+}
+
+static IDENTITY_DOMAIN: crate::source_adapter::semantics::DomainSpec =
+    crate::source_adapter::semantics::DomainSpec {
+        label: "identity",
+        dialect: &IdentityDialect,
+    };
+
+/// Checks a regex at the pattern-byte limit compiles and one byte over is rejected.
 #[test]
 fn regex_pattern_limit_is_inclusive() {
-    let mut definition = crate::typescript::extract(
-        "Given(/x/, () => work());",
-        &SourceFile {
-            path: PathBuf::from("steps.ts"),
-            language: TYPESCRIPT,
-        },
-    )
-    .unwrap()
-    .remove(0);
-    definition.matcher = format!(
-        "(?x){}",
-        " ".repeat(MAX_REGEX_PATTERN_BYTES.saturating_sub(4))
+    use crate::source_adapter::semantics::{HandlerScope, StepMatching, StreamEvidence};
+    // The extracted definition is a scaffold: the test sets every field `compile_matcher` reads.
+    let mut definition = definitions("Given(/x/, () => work());").remove(0);
+    definition.location = crate::model::SourceLocation::new("limit.txt", 3, 5, 3, 6);
+    definition.matcher_kind = MatcherKind::RegularExpression;
+    definition.matcher_flags = String::new();
+    definition.analysis_policy = crate::source_adapter::AnalysisPolicy::new(
+        &IDENTITY_DOMAIN,
+        HandlerScope::Shared,
+        StepMatching::ByText,
+        StreamEvidence::Complete,
+        false,
     );
-
-    let (compiled, error) = compile_matcher(&definition, &BTreeMap::new());
-    assert!(error.is_none());
-    assert!(compiled.regex.is_some());
+    for (padding, within) in [(4, true), (3, false)] {
+        definition.matcher = format!(
+            "(?x){}",
+            " ".repeat(MAX_REGEX_PATTERN_BYTES.saturating_sub(padding))
+        );
+        let (compiled, error) = compile_matcher(&definition, &BTreeMap::new());
+        assert_eq!(
+            error.is_some_and(|message| message.contains("limit.txt:3:5")),
+            !within,
+            "{padding}"
+        );
+        assert_eq!(compiled.regex.is_some(), within, "{padding}");
+    }
 }
 
 /// Checks that recording a broad ambiguity twice stores one group and one membership per definition.

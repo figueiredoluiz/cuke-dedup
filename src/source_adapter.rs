@@ -41,7 +41,7 @@ pub(crate) const INVALID_MATCHER_DIAGNOSTIC: &str =
 
 /// Parser language of a definition source: an open id that the adapter parsing the language
 /// declares through [`SourceAdapter::language`]. Two values are equal when their ids are, so
-/// `SourceLanguage::new("ruby")` names the Ruby adapter's language.
+/// `SourceLanguage::new("ruby")` equals [`crate::ruby::RUBY`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceLanguage(&'static str);
 
