@@ -10,10 +10,13 @@ pub(crate) use config::FrontendConfig;
 pub(crate) use crate::ruby::config::RawRubyConfig as RawFrontendConfig;
 pub(crate) mod semantics;
 pub(crate) mod suppression;
+pub use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
 pub use finalization::{
     SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
 };
-pub use semantics::AnalysisPolicy;
+pub use semantics::{
+    AnalysisPolicy, DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
+};
 
 use crate::framework_descriptor::FrameworkDescriptor;
 use crate::model::{Framework, SourceLocation, StepDefinition};
@@ -665,7 +668,7 @@ impl FrameworkContract {
     }
 
     /// This contract with `policy` in place of the adapter's default comparison policy.
-    pub(crate) const fn with_policy(self, policy: AnalysisPolicy) -> Self {
+    pub const fn with_policy(self, policy: AnalysisPolicy) -> Self {
         Self {
             policy: Some(policy),
             ..self
@@ -674,7 +677,7 @@ impl FrameworkContract {
 
     /// The comparison policy of `framework` among `contracts`, or `default` when no contract
     /// declares that framework or its contract keeps the adapter's policy.
-    pub(crate) fn policy_of(
+    pub fn policy_of(
         contracts: &[Self],
         framework: Framework,
         default: AnalysisPolicy,

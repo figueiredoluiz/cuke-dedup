@@ -1053,10 +1053,7 @@ fn language_domains_follow_the_registered_adapters() {
     let ruby = AdapterRegistry::builtin()
         .comparison_domain(crate::ruby::RUBY)
         .unwrap();
-    let alias: &'static DomainSpec = Box::leak(Box::new(DomainSpec {
-        label: ruby.label,
-        dialect: ruby.dialect,
-    }));
+    let alias: &'static DomainSpec = Box::leak(Box::new(DomainSpec::new(ruby.label, ruby.dialect)));
     assert_ne!(alias, ruby);
 }
 

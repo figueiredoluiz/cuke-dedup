@@ -22,7 +22,6 @@ use self::handler::{
     resolve_handler, HandlerBinding, ModuleScope,
 };
 use self::matcher::matcher_value;
-pub(crate) use self::matcher::rust_regex_expression;
 use self::matcher::{rust_regex_support, RegexSupport};
 use self::module_resolver::RegistrationResolver;
 use self::registrations::{

@@ -6554,6 +6554,20 @@
           },
           "rationale": "Ruby public-API evidence: unsupported syntax yields a typed extraction diagnostic, while an oversized matcher produces one analysis-phase resource diagnostic with the neighbouring finding retained; rendering uses the report context.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "caller_built_policies_separate_domains_and_drive_usage",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: definitions and policies are caller-built over caller domains and dialects; no adapter produces any input.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "caller_policies_key_matchers_and_resolve_contract_policies",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: public policy constructors, caller dialect keying and contract policy lookup; compile-time auto traits.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

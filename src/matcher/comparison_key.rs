@@ -11,7 +11,7 @@ use unicode_normalization::UnicodeNormalization;
 /// that wrap it. Splitting them keeps a pattern that merely starts with `(?i:` from being taken
 /// for a wrapper.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TranslatedRegex {
+pub struct TranslatedRegex {
     /// Rust inline flag letters in the order the adapter chose; empty when no group is needed.
     pub(crate) inline_flags: String,
     /// The translated pattern without its flag group.
@@ -19,8 +19,16 @@ pub(crate) struct TranslatedRegex {
 }
 
 impl TranslatedRegex {
+    /// A translation with `inline_flags` (Rust inline flag letters, empty for none) wrapping `body`.
+    pub fn new(inline_flags: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            inline_flags: inline_flags.into(),
+            body: body.into(),
+        }
+    }
+
     /// The complete Rust expression: the body, wrapped in a flag group when there are flags.
-    pub(crate) fn expression(&self) -> String {
+    pub fn expression(&self) -> String {
         if self.inline_flags.is_empty() {
             self.body.clone()
         } else {
@@ -30,8 +38,9 @@ impl TranslatedRegex {
 }
 
 /// Which source flags count toward a matcher's identity, declared by its regex dialect.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IdentityFlags {
+pub enum IdentityFlags {
     /// Only these flags count (JavaScript drops `g`, `y` and `d`).
     Listed(&'static str),
     /// Every flag counts, including the ones that name an encoding (Ruby `n`, `u`).
@@ -66,8 +75,9 @@ impl FlagIdentity {
 
 /// How an adapter's regex matchers are keyed for normalized-matcher comparison, declared by its
 /// regex dialect.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RegexKey {
+pub enum RegexKey {
     /// Key on the canonical form of the source pattern, with the identity flags written into the
     /// key text. A translation is ignored. Raw flags never partition keys.
     CanonicalSource,

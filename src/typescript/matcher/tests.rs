@@ -95,10 +95,7 @@ fn translation_keeps_shared_flags_and_refuses_unicode_sets() {
     // A pattern that begins like a flag group is a body, not a wrapper, when no flag applies.
     assert_eq!(
         translate_regex("(?i:a)", ""),
-        Some(TranslatedRegex {
-            inline_flags: String::new(),
-            body: "(?i:a)".to_owned()
-        })
+        Some(TranslatedRegex::new("", "(?i:a)"))
     );
     assert_eq!(rust_regex_expression("[a&&b]", "v"), None);
     assert_eq!(rust_regex_support("^value$", ""), RegexSupport::Supported);

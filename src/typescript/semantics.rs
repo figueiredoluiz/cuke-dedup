@@ -1,6 +1,6 @@
 //! Framework policy and regex execution owned by the JS/TS frontend.
 
-use crate::matcher::{IdentityFlags, RegexKey};
+use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
 use crate::model::Framework;
 use crate::source_adapter::semantics::{
     DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
@@ -12,9 +12,9 @@ struct JavaScriptRegex;
 static REGEX: JavaScriptRegex = JavaScriptRegex;
 
 impl RegexDialect for JavaScriptRegex {
-    /// Builds the Rust-compatible expression used for JavaScript regex usage matching.
-    fn expression(&self, matcher: &str, flags: &str) -> Option<String> {
-        super::rust_regex_expression(matcher, flags)
+    /// Translates a JavaScript regex for usage matching.
+    fn translate(&self, matcher: &str, flags: &str) -> Option<TranslatedRegex> {
+        super::matcher::translate_regex(matcher, flags)
     }
     /// Keys on the canonical source pattern, with the identity flags written into the key text.
     fn regex_key(&self) -> RegexKey {
@@ -28,12 +28,13 @@ impl RegexDialect for JavaScriptRegex {
     fn similarity_flags_match(&self, _: &str, _: &str) -> bool {
         true
     }
+    /// Tries a translated Ruby scoped array first, as every built-in dialect does.
+    fn parameter_sample(&self, pattern: &str) -> Option<String> {
+        crate::source_adapter::semantics::builtin_parameter_sample(pattern)
+    }
 }
 
-static DOMAIN: DomainSpec = DomainSpec {
-    label: "ecmascript",
-    dialect: &REGEX,
-};
+static DOMAIN: DomainSpec = DomainSpec::new("ecmascript", &REGEX);
 
 /// An ECMAScript policy: every handler's event stream counts as complete.
 const fn ecmascript(handler_scope: HandlerScope, step_matching: StepMatching) -> AnalysisPolicy {

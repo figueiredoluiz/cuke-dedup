@@ -1,16 +1,25 @@
-//! Internal compatibility profiles for extracted and caller-constructed definitions.
+//! Comparison policies adapters attach to the definitions they extract.
 
 use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
 use crate::model::{BehaviorEventRef, EffectStream, MatcherKind, StepDefinition};
 
 /// A set of definitions that may be compared with one another, with the regex dialect they share.
-/// Definitions of different domains are never compared; an adapter owns one static spec, and two
-/// specs are equal only when they are the same static, so a reused label cannot merge domains.
-pub(crate) struct DomainSpec {
+/// Definitions of different domains are never compared. Two specs are equal only when they are the
+/// same object, so a reused label cannot merge domains: declare each domain once, in a `static`
+/// (a `const` may be instantiated at several addresses).
+pub struct DomainSpec {
     /// Stable label reported in `--emit-fingerprints` records.
     pub(crate) label: &'static str,
     /// Regex semantics of the domain's matchers.
     pub(crate) dialect: &'static dyn RegexDialect,
+}
+
+impl DomainSpec {
+    /// A domain reported as `label` in `--emit-fingerprints` records, matching regexes with
+    /// `dialect`.
+    pub const fn new(label: &'static str, dialect: &'static dyn RegexDialect) -> Self {
+        Self { label, dialect }
+    }
 }
 
 impl PartialEq for DomainSpec {
@@ -30,8 +39,9 @@ impl std::fmt::Debug for DomainSpec {
 }
 
 /// Which handlers can run together: handlers of different scopes never share a runtime context.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HandlerScope {
+pub enum HandlerScope {
     /// Registered in the common pool every other shared handler runs in.
     Shared,
     /// Bound to the scenario callback that declares it.
@@ -41,8 +51,9 @@ pub(crate) enum HandlerScope {
 }
 
 /// How a definition's matcher is selected for a feature step.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StepMatching {
+pub enum StepMatching {
     /// Any feature step in the corpus can select the definition by its text.
     ByText,
     /// Only the step at the definition's own position selects it.
@@ -50,8 +61,9 @@ pub(crate) enum StepMatching {
 }
 
 /// Where the evidence regime of a handler's event stream comes from.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StreamEvidence {
+pub enum StreamEvidence {
     /// Read the regime from the handler's declared [`EffectStream`].
     Declared,
     /// Treat every handler's events as a complete stream, whatever it declares.
@@ -76,11 +88,16 @@ pub(crate) enum RuntimeContext<'a> {
     Stream(EffectStream),
 }
 
-pub(crate) trait RegexDialect: Sync {
-    /// Translates a regex matcher and its flags into a Rust `regex` expression with this dialect's
+/// The regex semantics of one comparison domain's matchers.
+pub trait RegexDialect: Sync + std::panic::RefUnwindSafe {
+    /// Translates a regex matcher and its flags into the Rust `regex` dialect with this dialect's
     /// semantics, or `None` when no faithful translation exists; usage analysis then treats the
-    /// matcher as non-authoritative.
-    fn expression(&self, matcher: &str, flags: &str) -> Option<String>;
+    /// matcher as non-authoritative. Usage analysis matches feature steps with
+    /// [`TranslatedRegex::expression`]; an expression that does not compile leaves the matcher's
+    /// usage indeterminate with no diagnostic, so the adapter reports it at extraction, as the
+    /// built-in adapters do. Pass the same translation to [`AnalysisPolicy::normalized_matcher`] so
+    /// keying and matching agree.
+    fn translate(&self, matcher: &str, flags: &str) -> Option<TranslatedRegex>;
     /// How this dialect's regex matchers are keyed for normalized-matcher comparison.
     fn regex_key(&self) -> RegexKey;
     /// Which flags count toward a matcher's identity, for exact-duplicate classes and canonical
@@ -92,56 +109,67 @@ pub(crate) trait RegexDialect: Sync {
 
     /// One text that parameter-type `pattern` matches, used as a usage witness, or `None`. The
     /// default takes the first `|` alternative after stripping enclosing groups, accepted only when
-    /// non-empty and made of alphanumerics, space, `_` or `-`; a translated scoped array tries its
-    /// first element first. A group opener without a trailing `)` yields `None`.
+    /// non-empty and made of alphanumerics, space, `_` or `-`; a group opener without a trailing
+    /// `)` yields `None`.
     fn parameter_sample(&self, pattern: &str) -> Option<String> {
-        // Preserve the existing witness subset, including translated scoped patterns.
-        // The resulting witness must still match both compiled definitions.
-        if let Some(array) = pattern
-            .strip_prefix("(?:(?m:")
-            .or_else(|| pattern.strip_prefix("(?:(?ms:"))
-            .and_then(|value| value.strip_suffix("))"))
-        {
+        alternative_sample(pattern)
+    }
+}
+
+/// The first `|` alternative of `pattern` after stripping enclosing groups, accepted only when
+/// non-empty and made of alphanumerics, space, `_` or `-`. A group opener without a trailing `)`
+/// yields `None`. The witness must still match both compiled definitions.
+pub(crate) fn alternative_sample(pattern: &str) -> Option<String> {
+    let mut trimmed = pattern.trim();
+    loop {
+        let inner = trimmed
+            .strip_prefix("(?:")
+            .or_else(|| trimmed.strip_prefix("(?m:"))
+            .or_else(|| trimmed.strip_prefix("(?ms:"))
+            .or_else(|| trimmed.strip_prefix("(?s:"))
+            .or_else(|| trimmed.strip_prefix('('));
+        let Some(inner) = inner else { break };
+        trimmed = inner.strip_suffix(')')?;
+    }
+    let first = trimmed.split('|').next()?;
+    if first.is_empty()
+        || first
+            .chars()
+            .any(|c| !c.is_alphanumeric() && !matches!(c, ' ' | '_' | '-'))
+    {
+        return None;
+    }
+    Some(first.to_owned())
+}
+
+/// The built-in dialects' witness: the first element of a translated Ruby scoped array
+/// (`(?:(?m:a)|(?m:b))`) when it qualifies, else [`alternative_sample`].
+pub(crate) fn builtin_parameter_sample(pattern: &str) -> Option<String> {
+    pattern
+        .strip_prefix("(?:(?m:")
+        .or_else(|| pattern.strip_prefix("(?:(?ms:"))
+        .and_then(|value| value.strip_suffix("))"))
+        .map(|array| {
             let end = [")|(?m:", ")|(?ms:"]
                 .into_iter()
                 .filter_map(|delimiter| array.find(delimiter))
                 .min()
                 .unwrap_or(array.len());
-            let first = &array[..end];
-            if !first.is_empty()
+            &array[..end]
+        })
+        .filter(|first| {
+            !first.is_empty()
                 && first
                     .chars()
                     .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
-            {
-                return Some(first.to_owned());
-            }
-        }
-        let mut trimmed = pattern.trim();
-        loop {
-            let inner = trimmed
-                .strip_prefix("(?:")
-                .or_else(|| trimmed.strip_prefix("(?m:"))
-                .or_else(|| trimmed.strip_prefix("(?ms:"))
-                .or_else(|| trimmed.strip_prefix("(?s:"))
-                .or_else(|| trimmed.strip_prefix('('));
-            let Some(inner) = inner else { break };
-            trimmed = inner.strip_suffix(')')?;
-        }
-        let first = trimmed.split('|').next()?;
-        if first.is_empty()
-            || first
-                .chars()
-                .any(|c| !c.is_alphanumeric() && !matches!(c, ' ' | '_' | '-'))
-        {
-            return None;
-        }
-        Some(first.to_owned())
-    }
+        })
+        .map(str::to_owned)
+        .or_else(|| alternative_sample(pattern))
 }
 
 /// How the analyzer compares one definition with others, declared by the adapter that extracted
-/// it. The fields are opaque: only an adapter chooses them, and an embedder that builds a
-/// [`StepDefinition`] by hand gets [`AnalysisPolicy::default`].
+/// it. A [`StepDefinition`] built by hand gets [`AnalysisPolicy::default`] unless the caller
+/// attaches one built with [`AnalysisPolicy::new`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnalysisPolicy {
@@ -153,8 +181,9 @@ pub struct AnalysisPolicy {
 }
 
 impl AnalysisPolicy {
-    /// Builds a policy from an adapter's declared capabilities.
-    pub(crate) const fn new(
+    /// Builds a policy from an adapter's declared capabilities. `step_invocation` declares that
+    /// handlers may invoke other steps by text, so usage needs the invocation evidence.
+    pub const fn new(
         domain: &'static DomainSpec,
         handler_scope: HandlerScope,
         step_matching: StepMatching,
@@ -175,8 +204,9 @@ impl AnalysisPolicy {
         self.domain
     }
 
-    /// The comparison text of a matcher, keyed as this policy's regex dialect declares.
-    pub(crate) fn normalized_matcher(
+    /// The comparison text of a matcher, keyed as this policy's regex dialect declares; the value
+    /// an adapter stores in [`StepDefinition::normalized_matcher`].
+    pub fn normalized_matcher(
         self,
         kind: MatcherKind,
         matcher: &str,
