@@ -3168,10 +3168,13 @@
         },
         {
           "name": "source_languages_are_open_ids_declared_by_adapters",
-          "requiredStatus": "engine-invariant",
-          "stage": "session-plumbing",
-          "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
-          "behaviorClass": "shared-engine-invariant"
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "source_languages_are_open_ids_declared_by_adapters"
+          },
+          "rationale": "`source_languages_are_open_ids_declared_by_adapters` reads the language each registered adapter declares, including `ruby::RUBY`, in-process.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "registered_languages_pass_the_extraction_entry_points",
