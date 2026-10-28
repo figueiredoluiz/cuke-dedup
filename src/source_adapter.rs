@@ -39,27 +39,21 @@ pub(crate) const UNSUPPORTED_MATCHER_DIAGNOSTIC: &str =
 pub(crate) const INVALID_MATCHER_DIAGNOSTIC: &str =
     "invalid JavaScript escape sequence in step matcher";
 
-/// Parser language selected for a definition source.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceLanguage {
-    /// Ruby Cucumber sources selected explicitly by definition globs.
-    Ruby,
-    /// JavaScript, JSX, or their module variants.
-    JavaScript,
-    /// TypeScript or its module variants.
-    TypeScript,
-    /// TypeScript with JSX syntax.
-    Tsx,
-}
+/// Parser language of a definition source: an open id that the adapter parsing the language
+/// declares through [`SourceAdapter::language`]. Two values are equal when their ids are, so
+/// `SourceLanguage::new("ruby")` names the Ruby adapter's language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SourceLanguage(&'static str);
 
-/// Returns the tree-sitter grammar registered for a definition-source language.
-pub(crate) fn grammar_for_language(language: SourceLanguage) -> tree_sitter::Language {
-    match language {
-        SourceLanguage::Ruby => tree_sitter_ruby::LANGUAGE.into(),
-        SourceLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
-        SourceLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        SourceLanguage::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+impl SourceLanguage {
+    /// A language with the given id.
+    pub const fn new(id: &'static str) -> Self {
+        Self(id)
+    }
+
+    /// The language id.
+    pub const fn id(self) -> &'static str {
+        self.0
     }
 }
 
@@ -398,7 +392,7 @@ impl SourceExtractionSession {
         let mut result = SourceFinalization::default();
         let mut completed = std::collections::BTreeSet::new();
         for file in files {
-            let adapter = adapter_for_language(file.language);
+            let adapter = registered_adapter(file.language)?;
             if completed.insert(adapter.name()) {
                 let finalization = adapter.finalize_session(self)?;
                 result.uncertainties.extend(finalization.uncertainties);
@@ -742,12 +736,11 @@ impl SourceAdapterRegistration {
     }
 }
 
-/// The authoritative language/adapter mapping: one table drives both the suffix registry and the
-/// language lookup, so the two routing surfaces cannot drift apart. Adding a language means one
-/// row here; the expansion stays an exhaustive match, so routing remains total without a
-/// fallible lookup.
+/// The authoritative adapter table: one row per adapter, which declares its own language. The
+/// suffix registry and the language lookup both read it, so the two routing surfaces cannot
+/// drift apart.
 macro_rules! register_source_adapters {
-    ( $( $language:ident => $adapter:path : $($suffix:literal),+ );+ ; ) => {
+    ( $( $adapter:path : $($suffix:literal),+ );+ ; ) => {
         /// Registered definition-source suffixes in deterministic lookup order.
         pub static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
             $(
@@ -756,21 +749,32 @@ macro_rules! register_source_adapters {
                 )+
             )+
         ];
-
-        /// Returns the adapter for an already classified source language.
-        pub fn adapter_for_language(language: SourceLanguage) -> &'static dyn SourceAdapter {
-            match language {
-                $(SourceLanguage::$language => &$adapter,)+
-            }
-        }
     };
 }
 
 register_source_adapters! {
-    Ruby => crate::ruby::RUBY_ADAPTER : ".rb";
-    JavaScript => crate::typescript::JAVASCRIPT_ADAPTER : ".mjs", ".cjs", ".jsx", ".js";
-    TypeScript => crate::typescript::TYPESCRIPT_ADAPTER : ".mts", ".cts", ".ts";
-    Tsx => crate::typescript::TSX_ADAPTER : ".tsx";
+    crate::ruby::RUBY_ADAPTER : ".rb";
+    crate::typescript::JAVASCRIPT_ADAPTER : ".mjs", ".cjs", ".jsx", ".js";
+    crate::typescript::TYPESCRIPT_ADAPTER : ".mts", ".cts", ".ts";
+    crate::typescript::TSX_ADAPTER : ".tsx";
+}
+
+/// Returns the registered adapter that declares `language`, or `None` when no adapter does.
+pub fn adapter_for_language(language: SourceLanguage) -> Option<&'static dyn SourceAdapter> {
+    SOURCE_ADAPTER_REGISTRY
+        .iter()
+        .map(|registration| registration.adapter)
+        .find(|adapter| adapter.language() == language)
+}
+
+/// Returns the registered adapter that declares `language`, or an error naming the language.
+pub(crate) fn registered_adapter(language: SourceLanguage) -> Result<&'static dyn SourceAdapter> {
+    adapter_for_language(language).with_context(|| {
+        format!(
+            "no source adapter is registered for language `{}`",
+            language.0
+        )
+    })
 }
 
 /// Returns the adapter registered for `path`, rejecting declaration and source-map files.

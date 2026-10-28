@@ -15,6 +15,8 @@ use tree_sitter::Node;
 
 /// Direct Cucumber-Ruby block registrations, the framework Ruby definitions are attributed to.
 pub(crate) const CUCUMBER_RUBY: Framework = Framework::new("cucumber-ruby");
+/// Ruby Cucumber sources, selected explicitly by definition globs.
+pub(crate) const RUBY: SourceLanguage = SourceLanguage::new("ruby");
 /// Every framework this adapter attributes definitions to; a named static so its address is unique.
 static FRAMEWORK_CONTRACTS: [crate::source_adapter::FrameworkContract; 1] =
     [crate::source_adapter::FrameworkContract::new(CUCUMBER_RUBY)];
@@ -88,7 +90,7 @@ impl SourceAdapter for RubyAdapter {
     }
     /// Identify extracted definitions as Ruby source.
     fn language(&self) -> SourceLanguage {
-        SourceLanguage::Ruby
+        RUBY
     }
     /// Extract a standalone file and retain unknown usage when dependency diagnostics remain.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction> {
@@ -132,7 +134,7 @@ impl SourceAdapter for RubyAdapter {
         state.proof_sources_exceeded = exceeded;
         state.prepared = files
             .iter()
-            .filter(|file| file.language == SourceLanguage::Ruby)
+            .filter(|file| file.language == RUBY)
             .map(|file| file.path.clone())
             .collect();
         if let Some(units) = units {
@@ -169,7 +171,7 @@ impl SourceAdapter for RubyAdapter {
             .unwrap_or_default();
         if state.assertions.incomplete() {
             result.uncertainties.push(SourceUncertainty::new(
-                UncertaintyScope::Registry(SourceLanguage::Ruby),
+                UncertaintyScope::Registry(RUBY),
                 UncertaintyCause::Source,
                 format!("Ruby assertion-provider provenance is incomplete{limit}"),
             ));
@@ -194,7 +196,7 @@ impl SourceAdapter for RubyAdapter {
         let invalidated = state.effects.invalidated() || escaped.is_some();
         if state.providers.work_exhausted() {
             result.uncertainties.push(SourceUncertainty::new(
-                UncertaintyScope::Registry(SourceLanguage::Ruby),
+                UncertaintyScope::Registry(RUBY),
                 if invalidated {
                     UncertaintyCause::Registration
                 } else {
@@ -208,7 +210,7 @@ impl SourceAdapter for RubyAdapter {
             ));
         } else if invalidated {
             result.uncertainties.push(SourceUncertainty::new(
-                UncertaintyScope::Registry(SourceLanguage::Ruby),
+                UncertaintyScope::Registry(RUBY),
                 UncertaintyCause::Registration,
                 format!("Ruby DSL redefinition or metaprogramming prevents trusted registration extraction across the selected suite{limit}{cause}"),
             ));
@@ -360,10 +362,10 @@ fn extract_with_proof(
     assertions: Option<&assertions::AssertionBindings>,
     finalized: bool,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
-    if file.language != SourceLanguage::Ruby {
+    if file.language != RUBY {
         bail!(
-            "cucumber-ruby adapter cannot parse {:?} source {}",
-            file.language,
+            "cucumber-ruby adapter cannot parse `{}` source {}",
+            file.language.id(),
             file.path.display()
         );
     }

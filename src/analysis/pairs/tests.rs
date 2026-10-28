@@ -1,5 +1,6 @@
 use super::*;
-use crate::discovery::{SourceFile, SourceLanguage};
+use crate::discovery::SourceFile;
+use crate::typescript::TYPESCRIPT;
 use std::path::PathBuf;
 
 /// First TypeScript definition extracted from `Given('abc', ...)` with a three-call handler.
@@ -8,7 +9,7 @@ fn definition() -> StepDefinition {
         "Given('abc', () => { open(); fill(); save(); });",
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()
@@ -791,7 +792,7 @@ fn work_accounting_contract_charges_similarity_stages_and_enforces_boundaries() 
         "Given('same', () => perform(1));\nGiven('same', () => perform(2));\nGiven('same', () => perform(3));",
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap();

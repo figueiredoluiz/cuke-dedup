@@ -55,14 +55,15 @@ impl SourceUncertainty {
     }
 
     /// Whether `definition` falls in this scope: an equal full location span, an equal file path,
-    /// or the comparison domain of the registry language.
+    /// or the comparison domain of the registry language. A language no registered adapter
+    /// declares has no known domain, so its registry scope covers every definition.
     fn affects(&self, definition: &StepDefinition) -> bool {
         match &self.scope {
             UncertaintyScope::Definition(location) => &definition.location == location,
             UncertaintyScope::File(path) => &definition.location.path == path,
-            UncertaintyScope::Registry(language) => {
-                definition.analysis_profile().domain == language.comparison_domain()
-            }
+            UncertaintyScope::Registry(language) => language
+                .comparison_domain()
+                .is_none_or(|domain| definition.analysis_profile().domain == domain),
         }
     }
 }

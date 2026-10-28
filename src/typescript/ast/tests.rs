@@ -1,12 +1,11 @@
 use super::*;
+use crate::typescript::TYPESCRIPT;
 
 /// Parse a TypeScript fixture and require a syntax-error-free tree.
 fn parse_typescript(source: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
     parser
-        .set_language(&crate::source_adapter::grammar_for_language(
-            crate::source_adapter::SourceLanguage::TypeScript,
-        ))
+        .set_language(&crate::typescript::grammar(TYPESCRIPT).unwrap())
         .unwrap();
     let tree = parser.parse(source, None).unwrap();
     assert!(!tree.root_node().has_error(), "{source}");

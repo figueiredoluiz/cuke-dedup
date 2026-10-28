@@ -5,10 +5,11 @@ use super::similarity::{
 };
 use super::*;
 use crate::config::{ConfigOverrides, SuppressionConfig};
-use crate::discovery::{SourceFile, SourceLanguage};
+use crate::discovery::SourceFile;
 use crate::gherkin;
 use crate::model::{DuplicationThreshold, Rule};
 use crate::typescript;
+use crate::typescript::{JAVASCRIPT, TYPESCRIPT};
 use std::path::{Path, PathBuf};
 
 /// Sets a definition's framework together with the policy its adapter attaches for that framework.
@@ -43,7 +44,7 @@ fn definitions(source: &str) -> Vec<StepDefinition> {
         source,
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()
@@ -1012,7 +1013,7 @@ fn exact_handlers_require_compatible_assertion_provenance_across_files() {
                 &source,
                 &SourceFile {
                     path: PathBuf::from(format!("steps-{index}.ts")),
-                    language: SourceLanguage::TypeScript,
+                    language: TYPESCRIPT,
                 },
             )
             .unwrap(),
@@ -1077,7 +1078,7 @@ fn unresolved_external_assertion_values_cannot_establish_handler_equivalence() {
                     &source,
                     &SourceFile {
                         path: PathBuf::from(format!("steps-{index}.ts")),
-                        language: SourceLanguage::TypeScript,
+                        language: TYPESCRIPT,
                     },
                 )
                 .unwrap(),
@@ -1337,7 +1338,7 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
         {
             extracted.extend(typescript::extract(
                 &format!("{header} Then('the parcel status is verified {index}', ({{state}}) => api.expect(state).toBe('ready'));"),
-                &SourceFile { path: PathBuf::from(format!("steps-{index}.ts")), language: SourceLanguage::TypeScript },
+                &SourceFile { path: PathBuf::from(format!("steps-{index}.ts")), language: TYPESCRIPT },
             ).unwrap());
         }
         assert_eq!(
@@ -1378,7 +1379,7 @@ fn assertion_trust_requires_real_facades_and_unmodified_namespace_factories() {
             &source,
             &SourceFile {
                 path: PathBuf::from("steps.js"),
-                language: SourceLanguage::JavaScript,
+                language: JAVASCRIPT,
             },
         )
         .unwrap();
@@ -4124,7 +4125,7 @@ fn named_handlers_with_different_bodies_and_stub_handlers_do_not_duplicate() {
                 source,
                 &SourceFile {
                     path: PathBuf::from(path),
-                    language: SourceLanguage::TypeScript,
+                    language: TYPESCRIPT,
                 },
             )
             .unwrap(),

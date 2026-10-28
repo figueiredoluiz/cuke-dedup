@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use cuke_dedup::typescript::JAVASCRIPT;
 use predicates::prelude::*;
 use serde_json::Value;
 use std::fs;
@@ -6752,10 +6753,11 @@ fn ruby_deep_handlers_and_unicode_locations_reach_final_analysis() {
     let directory = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: directory.path().join("features/steps/unicode.rb"),
-        language: SourceLanguage::Ruby,
+        language: SourceLanguage::new("ruby"),
     };
     let source = "prefix = '日本語'; Given('same') { first() }\nThen('same') { second() }";
-    let extraction = adapter_for_language(SourceLanguage::Ruby)
+    let extraction = adapter_for_language(SourceLanguage::new("ruby"))
+        .unwrap()
         .extract(source, &file)
         .unwrap();
     assert_eq!(extraction.definitions.len(), 2);
@@ -9644,12 +9646,12 @@ fn ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained() {
     let root = directory.path();
     let file = SourceFile {
         path: root.join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: SourceLanguage::new("ruby"),
     };
     let extracted = cuke_dedup::source_adapter::SOURCE_ADAPTER_REGISTRY
         .iter()
         .map(|registration| registration.adapter)
-        .find(|adapter| adapter.language() == SourceLanguage::Ruby)
+        .find(|adapter| adapter.language() == SourceLanguage::new("ruby"))
         .unwrap()
         .extract(RUBY_DUPLICATE_PAIR, &file)
         .unwrap();
@@ -11941,7 +11943,7 @@ fn ruby_session_extract(
     use cuke_dedup::source_adapter::{adapter_for_language, adapter_for_path, language_for_path};
     let path = root.join(name);
     let adapter = if by_language {
-        adapter_for_language(language_for_path(&path).unwrap())
+        adapter_for_language(language_for_path(&path).unwrap()).unwrap()
     } else {
         adapter_for_path(&path).unwrap()
     };
@@ -11959,21 +11961,22 @@ fn ruby_adapter_rejects_mislabeled_sources_with_context() {
     use cuke_dedup::source_adapter::{adapter_for_language, SourceFile, SourceLanguage};
     let file = SourceFile {
         path: "features/steps/example.js".into(),
-        language: SourceLanguage::JavaScript,
+        language: JAVASCRIPT,
     };
-    let error = adapter_for_language(SourceLanguage::Ruby)
+    let error = adapter_for_language(SourceLanguage::new("ruby"))
+        .unwrap()
         .extract("Given('a step') { work() }", &file)
         .unwrap_err()
         .to_string();
     assert!(
         error.contains("cucumber-ruby adapter cannot parse")
-            && error.contains("JavaScript")
+            && error.contains("`javascript`")
             && error.contains("features/steps/example.js"),
         "{error}"
     );
 }
 
-/// Library routing and sessions with Ruby: `.rb` and `SourceLanguage::Ruby` select the registry's
+/// Library routing and sessions with Ruby: `.rb` and `SourceLanguage::new("ruby")` select the registry's
 /// one Ruby adapter; language- and suffix-routed extraction share one session state in either
 /// order, so a later DSL redefinition through the other route withdraws earlier registrations at
 /// finalization while a separate session cannot; and Ruby extracted first, between or last beside
@@ -11991,10 +11994,10 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
         .map(|adapter| adapter as *const dyn SourceAdapter)
         .collect();
     let ruby_path = Path::new("steps.rb");
-    let ruby = SourceLanguage::Ruby;
+    let ruby = SourceLanguage::new("ruby");
     for adapter in [
         adapter_for_path(ruby_path).unwrap(),
-        adapter_for_language(ruby),
+        adapter_for_language(ruby).unwrap(),
     ] {
         assert!(std::ptr::addr_eq(
             adapter as *const dyn SourceAdapter,
@@ -12013,7 +12016,7 @@ fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
     let mutation = ("b.rb", "def Given(text); :replaced; end\n");
     let file = |name: &str| SourceFile {
         path: root.join(name),
-        language: SourceLanguage::Ruby,
+        language: SourceLanguage::new("ruby"),
     };
     let files = [file("a.rb"), file("b.rb")];
     for (language_first, shared) in [(true, true), (false, true), (true, false)] {
@@ -12133,8 +12136,8 @@ fn ruby_finalization_scopes_preserve_independent_final_findings() {
     let config = cuke_dedup::config::Config::load(root, Default::default()).unwrap();
     let blue = UncertaintyScope::Definition(definitions[4].location.clone());
     let panel_file = UncertaintyScope::File(root.join("steps.rb"));
-    let ruby = UncertaintyScope::Registry(SourceLanguage::Ruby);
-    let javascript = UncertaintyScope::Registry(SourceLanguage::JavaScript);
+    let ruby = UncertaintyScope::Registry(SourceLanguage::new("ruby"));
+    let javascript = UncertaintyScope::Registry(JAVASCRIPT);
     // Expected: [definitions retained, duplicate-matcher findings, duplicate-handler findings].
     for (cause, scope, expected) in [
         (Registration, blue.clone(), [4, 2, 0]),

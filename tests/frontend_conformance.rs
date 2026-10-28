@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use cuke_dedup::config::{Config, ConfigOverrides};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
 use cuke_dedup::source_adapter::{SourceExclusion, SOURCE_ADAPTER_REGISTRY};
+use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -98,18 +99,18 @@ fn source_exclusion_stays_with_javascript_adapter() {
     };
     let js_file = SourceFile {
         path: js,
-        language: SourceLanguage::JavaScript,
+        language: JAVASCRIPT,
     };
     let ruby_file = SourceFile {
         path: ruby,
-        language: SourceLanguage::Ruby,
+        language: SourceLanguage::new("ruby"),
     };
     assert_eq!(
-        adapter(SourceLanguage::JavaScript).inspect_source(&js_file, &[]),
+        adapter(JAVASCRIPT).inspect_source(&js_file, &[]),
         Some(SourceExclusion::Binary)
     );
     assert_eq!(
-        adapter(SourceLanguage::Ruby).inspect_source(&ruby_file, &[]),
+        adapter(SourceLanguage::new("ruby")).inspect_source(&ruby_file, &[]),
         None
     );
 }
@@ -261,7 +262,7 @@ fn adapters_share_one_stub_vocabulary() {
             format!("Given('a') {{ raise \"{label}\" }}"),
         ] {
             assert_eq!(
-                handler_is_stub(SourceLanguage::Ruby, "steps.rb", &source),
+                handler_is_stub(SourceLanguage::new("ruby"), "steps.rb", &source),
                 stub,
                 "{source}"
             );
@@ -272,7 +273,7 @@ fn adapters_share_one_stub_vocabulary() {
             format!("Given('a', () => '{label}');"),
         ] {
             assert_eq!(
-                handler_is_stub(SourceLanguage::TypeScript, "steps.ts", &source),
+                handler_is_stub(TYPESCRIPT, "steps.ts", &source),
                 stub,
                 "{source}"
             );

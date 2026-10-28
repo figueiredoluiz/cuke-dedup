@@ -291,8 +291,9 @@ impl StepDefinition {
 }
 
 impl super::SourceLanguage {
-    /// Comparison domain of this language's definitions, as its registered adapter declares it.
-    pub(crate) fn comparison_domain(self) -> &'static DomainSpec {
-        super::adapter_for_language(self).analysis_policy().domain()
+    /// Comparison domain of this language's definitions, as its registered adapter declares it;
+    /// `None` when no registered adapter declares the language.
+    pub(crate) fn comparison_domain(self) -> Option<&'static DomainSpec> {
+        super::adapter_for_language(self).map(|adapter| adapter.analysis_policy().domain())
     }
 }

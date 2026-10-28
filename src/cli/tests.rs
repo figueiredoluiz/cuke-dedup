@@ -1,4 +1,5 @@
 use super::*;
+use crate::typescript::TYPESCRIPT;
 
 /// A clean finalization keeps definitions; a failed one clears them, zeroes the file count,
 /// records the error, and leaves an incomplete run with no findings.
@@ -66,14 +67,13 @@ fn candidate_limit_cli_values_must_be_positive() {
 /// dynamic-matcher warning stays an incomplete warning, and an unrelated one stays complete.
 #[test]
 fn unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag() {
-    use crate::discovery::SourceLanguage;
     use crate::model::SourceLocation;
     use crate::source_adapter::{ExtractionDiagnostic, SourceFile};
 
     let directory = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: directory.path().join("steps.ts"),
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let unparseable = || {
         ExtractionDiagnostic::new(
@@ -148,12 +148,12 @@ fn unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag() 
 fn typed_adapter_diagnostics_route_independently_of_language_and_wording() {
     use crate::model::SourceLocation;
     use crate::source_adapter::{
-        ExtractionDiagnostic, ExtractionDiagnosticKind as Kind, SourceFile, SourceLanguage,
+        ExtractionDiagnostic, ExtractionDiagnosticKind as Kind, SourceFile,
     };
     let directory = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: directory.path().join("steps.ts"),
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let mut config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
     for strict in [false, true] {

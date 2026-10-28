@@ -302,7 +302,7 @@ fn exhausted_load_proof_reports_incompleteness_without_losing_direct_definitions
     use crate::source_adapter::{SourceAdapter, SourceExtractionSession};
     let file = SourceFile {
         path: PathBuf::from("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let mut session = SourceExtractionSession::default();
     session
@@ -323,7 +323,7 @@ fn exhausted_load_proof_reports_incompleteness_without_losing_direct_definitions
         .any(|d| d.message.contains("work limit")));
     let neighbor = SourceFile {
         path: PathBuf::from("neighbor.rb"),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     let result = super::super::RubyAdapter
         .extract_with_session("Given('neighbor') { work() }", &neighbor, &mut session)
@@ -367,7 +367,7 @@ fn optional_provider_proofs_respect_both_resource_limits() {
             std::fs::write(&path, source).unwrap();
             SourceFile {
                 path,
-                language: SourceLanguage::Ruby,
+                language: crate::ruby::RUBY,
             }
         })
         .collect();
@@ -409,7 +409,7 @@ fn provider_path_disappearing_during_read_withdraws_optional_proofs() {
     let root = tempfile::tempdir().unwrap();
     let file = SourceFile {
         path: root.path().join("steps.rb"),
-        language: SourceLanguage::Ruby,
+        language: crate::ruby::RUBY,
     };
     assert!(std::process::Command::new("mkfifo")
         .arg(&file.path)

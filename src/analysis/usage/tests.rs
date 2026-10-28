@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::{ConfigOverrides, SuppressionConfig};
-use crate::discovery::{SourceFile, SourceLanguage};
+use crate::discovery::SourceFile;
+use crate::typescript::TYPESCRIPT;
 use std::path::{Path, PathBuf};
 
 /// Extracts TypeScript step definitions from a synthetic steps.ts source, panicking on extraction failure.
@@ -9,7 +10,7 @@ fn definitions(source: &str) -> Vec<StepDefinition> {
         source,
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()
@@ -73,7 +74,7 @@ fn regex_pattern_limit_is_inclusive() {
         "Given(/x/, () => work());",
         &SourceFile {
             path: PathBuf::from("steps.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()

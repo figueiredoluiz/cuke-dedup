@@ -15,7 +15,6 @@ use crate::resource_limits::{
     read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES,
     MAX_REGISTRATION_MODULE_BYTES, MAX_REGISTRATION_RESOLUTION_STATES,
 };
-use crate::source_adapter::grammar_for_language;
 use crate::typescript::frameworks::{FRAMEWORK_CONTRACTS, PLAYWRIGHT_BDD};
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1102,7 +1101,7 @@ fn project_boundary(importer: &Path) -> Option<PathBuf> {
 fn parse_module(source: &str, path: &Path) -> Option<tree_sitter::Tree> {
     let language = ecmascript_language(path)?;
     let mut parser = Parser::new();
-    parser.set_language(&grammar_for_language(language)).ok()?;
+    parser.set_language(&super::grammar(language)?).ok()?;
     parser.parse(source, None)
 }
 

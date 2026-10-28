@@ -34,8 +34,8 @@ use crate::model::bounded_source_snippet;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
 use crate::source_adapter::suppression::inline_suppressions;
 use crate::source_adapter::{
-    adapter_for_language, grammar_for_language, AdapterSessionState, ExtractionDiagnosticKind,
-    SourceAdapter, SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
+    registered_adapter, AdapterSessionState, ExtractionDiagnosticKind, SourceAdapter,
+    SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
     UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX, UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX,
     UNSUPPORTED_MATCHER_DIAGNOSTIC,
 };
@@ -46,6 +46,23 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
+/// JavaScript, JSX, or their module variants.
+pub const JAVASCRIPT: SourceLanguage = SourceLanguage::new("javascript");
+/// TypeScript or its module variants.
+pub const TYPESCRIPT: SourceLanguage = SourceLanguage::new("typescript");
+/// TypeScript with JSX syntax.
+pub const TSX: SourceLanguage = SourceLanguage::new("tsx");
+
+/// The tree-sitter grammar of a JavaScript/TypeScript language, or `None` for any other language.
+pub(crate) fn grammar(language: SourceLanguage) -> Option<tree_sitter::Language> {
+    match language {
+        JAVASCRIPT => Some(tree_sitter_javascript::LANGUAGE.into()),
+        TYPESCRIPT => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        TSX => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        _ => None, // fail-closed: another adapter's or an undeclared language has no grammar.
+    }
+}
+
 pub(crate) struct TreeSitterSourceAdapter {
     name: &'static str,
     language: SourceLanguage,
@@ -53,15 +70,15 @@ pub(crate) struct TreeSitterSourceAdapter {
 
 pub(crate) static JAVASCRIPT_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter {
     name: "javascript",
-    language: SourceLanguage::JavaScript,
+    language: JAVASCRIPT,
 };
 pub(crate) static TYPESCRIPT_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter {
     name: "typescript",
-    language: SourceLanguage::TypeScript,
+    language: TYPESCRIPT,
 };
 pub(crate) static TSX_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter {
     name: "tsx",
-    language: SourceLanguage::Tsx,
+    language: TSX,
 };
 
 #[derive(Default)]
@@ -155,9 +172,9 @@ impl SourceAdapter for TreeSitterSourceAdapter {
     ) -> Result<Extraction> {
         if file.language != self.language {
             anyhow::bail!(
-                "{} adapter cannot parse {:?} source {}",
+                "{} adapter cannot parse `{}` source {}",
                 self.name,
-                file.language,
+                file.language.id(),
                 file.path.display()
             );
         }
@@ -216,7 +233,7 @@ impl UnresolvedRegistrationCalls {
 
 /// Reads and extracts step definitions from a discovered JavaScript or TypeScript file.
 pub fn extract_file(file: &SourceFile) -> Result<Vec<StepDefinition>> {
-    Ok(adapter_for_language(file.language)
+    Ok(registered_adapter(file.language)?
         .extract_file(file)?
         .definitions)
 }
@@ -228,7 +245,7 @@ pub fn extract(source: &str, file: &SourceFile) -> Result<Vec<StepDefinition>> {
 
 /// Extracts definitions and localized diagnostics from in-memory source.
 pub fn extract_detailed(source: &str, file: &SourceFile) -> Result<Extraction> {
-    adapter_for_language(file.language).extract(source, file)
+    registered_adapter(file.language)?.extract(source, file)
 }
 
 /// Extracts one file with the session's resolver state, returning definitions and diagnostics.
@@ -237,9 +254,11 @@ fn extract_detailed_impl(
     file: &SourceFile,
     session: &mut TypeScriptExtractionSession,
 ) -> Result<Extraction> {
+    let grammar = grammar(file.language)
+        .expect("the adapter accepts only its own JavaScript/TypeScript language");
     let mut parser = Parser::new();
     parser
-        .set_language(&grammar_for_language(file.language))
+        .set_language(&grammar)
         .context("failed to initialize the JavaScript/TypeScript parser")?;
     let tree = parser
         .parse(source, None)

@@ -194,7 +194,11 @@ fn reports_each_unmatched_definition_glob() {
 #[test]
 fn declaration_and_source_map_files_are_not_definition_sources() {
     for path in ["types.d.ts", "types.d.mts", "types.d.cts", "code.js.map"] {
-        assert_eq!(source_language(Path::new(path)), None, "{path}");
+        assert_eq!(
+            crate::source_adapter::language_for_path(Path::new(path)),
+            None,
+            "{path}"
+        );
     }
 }
 

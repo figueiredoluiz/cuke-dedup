@@ -16,9 +16,8 @@
 
 use cuke_dedup::config::{Config, ConfigOverrides};
 use cuke_dedup::modes::apply_baseline;
-use cuke_dedup::source_adapter::{
-    adapter_for_language, SourceExtractionSession, SourceFile, SourceLanguage,
-};
+use cuke_dedup::source_adapter::{adapter_for_language, SourceExtractionSession, SourceFile};
+use cuke_dedup::typescript::TYPESCRIPT;
 use libfuzzer_sys::fuzz_target;
 use std::fs;
 
@@ -74,10 +73,11 @@ fuzz_target!(|data: &[u8]| {
     if fs::write(&definition_path, definition_source).is_ok() {
         let file = SourceFile {
             path: definition_path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         let mut session = SourceExtractionSession::new(root);
-        let _ = adapter_for_language(SourceLanguage::TypeScript)
+        let _ = adapter_for_language(TYPESCRIPT)
+            .unwrap()
             .extract_file_with_session(&file, &mut session);
     }
 

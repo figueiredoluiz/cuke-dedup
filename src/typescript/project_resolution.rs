@@ -13,12 +13,15 @@ use std::path::{Path, PathBuf};
 
 const MODULE_SUFFIXES: [&str; 8] = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
-/// Returns the grammar for an ECMAScript module path, or `None` for declaration files, source maps,
-/// Ruby and every unregistered suffix: only ECMAScript sources can register steps through an import.
+/// Returns the language of an ECMAScript module path, or `None` for declaration files, source maps,
+/// other adapters' languages and every unregistered suffix: only ECMAScript sources can register
+/// steps through an import.
 pub(super) fn ecmascript_language(path: &Path) -> Option<SourceLanguage> {
-    language_for_path(path).filter(|language| match language {
-        SourceLanguage::JavaScript | SourceLanguage::TypeScript | SourceLanguage::Tsx => true,
-        SourceLanguage::Ruby => false,
+    language_for_path(path).filter(|language| {
+        matches!(
+            *language,
+            super::JAVASCRIPT | super::TYPESCRIPT | super::TSX
+        )
     })
 }
 

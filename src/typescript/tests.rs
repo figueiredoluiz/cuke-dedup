@@ -36,7 +36,7 @@ fn control_flow_behavior_events_map_typescript_node_kinds_only() {
 
 /// Extract definitions from a TypeScript fixture using the standard test file.
 fn extract_ts(source: &str) -> Vec<crate::model::StepDefinition> {
-    extract(source, &file(SourceLanguage::TypeScript)).unwrap()
+    extract(source, &file(TYPESCRIPT)).unwrap()
 }
 
 /// Build the standard step-file descriptor for the requested source language.
@@ -117,7 +117,7 @@ G('a user named {string}', async (name: string) => {
 });
 Then(/^the user exists$/, function () { expect(this.user).toBeTruthy(); });
 "#;
-    let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
+    let definitions = extract(source, &file(TYPESCRIPT)).unwrap();
     assert_eq!(definitions.len(), 2);
     assert_eq!(definitions[0].registration, "Given");
     assert_eq!(definitions[0].normalized_matcher, "a user named {string}");
@@ -133,7 +133,7 @@ import { createBdd } from 'playwright-bdd';
 const { Given: Setup, Then } = createBdd(test);
 Setup(`a loaded page`, async ({ page }) => { await page.goto('/'); });
 "#;
-    let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
+    let definitions = extract(source, &file(TYPESCRIPT)).unwrap();
     assert_eq!(definitions.len(), 1);
     assert_eq!(definitions[0].framework, PLAYWRIGHT_BDD);
     assert_eq!(definitions[0].registration, "Given");
@@ -147,7 +147,7 @@ import { Given as Setup, Then } from '@badeball/cypress-cucumber-preprocessor';
 Setup('a Cypress project', () => cy.visit('/'));
 Then('the page is visible', () => cy.get('main').should('be.visible'));
 "#;
-    let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
+    let definitions = extract(source, &file(TYPESCRIPT)).unwrap();
     assert_eq!(definitions.len(), 2);
     assert!(definitions
         .iter()
@@ -286,7 +286,7 @@ class JavaScriptSteps {
     for extension in ["js", "jsx"] {
         let source_file = SourceFile {
             path: PathBuf::from(format!("features/steps/example.{extension}")),
-            language: SourceLanguage::JavaScript,
+            language: JAVASCRIPT,
         };
         let extracted = extract_detailed(source, &source_file).unwrap();
         assert!(extracted.diagnostics.is_empty(), "{extension}");
@@ -382,7 +382,7 @@ class DynamicSteps {
   async prepare() { await work(); }
 }
 "#;
-    let file = file(SourceLanguage::TypeScript);
+    let file = file(TYPESCRIPT);
     let extracted = extract_detailed(source, &file).unwrap();
 
     assert!(extracted.definitions.is_empty());
@@ -519,7 +519,7 @@ class InvalidSteps {
   value = 1;
 }
 "#;
-    let extracted = extract_detailed(source, &file(SourceLanguage::TypeScript)).unwrap();
+    let extracted = extract_detailed(source, &file(TYPESCRIPT)).unwrap();
     assert!(extracted.definitions.is_empty());
     assert!(extracted.diagnostics.iter().any(|diagnostic| diagnostic
         .message
@@ -569,7 +569,7 @@ fn project_resolved_registrations_propagate_framework_metadata() {
         .unwrap();
         let file = SourceFile {
             path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         let source = fs::read_to_string(&file.path).unwrap();
         let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
@@ -606,7 +606,7 @@ fn mixed_framework_detection_is_scoped_to_each_source_file() {
         fs::write(&path, source).unwrap();
         let source_file = SourceFile {
             path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         let extracted = extract_detailed_impl(source, &source_file, &mut session).unwrap();
         assert_eq!(extracted.definitions.len(), 1, "{name}");
@@ -711,7 +711,7 @@ Then('the result is visible', () => verify());
     .unwrap();
     let file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let source = fs::read_to_string(&file.path).unwrap();
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -772,7 +772,7 @@ Given('an unrelated module is not assertion provenance', ({ state }) => localChe
     fs::write(&path, source).unwrap();
     let file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
@@ -840,7 +840,7 @@ fn project_resolves_commonjs_playwright_bdd_factory_aliases() {
         .unwrap();
         let file = SourceFile {
             path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         let source = fs::read_to_string(&file.path).unwrap();
         let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -872,7 +872,7 @@ fn project_resolves_reexported_runtime_registration_imports() {
         .unwrap();
         let file = SourceFile {
             path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         let source = fs::read_to_string(&file.path).unwrap();
         let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -924,7 +924,7 @@ PlaywrightGiven('through a factory chain', () => act());
     .unwrap();
     let file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let source = fs::read_to_string(&file.path).unwrap();
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -954,7 +954,7 @@ fn module_resolution_clears_active_paths_after_recoverable_errors() {
     .unwrap();
     let first_file = SourceFile {
         path: first_path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let first_source = fs::read_to_string(&first_file.path).unwrap();
     let first = extract_detailed_impl(&first_source, &first_file, &mut session).unwrap();
@@ -970,7 +970,7 @@ fn module_resolution_clears_active_paths_after_recoverable_errors() {
     .unwrap();
     let second_file = SourceFile {
         path: second_path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let second_source = fs::read_to_string(&second_file.path).unwrap();
     let second = extract_detailed_impl(&second_source, &second_file, &mut session).unwrap();
@@ -1015,7 +1015,7 @@ export const { Given } = createBdd();
         .unwrap();
         let file = SourceFile {
             path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         };
         let source = fs::read_to_string(&file.path).unwrap();
         let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
@@ -1053,7 +1053,7 @@ export const { Given } = (createBdd(test) as ReturnType<typeof createBdd>)!;
     .unwrap();
     let file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let source = fs::read_to_string(&file.path).unwrap();
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -1087,7 +1087,7 @@ export const { Given } = Factory(test);
     .unwrap();
     let file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let source = fs::read_to_string(&file.path).unwrap();
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
@@ -1106,19 +1106,19 @@ export const { Given } = Factory(test);
 fn alpha_fingerprint_ignores_local_renames_but_not_opposite_assertions() {
     let first = extract(
             "Then('visible', async ({ page }) => { const item = page.locator('x'); await expect(item).toBeVisible(); });",
-            &file(SourceLanguage::TypeScript),
+            &file(TYPESCRIPT),
         )
         .unwrap()
         .remove(0);
     let renamed = extract(
             "Then('shown', async ({ page }) => { const element = page.locator('x'); await expect(element).toBeVisible(); });",
-            &file(SourceLanguage::TypeScript),
+            &file(TYPESCRIPT),
         )
         .unwrap()
         .remove(0);
     let opposite = extract(
             "Then('hidden', async ({ page }) => { const item = page.locator('x'); await expect(item).not.toBeVisible(); });",
-            &file(SourceLanguage::TypeScript),
+            &file(TYPESCRIPT),
         )
         .unwrap()
         .remove(0);
@@ -1177,7 +1177,7 @@ When('unknown rule', () => another());
 // cuke-dedup:ignore unused-definition --
 When('empty reason', () => finalAction());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -1208,7 +1208,7 @@ fn rejects_oversized_inline_suppression_reasons() {
         &format!(
             "// cuke-dedup:ignore duplicate-handler -- {reason}\nGiven('step', () => work());"
         ),
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -1223,13 +1223,13 @@ fn rejects_oversized_inline_suppression_reasons() {
 fn structural_fingerprint_masks_string_literal_contents() {
     let first = extract(
         "Then('save', async ({ page }) => { await page.locator('#save').click(); });",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap()
     .remove(0);
     let second = extract(
         "Then('saves', async ({ page }) => { await page.locator('#saves').click(); });",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap()
     .remove(0);
@@ -1283,7 +1283,7 @@ fn behavior_signatures_canonicalize_calls_without_treating_await_as_behavior() {
             expected: &["call:v0#click"],
         },
     ] {
-        let definition = extract(case.source, &file(SourceLanguage::TypeScript))
+        let definition = extract(case.source, &file(TYPESCRIPT))
             .unwrap()
             .remove(0);
         assert_eq!(
@@ -1970,7 +1970,7 @@ Then('using loop binding', ({ state, resources }) => {
   for (using expect of resources) { expect(state).toBe('ready'); }
 });
 "#;
-    let definitions = extract(source, &file(SourceLanguage::JavaScript)).unwrap();
+    let definitions = extract(source, &file(JAVASCRIPT)).unwrap();
     assert_eq!(definitions.len(), 1);
     assert!(definitions[0]
         .handler
@@ -2241,7 +2241,7 @@ fn defaulted_destructured_parameters_preserve_initializer_behavior() {
 fn computed_callees_keep_the_structural_fallback() {
     let definition = extract(
         "Given('step', ({ page, method }) => page[method]());",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap()
     .remove(0);
@@ -2257,9 +2257,7 @@ somePromise.then('not a step', () => {});
 const { Given: G } = require('unrelated-lib');
 G('also not a step', () => {});
 "#;
-    assert!(extract(source, &file(SourceLanguage::JavaScript))
-        .unwrap()
-        .is_empty());
+    assert!(extract(source, &file(JAVASCRIPT)).unwrap().is_empty());
 }
 
 /// Verify extraction retains regex flags and decodes JavaScript hexadecimal and Unicode matcher escapes.
@@ -2267,7 +2265,7 @@ G('also not a step', () => {});
 fn retains_regex_flags_and_decodes_javascript_hex_escapes() {
     let definitions = extract(
         r#"Then(/^THE USER$/i, namedHandler); Given("letter \x41 and \u{1F600}", namedHandler);"#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 2);
@@ -2278,12 +2276,9 @@ fn retains_regex_flags_and_decodes_javascript_hex_escapes() {
 /// Verify raw regex flags are retained while matcher identity includes only canonical semantic flags.
 #[test]
 fn preserves_all_flags_but_normalizes_only_semantic_regex_flags() {
-    let definition = extract(
-        r"Then(/^VALUE$/ygusm, () => work());",
-        &file(SourceLanguage::JavaScript),
-    )
-    .unwrap()
-    .remove(0);
+    let definition = extract(r"Then(/^VALUE$/ygusm, () => work());", &file(JAVASCRIPT))
+        .unwrap()
+        .remove(0);
     assert_eq!(definition.matcher_flags, "ygusm");
     assert_eq!(definition.normalized_matcher, "[regex-flags:msu] ^VALUE$");
 }
@@ -2295,7 +2290,7 @@ fn resolves_named_handlers_to_bodies_without_cross_file_name_collisions() {
         "function handler() { doAlpha(); } Given('alpha step', handler);",
         &SourceFile {
             path: PathBuf::from("steps/a.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()
@@ -2304,7 +2299,7 @@ fn resolves_named_handlers_to_bodies_without_cross_file_name_collisions() {
         "function handler() { doBetaDifferently(); } Given('bravo step', handler);",
         &SourceFile {
             path: PathBuf::from("steps/b.ts"),
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
     )
     .unwrap()
@@ -2324,7 +2319,7 @@ fn resolves_named_handlers_to_bodies_without_cross_file_name_collisions() {
 fn resolves_bound_named_handlers_without_dropping_the_definition() {
     let definition = extract(
         "function handler() { doWork(); } Given('bound step', handler.bind(world));",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap()
     .remove(0);
@@ -2342,7 +2337,7 @@ Given('one', handler.bind(null, 1));
 Given('two', handler.bind(null, 2));
 Given('another one', handler.bind(null, 1));
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -2365,7 +2360,7 @@ Given('another one', handler.bind(null, 1));
 fn unresolved_handler_references_are_not_comparable() {
     let definition = extract(
         "import { handler } from './shared'; Given('a step', handler);",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap()
     .remove(0);
@@ -2389,7 +2384,7 @@ Given('promise stub', () => Promise.resolve());
 Given('void stub', () => void 0);
 Given('real handler', () => doWork());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 9);
@@ -2418,7 +2413,7 @@ Given('timer', () => world.suspendingTimer());
 Given('return value', () => { return 'the confirmed order id'; });
 Given('domain error', () => { throw new DomainError(order.id); });
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 4);
@@ -2435,7 +2430,7 @@ fn structural_templates_preserve_substitution_behavior() {
 Given('user name', () => render(`${user.firstName} ${user.lastName}`));
 Given('order total', () => render(`${order.subtotal + order.tax}`));
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert_ne!(
@@ -2449,7 +2444,7 @@ Given('order total', () => render(`${order.subtotal + order.tax}`));
 fn lowercase_registrations_require_supported_import_evidence() {
     let unrelated = extract(
             "function fn() { work(); } then('not a step', fn); const alias = then; alias('also not a step', fn);",
-            &file(SourceLanguage::JavaScript),
+            &file(JAVASCRIPT),
         )
         .unwrap();
     assert!(unrelated.is_empty());
@@ -2460,7 +2455,7 @@ import { createBdd } from 'playwright-bdd';
 const { given } = createBdd(test);
 given('a real step', () => work());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert_eq!(supported.len(), 1);
@@ -2469,7 +2464,7 @@ given('a real step', () => work());
         "// import { given } from '@cucumber/cucumber';\ngiven('phantom', () => work());",
         "const documentation = \"import { given } from 'playwright-bdd'\";\ngiven('phantom', () => work());",
     ] {
-        assert!(extract(source, &file(SourceLanguage::TypeScript))
+        assert!(extract(source, &file(TYPESCRIPT))
             .unwrap()
             .is_empty());
     }
@@ -2483,7 +2478,7 @@ fn regex_flag_encoding_cannot_collide_with_literal_matcher_text() {
 Given(/^a step here$/i, () => first());
 Given('a step here /i', () => second());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert_ne!(
@@ -2501,7 +2496,7 @@ fn resolves_supported_registration_import_shapes_and_alias_chains() {
         "const G = Given; const H = G; H('step', () => work());",
         "const { given: g } = require('@cucumber/cucumber'); const h = g; h('step', () => work());",
     ] {
-        let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
+        let definitions = extract(source, &file(TYPESCRIPT)).unwrap();
         assert_eq!(definitions.len(), 1, "source: {source}");
     }
 }
@@ -2518,7 +2513,7 @@ fn runtime_absent_and_shadowed_registrations_are_ignored() {
         "class Given {} Given('phantom', () => work());",
         "type Given = (name: string) => void; export type { Given }; Given('phantom', () => work());",
     ] {
-        let definitions = extract(source, &file(SourceLanguage::TypeScript)).unwrap();
+        let definitions = extract(source, &file(TYPESCRIPT)).unwrap();
         assert!(definitions.is_empty(), "source: {source}");
     }
 }
@@ -2545,7 +2540,7 @@ Given('ambient runtime registration', () => work());
         source,
         &SourceFile {
             path,
-            language: SourceLanguage::TypeScript,
+            language: TYPESCRIPT,
         },
         &mut session,
     )
@@ -2584,7 +2579,7 @@ Given(/value (?=ahead)/, () => work());
 Given('broken \xZZ', () => broken());
 Given('valid step', () => valid());
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(extracted.definitions.len(), 2);
@@ -2629,16 +2624,13 @@ fn supported_regexes_remain_authoritative_under_resource_limits() {
 #[test]
 fn grammar_limitations_stay_incomplete() {
     let controls = [
+        (TSX, "const n=<panel>body</panel>; Given('clean',()=>n);"),
         (
-            SourceLanguage::Tsx,
-            "const n=<panel>body</panel>; Given('clean',()=>n);",
-        ),
-        (
-            SourceLanguage::TypeScript,
+            TYPESCRIPT,
             "const x=<T>(v:T)=>v; const b=1<2; Given('clean',()=>x(b));",
         ),
         (
-            SourceLanguage::JavaScript,
+            JAVASCRIPT,
             "import x from './x.json' with {type:'json'}; Given('clean',()=>x);",
         ),
     ];
@@ -2648,31 +2640,22 @@ fn grammar_limitations_stay_incomplete() {
         assert_eq!(extracted.definitions.len(), 1, "{source}");
     }
     let limitations = [
+        (TYPESCRIPT, "const x=f<typeof import('x')>();"),
+        (TYPESCRIPT, "const x=tag.a<{on:boolean}>`x`;"),
+        (TYPESCRIPT, "export type * as ns from './x';"),
+        (TYPESCRIPT, "type F=(string)=>void;"),
+        (TYPESCRIPT, "type T=import('x').T[];"),
         (
-            SourceLanguage::TypeScript,
-            "const x=f<typeof import('x')>();",
-        ),
-        (
-            SourceLanguage::TypeScript,
-            "const x=tag.a<{on:boolean}>`x`;",
-        ),
-        (
-            SourceLanguage::TypeScript,
-            "export type * as ns from './x';",
-        ),
-        (SourceLanguage::TypeScript, "type F=(string)=>void;"),
-        (SourceLanguage::TypeScript, "type T=import('x').T[];"),
-        (
-            SourceLanguage::TypeScript,
+            TYPESCRIPT,
             "const x={} as unknown as (typeof module)['key'];",
         ),
-        (SourceLanguage::Tsx, "const x=<a href='?a=1&b=2' />;"),
-        (SourceLanguage::Tsx, "const x=<a>a&b</a>;"),
-        (SourceLanguage::Tsx, "const x=<a>&#128465;</a>;"),
-        (SourceLanguage::Tsx, "const x=<a title='&#128465;' />;"),
-        (SourceLanguage::JavaScript, "const x=<a href='?a=1&b=2' />;"),
-        (SourceLanguage::JavaScript, "const x=<a>&#128465;</a>;"),
-        (SourceLanguage::JavaScript, "const x=<button in />;"),
+        (TSX, "const x=<a href='?a=1&b=2' />;"),
+        (TSX, "const x=<a>a&b</a>;"),
+        (TSX, "const x=<a>&#128465;</a>;"),
+        (TSX, "const x=<a title='&#128465;' />;"),
+        (JAVASCRIPT, "const x=<a href='?a=1&b=2' />;"),
+        (JAVASCRIPT, "const x=<a>&#128465;</a>;"),
+        (JAVASCRIPT, "const x=<button in />;"),
     ];
     for (language, construct) in limitations {
         let source =
@@ -2701,7 +2684,7 @@ fn deeply_nested_handlers_do_not_use_the_process_stack() {
         "[".repeat(depth),
         "]".repeat(depth)
     );
-    let extracted = extract_detailed(&source, &file(SourceLanguage::TypeScript)).unwrap();
+    let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
     assert_eq!(extracted.definitions.len(), 1);
 }
 
@@ -2710,7 +2693,7 @@ fn deeply_nested_handlers_do_not_use_the_process_stack() {
 fn source_locations_count_unicode_code_points() {
     let definition = extract(
         "const prefix = '日本語'; Given('unicode column', () => work());",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap()
     .remove(0);
@@ -2722,7 +2705,7 @@ fn source_locations_count_unicode_code_points() {
 fn generator_handlers_are_extracted_and_comparable() {
     let definitions = extract(
         "Given('generator', function* () { yield performWork(); });",
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 1);
@@ -2734,7 +2717,7 @@ fn generator_handlers_are_extracted_and_comparable() {
 fn dynamic_matchers_and_handlers_emit_diagnostics_instead_of_disappearing() {
     let extracted = extract_detailed(
         "Given(dynamicMatcher, () => work()); Given('wrapped', wrap(handler)); Given('object handler', { timeout: 1 }); Given('missing handler');",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert_eq!(extracted.definitions.len(), 1);
@@ -2771,7 +2754,7 @@ fn unresolved_registration_shaped_calls_are_visible_without_flagging_helpers() {
     ];
 
     for (source, expected_calls) in cases {
-        let extracted = extract_detailed(source, &file(SourceLanguage::TypeScript)).unwrap();
+        let extracted = extract_detailed(source, &file(TYPESCRIPT)).unwrap();
         assert!(extracted.definitions.is_empty(), "{source}");
         let completeness = extracted
             .diagnostics
@@ -2799,7 +2782,7 @@ fn unresolved_registration_imports_name_the_module_in_diagnostics() {
         "import { Given } from '@company/bdd'; Given('missing', () => work());",
         "import * as bdd from '@company/bdd'; bdd.Given('missing', () => work());",
     ] {
-        let extracted = extract_detailed(source, &file(SourceLanguage::TypeScript)).unwrap();
+        let extracted = extract_detailed(source, &file(TYPESCRIPT)).unwrap();
         let diagnostics = extracted
             .diagnostics
             .iter()
@@ -2819,11 +2802,8 @@ fn unresolved_registration_imports_name_the_module_in_diagnostics() {
 /// Verify an unsupported matcher on a resolved registration reports matcher incompleteness rather than unresolved provenance.
 #[test]
 fn resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved() {
-    let extracted = extract_detailed(
-        "Given(dynamicMatcher, () => work());",
-        &file(SourceLanguage::TypeScript),
-    )
-    .unwrap();
+    let extracted =
+        extract_detailed("Given(dynamicMatcher, () => work());", &file(TYPESCRIPT)).unwrap();
 
     assert!(extracted.definitions.is_empty());
     assert!(extracted
@@ -2849,7 +2829,7 @@ import { Then } from '@company/bdd';
 Given('visible step', () => visible());
 Then('invisible step', () => invisible());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -2881,7 +2861,7 @@ bdd['Then']('subscripted', () => seventh());
 bdd['Th\u0065n']('escaped subscript', () => eighth());
 (bdd as typeof bdd).When('wrapped namespace', () => ninth());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -2911,7 +2891,7 @@ import * as custom from '@company/bdd';
 Given('visible step', () => visible());
 custom['Then']('invisible step', () => invisible());
 "#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -2930,7 +2910,7 @@ custom['Then']('invisible step', () => invisible());
 fn computed_subscripts_and_lowercase_then_calls_are_not_registration_evidence() {
     let extracted = extract_detailed(
         "const property = 'Then'; custom[property]('dynamic', handler); promise['then'](handler);",
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
 
@@ -2950,7 +2930,7 @@ fn deeply_parenthesized_registration_callees_are_unwrapped_iteratively() {
         "(".repeat(depth),
         ")".repeat(depth)
     );
-    let extracted = extract_detailed(&source, &file(SourceLanguage::TypeScript)).unwrap();
+    let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
 
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].matcher, "deep");
@@ -3142,9 +3122,7 @@ fn configured_assertion_modules_are_trusted_in_every_import_form() {
             "{header}\nimport {{ Given }} from '@cucumber/cucumber';\n\
              Given('a declared factory', () => {factory}(gauge()).toBe(1));"
         );
-        let extracted =
-            extract_detailed_impl(&source, &file(SourceLanguage::TypeScript), &mut session)
-                .unwrap();
+        let extracted = extract_detailed_impl(&source, &file(TYPESCRIPT), &mut session).unwrap();
         assert_eq!(extracted.definitions.len(), 1, "{header}");
         extracted.definitions[0]
             .handler
@@ -3178,8 +3156,7 @@ fn configured_registration_names_override_inference_without_duplicating_known_al
     let mut session =
         TypeScriptExtractionSession::for_root(std::path::Path::new("."), &configured, &[]);
     let source = "function step(text, handler) { dynamic(text, handler); }\nstep('configured', () => work());";
-    let extracted =
-        extract_detailed_impl(source, &file(SourceLanguage::TypeScript), &mut session).unwrap();
+    let extracted = extract_detailed_impl(source, &file(TYPESCRIPT), &mut session).unwrap();
     assert_eq!(extracted.definitions.len(), 1);
     assert_eq!(extracted.definitions[0].registration, "step");
 }
@@ -3237,7 +3214,7 @@ Shape('not a step', () => work());"#,
         r#"import { type Given as Shape, When as Setup } from '@company/bdd';
 Setup('missing', () => work());
 Shape('not a registration', () => work());"#,
-        &file(SourceLanguage::TypeScript),
+        &file(TYPESCRIPT),
     )
     .unwrap();
     assert!(extracted.definitions.is_empty());
@@ -3293,24 +3270,18 @@ others.Given('not a step', () => work());"#,
 #[test]
 fn language_adapters_reject_sources_from_another_language() {
     let error = TYPESCRIPT_ADAPTER
-        .extract(
-            "Given('a step', () => work());",
-            &file(SourceLanguage::JavaScript),
-        )
+        .extract("Given('a step', () => work());", &file(JAVASCRIPT))
         .unwrap_err()
         .to_string();
     assert!(
         error.contains("typescript adapter cannot parse")
-            && error.contains("JavaScript")
+            && error.contains("`javascript`")
             && error.contains("features/steps/example.ts"),
         "{error}"
     );
 
     let error = JAVASCRIPT_ADAPTER
-        .extract(
-            "Given('a step', () => work());",
-            &file(SourceLanguage::TypeScript),
-        )
+        .extract("Given('a step', () => work());", &file(TYPESCRIPT))
         .unwrap_err()
         .to_string();
     assert!(error.contains("javascript adapter cannot parse"), "{error}");
@@ -3381,17 +3352,13 @@ class Steps {{
 "#
         )
     };
-    let first = extract(&source("makePage()"), &file(SourceLanguage::JavaScript)).unwrap();
+    let first = extract(&source("makePage()"), &file(JAVASCRIPT)).unwrap();
     let renamed = extract(
         &source("makePage()").replace("page", "tab"),
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
-    let other = extract(
-        &source("makeOtherPage()"),
-        &file(SourceLanguage::JavaScript),
-    )
-    .unwrap();
+    let other = extract(&source("makeOtherPage()"), &file(JAVASCRIPT)).unwrap();
 
     assert_eq!(first.len(), 1);
     assert_eq!(
@@ -3423,7 +3390,7 @@ function register() {
   Given('a nested registration', run);
 }
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(nested.len(), 1);
@@ -3435,7 +3402,7 @@ var run = () => firstAction();
 var run = () => secondAction();
 Given('a redeclared registration', run);
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(redeclared.len(), 1);
@@ -3477,7 +3444,7 @@ Given('undefined stub', () => undefined);
 Given('thrown marker stub', () => { throw pending; });
 Given('real handler', () => doWork());
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 4);
@@ -3498,7 +3465,7 @@ fn calls_on_unnameable_receivers_keep_their_structural_callee() {
 Given('literal receiver', () => 'the value'.trim());
 Given('other literal receiver', () => 'the value'.trimEnd());
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 2);
@@ -3525,7 +3492,7 @@ fn comments_do_not_change_normalized_handler_fingerprints() {
 Given('with comment', () => { /* explain the wait */ work(); });
 Given('without comment', () => { work(); });
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 2);
@@ -4123,7 +4090,7 @@ Then('a facade require namespace is not', ({ state }) => facade.expect(state).to
     fs::write(&path, source).unwrap();
     let file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
 
@@ -4160,7 +4127,7 @@ Given('first', (page, other) => { const alias = page; alias.goto('/'); });
 Given('second', (tab, extra) => { const copy = tab; copy.goto('/'); });
 Given('third', (page, other) => { const alias = other; alias.goto('/'); });
 "#,
-        &file(SourceLanguage::JavaScript),
+        &file(JAVASCRIPT),
     )
     .unwrap();
     assert_eq!(definitions.len(), 3);
@@ -4231,7 +4198,7 @@ fn extract_in_project(files: &[(&str, &str)], source: &str) -> Extraction {
     fs::write(&path, source).unwrap();
     let source_file = SourceFile {
         path,
-        language: SourceLanguage::TypeScript,
+        language: TYPESCRIPT,
     };
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
     extract_detailed_impl(source, &source_file, &mut session).unwrap()
@@ -4534,7 +4501,7 @@ fn passing_a_registration_to_a_function_is_reported() {
 fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, label: &str) -> usize {
     let mut parser = Parser::new();
     parser
-        .set_language(&grammar_for_language(language))
+        .set_language(&crate::typescript::grammar(language).unwrap())
         .unwrap();
     let tree = parser.parse(source, None).unwrap();
     let (root, bytes) = (tree.root_node(), source.as_bytes());
@@ -4708,7 +4675,7 @@ class Steps {
 }
 const DECLARED_AFTER = 'late';
 "#;
-    let compared = assert_literal_cache_matches_walk(matrix, SourceLanguage::TypeScript, "matrix");
+    let compared = assert_literal_cache_matches_walk(matrix, TYPESCRIPT, "matrix");
     assert!(compared >= 85, "matrix compared only {compared} callables");
 
     let (mut files, mut directories) = (Vec::new(), vec![PathBuf::from("fixtures")]);
@@ -4718,7 +4685,7 @@ const DECLARED_AFTER = 'late';
             if path.is_dir() {
                 directories.push(path);
             } else if let Some(language) = crate::source_adapter::language_for_path(&path)
-                .filter(|language| *language != SourceLanguage::Ruby)
+                .filter(|language| *language != crate::ruby::RUBY)
             {
                 files.push((path, language));
             }
@@ -4785,7 +4752,7 @@ fn module_cache_holds_every_safe_alias_pair() {
     let counts = |source: &str| {
         let mut parser = Parser::new();
         parser
-            .set_language(&grammar_for_language(SourceLanguage::TypeScript))
+            .set_language(&crate::typescript::grammar(TYPESCRIPT).unwrap())
             .unwrap();
         let tree = parser.parse(source, None).unwrap();
         ModuleScope::new(tree.root_node()).cache_counts(source.as_bytes())
@@ -4822,4 +4789,23 @@ fn handler_representations_are_digests_for_every_handler_shape() {
     assert_eq!(definitions[1].handler.exact, definitions[3].handler.exact);
     assert_ne!(definitions[1].handler.exact, definitions[0].handler.exact);
     assert_ne!(definitions[1].handler.exact, definitions[2].handler.exact);
+}
+
+/// Each JavaScript/TypeScript language selects a grammar that parses a representative source
+/// without syntax errors; another adapter's language or an undeclared one selects none.
+#[test]
+fn ecmascript_languages_select_their_grammar() {
+    for (language, source) in [
+        (JAVASCRIPT, "const value = 1;"),
+        (TYPESCRIPT, "const value: number = 1;"),
+        (TSX, "const value = <div />;"),
+    ] {
+        let mut parser = Parser::new();
+        parser.set_language(&grammar(language).unwrap()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "{language:?}");
+    }
+    for language in [crate::ruby::RUBY, SourceLanguage::new("python")] {
+        assert!(grammar(language).is_none(), "{language:?}");
+    }
 }

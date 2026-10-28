@@ -116,7 +116,7 @@ test("oracle clauses resolve only against real oracle members with their observe
 
 /** Checks Ruby evidence detection reads only the selected function body and handles literals, comments, lifetimes, and Ruby-specific suites. */
 test("a test body counts as Ruby evidence only when it exercises Ruby input", () => {
-  const content = "#[test]\nfn ruby_case() {\n  write(\"steps.rb\", source);\n}\n#[test]\nfn js_case() {\n  write(\"steps.ts\", { nested: 1 });\n}\n/// Runs a Ruby project with an optional definition pattern.\nfn ruby_helper() {}\n#[test]\nfn lang_case() {\n  SourceLanguage::Ruby\n}\n";
+  const content = "#[test]\nfn ruby_case() {\n  write(\"steps.rb\", source);\n}\n#[test]\nfn js_case() {\n  write(\"steps.ts\", { nested: 1 });\n}\n/// Runs a Ruby project with an optional definition pattern.\nfn ruby_helper() {}\n#[test]\nfn lang_case() {\n  crate::ruby::RUBY\n}\n";
   assert.ok(testBodyMentionsRuby(content, "ruby_case"));
   // The slice stops at the test's closing brace: the Ruby helper doc after js_case is not its body.
   assert.ok(!testBodyMentionsRuby(content, "js_case"));
@@ -129,6 +129,11 @@ test("a test body counts as Ruby evidence only when it exercises Ruby input", ()
   assert.ok(testBodyMentionsRuby("fn f() {\n  set_framework(def, CUCUMBER_RUBY);\n}", "f"));
   assert.ok(testBodyMentionsRuby("fn f() {\n  Framework::new(\"cucumber-ruby\")\n}", "f"));
   assert.ok(!testBodyMentionsRuby("fn f() {\n  set_framework(def, CUCUMBER_JS);\n}", "f"));
+  // Ruby's language id names Ruby input, through the adapter constant or the public id; another
+  // adapter's language does not.
+  assert.ok(testBodyMentionsRuby("fn f() {\n  SourceLanguage::new(\"ruby\")\n}", "f"));
+  assert.ok(!testBodyMentionsRuby("fn f() {\n  crate::typescript::TYPESCRIPT\n}", "f"));
+  assert.ok(!testBodyMentionsRuby("fn f() {\n  SourceLanguage::new(\"python\")\n}", "f"));
   // Braces inside strings, raw strings and comments do not end or extend the body.
   const malformed = "fn writes_broken() {\n  write(\"Given('broken', () => {\\n\");\n  let raw = r#\"fn x() { \"#; // } not a close\n}\nfn ruby_next() {\n  write(\"steps.rb\", s);\n}\n";
   assert.equal(functionBody(malformed, "writes_broken").endsWith("// } not a close\n}"), true);

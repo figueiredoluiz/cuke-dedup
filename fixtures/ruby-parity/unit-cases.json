@@ -3011,16 +3011,6 @@
           "behaviorClass": "ruby-behavior"
         },
         {
-          "name": "source_languages_select_their_registered_tree_sitter_grammar",
-          "requiredStatus": "rust-evidence",
-          "evidenceTest": {
-            "file": "src/source_adapter/tests.rs",
-            "name": "source_languages_select_their_registered_tree_sitter_grammar"
-          },
-          "rationale": "Parses a Ruby registration with the Ruby grammar entry of the adapter table beside the ECMAScript grammars, in-process.",
-          "behaviorClass": "ruby-behavior"
-        },
-        {
           "name": "every_registration_has_a_unique_suffix_and_produces_shared_ir",
           "requiredStatus": "engine-invariant",
           "stage": "session-plumbing",
@@ -3072,7 +3062,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_library_routes_and_sessions_share_state_beside_ecmascript"
           },
-          "rationale": "adapter_for_path(\"steps.rb\") and adapter_for_language(Ruby) both have the data address of the single `.rb` SOURCE_ADAPTER_REGISTRY entry, name `cucumber-ruby` and language Ruby, and language_for_path(\"steps.rb\") is Ruby.",
+          "rationale": "adapter_for_path(\"steps.rb\") and adapter_for_language(ruby::RUBY) both have the data address of the single `.rb` SOURCE_ADAPTER_REGISTRY entry, name `cucumber-ruby` and language id `ruby`, and language_for_path(\"steps.rb\") is ruby::RUBY.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -3174,6 +3164,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
           "rationale": "Adapter-independent stage `api-shape`: the crate-internal `FrameworkContract` builders and `policy_of` fallback over a caller-built id; no adapter declares or produces the values.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "source_languages_are_open_ids_declared_by_adapters",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "unregistered_languages_fail_at_extraction_entry_points",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -4841,6 +4845,12 @@
           "name": "control_flow_behavior_events_map_typescript_node_kinds_only",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: TypeScript tree-sitter node-kind mapping to control-flow events. Semantic residue: Ruby control-flow events are pinned by `action_streams_compare_ordinary_handlers_like_the_typescript_frontend`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "ecmascript_languages_select_their_grammar",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JavaScript/TypeScript grammar selection by language id; the Ruby adapter uses its grammar directly, with no lookup. Semantic residue: none.",
           "behaviorClass": "language-specific-api"
         }
       ]

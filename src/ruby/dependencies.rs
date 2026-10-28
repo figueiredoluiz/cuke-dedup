@@ -7,7 +7,7 @@ use crate::resource_limits::{
     known_input_limit_exceeded, read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES,
     MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
 };
-use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile, SourceLanguage};
+use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile};
 use globset::GlobSet;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ pub(crate) fn resolve(config: &Config, excludes: &GlobSet, files: &mut Discovere
     if !files
         .definitions
         .iter()
-        .any(|file| file.language == SourceLanguage::Ruby)
+        .any(|file| file.language == super::RUBY)
     {
         return;
     }
@@ -119,7 +119,7 @@ fn resolve_graph(
     let mut queue: VecDeque<_> = files
         .definitions
         .iter()
-        .filter(|f| f.language == SourceLanguage::Ruby)
+        .filter(|f| f.language == super::RUBY)
         .cloned()
         .collect();
     // An entry point that cannot be canonicalized loses only its own edges; extraction reports it.
@@ -133,7 +133,7 @@ fn resolve_graph(
     let mut skipped: std::collections::BTreeMap<_, _> = files
         .skipped_definitions
         .iter()
-        .filter(|file| file.language == SourceLanguage::Ruby)
+        .filter(|file| file.language == super::RUBY)
         .filter_map(|file| Some((canonical_platform_path(&file.path).ok()?, file.path.clone())))
         .collect();
     let mut promoted = BTreeSet::new();
@@ -236,7 +236,7 @@ fn resolve_graph(
                 }
                 let source_file = SourceFile {
                     path: target.clone(),
-                    language: SourceLanguage::Ruby,
+                    language: super::RUBY,
                 };
                 files.definitions.push(source_file.clone());
                 queue.push_back(source_file);

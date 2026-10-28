@@ -481,6 +481,15 @@ fn extract_corpus(
     corpus
 }
 
+/// The adapter of a discovered source: discovery selects only languages a registered adapter
+/// declares.
+fn discovered_adapter(
+    file: &source_adapter::SourceFile,
+) -> &'static dyn source_adapter::SourceAdapter {
+    source_adapter::adapter_for_language(file.language)
+        .expect("discovery selects only registered languages")
+}
+
 /// Extracts definitions through one shared session that carries discovered edges and gaps.
 fn extract_definitions(
     config: &Config,
@@ -510,7 +519,7 @@ fn extract_definitions(
     .with_dependency_gaps(&files.dependency_gaps);
     let mut prepared = BTreeSet::new();
     for file in &files.definitions {
-        let adapter = source_adapter::adapter_for_language(file.language);
+        let adapter = discovered_adapter(file);
         if prepared.insert(adapter.name()) {
             if let Err(error) = adapter.prepare_session(&files.definitions, &mut extraction_session)
             {
@@ -526,7 +535,7 @@ fn extract_definitions(
         // Generated bundles, compressed payloads and binary blobs reach here whenever they carry
         // a source extension. They cannot contain an authored definition, so they are excluded
         // before parsing rather than analyzed and discarded.
-        let adapter = source_adapter::adapter_for_language(file.language);
+        let adapter = discovered_adapter(file);
         if let Some(excluded) = adapter.inspect_source(file, &config.registrations) {
             // Every one of these signals is a heuristic over file content, not a proof: a NUL
             // byte or an archive header can appear inside an authored comment or string, and
