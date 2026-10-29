@@ -6602,6 +6602,13 @@
           },
           "rationale": "The Ruby registry-reader test follows a `require_relative` load through the registered Ruby adapter's dependency discovery and finalizes a rooted session with its state.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "caller_framework_contracts_discover_feature_patterns",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: the adapter and its descriptor are caller-built test doubles of neither language; the built-in Cucumber.js contract appears only as the precedence control.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

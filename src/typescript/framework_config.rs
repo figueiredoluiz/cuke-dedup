@@ -32,23 +32,19 @@ const CYPRESS_PREPROCESSORS: [&str; 2] = [
 const BROAD_FEATURES: &str = "**/*.{feature,feature.md}";
 
 /// Recognized Playwright-BDD configuration.
-pub(crate) const PLAYWRIGHT_BDD_DISCOVERY: FrameworkDescriptor = FrameworkDescriptor {
-    name: "Playwright-BDD",
-    discover: playwright_discovery,
-};
+pub(crate) const PLAYWRIGHT_BDD_DISCOVERY: FrameworkDescriptor =
+    FrameworkDescriptor::new("Playwright-BDD", playwright_discovery);
 
 /// Cypress configuration, when a supported Cucumber preprocessor dependency is present.
-pub(crate) const CYPRESS_CUCUMBER_DISCOVERY: FrameworkDescriptor = FrameworkDescriptor {
-    name: "Cypress Cucumber",
-    discover: cypress_discovery,
-};
+pub(crate) const CYPRESS_CUCUMBER_DISCOVERY: FrameworkDescriptor =
+    FrameworkDescriptor::new("Cypress Cucumber", cypress_discovery);
 
 /// Cucumber configuration files, scripted ones in the JavaScript and TypeScript extensions, else
 /// default paths when a Cucumber dependency is present.
-pub(crate) const CUCUMBER_JS_DISCOVERY: FrameworkDescriptor = FrameworkDescriptor {
-    name: "Cucumber.js",
-    discover: |input| cucumber_discovery(input, &[SCRIPT_CONFIG_READER]),
-};
+pub(crate) const CUCUMBER_JS_DISCOVERY: FrameworkDescriptor =
+    FrameworkDescriptor::new("Cucumber.js", |input| {
+        cucumber_discovery(input, &[SCRIPT_CONFIG_READER])
+    });
 
 /// Reads scripted configuration in the JavaScript and TypeScript module extensions.
 const SCRIPT_CONFIG_READER: ScriptConfigReader = ScriptConfigReader {
@@ -89,11 +85,9 @@ fn cypress_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
         }
         LiteralProperty::Missing => return Ok(None),
     };
-    Ok(Some(DiscoveredFeatures {
-        patterns,
-        source: path.to_path_buf(),
-        warnings,
-    }))
+    Ok(Some(
+        DiscoveredFeatures::new(patterns, path.to_path_buf()).with_warnings(warnings),
+    ))
 }
 
 /// Reads defineBddConfig feature paths or roots statically, supplying defaults for missing values and warnings for dynamic values.
@@ -133,11 +127,9 @@ fn playwright_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
             LiteralProperty::Missing => vec!["features/**/*.feature".to_owned()],
         },
     };
-    Ok(Some(DiscoveredFeatures {
-        patterns,
-        source: path.to_path_buf(),
-        warnings,
-    }))
+    Ok(Some(
+        DiscoveredFeatures::new(patterns, path.to_path_buf()).with_warnings(warnings),
+    ))
 }
 
 /// Reads a static property from a matching call or object, preferring an object-valued default profile when no call is specified.

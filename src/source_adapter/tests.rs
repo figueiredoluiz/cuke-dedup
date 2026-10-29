@@ -1254,15 +1254,12 @@ fn public_framework_contracts_start_without_discovery_or_excludes() {
     );
 }
 
-/// The crate-internal builders attach discovery and a policy, and `policy_of` falls back to the
+/// The contract builders attach discovery and a policy, and `policy_of` falls back to the
 /// adapter default for a contract without one and for an id no contract declares.
 #[test]
 fn contract_builders_attach_discovery_and_policy() {
     let framework = Framework::new("external-framework");
-    let discovery = crate::framework_descriptor::FrameworkDescriptor {
-        name: "External",
-        discover: |_| Ok(None),
-    };
+    let discovery = FrameworkDescriptor::new("External", |_| Ok(None));
     let default = AnalysisPolicy::default();
     let local = AnalysisPolicy::new(
         default.domain(),
