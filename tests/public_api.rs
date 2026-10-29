@@ -1211,6 +1211,11 @@ impl<'de> serde::Deserialize<'de> for PanicsOnRead {
     }
 }
 
+/// A clone made through the `Clone` bound alone, so the seed's own `Clone` impl runs.
+fn cloned<T: Clone>(value: &T) -> T {
+    value.clone()
+}
+
 /// Checks a caller framework id reads back only through a registry that declares it: the
 /// registry lookup, `FrameworkSeed`, and `RegistrySeed` over a definition, a list, an analysis
 /// result and a nested seed. A caller-only registry replaces the built-in ids, and plain
@@ -1283,7 +1288,7 @@ fn caller_framework_ids_read_back_through_their_registry() {
 
     // One seed reads several values: it is `Copy` and `Clone` whatever `T` is.
     let seed = RegistrySeed::<StepDefinition>::new(&extended);
-    let reused = <RegistrySeed<'_, StepDefinition> as Clone>::clone(&seed);
+    let reused = cloned(&seed);
     for (seed, json, framework) in [
         (seed, &caller_json, caller),
         (reused, &cucumber_json, cucumber),
