@@ -277,6 +277,9 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   first match sets the patterns and their origin; its patterns are normalized like Cucumber
   `paths`. A descriptor error becomes a configuration warning, except an input-limit error from
   `DiscoveryInput::read`.
+  `Framework` and the types holding one (`StepDefinition`, `AnalysisResult`) deserialize against
+  the built-in adapters; a caller framework id reads back through `AdapterRegistry::framework`,
+  `FrameworkSeed` or `RegistrySeed<T>`, which reads any `T` with a registry's ids in scope.
 - An adapter not discovered by default is selected only by definition patterns that depend on its
   suffix. Ruby owns its configuration keys: the `ruby`
   section and the flat `rubyLoadPaths` alias are flattened into the core config from

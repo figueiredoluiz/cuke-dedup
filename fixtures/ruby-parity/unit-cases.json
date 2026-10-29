@@ -6648,6 +6648,13 @@
           "stage": "config-decoding",
           "rationale": "Adapter-independent stage `config-decoding`: the adapter and its descriptor are caller-built test doubles of neither language; the built-in Cucumber.js contract appears only as the precedence control.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "caller_framework_ids_read_back_through_their_registry",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: framework ids resolve against the seeding registry; the adapter is a caller-built test double and the Cucumber.js id appears only as the built-in control.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

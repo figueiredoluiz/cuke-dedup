@@ -914,6 +914,26 @@ impl AdapterRegistry {
             })
     }
 
+    /// The framework `id` names: [`Framework::UNKNOWN`] or a framework a registered contract
+    /// declares; `None` for any other id.
+    pub fn framework(&self, id: &str) -> Option<Framework> {
+        self.declared_frameworks()
+            .find(|framework| framework.id() == id)
+    }
+
+    /// [`Framework::UNKNOWN`] followed by every registered contract's framework.
+    pub(crate) fn frameworks(&self) -> Vec<Framework> {
+        self.declared_frameworks().collect()
+    }
+
+    /// [`Framework::UNKNOWN`] followed by every registered contract's framework, lazily.
+    fn declared_frameworks(&self) -> impl Iterator<Item = Framework> + '_ {
+        std::iter::once(Framework::UNKNOWN).chain(
+            self.framework_contracts()
+                .map(|contract| contract.framework),
+        )
+    }
+
     /// `core` followed by the default exclude globs every registered adapter declares, its own
     /// before its frameworks', in registry order without repeats.
     pub(crate) fn default_excludes(&self, core: &[&'static str]) -> Vec<&'static str> {
