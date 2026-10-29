@@ -75,7 +75,8 @@ pub enum MatcherKind {
 
 /// Step-definition framework inferred from a source file: an open id that the language adapter
 /// declaring the framework defines. It serializes as the id (`"cucumber-js"`); deserialization
-/// accepts [`Framework::UNKNOWN`] and the ids registered adapters declare, and rejects any other.
+/// accepts [`Framework::UNKNOWN`] and the ids built-in adapters declare, and rejects any other.
+/// [`FrameworkSeed`] and [`RegistrySeed`] read ids against another registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Framework(&'static str);
 
@@ -83,8 +84,8 @@ impl Framework {
     /// No framework could be attributed.
     pub const UNKNOWN: Self = Self("unknown");
 
-    /// A framework with the given report id. Serialized definitions read back only when a
-    /// registered adapter declares the id through `SourceAdapter::framework_contracts`.
+    /// A framework with the given report id. A serialized id reads back only through a registry
+    /// whose adapter declares it with `SourceAdapter::framework_contracts`.
     pub const fn new(id: &'static str) -> Self {
         Self(id)
     }
@@ -102,26 +103,109 @@ impl Serialize for Framework {
     }
 }
 
-impl<'de> Deserialize<'de> for Framework {
-    /// Reads an id declared by a registered adapter, or `unknown`; any other id is an error.
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id = String::deserialize(deserializer)?;
-        let known = || {
-            std::iter::once(Self::UNKNOWN).chain(
-                crate::source_adapter::AdapterRegistry::builtin()
-                    .framework_contracts()
-                    .map(|contract| contract.framework),
-            )
-        };
-        known().find(|framework| framework.0 == id).ok_or_else(|| {
-            let mut expected: Vec<&str> = known().map(Self::id).collect();
+thread_local! {
+    /// Frameworks a [`RegistrySeed`] admits while it reads its value; `None` reads
+    /// against the built-in registry.
+    static SEEDED_FRAMEWORKS: std::cell::RefCell<Option<Vec<Framework>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Frameworks the built-in registry declares, built on first use.
+static BUILTIN_FRAMEWORKS: std::sync::LazyLock<Vec<Framework>> =
+    std::sync::LazyLock::new(|| crate::source_adapter::AdapterRegistry::builtin().frameworks());
+
+/// The framework among `known` whose id is `id`, or an error listing the accepted ids.
+fn resolve_framework(id: &str, known: &[Framework]) -> Result<Framework, String> {
+    known
+        .iter()
+        .copied()
+        .find(|framework| framework.0 == id)
+        .ok_or_else(|| {
+            let mut expected: Vec<&str> = known.iter().map(|framework| framework.0).collect();
             expected.sort_unstable();
             expected.dedup();
-            serde::de::Error::custom(format!(
+            format!(
                 "unknown framework `{id}`, expected one of {}",
                 expected.join(", ")
-            ))
+            )
         })
+}
+
+impl<'de> Deserialize<'de> for Framework {
+    /// Reads an id declared by a built-in adapter, or `unknown`; any other id is an error. Inside
+    /// a [`RegistrySeed`] the seed's registry decides instead.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        SEEDED_FRAMEWORKS
+            .with_borrow(|seeded| match seeded {
+                Some(known) => resolve_framework(&id, known),
+                None => resolve_framework(&id, &BUILTIN_FRAMEWORKS),
+            })
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Reads one [`Framework`] id against a registry: `unknown` or an id one of its contracts
+/// declares. [`Framework`]'s own `Deserialize` reads against the built-in registry.
+pub type FrameworkSeed<'a> = RegistrySeed<'a, Framework>;
+
+/// Reads any `T` with a registry's framework ids in scope: every [`Framework`] inside `T` resolves
+/// against `registry` instead of the built-in adapters, so a caller adapter's framework id reads
+/// back in a [`StepDefinition`], a `Vec<StepDefinition>`, an [`AnalysisResult`] or a caller type.
+/// Everything else reads as `T`'s own `Deserialize` does; a definition's `analysis_policy` stays
+/// the default. The scope belongs to the reading thread: a [`Framework`] that `T` reads on another
+/// thread resolves against the built-in registry.
+pub struct RegistrySeed<'a, T> {
+    registry: &'a crate::source_adapter::AdapterRegistry,
+    target: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<'a, T> RegistrySeed<'a, T> {
+    /// A seed that admits the frameworks `registry` declares.
+    pub fn new(registry: &'a crate::source_adapter::AdapterRegistry) -> Self {
+        Self {
+            registry,
+            target: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for RegistrySeed<'_, T> {
+    /// Copies the seed; `T` need not be `Clone`.
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for RegistrySeed<'_, T> {}
+
+impl<T> fmt::Debug for RegistrySeed<'_, T> {
+    /// Names the seed; the registry has no `Debug` form.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegistrySeed")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Restores the enclosing seed's frameworks when a seeded read ends, by return, error or unwind.
+struct RestoreSeededFrameworks(Option<Vec<Framework>>);
+
+impl Drop for RestoreSeededFrameworks {
+    /// Puts the enclosing frameworks back.
+    fn drop(&mut self) {
+        SEEDED_FRAMEWORKS.set(self.0.take());
+    }
+}
+
+impl<'de, T: Deserialize<'de>> serde::de::DeserializeSeed<'de> for RegistrySeed<'_, T> {
+    type Value = T;
+
+    /// Reads `T` with the seed's frameworks in scope for every [`Framework`] it holds.
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<T, D::Error> {
+        let _restore =
+            RestoreSeededFrameworks(SEEDED_FRAMEWORKS.replace(Some(self.registry.frameworks())));
+        T::deserialize(deserializer)
     }
 }
 

@@ -3,8 +3,8 @@ use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{ExcludeSet, SourceFile, SourceLanguage};
 use cuke_dedup::model::SourceLocation;
 use cuke_dedup::model::{
-    AnalysisResult, EffectStream, FeatureStep, Framework, HandlerFingerprint, MatcherKind, Rule,
-    Severity, StepDefinition,
+    AnalysisResult, EffectStream, FeatureStep, Framework, FrameworkSeed, HandlerFingerprint,
+    MatcherKind, RegistrySeed, Rule, Severity, StepDefinition,
 };
 use cuke_dedup::modes::{BaselineFile, BASELINE_SCHEMA_VERSION};
 use cuke_dedup::reporters::{
@@ -1182,4 +1182,162 @@ fn caller_framework_contracts_discover_feature_patterns() {
             .unwrap()
             .is_none()
     );
+}
+
+/// A pair whose first framework reads through a nested built-in seed and whose second reads in
+/// the enclosing scope.
+struct NestedFrameworks(Framework, Framework);
+
+impl<'de> serde::Deserialize<'de> for NestedFrameworks {
+    /// Reads `[inner, outer]`, the inner id through a built-in `RegistrySeed`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{DeserializeSeed, Error};
+        let [inner, outer]: [serde_json::Value; 2] = serde::Deserialize::deserialize(deserializer)?;
+        let inner = RegistrySeed::<Framework>::new(AdapterRegistry::builtin())
+            .deserialize(inner)
+            .map_err(D::Error::custom)?;
+        let outer = serde::Deserialize::deserialize(outer).map_err(D::Error::custom)?;
+        Ok(Self(inner, outer))
+    }
+}
+
+/// A value whose deserialization panics.
+struct PanicsOnRead;
+
+impl<'de> serde::Deserialize<'de> for PanicsOnRead {
+    /// Panics.
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        panic!("deserialization panicked")
+    }
+}
+
+/// Checks a caller framework id reads back only through a registry that declares it: the
+/// registry lookup, `FrameworkSeed`, and `RegistrySeed` over a definition, a list, an analysis
+/// result and a nested seed. A caller-only registry replaces the built-in ids, and plain
+/// `Deserialize` reads built-in ids again after a seeded read returns, fails or panics.
+#[test]
+fn caller_framework_ids_read_back_through_their_registry() {
+    use serde::de::DeserializeSeed;
+    let builtin = AdapterRegistry::builtin();
+    let extended = AdapterRegistry::new(
+        builtin
+            .registrations()
+            .iter()
+            .copied()
+            .chain([SourceAdapterRegistration::new(".bdd", &BDD)]),
+    )
+    .unwrap();
+    let caller_only = AdapterRegistry::new([SourceAdapterRegistration::new(".bdd", &BDD)]).unwrap();
+    let caller = Framework::new("caller-bdd");
+    let cucumber = builtin.framework("cucumber-js").expect("built-in id");
+    for (registry, id, expected) in [
+        (&extended, "caller-bdd", Some(caller)),
+        (&extended, "cucumber-js", Some(cucumber)),
+        (&extended, "unknown", Some(Framework::UNKNOWN)),
+        (&extended, "Caller-BDD", None),
+        (builtin, "caller-bdd", None),
+        (&caller_only, "cucumber-js", None),
+        (&caller_only, "unknown", Some(Framework::UNKNOWN)),
+    ] {
+        assert_eq!(registry.framework(id), expected, "{id}");
+    }
+
+    let framework = |registry, id: &str| {
+        FrameworkSeed::new(registry)
+            .deserialize(serde_json::json!(id))
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(framework(&extended, "caller-bdd"), Ok(caller));
+    assert_eq!(framework(&caller_only, "unknown"), Ok(Framework::UNKNOWN));
+    assert_eq!(
+        framework(&caller_only, "cucumber-js"),
+        Err("unknown framework `cucumber-js`, expected one of caller-bdd, unknown".to_owned())
+    );
+    assert!(framework(builtin, "caller-bdd")
+        .unwrap_err()
+        .starts_with("unknown framework `caller-bdd`, expected one of "));
+
+    let definition = |framework| StepDefinition {
+        framework,
+        ..caller_definition(
+            AnalysisPolicy::default(),
+            "I log in",
+            MatcherKind::CucumberExpression,
+            3,
+        )
+    };
+    let [caller_json, cucumber_json] =
+        [caller, cucumber].map(|framework| serde_json::to_value(definition(framework)).unwrap());
+    let plain = |json: &serde_json::Value| {
+        serde_json::from_value::<StepDefinition>(json.clone()).map_err(|error| error.to_string())
+    };
+    let rejects_caller = |when: &str| {
+        let error = plain(&caller_json).unwrap_err();
+        assert!(
+            error.contains("unknown framework `caller-bdd`"),
+            "{when}: {error}"
+        );
+        assert_eq!(plain(&cucumber_json), Ok(definition(cucumber)), "{when}");
+    };
+    rejects_caller("before any seed");
+
+    // One seed reads several values: it is `Copy` and `Clone` whatever `T` is.
+    let seed = RegistrySeed::<StepDefinition>::new(&extended);
+    let reused = <RegistrySeed<'_, StepDefinition> as Clone>::clone(&seed);
+    for (seed, json, framework) in [
+        (seed, &caller_json, caller),
+        (reused, &cucumber_json, cucumber),
+    ] {
+        assert_eq!(
+            seed.deserialize(json.clone()).unwrap(),
+            definition(framework)
+        );
+    }
+    assert_eq!(format!("{seed:?}"), "RegistrySeed { .. }");
+    rejects_caller("after a seeded read");
+    let list = serde_json::json!([caller_json, cucumber_json]);
+    assert_eq!(
+        RegistrySeed::<Vec<StepDefinition>>::new(&extended)
+            .deserialize(list.clone())
+            .unwrap(),
+        [definition(caller), definition(cucumber)]
+    );
+    let result = AnalysisResult::new(vec![definition(caller)], Vec::new(), Vec::new());
+    let read = RegistrySeed::<AnalysisResult>::new(&extended)
+        .deserialize(serde_json::to_value(&result).unwrap())
+        .unwrap();
+    assert_eq!(read.definitions, [definition(caller)]);
+    assert!(
+        serde_json::from_value::<AnalysisResult>(serde_json::to_value(&result).unwrap()).is_err()
+    );
+
+    // A caller-only seed admits its own ids and `unknown`, not the built-in ones.
+    let error = RegistrySeed::<Vec<StepDefinition>>::new(&caller_only)
+        .deserialize(list)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unknown framework `cucumber-js`"), "{error}");
+    rejects_caller("after a failed seeded read");
+
+    // The nested built-in seed rejects a caller id; the enclosing scope resumes after it returns.
+    let nested = |ids: [&str; 2]| {
+        RegistrySeed::<NestedFrameworks>::new(&extended)
+            .deserialize(serde_json::json!(ids))
+            .map(|NestedFrameworks(inner, outer)| [inner, outer])
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(
+        nested(["cucumber-js", "caller-bdd"]),
+        Ok([cucumber, caller])
+    );
+    assert!(nested(["caller-bdd", "caller-bdd"])
+        .unwrap_err()
+        .contains("unknown framework `caller-bdd`"));
+    rejects_caller("after a nested seeded read");
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        RegistrySeed::<PanicsOnRead>::new(&extended).deserialize(serde_json::Value::Null)
+    }));
+    assert!(panicked.is_err());
+    rejects_caller("after a panicking seeded read");
 }
