@@ -108,7 +108,7 @@ impl SourceFinalization {
 
     /// Applies the authority removal, resolving registry-scoped comparison domains through
     /// `adapters`.
-    pub(crate) fn apply_with(
+    pub fn apply_with(
         &self,
         adapters: &super::AdapterRegistry,
         definitions: &mut Vec<StepDefinition>,

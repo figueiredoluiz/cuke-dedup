@@ -2,6 +2,7 @@
 
 mod config;
 mod finalization;
+mod registry_validation;
 pub(crate) use config::FrontendConfig;
 // Every frontend's keys of one configuration source, flattened into the core config. Only Ruby
 // has keys today. A wrapper struct flattening it would nest two flattens, and serde then rejects
@@ -14,6 +15,7 @@ pub use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
 pub use finalization::{
     SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
 };
+pub use registry_validation::RegistryError;
 pub use semantics::{
     AnalysisPolicy, DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
@@ -473,7 +475,7 @@ impl SourceExtractionSession {
     }
 
     /// Creates a session for `config`: its root, registrations, assertion modules and adapters.
-    pub(crate) fn for_config(config: &crate::config::Config) -> Self {
+    pub fn for_config(config: &crate::config::Config) -> Self {
         Self::with_adapters(
             &config.root,
             &config.registrations,
@@ -713,6 +715,21 @@ impl SourceAdapterRegistration {
         }
     }
 
+    /// This registration with the session hooks of the built-in registration of the same adapter
+    /// object, or none for any other adapter: hooks follow the adapter, so a built-in adapter
+    /// registered under another suffix keeps them and a replaced adapter drops them.
+    fn with_builtin_hooks(self) -> Self {
+        let builtin = SOURCE_ADAPTER_REGISTRY.iter().find(|builtin| {
+            std::ptr::addr_eq(builtin.adapter, self.adapter)
+                && builtin.adapter.name() == self.adapter.name()
+        });
+        Self {
+            initialize_session: builtin.and_then(|builtin| builtin.initialize_session),
+            discover_dependencies: builtin.and_then(|builtin| builtin.discover_dependencies),
+            ..self
+        }
+    }
+
     /// Creates a registration for `adapter` carrying its session-state initializer and its
     /// `discover_dependencies` hook, which may be the no-op default.
     const fn with_session<A: StatefulSourceAdapter>(
@@ -734,7 +751,7 @@ impl SourceAdapterRegistration {
 macro_rules! register_source_adapters {
     ( $( $adapter:path : $($suffix:literal),+ );+ ; ) => {
         /// Registered definition-source suffixes in deterministic lookup order.
-        pub static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
+        pub(crate) static SOURCE_ADAPTER_REGISTRY: &[SourceAdapterRegistration] = &[
             $(
                 $(
                     SourceAdapterRegistration::with_session($suffix, &$adapter),
@@ -752,10 +769,12 @@ register_source_adapters! {
 }
 
 /// A set of source-adapter registrations that routes paths and languages to adapters. Discovery,
-/// configuration defaults and extraction sessions read the registry they are given;
-/// [`AdapterRegistry::builtin`] holds the adapters this crate ships.
+/// configuration defaults and extraction sessions read the registry they are given:
+/// [`crate::config::Config::load_with_adapters`] attaches one and
+/// [`SourceExtractionSession::for_config`] carries it. [`AdapterRegistry::builtin`] holds the
+/// adapters this crate ships; [`AdapterRegistry::new`] validates any other set.
 #[derive(Clone)]
-pub(crate) struct AdapterRegistry {
+pub struct AdapterRegistry {
     registrations: std::borrow::Cow<'static, [SourceAdapterRegistration]>,
 }
 
@@ -764,18 +783,35 @@ static BUILTIN_REGISTRY: AdapterRegistry = AdapterRegistry {
 };
 
 impl AdapterRegistry {
-    /// The adapters this crate ships, in [`SOURCE_ADAPTER_REGISTRY`] order.
-    pub(crate) fn builtin() -> &'static Self {
+    /// The adapters this crate ships.
+    pub fn builtin() -> &'static Self {
         &BUILTIN_REGISTRY
     }
 
+    /// A registry of `registrations` in lookup order, or the first conflict among them. To extend
+    /// or replace built-in adapters, start from [`AdapterRegistry::builtin`]'s
+    /// [`registrations`](Self::registrations): a suffix, language or adapter name that collides
+    /// with a built-in one is rejected, not overridden.
+    pub fn new(
+        registrations: impl IntoIterator<Item = SourceAdapterRegistration>,
+    ) -> std::result::Result<Self, RegistryError> {
+        let registrations: Vec<_> = registrations
+            .into_iter()
+            .map(SourceAdapterRegistration::with_builtin_hooks)
+            .collect();
+        registry_validation::validate(&registrations)?;
+        Ok(Self {
+            registrations: std::borrow::Cow::Owned(registrations),
+        })
+    }
+
     /// The registrations in lookup order.
-    pub(crate) fn registrations(&self) -> &[SourceAdapterRegistration] {
+    pub fn registrations(&self) -> &[SourceAdapterRegistration] {
         &self.registrations
     }
 
     /// The registered adapter that declares `language`, or `None` when no adapter does.
-    pub(crate) fn adapter_for_language(
+    pub fn adapter_for_language(
         &self,
         language: SourceLanguage,
     ) -> Option<&'static dyn SourceAdapter> {
@@ -786,7 +822,7 @@ impl AdapterRegistry {
     }
 
     /// The registered adapter that declares `language`, or an error naming the language.
-    pub(crate) fn registered_adapter(
+    pub fn registered_adapter(
         &self,
         language: SourceLanguage,
     ) -> Result<&'static dyn SourceAdapter> {
@@ -798,8 +834,9 @@ impl AdapterRegistry {
         })
     }
 
-    /// The adapter registered for `path`, rejecting declaration and source-map files.
-    pub(crate) fn adapter_for_path(&self, path: &Path) -> Option<&'static dyn SourceAdapter> {
+    /// The adapter registered for `path`. A `.map` file and a TypeScript declaration file
+    /// (`.d.ts`, `.d.mts`, `.d.cts`) route to no adapter, whichever adapter claims the suffix.
+    pub fn adapter_for_path(&self, path: &Path) -> Option<&'static dyn SourceAdapter> {
         let extension = path.extension()?.to_str()?;
         if extension == "map" || is_declaration_file(path, extension) {
             return None;
@@ -811,12 +848,12 @@ impl AdapterRegistry {
     }
 
     /// The language of the adapter registered for `path`.
-    pub(crate) fn language_for_path(&self, path: &Path) -> Option<SourceLanguage> {
+    pub fn language_for_path(&self, path: &Path) -> Option<SourceLanguage> {
         self.adapter_for_path(path).map(SourceAdapter::language)
     }
 
     /// The registered suffixes in lookup order.
-    pub(crate) fn suffixes(&self) -> Vec<&'static str> {
+    pub fn suffixes(&self) -> Vec<&'static str> {
         self.registrations
             .iter()
             .map(|registration| registration.suffix)

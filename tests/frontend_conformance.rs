@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use cuke_dedup::config::{Config, ConfigOverrides};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
 use cuke_dedup::ruby::RUBY;
-use cuke_dedup::source_adapter::{SourceExclusion, SOURCE_ADAPTER_REGISTRY};
+use cuke_dedup::source_adapter::{AdapterRegistry, SourceExclusion};
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
 use serde_json::Value;
 use std::fs;
@@ -92,7 +92,8 @@ fn source_exclusion_stays_with_javascript_adapter() {
     fs::write(&js, b"const data = '\0';").unwrap();
     fs::write(&ruby, b"Given('step') { work() }\0").unwrap();
     let adapter = |language| {
-        SOURCE_ADAPTER_REGISTRY
+        AdapterRegistry::builtin()
+            .registrations()
             .iter()
             .map(|entry| entry.adapter)
             .find(|adapter| adapter.language() == language)
@@ -228,7 +229,8 @@ fn ruby_configuration_keeps_flat_compatibility_key() {
 
 /// Whether the handler of the only definition `source` registers counts as a stub.
 fn handler_is_stub(language: SourceLanguage, path: &str, source: &str) -> bool {
-    let adapter = SOURCE_ADAPTER_REGISTRY
+    let adapter = AdapterRegistry::builtin()
+        .registrations()
         .iter()
         .map(|entry| entry.adapter)
         .find(|adapter| adapter.language() == language)

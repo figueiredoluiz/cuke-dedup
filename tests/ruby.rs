@@ -9649,7 +9649,8 @@ fn ruby_library_suppression_reasons_are_bounded_when_a_finding_is_retained() {
         path: root.join("steps.rb"),
         language: RUBY,
     };
-    let extracted = cuke_dedup::source_adapter::SOURCE_ADAPTER_REGISTRY
+    let extracted = cuke_dedup::source_adapter::AdapterRegistry::builtin()
+        .registrations()
         .iter()
         .map(|registration| registration.adapter)
         .find(|adapter| adapter.language() == RUBY)
@@ -11987,7 +11988,7 @@ fn ruby_adapter_rejects_mislabeled_sources_with_context() {
 #[test]
 fn ruby_library_routes_and_sessions_share_state_beside_ecmascript() {
     use cuke_dedup::source_adapter::*;
-    let registry = SOURCE_ADAPTER_REGISTRY.iter();
+    let registry = AdapterRegistry::builtin().registrations().iter();
     let registered = registry
         .filter(|entry| entry.suffix == ".rb")
         .map(|entry| entry.adapter);
