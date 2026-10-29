@@ -5,10 +5,7 @@ const JS: IdentityFlags = IdentityFlags::Listed("imsuv");
 
 /// A translation whose body is `body` and whose inline flags are `flags`.
 fn translated(body: &str, flags: &str) -> TranslatedRegex {
-    TranslatedRegex {
-        inline_flags: flags.to_owned(),
-        body: body.to_owned(),
-    }
+    TranslatedRegex::new(flags, body)
 }
 
 /// Regex matchers: the canonical key folds the pattern and carries the identity flags in its

@@ -157,19 +157,19 @@ pub(super) enum RegexSupport {
 /// Extraction and usage analysis must agree on this translation exactly: extraction uses it to
 /// decide whether a definition is analyzable, and usage analysis uses it to match feature steps.
 /// Two copies could drift and report a limitation the analyzer did not actually hit.
-fn translate_regex(matcher: &str, flags: &str) -> Option<TranslatedRegex> {
+pub(super) fn translate_regex(matcher: &str, flags: &str) -> Option<TranslatedRegex> {
     // JavaScript's `v` flag enables Unicode set notation and changes character-class semantics.
     // Rust's regex engine has no equivalent, so no Rust expression is authoritative for it.
     if flags.contains('v') {
         return None;
     }
-    Some(TranslatedRegex {
-        inline_flags: flags
+    Some(TranslatedRegex::new(
+        flags
             .chars()
             .filter(|flag| matches!(flag, 'i' | 'm' | 's' | 'u'))
-            .collect(),
-        body: matcher.to_owned(),
-    })
+            .collect::<String>(),
+        matcher,
+    ))
 }
 
 /// Builds the Rust regular expression for a JavaScript matcher and its flags.

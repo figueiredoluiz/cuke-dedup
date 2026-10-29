@@ -72,9 +72,9 @@ fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
 struct IdentityDialect;
 
 impl crate::source_adapter::semantics::RegexDialect for IdentityDialect {
-    /// Returns the matcher as the expression, ignoring flags.
-    fn expression(&self, matcher: &str, _: &str) -> Option<String> {
-        Some(matcher.to_owned())
+    /// Returns the matcher as the translation body, ignoring flags.
+    fn translate(&self, matcher: &str, _: &str) -> Option<crate::matcher::TranslatedRegex> {
+        Some(crate::matcher::TranslatedRegex::new("", matcher))
     }
     /// Keys on the canonical source pattern.
     fn regex_key(&self) -> crate::matcher::RegexKey {
@@ -91,10 +91,7 @@ impl crate::source_adapter::semantics::RegexDialect for IdentityDialect {
 }
 
 static IDENTITY_DOMAIN: crate::source_adapter::semantics::DomainSpec =
-    crate::source_adapter::semantics::DomainSpec {
-        label: "identity",
-        dialect: &IdentityDialect,
-    };
+    crate::source_adapter::semantics::DomainSpec::new("identity", &IdentityDialect);
 
 /// Checks a regex at the pattern-byte limit compiles and one byte over is rejected.
 #[test]
@@ -623,6 +620,10 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
         ("", None),
         ("red.*", None),
         ("(red", None),
+        // A translated Ruby scoped array: built-in dialects take its first element.
+        ("(?:(?m:red)|(?ms:green))", Some("red")),
+        ("(?:(?ms:red-1))", Some("red-1")),
+        ("(?:(?m:red.*)|(?m:green))", None),
     ] {
         for framework in [
             crate::typescript::frameworks::CUCUMBER_JS,
@@ -640,6 +641,18 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
             );
         }
     }
+    // A caller dialect's default has no scoped-array shortcut.
+    use crate::source_adapter::semantics::RegexDialect;
+    assert_eq!(
+        IdentityDialect.parameter_sample("(?:(?m:red)|(?ms:green))"),
+        None
+    );
+    assert_eq!(
+        IdentityDialect
+            .parameter_sample("(?m:red|green)")
+            .as_deref(),
+        Some("red")
+    );
     assert_eq!(witness_literal(r"a\(b) c/d"), "a(b) c");
     assert_eq!(witness_literal("open(unclosed"), "open(unclosed");
 }

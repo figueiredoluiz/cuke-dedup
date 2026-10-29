@@ -128,7 +128,7 @@ const SCOPES = [
     files: () => ALL_RUST_SOURCES.filter(
       (path) => isTestPath(path) || path.startsWith("fuzz/"),
     ),
-    maximumPercentage: 2.44,
+    maximumPercentage: 2.38,
     maximumDuplicatedLines: 1266,
     minimumFiles: 12,
     minimumLines: 15_000,

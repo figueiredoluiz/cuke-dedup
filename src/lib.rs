@@ -53,23 +53,32 @@
 //! next minor release.
 //!
 //! [`model::StepDefinition::analysis_policy`] holds the comparison policy the extracting adapter
-//! attached, an opaque [`source_adapter::AnalysisPolicy`]. A definition built by hand or
-//! deserialized has [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript
-//! baseline, whatever its `framework`; a hand-built Ruby definition takes
-//! `adapter_for_language(ruby::RUBY).map(|ruby| ruby.analysis_policy())`, and
-//! framework-specific policies
-//! (Jest-Cucumber, vitest-cucumber-plugin) come only from extraction. The field is not serialized.
+//! attached, a [`source_adapter::AnalysisPolicy`]. A definition built by hand or deserialized has
+//! [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript baseline, whatever its
+//! `framework`; a hand-built Ruby definition takes
+//! `adapter_for_language(ruby::RUBY).map(|ruby| ruby.analysis_policy())`, and a built-in
+//! framework-specific policy (Jest-Cucumber, vitest-cucumber-plugin) comes from
+//! [`source_adapter::FrameworkContract::policy_of`] over the adapter's
+//! [`source_adapter::SourceAdapter::framework_contracts`]. The field is not serialized. A caller builds its own policy from a
+//! [`source_adapter::DomainSpec`] declared in a `static`, a [`source_adapter::RegexDialect`] and
+//! the capability enums ([`source_adapter::HandlerScope`], [`source_adapter::StepMatching`],
+//! [`source_adapter::StreamEvidence`]) with [`source_adapter::AnalysisPolicy::new`], and keys
+//! matchers with [`source_adapter::AnalysisPolicy::normalized_matcher`]. Definitions of different
+//! domains are never compared: analysis rejects a mix.
 //!
 //! A source language is an open id that its adapter declares ([`source_adapter::SourceLanguage`]):
 //! the JavaScript/TypeScript ids are the [`typescript::JAVASCRIPT`], [`typescript::TYPESCRIPT`] and
 //! [`typescript::TSX`] constants, Ruby's is [`ruby::RUBY`]. A language no registered
 //! adapter declares has no adapter: [`source_adapter::adapter_for_language`] returns `None` and
-//! extraction entry points return an error. A [`source_adapter::SourceAdapter`] implementation is
-//! `Sync` and `RefUnwindSafe`.
+//! extraction entry points return an error. [`source_adapter::SourceAdapter`] and
+//! [`source_adapter::RegexDialect`] implementations are `Sync` and `RefUnwindSafe`.
 //!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,
-//! and give it a constructor if it travels both ways.
+//! and give it a constructor if it travels both ways. The rule is about structs: a
+//! `#[non_exhaustive]` enum's variants stay constructible outside this crate, so every public enum
+//! carries it, including the ones callers build ([`model::MatcherKind`],
+//! [`source_adapter::HandlerScope`], [`source_adapter::RegexKey`]).
 //!
 //! Machine-readable output is versioned independently of the crate, so a schema change is visible
 //! to consumers that never read the crate version: [`reporters::JSON_SCHEMA_VERSION`],

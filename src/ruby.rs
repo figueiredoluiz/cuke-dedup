@@ -1577,11 +1577,11 @@ fn regex_translation(
     }
     result.push(')');
     match crate::resource_limits::compile_regex(&result) {
-        Ok(_) => Ok(crate::matcher::TranslatedRegex {
-            // `(?` + flags + `:` is the group prefix and the final `)` closes it.
-            inline_flags: result[2..group_prefix_len - 1].to_owned(),
-            body: result[group_prefix_len..result.len() - 1].to_owned(),
-        }),
+        // `(?` + flags + `:` is the group prefix and the final `)` closes it.
+        Ok(_) => Ok(crate::matcher::TranslatedRegex::new(
+            &result[2..group_prefix_len - 1],
+            &result[group_prefix_len..result.len() - 1],
+        )),
         Err(regex::Error::CompiledTooBig(_)) => Err(RegexConversionError::CompiledTooBig),
         Err(_) => Err(RegexConversionError::Unsupported),
     }

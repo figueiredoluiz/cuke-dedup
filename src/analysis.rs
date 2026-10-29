@@ -112,6 +112,22 @@ pub(crate) fn analyze_for_cli(
     )
 }
 
+/// Names two comparison domains in a mixed-domain refusal, in label order; two domains sharing a
+/// label are named as such.
+fn mixed_domains(left: &str, right: &str) -> String {
+    match left.cmp(right) {
+        std::cmp::Ordering::Equal => {
+            format!("definitions from two comparison domains labelled `{left}`")
+        }
+        std::cmp::Ordering::Less => {
+            format!("definitions from comparison domains `{left}` and `{right}`")
+        }
+        std::cmp::Ordering::Greater => {
+            format!("definitions from comparison domains `{right}` and `{left}`")
+        }
+    }
+}
+
 /// Shared pipeline: pair rules, then feature usage and static overlap on the comparison budget the
 /// pair stage left, indirect usage, and unused definitions; findings are sorted by primary path,
 /// line, column and rule. Fails on invalid analysis limits or definitions from more than one
@@ -133,11 +149,15 @@ fn analyze_internal(
     let mut findings = Vec::new();
     if let Some(first) = definitions.first() {
         let domain = first.analysis_profile().domain;
-        if definitions
+        if let Some(other) = definitions
             .iter()
-            .any(|d| d.analysis_profile().domain != domain)
+            .map(|d| d.analysis_profile().domain)
+            .find(|other| *other != domain)
         {
-            bail!("Ruby and JS/TS definitions require separate analysis runs with explicit definition and feature roots");
+            bail!(
+                "{} require separate analysis runs with explicit definition and feature roots",
+                mixed_domains(domain.label, other.label)
+            );
         }
     }
     let suppressions = suppression::SuppressionIndex::new(config, &definitions);

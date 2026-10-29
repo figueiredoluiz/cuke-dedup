@@ -2,7 +2,10 @@ use cuke_dedup::analysis::{analyze, analyze_with_diagnostics, merge_parameter_ty
 use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{SourceFile, SourceLanguage};
 use cuke_dedup::model::SourceLocation;
-use cuke_dedup::model::{AnalysisResult, Rule, Severity};
+use cuke_dedup::model::{
+    AnalysisResult, EffectStream, FeatureStep, Framework, HandlerFingerprint, MatcherKind, Rule,
+    Severity, StepDefinition,
+};
 use cuke_dedup::modes::{BaselineFile, BASELINE_SCHEMA_VERSION};
 use cuke_dedup::reporters::{
     render_html, render_json, render_jsonl, render_sarif, write_terminal, ExecutionMetrics,
@@ -10,8 +13,10 @@ use cuke_dedup::reporters::{
 };
 use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{
-    Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceAdapter,
-    SourceAdapterRegistration, SourceParameterType, SOURCE_ADAPTER_REGISTRY,
+    AnalysisPolicy, DomainSpec, Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel,
+    FrameworkContract, HandlerScope, IdentityFlags, RegexDialect, RegexKey, SourceAdapter,
+    SourceAdapterRegistration, SourceParameterType, StepMatching, StreamEvidence, TranslatedRegex,
+    SOURCE_ADAPTER_REGISTRY,
 };
 use cuke_dedup::typescript;
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
@@ -467,4 +472,245 @@ fn ruby_extraction_flows_through_the_public_diagnostic_analysis_and_report_api()
     let terminal = String::from_utf8(terminal).unwrap();
     assert!(terminal.contains("Analyzed 3 definitions"));
     assert!(terminal.contains("steps.rb:1:1"));
+}
+
+/// A caller regex dialect whose usage expression, key form and identity flags are fixed per static.
+struct CallerDialect {
+    expression: Option<&'static str>,
+    key: RegexKey,
+    identity: IdentityFlags,
+}
+
+impl RegexDialect for CallerDialect {
+    /// Returns the fixed usage expression as the translation body, ignoring the matcher.
+    fn translate(&self, _: &str, _: &str) -> Option<TranslatedRegex> {
+        self.expression.map(|body| TranslatedRegex::new("", body))
+    }
+    /// Returns the fixed key form.
+    fn regex_key(&self) -> RegexKey {
+        self.key
+    }
+    /// Returns the fixed identity flags.
+    fn identity_flags(&self) -> IdentityFlags {
+        self.identity
+    }
+    /// Requires equal flag strings.
+    fn similarity_flags_match(&self, left: &str, right: &str) -> bool {
+        left == right
+    }
+}
+
+static NEVER_MATCHES: CallerDialect = CallerDialect {
+    expression: Some("^never$"),
+    key: RegexKey::CanonicalSource,
+    identity: IdentityFlags::Listed("i"),
+};
+static UNTRANSLATABLE: CallerDialect = CallerDialect {
+    expression: None,
+    key: RegexKey::CanonicalSource,
+    identity: IdentityFlags::Listed("i"),
+};
+static UNCOMPILABLE: CallerDialect = CallerDialect {
+    expression: Some("(unclosed"),
+    key: RegexKey::CanonicalSource,
+    identity: IdentityFlags::Listed("i"),
+};
+static ALL_FLAGS: CallerDialect = CallerDialect {
+    expression: None,
+    key: RegexKey::CanonicalSource,
+    identity: IdentityFlags::All,
+};
+static TRANSLATED_BODY: CallerDialect = CallerDialect {
+    expression: None,
+    key: RegexKey::TranslatedBody,
+    identity: IdentityFlags::All,
+};
+static CALLER: DomainSpec = DomainSpec::new("caller", &NEVER_MATCHES);
+// Same label and dialect as `CALLER`, but a different static: a different domain.
+static CALLER_TWIN: DomainSpec = DomainSpec::new("caller", &NEVER_MATCHES);
+static OPAQUE: DomainSpec = DomainSpec::new("opaque", &UNTRANSLATABLE);
+static BROKEN: DomainSpec = DomainSpec::new("broken", &UNCOMPILABLE);
+static ALL_FLAGS_DOMAIN: DomainSpec = DomainSpec::new("all-flags", &ALL_FLAGS);
+static TRANSLATED_DOMAIN: DomainSpec = DomainSpec::new("translated", &TRANSLATED_BODY);
+
+/// A shared-scope, complete-stream caller policy over `domain`.
+const fn caller_policy(domain: &'static DomainSpec, matching: StepMatching) -> AnalysisPolicy {
+    AnalysisPolicy::new(
+        domain,
+        HandlerScope::Shared,
+        matching,
+        StreamEvidence::Complete,
+        false,
+    )
+}
+
+/// A definition carrying `policy`, keyed by it, with a handler unique to `line`.
+fn caller_definition(
+    policy: AnalysisPolicy,
+    matcher: &str,
+    kind: MatcherKind,
+    line: usize,
+) -> StepDefinition {
+    let body = format!("work{line}()");
+    StepDefinition {
+        matcher: matcher.to_owned(),
+        normalized_matcher: policy.normalized_matcher(kind, matcher, "", None),
+        matcher_kind: kind,
+        matcher_flags: String::new(),
+        handler: HandlerFingerprint {
+            exact: body.clone(),
+            normalized: body.clone(),
+            alpha_normalized: body.clone(),
+            structural: body.clone(),
+            behavior_signature: vec![format!("call:{body}")],
+            source_snippet: body,
+            comparable: true,
+            trivial: false,
+            effect_stream: EffectStream::Complete,
+            capture_scope: None,
+        },
+        framework: Framework::new("caller-framework"),
+        analysis_policy: policy,
+        registration: "Given".to_owned(),
+        location: SourceLocation::new(PathBuf::from("steps.caller"), line, 1, line, 2),
+        inline_suppressions: Vec::new(),
+    }
+}
+
+/// The rules of the findings `definitions` and one feature step reading `feature` produce.
+fn caller_rules(definitions: Vec<StepDefinition>, feature: &str) -> anyhow::Result<Vec<Rule>> {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let steps = vec![FeatureStep {
+        keyword: "Given ".to_owned(),
+        text: feature.to_owned(),
+        location: SourceLocation::new(PathBuf::from("a.feature"), 3, 5, 3, 20),
+    }];
+    let result = analyze_with_diagnostics(definitions, steps, &config)?.result;
+    Ok(result.findings.iter().map(|finding| finding.rule).collect())
+}
+
+/// Checks caller-built policies compare only within their own static domain, drive usage through
+/// their dialect and honour their step-matching capability.
+#[test]
+fn caller_built_policies_separate_domains_and_drive_usage() {
+    use MatcherKind::{CucumberExpression, RegularExpression};
+    let shared = caller_policy(&CALLER, StepMatching::ByText);
+    let pair = |second: AnalysisPolicy| {
+        caller_rules(
+            vec![
+                caller_definition(shared, "I log in", CucumberExpression, 2),
+                caller_definition(second, "I log in", CucumberExpression, 4),
+            ],
+            "I log in",
+        )
+    };
+    assert!(pair(shared).unwrap().contains(&Rule::DuplicateMatcher));
+    for (foreign, refused) in [
+        (
+            AnalysisPolicy::default(),
+            "definitions from comparison domains `caller` and `ecmascript`",
+        ),
+        (
+            caller_policy(&CALLER_TWIN, StepMatching::ByText),
+            "definitions from two comparison domains labelled `caller`",
+        ),
+    ] {
+        let error = pair(foreign).unwrap_err().to_string();
+        assert!(
+            error.starts_with(refused) && error.contains("separate analysis runs"),
+            "{error}"
+        );
+    }
+
+    // The dialect's expression decides usage: a translation that cannot match leaves the
+    // definition unused; no translation makes it non-authoritative.
+    let regex = |domain| {
+        caller_rules(
+            vec![caller_definition(
+                caller_policy(domain, StepMatching::ByText),
+                "a cat",
+                RegularExpression,
+                2,
+            )],
+            "a cat",
+        )
+        .unwrap()
+    };
+    assert_eq!(regex(&CALLER), [Rule::UnusedDefinition]);
+    assert_eq!(regex(&OPAQUE), []);
+    // A translation that does not compile leaves usage indeterminate, as no translation does.
+    assert_eq!(regex(&BROKEN), []);
+
+    let unmatched = |matching| {
+        caller_rules(
+            vec![caller_definition(
+                caller_policy(&CALLER, matching),
+                "I log out",
+                CucumberExpression,
+                2,
+            )],
+            "I log in",
+        )
+        .unwrap()
+    };
+    assert_eq!(unmatched(StepMatching::ByText), [Rule::UnusedDefinition]);
+    assert_eq!(unmatched(StepMatching::Positional), []);
+}
+
+/// Checks caller policies key regex matchers as their dialect declares, translations render with
+/// their flag group, contract policies resolve per framework, and policy-carrying types keep their
+/// auto traits.
+#[test]
+fn caller_policies_key_matchers_and_resolve_contract_policies() {
+    use std::panic::{RefUnwindSafe, UnwindSafe};
+    /// Requires policy-carrying types to satisfy the public thread- and unwind-safety bounds.
+    fn assert_auto_traits<T: Send + Sync + UnwindSafe + RefUnwindSafe>() {}
+    assert_auto_traits::<AnalysisPolicy>();
+    assert_auto_traits::<StepDefinition>();
+
+    let key = |domain, translated: Option<&TranslatedRegex>| {
+        caller_policy(domain, StepMatching::ByText).normalized_matcher(
+            MatcherKind::RegularExpression,
+            "a",
+            "gi",
+            translated,
+        )
+    };
+    let translation = TranslatedRegex::new("i", "b");
+    assert_eq!(key(&CALLER, None), "[regex-flags:i] a");
+    assert_eq!(key(&ALL_FLAGS_DOMAIN, None), "[regex-flags:gi] a");
+    assert_eq!(key(&CALLER, Some(&translation)), "[regex-flags:i] a");
+    assert_eq!(key(&TRANSLATED_DOMAIN, Some(&translation)), "b");
+    assert_eq!(key(&TRANSLATED_DOMAIN, None), "a");
+    assert_eq!(translation.expression(), "(?i:b)");
+    assert_eq!(TranslatedRegex::new("", "b").expression(), "b");
+
+    let local = AnalysisPolicy::new(
+        &CALLER,
+        HandlerScope::Local,
+        StepMatching::Positional,
+        StreamEvidence::Declared,
+        true,
+    );
+    let shared = caller_policy(&CALLER, StepMatching::ByText);
+    assert_ne!(local, shared);
+    let scoped = Framework::new("caller-scoped");
+    let plain = Framework::new("caller-plain");
+    let contracts = [
+        FrameworkContract::new(scoped).with_policy(local),
+        FrameworkContract::new(plain),
+    ];
+    assert_eq!(
+        FrameworkContract::policy_of(&contracts, scoped, shared),
+        local
+    );
+    assert_eq!(
+        FrameworkContract::policy_of(&contracts, plain, shared),
+        shared
+    );
+    assert_eq!(
+        FrameworkContract::policy_of(&contracts, Framework::new("absent"), shared),
+        shared
+    );
 }

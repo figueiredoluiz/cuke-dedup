@@ -945,7 +945,8 @@ fn compile_matcher(
             let expression = definition
                 .analysis_profile()
                 .dialect()
-                .expression(&definition.matcher, &definition.matcher_flags);
+                .translate(&definition.matcher, &definition.matcher_flags)
+                .map(|translated| translated.expression());
             let Some(expression) = expression else {
                 return (
                     CompiledMatcher {
