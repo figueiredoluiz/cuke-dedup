@@ -6592,6 +6592,16 @@
           },
           "rationale": "The Ruby registry-reader test routes `.rb` discovery, finalization and dependency loads through the registry the configuration carries.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "stateful_caller_adapters_keep_session_state_and_dependency_discovery",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "registry_readers_use_the_registry_they_carry"
+          },
+          "rationale": "The Ruby registry-reader test follows a `require_relative` load through the registered Ruby adapter's dependency discovery and finalizes a rooted session with its state.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

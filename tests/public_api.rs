@@ -1,6 +1,6 @@
 use cuke_dedup::analysis::{analyze, analyze_with_diagnostics, merge_parameter_types};
 use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
-use cuke_dedup::discovery::{SourceFile, SourceLanguage};
+use cuke_dedup::discovery::{ExcludeSet, SourceFile, SourceLanguage};
 use cuke_dedup::model::SourceLocation;
 use cuke_dedup::model::{
     AnalysisResult, EffectStream, FeatureStep, Framework, HandlerFingerprint, MatcherKind, Rule,
@@ -13,16 +13,17 @@ use cuke_dedup::reporters::{
 };
 use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{
-    AdapterRegistry, AnalysisPolicy, DomainSpec, Extraction, ExtractionDiagnostic,
-    ExtractionDiagnosticLevel, FrameworkContract, HandlerScope, IdentityFlags, RegexDialect,
-    RegexKey, SourceAdapter, SourceAdapterRegistration, SourceExtractionSession,
-    SourceParameterType, StepMatching, StreamEvidence, TranslatedRegex,
+    AdapterRegistry, AdapterSessionState, AnalysisPolicy, DependencyGap, DomainSpec, Extraction,
+    ExtractionDiagnostic, ExtractionDiagnosticLevel, FrameworkContract, HandlerScope,
+    IdentityFlags, RegexDialect, RegexKey, SourceAdapter, SourceAdapterRegistration,
+    SourceDependency, SourceExtractionSession, SourceParameterType, StatefulSourceAdapter,
+    StepMatching, StreamEvidence, TranslatedRegex,
 };
 use cuke_dedup::typescript;
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The registered adapter for `language`, for tests that drive extraction directly.
 fn registered_adapter(language: SourceLanguage) -> &'static dyn SourceAdapter {
@@ -805,4 +806,177 @@ fn caller_registries_route_discovery_extraction_and_analysis() {
     let outcome = analyze_with_diagnostics(definitions, Vec::new(), &config).unwrap();
     let rules: Vec<_> = outcome.result.findings.iter().map(|f| f.rule).collect();
     assert!(rules.contains(&Rule::DuplicateMatcher), "{rules:?}");
+}
+
+/// Session state of [`LoadsAdapter`]: whether the session had a root and how many files it read.
+struct LoadsState {
+    rooted: bool,
+    extracted: usize,
+}
+
+impl AdapterSessionState for LoadsState {
+    /// Records whether the session has a root.
+    fn initialize(root: Option<&Path>, _: &[String], _: &[String]) -> Self {
+        Self {
+            rooted: root.is_some(),
+            extracted: 0,
+        }
+    }
+}
+
+/// A stateful caller adapter: each `load: <path>` line of a `.loads` file loads another source,
+/// which its dependency discovery follows unless excluded.
+struct LoadsAdapter {
+    _id: u8,
+}
+
+impl SourceAdapter for LoadsAdapter {
+    /// Returns the adapter name.
+    fn name(&self) -> &'static str {
+        "caller-loads"
+    }
+    /// Returns the caller language.
+    fn language(&self) -> SourceLanguage {
+        SourceLanguage::new("caller-loads")
+    }
+    /// Extracts nothing without a session.
+    fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
+        Ok(Extraction::new(Vec::new(), Vec::new()))
+    }
+    /// Counts the file in the session state.
+    fn extract_with_session(
+        &self,
+        _: &str,
+        _: &SourceFile,
+        session: &mut SourceExtractionSession,
+    ) -> anyhow::Result<Extraction> {
+        session.state::<LoadsState>()?.extracted += 1;
+        Ok(Extraction::new(Vec::new(), Vec::new()))
+    }
+}
+
+impl StatefulSourceAdapter for LoadsAdapter {
+    type State = LoadsState;
+    /// Follows `load:` lines of selected sources, skipping excluded targets and recording a missing
+    /// one as a gap.
+    fn discover_dependencies(
+        config: &Config,
+        excludes: &ExcludeSet,
+        files: &mut cuke_dedup::discovery::DiscoveredFiles,
+    ) {
+        let language = SourceLanguage::new("caller-loads");
+        let selected: Vec<_> = files
+            .definitions
+            .iter()
+            .filter(|file| file.language == language)
+            .map(|file| file.path.clone())
+            .collect();
+        for path in selected {
+            let source = fs::read_to_string(&path).unwrap();
+            for (index, line) in source.lines().enumerate() {
+                let Some(target) = line.strip_prefix("load: ") else {
+                    continue;
+                };
+                if excludes.excludes(Path::new(target)) {
+                    continue;
+                }
+                let location = SourceLocation::new(path.clone(), index + 1, 1, index + 1, 2);
+                let target = config.root.join(target);
+                if !target.exists() {
+                    files
+                        .dependency_gaps
+                        .push(DependencyGap::new(location, "target is missing"));
+                    continue;
+                }
+                files
+                    .dependencies
+                    .push(SourceDependency::new(location, target.clone()));
+                files.definitions.push(SourceFile {
+                    path: target,
+                    language,
+                });
+            }
+        }
+    }
+}
+
+// Not zero-sized, so the two statics have distinct addresses.
+static LOADS: LoadsAdapter = LoadsAdapter { _id: 0 };
+// Same behaviour, another object: hooks made for `LOADS` do not belong to it.
+static OTHER_LOADS: LoadsAdapter = LoadsAdapter { _id: 1 };
+
+/// Checks a stateful caller adapter gets its session state at construction, its dependency
+/// discovery once with the configured excludes, and the discovered edges and gaps as session
+/// evidence, whichever of its registrations carries the hooks; a registration without hooks for
+/// its adapter gets neither.
+#[test]
+fn stateful_caller_adapters_keep_session_state_and_dependency_discovery() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("steps.loads"),
+        // The self-load adds `steps.loads` again; discovery keeps it once.
+        "load: helper.loads\nload: vendor/lib.loads\nload: missing.loads\nload: steps.loads\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("helper.loads"), "").unwrap();
+    let overrides = ConfigOverrides {
+        definitions: Some(vec!["steps.loads".to_owned()]),
+        // A directory glob: only the ancestor check excludes `vendor/lib.loads`.
+        exclude: Some(vec!["vendor".to_owned()]),
+        ..ConfigOverrides::default()
+    };
+    let stateful = SourceAdapterRegistration::with_session(".loads", &LOADS);
+    let mut replaced = stateful;
+    replaced.adapter = &OTHER_LOADS;
+    let hookless = SourceAdapterRegistration::new(".loads", &LOADS);
+    for (registrations, hooked) in [
+        (vec![stateful], true),
+        // The hooks sit on a later registration of the same adapter.
+        (
+            vec![
+                hookless,
+                SourceAdapterRegistration::with_session(".load2", &LOADS),
+            ],
+            true,
+        ),
+        (vec![hookless], false),
+        (vec![replaced], false),
+    ] {
+        let registry = AdapterRegistry::new(registrations).unwrap();
+        let config = Config::load_with_adapters(root.path(), overrides.clone(), registry).unwrap();
+        let files = cuke_dedup::discovery::discover(&config).unwrap();
+        let names: Vec<_> = files
+            .definitions
+            .iter()
+            .map(|file| file.path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        let mut session = SourceExtractionSession::for_config(&config)
+            .with_dependencies(&files.dependencies)
+            .with_dependency_gaps(&files.dependency_gaps);
+        let state = session.state::<LoadsState>();
+        assert_eq!(state.is_ok(), hooked);
+        if !hooked {
+            assert_eq!(names, ["steps.loads"]);
+            assert!(files.dependencies.is_empty() && files.dependency_gaps.is_empty());
+            continue;
+        }
+        assert!(state.unwrap().rooted);
+        assert_eq!(files.dependencies.len(), 2);
+        // Discovery re-sorts and de-duplicates the definitions the hook appended.
+        assert_eq!(names, ["helper.loads", "steps.loads"]);
+        for file in &files.definitions {
+            LOADS.extract_file_with_session(file, &mut session).unwrap();
+        }
+        assert_eq!(session.state::<LoadsState>().unwrap().extracted, 2);
+        let (edge, gap) = (&files.dependencies[0], &files.dependency_gaps[0]);
+        assert_eq!((edge.location.line, gap.location.line), (1, 3));
+        assert!(session.dependency_resolved(&edge.location));
+        assert!(!session.dependency_resolved(&gap.location));
+        assert_eq!(session.dependency_edges(), files.dependencies);
+        assert_eq!(session.dependency_gap(&edge.location), None);
+        assert_eq!(
+            session.dependency_gap(&gap.location),
+            Some("target is missing")
+        );
+    }
 }

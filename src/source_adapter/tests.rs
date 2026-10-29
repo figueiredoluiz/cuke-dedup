@@ -268,13 +268,10 @@ fn every_registration_has_a_unique_suffix_and_produces_shared_ir() {
     for registration in SOURCE_ADAPTER_REGISTRY {
         assert!(suffixes.insert(registration.suffix), "duplicate suffix");
         assert!(
-            registration.initialize_session.is_some(),
-            "{} is missing session initialization",
-            registration.suffix
-        );
-        assert!(
-            registration.discover_dependencies.is_some(),
-            "{} is missing dependency discovery",
+            registration
+                .hooks
+                .is_some_and(|hooks| std::ptr::addr_eq(hooks.adapter, registration.adapter)),
+            "{} is missing session hooks for its adapter",
             registration.suffix
         );
         let file = SourceFile {

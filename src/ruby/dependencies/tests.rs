@@ -13,7 +13,7 @@ fn resolve_with(root: &Path, selected: &[&str], budget: (usize, usize)) -> Disco
             .collect(),
         ..DiscoveredFiles::default()
     };
-    resolve_graph(&config, &GlobSet::empty(), &mut files, budget).unwrap();
+    resolve_graph(&config, &ExcludeSet::default(), &mut files, budget).unwrap();
     files
 }
 
@@ -244,7 +244,7 @@ fn admitted_loads_remove_files_from_the_skipped_list() {
     };
     // Three dependency-only files fit: `a`, `k` (through the load path) and `c` (loaded by
     // `a`); `g` is the fourth and is refused.
-    resolve_graph(&config, &GlobSet::empty(), &mut files, (3, usize::MAX)).unwrap();
+    resolve_graph(&config, &ExcludeSet::default(), &mut files, (3, usize::MAX)).unwrap();
     let skipped: Vec<_> = files
         .skipped_definitions
         .iter()
