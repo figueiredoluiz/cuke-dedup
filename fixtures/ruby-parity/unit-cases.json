@@ -1929,6 +1929,20 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "configured_paths_follow_the_disk_before_the_extension",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: the core descriptor classifies a configured path as a file or a directory from the filesystem, then from its shape, before any adapter runs; Ruby `cucumber.yml` paths take the same function.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_descriptors_only_drop_the_dot_slash_prefix",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: the core `detect` chooses between prefix-only and full path normalization per descriptor, before any adapter runs; both descriptors are test doubles of neither language.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "structured_config_values_distinguish_missing_dynamic_and_strings",
           "requiredStatus": "engine-invariant",
           "stage": "config-decoding",
@@ -1949,6 +1963,12 @@
     },
     "src/framework_registry/tests.rs": {
       "tests": [
+        {
+          "name": "playwright_and_cypress_patterns_are_not_renormalized",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Playwright-BDD and Cypress configuration detection (`playwright and cypress patterns are not renormalized`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
         {
           "name": "detects_supported_frameworks_and_dependency_fallbacks",
           "requiredStatus": "language-inapplicable",
@@ -6312,6 +6332,25 @@
           },
           "rationale": "`regression_ruby_exact_matcher_evidence_keeps_encoding_flags` requires `--emit-pairs` to report `/x/n` against `/x/` as not an exact matcher, with reordered flags as the exact-matcher control.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_267_cucumber_paths_follow_the_disk",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Cucumber `paths` from `cucumber.json` are normalized by the core descriptor before any adapter runs; Ruby `cucumber.yml` paths take the same function, pinned by `configured_paths_follow_the_disk_before_the_extension`.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_267_cypress_spec_pattern_is_not_expanded",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Cypress `e2e.specPattern` discovery (`regression 267 cypress spec pattern is not expanded`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_267_playwright_features_root_accepts_dot_slash",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Playwright-BDD `featuresRoot` discovery (`regression 267 playwright features root accepts dot slash`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     },

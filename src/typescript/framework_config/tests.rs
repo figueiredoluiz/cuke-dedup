@@ -43,30 +43,50 @@ fn extracts_cypress_e2e_spec_pattern_from_project_config() {
     );
 }
 
-/// Checks Playwright and Cypress distinguish absent configuration from dynamic paths and framework defaults.
+/// Checks Playwright and Cypress distinguish absent configuration from dynamic paths and framework defaults, and that a feature path with an extension expands only when it names an existing directory.
 #[test]
 fn framework_files_cover_missing_dynamic_and_default_paths() {
     let directory = tempfile::tempdir().unwrap();
 
     let playwright = directory.path().join("playwright.config.js");
     fs::write(&playwright, "export default { testDir: 'tests' }").unwrap();
-    assert!(playwright_config(&playwright).unwrap().is_none());
+    assert!(playwright_config(directory.path(), &playwright)
+        .unwrap()
+        .is_none());
     fs::write(
         &playwright,
         "const root = dynamic(); defineBddConfig({ featuresRoot: root });",
     )
     .unwrap();
-    let dynamic = playwright_config(&playwright).unwrap().unwrap();
+    let dynamic = playwright_config(directory.path(), &playwright)
+        .unwrap()
+        .unwrap();
     assert_eq!(dynamic.patterns, ["**/*.{feature,feature.md}"]);
     assert_eq!(dynamic.warnings.len(), 1);
     fs::write(&playwright, "defineBddConfig({});").unwrap();
     assert_eq!(
-        playwright_config(&playwright).unwrap().unwrap().patterns,
+        playwright_config(directory.path(), &playwright)
+            .unwrap()
+            .unwrap()
+            .patterns,
         ["features/**/*.feature"]
+    );
+    fs::create_dir_all(directory.path().join("specs.v2")).unwrap();
+    fs::write(
+        &playwright,
+        "defineBddConfig({ features: ['specs.v2', 'absent.v2'] });",
+    )
+    .unwrap();
+    assert_eq!(
+        playwright_config(directory.path(), &playwright)
+            .unwrap()
+            .unwrap()
+            .patterns,
+        ["specs.v2/**/*.feature", "absent.v2"]
     );
     fs::write(&playwright, "defineBddConfig({ features: dynamic() });").unwrap();
     assert_eq!(
-        playwright_config(&playwright)
+        playwright_config(directory.path(), &playwright)
             .unwrap()
             .unwrap()
             .warnings

@@ -34,9 +34,10 @@ pub(crate) struct FrameworkFeatures {
 /// Feature patterns one configuration file, or other project evidence, yields: the glob patterns
 /// relative to the project root, the file they came from, and warnings shown with the
 /// configuration. Discovery normalizes each pattern as it does Cucumber `paths`: `\` becomes
-/// `/`, a leading `./` and a trailing `:<line>` are dropped, a directory expands to a glob over
-/// feature files, and a negated (`!`) pattern is dropped with a warning. Empty patterns select no
-/// feature files.
+/// `/`, a leading `./` and trailing `:<line>` suffixes are dropped, a directory expands to a glob
+/// over feature files, and a negated (`!`) pattern is dropped with a warning. A path that exists
+/// under the root is a file or a directory as it is on disk; a missing path is a directory when it
+/// ends in `/` or has no extension. Empty patterns select no feature files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredFeatures {
     pub(crate) patterns: Vec<String>,
@@ -121,6 +122,7 @@ impl<'a> DiscoveryInput<'a> {
 pub struct FrameworkDescriptor {
     pub(crate) name: &'static str,
     pub(crate) discover: FeatureDiscovery,
+    pub(crate) normalize: bool,
 }
 
 /// A descriptor's discovery function.
@@ -128,8 +130,23 @@ pub type FeatureDiscovery = fn(&DiscoveryInput<'_>) -> Result<Option<DiscoveredF
 
 impl FrameworkDescriptor {
     /// A descriptor reported as `name` in the feature-pattern origin, discovering with `discover`.
+    /// Its patterns are normalized as described on [`DiscoveredFeatures`].
     pub const fn new(name: &'static str, discover: FeatureDiscovery) -> Self {
-        Self { name, discover }
+        Self {
+            name,
+            discover,
+            normalize: true,
+        }
+    }
+
+    /// A descriptor whose patterns lose only a leading `./`, for frameworks whose own path rules
+    /// differ from Cucumber `paths`.
+    pub(crate) const fn verbatim(name: &'static str, discover: FeatureDiscovery) -> Self {
+        Self {
+            name,
+            discover,
+            normalize: false,
+        }
     }
 }
 
@@ -157,13 +174,21 @@ pub(crate) fn detect<'d>(
     for descriptor in descriptors {
         if let Some(found) = (descriptor.discover)(input)? {
             let mut warnings = found.warnings;
-            let patterns = found
-                .patterns
-                .iter()
-                .filter_map(|pattern| {
-                    framework_pattern(pattern, CUCUMBER_EXTENSIONS, &mut warnings)
-                })
-                .collect();
+            let patterns = if descriptor.normalize {
+                found
+                    .patterns
+                    .iter()
+                    .filter_map(|pattern| {
+                        framework_pattern(input.root, pattern, CUCUMBER_EXTENSIONS, &mut warnings)
+                    })
+                    .collect()
+            } else {
+                found
+                    .patterns
+                    .iter()
+                    .map(|pattern| root_relative(pattern))
+                    .collect()
+            };
             return Ok(Some(FrameworkFeatures {
                 patterns,
                 source: found.source,
@@ -185,7 +210,8 @@ pub(crate) fn cucumber_discovery(
         let path = input.root.join(name);
         if path.is_file() {
             let context = || format!("failed to parse framework config {}", path.display());
-            return cucumber_config(&path, |text, _| parse(text).with_context(context)).map(Some);
+            let read = |text: &str, _: &str| parse(text).with_context(context);
+            return cucumber_config(&path, read).map(Some);
         }
     }
     for reader in script_readers {
@@ -213,7 +239,7 @@ pub(crate) fn cucumber_discovery(
 pub(crate) fn first_matching_config(
     root: &Path,
     configs: &[&str],
-    probe: fn(&Path) -> Result<Option<DiscoveredFeatures>>,
+    probe: impl Fn(&Path) -> Result<Option<DiscoveredFeatures>>,
 ) -> Result<Option<DiscoveredFeatures>> {
     for name in configs {
         let path = root.join(name);
@@ -244,7 +270,8 @@ pub(crate) fn package_has_any_dependency(package: Option<&JsonValue>, names: &[&
         .any(|name| package_has_dependency(package, name))
 }
 
-/// Reads Cucumber paths with the file's format reader, normalizing literal paths and warning before using defaults for dynamic values.
+/// Reads Cucumber paths with the file's format reader, warning before using defaults for dynamic
+/// values. Literal paths are returned as written; `detect` normalizes them.
 fn cucumber_config(
     path: &Path,
     read_paths: impl FnOnce(&str, &str) -> Result<LiteralProperty>,
@@ -254,10 +281,7 @@ fn cucumber_config(
     let mut warnings = Vec::new();
     let patterns = match paths {
         LiteralProperty::Missing => vec![CUCUMBER_DEFAULT.to_owned()],
-        LiteralProperty::Strings(paths) => paths
-            .into_iter()
-            .filter_map(|path| framework_pattern(&path, CUCUMBER_EXTENSIONS, &mut warnings))
-            .collect(),
+        LiteralProperty::Strings(paths) => paths,
         LiteralProperty::Dynamic => {
             warnings.push(format!(
                 "{} uses dynamic Cucumber paths; falling back to Cucumber's default `{CUCUMBER_DEFAULT}`",
@@ -269,8 +293,11 @@ fn cucumber_config(
     Ok(DiscoveredFeatures::new(patterns, path.to_path_buf()).with_warnings(warnings))
 }
 
-/// Drops initially blank inputs and negated paths, normalizes prefixes and numeric line suffixes, and expands directory or dot paths into globs over `extension`.
+/// Drops initially blank inputs and negated paths, normalizes prefixes and numeric line suffixes, and
+/// expands directories into globs over `extension`. A path that exists under `root` is a directory
+/// or a file as it is on disk; a missing one is a directory when it ends in `/` or has no extension.
 pub(crate) fn framework_pattern(
+    root: &Path,
     value: &str,
     extension: &str,
     warnings: &mut Vec<String>,
@@ -279,9 +306,7 @@ pub(crate) fn framework_pattern(
     if value.is_empty() {
         return None;
     }
-    while let Some(stripped) = value.strip_prefix("./") {
-        value = stripped.to_owned();
-    }
+    value = root_relative(&value);
     if value.is_empty() {
         value = ".".to_owned();
     }
@@ -291,15 +316,31 @@ pub(crate) fn framework_pattern(
         ));
         return None;
     }
-    if let Some((path, line)) = value.rsplit_once(':') {
-        if line.chars().all(|character| character.is_ascii_digit()) {
-            value = path.to_owned();
-        }
+    while let Some((path, _)) = value
+        .rsplit_once(':')
+        .filter(|(_, line)| line.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        value = path.to_owned();
     }
-    if is_glob(&value) || has_extension(&value) {
+    if is_glob(&value) {
         return Some(value);
     }
-    Some(directory_pattern(&value, extension))
+    let path = root.join(&value);
+    let file = !value.ends_with('/') && !path.is_dir() && (path.is_file() || has_extension(&value));
+    Some(if file {
+        value
+    } else {
+        directory_pattern(&value, extension)
+    })
+}
+
+/// Drops leading `./` segments, which discovery's root-relative matching never sees.
+fn root_relative(value: &str) -> String {
+    let mut value = value;
+    while let Some(stripped) = value.strip_prefix("./") {
+        value = stripped;
+    }
+    value.to_owned()
 }
 
 /// Appends a recursive glob for the requested extension, treating empty and dot paths as the current directory.

@@ -8191,3 +8191,94 @@ fn regression_ruby_exact_matcher_evidence_keeps_encoding_flags() {
         ]
     );
 }
+
+/// Writes `config`, one feature per `(path, step)` and a distinct definition for each step, then
+/// runs the built binary with `--require-features` in `root`.
+fn require_discovered_features(
+    root: &Path,
+    config: (&str, &str),
+    features: &[(&str, &str)],
+) -> assert_cmd::assert::Assert {
+    write(root, config.0, config.1);
+    let mut steps = String::new();
+    for (index, (path, step)) in features.iter().enumerate() {
+        write(
+            root,
+            path,
+            &format!("Feature: F\n  Scenario: S\n    Given {step}\n"),
+        );
+        steps.push_str(&format!("Given('{step}', () => work({index}));\n"));
+    }
+    write(root, "steps.ts", &steps);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([".", "--require-features"])
+        .assert()
+}
+
+/// Checks Cucumber.js `paths` follow the disk: a dotted directory expands, an extension-less file
+/// stays a file, and every `:<line>` suffix is dropped. Any entry read the other way matches no
+/// files and fails `--require-features`.
+#[test]
+fn regression_267_cucumber_paths_follow_the_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    require_discovered_features(
+        directory.path(),
+        (
+            "cucumber.json",
+            r#"{"default":{"paths":["specs.v2","smoke/login","checkout.feature:3:5"]}}"#,
+        ),
+        &[
+            ("specs.v2/login.feature", "the user signs in"),
+            ("smoke/login", "the user signs out"),
+            ("checkout.feature", "the user pays"),
+        ],
+    )
+    .success()
+    .stdout(predicate::str::contains("3 feature steps"))
+    .stderr(predicate::str::contains("matched no files").not());
+}
+
+/// Checks a Cypress `specPattern` naming a directory stays literal, as Cypress reads it, instead of
+/// expanding like a Cucumber path, while a `./`-prefixed glob still selects its feature files.
+#[test]
+fn regression_267_cypress_spec_pattern_is_not_expanded() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "package.json",
+        r#"{"devDependencies":{"@badeball/cypress-cucumber-preprocessor":"1"}}"#,
+    );
+    require_discovered_features(
+        directory.path(),
+        (
+            "cypress.config.js",
+            "export default defineConfig({ e2e: { specPattern: ['cypress/e2e', './cypress/e2e/**/*.feature'] } });",
+        ),
+        &[("cypress/e2e/login.feature", "the user signs in")],
+    )
+    .success()
+    .stdout(predicate::str::contains("1 feature step"))
+    .stderr(predicate::str::contains(
+        "feature pattern `cypress/e2e` from Cypress Cucumber configuration",
+    ));
+}
+
+/// Checks a Playwright-BDD `featuresRoot` written with a leading `./` selects the feature files
+/// under it.
+#[test]
+fn regression_267_playwright_features_root_accepts_dot_slash() {
+    let directory = tempfile::tempdir().unwrap();
+    require_discovered_features(
+        directory.path(),
+        (
+            "playwright.config.ts",
+            "defineBddConfig({ featuresRoot: './specs' });",
+        ),
+        &[("specs/login.feature", "the user signs in")],
+    )
+    .success()
+    .stdout(predicate::str::contains("1 feature step"))
+    .stderr(predicate::str::contains("matched no files").not());
+}

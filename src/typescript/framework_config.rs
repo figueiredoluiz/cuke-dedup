@@ -33,11 +33,11 @@ const BROAD_FEATURES: &str = "**/*.{feature,feature.md}";
 
 /// Recognized Playwright-BDD configuration.
 pub(crate) const PLAYWRIGHT_BDD_DISCOVERY: FrameworkDescriptor =
-    FrameworkDescriptor::new("Playwright-BDD", playwright_discovery);
+    FrameworkDescriptor::verbatim("Playwright-BDD", playwright_discovery);
 
 /// Cypress configuration, when a supported Cucumber preprocessor dependency is present.
 pub(crate) const CYPRESS_CUCUMBER_DISCOVERY: FrameworkDescriptor =
-    FrameworkDescriptor::new("Cypress Cucumber", cypress_discovery);
+    FrameworkDescriptor::verbatim("Cypress Cucumber", cypress_discovery);
 
 /// Cucumber configuration files, scripted ones in the JavaScript and TypeScript extensions, else
 /// default paths when a Cucumber dependency is present.
@@ -56,7 +56,9 @@ const SCRIPT_CONFIG_READER: ScriptConfigReader = ScriptConfigReader {
 
 /// Inspects supported Playwright configuration filenames in precedence order for a BDD configuration.
 fn playwright_discovery(input: &DiscoveryInput<'_>) -> Result<Option<DiscoveredFeatures>> {
-    first_matching_config(input.root, &PLAYWRIGHT_CONFIGS, playwright_config)
+    first_matching_config(input.root, &PLAYWRIGHT_CONFIGS, |path| {
+        playwright_config(input.root, path)
+    })
 }
 
 /// Inspects Cypress configurations only when a supported Cucumber preprocessor dependency is present.
@@ -91,7 +93,7 @@ fn cypress_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
 }
 
 /// Reads defineBddConfig feature paths or roots statically, supplying defaults for missing values and warnings for dynamic values.
-fn playwright_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
+fn playwright_config(root: &Path, path: &Path) -> Result<Option<DiscoveredFeatures>> {
     let (text, extension) = read_config(path)?;
     if !text.contains("defineBddConfig") {
         return Ok(None);
@@ -103,7 +105,7 @@ fn playwright_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
     let patterns = match features {
         LiteralProperty::Strings(paths) => paths
             .into_iter()
-            .filter_map(|path| framework_pattern(&path, "feature", &mut warnings))
+            .filter_map(|path| framework_pattern(root, &path, "feature", &mut warnings))
             .collect(),
         LiteralProperty::Dynamic => {
             warnings.push(format!(

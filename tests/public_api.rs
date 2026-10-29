@@ -1053,7 +1053,9 @@ fn caller_framework_contracts_discover_feature_patterns() {
     let load = |files: &[(&str, &str)], overrides: ConfigOverrides, caller: bool| {
         let root = tempfile::tempdir().unwrap();
         for (name, text) in files {
-            fs::write(root.path().join(name), text).unwrap();
+            let path = root.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
         }
         let config = if caller {
             Config::load_with_adapters(root.path(), overrides, registry.clone())
@@ -1095,6 +1097,17 @@ fn caller_framework_contracts_discover_feature_patterns() {
     let (features, origin, _) = load(&package, ConfigOverrides::default(), true).unwrap();
     assert_eq!(features, ["specs/**/*.feature"]);
     assert_eq!(origin, "Caller BDD configuration package.json");
+
+    // A caller path with an extension expands only when it names an existing directory.
+    let dotted = [
+        ("caller.bdd", "specs.v2\n./absent.v2\n"),
+        ("specs.v2/login.feature", ""),
+    ];
+    let (features, _, _) = load(&dotted, ConfigOverrides::default(), true).unwrap();
+    assert_eq!(
+        features,
+        ["specs.v2/**/*.{feature,feature.md}", "absent.v2"]
+    );
 
     // No caller evidence, a built-in registry and explicit features each leave the caller
     // descriptor out: no caller origin and no caller warning.
