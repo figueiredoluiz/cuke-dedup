@@ -921,6 +921,36 @@ impl AdapterRegistry {
             .find(|framework| framework.id() == id)
     }
 
+    /// The policy of a definition of `framework` at `path`: its contract's policy, else its
+    /// adapter's. The adapter is the one `path` routes to when that adapter declares `framework` or
+    /// `framework` is [`Framework::UNKNOWN`], else the first one declaring `framework`; with
+    /// neither, [`AnalysisPolicy::default`]. Adapters sharing one contract slice may differ in
+    /// policy, so the routed adapter comes first.
+    pub(crate) fn policy_for(&self, framework: Framework, path: &Path) -> AnalysisPolicy {
+        let declares = |adapter: &&'static dyn SourceAdapter| {
+            adapter
+                .framework_contracts()
+                .iter()
+                .any(|contract| contract.framework == framework)
+        };
+        self.adapter_for_path(path)
+            .filter(|adapter| framework == Framework::UNKNOWN || declares(adapter))
+            .or_else(|| {
+                self.registrations
+                    .iter()
+                    .map(|registration| registration.adapter)
+                    .find(declares)
+            })
+            .map(|adapter| {
+                FrameworkContract::policy_of(
+                    adapter.framework_contracts(),
+                    framework,
+                    adapter.analysis_policy(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
     /// [`Framework::UNKNOWN`] followed by every registered contract's framework.
     pub(crate) fn frameworks(&self) -> Vec<Framework> {
         self.declared_frameworks().collect()

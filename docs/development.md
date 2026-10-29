@@ -279,7 +279,11 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   `DiscoveryInput::read`.
   `Framework` and the types holding one (`StepDefinition`, `AnalysisResult`) deserialize against
   the built-in adapters; a caller framework id reads back through `AdapterRegistry::framework`,
-  `FrameworkSeed` or `RegistrySeed<T>`, which reads any `T` with a registry's ids in scope.
+  `FrameworkSeed` or `RegistrySeed<T>`, which reads any `T` with a registry's ids in scope. A
+  read-back `StepDefinition` gets its contract's policy, else its adapter's (the one its path
+  routes to when that adapter declares the framework or the framework is `unknown`, else the first
+  declaring one), from the same registry; built-in definitions round-trip with their extracted
+  policy.
 - An adapter not discovered by default is selected only by definition patterns that depend on its
   suffix. Ruby owns its configuration keys: the `ruby`
   section and the flat `rubyLoadPaths` alias are flattened into the core config from

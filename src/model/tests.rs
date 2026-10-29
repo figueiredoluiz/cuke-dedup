@@ -474,3 +474,45 @@ fn framework_ids_keep_their_serialized_form_and_reject_undeclared_ids() {
         );
     }
 }
+
+/// A JSON value deserializer that records the struct name it is asked for.
+struct StructNameProbe<'a>(serde_json::Value, &'a std::cell::Cell<Option<&'static str>>);
+
+impl<'de> serde::Deserializer<'de> for StructNameProbe<'_> {
+    type Error = serde_json::Error;
+
+    /// Defers to the JSON value.
+    fn deserialize_any<V: serde::de::Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        self.0.deserialize_any(visitor)
+    }
+
+    /// Records `name`, then defers to the JSON value.
+    fn deserialize_struct<V: serde::de::Visitor<'de>>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        self.1.set(Some(name));
+        self.0.deserialize_struct(name, fields, visitor)
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes byte_buf option
+        unit unit_struct newtype_struct seq tuple tuple_struct map enum identifier ignored_any
+    }
+}
+
+/// Checks a definition is read back under the struct name its serializer writes, which formats
+/// such as RON compare.
+#[test]
+fn step_definitions_read_back_under_their_serialized_struct_name() {
+    let name = std::cell::Cell::new(None);
+    let value = serde_json::to_value(definition(3)).unwrap();
+    let read = StepDefinition::deserialize(StructNameProbe(value, &name)).unwrap();
+    assert_eq!(read, definition(3));
+    assert_eq!(name.get(), Some("StepDefinition"));
+}
