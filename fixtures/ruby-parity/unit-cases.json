@@ -2464,6 +2464,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "step_definitions_read_back_under_their_serialized_struct_name",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: the definition reader requests the struct name the serializer writes; the definition is synthetic.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "rule_names_are_stable_kebab_case",
           "requiredStatus": "engine-invariant",
           "stage": "model-codec",
@@ -6654,6 +6661,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "model-codec",
           "rationale": "Adapter-independent stage `model-codec`: framework ids resolve against the seeding registry; the adapter is a caller-built test double and the Cucumber.js id appears only as the built-in control.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "read_back_definitions_get_the_policy_extraction_attaches",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: read-back policy follows the registry's declaring or routed adapter; the adapter is a caller-built test double and the built-in Cucumber.js and Jest-Cucumber ids appear only as controls.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "read_back_policy_prefers_the_routed_adapter_of_a_shared_contract",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: read-back policy precedence across adapters sharing a contract slice; both adapters are caller-built test doubles of neither language.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

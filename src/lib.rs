@@ -53,13 +53,19 @@
 //! next minor release.
 //!
 //! [`model::StepDefinition::analysis_policy`] holds the comparison policy the extracting adapter
-//! attached, a [`source_adapter::AnalysisPolicy`]. A definition built by hand or deserialized has
-//! [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript baseline, whatever its
-//! `framework`; a hand-built Ruby definition takes
+//! attached, a [`source_adapter::AnalysisPolicy`]. The field is not serialized: a deserialized
+//! definition gets its framework contract's policy, else its adapter's, where the adapter is the
+//! one its location's suffix routes to when that adapter declares `framework` or `framework` is
+//! `unknown`, else the first one declaring `framework`. Plain `Deserialize` reads against the
+//! built-in adapters and [`model::RegistrySeed`] against its registry; a definition no adapter
+//! claims gets [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript baseline.
+//! Built-in definitions round-trip with their extracted policy; a caller adapter that attaches a
+//! policy on other grounds does not. A definition
+//! built by hand has the default whatever its `framework`; a hand-built Ruby definition takes
 //! `adapter_for_language(ruby::RUBY).map(|ruby| ruby.analysis_policy())`, and a built-in
 //! framework-specific policy (Jest-Cucumber, vitest-cucumber-plugin) comes from
 //! [`source_adapter::FrameworkContract::policy_of`] over the adapter's
-//! [`source_adapter::SourceAdapter::framework_contracts`]. The field is not serialized. A caller builds its own policy from a
+//! [`source_adapter::SourceAdapter::framework_contracts`]. A caller builds its own policy from a
 //! [`source_adapter::DomainSpec`] declared in a `static`, a [`source_adapter::RegexDialect`] and
 //! the capability enums ([`source_adapter::HandlerScope`], [`source_adapter::StepMatching`],
 //! [`source_adapter::StreamEvidence`]) with [`source_adapter::AnalysisPolicy::new`], and keys

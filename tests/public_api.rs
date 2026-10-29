@@ -1012,29 +1012,52 @@ static CALLER_BDD_CONTRACTS: [FrameworkContract; 1] =
     [FrameworkContract::new(Framework::new("caller-bdd"))
         .with_discovery(FrameworkDescriptor::new("Caller BDD", caller_bdd_discovery))];
 
-/// A caller adapter whose one framework contract discovers feature files.
-struct BddAdapter;
+/// A caller adapter that extracts nothing, declares `contracts` and compares with `policy` (the
+/// default when `None`). With `nested_seed`, reading its policy starts a seeded read, as an adapter
+/// loading its policy lazily might.
+struct ContractAdapter {
+    name: &'static str,
+    contracts: &'static [FrameworkContract],
+    policy: Option<AnalysisPolicy>,
+    nested_seed: bool,
+}
 
-impl SourceAdapter for BddAdapter {
+impl SourceAdapter for ContractAdapter {
     /// Returns the adapter name.
     fn name(&self) -> &'static str {
-        "caller-bdd-steps"
+        self.name
     }
-    /// Returns the caller language.
+    /// Returns the adapter name as its language.
     fn language(&self) -> SourceLanguage {
-        SourceLanguage::new("caller-bdd-steps")
+        SourceLanguage::new(self.name)
     }
     /// Extracts nothing.
     fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
         Ok(Extraction::new(Vec::new(), Vec::new()))
     }
-    /// Declares the discovering contract.
+    /// Returns the configured policy, after a nested seeded read when asked.
+    fn analysis_policy(&self) -> AnalysisPolicy {
+        if self.nested_seed {
+            use serde::de::DeserializeSeed;
+            FrameworkSeed::new(AdapterRegistry::builtin())
+                .deserialize(serde_json::json!("unknown"))
+                .unwrap();
+        }
+        self.policy.unwrap_or_default()
+    }
+    /// Declares the configured contracts.
     fn framework_contracts(&self) -> &'static [FrameworkContract] {
-        &CALLER_BDD_CONTRACTS
+        self.contracts
     }
 }
 
-static BDD: BddAdapter = BddAdapter;
+/// A caller adapter whose one framework contract discovers feature files.
+static BDD: ContractAdapter = ContractAdapter {
+    name: "caller-bdd-steps",
+    contracts: &CALLER_BDD_CONTRACTS,
+    policy: None,
+    nested_seed: false,
+};
 
 /// Checks a caller framework contract's discovery sets normalized feature patterns, their origin
 /// and warnings from its configuration file or `package.json`, runs after the built-in contracts,
@@ -1201,16 +1224,18 @@ impl<'de> serde::Deserialize<'de> for NestedFrameworks {
     }
 }
 
-/// A framework id read on a spawned thread, with the outcome of that read.
-struct ReadOnAnotherThread(Result<Framework, String>);
+/// A value read on a spawned thread, with the outcome of that read.
+struct ReadOnAnotherThread<T>(Result<T, String>);
 
-impl<'de> serde::Deserialize<'de> for ReadOnAnotherThread {
-    /// Reads the id as a value, then deserializes the framework on a scoped thread.
+impl<'de, T: serde::de::DeserializeOwned + Send> serde::Deserialize<'de>
+    for ReadOnAnotherThread<T>
+{
+    /// Reads the input as a JSON value, then deserializes `T` from it on a scoped thread.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+        let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
         let read = std::thread::scope(|scope| {
             scope
-                .spawn(|| serde_json::from_value::<Framework>(id).map_err(|e| e.to_string()))
+                .spawn(|| serde_json::from_value::<T>(value).map_err(|e| e.to_string()))
                 .join()
                 .unwrap()
         });
@@ -1367,7 +1392,7 @@ fn caller_framework_ids_read_back_through_their_registry() {
     // The scope belongs to the reading thread: inside a seeded read, a framework read on another
     // thread resolves against the built-in registry.
     let on_another_thread = |id: &str| {
-        RegistrySeed::<ReadOnAnotherThread>::new(&extended)
+        RegistrySeed::<ReadOnAnotherThread<Framework>>::new(&extended)
             .deserialize(serde_json::json!(id))
             .unwrap()
             .0
@@ -1376,4 +1401,148 @@ fn caller_framework_ids_read_back_through_their_registry() {
     assert!(on_another_thread("caller-bdd")
         .unwrap_err()
         .contains("unknown framework `caller-bdd`"));
+}
+
+static POLICY_CONTRACTS: [FrameworkContract; 2] = [
+    FrameworkContract::new(Framework::new("policy-scoped"))
+        .with_policy(caller_policy(&CALLER, StepMatching::Positional)),
+    FrameworkContract::new(Framework::new("policy-plain")),
+];
+
+/// A caller adapter with its own policy and one contract that overrides it.
+static POLICY: ContractAdapter = ContractAdapter {
+    name: "caller-policy-steps",
+    contracts: &POLICY_CONTRACTS,
+    policy: Some(caller_policy(&CALLER, StepMatching::ByText)),
+    nested_seed: false,
+};
+
+/// Checks a read-back definition gets the policy extraction attaches: its contract's, else the
+/// adapter's, where the adapter is the one declaring its framework, else, for `unknown`, the one
+/// its path routes to, else none (the default). `RegistrySeed` resolves against its registry, plain
+/// `Deserialize` and a read on another thread against the built-in adapters.
+#[test]
+fn read_back_definitions_get_the_policy_extraction_attaches() {
+    use serde::de::DeserializeSeed;
+    let registry = AdapterRegistry::new(
+        AdapterRegistry::builtin()
+            .registrations()
+            .iter()
+            .copied()
+            .chain([SourceAdapterRegistration::new(".pol", &POLICY)]),
+    )
+    .unwrap();
+    let framework = |id: &str| registry.framework(id).expect("declared id");
+    let contract = caller_policy(&CALLER, StepMatching::Positional);
+    let adapter = POLICY.analysis_policy();
+    let ts = registered_adapter(TYPESCRIPT);
+    let jest = FrameworkContract::policy_of(
+        ts.framework_contracts(),
+        framework("jest-cucumber"),
+        ts.analysis_policy(),
+    );
+    let definition = |id: &str, path: &str| {
+        let mut definition = caller_definition(
+            AnalysisPolicy::default(),
+            "I log in",
+            MatcherKind::CucumberExpression,
+            3,
+        );
+        definition.framework = framework(id);
+        definition.location.path = PathBuf::from(path);
+        serde_json::to_value(definition).unwrap()
+    };
+    let seeded = |json: serde_json::Value| {
+        RegistrySeed::<StepDefinition>::new(&registry)
+            .deserialize(json)
+            .unwrap()
+            .analysis_policy
+    };
+    for (id, path, expected) in [
+        ("policy-scoped", "steps.pol", contract),
+        ("policy-plain", "steps.pol", adapter),
+        // The declaring adapter wins over the path's.
+        ("policy-plain", "steps.ts", adapter),
+        ("cucumber-js", "steps.pol", AnalysisPolicy::default()),
+        ("jest-cucumber", "steps.pol", jest),
+        // `unknown` takes the adapter its path routes to, and the default when none does.
+        ("unknown", "steps.pol", adapter),
+        ("unknown", "steps.txt", AnalysisPolicy::default()),
+    ] {
+        assert_eq!(seeded(definition(id, path)), expected, "{id} at {path}");
+    }
+    assert_ne!(contract, adapter);
+    assert_ne!(adapter, AnalysisPolicy::default());
+    assert_ne!(jest, AnalysisPolicy::default());
+
+    // Without the seed, the built-in adapters decide: `.pol` routes nowhere.
+    let plain = |json: serde_json::Value| {
+        serde_json::from_value::<StepDefinition>(json)
+            .unwrap()
+            .analysis_policy
+    };
+    assert_eq!(
+        plain(definition("unknown", "steps.pol")),
+        AnalysisPolicy::default()
+    );
+    assert_eq!(plain(definition("jest-cucumber", "steps.ts")), jest);
+    let elsewhere = RegistrySeed::<ReadOnAnotherThread<StepDefinition>>::new(&registry)
+        .deserialize(definition("unknown", "steps.pol"))
+        .unwrap()
+        .0
+        .unwrap();
+    assert_eq!(elsewhere.analysis_policy, AnalysisPolicy::default());
+}
+
+static SHARED_CONTRACTS: [FrameworkContract; 1] =
+    [FrameworkContract::new(Framework::new("shared-plain"))];
+
+/// Two caller adapters sharing one contract slice with different policies; reading the first's
+/// policy starts a nested seeded read.
+static SHARED_BY_TEXT: ContractAdapter = ContractAdapter {
+    name: "shared-text",
+    contracts: &SHARED_CONTRACTS,
+    policy: Some(caller_policy(&CALLER, StepMatching::ByText)),
+    nested_seed: true,
+};
+
+static SHARED_POSITIONAL: ContractAdapter = ContractAdapter {
+    name: "shared-positional",
+    contracts: &SHARED_CONTRACTS,
+    policy: Some(caller_policy(&CALLER, StepMatching::Positional)),
+    nested_seed: false,
+};
+
+/// Checks adapters sharing a contract slice keep their own policies on read-back: the adapter a
+/// definition's path routes to wins when it declares the framework, the first declaring adapter
+/// otherwise; and an adapter that reads through a seed while the policy is resolved does not
+/// conflict with the enclosing seed.
+#[test]
+fn read_back_policy_prefers_the_routed_adapter_of_a_shared_contract() {
+    use serde::de::DeserializeSeed;
+    let registry = AdapterRegistry::new([
+        SourceAdapterRegistration::new(".text", &SHARED_BY_TEXT),
+        SourceAdapterRegistration::new(".positional", &SHARED_POSITIONAL),
+    ])
+    .unwrap();
+    let by_text = caller_policy(&CALLER, StepMatching::ByText);
+    let positional = caller_policy(&CALLER, StepMatching::Positional);
+    for (path, expected) in [
+        ("steps.positional", positional),
+        ("steps.text", by_text),
+        ("steps.txt", by_text),
+    ] {
+        let mut definition = caller_definition(
+            AnalysisPolicy::default(),
+            "I log in",
+            MatcherKind::CucumberExpression,
+            3,
+        );
+        definition.framework = registry.framework("shared-plain").unwrap();
+        definition.location.path = PathBuf::from(path);
+        let read = RegistrySeed::<StepDefinition>::new(&registry)
+            .deserialize(serde_json::to_value(definition).unwrap())
+            .unwrap();
+        assert_eq!(read.analysis_policy, expected, "{path}");
+    }
 }

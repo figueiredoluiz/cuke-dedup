@@ -103,10 +103,16 @@ impl Serialize for Framework {
     }
 }
 
+/// The registry a [`RegistrySeed`] reads against, with its frameworks listed once.
+struct SeedScope {
+    registry: std::rc::Rc<crate::source_adapter::AdapterRegistry>,
+    frameworks: Vec<Framework>,
+}
+
 thread_local! {
-    /// Frameworks a [`RegistrySeed`] admits while it reads its value; `None` reads
-    /// against the built-in registry.
-    static SEEDED_FRAMEWORKS: std::cell::RefCell<Option<Vec<Framework>>> =
+    /// The registry a [`RegistrySeed`] reads its value against; `None` reads against the
+    /// built-in registry.
+    static SEED_SCOPE: std::cell::RefCell<Option<SeedScope>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -136,9 +142,9 @@ impl<'de> Deserialize<'de> for Framework {
     /// a [`RegistrySeed`] the seed's registry decides instead.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let id = String::deserialize(deserializer)?;
-        SEEDED_FRAMEWORKS
-            .with_borrow(|seeded| match seeded {
-                Some(known) => resolve_framework(&id, known),
+        SEED_SCOPE
+            .with_borrow(|scope| match scope {
+                Some(scope) => resolve_framework(&id, &scope.frameworks),
                 None => resolve_framework(&id, &BUILTIN_FRAMEWORKS),
             })
             .map_err(serde::de::Error::custom)
@@ -152,9 +158,9 @@ pub type FrameworkSeed<'a> = RegistrySeed<'a, Framework>;
 /// Reads any `T` with a registry's framework ids in scope: every [`Framework`] inside `T` resolves
 /// against `registry` instead of the built-in adapters, so a caller adapter's framework id reads
 /// back in a [`StepDefinition`], a `Vec<StepDefinition>`, an [`AnalysisResult`] or a caller type.
-/// Everything else reads as `T`'s own `Deserialize` does; a definition's `analysis_policy` stays
-/// the default. The scope belongs to the reading thread: a [`Framework`] that `T` reads on another
-/// thread resolves against the built-in registry.
+/// A [`StepDefinition`] inside `T` takes its `analysis_policy` from `registry`. Everything else
+/// reads as `T`'s own `Deserialize` does. The scope belongs to the reading thread: a [`Framework`]
+/// or definition that `T` reads on another thread resolves against the built-in registry.
 pub struct RegistrySeed<'a, T> {
     registry: &'a crate::source_adapter::AdapterRegistry,
     target: std::marker::PhantomData<fn() -> T>,
@@ -188,23 +194,25 @@ impl<T> fmt::Debug for RegistrySeed<'_, T> {
     }
 }
 
-/// Restores the enclosing seed's frameworks when a seeded read ends, by return, error or unwind.
-struct RestoreSeededFrameworks(Option<Vec<Framework>>);
+/// Restores the enclosing seed's scope when a seeded read ends, by return, error or unwind.
+struct RestoreSeedScope(Option<SeedScope>);
 
-impl Drop for RestoreSeededFrameworks {
-    /// Puts the enclosing frameworks back.
+impl Drop for RestoreSeedScope {
+    /// Puts the enclosing scope back.
     fn drop(&mut self) {
-        SEEDED_FRAMEWORKS.set(self.0.take());
+        SEED_SCOPE.set(self.0.take());
     }
 }
 
 impl<'de, T: Deserialize<'de>> serde::de::DeserializeSeed<'de> for RegistrySeed<'_, T> {
     type Value = T;
 
-    /// Reads `T` with the seed's frameworks in scope for every [`Framework`] it holds.
+    /// Reads `T` with the seed's registry in scope for every [`Framework`] and definition it holds.
     fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<T, D::Error> {
-        let _restore =
-            RestoreSeededFrameworks(SEEDED_FRAMEWORKS.replace(Some(self.registry.frameworks())));
+        let _restore = RestoreSeedScope(SEED_SCOPE.replace(Some(SeedScope {
+            registry: std::rc::Rc::new(self.registry.clone()),
+            frameworks: self.registry.frameworks(),
+        })));
         T::deserialize(deserializer)
     }
 }
@@ -250,7 +258,7 @@ pub struct InlineSuppression {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 /// A step definition extracted into the analyzer's shared representation.
 pub struct StepDefinition {
     /// Original matcher text without language-specific delimiters.
@@ -266,8 +274,13 @@ pub struct StepDefinition {
     pub handler: HandlerFingerprint,
     /// Framework that registered the definition.
     pub framework: Framework,
-    /// How the analyzer compares this definition, attached by the adapter that extracted it. A
-    /// hand-built or deserialized definition uses [`AnalysisPolicy::default`]. Not serialized.
+    /// How the analyzer compares this definition, attached by the adapter that extracted it. Not
+    /// serialized: a deserialized definition gets its framework contract's policy, else its
+    /// adapter's. The adapter is the one `location.path` routes to when that adapter declares
+    /// `framework` or `framework` is [`Framework::UNKNOWN`], else the first one declaring
+    /// `framework`; with neither, and for a hand-built definition, [`AnalysisPolicy::default`].
+    /// Built-in extraction attaches the same policy, so built-in definitions round-trip; a caller
+    /// adapter that attaches a policy on other grounds does not.
     #[serde(skip)]
     pub analysis_policy: AnalysisPolicy,
     /// Registration name resolved from direct, aliased, or namespaced usage.
@@ -277,6 +290,48 @@ pub struct StepDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// Source-local suppression directives attached to this definition.
     pub inline_suppressions: Vec<InlineSuppression>,
+}
+
+/// Field-by-field reader of [`StepDefinition`]. Serde's remote derive builds the definition from
+/// these fields, so a field added to or retyped in [`StepDefinition`] fails to compile here. The
+/// rename keeps the struct name the serializer writes, which name-checking formats compare.
+#[derive(Deserialize)]
+#[serde(remote = "StepDefinition", rename = "StepDefinition")]
+struct StepDefinitionFields {
+    matcher: String,
+    normalized_matcher: String,
+    matcher_kind: MatcherKind,
+    #[serde(default)]
+    matcher_flags: String,
+    handler: HandlerFingerprint,
+    framework: Framework,
+    #[serde(skip)]
+    analysis_policy: AnalysisPolicy,
+    registration: String,
+    location: SourceLocation,
+    #[serde(default)]
+    inline_suppressions: Vec<InlineSuppression>,
+}
+
+impl<'de> Deserialize<'de> for StepDefinition {
+    /// Reads the fields, then attaches the policy described on
+    /// [`StepDefinition::analysis_policy`]. Inside a [`RegistrySeed`] the seed's registry decides;
+    /// otherwise the built-in registry does.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut definition = StepDefinitionFields::deserialize(deserializer)?;
+        // Release the scope before adapter code runs: an adapter may start a seeded read itself.
+        let seeded = SEED_SCOPE.with_borrow(|scope| {
+            scope
+                .as_ref()
+                .map(|scope| std::rc::Rc::clone(&scope.registry))
+        });
+        let registry = seeded
+            .as_deref()
+            .unwrap_or(crate::source_adapter::AdapterRegistry::builtin());
+        definition.analysis_policy =
+            registry.policy_for(definition.framework, &definition.location.path);
+        Ok(definition)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

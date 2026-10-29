@@ -1003,7 +1003,8 @@ fn adapter_policies_resolve_to_their_declared_capabilities() {
 }
 
 /// An unconfigured definition keeps the baseline JavaScript/TypeScript policy; extraction attaches
-/// the policy of the framework that registered each definition, and Ruby its own.
+/// the policy of the framework that registered each definition, and Ruby its own. A serialized
+/// definition reads back with the policy extraction attached.
 #[test]
 fn extraction_attaches_the_policy_of_the_registering_framework() {
     assert_eq!(
@@ -1014,6 +1015,7 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
     assert!(format!("{:?}", AnalysisPolicy::default()).contains("DomainSpec(ecmascript)"));
     // Every definition carries one policy; keep it to a pointer plus packed flags.
     assert!(std::mem::size_of::<AnalysisPolicy>() <= 16);
+    let mut extracted = Vec::new();
     for (source, framework) in [
         (
             "import { Given } from '@cucumber/cucumber'; Given('a', () => work());",
@@ -1035,6 +1037,7 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
             "import { Given } from 'vitest-cucumber-plugin'; Given('a', () => work());",
             VITEST_CUCUMBER,
         ),
+        ("Given('a', () => work());", Framework::UNKNOWN),
     ] {
         let definitions = ts_definitions(source);
         assert_eq!(definitions.len(), 1, "{framework:?}");
@@ -1044,6 +1047,7 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
             crate::typescript::semantics::policy(framework),
             "{framework:?}"
         );
+        extracted.push(definitions[0].clone());
     }
     let ruby = adapter_for_language(crate::ruby::RUBY)
         .unwrap()
@@ -1063,10 +1067,19 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
         ruby.definitions[0].analysis_policy,
         AnalysisPolicy::default()
     );
-    // The policy is not serialized: a round trip yields the default.
-    let restored: StepDefinition =
-        serde_json::from_str(&serde_json::to_string(&ruby.definitions[0]).unwrap()).unwrap();
-    assert_eq!(restored.analysis_policy, AnalysisPolicy::default());
+    extracted.push(ruby.definitions[0].clone());
+    // The policy is not serialized; reading back attaches the one extraction did, which differs
+    // from the default for Jest-Cucumber, vitest-cucumber-plugin and Ruby.
+    let defaults = extracted
+        .iter()
+        .filter(|definition| definition.analysis_policy == AnalysisPolicy::default())
+        .count();
+    assert_eq!(defaults, extracted.len() - 3);
+    for definition in extracted {
+        let restored: StepDefinition =
+            serde_json::from_str(&serde_json::to_string(&definition).unwrap()).unwrap();
+        assert_eq!(restored, definition, "{:?}", definition.framework);
+    }
 }
 
 /// A language's comparison domain is the one its registered adapter declares, and the definitions
