@@ -1201,6 +1201,23 @@ impl<'de> serde::Deserialize<'de> for NestedFrameworks {
     }
 }
 
+/// A framework id read on a spawned thread, with the outcome of that read.
+struct ReadOnAnotherThread(Result<Framework, String>);
+
+impl<'de> serde::Deserialize<'de> for ReadOnAnotherThread {
+    /// Reads the id as a value, then deserializes the framework on a scoped thread.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+        let read = std::thread::scope(|scope| {
+            scope
+                .spawn(|| serde_json::from_value::<Framework>(id).map_err(|e| e.to_string()))
+                .join()
+                .unwrap()
+        });
+        Ok(Self(read))
+    }
+}
+
 /// A value whose deserialization panics.
 struct PanicsOnRead;
 
@@ -1219,7 +1236,8 @@ fn cloned<T: Clone>(value: &T) -> T {
 /// Checks a caller framework id reads back only through a registry that declares it: the
 /// registry lookup, `FrameworkSeed`, and `RegistrySeed` over a definition, a list, an analysis
 /// result and a nested seed. A caller-only registry replaces the built-in ids, and plain
-/// `Deserialize` reads built-in ids again after a seeded read returns, fails or panics.
+/// `Deserialize` reads built-in ids again after a seeded read returns, fails or panics. A framework
+/// read on another thread inside a seeded read uses the built-in ids.
 #[test]
 fn caller_framework_ids_read_back_through_their_registry() {
     use serde::de::DeserializeSeed;
@@ -1345,4 +1363,17 @@ fn caller_framework_ids_read_back_through_their_registry() {
     }));
     assert!(panicked.is_err());
     rejects_caller("after a panicking seeded read");
+
+    // The scope belongs to the reading thread: inside a seeded read, a framework read on another
+    // thread resolves against the built-in registry.
+    let on_another_thread = |id: &str| {
+        RegistrySeed::<ReadOnAnotherThread>::new(&extended)
+            .deserialize(serde_json::json!(id))
+            .unwrap()
+            .0
+    };
+    assert_eq!(on_another_thread("cucumber-js"), Ok(cucumber));
+    assert!(on_another_thread("caller-bdd")
+        .unwrap_err()
+        .contains("unknown framework `caller-bdd`"));
 }
