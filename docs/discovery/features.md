@@ -6,10 +6,13 @@ When `features` is not configured, CukeDedup reads literal feature paths from su
 - Cypress `e2e.specPattern` when the Badeball Cucumber preprocessor is installed.
 - Cucumber.js configuration.
 
-Cucumber directories include `.feature` and `.feature.md`. Playwright-BDD directories follow its
-`.feature` default. Explicit file and glob paths are preserved, so projects can select conventions
-such as `*.spec`. Dynamic paths produce a warning; set `features` in CukeDedup configuration to
-make them deterministic.
+Cucumber.js `paths` and Playwright-BDD `features` entries that exist are read as files or
+directories as they are on disk; a missing entry is a directory when it ends in `/` or has no
+extension. Trailing `:<line>` suffixes are dropped. Cucumber directories include `.feature` and
+`.feature.md`. Playwright-BDD directories follow its `.feature` default. Files and globs are
+preserved, so projects can select conventions such as `*.spec`. Cypress `e2e.specPattern` values
+are used as written, less a leading `./`. Dynamic paths produce a warning; set `features` in
+CukeDedup configuration to make them deterministic.
 
 `.feature.md` selects the Gherkin Markdown parser. Other extensions selected by a custom or
 framework pattern are parsed as classic Gherkin. This avoids treating ordinary Markdown as

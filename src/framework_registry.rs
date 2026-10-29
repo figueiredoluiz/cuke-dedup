@@ -16,7 +16,7 @@ pub(crate) fn detect(
     let descriptors = adapters
         .framework_contracts()
         .filter_map(|contract| contract.discovery.as_ref());
-    framework_descriptor::detect(descriptors, &DiscoveryInput { root, package })
+    framework_descriptor::detect(descriptors, &DiscoveryInput::new(root, package))
 }
 
 #[cfg(test)]

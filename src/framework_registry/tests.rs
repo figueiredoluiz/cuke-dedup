@@ -8,6 +8,32 @@ fn detect(root: &Path, package: Option<&JsonValue>) -> Result<Option<FrameworkFe
     super::detect(AdapterRegistry::builtin(), root, package)
 }
 
+/// Checks Playwright-BDD and Cypress patterns lose only a leading `./`: Cucumber `paths`
+/// normalization would expand the existing Cypress `specs` directory, and an unstripped `./`
+/// would match no root-relative file.
+#[test]
+fn playwright_and_cypress_patterns_are_not_renormalized() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("specs")).unwrap();
+    let config = directory.path().join("playwright.config.ts");
+    fs::write(&config, "defineBddConfig({ featuresRoot: './specs' });").unwrap();
+    let detected = detect(directory.path(), None).unwrap().unwrap();
+    assert_eq!(detected.patterns, ["specs/**/*.feature"]);
+
+    fs::remove_file(config).unwrap();
+    fs::write(
+        directory.path().join("cypress.config.js"),
+        "export default defineConfig({ e2e: { specPattern: './specs' } });",
+    )
+    .unwrap();
+    let package = serde_json::json!({
+        "devDependencies": {"@badeball/cypress-cucumber-preprocessor": "1"}
+    });
+    let detected = detect(directory.path(), Some(&package)).unwrap().unwrap();
+    assert_eq!(detected.framework, "Cypress Cucumber");
+    assert_eq!(detected.patterns, ["specs"]);
+}
+
 /// Checks recognized framework files and current or legacy dependency names enable the expected discovery defaults.
 #[test]
 fn detects_supported_frameworks_and_dependency_fallbacks() {

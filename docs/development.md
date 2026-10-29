@@ -272,6 +272,11 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   `SourceAdapterRegistration::with_session`) owns per-run session state and may expand
   dependencies: its hook adds loaded sources, edges and gaps to `DiscoveredFiles`, reading the
   configured excludes through `ExcludeSet`; discovery then re-sorts and de-duplicates definitions.
+  A framework contract may carry a `FrameworkDescriptor` (`FrameworkContract::with_discovery`).
+  When the configuration names no feature patterns, descriptors run in registry order and the
+  first match sets the patterns and their origin; its patterns are normalized like Cucumber
+  `paths`. A descriptor error becomes a configuration warning, except an input-limit error from
+  `DiscoveryInput::read`.
 - An adapter not discovered by default is selected only by definition patterns that depend on its
   suffix. Ruby owns its configuration keys: the `ruby`
   section and the flat `rubyLoadPaths` alias are flattened into the core config from

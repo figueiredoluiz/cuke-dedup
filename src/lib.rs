@@ -90,6 +90,17 @@
 //! `dependency_edges`). Session hooks follow the adapter object they were made for: a built-in
 //! adapter registered under another suffix keeps them, and a registration whose `adapter` is
 //! replaced drops them.
+//!
+//! A framework contract finds its feature files through a
+//! [`source_adapter::FrameworkDescriptor`] attached with
+//! [`source_adapter::FrameworkContract::with_discovery`]. When the configuration names no feature
+//! patterns, discovery runs each registered contract's descriptor in registry order and keeps the
+//! first [`source_adapter::DiscoveredFeatures`]; a registry that lists the built-in registrations
+//! first reaches a caller contract only when no built-in one matches. A descriptor error becomes a
+//! configuration warning, except an input-limit error from
+//! [`source_adapter::DiscoveryInput::read`], which fails loading.
+//! [`source_adapter::DiscoveryInput::package`] returns a `serde_json::Value`, so `serde_json` 1.x
+//! is part of the public API.
 //! [`config::Config::load_with_adapters`] attaches a registry; discovery, default excludes,
 //! framework detection, [`source_adapter::SourceExtractionSession::for_config`] and session
 //! finalization read it, and [`source_adapter::SourceFinalization::apply_with`] takes one. These

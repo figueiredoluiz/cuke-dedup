@@ -13,11 +13,11 @@ use cuke_dedup::reporters::{
 };
 use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{
-    AdapterRegistry, AdapterSessionState, AnalysisPolicy, DependencyGap, DomainSpec, Extraction,
-    ExtractionDiagnostic, ExtractionDiagnosticLevel, FrameworkContract, HandlerScope,
-    IdentityFlags, RegexDialect, RegexKey, SourceAdapter, SourceAdapterRegistration,
-    SourceDependency, SourceExtractionSession, SourceParameterType, StatefulSourceAdapter,
-    StepMatching, StreamEvidence, TranslatedRegex,
+    AdapterRegistry, AdapterSessionState, AnalysisPolicy, DependencyGap, DiscoveredFeatures,
+    DiscoveryInput, DomainSpec, Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel,
+    FrameworkContract, FrameworkDescriptor, HandlerScope, IdentityFlags, RegexDialect, RegexKey,
+    SourceAdapter, SourceAdapterRegistration, SourceDependency, SourceExtractionSession,
+    SourceParameterType, StatefulSourceAdapter, StepMatching, StreamEvidence, TranslatedRegex,
 };
 use cuke_dedup::typescript;
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
@@ -979,4 +979,207 @@ fn stateful_caller_adapters_keep_session_state_and_dependency_discovery() {
             Some("target is missing")
         );
     }
+}
+
+/// Discovers `caller.bdd`: one feature pattern per line, `?` lines dropped with a warning, an
+/// `error` line failing discovery; else the default glob when `package.json` depends on
+/// `caller-bdd`.
+fn caller_bdd_discovery(input: &DiscoveryInput<'_>) -> anyhow::Result<Option<DiscoveredFeatures>> {
+    let config = input.root().join("caller.bdd");
+    if config.is_file() {
+        let text = input.read(&config)?;
+        anyhow::ensure!(
+            !text.lines().any(|line| line == "error"),
+            "bad caller config"
+        );
+        let (dynamic, literal): (Vec<_>, Vec<_>) = text.lines().partition(|line| *line == "?");
+        let patterns = literal.into_iter().map(str::to_owned).collect();
+        return Ok(Some(
+            DiscoveredFeatures::new(patterns, config)
+                .with_warnings(vec![format!("{} dynamic path(s) skipped", dynamic.len())])
+                .with_warnings(vec!["caller config read".to_owned()]),
+        ));
+    }
+    Ok(input.has_dependency("caller-bdd").then(|| {
+        DiscoveredFeatures::new(
+            vec!["specs/**/*.feature".to_owned()],
+            input.root().join("package.json"),
+        )
+    }))
+}
+
+static CALLER_BDD_CONTRACTS: [FrameworkContract; 1] =
+    [FrameworkContract::new(Framework::new("caller-bdd"))
+        .with_discovery(FrameworkDescriptor::new("Caller BDD", caller_bdd_discovery))];
+
+/// A caller adapter whose one framework contract discovers feature files.
+struct BddAdapter;
+
+impl SourceAdapter for BddAdapter {
+    /// Returns the adapter name.
+    fn name(&self) -> &'static str {
+        "caller-bdd-steps"
+    }
+    /// Returns the caller language.
+    fn language(&self) -> SourceLanguage {
+        SourceLanguage::new("caller-bdd-steps")
+    }
+    /// Extracts nothing.
+    fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
+        Ok(Extraction::new(Vec::new(), Vec::new()))
+    }
+    /// Declares the discovering contract.
+    fn framework_contracts(&self) -> &'static [FrameworkContract] {
+        &CALLER_BDD_CONTRACTS
+    }
+}
+
+static BDD: BddAdapter = BddAdapter;
+
+/// Checks a caller framework contract's discovery sets normalized feature patterns, their origin
+/// and warnings from its configuration file or `package.json`, runs after the built-in contracts,
+/// reports its errors as warnings except input-limit errors, and is skipped when the configuration
+/// names features or no caller registry is attached.
+#[test]
+fn caller_framework_contracts_discover_feature_patterns() {
+    let registry = AdapterRegistry::new(
+        AdapterRegistry::builtin()
+            .registrations()
+            .iter()
+            .copied()
+            .chain([SourceAdapterRegistration::new(".bdd", &BDD)]),
+    )
+    .unwrap();
+    let load = |files: &[(&str, &str)], overrides: ConfigOverrides, caller: bool| {
+        let root = tempfile::tempdir().unwrap();
+        for (name, text) in files {
+            let path = root.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let config = if caller {
+            Config::load_with_adapters(root.path(), overrides, registry.clone())
+        } else {
+            Config::load(root.path(), overrides)
+        };
+        config.map(|config| {
+            (
+                config.features,
+                config.feature_pattern_origin,
+                config.config_warnings,
+            )
+        })
+    };
+    let caller_config = [(
+        "caller.bdd",
+        "./specs/**/*.feature\nspecs\\more\n!specs/skip\n?\n",
+    )];
+    let (features, origin, warnings) =
+        load(&caller_config, ConfigOverrides::default(), true).unwrap();
+    assert_eq!(
+        features,
+        ["specs/**/*.feature", "specs/more/**/*.{feature,feature.md}"]
+    );
+    assert_eq!(origin, "Caller BDD configuration caller.bdd");
+    assert_eq!(
+        warnings,
+        [
+            "1 dynamic path(s) skipped",
+            "caller config read",
+            "negated framework path `!specs/skip` is not a discovery input; use `exclude` in .cuke-dedup.json",
+        ]
+    );
+
+    let package = [(
+        "package.json",
+        r#"{"peerDependencies": {"caller-bdd": "1"}}"#,
+    )];
+    let (features, origin, _) = load(&package, ConfigOverrides::default(), true).unwrap();
+    assert_eq!(features, ["specs/**/*.feature"]);
+    assert_eq!(origin, "Caller BDD configuration package.json");
+
+    // A caller path with an extension expands only when it names an existing directory.
+    let dotted = [
+        ("caller.bdd", "specs.v2\n./absent.v2\n"),
+        ("specs.v2/login.feature", ""),
+    ];
+    let (features, _, _) = load(&dotted, ConfigOverrides::default(), true).unwrap();
+    assert_eq!(
+        features,
+        ["specs.v2/**/*.{feature,feature.md}", "absent.v2"]
+    );
+
+    // No caller evidence, a built-in registry and explicit features each leave the caller
+    // descriptor out: no caller origin and no caller warning.
+    let explicit = ConfigOverrides {
+        features: Some(vec!["docs/**/*.feature".to_owned()]),
+        ..ConfigOverrides::default()
+    };
+    for (files, overrides, caller, expected_origin) in [
+        (
+            &[][..],
+            ConfigOverrides::default(),
+            true,
+            "built-in defaults",
+        ),
+        (
+            &caller_config[..],
+            ConfigOverrides::default(),
+            false,
+            "built-in defaults",
+        ),
+        (&caller_config[..], explicit, true, "--features"),
+    ] {
+        let (_, origin, warnings) = load(files, overrides, caller).unwrap();
+        assert_eq!(origin, expected_origin, "{caller}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    let (_, origin, warnings) = load(
+        &[("caller.bdd", "error\n")],
+        ConfigOverrides::default(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(origin, "built-in defaults");
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].starts_with("could not inspect framework configuration (bad caller config)"),
+        "{warnings:?}"
+    );
+    let oversized = "x".repeat(1024 * 1024 + 1);
+    let error = load(
+        &[("caller.bdd", &oversized)],
+        ConfigOverrides::default(),
+        true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("caller.bdd"), "{error}");
+
+    // A built-in contract earlier in registry order matches first.
+    let both = [
+        caller_config[0],
+        (
+            "package.json",
+            r#"{"devDependencies": {"@cucumber/cucumber": "1"}}"#,
+        ),
+    ];
+    let (_, origin, _) = load(&both, ConfigOverrides::default(), true).unwrap();
+    assert_eq!(origin, "Cucumber.js configuration package.json");
+
+    // A discovery function is testable on its own: build its input and read its result.
+    let root = tempfile::tempdir().unwrap();
+    let package = serde_json::json!({"dependencies": {"caller-bdd": "1"}});
+    let input = DiscoveryInput::new(root.path(), Some(&package));
+    assert_eq!(input.package(), Some(&package));
+    let found = caller_bdd_discovery(&input).unwrap().unwrap();
+    assert_eq!(found.patterns(), ["specs/**/*.feature"]);
+    assert_eq!(found.source(), root.path().join("package.json"));
+    assert!(found.warnings().is_empty());
+    assert!(
+        caller_bdd_discovery(&DiscoveryInput::new(root.path(), None))
+            .unwrap()
+            .is_none()
+    );
 }

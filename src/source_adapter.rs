@@ -11,6 +11,9 @@ pub(crate) use config::FrontendConfig;
 pub(crate) use crate::ruby::config::RawRubyConfig as RawFrontendConfig;
 pub(crate) mod semantics;
 pub(crate) mod suppression;
+pub use crate::framework_descriptor::{
+    DiscoveredFeatures, DiscoveryInput, FeatureDiscovery, FrameworkDescriptor,
+};
 pub use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
 pub use finalization::{
     SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
@@ -20,7 +23,6 @@ pub use semantics::{
     AnalysisPolicy, DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
 
-use crate::framework_descriptor::FrameworkDescriptor;
 use crate::model::{Framework, SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
 use anyhow::{Context, Result};
@@ -678,8 +680,11 @@ impl FrameworkContract {
         Self { excludes, ..self }
     }
 
-    /// This contract with `discovery` as its feature discovery.
-    pub(crate) const fn with_discovery(self, discovery: FrameworkDescriptor) -> Self {
+    /// This contract with `discovery` as its feature discovery. Discovery runs only when the
+    /// configuration names no feature patterns, over every registered contract in registry order,
+    /// and the first match wins: a registry listing the built-in registrations first reaches a
+    /// caller contract only when no built-in one matches.
+    pub const fn with_discovery(self, discovery: FrameworkDescriptor) -> Self {
         Self {
             discovery: Some(discovery),
             ..self
