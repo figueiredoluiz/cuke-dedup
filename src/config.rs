@@ -249,7 +249,7 @@ impl Config {
 
     /// Like [`Config::load`], routing definition sources, default excludes and framework
     /// detection through `adapters`.
-    pub(crate) fn load_with_adapters(
+    pub fn load_with_adapters(
         root: &Path,
         overrides: ConfigOverrides,
         adapters: AdapterRegistry,
@@ -560,7 +560,7 @@ impl Config {
     }
 
     /// The source adapters this configuration routes definition sources to.
-    pub(crate) fn adapters(&self) -> &AdapterRegistry {
+    pub fn adapters(&self) -> &AdapterRegistry {
         &self.adapters
     }
 

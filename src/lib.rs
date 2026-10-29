@@ -73,6 +73,28 @@
 //! extraction entry points return an error. [`source_adapter::SourceAdapter`] and
 //! [`source_adapter::RegexDialect`] implementations are `Sync` and `RefUnwindSafe`.
 //!
+//! Adapters reach the analyzer through a [`source_adapter::AdapterRegistry`].
+//! [`source_adapter::AdapterRegistry::builtin`] holds the adapters this crate ships;
+//! [`source_adapter::AdapterRegistry::new`] takes any other set and rejects the first conflict as
+//! a [`source_adapter::RegistryError`]: an invalid or repeated suffix, a language or adapter name
+//! claimed twice, a framework id declared twice or as `unknown`, two domains sharing a label, or a
+//! contract policy outside its adapter's domain. A collision with a built-in adapter is rejected,
+//! not overridden; start from the built-in registrations to extend or replace them.
+//! Session hooks follow the adapter object: a built-in adapter registered under another suffix
+//! keeps them, and a caller adapter replacing a built-in one gets none.
+//! [`config::Config::load_with_adapters`] attaches a registry; discovery, default excludes,
+//! framework detection, [`source_adapter::SourceExtractionSession::for_config`] and session
+//! finalization read it, and [`source_adapter::SourceFinalization::apply_with`] takes one. These
+//! read the built-in registry instead: the free lookup functions
+//! ([`source_adapter::adapter_for_language`], [`source_adapter::adapter_for_path`],
+//! [`source_adapter::language_for_path`], [`source_adapter::registered_suffixes`]),
+//! [`source_adapter::SourceFinalization::apply`], sessions built with
+//! [`source_adapter::SourceExtractionSession::new`], `with_registrations` or `with_options`,
+//! [`model::Framework`] deserialization (a caller framework id does not read back), and the
+//! JavaScript/TypeScript extraction functions and module resolution. Path routing never sends a
+//! `.map` file or a TypeScript declaration file (`.d.ts`, `.d.mts`, `.d.cts`) to an adapter,
+//! whichever adapter claims the suffix.
+//!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,
 //! and give it a constructor if it travels both ways. The rule is about structs: a

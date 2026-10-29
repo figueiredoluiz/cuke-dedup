@@ -453,16 +453,14 @@ fn unregistered_languages_fail_at_extraction_entry_points() {
 
 /// A registry of the built-in registrations whose adapter's language satisfies `keep`.
 fn builtin_where(keep: impl Fn(SourceLanguage) -> bool) -> AdapterRegistry {
-    AdapterRegistry {
-        registrations: std::borrow::Cow::Owned(
-            AdapterRegistry::builtin()
-                .registrations()
-                .iter()
-                .copied()
-                .filter(|registration| keep(registration.adapter.language()))
-                .collect(),
-        ),
-    }
+    AdapterRegistry::new(
+        AdapterRegistry::builtin()
+            .registrations()
+            .iter()
+            .copied()
+            .filter(|registration| keep(registration.adapter.language())),
+    )
+    .unwrap()
 }
 
 /// Checks the built-in registry routes each suffix to its language and rejects unregistered,
@@ -595,14 +593,81 @@ fn registry_readers_use_the_registry_they_carry() {
     }
 
     let package = serde_json::json!({"devDependencies": {"@cucumber/cucumber": "1"}});
-    let empty = AdapterRegistry {
-        registrations: std::borrow::Cow::Owned(Vec::new()),
-    };
+    let empty = AdapterRegistry::new([]).unwrap();
     for (registry, detected) in [(AdapterRegistry::builtin(), true), (&empty, false)] {
         let found = crate::framework_registry::detect(registry, root, Some(&package)).unwrap();
         assert_eq!(found.is_some(), detected);
     }
+
+    // The built-in Ruby adapter registered under another suffix through the public constructor
+    // keeps its session state and dependency discovery.
+    fs::write(
+        root.join("steps.rake"),
+        "require_relative 'helper'\nGiven('a step') { work }",
+    )
+    .unwrap();
+    fs::write(root.join("helper.rb"), "def work; end").unwrap();
+    let rake = crate::config::ConfigOverrides {
+        definitions: Some(vec!["steps.rake".to_owned()]),
+        ..Default::default()
+    };
+    let registry = AdapterRegistry::new([SourceAdapterRegistration::new(
+        ".rake",
+        registered_adapter(crate::ruby::RUBY).unwrap(),
+    )])
+    .unwrap();
+    let config = crate::config::Config::load_with_adapters(root, rake, registry).unwrap();
+    let discovered = crate::discovery::discover(&config).unwrap();
+    // The followed load joins the definitions as a dependency-only Ruby source.
+    assert_eq!(discovered.definitions.len(), 2, "{discovered:?}");
+    assert_eq!(discovered.dependencies.len(), 1, "{discovered:?}");
+    SourceExtractionSession::for_config(&config)
+        .finalize(&discovered.definitions, &mut Vec::new())
+        .unwrap();
+
+    // A copied built-in registration whose adapter is replaced takes the replacement's hooks: a
+    // caller adapter declaring Ruby follows no Ruby load.
+    let mut replaced = *AdapterRegistry::builtin()
+        .registrations()
+        .iter()
+        .find(|registration| registration.suffix == ".rb")
+        .unwrap();
+    replaced.adapter = &REPLACEMENT_RUBY;
+    fs::write(
+        root.join("steps.rb"),
+        "require_relative 'helper'\nGiven('a step') { work }",
+    )
+    .unwrap();
+    let rb = crate::config::ConfigOverrides {
+        definitions: Some(vec!["steps.rb".to_owned()]),
+        ..Default::default()
+    };
+    let registry = AdapterRegistry::new([replaced]).unwrap();
+    let config = crate::config::Config::load_with_adapters(root, rb, registry).unwrap();
+    let discovered = crate::discovery::discover(&config).unwrap();
+    assert_eq!(discovered.definitions.len(), 1, "{discovered:?}");
+    assert!(discovered.dependencies.is_empty(), "{discovered:?}");
 }
+
+/// A caller adapter declaring Ruby, to replace the built-in one.
+struct ReplacementRuby;
+
+impl SourceAdapter for ReplacementRuby {
+    /// Returns a name distinct from the built-in Ruby adapter's.
+    fn name(&self) -> &'static str {
+        "replacement-ruby"
+    }
+    /// Declares Ruby.
+    fn language(&self) -> SourceLanguage {
+        crate::ruby::RUBY
+    }
+    /// Extracts nothing.
+    fn extract(&self, _: &str, _: &SourceFile) -> Result<Extraction> {
+        Ok(Extraction::new(Vec::new(), Vec::new()))
+    }
+}
+
+static REPLACEMENT_RUBY: ReplacementRuby = ReplacementRuby;
 
 /// Checks registered languages pass the extraction and finalization entry points that reject an unregistered id.
 #[test]

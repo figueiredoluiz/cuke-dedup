@@ -13,10 +13,10 @@ use cuke_dedup::reporters::{
 };
 use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{
-    AnalysisPolicy, DomainSpec, Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel,
-    FrameworkContract, HandlerScope, IdentityFlags, RegexDialect, RegexKey, SourceAdapter,
-    SourceAdapterRegistration, SourceParameterType, StepMatching, StreamEvidence, TranslatedRegex,
-    SOURCE_ADAPTER_REGISTRY,
+    AdapterRegistry, AnalysisPolicy, DomainSpec, Extraction, ExtractionDiagnostic,
+    ExtractionDiagnosticLevel, FrameworkContract, HandlerScope, IdentityFlags, RegexDialect,
+    RegexKey, SourceAdapter, SourceAdapterRegistration, SourceExtractionSession,
+    SourceParameterType, StepMatching, StreamEvidence, TranslatedRegex,
 };
 use cuke_dedup::typescript;
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
@@ -26,7 +26,8 @@ use std::path::PathBuf;
 
 /// The registered adapter for `language`, for tests that drive extraction directly.
 fn registered_adapter(language: SourceLanguage) -> &'static dyn SourceAdapter {
-    SOURCE_ADAPTER_REGISTRY
+    AdapterRegistry::builtin()
+        .registrations()
         .iter()
         .map(|registration| registration.adapter)
         .find(|adapter| adapter.language() == language)
@@ -36,7 +37,6 @@ fn registered_adapter(language: SourceLanguage) -> &'static dyn SourceAdapter {
 /// Checks external adapters retain session constructors, auto traits, default capabilities, the core parameter-type merge, and legacy extraction delegation.
 #[test]
 fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defaults() {
-    use cuke_dedup::source_adapter::SourceExtractionSession;
     use std::panic::{RefUnwindSafe, UnwindSafe};
     /// Requires session types to satisfy the public thread-safety, pinning, and unwind-safety trait bounds at compile time.
     fn assert_auto_traits<T: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe>() {}
@@ -194,8 +194,10 @@ fn extensible_public_outputs_use_stable_constructors() {
     assert_eq!(default_baseline.schema_version, BASELINE_SCHEMA_VERSION);
     assert!(default_baseline.fingerprints.is_empty());
 
-    let registration =
-        SourceAdapterRegistration::new(".custom", SOURCE_ADAPTER_REGISTRY[0].adapter);
+    let registration = SourceAdapterRegistration::new(
+        ".custom",
+        AdapterRegistry::builtin().registrations()[0].adapter,
+    );
     assert_eq!(registration.suffix, ".custom");
 
     let all_rules: &[Rule] = Rule::ALL;
@@ -713,4 +715,94 @@ fn caller_policies_key_matchers_and_resolve_contract_policies() {
         FrameworkContract::policy_of(&contracts, Framework::new("absent"), shared),
         shared
     );
+}
+
+/// A caller adapter: each `step: <text>` line of a `.lines` file is a Cucumber Expression in the
+/// caller domain.
+struct LinesAdapter;
+
+impl SourceAdapter for LinesAdapter {
+    /// Returns the adapter name.
+    fn name(&self) -> &'static str {
+        "caller-lines"
+    }
+    /// Returns the caller language.
+    fn language(&self) -> SourceLanguage {
+        SourceLanguage::new("caller-lines")
+    }
+    /// Extracts one definition per `step:` line.
+    fn extract(&self, source: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
+        let definitions = source
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| Some((index + 1, line.strip_prefix("step: ")?)))
+            .map(|(line, text)| {
+                caller_definition(
+                    self.analysis_policy(),
+                    text,
+                    MatcherKind::CucumberExpression,
+                    line,
+                )
+            })
+            .collect();
+        Ok(Extraction::new(definitions, Vec::new()))
+    }
+    /// Attaches the caller policy.
+    fn analysis_policy(&self) -> AnalysisPolicy {
+        caller_policy(&CALLER, StepMatching::ByText)
+    }
+}
+
+static LINES: LinesAdapter = LinesAdapter;
+
+/// Checks a caller registry carries a caller adapter through configuration, discovery, session
+/// extraction, finalization and analysis, while the built-in configuration ignores its files.
+#[test]
+fn caller_registries_route_discovery_extraction_and_analysis() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("steps.lines"),
+        "step: I log in\nstep: I log in\n",
+    )
+    .unwrap();
+    let overrides = ConfigOverrides {
+        definitions: Some(vec!["*.lines".to_owned()]),
+        ..ConfigOverrides::default()
+    };
+    let builtin = Config::load(root.path(), overrides.clone()).unwrap();
+    assert!(cuke_dedup::discovery::discover(&builtin)
+        .unwrap()
+        .definitions
+        .is_empty());
+
+    let registrations = AdapterRegistry::builtin()
+        .registrations()
+        .iter()
+        .copied()
+        .chain([SourceAdapterRegistration::new(".lines", &LINES)]);
+    let registry = AdapterRegistry::new(registrations).unwrap();
+    let config = Config::load_with_adapters(root.path(), overrides, registry).unwrap();
+    let files = cuke_dedup::discovery::discover(&config).unwrap();
+    assert_eq!(files.definitions.len(), 1);
+    let file = &files.definitions[0];
+    assert_eq!(file.language, SourceLanguage::new("caller-lines"));
+    let mut session = SourceExtractionSession::for_config(&config);
+    let adapter = config.adapters().adapter_for_path(&file.path).unwrap();
+    let mut definitions = adapter
+        .extract_file_with_session(file, &mut session)
+        .unwrap()
+        .definitions;
+    session
+        .finalize(&files.definitions, &mut definitions)
+        .unwrap();
+    assert_eq!(
+        SourceExtractionSession::new(root.path())
+            .finalize(&files.definitions, &mut Vec::new())
+            .unwrap_err()
+            .to_string(),
+        "no source adapter is registered for language `caller-lines`"
+    );
+    let outcome = analyze_with_diagnostics(definitions, Vec::new(), &config).unwrap();
+    let rules: Vec<_> = outcome.result.findings.iter().map(|f| f.rule).collect();
+    assert!(rules.contains(&Rule::DuplicateMatcher), "{rules:?}");
 }

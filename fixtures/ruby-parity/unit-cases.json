@@ -3207,7 +3207,7 @@
             "file": "src/source_adapter/tests.rs",
             "name": "registry_readers_use_the_registry_they_carry"
           },
-          "rationale": "`registry_readers_use_the_registry_they_carry` finalizes, scopes uncertainty for and discovers `.rb` sources under `ruby::RUBY` through the registry each reader carries, with registries that drop Ruby or JavaScript as controls, in-process.",
+          "rationale": "`registry_readers_use_the_registry_they_carry` finalizes, scopes uncertainty for, discovers and follows `require_relative` loads of `.rb` sources under `ruby::RUBY` through the registry each reader carries, with registries that drop Ruby or JavaScript, move Ruby to `.rake` or replace its adapter as controls, in-process.",
           "behaviorClass": "ruby-behavior"
         },
         {
@@ -3226,6 +3226,20 @@
           "stage": "session-plumbing",
           "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
           "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/source_adapter/registry_validation/tests.rs": {
+      "tests": [
+        {
+          "name": "registry_construction_rejects_each_conflict",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/registry_validation/tests.rs",
+            "name": "registry_construction_rejects_each_conflict"
+          },
+          "rationale": "`registry_construction_rejects_each_conflict` accepts the built-in and Ruby-only registrations and rejects a second adapter declaring `ruby::RUBY` beside `cucumber-ruby`, a caller suffix over `.rb` and a domain reusing the `ruby` label, in-process.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },
@@ -6567,6 +6581,16 @@
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
           "rationale": "Adapter-independent stage `api-shape`: public policy constructors, caller dialect keying and contract policy lookup; compile-time auto traits.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "caller_registries_route_discovery_extraction_and_analysis",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/source_adapter/tests.rs",
+            "name": "registry_readers_use_the_registry_they_carry"
+          },
+          "rationale": "The Ruby registry-reader test routes `.rb` discovery, finalization and dependency loads through the registry the configuration carries.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
