@@ -268,8 +268,10 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   Adapters return parameter-type declarations in `Extraction.parameter_types`; the core merges
   them with configured patterns (`analysis::merge_parameter_types`), whatever the language of the
   first definition file. Optional hooks have defaults.
-  Dependency expansion uses private registry callbacks and exposes no glob types or discovery
-  mutation.
+  A stateful adapter (`StatefulSourceAdapter`, registered with
+  `SourceAdapterRegistration::with_session`) owns per-run session state and may expand
+  dependencies: its hook adds loaded sources, edges and gaps to `DiscoveredFiles`, reading the
+  configured excludes through `ExcludeSet`; discovery then re-sorts and de-duplicates definitions.
 - An adapter not discovered by default is selected only by definition patterns that depend on its
   suffix. Ruby owns its configuration keys: the `ruby`
   section and the flat `rubyLoadPaths` alias are flattened into the core config from

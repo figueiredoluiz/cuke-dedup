@@ -341,11 +341,10 @@ pub struct SourceExtractionSession {
     adapters: AdapterRegistry,
 }
 
-/// Backend-owned state; related syntax variants can share the same state type.
-/// The bounds preserve the public session's existing thread and unwind-safety guarantees.
-pub(crate) trait AdapterSessionState:
-    Any + Send + Sync + UnwindSafe + RefUnwindSafe
-{
+/// Per-run state an adapter keeps in a [`SourceExtractionSession`], such as caches shared across
+/// files; adapters of related syntax variants can share one state type. The bounds preserve the
+/// session's thread and unwind-safety guarantees.
+pub trait AdapterSessionState: Any + Send + Sync + UnwindSafe + RefUnwindSafe {
     /// Builds the backend's per-run state from the session root (`None` for a default session),
     /// configured registrations and assertion modules. Infallible; called at most once per state
     /// type per session, at construction for a rooted session and on first access otherwise.
@@ -356,15 +355,19 @@ pub(crate) trait AdapterSessionState:
     ) -> Self;
 }
 
-/// Internal stateful registrations must explicitly select their backend state.
-pub(crate) trait StatefulSourceAdapter: SourceAdapter {
+/// An adapter with per-run session state and optional dependency discovery. Register it with
+/// [`SourceAdapterRegistration::with_session`]; read its state with
+/// [`SourceExtractionSession::state`].
+pub trait StatefulSourceAdapter: SourceAdapter {
+    /// The session state this adapter reads.
     type State: AdapterSessionState;
     /// Adds loaded sources, resolved edges and refused-load gaps to `files`, without executing them.
     /// Called once per adapter name when a selected definition has its language; whole-graph
-    /// failures go into `files.errors`. The default does nothing.
+    /// failures go into `files.errors`. `excludes` matches root-relative paths the configuration
+    /// excludes. The default does nothing.
     fn discover_dependencies(
         _config: &crate::config::Config,
-        _excludes: &globset::GlobSet,
+        _excludes: &crate::discovery::ExcludeSet,
         _files: &mut crate::discovery::DiscoveredFiles,
     ) {
     }
@@ -425,7 +428,7 @@ impl SourceExtractionSession {
     }
 
     /// The reason discovery refused to follow the loading call at `location`, if it did.
-    pub(crate) fn dependency_gap(&self, location: &SourceLocation) -> Option<&str> {
+    pub fn dependency_gap(&self, location: &SourceLocation) -> Option<&str> {
         self.dependency_gaps
             .get(&(location.path.clone(), location.line, location.column))
             .map(String::as_str)
@@ -433,13 +436,13 @@ impl SourceExtractionSession {
 
     /// Whether discovery supplied a resolved edge for the loading call at `location`, matched by
     /// path, start line and start column only.
-    pub(crate) fn dependency_resolved(&self, location: &SourceLocation) -> bool {
+    pub fn dependency_resolved(&self, location: &SourceLocation) -> bool {
         self.dependencies
             .contains_key(&(location.path.clone(), location.line, location.column))
     }
 
     /// Clones of the resolved loading edges, ordered by call path, line and column.
-    pub(crate) fn dependency_edges(&self) -> Vec<SourceDependency> {
+    pub fn dependency_edges(&self) -> Vec<SourceDependency> {
         self.dependencies.values().cloned().collect()
     }
 
@@ -516,8 +519,11 @@ impl SourceExtractionSession {
 
     /// Returns this session's `T` state. A session without a root creates it on first access; a
     /// rooted session errors when `T` was not initialized at construction. Also errors when the
-    /// stored value is not a `T`.
-    pub(crate) fn state<T: AdapterSessionState>(&mut self) -> Result<&mut T> {
+    /// stored value is not a `T`. [`SourceExtractionSession::for_config`] initializes, at
+    /// construction, the state of every registration of the configuration's registry whose hooks
+    /// belong to its adapter (see [`SourceAdapterRegistration::with_session`]); `new`,
+    /// `with_registrations` and `with_options` read the built-in registry.
+    pub fn state<T: AdapterSessionState>(&mut self) -> Result<&mut T> {
         // Explicit-root sessions must never establish a boundary later than construction.
         if self.root.is_none() {
             self.initialize::<T>();
@@ -629,8 +635,19 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
     }
 }
 
-type DependencyDiscovery =
-    fn(&crate::config::Config, &globset::GlobSet, &mut crate::discovery::DiscoveredFiles);
+type DependencyDiscovery = fn(
+    &crate::config::Config,
+    &crate::discovery::ExcludeSet,
+    &mut crate::discovery::DiscoveredFiles,
+);
+
+/// The session hooks of a stateful registration and the adapter they were made for.
+#[derive(Clone, Copy)]
+struct SessionHooks {
+    adapter: &'static dyn SourceAdapter,
+    initialize: fn(&mut SourceExtractionSession),
+    discover_dependencies: DependencyDiscovery,
+}
 
 /// A framework an adapter recognizes: its report id, the feature discovery its configuration
 /// supports, the generated or report directories it writes and the comparison policy its
@@ -700,8 +717,7 @@ pub struct SourceAdapterRegistration {
     pub suffix: &'static str,
     /// Adapter responsible for matching sources.
     pub adapter: &'static dyn SourceAdapter,
-    initialize_session: Option<fn(&mut SourceExtractionSession)>,
-    discover_dependencies: Option<DependencyDiscovery>,
+    hooks: Option<SessionHooks>,
 }
 
 impl SourceAdapterRegistration {
@@ -710,38 +726,45 @@ impl SourceAdapterRegistration {
         Self {
             suffix,
             adapter,
-            initialize_session: None,
-            discover_dependencies: None,
-        }
-    }
-
-    /// This registration with the session hooks of the built-in registration of the same adapter
-    /// object, or none for any other adapter: hooks follow the adapter, so a built-in adapter
-    /// registered under another suffix keeps them and a replaced adapter drops them.
-    fn with_builtin_hooks(self) -> Self {
-        let builtin = SOURCE_ADAPTER_REGISTRY.iter().find(|builtin| {
-            std::ptr::addr_eq(builtin.adapter, self.adapter)
-                && builtin.adapter.name() == self.adapter.name()
-        });
-        Self {
-            initialize_session: builtin.and_then(|builtin| builtin.initialize_session),
-            discover_dependencies: builtin.and_then(|builtin| builtin.discover_dependencies),
-            ..self
+            hooks: None,
         }
     }
 
     /// Creates a registration for `adapter` carrying its session-state initializer and its
-    /// `discover_dependencies` hook, which may be the no-op default.
-    const fn with_session<A: StatefulSourceAdapter>(
+    /// [`StatefulSourceAdapter::discover_dependencies`] hook. The hooks belong to `adapter`:
+    /// replacing the registration's `adapter` drops them. Objects are told apart by address and
+    /// name, and zero-sized adapters of different types may share an address, so give each adapter
+    /// its own name.
+    pub const fn with_session<A: StatefulSourceAdapter>(
         suffix: &'static str,
         adapter: &'static A,
     ) -> Self {
         Self {
             suffix,
             adapter,
-            initialize_session: Some(SourceExtractionSession::initialize::<A::State>),
-            discover_dependencies: Some(A::discover_dependencies),
+            hooks: Some(SessionHooks {
+                adapter,
+                initialize: SourceExtractionSession::initialize::<A::State>,
+                discover_dependencies: A::discover_dependencies,
+            }),
         }
+    }
+
+    /// This registration with the session hooks made for its adapter object: its own when they
+    /// were, else those of the built-in registration of the same adapter, else none. Hooks follow
+    /// the adapter, so a built-in adapter registered under another suffix keeps them and a
+    /// replaced `adapter` drops the hooks of the one it replaced.
+    fn with_owned_hooks(self) -> Self {
+        let owns = |hooks: &SessionHooks| {
+            std::ptr::addr_eq(hooks.adapter, self.adapter)
+                && hooks.adapter.name() == self.adapter.name()
+        };
+        let hooks = self.hooks.filter(owns).or_else(|| {
+            SOURCE_ADAPTER_REGISTRY
+                .iter()
+                .find_map(|builtin| builtin.hooks.filter(owns))
+        });
+        Self { hooks, ..self }
     }
 }
 
@@ -797,7 +820,7 @@ impl AdapterRegistry {
     ) -> std::result::Result<Self, RegistryError> {
         let registrations: Vec<_> = registrations
             .into_iter()
-            .map(SourceAdapterRegistration::with_builtin_hooks)
+            .map(SourceAdapterRegistration::with_owned_hooks)
             .collect();
         registry_validation::validate(&registrations)?;
         Ok(Self {
@@ -911,17 +934,19 @@ impl AdapterRegistry {
         for initialize in self
             .registrations
             .iter()
-            .filter_map(|registration| registration.initialize_session)
+            .filter_map(|registration| registration.hooks.map(|hooks| hooks.initialize))
         {
             initialize(session);
         }
     }
 
-    /// Runs each selected adapter's dependency discovery once, in registry order.
+    /// Runs each selected adapter's dependency discovery once, in registry order, then restores
+    /// discovery's ordering: definitions sorted and unique by path, and no admitted file left
+    /// among the skipped ones.
     pub(crate) fn discover_dependencies(
         &self,
         config: &crate::config::Config,
-        excludes: &globset::GlobSet,
+        excludes: &crate::discovery::ExcludeSet,
         files: &mut crate::discovery::DiscoveredFiles,
     ) {
         let mut completed = std::collections::BTreeSet::new();
@@ -934,12 +959,25 @@ impl AdapterRegistry {
                     .iter()
                     .any(|file| file.language == entry.adapter.language())
             })
-            .filter(|entry| completed.insert(entry.adapter.name()))
-            .filter_map(|entry| entry.discover_dependencies)
+            // A registration without hooks must not claim the adapter's one run.
+            .filter_map(|entry| entry.hooks.map(|hooks| (entry.adapter.name(), hooks)))
+            .filter(|(name, _)| completed.insert(*name))
+            .map(|(_, hooks)| hooks.discover_dependencies)
             .collect();
         for callback in callbacks {
             callback(config, excludes, files);
         }
+        files
+            .definitions
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        files
+            .definitions
+            .dedup_by(|left, right| left.path == right.path);
+        let admitted: std::collections::BTreeSet<_> =
+            files.definitions.iter().map(|file| &file.path).collect();
+        files
+            .skipped_definitions
+            .retain(|file| !admitted.contains(&file.path));
     }
 }
 

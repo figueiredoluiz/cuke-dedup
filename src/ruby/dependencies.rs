@@ -3,17 +3,17 @@
 use super::{descendants, literal_string, location, syntax_error, text};
 use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
+use crate::discovery::ExcludeSet;
 use crate::resource_limits::{
     known_input_limit_exceeded, read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES,
     MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
 };
 use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile};
-use globset::GlobSet;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 /// Resolves the Ruby source graph from the selected files into discovery's edges and gaps.
-pub(crate) fn resolve(config: &Config, excludes: &GlobSet, files: &mut DiscoveredFiles) {
+pub(crate) fn resolve(config: &Config, excludes: &ExcludeSet, files: &mut DiscoveredFiles) {
     if !files
         .definitions
         .iter()
@@ -102,7 +102,7 @@ pub(super) fn byte_limit(bytes: usize) -> String {
 /// as an edge and each load refused by the expansion `budget` as a gap.
 fn resolve_graph(
     config: &Config,
-    excludes: &GlobSet,
+    excludes: &ExcludeSet,
     files: &mut DiscoveredFiles,
     budget: (usize, usize),
 ) -> anyhow::Result<()> {
@@ -206,11 +206,10 @@ fn resolve_graph(
             {
                 continue;
             }
-            if target.strip_prefix(&root).is_ok_and(|relative| {
-                relative.ancestors().any(|part| {
-                    excludes.is_match(part) || excludes.is_match(format!("{}/", part.display()))
-                })
-            }) {
+            if target
+                .strip_prefix(&root)
+                .is_ok_and(|relative| excludes.excludes(relative))
+            {
                 continue;
             }
             if !known.contains(&target) {

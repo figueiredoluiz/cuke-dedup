@@ -76,7 +76,7 @@ impl StatefulSourceAdapter for RubyAdapter {
     /// Expand selected Ruby files through the bounded local dependency resolver.
     fn discover_dependencies(
         config: &crate::config::Config,
-        excludes: &globset::GlobSet,
+        excludes: &crate::discovery::ExcludeSet,
         files: &mut crate::discovery::DiscoveredFiles,
     ) {
         dependencies::resolve(config, excludes, files);

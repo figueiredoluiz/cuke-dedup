@@ -53,7 +53,7 @@ pub fn discover(config: &Config) -> Result<DiscoveredFiles> {
     } else {
         Some(compile_pattern_matchers(&config.definitions, "definition")?)
     };
-    let excludes = compile_globs(&config.exclude, "exclude")?;
+    let excludes = ExcludeSet(compile_globs(&config.exclude, "exclude")?);
     let mut files = DiscoveredFiles::default();
 
     let root = config.root.clone();
@@ -179,6 +179,27 @@ fn compile_pattern_matchers(patterns: &[String], kind: &str) -> Result<Vec<(Glob
             Ok((glob.compile_matcher(), pattern.clone()))
         })
         .collect()
+}
+
+/// The configuration's exclude globs, as a dependency-discovery hook reads them. The default
+/// excludes nothing.
+#[derive(Clone, Debug, Default)]
+pub struct ExcludeSet(GlobSet);
+
+impl ExcludeSet {
+    /// Whether any exclude glob matches `path` itself, a path relative to the configuration root.
+    pub fn is_match(&self, path: impl AsRef<Path>) -> bool {
+        self.0.is_match(path)
+    }
+
+    /// Whether the configuration excludes `relative`, a path relative to its root: some glob
+    /// matches the path or one of its ancestors, in its own or its trailing-`/` directory form, as
+    /// discovery's walk prunes them.
+    pub fn excludes(&self, relative: &Path) -> bool {
+        relative
+            .ancestors()
+            .any(|part| self.0.is_match(part) || self.0.is_match(format!("{}/", part.display())))
+    }
 }
 
 /// Builds one `GlobSet` from `patterns`; an empty list matches nothing. Errors name the first

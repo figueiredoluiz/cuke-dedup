@@ -80,8 +80,16 @@
 //! claimed twice, a framework id declared twice or as `unknown`, two domains sharing a label, or a
 //! contract policy outside its adapter's domain. A collision with a built-in adapter is rejected,
 //! not overridden; start from the built-in registrations to extend or replace them.
-//! Session hooks follow the adapter object: a built-in adapter registered under another suffix
-//! keeps them, and a caller adapter replacing a built-in one gets none.
+//! An adapter that keeps per-run state implements [`source_adapter::StatefulSourceAdapter`] with an
+//! [`source_adapter::AdapterSessionState`] type and registers with
+//! [`source_adapter::SourceAdapterRegistration::with_session`]: a rooted session initializes the
+//! state at construction, the adapter reads it with
+//! [`source_adapter::SourceExtractionSession::state`], and discovery runs its
+//! `discover_dependencies` hook once with the configured [`discovery::ExcludeSet`]. The session
+//! exposes the discovered loading evidence (`dependency_resolved`, `dependency_gap`,
+//! `dependency_edges`). Session hooks follow the adapter object they were made for: a built-in
+//! adapter registered under another suffix keeps them, and a registration whose `adapter` is
+//! replaced drops them.
 //! [`config::Config::load_with_adapters`] attaches a registry; discovery, default excludes,
 //! framework detection, [`source_adapter::SourceExtractionSession::for_config`] and session
 //! finalization read it, and [`source_adapter::SourceFinalization::apply_with`] takes one. These
