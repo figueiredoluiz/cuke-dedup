@@ -18,16 +18,17 @@ fn definitions(source: &str) -> Vec<StepDefinition> {
 
 /// Matcher summaries as the step-matching pass computes them, for direct overlap calls.
 fn summaries(definitions: &[StepDefinition], config: &Config) -> Vec<MatcherSummary> {
-    definitions
-        .iter()
-        .map(|definition| {
-            let matcher = compile_matcher(definition, &config.parameter_types).0;
-            MatcherSummary {
-                authoritative: matcher.authoritative,
-                has_regex: matcher.regex.is_some(),
-            }
-        })
-        .collect()
+    let mut summaries = Vec::new();
+    scan_windows(
+        definitions,
+        &config.parameter_types,
+        definitions.len().max(1),
+        |_, matchers, _, _| {
+            summaries.extend(matchers.iter().map(MatcherSummary::of));
+            ControlFlow::Continue(())
+        },
+    );
+    summaries
 }
 
 /// Creates a default configuration and returns its temporary directory to keep the root alive.
@@ -97,7 +98,7 @@ static IDENTITY_DOMAIN: crate::source_adapter::semantics::DomainSpec =
 #[test]
 fn regex_pattern_limit_is_inclusive() {
     use crate::source_adapter::semantics::{HandlerScope, StepMatching, StreamEvidence};
-    // The extracted definition is a scaffold: the test sets every field `compile_matcher` reads.
+    // The extracted definition is a scaffold: the test sets every field `prepare_matcher` reads.
     let mut definition = definitions("Given(/x/, () => work());").remove(0);
     definition.location = crate::model::SourceLocation::new("limit.txt", 3, 5, 3, 6);
     definition.matcher_kind = MatcherKind::RegularExpression;
@@ -114,13 +115,13 @@ fn regex_pattern_limit_is_inclusive() {
             "(?x){}",
             " ".repeat(MAX_REGEX_PATTERN_BYTES.saturating_sub(padding))
         );
-        let (compiled, error) = compile_matcher(&definition, &BTreeMap::new());
+        let (prepared, error) = prepare_matcher(&definition, &BTreeMap::new());
         assert_eq!(
             error.is_some_and(|message| message.contains("limit.txt:3:5")),
             !within,
             "{padding}"
         );
-        assert_eq!(compiled.regex.is_some(), within, "{padding}");
+        assert_eq!(prepared.expression.is_some(), within, "{padding}");
     }
 }
 
@@ -450,8 +451,7 @@ fn oversized_combined_matcher_programs_split_without_changing_matches() {
     let compiled = (0..200)
         .map(|index| {
             let expression = format!("^distinct matcher value {index:04}$");
-            CompiledMatcher {
-                regex: Some(Regex::new(&expression).unwrap()),
+            PreparedMatcher {
                 expression: Some(expression),
                 authoritative: true,
             }
@@ -460,27 +460,96 @@ fn oversized_combined_matcher_programs_split_without_changing_matches() {
 
     let index = MatcherIndex::build_with_limits(&compiled, 4 * 1024, 64 * 1024);
     assert!(index.sets.len() > 1);
-    assert!(index.fallback_definitions.is_empty());
+    assert!(index.fallback.is_empty());
 
     let mut matches = Vec::new();
-    index.matches(&compiled, "distinct matcher value 0123", &mut matches);
+    index.matches("distinct matcher value 0123", &mut matches);
     assert_eq!(matches, vec![123]);
 }
 
-/// Checks that a rejected combined pattern falls back to its valid individual regex.
+/// Checks each singleton-set failure by how the pattern compiles alone, at limits where the set
+/// and the individual program disagree in both directions; a valid matcher after a rejected one
+/// pins the rebuild.
+///
+/// Under a 64-byte limit `foo|bar|baz|qux` compiles alone (literal search) but not as a set. Under
+/// 1,024 bytes nine capture groups fit only as a set, which compiles without captures, and so are
+/// matched, not rejected. `(` compiles in no form; `\w{64}` exceeds the size limit in both.
 #[test]
-fn matcher_index_falls_back_when_even_one_combined_pattern_is_rejected() {
-    let compiled = vec![CompiledMatcher {
-        regex: Some(Regex::new("^fallback$").unwrap()),
-        expression: Some("(".to_owned()),
-        authoritative: true,
-    }];
-    let index = MatcherIndex::build_with_limits(&compiled, 32, 32);
-    assert!(index.sets.is_empty());
-    assert_eq!(index.fallback_definitions, [0]);
+fn matcher_index_resolves_singleton_failures_by_the_individual_compile() {
+    let prepared = |expressions: &[&str]| {
+        expressions
+            .iter()
+            .map(|expression| PreparedMatcher {
+                expression: Some((*expression).to_owned()),
+                authoritative: true,
+            })
+            .collect::<Vec<_>>()
+    };
     let mut matches = Vec::new();
-    index.matches(&compiled, "fallback", &mut matches);
+
+    let index = MatcherIndex::build_with_limits(&prepared(&["foo|bar|baz|qux"]), 64, 64);
+    assert!(index.sets.is_empty() && index.rejected.is_empty());
+    assert_eq!(index.scan_work(), 1);
+    index.matches("baz", &mut matches);
     assert_eq!(matches, [0]);
+
+    let captures = "(x)".repeat(9);
+    let index = MatcherIndex::build_with_limits(&prepared(&[&captures]), 1024, 1024);
+    assert_eq!((index.sets.len(), index.fallback.len()), (1, 0));
+    index.matches(&"x".repeat(9), &mut matches);
+    assert_eq!(matches, [0]);
+
+    let index = MatcherIndex::build_with_limits(
+        &prepared(&["^a$", "^b$", "(", "^c$", r"\w{64}", "^d$"]),
+        1024 * 1024,
+        1024 * 1024,
+    );
+    assert_eq!(index.rejected, [(2, false), (4, true)]);
+    assert_eq!(index.sets.len(), 1, "rebuilt without the rejected matchers");
+    assert!(index.fallback.is_empty());
+    index.matches("d", &mut matches);
+    assert_eq!(matches, [5]);
+}
+
+/// Checks the window walk clears the expression of a matcher its index rejects for size and reports
+/// the limit at the matcher's location, while invalid syntax is dropped before the index with no
+/// diagnostic.
+#[test]
+fn rejected_matchers_lose_their_regex_and_report_only_the_size_limit() {
+    let definitions = definitions(
+        "Given(/^valid$/, () => work());\nGiven(/^(?:\\w{2}){100000}$/, () => work());\nGiven(/^[z-a]$/, () => work());",
+    );
+    let (_directory, config) = config();
+    let mut outcome = Vec::new();
+    scan_windows(
+        &definitions,
+        &config.parameter_types,
+        3,
+        |_, matchers, _, diagnostics| {
+            outcome.extend(
+                matchers
+                    .iter()
+                    .map(|matcher| matcher.expression.is_some())
+                    .zip(diagnostics),
+            );
+            ControlFlow::Continue(())
+        },
+    );
+    assert_eq!(outcome.len(), 3);
+    assert_eq!(outcome[0], (true, None));
+    assert!(!outcome[1].0);
+    assert!(outcome[1]
+        .1
+        .as_deref()
+        .is_some_and(|message| message.contains("steps.ts:2:1")));
+    assert_eq!(outcome[2], (false, None));
+    let prepared = |index: usize| {
+        prepare_matcher(&definitions[index], &config.parameter_types)
+            .0
+            .expression
+    };
+    assert!(prepared(1).is_some(), "size is decided by the index");
+    assert!(prepared(2).is_none(), "syntax is decided before it");
 }
 
 /// Checks membership intersections distinguish shared ambiguity groups from disjoint groups.
@@ -687,19 +756,26 @@ fn fallback_expression_handles_optional_alternative_and_declared_parameters() {
 fn matcher_compilation_reports_limits_but_not_unsupported_syntax() {
     let mut definition = definitions("Given(/^valid$/, () => work());").remove(0);
     definition.matcher = "x".repeat(MAX_REGEX_PATTERN_BYTES + 1);
-    let (compiled, diagnostic) = compile_matcher(&definition, &BTreeMap::new());
-    assert!(compiled.regex.is_none());
+    let (prepared, diagnostic) = prepare_matcher(&definition, &BTreeMap::new());
+    assert!(prepared.expression.is_none());
     assert!(diagnostic.unwrap().contains("regex resource limit"));
 
+    // Within the pattern limit, but the `(?i:...)` wrapper of the translation exceeds it.
+    definition.matcher = "x".repeat(MAX_REGEX_PATTERN_BYTES);
+    definition.matcher_flags = "i".to_owned();
+    let (prepared, diagnostic) = prepare_matcher(&definition, &BTreeMap::new());
+    assert!(prepared.expression.is_none());
+    assert!(diagnostic.unwrap().contains("regex resource limit"));
+    definition.matcher_flags = String::new();
+
     definition.matcher = "(".to_owned();
-    let (compiled, diagnostic) = compile_matcher(&definition, &BTreeMap::new());
-    assert!(compiled.regex.is_none());
+    let (_, diagnostic) = prepare_matcher(&definition, &BTreeMap::new());
     assert!(diagnostic.is_none());
 
     definition.matcher_kind = MatcherKind::CucumberExpression;
     definition.matcher = "x".repeat(MAX_REGEX_PATTERN_BYTES + 1);
-    let (compiled, diagnostic) = compile_matcher(&definition, &BTreeMap::new());
-    assert!(compiled.regex.is_none());
+    let (prepared, diagnostic) = prepare_matcher(&definition, &BTreeMap::new());
+    assert!(prepared.expression.is_none());
     assert!(diagnostic.unwrap().contains("regex resource limit"));
 }
 

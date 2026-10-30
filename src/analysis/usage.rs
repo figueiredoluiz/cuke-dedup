@@ -4,7 +4,9 @@ use crate::config::Config;
 use crate::model::{
     FeatureStep, Finding, FindingEvidence, MatcherKind, Rule, Severity, StepDefinition,
 };
-use crate::resource_limits::{compile_regex, MAX_REGEX_PATTERN_BYTES, MAX_STATIC_OVERLAP_FINDINGS};
+use crate::resource_limits::{
+    compile_regex_with_limits, MAX_REGEX_PATTERN_BYTES, MAX_STATIC_OVERLAP_FINDINGS,
+};
 use cucumber_expressions::expand::IntoRegexCharIter;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -16,21 +18,25 @@ static FALLBACK_PLACEHOLDER: LazyLock<Regex> =
 const MAX_OVERLAP_SUPPRESSION_WORK: u64 = 100_000_000;
 const OVERLAP_PROPOSAL_WORK_MULTIPLIER: usize = 4;
 
-struct CompiledMatcher {
-    regex: Option<Regex>,
+/// A definition's matcher before compilation; `expression` is the regex source to index.
+struct PreparedMatcher {
     expression: Option<String>,
     authoritative: bool,
 }
 
-/// A single-pass index over every compiled matcher.
+/// A single-pass index over every prepared matcher.
 ///
 /// `RegexSet` evaluates many patterns in one scan of the step text, replacing a per-step loop over
 /// every definition. A set that exceeds the shared regex limits is split recursively, so one
 /// oversized combined program cannot silently return the entire run to O(definitions x steps).
+/// The index compiles a matcher only inside its set: a separate `Regex` per matcher doubled
+/// compilation, which was most of the analysis allocation volume.
 struct MatcherIndex {
     sets: Vec<MatcherSet>,
-    /// Individual matchers whose combined program could not be built even as a singleton.
-    fallback_definitions: Vec<usize>,
+    /// Matchers whose singleton set failed but whose own `Regex` compiled, tested one by one.
+    fallback: Vec<(usize, Regex)>,
+    /// Matchers that compiled neither in a set nor alone, with whether the cause was the size limit.
+    rejected: Vec<(usize, bool)>,
 }
 
 struct MatcherSet {
@@ -40,42 +46,68 @@ struct MatcherSet {
 }
 
 impl MatcherIndex {
-    /// Indexes the matchers that kept a compiled expression, under the shared regex size and DFA
-    /// limits.
-    fn build(compiled: &[CompiledMatcher]) -> Self {
+    /// Indexes the matchers that kept an expression, under the shared regex size and DFA limits.
+    fn build(matchers: &[PreparedMatcher]) -> Self {
         Self::build_with_limits(
-            compiled,
+            matchers,
             crate::resource_limits::REGEX_SIZE_LIMIT_BYTES,
             crate::resource_limits::REGEX_DFA_SIZE_LIMIT_BYTES,
         )
     }
 
-    /// Indexes matchers that kept a compiled expression into `RegexSet`s under the given limits;
-    /// matchers without one are not indexed. Sets are ordered by first definition index and
-    /// fallback definitions ascending.
+    /// Indexes matchers that kept an expression into `RegexSet`s under the given limits; matchers
+    /// without one are not indexed. Sets are ordered by first definition index, fallback and
+    /// rejected matchers ascending.
+    ///
+    /// A rejected matcher splits every set on its path down to a singleton, so the index is rebuilt
+    /// without it: its sets, and the scan work they charge, are those of the matchers that compile.
+    /// Only the size limit rejects here; `prepare_matcher` drops invalid syntax.
     fn build_with_limits(
-        compiled: &[CompiledMatcher],
+        matchers: &[PreparedMatcher],
         size_limit: usize,
         dfa_limit: usize,
     ) -> Self {
         let mut entries = Vec::new();
-        for (index, matcher) in compiled.iter().enumerate() {
+        for (index, matcher) in matchers.iter().enumerate() {
             if let Some(expression) = matcher.expression.as_deref() {
                 entries.push((index, expression));
             }
         }
-        let mut index = Self {
-            sets: Vec::new(),
-            fallback_definitions: Vec::new(),
-        };
-        index.build_range(&entries, size_limit, dfa_limit);
-        index.sets.sort_by_key(|set| set.definitions[0]);
-        index.fallback_definitions.sort_unstable();
+        let mut index = Self::from_entries(&entries, size_limit, dfa_limit);
+        if !index.rejected.is_empty() {
+            let rejected = std::mem::take(&mut index.rejected);
+            entries.retain(|(local, _)| {
+                rejected
+                    .binary_search_by_key(local, |(rejected, _)| *rejected)
+                    .is_err()
+            });
+            index = Self::from_entries(&entries, size_limit, dfa_limit);
+            index.rejected.extend(rejected);
+            index.rejected.sort_unstable();
+        }
         index
     }
 
-    /// Builds one set for `entries`; on a build error the range is halved and each half retried,
-    /// and a single entry that still fails goes to `fallback_definitions`. Empty input is a no-op.
+    /// Builds the sets for `entries` and orders the result.
+    fn from_entries(entries: &[(usize, &str)], size_limit: usize, dfa_limit: usize) -> Self {
+        let mut index = Self {
+            sets: Vec::new(),
+            fallback: Vec::new(),
+            rejected: Vec::new(),
+        };
+        index.build_range(entries, size_limit, dfa_limit);
+        index.sets.sort_by_key(|set| set.definitions[0]);
+        index.fallback.sort_unstable_by_key(|(index, _)| *index);
+        index.rejected.sort_unstable();
+        index
+    }
+
+    /// Builds one set for `entries`; on a build error the range is halved and each half retried.
+    /// A single entry that still fails is compiled alone: it goes to `fallback` when that succeeds,
+    /// else to `rejected`. Empty input is a no-op.
+    ///
+    /// Neither form implies the other: a set compiles without capture groups, so a capture-heavy
+    /// pattern can fit only as a set, while a large literal alternation can fit only alone.
     fn build_range(&mut self, entries: &[(usize, &str)], size_limit: usize, dfa_limit: usize) {
         if entries.is_empty() {
             return;
@@ -98,13 +130,21 @@ impl MatcherIndex {
                 self.build_range(&entries[..middle], size_limit, dfa_limit);
                 self.build_range(&entries[middle..], size_limit, dfa_limit);
             }
-            Err(_) => self.fallback_definitions.push(entries[0].0),
+            Err(_) => {
+                let (index, expression) = entries[0];
+                match compile_regex_with_limits(expression, size_limit, dfa_limit) {
+                    Ok(regex) => self.fallback.push((index, regex)),
+                    Err(error) => self
+                        .rejected
+                        .push((index, matches!(error, regex::Error::CompiledTooBig(_)))),
+                }
+            }
         }
     }
 
     /// Replaces `output` with the sorted local indices of every matcher accepting `text`; fallback
-    /// definitions are tested one by one with their own regex.
-    fn matches(&self, compiled: &[CompiledMatcher], text: &str, output: &mut Vec<usize>) {
+    /// matchers are tested one by one with their own regex.
+    fn matches(&self, text: &str, output: &mut Vec<usize>) {
         output.clear();
         for indexed in &self.sets {
             output.extend(
@@ -115,12 +155,12 @@ impl MatcherIndex {
                     .map(|pattern| indexed.definitions[pattern]),
             );
         }
-        output.extend(self.fallback_definitions.iter().copied().filter(|index| {
-            compiled[*index]
-                .regex
-                .as_ref()
-                .is_some_and(|regex| regex.is_match(text))
-        }));
+        output.extend(
+            self.fallback
+                .iter()
+                .filter(|(_, regex)| regex.is_match(text))
+                .map(|(index, _)| *index),
+        );
         output.sort_unstable();
     }
 
@@ -130,9 +170,7 @@ impl MatcherIndex {
     /// one individual regex scan. Charging this before matching closes the no-candidate case,
     /// where prior pair budgets never advanced despite repeatedly scanning the complete index.
     fn scan_work(&self) -> usize {
-        self.sets
-            .len()
-            .saturating_add(self.fallback_definitions.len())
+        self.sets.len().saturating_add(self.fallback.len())
     }
 }
 
@@ -169,6 +207,16 @@ struct MatcherSummary {
     has_regex: bool,
 }
 
+impl MatcherSummary {
+    /// Summarizes a matcher after its window's index cleared the expressions it rejected.
+    fn of(matcher: &PreparedMatcher) -> Self {
+        Self {
+            authoritative: matcher.authoritative,
+            has_regex: matcher.expression.is_some(),
+        }
+    }
+}
+
 /// Compiles each window in index order and hands it to `visit` before dropping it; a `Break`
 /// from `visit` stops the walk, so no later window is compiled. Returns the scan work of the
 /// windows visited, which is the whole corpus only when `visit` never breaks.
@@ -182,7 +230,7 @@ fn scan_windows(
     window: usize,
     mut visit: impl FnMut(
         usize,
-        &[CompiledMatcher],
+        &[PreparedMatcher],
         &MatcherIndex,
         Vec<Option<String>>,
     ) -> ControlFlow<()>,
@@ -190,13 +238,18 @@ fn scan_windows(
     let mut scan_work = 0_usize;
     for start in (0..definitions.len()).step_by(window) {
         let end = (start + window).min(definitions.len());
-        let (compiled, diagnostics): (Vec<_>, Vec<_>) = definitions[start..end]
+        let (mut matchers, mut diagnostics): (Vec<_>, Vec<_>) = definitions[start..end]
             .iter()
-            .map(|definition| compile_matcher(definition, parameter_types))
+            .map(|definition| prepare_matcher(definition, parameter_types))
             .unzip();
-        let index = MatcherIndex::build(&compiled);
+        let index = MatcherIndex::build(&matchers);
+        // A rejected matcher has no program; only the size limit is reported.
+        for &(local, too_big) in &index.rejected {
+            matchers[local].expression = None;
+            diagnostics[local] = too_big.then(|| regex_limit_message(&definitions[start + local]));
+        }
         scan_work = scan_work.saturating_add(index.scan_work());
-        if visit(start, &compiled, &index, diagnostics).is_break() {
+        if visit(start, &matchers, &index, diagnostics).is_break() {
             break;
         }
     }
@@ -314,14 +367,11 @@ fn analyze_feature_usage_in_windows(
         definitions,
         &config.parameter_types,
         window,
-        |start, compiled, index, diagnostics| {
-            summaries.extend(compiled.iter().map(|matcher| MatcherSummary {
-                authoritative: matcher.authoritative,
-                has_regex: matcher.regex.is_some(),
-            }));
+        |start, matchers, index, diagnostics| {
+            summaries.extend(matchers.iter().map(MatcherSummary::of));
             incomplete.extend(diagnostics.into_iter().flatten());
             for (text, accumulated) in matched_texts.iter_mut() {
-                index.matches(compiled, text, &mut local);
+                index.matches(text, &mut local);
                 accumulated.extend(local.iter().map(|index| index + start));
             }
             ControlFlow::Continue(())
@@ -665,9 +715,9 @@ fn collect_overlap_proposals(
         window,
         // Summaries and compilation diagnostics were already collected by the step-matching pass;
         // recompiling here must not duplicate them.
-        |start, compiled, index, _diagnostics| {
+        |start, _, index, _diagnostics| {
             for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter_mut()) {
-                index.matches(compiled, witness, &mut local);
+                index.matches(witness, &mut local);
                 let definition = &definitions[*left];
                 for right in local.iter().map(|index| index + start) {
                     if right == *left || !summaries[right].authoritative {
@@ -853,9 +903,9 @@ pub(super) fn apply_indirect_usage(
         definitions,
         &config.parameter_types,
         matcher_window_size(),
-        |start, compiled, index, _| {
+        |start, _, index, _| {
             for text in &usage.texts {
-                index.matches(compiled, text, &mut matched);
+                index.matches(text, &mut matched);
                 outcome
                     .used
                     .extend(matched.iter().map(|index| index + start));
@@ -909,23 +959,22 @@ pub(super) fn analyze_unused(
     }
 }
 
-/// Compiles a definition's matcher, returning a diagnostic only for resource limits.
-/// Non-global and literal matchers get no regex and are non-authoritative, as is a regex the
-/// dialect cannot translate. Oversized matchers, and translated patterns that fail to compile for
-/// another reason, are authoritative with no regex; only the oversized case returns a diagnostic.
+/// Prepares a definition's matcher for its window's index, returning a diagnostic only for
+/// resource limits. Non-global and literal matchers get no expression and are non-authoritative,
+/// as is a regex the dialect cannot translate. Oversized matchers are authoritative with no
+/// expression and a diagnostic; `MatcherIndex` rejects the ones that do not compile.
 /// A Cucumber Expression the library cannot expand uses the permissive fallback, authoritative
-/// only when every placeholder resolved. `expression` is kept only when the regex compiled.
-fn compile_matcher(
+/// only when every placeholder resolved.
+fn prepare_matcher(
     definition: &StepDefinition,
     parameter_types: &BTreeMap<String, String>,
-) -> (CompiledMatcher, Option<String>) {
+) -> (PreparedMatcher, Option<String>) {
     match (
         definition.analysis_profile().matches_by_text(),
         definition.matcher_kind,
     ) {
         (false, _) | (_, MatcherKind::Literal) => (
-            CompiledMatcher {
-                regex: None,
+            PreparedMatcher {
                 expression: None,
                 authoritative: false,
             },
@@ -934,8 +983,7 @@ fn compile_matcher(
         (_, MatcherKind::RegularExpression) => {
             if definition.matcher.len() > MAX_REGEX_PATTERN_BYTES {
                 return (
-                    CompiledMatcher {
-                        regex: None,
+                    PreparedMatcher {
                         expression: None,
                         authoritative: true,
                     },
@@ -949,19 +997,17 @@ fn compile_matcher(
                 .map(|translated| translated.expression());
             let Some(expression) = expression else {
                 return (
-                    CompiledMatcher {
-                        regex: None,
+                    PreparedMatcher {
                         expression: None,
                         authoritative: false,
                     },
                     None,
                 );
             };
-            let (regex, error) = compile_definition_regex(&expression, definition);
+            let (expression, error) = checked_expression(expression, definition);
             (
-                CompiledMatcher {
-                    expression: regex.is_some().then(|| expression.clone()),
-                    regex,
+                PreparedMatcher {
+                    expression,
                     authoritative: true,
                 },
                 error,
@@ -970,19 +1016,17 @@ fn compile_matcher(
         (_, MatcherKind::CucumberExpression) => {
             match cucumber_regex_expression(&definition.matcher) {
                 CucumberRegexExpression::Compiled(expression) => {
-                    let (regex, error) = compile_definition_regex(&expression, definition);
+                    let (expression, error) = checked_expression(expression, definition);
                     (
-                        CompiledMatcher {
-                            expression: regex.is_some().then(|| expression.clone()),
-                            regex,
+                        PreparedMatcher {
+                            expression,
                             authoritative: true,
                         },
                         error,
                     )
                 }
                 CucumberRegexExpression::ResourceLimit => (
-                    CompiledMatcher {
-                        regex: None,
+                    PreparedMatcher {
                         expression: None,
                         authoritative: true,
                     },
@@ -995,11 +1039,10 @@ fn compile_matcher(
                     // prove runtime ambiguity. Oversized input already returned ResourceLimit.
                     let fallback =
                         fallback_cucumber_expression_regex(&definition.matcher, parameter_types);
-                    let (regex, error) = compile_definition_regex(&fallback.expression, definition);
+                    let (expression, error) = checked_expression(fallback.expression, definition);
                     (
-                        CompiledMatcher {
-                            expression: regex.is_some().then(|| fallback.expression.clone()),
-                            regex,
+                        PreparedMatcher {
+                            expression,
                             authoritative: fallback.exact,
                         },
                         error,
@@ -1032,19 +1075,21 @@ fn cucumber_regex_expression(matcher: &str) -> CucumberRegexExpression {
     CucumberRegexExpression::Compiled(expanded)
 }
 
-/// Compiles under the shared regex limits. An oversized expression or `CompiledTooBig` yields a
-/// resource-limit diagnostic; any other compile error yields `(None, None)`.
-fn compile_definition_regex(
-    expression: &str,
+/// Keeps `expression` for the index unless it exceeds `MAX_REGEX_PATTERN_BYTES`, which yields
+/// the resource-limit diagnostic, or does not parse, which drops it with no diagnostic.
+///
+/// The parser has the `regex` builder's defaults, so it rejects exactly the patterns that fail
+/// with a syntax error. Unparsed, such a pattern would reach `MatcherIndex` and rebuild its window.
+fn checked_expression(
+    expression: String,
     definition: &StepDefinition,
-) -> (Option<Regex>, Option<String>) {
+) -> (Option<String>, Option<String>) {
     if expression.len() > MAX_REGEX_PATTERN_BYTES {
-        return (None, Some(regex_limit_message(definition)));
-    }
-    match compile_regex(expression) {
-        Ok(regex) => (Some(regex), None),
-        Err(regex::Error::CompiledTooBig(_)) => (None, Some(regex_limit_message(definition))),
-        Err(_) => (None, None),
+        (None, Some(regex_limit_message(definition)))
+    } else if regex_syntax::Parser::new().parse(&expression).is_err() {
+        (None, None)
+    } else {
+        (Some(expression), None)
     }
 }
 

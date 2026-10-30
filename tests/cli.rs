@@ -3372,6 +3372,37 @@ fn pathological_matcher_programs_fail_with_an_actionable_resource_error() {
     assert_eq!(report["summary"]["definitionsAnalyzed"], 1);
 }
 
+/// Checks a matcher whose program fits only without capture groups is matched, not reported over
+/// the regex limit: the matcher index compiles it in a set, which has no captures.
+///
+/// 11,000 groups exceed the 1 MiB program limit with captures and fit without them. The second
+/// definition also matches the step, so the ambiguity appears only if the first one is matched.
+#[test]
+fn capture_heavy_matchers_compile_in_their_matcher_set() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "steps.ts",
+        &format!(
+            "Given(/^{}$/, () => work());\nGiven(/^x+$/, () => other());\n",
+            "(x)".repeat(11_000)
+        ),
+    );
+    write(
+        directory.path(),
+        "edge.feature",
+        &format!(
+            "Feature: Edge\n  Scenario: One\n    Given {}\n",
+            "x".repeat(11_000)
+        ),
+    );
+
+    analyze_root_with(directory.path(), &["--threshold", "100"])
+        .code(1)
+        .stdout(predicate::str::contains("ambiguous-step"))
+        .stderr(predicate::str::contains("regex resource limit").not());
+}
+
 /// Checks an oversized expression warns about regex resources and retains its definition in the default report.
 #[test]
 fn oversized_cucumber_expression_fails_closed_and_still_writes_a_report() {

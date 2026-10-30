@@ -236,7 +236,7 @@ pub(crate) fn compile_regex(pattern: &str) -> Result<regex::Regex, regex::Error>
 }
 
 /// Compiles `pattern` with the given program size limit and lazy-DFA cache limit.
-fn compile_regex_with_limits(
+pub(crate) fn compile_regex_with_limits(
     pattern: &str,
     size_limit: usize,
     dfa_size_limit: usize,
