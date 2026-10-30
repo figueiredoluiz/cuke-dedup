@@ -254,15 +254,16 @@ impl ProjectResolution {
             );
         }
         let canonical = self.canonical_contained(path, root, "project config")?;
+        let top_level = depth == 0;
+        // Before the success cache: a nested load that succeeded later must not hide a kept failure.
+        if let Some(failure) = self.failed_configs.get(&canonical).filter(|_| top_level) {
+            return Err(failure.error());
+        }
         if self.configs.contains_key(&canonical) {
             return self
                 .configs
                 .get(&canonical)
                 .context("project config cache entry disappeared");
-        }
-        let top_level = depth == 0;
-        if let Some(failure) = self.failed_configs.get(&canonical).filter(|_| top_level) {
-            return Err(failure.error());
         }
         if !self.config_active.insert(canonical.clone()) {
             bail!("project config extends cycle at {}", canonical.display());

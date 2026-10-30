@@ -1601,4 +1601,9 @@ fn only_top_level_project_config_failures_are_kept() {
         Ok(()),
         "a kept failure is not read through extends"
     );
+    assert_eq!(
+        load("first.json").unwrap_err(),
+        first,
+        "the nested success cached above does not hide the kept failure"
+    );
 }

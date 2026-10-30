@@ -56,9 +56,10 @@ when CI must reject degraded analysis.
 Resolution confines imports and package targets to canonical analysis or package roots and shares
 cached work between importing files. A registration module, package manifest, importer's nearest
 project configuration or workspace scan that fails is reported again to each later importer
-without being read or scanned again or charged against the byte, file and mapping limits. Each
-import still charges one module path/depth state, and once the module limit is reached a failed
-module reports that limit. A read error is not kept, and a failed base configuration reached
+without being read or scanned again or charged against the byte, file and mapping limits. A
+module path/depth state is charged only when an import resolves to a module whose exports are not
+cached at that depth. A failed module's exports are never cached, so each import of it charges a
+new state, and once the module limit is reached it reports that limit. A read error is not kept, and a failed base configuration reached
 through `extends` is loaded again from each configuration that extends it.
 
 Selected Ruby definition files are not charged against the Ruby load limit. A load that would
