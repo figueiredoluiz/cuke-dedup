@@ -904,6 +904,7 @@ fn workspace_scanning_skips_unnamed_packages_and_entry_points_fall_back_to_the_i
         resolver
             .workspace_packages
             .as_ref()
+            .and_then(|scanned| scanned.as_ref().ok())
             .unwrap()
             .keys()
             .map(String::as_str)
@@ -955,6 +956,30 @@ fn duplicate_workspace_package_names_are_refused() {
             .contains("duplicate workspace package name `@example/bdd`"),
         "{error:#}"
     );
+
+    // Without the duplicate a new scan would succeed, so the same error means no rescan.
+    fs::remove_dir_all(directory.path().join("packages").join("second")).unwrap();
+    let again = resolver
+        .resolve(&importer, "@example/bdd", &boundary)
+        .unwrap_err();
+    assert_eq!(format!("{again:#}"), format!("{error:#}"));
+}
+
+/// Checks a kept failure keeps the full `{:#}` text and a failed read is not kept, including a
+/// workspace walk error that holds its I/O cause: a read can fail transiently.
+#[test]
+fn kept_failures_keep_their_text_and_skip_io_failures() {
+    let io = anyhow::Error::new(std::io::Error::other("denied")).context("failed to read manifest");
+    assert!(KeptFailure::new(&io).is_none());
+    let walk = anyhow::Error::new(ignore::Error::WithPath {
+        path: "packages".into(),
+        err: Box::new(ignore::Error::Io(std::io::Error::other("denied"))),
+    })
+    .context("failed while scanning declared workspace packages");
+    assert!(KeptFailure::new(&walk).is_none());
+    let plain = anyhow::anyhow!("duplicate workspace package name `x`").context("while scanning");
+    let kept = KeptFailure::new(&plain).unwrap().error();
+    assert_eq!(format!("{kept:#}"), format!("{plain:#}"));
 }
 
 /// Pins that a project config only claims a specifier it genuinely maps. A config without `paths`
@@ -1524,4 +1549,56 @@ fn every_resolution_route_rejects_non_ecmascript_targets() {
         let resolved = resolve_from_root_step(directory.path(), specifier).unwrap();
         assert_eq!(resolved.is_some(), resolves, "{specifier}");
     }
+}
+
+/// Checks a failed package manifest is read once per run: after the first failure the manifest is
+/// repaired on disk, and the next resolution reports the kept failure.
+#[test]
+fn failed_package_manifests_are_not_read_again() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("package.json"), "{").unwrap();
+    let importer = directory.path().join("steps.ts");
+    fs::write(&importer, "").unwrap();
+    let boundary = directory.path().canonicalize().unwrap();
+    let mut resolver = ProjectResolution::for_root(directory.path());
+
+    let first = resolver
+        .resolve(&importer, "@example/bdd", &boundary)
+        .unwrap_err();
+    assert!(format!("{first:#}").contains("failed to parse static package manifest"));
+    fs::write(directory.path().join("package.json"), "{}").unwrap();
+    let second = resolver
+        .resolve(&importer, "@example/bdd", &boundary)
+        .unwrap_err();
+    assert_eq!(format!("{second:#}"), format!("{first:#}"));
+}
+
+/// Checks a top-level project config failure is kept while a failed base loaded through `extends`
+/// is not: a nested failure depends on the depth and the configs in flight.
+#[test]
+fn only_top_level_project_config_failures_are_kept() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    fs::write(root.join("base.json"), "{").unwrap();
+    fs::write(root.join("first.json"), r#"{"extends":"./base.json"}"#).unwrap();
+    fs::write(root.join("second.json"), r#"{"extends":"./base.json"}"#).unwrap();
+    fs::write(root.join("third.json"), r#"{"extends":"./first.json"}"#).unwrap();
+    let mut resolver = ProjectResolution::for_root(&root);
+    let mut load = |name: &str| {
+        resolver
+            .load_project_config(&root.join(name), &root, 0)
+            .map(|_| ())
+            .map_err(|error| format!("{error:#}"))
+    };
+
+    let first = load("first.json").unwrap_err();
+    fs::write(root.join("base.json"), "{}").unwrap();
+    assert_eq!(load("first.json").unwrap_err(), first);
+    assert_eq!(load("base.json"), Ok(()), "a nested failure is not kept");
+    assert_eq!(load("second.json"), Ok(()));
+    assert_eq!(
+        load("third.json"),
+        Ok(()),
+        "a kept failure is not read through extends"
+    );
 }

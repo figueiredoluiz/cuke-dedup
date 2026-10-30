@@ -3588,6 +3588,12 @@
     "src/typescript/module_resolver/tests.rs": {
       "tests": [
         {
+          "name": "kept_module_failures_report_the_module_limit_once_it_is_reached",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: CommonJS/ESM registration module resolution reports the module count limit before a kept module failure (`kept module failures report the module limit once it is reached`). Semantic residue: Ruby load failures are pinned by the `load-unresolved` group.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "project_resolution_supports_relative_modules_and_rejects_escapes",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`project resolution supports relative modules and rejects escapes`). Semantic residue: Ruby load-path resolution and cycles are pinned by the `load-provider-root` and `load-cycle` groups.",
@@ -3898,6 +3904,24 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "kept_failures_keep_their_text_and_skip_io_failures",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json resolution keeps a failed load's diagnostic text and never keeps an I/O failure (`kept failures keep their text and skip io failures`). Semantic residue: Ruby load failures are pinned by the `load-unresolved` group.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "failed_package_manifests_are_not_read_again",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json resolution reads a failed package manifest once per run (`failed package manifests are not read again`). Semantic residue: Ruby load failures are pinned by the `load-unresolved` group.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "only_top_level_project_config_failures_are_kept",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json resolution keeps only top-level project config failures, not failures reached through `extends` (`only top level project config failures are kept`). Semantic residue: Ruby load failures are pinned by the `load-unresolved` group.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "project_configs_without_matching_path_targets_fall_through",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: CommonJS/ESM export and re-export resolution (`project configs without matching path targets fall through`). Semantic residue: Ruby provider re-exports and load roots are covered by the equivalent-provider-* groups.",
@@ -4146,9 +4170,9 @@
           "behaviorClass": "language-specific-api"
         },
         {
-          "name": "module_resolution_clears_active_paths_after_recoverable_errors",
+          "name": "failed_registration_modules_are_kept_and_clear_their_active_path",
           "requiredStatus": "language-inapplicable",
-          "rationale": "JS/TS-only: tsconfig/package.json resolution (path aliases, extends, workspaces, package maps) (`module resolution clears active paths after recoverable errors`). Semantic residue: Ruby load cycles and recoverable load errors are pinned by the `load-cycle` and `load-unresolved` groups.",
+          "rationale": "JS/TS-only: tsconfig/package.json resolution (path aliases, extends, workspaces, package maps) (`failed registration modules are kept and clear their active path`: a second import of a failed module reports the kept failure, not a re-read or a silent cycle). Semantic residue: Ruby load cycles and recoverable load errors are pinned by the `load-cycle` and `load-unresolved` groups.",
           "behaviorClass": "language-specific-api"
         },
         {

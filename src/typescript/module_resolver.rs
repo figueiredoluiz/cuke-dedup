@@ -9,7 +9,9 @@ use super::frameworks::{
     registration_exports_for_module, RegistrationExports,
 };
 use super::node_text;
-use super::project_resolution::{ecmascript_language, ProjectResolution};
+use super::project_resolution::{
+    ecmascript_language, is_io_failure, KeptFailure, ProjectResolution,
+};
 use crate::model::Framework;
 use crate::resource_limits::{
     read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES,
@@ -61,6 +63,8 @@ struct ResolutionState {
     active: BTreeSet<PathBuf>,
     exports: BTreeMap<(PathBuf, usize), CachedExports>,
     modules: BTreeMap<PathBuf, Option<ModuleFacts>>,
+    /// Modules that failed to load; kept apart so they do not count toward the module limit.
+    failed_modules: BTreeMap<PathBuf, KeptFailure>,
     module_bytes: WorkBudget,
     resolutions_started: WorkBudget,
 }
@@ -72,6 +76,7 @@ impl Default for ResolutionState {
             active: BTreeSet::new(),
             exports: BTreeMap::new(),
             modules: BTreeMap::new(),
+            failed_modules: BTreeMap::new(),
             module_bytes: WorkBudget::new(MAX_REGISTRATION_MODULE_BYTES),
             resolutions_started: WorkBudget::new(MAX_REGISTRATION_RESOLUTION_STATES),
         }
@@ -297,16 +302,6 @@ fn resolve_active_exports(
     })
 }
 
-/// Returns whether `error` was caused by the filesystem refusing a read.
-///
-/// Resource limits carry their own typed cause, so an `io::Error` anywhere in the chain means a
-/// genuine read failure — a permission change, a vanished file, or exhausted descriptors.
-fn is_io_failure(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
-}
-
 /// Combines framework evidence: the input earlier in contract precedence wins, and the result is
 /// unknown only when neither input is a contract framework.
 pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framework {
@@ -322,7 +317,7 @@ pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framew
         .map_or(Framework::UNKNOWN, |(_, framework)| framework)
 }
 
-/// Reads and caches module facts within count and byte limits, rejecting syntax-recovered exports.
+/// Caches module facts, or the failure to read them, within the module count limit.
 fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<ModuleFacts>> {
     if let Some(module) = state.modules.get(path) {
         return Ok(module.clone());
@@ -333,6 +328,21 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
             MAX_REGISTRATION_MODULES
         );
     }
+    // After the count limit, so a failed module reached later reports the limit as before.
+    if let Some(failure) = state.failed_modules.get(path) {
+        return Err(failure.error());
+    }
+    let module = read_module(path, state).inspect_err(|error| {
+        if let Some(failure) = KeptFailure::new(error) {
+            state.failed_modules.insert(path.to_owned(), failure);
+        }
+    })?;
+    state.modules.insert(path.to_owned(), module.clone());
+    Ok(module)
+}
+
+/// Reads module facts within the byte limit, rejecting syntax-recovered exports.
+fn read_module(path: &Path, state: &mut ResolutionState) -> Result<Option<ModuleFacts>> {
     let source = read_utf8(path, "registration module", MAX_PROJECT_INPUT_BYTES)?;
     if !state.module_bytes.admit(source.len()) {
         bail!(
@@ -351,7 +361,6 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
     } else {
         None
     };
-    state.modules.insert(path.to_owned(), module.clone());
     Ok(module)
 }
 

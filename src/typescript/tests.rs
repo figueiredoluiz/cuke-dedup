@@ -2,7 +2,7 @@ use super::*;
 use crate::model::Rule;
 use crate::typescript::frameworks::{CUCUMBER_JS, CYPRESS_CUCUMBER, PLAYWRIGHT_BDD};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Verify TypeScript control-flow kinds map to typed events and unknown kinds retain legacy spellings.
 #[test]
@@ -45,6 +45,22 @@ fn file(language: SourceLanguage) -> SourceFile {
         path: PathBuf::from("features/steps/example.ts"),
         language,
     }
+}
+
+/// Writes `source` to `name` under `directory` and extracts it as TypeScript through `session`.
+fn extract_written(
+    directory: &Path,
+    name: &str,
+    source: &str,
+    session: &mut TypeScriptExtractionSession,
+) -> Extraction {
+    let path = directory.join(name);
+    fs::write(&path, source).unwrap();
+    let file = SourceFile {
+        path,
+        language: TYPESCRIPT,
+    };
+    extract_detailed_impl(source, &file, session).unwrap()
 }
 
 /// Verify supported framework entrypoints preserve duplicate-matcher findings and attribution while unsupported paths yield none.
@@ -561,18 +577,12 @@ fn project_resolved_registrations_propagate_framework_metadata() {
         ("imports.ts", "#bdd", CUCUMBER_JS),
         ("workspace.ts", "@example/bdd", PLAYWRIGHT_BDD),
     ] {
-        let path = directory.path().join(name);
-        fs::write(
-            &path,
-            format!("import {{ Given }} from '{module}';\nGiven('resolved', () => work());\n"),
-        )
-        .unwrap();
-        let file = SourceFile {
-            path,
-            language: TYPESCRIPT,
-        };
-        let source = fs::read_to_string(&file.path).unwrap();
-        let extracted = extract_detailed_impl(&source, &file, &mut session).unwrap();
+        let extracted = extract_written(
+            directory.path(),
+            name,
+            &format!("import {{ Given }} from '{module}';\nGiven('resolved', () => work());\n"),
+            &mut session,
+        );
         assert_eq!(extracted.definitions.len(), 1, "{module}");
         assert_eq!(extracted.definitions[0].framework, expected, "{module}");
     }
@@ -937,47 +947,43 @@ PlaywrightGiven('through a factory chain', () => act());
     assert_eq!(extracted.definitions[1].framework, PLAYWRIGHT_BDD);
 }
 
-/// Verify a recoverable module parse failure does not prevent later resolution after the source is repaired.
+/// Verify a failed registration module is kept for the run and clears its active path. The module
+/// is repaired on disk after the first import fails; the second import still reports the same
+/// failure, where a re-read would resolve it and a leaked active marker would pass it as a cycle
+/// with no diagnostic.
 #[test]
-fn module_resolution_clears_active_paths_after_recoverable_errors() {
+fn failed_registration_modules_are_kept_and_clear_their_active_path() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("package.json"), "{}").unwrap();
     let module = directory.path().join("fixture.ts");
     fs::write(&module, "export { Given from '@cucumber/cucumber';\n").unwrap();
     let mut session = TypeScriptExtractionSession::for_root(directory.path(), &[], &[]);
+    // The call sits off line 1 and column 1, so a diagnostic at a fallback location cannot pass.
+    let source =
+        "// steps\nimport { Given } from './fixture';\n  Given('attempt', () => work());\n";
 
-    let first_path = directory.path().join("first.steps.ts");
-    fs::write(
-        &first_path,
-        "import { Given } from './fixture';\nGiven('first attempt', () => work());\n",
-    )
-    .unwrap();
-    let first_file = SourceFile {
-        path: first_path,
-        language: TYPESCRIPT,
-    };
-    let first_source = fs::read_to_string(&first_file.path).unwrap();
-    let first = extract_detailed_impl(&first_source, &first_file, &mut session).unwrap();
-    assert!(first.definitions.is_empty());
-    assert!(!first.diagnostics.is_empty());
-
+    let first = extract_written(directory.path(), "first.steps.ts", source, &mut session);
     fs::write(&module, "export { Given } from '@cucumber/cucumber';\n").unwrap();
-    let second_path = directory.path().join("second.steps.ts");
-    fs::write(
-        &second_path,
-        "import { Given } from './fixture';\nGiven('second attempt', () => work());\n",
-    )
-    .unwrap();
-    let second_file = SourceFile {
-        path: second_path,
-        language: TYPESCRIPT,
+    let second = extract_written(directory.path(), "second.steps.ts", source, &mut session);
+    assert!(second.definitions.is_empty());
+    let reported = |extracted: &Extraction| {
+        extracted
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic.location.line,
+                    diagnostic.location.column,
+                    diagnostic.message.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
     };
-    let second_source = fs::read_to_string(&second_file.path).unwrap();
-    let second = extract_detailed_impl(&second_source, &second_file, &mut session).unwrap();
-
-    assert!(second.diagnostics.is_empty());
-    assert_eq!(second.definitions.len(), 1);
-    assert_eq!(second.definitions[0].framework, CUCUMBER_JS);
+    assert!(reported(&first)
+        .iter()
+        .any(|(line, column, message)| (*line, *column) == (3, 3)
+            && message.contains("syntax errors")));
+    assert_eq!(reported(&second), reported(&first));
 }
 
 /// Verify explicit trusted factory-result exports resolve while local `createBdd` lookalikes remain untrusted.

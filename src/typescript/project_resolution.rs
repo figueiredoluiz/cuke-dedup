@@ -62,13 +62,54 @@ struct PackageInfo {
     workspaces: Vec<String>,
 }
 
+/// A failed load or scan, kept so later resolutions report it without reading or charging the
+/// same input again. Consumers read only its `{:#}` text: an I/O failure, the one typed cause they
+/// test, is never kept, because a read can fail transiently.
+#[derive(Clone)]
+pub(super) struct KeptFailure {
+    message: String,
+}
+
+impl KeptFailure {
+    /// Keeps `error`'s full cause chain, or `None` for a failed read. A workspace walk error holds
+    /// its I/O cause without exposing it as a source, so it is checked apart from `is_io_failure`.
+    pub(super) fn new(error: &anyhow::Error) -> Option<Self> {
+        let walk_read = |cause: &(dyn std::error::Error + 'static)| {
+            cause
+                .downcast_ref::<ignore::Error>()
+                .is_some_and(|walk| walk.io_error().is_some())
+        };
+        (!is_io_failure(error) && !error.chain().any(walk_read)).then(|| Self {
+            message: format!("{error:#}"),
+        })
+    }
+
+    /// An error with the kept text.
+    pub(super) fn error(&self) -> anyhow::Error {
+        anyhow::anyhow!(self.message.clone())
+    }
+}
+
+/// Returns whether `error` was caused by the filesystem refusing a read.
+///
+/// Resource limits carry their own typed cause, so an `io::Error` anywhere in the chain means a
+/// genuine read failure — a permission change, a vanished file, or exhausted descriptors.
+pub(super) fn is_io_failure(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+}
+
 pub(super) struct ProjectResolution {
     root: Option<PathBuf>,
     config_for_directory: BTreeMap<PathBuf, Option<PathBuf>>,
     configs: BTreeMap<PathBuf, EffectiveProjectConfig>,
+    /// Top-level config loads that failed; a nested failure depends on the depth and the configs in
+    /// flight, so only its top-level load is kept.
+    failed_configs: BTreeMap<PathBuf, KeptFailure>,
     config_active: BTreeSet<PathBuf>,
-    packages: BTreeMap<PathBuf, PackageInfo>,
-    workspace_packages: Option<BTreeMap<String, PackageInfo>>,
+    packages: BTreeMap<PathBuf, Result<PackageInfo, KeptFailure>>,
+    workspace_packages: Option<Result<BTreeMap<String, PackageInfo>, KeptFailure>>,
     metadata_files: WorkBudget,
     metadata_bytes: WorkBudget,
     mappings: WorkBudget,
@@ -81,6 +122,7 @@ impl Default for ProjectResolution {
             root: None,
             config_for_directory: BTreeMap::new(),
             configs: BTreeMap::new(),
+            failed_configs: BTreeMap::new(),
             config_active: BTreeSet::new(),
             packages: BTreeMap::new(),
             workspace_packages: None,
@@ -218,12 +260,20 @@ impl ProjectResolution {
                 .get(&canonical)
                 .context("project config cache entry disappeared");
         }
+        let top_level = depth == 0;
+        if let Some(failure) = self.failed_configs.get(&canonical).filter(|_| top_level) {
+            return Err(failure.error());
+        }
         if !self.config_active.insert(canonical.clone()) {
             bail!("project config extends cycle at {}", canonical.display());
         }
         let result = self.load_project_config_uncached(&canonical, root, depth);
         self.config_active.remove(&canonical);
-        let loaded = result?;
+        let loaded = result.inspect_err(|error| {
+            if let Some(failure) = KeptFailure::new(error).filter(|_| top_level) {
+                self.failed_configs.insert(canonical.clone(), failure);
+            }
+        })?;
         self.configs.insert(canonical.clone(), loaded);
         self.configs
             .get(&canonical)
@@ -356,13 +406,7 @@ impl ProjectResolution {
         let Some((name, subpath)) = split_package_specifier(extends) else {
             return Ok(None);
         };
-        self.initialize_workspaces(root)?;
-        let Some(package) = self
-            .workspace_packages
-            .as_ref()
-            .and_then(|packages| packages.get(name))
-            .cloned()
-        else {
+        let Some(package) = self.workspace_packages(root)?.get(name).cloned() else {
             return Ok(None);
         };
         // A package base stays inside its package, like an `exports` target: no traversal, no
@@ -497,12 +541,7 @@ impl ProjectResolution {
                 return self.resolve_package_entry(&scope, subpath, root);
             }
         }
-        self.initialize_workspaces(root)?;
-        let package = self
-            .workspace_packages
-            .as_ref()
-            .and_then(|packages| packages.get(name))
-            .cloned();
+        let package = self.workspace_packages(root)?.get(name).cloned();
         match package {
             Some(package) => self.resolve_package_entry(&package, subpath, root),
             None => Ok(None),
@@ -580,11 +619,25 @@ impl ProjectResolution {
         Ok(None)
     }
 
-    /// Indexes named declared workspaces once using a bounded scan, rejecting duplicate package names.
-    fn initialize_workspaces(&mut self, root: &Path) -> Result<()> {
-        if self.workspace_packages.is_some() {
-            return Ok(());
+    /// The workspace packages under `root` by name, scanned once per run; a failed scan is kept
+    /// and reported again without rescanning.
+    fn workspace_packages(&mut self, root: &Path) -> Result<&BTreeMap<String, PackageInfo>> {
+        let scanned = match self.workspace_packages.take() {
+            Some(scanned) => scanned,
+            None => match self.scan_workspaces(root) {
+                Ok(packages) => Ok(packages),
+                Err(error) => Err(KeptFailure::new(&error).ok_or(error)?),
+            },
+        };
+        match self.workspace_packages.insert(scanned) {
+            Ok(packages) => Ok(packages),
+            Err(failure) => Err(failure.error()),
         }
+    }
+
+    /// Walks `root` for directories matching the root manifest's workspace patterns and loads each
+    /// package, refusing duplicate names and scans past `MAX_WORKSPACE_SCAN_ENTRIES`.
+    fn scan_workspaces(&mut self, root: &Path) -> Result<BTreeMap<String, PackageInfo>> {
         let root_package = if root.join("package.json").is_file() {
             Some(self.load_package(root, root)?)
         } else {
@@ -598,8 +651,7 @@ impl ProjectResolution {
         }
         let patterns = root_package.map_or_else(Vec::new, |package| package.workspaces);
         if patterns.is_empty() {
-            self.workspace_packages = Some(packages);
-            return Ok(());
+            return Ok(packages);
         }
         let globs = compile_workspace_globs(&patterns)?;
         let mut builder = ignore::WalkBuilder::new(root);
@@ -646,19 +698,32 @@ impl ProjectResolution {
                 );
             }
         }
-        self.workspace_packages = Some(packages);
-        Ok(())
+        Ok(packages)
     }
 
-    /// Caches a contained static package manifest, validating fields and charging its import and export mappings.
+    /// Caches a contained static package manifest, or the failure to load it, by canonical root.
     fn load_package(&mut self, package_root: &Path, root: &Path) -> Result<PackageInfo> {
         let package_root = self.canonical_contained(package_root, root, "package")?;
-        if let Some(package) = self.packages.get(&package_root) {
-            return Ok(package.clone());
-        }
+        let loaded = match self.packages.get(&package_root) {
+            Some(loaded) => loaded.clone(),
+            None => {
+                let loaded = match self.read_package(&package_root) {
+                    Ok(package) => Ok(package),
+                    Err(error) => Err(KeptFailure::new(&error).ok_or(error)?),
+                };
+                self.packages.insert(package_root, loaded.clone());
+                loaded
+            }
+        };
+        loaded.map_err(|failure| failure.error())
+    }
+
+    /// Reads a contained static package manifest, validating fields and charging its import and
+    /// export mappings.
+    fn read_package(&mut self, package_root: &Path) -> Result<PackageInfo> {
         let manifest = self.canonical_contained(
             &package_root.join("package.json"),
-            &package_root,
+            package_root,
             "package manifest",
         )?;
         let text = self.read_metadata(&manifest, "package manifest")?;
@@ -677,17 +742,15 @@ impl ProjectResolution {
         let imports = object.get("imports").cloned();
         let exports = object.get("exports").cloned();
         self.charge_mappings(map_size(imports.as_ref()) + map_size(exports.as_ref()))?;
-        let package = PackageInfo {
-            root: package_root.clone(),
+        Ok(PackageInfo {
+            root: package_root.to_owned(),
             name: optional_string(object, "name", &manifest)?,
             imports,
             exports,
             main: optional_string(object, "main", &manifest)?,
             tsconfig: optional_string(object, "tsconfig", &manifest)?,
             workspaces: workspace_patterns(object.get("workspaces"), &manifest)?,
-        };
-        self.packages.insert(package_root, package.clone());
-        Ok(package)
+        })
     }
 
     /// Tries supported exact, extension-substituted, suffixed, and index paths, rejecting canonical targets outside the container.

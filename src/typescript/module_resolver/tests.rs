@@ -1106,3 +1106,28 @@ fn framework_evidence_merges_by_contract_precedence() {
         }
     }
 }
+
+/// Verify a kept module failure yields to the module count limit: once the graph holds the limit,
+/// a failed module reached again reports the limit, as a fresh load would.
+#[test]
+fn kept_module_failures_report_the_module_limit_once_it_is_reached() {
+    let directory = tempfile::tempdir().unwrap();
+    let broken = directory.path().join("broken.ts");
+    fs::write(&broken, "export { Given from '@cucumber/cucumber';\n").unwrap();
+    let mut state = ResolutionState::default();
+    let first = load_module(&broken, &mut state).unwrap_err();
+    assert!(format!("{first:#}").contains("syntax errors"), "{first:#}");
+    for index in 0..MAX_REGISTRATION_MODULES {
+        let module = directory.path().join(format!("m{index}.ts"));
+        fs::write(&module, "").unwrap();
+        load_module(&module, &mut state).unwrap();
+    }
+
+    let again = load_module(&broken, &mut state).unwrap_err();
+    assert!(
+        format!("{again:#}").contains(&format!(
+            "{MAX_REGISTRATION_MODULES}-module resolution limit"
+        )),
+        "{again:#}"
+    );
+}

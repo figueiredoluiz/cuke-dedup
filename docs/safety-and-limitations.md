@@ -54,7 +54,12 @@ when CI must reject degraded analysis.
 | Memoized module path/depth states | 16,384 |
 
 Resolution confines imports and package targets to canonical analysis or package roots and shares
-cached work between importing files.
+cached work between importing files. A registration module, package manifest, importer's nearest
+project configuration or workspace scan that fails is reported again to each later importer
+without being read or scanned again or charged against the byte, file and mapping limits. Each
+import still charges one module path/depth state, and once the module limit is reached a failed
+module reports that limit. A read error is not kept, and a failed base configuration reached
+through `extends` is loaded again from each configuration that extends it.
 
 Selected Ruby definition files are not charged against the Ruby load limit. A load that would
 exceed it is not followed, and later new loads are refused too: analysis is marked incomplete at
