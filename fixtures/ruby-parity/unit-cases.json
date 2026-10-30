@@ -47,6 +47,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "matcher_blocking_stores_each_charged_pair_once_under_its_own_key",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the matcher-blocking pair set's keys and admission; the TypeScript fixture only supplies definition values.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "fuzzy_pair_evidence_is_never_collapsed_into_clusters",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {

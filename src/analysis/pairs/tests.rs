@@ -3,6 +3,14 @@ use crate::discovery::SourceFile;
 use crate::typescript::TYPESCRIPT;
 use std::path::PathBuf;
 
+/// Behaviour event ids of `definitions` in order, sorted, and their anchors.
+fn event_views(definitions: &[StepDefinition]) -> [Vec<Vec<usize>>; 3] {
+    let events = behavior_event_ids(definitions);
+    let mut sorted = events.clone();
+    sorted.iter_mut().for_each(|events| events.sort_unstable());
+    [events, sorted, behavior_anchor_event_ids(definitions)]
+}
+
 /// First TypeScript definition extracted from `Given('abc', ...)` with a three-call handler.
 fn definition() -> StepDefinition {
     crate::typescript::extract(
@@ -230,12 +238,7 @@ fn matcher_blocking_fails_closed_when_a_work_budget_is_exceeded() {
     right.handler.behavior_signature = vec!["method:instance sync".to_owned()];
     let definitions = [left, right];
     let classes = comparison_classes(&definitions);
-    let events = behavior_event_ids(&definitions);
-    let mut sorted_events = events.clone();
-    sorted_events
-        .iter_mut()
-        .for_each(|events| events.sort_unstable());
-    let anchor_events = behavior_anchor_event_ids(&definitions);
+    let [events, sorted_events, anchor_events] = event_views(&definitions);
     let mut considered = HashSet::new();
     let mut proposal_work = MAX_MATCHER_BLOCKING_PROPOSAL_WORK;
     let mut event_work = 0;
@@ -318,12 +321,7 @@ fn handler_prefilters_are_safe_upper_bounds_for_the_near_rule() {
             right.into_iter().map(str::to_owned).collect();
         let definitions = [left_definition, right_definition];
         let classes = comparison_classes(&definitions);
-        let events = behavior_event_ids(&definitions);
-        let mut sorted_events = events.clone();
-        sorted_events
-            .iter_mut()
-            .for_each(|events| events.sort_unstable());
-        let anchor_events = behavior_anchor_event_ids(&definitions);
+        let [events, sorted_events, anchor_events] = event_views(&definitions);
         assert_eq!(
             can_reach_handler_similarity_gate(
                 classes.relationships(0, 1),
@@ -1187,4 +1185,58 @@ fn exact_matcher_class_keys_on_effective_flags() {
             "{left:?} against {right:?} (ruby: {ruby})"
         );
     }
+}
+
+/// Checks matcher blocking charges and stores a pair once, under a key no other pair shares, in
+/// either orientation, and stores no pair an early exclusion rejects.
+#[test]
+fn matcher_blocking_stores_each_charged_pair_once_under_its_own_key() {
+    let definitions = (0..5)
+        .map(|index| {
+            let mut definition = definition();
+            // The last definition repeats the first one's matcher: an early exclusion.
+            let matcher = format!("m{}", index % 4);
+            definition.matcher = matcher.clone();
+            definition.normalized_matcher = matcher;
+            definition.handler.alpha_normalized = format!("alpha-{index}");
+            definition.handler.structural = format!("structure-{index}");
+            // Alternating async and sync handlers: each charged pair is rejected as runtime
+            // incompatible before any event work.
+            let mode = if index % 2 == 0 { "async" } else { "sync" };
+            definition.handler.behavior_signature = vec![format!("method:instance {mode}")];
+            definition
+        })
+        .collect::<Vec<_>>();
+    let classes = comparison_classes(&definitions);
+    let [events, sorted_events, anchor_events] = event_views(&definitions);
+    let mut considered = HashSet::new();
+    let mut proposal_work = 0;
+    let mut event_work = 0;
+    let mut builder = CandidateBuilder::new(usize::MAX);
+    {
+        let mut proposals_after = |left, right| {
+            assert!(consider_matcher_blocking_pair(
+                &definitions,
+                &classes,
+                &events,
+                &sorted_events,
+                &anchor_events,
+                left,
+                right,
+                &mut considered,
+                &mut proposal_work,
+                &mut event_work,
+                &mut builder,
+            ));
+            proposal_work
+        };
+        assert_eq!(proposals_after(0, 3), 1);
+        assert_eq!(proposals_after(3, 0), 1);
+        // A key from the sum or a truncated index would equal (0, 3)'s.
+        assert_eq!(proposals_after(1, 2), 2);
+        assert_eq!(proposals_after(0, 4), 2);
+    }
+    assert_eq!(considered.len(), 2);
+    assert_eq!(event_work, 0);
+    assert!(builder.candidates.is_empty());
 }
