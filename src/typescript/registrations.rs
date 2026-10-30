@@ -45,7 +45,8 @@ pub(super) struct RegistrationNames {
     configured: BTreeSet<String>,
 }
 
-type BindingKey = (usize, String);
+/// A name and its binding scope. Name first, so all bindings of a name sort together.
+type BindingKey = (String, usize);
 
 /// Runtime lexical bindings and the registration evidence attached to each binding.
 /// A name bound locally with no entry in these maps is untrusted, even when an outer
@@ -81,21 +82,36 @@ impl ScopedRegistrations {
                 .get(&scope.id())
                 .is_some_and(|names| names.contains(name))
             {
-                return (scope.id(), name.to_owned());
+                return (name.to_owned(), scope.id());
             }
             parent = scope.parent();
         }
-        (self.root, name.to_owned())
+        (name.to_owned(), self.root)
+    }
+
+    /// Returns evidence at the nearest binding. Most names have none anywhere in the file, and
+    /// for those the ancestor walk in `key` is skipped: `Node::parent` descends from the root.
+    fn evidence<'a, V>(
+        &self,
+        evidence: &'a BTreeMap<BindingKey, V>,
+        node: Node<'_>,
+        name: &str,
+    ) -> Option<&'a V> {
+        evidence
+            .range((name.to_owned(), 0)..)
+            .next()
+            .filter(|((bound, _), _)| bound == name)
+            .and_then(|_| evidence.get(&self.key(node, name)))
     }
 
     /// Returns registration evidence for the name at its nearest lexical binding.
     fn alias(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExport> {
-        self.aliases.get(&self.key(node, name))
+        self.evidence(&self.aliases, node, name)
     }
 
     /// Returns namespace exports for the name at its nearest lexical binding.
     fn namespace(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExports> {
-        self.namespaces.get(&self.key(node, name))
+        self.evidence(&self.namespaces, node, name)
     }
 
     /// Checks whether the nearest lexical binding has registration-factory evidence.
@@ -109,7 +125,7 @@ impl RegistrationNames {
     pub(super) fn fallback_export(&self, name: &str) -> Option<&RegistrationExport> {
         self.scoped
             .aliases
-            .get(&(self.scoped.root, name.to_owned()))
+            .get(&(name.to_owned(), self.scoped.root))
             .filter(|_| self.fallback_aliases.contains(name))
     }
 
@@ -118,7 +134,7 @@ impl RegistrationNames {
         let registration = if self.configured.contains(name) {
             self.scoped
                 .aliases
-                .get(&(self.scoped.root, name.to_owned()))
+                .get(&(name.to_owned(), self.scoped.root))
         } else {
             self.scoped.alias(node, name)
         };
@@ -144,7 +160,7 @@ impl RegistrationNames {
     pub(super) fn recognizes_alias(&self, name: &str) -> bool {
         self.scoped
             .aliases
-            .get(&(self.scoped.root, name.to_owned()))
+            .get(&(name.to_owned(), self.scoped.root))
             .is_some_and(|export| !super::framework_callbacks::uses_callbacks(export.framework))
     }
 
@@ -152,7 +168,7 @@ impl RegistrationNames {
     pub(super) fn recognizes_namespace(&self, name: &str) -> bool {
         self.scoped
             .namespaces
-            .get(&(self.scoped.root, name.to_owned()))
+            .get(&(name.to_owned(), self.scoped.root))
             .is_some_and(|exports| {
                 exports
                     .values()
@@ -243,7 +259,7 @@ fn registration_binding<'a>(
             registrations
                 .scoped
                 .aliases
-                .get(&(registrations.scoped.root, name.to_owned()))
+                .get(&(name.to_owned(), registrations.scoped.root))
         }
         RegistrationCallee::Identifier(name) => registrations.scoped.alias(function, name),
         RegistrationCallee::Property { object, name } => registrations
@@ -282,22 +298,21 @@ pub(super) fn unresolved_registration_module<'a>(
     registrations: &'a RegistrationNames,
 ) -> Option<&'a str> {
     match registration_callee(function, source)? {
-        RegistrationCallee::Identifier(name)
-            if registrations.scoped.key(function, name).0 == registrations.scoped.root =>
-        {
-            registrations
-                .unresolved_aliases
-                .get(name)
-                .map(String::as_str)
-        }
+        RegistrationCallee::Identifier(name) => registrations
+            .unresolved_aliases
+            .get(name)
+            .filter(|_| registrations.scoped.key(function, name).1 == registrations.scoped.root)
+            .map(String::as_str),
         RegistrationCallee::Property { object, name } if REGISTRATIONS.contains(&name.as_ref()) => {
             let namespace = node_text(object, source);
-            (registrations.scoped.key(object, namespace).0 == registrations.scoped.root)
-                .then(|| registrations.unresolved_namespaces.get(namespace))
-                .flatten()
+            registrations
+                .unresolved_namespaces
+                .get(namespace)
+                .filter(|_| {
+                    registrations.scoped.key(object, namespace).1 == registrations.scoped.root
+                })
                 .map(String::as_str)
         }
-        RegistrationCallee::Identifier(_) => None,
         RegistrationCallee::Property { .. } => None,
     }
 }
@@ -386,7 +401,7 @@ pub(super) fn detect_registrations(
         collect_create_bdd_factories(root, source, file_path, resolver, &loader)?;
     let mut scoped = ScopedRegistrations::new(root, source);
     for name in &create_bdd_factories {
-        scoped.factories.insert((root.id(), name.clone()));
+        scoped.factories.insert((name.clone(), root.id()));
     }
     let mut discovered = RegistrationDiscovery {
         loader: Some(loader),
@@ -461,7 +476,7 @@ pub(super) fn detect_registrations(
                         discovered
                             .scoped
                             .aliases
-                            .insert((root.id(), name.clone()), registration.clone());
+                            .insert((name.clone(), root.id()), registration.clone());
                         discovered.aliases.insert(name, registration);
                     }
                 }
@@ -546,7 +561,7 @@ pub(super) fn detect_registrations(
                 discovered
                     .scoped
                     .aliases
-                    .insert((root.id(), name.to_owned()), registration.clone());
+                    .insert((name.to_owned(), root.id()), registration.clone());
             }
         }
     }
@@ -599,7 +614,7 @@ pub(super) fn detect_registrations(
             discovered
                 .scoped
                 .aliases
-                .entry((root.id(), name.clone()))
+                .entry((name.clone(), root.id()))
                 .or_insert_with(|| registration.clone());
         }
     }
@@ -719,7 +734,7 @@ fn resolve_wrapper_candidates(
         dependents
             .entry(candidate.target.clone())
             .or_default()
-            .push((discovered.scoped.root, candidate.name.clone()));
+            .push((candidate.name.clone(), discovered.scoped.root));
     }
     let mut uncertain = discovered.wrapper_writes.clone();
     let mut writes: Vec<_> = uncertain.iter().cloned().collect();
@@ -734,20 +749,20 @@ fn resolve_wrapper_candidates(
     let mut callers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (index, candidate) in discovered.wrapper_candidates.iter().enumerate() {
         callers
-            .entry(candidate.target.1.as_str())
+            .entry(candidate.target.0.as_str())
             .or_default()
             .push(index);
     }
     let mut pending: Vec<usize> = (0..discovered.wrapper_candidates.len()).collect();
     while let Some(index) = pending.pop() {
         let candidate = &discovered.wrapper_candidates[index];
-        if uncertain.contains(&(discovered.scoped.root, candidate.name.clone())) {
+        if uncertain.contains(&(candidate.name.clone(), discovered.scoped.root)) {
             continue;
         }
         if discovered
             .scoped
             .aliases
-            .contains_key(&(discovered.scoped.root, candidate.name.clone()))
+            .contains_key(&(candidate.name.clone(), discovered.scoped.root))
         {
             continue;
         }
@@ -762,7 +777,7 @@ fn resolve_wrapper_candidates(
         discovered
             .scoped
             .aliases
-            .insert((discovered.scoped.root, name.clone()), registration);
+            .insert((name.clone(), discovered.scoped.root), registration);
         // Only the wrappers that forward to the name just resolved can newly become resolvable.
         if let Some(unlocked) = callers.get(name.as_str()) {
             pending.extend(unlocked.iter().copied());
@@ -957,7 +972,7 @@ fn record_import_bindings(
     for_each_import_binding(import, source, |binding| match binding {
         ImportBinding::Named { exported, local } => {
             if let Some(registration) = exports.get(exported) {
-                let key = (scoped.root, local.to_owned());
+                let key = (local.to_owned(), scoped.root);
                 if registration.kind == RegistrationExportKind::Factory {
                     scoped.factories.insert(key);
                 } else {
@@ -968,7 +983,7 @@ fn record_import_bindings(
         ImportBinding::Namespace(local) => {
             scoped
                 .namespaces
-                .insert((scoped.root, local.to_owned()), exports.clone());
+                .insert((local.to_owned(), scoped.root), exports.clone());
         }
         ImportBinding::Default(_) => {}
     });
