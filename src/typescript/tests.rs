@@ -2805,6 +2805,62 @@ fn unresolved_registration_imports_name_the_module_in_diagnostics() {
     }
 }
 
+/// Verify only an unshadowed binding of an unresolved import names its module; a local binding of the
+/// same name is unknown code, and each `true` row is the opposite-answer control for its import form.
+#[test]
+fn shadowed_unresolved_imports_do_not_name_the_module() {
+    let named = "import { Given } from '@company/bdd';";
+    let star = "import * as bdd from '@company/bdd';";
+    let default = "import bdd from '@company/bdd';";
+    let equals = "import bdd = require('@company/bdd');";
+    let direct = "Given('missing', () => work());";
+    let member = "bdd.Given('missing', () => work());";
+    let subscript = "bdd['Given']('missing', () => work());";
+    let nested = "function wrap() { CALL }";
+    let parameter = "function wrap(PARAMETER) { CALL }";
+    let block = "{ const PARAMETER = make(); CALL }";
+    let catch = "try { work(); } catch (PARAMETER) { CALL }";
+    for (import, scope, call, name, names_module) in [
+        (named, nested, direct, "Given", true),
+        (named, parameter, direct, "Given", false),
+        (named, block, direct, "Given", false),
+        (named, catch, direct, "Given", false),
+        (star, nested, member, "bdd", true),
+        (star, parameter, member, "bdd", false),
+        (star, block, member, "bdd", false),
+        (star, nested, subscript, "bdd", true),
+        (star, parameter, subscript, "bdd", false),
+        (default, nested, member, "bdd", true),
+        (default, parameter, member, "bdd", false),
+        (equals, nested, member, "bdd", true),
+        (equals, parameter, member, "bdd", false),
+    ] {
+        let body = scope.replace("PARAMETER", name).replace("CALL", call);
+        let source = format!("{import}\n{body}");
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        let completeness: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+            .collect();
+        assert_eq!(completeness.len(), 1, "{source}: {completeness:?}");
+        assert_eq!(
+            completeness[0]
+                .message
+                .contains("unresolved module `@company/bdd`"),
+            names_module,
+            "{source}: {}",
+            completeness[0].message
+        );
+        let location = &completeness[0].location;
+        assert_eq!(
+            (location.line, location.column),
+            (2, body.find(call).unwrap() + 1),
+            "{source}"
+        );
+    }
+}
+
 /// Verify an unsupported matcher on a resolved registration reports matcher incompleteness rather than unresolved provenance.
 #[test]
 fn resolved_registration_with_an_unsupported_matcher_is_not_called_unresolved() {
