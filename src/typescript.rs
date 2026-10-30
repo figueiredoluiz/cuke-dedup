@@ -877,7 +877,8 @@ fn extract_matcher(
                 location: node_location(context.file, matcher_node, source),
                 message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
             }),
-            // The analysis phase emits one run-level operational error after reports are written.
+            // Analysis compiles the matcher in its matcher set, which has no capture groups, and
+            // emits one run-level operational error only when that program exceeds the limit too.
             RegexSupport::ResourceLimit | RegexSupport::Supported => {}
         }
     }

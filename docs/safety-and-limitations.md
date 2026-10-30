@@ -67,7 +67,9 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 
 ## Matcher and Gherkin limits
 
-- A matcher pattern or compiled program is limited to 1 MiB.
+- A matcher pattern or compiled program is limited to 1 MiB. Matching compiles a matcher inside
+  its matcher set, without capture groups; a matcher that fits in no set is compiled alone, with
+  them. Ruby regex conversion also checks the program alone.
 - Each matcher receives a 2 MiB lazy-DFA cache.
 - Oversized matcher sets split recursively into bounded sets rather than falling back to a full
   definition-by-step loop.

@@ -235,6 +235,7 @@ dependencies = [
  "libc",
  "predicates",
  "regex",
+ "regex-syntax",
  "same-file",
  "serde",
  "serde_json",

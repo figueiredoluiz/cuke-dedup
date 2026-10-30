@@ -1431,10 +1431,17 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "matcher_index_falls_back_when_even_one_combined_pattern_is_rejected",
+          "name": "matcher_index_resolves_singleton_failures_by_the_individual_compile",
           "requiredStatus": "engine-invariant",
           "stage": "regex-compiler",
-          "rationale": "Adapter-independent stage `regex-compiler`: `MatcherIndex` receives only compiled normalized expressions; whether a singleton `RegexSet` rejects an expression whose individual `Regex` compiled depends on shared compiler limits, not Ruby syntax. The unit test forces that safety branch with a reduced set limit; the branch must remain fail-safe even though no production Ruby or JS/TS input is known to trigger it. `ruby_split_matcher_index_keeps_each_step_on_its_own_definition` pins the reachable combined-set split and final matches.",
+          "rationale": "Adapter-independent stage `regex-compiler`: `MatcherIndex` receives only normalized expressions and decides by shared compiler limits whether each compiles in a set, alone (fallback) or not at all (rejected, index rebuilt without it); no Ruby syntax is involved. Reduced limits reach both disagreement directions (literal alternation alone, capture groups only in a set). `ruby_split_matcher_index_keeps_each_step_on_its_own_definition` pins the reachable combined-set split and final matches.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "rejected_matchers_lose_their_regex_and_report_only_the_size_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "regex-compiler",
+          "rationale": "Adapter-independent stage `regex-compiler`: the window walk clears a matcher `MatcherIndex` rejected and reports only the compiled-size limit, at the definition's location; the TypeScript fixture only supplies translated expressions.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1509,7 +1516,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax"
           },
-          "rationale": "The Ruby binary reports raw-pattern and compiled-program resource limits separately from unsupported possessive syntax, while independent duplicate-matcher findings survive. Ruby dialect translation validates expressions before shared `compile_definition_regex`, so its residual unsupported-syntax arm is a fail-closed shared API guard without a distinct Ruby source producer.",
+          "rationale": "The Ruby binary reports raw-pattern and compiled-program resource limits separately from unsupported possessive syntax, while independent duplicate-matcher findings survive. Ruby dialect translation validates expressions before the shared `MatcherIndex` compile, so its residual unsupported-syntax rejection is a fail-closed shared API guard without a distinct Ruby source producer.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -5523,6 +5530,12 @@
           },
           "rationale": "`Given(/a{100000}/)` beside a broken feature exits 2 with the regex resource limit and `simplify the matcher` guidance plus the Gherkin parse failure, and the JSON report keeps 1 analyzed definition. The repeat is 100,000 instead of 1,000,000 because Ruby rejects repeats above 100,000 (`too big number for repeat range`).",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "capture_heavy_matchers_compile_in_their_matcher_set",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: analysis compiles a JS/TS regex matcher only in the shared matcher index, so one that fits only without capture groups is matched there; extraction's own compile only classifies it. Ruby regex conversion compiles the program alone, with captures, and reports the limit first (`ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax`). Semantic residue: the shared index rule is pinned by `matcher_index_resolves_singleton_failures_by_the_individual_compile`.",
+          "behaviorClass": "language-specific-api"
         },
         {
           "name": "oversized_cucumber_expression_fails_closed_and_still_writes_a_report",
