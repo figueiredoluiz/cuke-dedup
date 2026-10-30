@@ -1317,7 +1317,7 @@ fn consider_matcher_blocking_pair(
     anchor_events: &[Vec<usize>],
     left: usize,
     right: usize,
-    considered_pairs: &mut HashSet<(usize, usize)>,
+    considered_pairs: &mut HashSet<u64>,
     proposal_work: &mut u64,
     event_work: &mut u64,
     builder: &mut CandidateBuilder,
@@ -1327,7 +1327,7 @@ fn consider_matcher_blocking_pair(
     if relationships.normalized_matcher
         || covered_by_structural_source(relationships)
         || builder.candidates.contains_key(&pair)
-        || !considered_pairs.insert(pair)
+        || !considered_pairs.insert(pair_key(pair))
     {
         return true;
     }
@@ -1528,6 +1528,13 @@ impl CandidateBuilder {
 /// Orders a pair as `(min, max)` so both orientations share one key.
 fn candidate_pair(left: usize, right: usize) -> (usize, usize) {
     (left.min(right), left.max(right))
+}
+
+/// One `u64` for an ordered pair: half the size of a `(usize, usize)` entry in a set that holds up
+/// to `MAX_MATCHER_BLOCKING_PROPOSAL_WORK` pairs. A definition index fits in 32 bits: four billion
+/// definitions cannot be held in memory.
+fn pair_key((low, high): (usize, usize)) -> u64 {
+    (low as u64) << 32 | high as u64
 }
 
 pub(super) struct CandidateGeneration {
