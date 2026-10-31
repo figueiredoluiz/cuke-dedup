@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { classify, diffRows, inventorySources, render, rows, totals, validateManifest } from "../check-language-boundary.mjs";
 
-// Matrix: edge kind (module, marker, name, key, grammar; neutral framework and language id types as
-// controls) x location
+// Matrix: edge kind (module, marker, name, key, text, grammar; neutral framework and language id types
+// as controls) x location
 // (code, line/doc/block comment, string, raw string, char, inline cfg(test) module, nested module,
 // alias, glob) -> counted or ignored, each ignored row paired with a counted control of the same
 // text. File classes (core, registry, adapter, exempt, test, asset, unclassified), baseline
@@ -16,8 +16,8 @@ import { classify, diffRows, inventorySources, render, rows, totals, validateMan
 
 /** Inventories every edge kind in one synthetic Rust source. */
 const full = (path, source) => inventorySources({ [path]: source })[path];
-/** Inventories module, marker and grammar edges, dropping the overlapping name and key kinds. */
-const inventory = (path, source) => Object.fromEntries(Object.entries(full(path, source)).filter(([key]) => !/^(name|key):/.test(key)));
+/** Inventories module, marker and grammar edges, dropping the overlapping name, key and text kinds. */
+const inventory = (path, source) => Object.fromEntries(Object.entries(full(path, source)).filter(([key]) => !/^(name|key|text):/.test(key)));
 
 /** Checks qualified adapter references produce canonical module counts. */
 test("qualified references record canonical adapter edges", () => {
@@ -121,7 +121,7 @@ test("only import items treat use as a keyword", () => {
 });
 
 /** Checks comments and literal contents do not create dependency edges. */
-test("comments, ordinary strings, raw strings and chars do not create edges", () => {
+test("comments, ordinary strings, raw strings and chars do not create code edges", () => {
   const edges = inventory("src/analysis.rs", String.raw`
     // crate::ruby::commented(); crate::typescript::commented();
     /* tree_sitter_typescript::LANGUAGE_TSX */
@@ -133,16 +133,16 @@ test("comments, ordinary strings, raw strings and chars do not create edges", ()
   assert.deepEqual(edges, {});
 });
 
-/** Checks each edge kind is counted in code and ignored in comments and prose strings, with a counted control for every ignored row. */
-test("edge kinds x locations: counted in code, ignored in comments and prose strings", () => {
+/** Checks each code edge kind is counted in code and ignored in comments, with prose strings counted as text, with a counted control for every ignored row. */
+test("edge kinds x locations: counted in code, ignored in comments, strings count as text", () => {
   const ruby = { "crate::ruby": 1, "name:ruby": 1 };
   const table = [
     ["module: code", "crate::ruby::extract();", ruby],
     ["module: line comment", "// crate::ruby::extract();", {}],
     ["module: doc comment", "/// crate::ruby::extract();\nfn f() {}", {}],
     ["module: nested block comment", "/* /* crate::ruby::extract(); */ */", {}],
-    ["module: prose string", 'let _ = "call crate::ruby::extract();";', {}],
-    ["module: raw string", 'let _ = r#"call crate::ruby::extract();"#;', {}],
+    ["module: prose string", 'let _ = "call crate::ruby::extract();";', { "text:ruby": 1 }],
+    ["module: raw string", 'let _ = r#"call crate::ruby::extract();"#;', { "text:ruby": 1 }],
     ["module: nested module path", "mod a { mod b { super::super::ruby::extract(); } }", ruby],
     ["module: inline cfg(test) module is counted", "#[cfg(test)] mod tests { use super::*; fn t() { crate::ruby::extract(); } }", ruby],
     // The open `Framework` id type is neutral; a framework id spelled in core still counts as a key.
@@ -172,11 +172,11 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
     ["name: digit-delimited segments", "fn ruby2_keywords() {} fn Ruby3() {}", { "name:ruby": 2 }],
     ["name: inherited Object property names", "let _ = x::constructor::y; toString(); __proto__();", {}],
     ["name: comment", "// fn run_vitest() {}", {}],
-    ["name: prose string", 'let _ = "fn run_vitest() {}";', {}],
+    ["name: prose string", 'let _ = "fn run_vitest() {}";', { "text:vitest": 1 }],
     ["key: camelCase", 'let _ = "rubyLoadPaths";', { "key:ruby": 1 }],
     ["key: hyphenated", 'let _ = "cucumber-js";', { "key:cucumberjs": 1 }],
     ["key: raw string", 'let _ = r"jest";', { "key:jest": 1 }],
-    ["key: prose string", 'let _ = "load ruby paths";', {}],
+    ["key: prose string", 'let _ = "load ruby paths";', { "text:ruby": 1 }],
     ["grammar: path", "let _ = tree_sitter_ruby::LANGUAGE;", { "grammar:tree_sitter_ruby": 1, "name:ruby": 1 }],
     ["grammar: leading ::", "let _ = ::tree_sitter_typescript::LANGUAGE_TSX;", { "grammar:tree_sitter_typescript": 1, "name:tsx": 1, "name:typescript": 1 }],
     ["grammar: alias", "use tree_sitter_ruby as g; let _ = g::LANGUAGE;", { "grammar:tree_sitter_ruby": 2, "name:ruby": 1 }],
@@ -188,6 +188,73 @@ test("edge kinds x locations: counted in code, ignored in comments and prose str
     ["unrelated ambiguous alias is ignored", "use a::b as x; use c::d as x; x::f();", {}],
   ];
   for (const [label, source, expected] of table) assert.deepEqual(full("src/analysis.rs", source), expected, label);
+});
+
+/** Checks ecosystem words in literals count as text, each with a control that must not match. */
+test("text: ecosystem words in string literals", () => {
+  for (const [label, source, expected] of [
+    ["language in a message", 'let _ = "Ruby sources differ";', { "text:ruby": 1 }],
+    ["compound and slash", 'let _ = "JavaScript/TypeScript syntax";', { "text:javascript": 1, "text:typescript": 1 }],
+    ["abbreviations", 'let _ = "Ruby and JS/TS sources";', { "text:js": 1, "text:ruby": 1, "text:ts": 1 }],
+    ["each token", 'let _ = "Ruby, then Ruby";', { "text:ruby": 2 }],
+    // Lowercase on purpose: `\\nRuby` would split at the capital without the escape rule.
+    ["after an escape", String.raw`let _ = "first\nruby second";`, { "text:ruby": 1 }],
+    ["line continuation", 'let _ = "first \\\n    ruby";', { "text:ruby": 1 }],
+    // A raw string has no escapes, so its backslashes must not eat the next letter.
+    ["raw string", 'let _ = r#"JS "quoted" text"#;', { "text:js": 1 }],
+    ["backslashes in a raw string", String.raw`let _ = r"lib\ruby\x y";`, { "text:ruby": 1 }],
+    ["backslashes in a cooked string", String.raw`let _ = "C:\\proj\\ruby y";`, { "text:ruby": 1 }],
+    ["byte escape", String.raw`let _ = "\x1bruby x";`, { "text:ruby": 1 }],
+    ["unicode escape", String.raw`let _ = "\u{1b}ruby x";`, { "text:ruby": 1 }],
+    ["word beside a placeholder", 'let _ = format!("{} uses Vitest", name);', { "text:vitest": 1 }],
+    // Over-counting is the safe direction: this tool cannot tell a capture from literal braces.
+    ["word in braces, capture or not", 'let _ = "use {ruby} and {ts:?}";', { "text:ruby": 1, "text:ts": 1 }],
+    ["tool and file names", 'let _ = "see tsconfig.json, node_modules and npm";', { "text:nodemodules": 1, "text:npm": 1, "text:tsconfig": 1 }],
+    ["whole-token file name", 'let _ = "tsconfig.json";', { "text:tsconfig": 1 }],
+    ["extensions", 'let _ = "a .d.ts, .rb or .jsx file, .mjs, .cjs, .mts, .cts";', { "text:cjs": 1, "text:cts": 1, "text:jsx": 1, "text:mjs": 1, "text:mts": 1, "text:rb": 1, "text:ts": 1 }],
+    ["whole token stays a key, not text as well", 'let _ = "ruby";', { "key:ruby": 1 }],
+    ["key keeps its other words", 'let _ = "vitest.config.ts";', { "key:vitest": 1, "text:ts": 1 }],
+    ["framework in prose is one word", 'let _ = "run cucumber-js";', { "text:cucumberjs": 1 }],
+    ["dotted framework file in prose is one word", 'let _ = "see cucumber.js here";', { "text:cucumberjs": 1 }],
+    ["dotted framework file is one word", 'let _ = "cucumber.js";', { "key:cucumberjs": 1 }],
+    ["npm scope", 'const DEPENDENCIES: [&str; 1] = ["@cucumber/cucumber"];', { "text:npm-scope": 1 }],
+    ["each npm scope", 'let _ = "@cucumber/cucumber and @playwright/test";', { "text:npm-scope": 2, "text:playwright": 1 }],
+    ["scope with dots, underscores or capitals", 'let _ = "@my_org/a @my.org/b @Org/c";', { "text:npm-scope": 3 }],
+    ["email is not a scope", 'let _ = "user@example.com";', {}],
+    ["URL user info is not a scope", 'let _ = "https://user@host/path";', {}],
+    ["words as substrings", 'let _ = "rubygems majestic status contents subjects tests";', {}],
+    ["plain Cucumber is the product", 'let _ = "dynamic Cucumber paths";', {}],
+  ]) assert.deepEqual(full("src/cli.rs", source), expected, label);
+});
+
+/** Checks every doc comment counts in a file naming clap, and none in any other. */
+test("text: doc comments in a clap file", () => {
+  const clap = "use clap::Parser;\n";
+  for (const [label, source, expected] of [
+    ["line comment", `${clap}// Ruby sources`, {}],
+    ["four slashes are not a doc comment", `${clap}//// Ruby sources`, {}],
+    ["plain block comment", `${clap}/* Ruby sources */`, {}],
+    ["empty block comment", `${clap}/**/`, {}],
+    ["three stars are not a doc comment", `${clap}/*** Ruby sources */`, {}],
+    ["field with an attribute", `${clap}struct B {\n  /// Skip node_modules.\n  #[arg(long)]\n  flag: bool,\n}`, { "text:nodemodules": 1 }],
+    ["doc with no attribute", `${clap}enum C {\n  /// Analyze Ruby.\n  Check,\n}`, { "text:ruby": 1 }],
+    ["doc above the clap import", "/// Ruby tool.\n\nuse clap::Parser;", { "text:ruby": 1 }],
+    ["fully qualified derive", "#[derive(clap::Parser)]\nstruct A;\n/// Ruby.", { "text:ruby": 1 }],
+    ["aliased derive", "use clap::Parser as P;\n#[derive(P)]\nstruct A;\n/// Ruby.", { "text:ruby": 1 }],
+    ["block doc", `${clap}/** Ruby tool. */`, { "text:ruby": 1 }],
+    ["multi-line block doc", `${clap}/**\n * Ruby tool.\n */`, { "text:ruby": 1 }],
+    ["CRLF", "use clap::Parser;\r\n/// Skip node_modules.\r\n", { "text:nodemodules": 1 }],
+    // Ends on the word, with no newline: `end` is -1 here, so slicing to it would cut the last letter.
+    ["doc at the end of a file", `${clap}/// Uses JS`, { "text:js": 1 }],
+    ["word in braces", `${clap}/// Use {ruby} here.`, { "text:ruby": 1 }],
+    ["npm scope", `${clap}/// Use @cucumber/cucumber.`, { "text:npm-scope": 1 }],
+    ["doc in a file with no clap", "/// Ruby sources\n#[derive(Debug)]\nstruct S;", {}],
+    ["clap in a block comment", "/* use clap::Parser; */\n/// Ruby.", {}],
+    ["clap in a line comment", "// use clap::Parser;\n/// Ruby.", {}],
+    ["clap in a doc example", "/// use clap::Parser;\n/// Ruby.", {}],
+    ["clap in a string", 'const A: &str = "use clap::Parser";\n/// Ruby.', {}],
+    ["word containing clap", "fn clapping() {}\n/// Ruby.", {}],
+  ]) assert.deepEqual(full("src/cli.rs", source), expected, label);
 });
 
 /** Checks syntax the scanner cannot model throws, so the check fails instead of passing silently. */
@@ -233,7 +300,7 @@ test("diffRows reports every baseline movement and nothing for equal counts", ()
 test("rows sort by code unit and totals sum per kind", () => {
   const list = rows({ "src/b.rs": { "marker:method:ruby": 1, "crate::ruby": 1, "marker:method:Zed": 2 }, "src/a.rs": { "name:ruby": 3 } });
   assert.deepEqual(list.map(([file, key]) => `${file} ${key}`), ["src/a.rs name:ruby", "src/b.rs crate::ruby", "src/b.rs marker:method:Zed", "src/b.rs marker:method:ruby"]);
-  assert.deepEqual(totals(list), { module: 1, marker: 3, name: 3, key: 0, grammar: 0 });
+  assert.deepEqual(totals(list), { module: 1, marker: 3, name: 3, key: 0, text: 0, grammar: 0 });
 });
 
 /** Checks the baseline validator accepts a rendered baseline and rejects each malformed shape. */
@@ -282,7 +349,7 @@ test("CLI: matching baseline passes; added edge fails naming file, kind, counts 
   await withRepo({ "src/analysis.rs": "let _ = tree_sitter_ruby::LANGUAGE;", "src/cli.rs": "" }, baseline, async ({ run, put }) => {
     const passing = run();
     assert.equal(passing.status, 0, passing.stderr);
-    assert.match(passing.stdout, /core: 1 files with edges; module 0, marker 0, name 1, key 0, grammar 1\./);
+    assert.match(passing.stdout, /core: 1 files with edges; module 0, marker 0, name 1, key 0, text 0, grammar 1\./);
     assert.match(passing.stdout, /registry: 0 files with edges/);
     await put("src/cli.rs", "crate::ruby::extract();");
     const added = run();
@@ -291,6 +358,8 @@ test("CLI: matching baseline passes; added edge fails naming file, kind, counts 
     assert.match(added.stderr, /record a reviewed increase with `--update --allow-growth`/);
     await put("src/cli.rs", "let _ = tree_sitter_typescript::LANGUAGE;");
     assert.match(run().stderr, /core src\/cli\.rs: grammar:tree_sitter_typescript: baseline 0, found 1/);
+    await put("src/cli.rs", 'let _ = "Ruby sources differ";');
+    assert.match(run().stderr, /core src\/cli\.rs: text:ruby: baseline 0, found 1; boundary growth/);
   });
 });
 
@@ -315,7 +384,7 @@ test("CLI: registry files are ratcheted in their own section", async () => {
     await withRepo({ [file]: text }, { registry }, async ({ run, put }) => {
       const passing = run();
       assert.equal(passing.status, 0, passing.stderr);
-      assert.match(passing.stdout, /registry: 1 files with edges; module 1, marker 0, name 2, key 0, grammar 1\./);
+      assert.match(passing.stdout, /registry: 1 files with edges; module 1, marker 0, name 2, key 0, text 0, grammar 1\./);
       await put(file, `${text} crate::typescript::x();`);
       const { stderr } = run();
       assert.ok(stderr.includes(`registry ${file}: module crate::typescript: baseline 0, found 1`), stderr);
