@@ -52,6 +52,7 @@ when CI must reject degraded analysis.
 | Ruby files reached only through `require`/`require_relative` | 1,024 files / 64 MiB total |
 | Ruby provider and assertion proofs (selected plus loaded Ruby files) | 1,024 files / 64 MiB total |
 | Memoized module path/depth states | 16,384 |
+| Memoized module resolutions | 16 MiB |
 
 Resolution confines imports and package targets to canonical analysis or package roots and shares
 cached work between importing files. A registration module, package manifest, importer's nearest
@@ -60,7 +61,8 @@ without being read or scanned again or charged against the byte, file and mappin
 module path/depth state is charged only when an import resolves to a module whose exports are not
 cached at that depth. A failed module's exports are never cached, so each import of it charges a
 new state, and once the module limit is reached it reports that limit. A read error is not kept, and a failed base configuration reached
-through `extends` is loaded again from each configuration that extends it.
+through `extends` is loaded again from each configuration that extends it. Reaching the memoized
+module resolutions limit costs only time: later imports resolve again, and analysis stays complete.
 
 Selected Ruby definition files are not charged against the Ruby load limit. A load that would
 exceed it is not followed, and later new loads are refused too: analysis is marked incomplete at

@@ -1,8 +1,8 @@
 use super::ast::is_relative_module;
 use crate::resource_limits::{
-    read_utf8, WorkBudget, MAX_CONFIG_INPUT_BYTES, MAX_PROJECT_CONFIG_EXTENDS_DEPTH,
-    MAX_PROJECT_METADATA_BYTES, MAX_PROJECT_METADATA_FILES, MAX_PROJECT_MODULE_MAPPINGS,
-    MAX_WORKSPACE_SCAN_ENTRIES,
+    read_utf8, WorkBudget, MAX_CONFIG_INPUT_BYTES, MAX_MEMOIZED_RESOLUTION_BYTES,
+    MAX_PROJECT_CONFIG_EXTENDS_DEPTH, MAX_PROJECT_METADATA_BYTES, MAX_PROJECT_METADATA_FILES,
+    MAX_PROJECT_MODULE_MAPPINGS, MAX_WORKSPACE_SCAN_ENTRIES,
 };
 use crate::source_adapter::{language_for_path, SourceLanguage};
 use anyhow::{bail, Context, Result};
@@ -110,6 +110,11 @@ pub(super) struct ProjectResolution {
     config_active: BTreeSet<PathBuf>,
     packages: BTreeMap<PathBuf, Result<PackageInfo, KeptFailure>>,
     workspace_packages: Option<Result<BTreeMap<String, PackageInfo>, KeptFailure>>,
+    /// Resolutions by importing directory and specifier. Most imports repeat one, and each fresh
+    /// resolution costs several `realpath` calls. An error is not memoized; a miss is, as
+    /// `config_for_directory` already caches one.
+    resolved: BTreeMap<PathBuf, BTreeMap<String, Option<PathBuf>>>,
+    resolved_bytes: WorkBudget,
     metadata_files: WorkBudget,
     metadata_bytes: WorkBudget,
     mappings: WorkBudget,
@@ -126,6 +131,8 @@ impl Default for ProjectResolution {
             config_active: BTreeSet::new(),
             packages: BTreeMap::new(),
             workspace_packages: None,
+            resolved: BTreeMap::new(),
+            resolved_bytes: WorkBudget::new(MAX_MEMOIZED_RESOLUTION_BYTES),
             metadata_files: WorkBudget::new(MAX_PROJECT_METADATA_FILES),
             metadata_bytes: WorkBudget::new(MAX_PROJECT_METADATA_BYTES),
             mappings: WorkBudget::new(MAX_PROJECT_MODULE_MAPPINGS),
@@ -144,6 +151,40 @@ impl ProjectResolution {
 
     /// Resolves relative paths, package imports, TypeScript path aliases, and workspace packages within the analysis boundary.
     pub(super) fn resolve(
+        &mut self,
+        importer: &Path,
+        specifier: &str,
+        fallback_boundary: &Path,
+    ) -> Result<Option<PathBuf>> {
+        // Without a root the boundary comes from the original importer, so the directory and
+        // specifier do not determine the answer.
+        let Some(directory) = self.root.as_ref().and(importer.parent()) else {
+            return self.resolve_uncached(importer, specifier, fallback_boundary);
+        };
+        if let Some(cached) = self
+            .resolved
+            .get(directory)
+            .and_then(|by_specifier| by_specifier.get(specifier))
+        {
+            return Ok(cached.clone());
+        }
+        let resolved = self.resolve_uncached(importer, specifier, fallback_boundary)?;
+        // Past the limit a repeat is resolved again: same answer, more `realpath` calls. Replaying
+        // a success charges nothing either way, because every load behind it is cached.
+        let entry_bytes = directory.as_os_str().len()
+            + specifier.len()
+            + resolved.as_ref().map_or(0, |path| path.as_os_str().len());
+        if self.resolved_bytes.admit(entry_bytes) {
+            self.resolved
+                .entry(directory.to_owned())
+                .or_default()
+                .insert(specifier.to_owned(), resolved.clone());
+        }
+        Ok(resolved)
+    }
+
+    /// Resolves without the memo, following the importer's directory and never its file name.
+    fn resolve_uncached(
         &mut self,
         importer: &Path,
         specifier: &str,

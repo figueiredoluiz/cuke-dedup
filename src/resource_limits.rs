@@ -23,6 +23,7 @@ pub(crate) const MAX_PROJECT_CONFIG_EXTENDS_DEPTH: usize = 16;
 pub(crate) const MAX_PROJECT_METADATA_FILES: usize = 1_024;
 pub(crate) const MAX_PROJECT_METADATA_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_PROJECT_MODULE_MAPPINGS: usize = 16_384;
+pub(crate) const MAX_MEMOIZED_RESOLUTION_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_WORKSPACE_SCAN_ENTRIES: usize = 100_000;
 pub(crate) const MAX_GHERKIN_MARKDOWN_CANDIDATES: usize = 10_000;
 pub(crate) const MAX_GHERKIN_MARKDOWN_PROBE_BYTES: usize = 64 * 1024 * 1024;

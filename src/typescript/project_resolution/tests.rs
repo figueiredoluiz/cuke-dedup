@@ -1607,3 +1607,156 @@ fn only_top_level_project_config_failures_are_kept() {
         "the nested success cached above does not hide the kept failure"
     );
 }
+
+/// Creates `x/a.ts`, `x/b.ts` and `y/a.ts` in a temporary project, returning its directory and root.
+fn memo_project() -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    fs::create_dir_all(root.join("x")).unwrap();
+    fs::create_dir_all(root.join("y")).unwrap();
+    for file in ["x/a.ts", "x/b.ts", "y/a.ts"] {
+        fs::write(root.join(file), "export {};\n").unwrap();
+    }
+    (directory, root)
+}
+
+/// Verify a resolution is keyed by importing directory and specifier, never the importer's file
+/// name, and that a repeat comes from the memo: the disk changes and the answer does not.
+#[test]
+fn resolutions_are_memoized_by_directory_and_specifier() {
+    let (_directory, root) = memo_project();
+    let mut resolver = ProjectResolution::for_root(&root);
+    let mut resolve = |importer: &str, specifier: &str| {
+        resolver
+            .resolve(&root.join(importer), specifier, &root)
+            .unwrap()
+    };
+    assert_eq!(resolve("x/steps.ts", "./a"), Some(root.join("x/a.ts")));
+    assert_eq!(resolve("y/steps.ts", "./a"), Some(root.join("y/a.ts")));
+    assert_eq!(resolve("x/steps.ts", "./b"), Some(root.join("x/b.ts")));
+    assert_eq!(resolve("x/steps.ts", "./later"), None);
+
+    fs::remove_file(root.join("x/a.ts")).unwrap();
+    fs::write(root.join("x/later.ts"), "export {};\n").unwrap();
+    assert_eq!(resolve("x/steps.ts", "./a"), Some(root.join("x/a.ts")));
+    assert_eq!(resolve("x/other.ts", "./a"), Some(root.join("x/a.ts")));
+    assert_eq!(resolve("x/steps.ts", "./later"), None);
+}
+
+/// Verify a failed resolution runs again. The repaired call must find a module: a failure memoized
+/// as a miss would answer `None` there.
+#[test]
+fn failed_resolutions_are_not_memoized() {
+    let (_directory, root) = memo_project();
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"@t/*":["./x/*"]}}}"#,
+    )
+    .unwrap();
+    let importer = root.join("z/steps.ts");
+    let mut resolver = ProjectResolution::for_root(&root);
+    assert!(resolver.resolve(&importer, "@t/a", &root).is_err());
+    fs::create_dir(root.join("z")).unwrap();
+    assert_eq!(
+        resolver.resolve(&importer, "@t/a", &root).unwrap(),
+        Some(root.join("x/a.ts"))
+    );
+}
+
+/// Verify the memo keeps each directory's answer for specifiers that depend on its nearest
+/// configuration or package, not only for relative ones.
+#[test]
+fn memoized_resolutions_keep_each_directory_config_and_package_scope() {
+    let (_directory, root) = memo_project();
+    for scope in ["x", "y"] {
+        fs::write(
+            root.join(scope).join("tsconfig.json"),
+            r#"{"compilerOptions":{"paths":{"@t/*":["./*"]}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(scope).join("package.json"),
+            r##"{"name":"scope","imports":{"#a":"./a.ts"}}"##,
+        )
+        .unwrap();
+    }
+    let mut resolver = ProjectResolution::for_root(&root);
+    let mut resolve = |importer: &str, specifier: &str| {
+        resolver
+            .resolve(&root.join(importer), specifier, &root)
+            .unwrap()
+    };
+    let answers = |resolve: &mut dyn FnMut(&str, &str) -> Option<PathBuf>| {
+        ["@t/a", "#a"].map(|specifier| {
+            ["x/steps.ts", "y/steps.ts"].map(|importer| resolve(importer, specifier))
+        })
+    };
+    let first = answers(&mut resolve);
+    for answer in &first {
+        assert_eq!(
+            answer,
+            &[Some(root.join("x/a.ts")), Some(root.join("y/a.ts"))]
+        );
+    }
+    fs::remove_file(root.join("x/a.ts")).unwrap();
+    fs::remove_file(root.join("y/a.ts")).unwrap();
+    assert_eq!(answers(&mut resolve), first);
+}
+
+/// Verify replaying a success charges nothing: with the memo off and the metadata budget spent by
+/// the first load, the same import still resolves.
+#[test]
+fn replaying_a_resolution_charges_nothing() {
+    let (_directory, root) = memo_project();
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"@t/*":["./x/*"]}}}"#,
+    )
+    .unwrap();
+    let importer = root.join("x/steps.ts");
+    let mut resolver = ProjectResolution {
+        resolved_bytes: WorkBudget::new(0),
+        metadata_files: WorkBudget::new(1),
+        ..ProjectResolution::for_root(&root)
+    };
+    for _ in 0..2 {
+        assert_eq!(
+            resolver.resolve(&importer, "@t/a", &root).unwrap(),
+            Some(root.join("x/a.ts"))
+        );
+    }
+}
+
+/// Verify the memo stops growing at its byte limit and a later resolution reads the disk again.
+#[test]
+fn resolutions_past_the_memo_limit_are_resolved_again() {
+    let (_directory, root) = memo_project();
+    let importer = root.join("x/steps.ts");
+    let directory = importer.parent().unwrap().as_os_str().len();
+    let answer = root.join("x/a.ts").as_os_str().len();
+    let mut resolver = ProjectResolution {
+        resolved_bytes: WorkBudget::new(directory + "./a".len() + answer),
+        ..ProjectResolution::for_root(&root)
+    };
+    resolver.resolve(&importer, "./a", &root).unwrap();
+    resolver.resolve(&importer, "./b", &root).unwrap();
+    fs::remove_file(root.join("x/a.ts")).unwrap();
+    fs::remove_file(root.join("x/b.ts")).unwrap();
+    assert!(resolver.resolve(&importer, "./a", &root).unwrap().is_some());
+    assert_eq!(resolver.resolve(&importer, "./b", &root).unwrap(), None);
+}
+
+/// Verify nothing is memoized without a root, where the boundary decides the answer: the same
+/// directory and specifier resolve under one boundary and not under another.
+#[test]
+fn resolutions_without_a_root_are_not_memoized() {
+    let (_directory, root) = memo_project();
+    let importer = root.join("x/steps.ts");
+    let mut resolver = ProjectResolution::default();
+    let contained = resolver.resolve(&importer, "./a", &root.join("x"));
+    assert_eq!(contained.unwrap(), Some(root.join("x/a.ts")));
+    assert!(!matches!(
+        resolver.resolve(&importer, "./a", &root.join("y")),
+        Ok(Some(_))
+    ));
+}
