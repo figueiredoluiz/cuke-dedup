@@ -692,35 +692,43 @@ fn extract_call<'tree>(
         })?;
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
-    let arguments: Vec<_> = arguments.named_children(&mut cursor).collect();
+    let arguments: Vec<_> = arguments
+        .named_children(&mut cursor)
+        .filter(|argument| argument.kind() != "comment")
+        .collect();
     let Some(&matcher_node) = arguments.first() else {
         warn_unsupported_matcher(call, context, diagnostics);
         return None;
     };
     let (matcher, mut matcher_kind, matcher_flags) =
         extract_matcher(matcher_node, context, diagnostics)?;
-    if arguments.len() < 2 {
-        return None;
-    }
     if matcher_kind == MatcherKind::CucumberExpression
         && frameworks::callback_model(registration_framework)
             .is_some_and(|model| model.literal_strings)
     {
         matcher_kind = MatcherKind::Literal;
     }
-    let handler = arguments.iter().rev().copied().find(|node| {
-        matches!(
-            node.kind(),
-            "arrow_function"
-                | "function_expression"
-                | "generator_function"
-                | "identifier"
-                | "member_expression"
-                | "call_expression"
-        )
-    });
+    // The handler is the last argument, past an options object. Parentheses and type syntax do not
+    // exist at runtime, so a wrapped handler is that handler. Nothing earlier stands in for an
+    // unmodeled last argument: that would compare a value that is not the handler.
+    let handler = arguments[1..]
+        .iter()
+        .filter_map(|argument| registrations::unwrap_registration_callee(*argument))
+        .rfind(|argument| argument.kind() != "object")
+        .filter(|node| {
+            matches!(
+                node.kind(),
+                "arrow_function"
+                    | "function_expression"
+                    | "generator_function"
+                    | "identifier"
+                    | "member_expression"
+                    | "subscript_expression"
+                    | "call_expression"
+            )
+        });
     let Some(handler) = handler else {
-        diagnostics.push(unsupported_handler_diagnostic(context, call));
+        diagnostics.push(dropped_registration_diagnostic(context, call));
         return None;
     };
     let bound_arguments = bind_arguments(handler, source);
@@ -767,15 +775,12 @@ fn extract_decorator<'tree>(
     };
     let (matcher, matcher_kind, matcher_flags) =
         extract_matcher(matcher_node, context, diagnostics)?;
-    let Some(method) = decorated_method(call) else {
-        diagnostics.push(unsupported_handler_diagnostic(context, call));
-        return None;
-    };
-    let evidence = context.handler_evidence();
-    let Some(handler) =
+    let handler = decorated_method(call).and_then(|method| {
+        let evidence = context.handler_evidence();
         fingerprint_method_handler(method, source, &evidence.assertions, &evidence.module_scope)
-    else {
-        diagnostics.push(unsupported_handler_diagnostic(context, method));
+    });
+    let Some(handler) = handler else {
+        diagnostics.push(dropped_registration_diagnostic(context, call));
         return None;
     };
     Some(step_definition(
@@ -882,6 +887,8 @@ fn extract_matcher(
     diagnostics: &mut Vec<ExtractionDiagnostic>,
 ) -> Option<(String, MatcherKind, String)> {
     let source = context.source;
+    let matcher_node =
+        registrations::unwrap_registration_callee(matcher_node).unwrap_or(matcher_node);
     let (matcher, matcher_kind, matcher_flags) = match matcher_value(matcher_node, source) {
         Some(value) => value,
         None if matcher_node.kind() == "string" => {
@@ -924,6 +931,20 @@ fn unsupported_handler_diagnostic(
         ExtractionDiagnosticLevel::Warning,
         node_location(context.file, node, context.source),
         "dynamic or unsupported step handler cannot be compared statically",
+    )
+}
+
+/// Reports a resolved registration that yields no definition. Analysis cannot see a step it
+/// dropped, so the corpus is incomplete.
+fn dropped_registration_diagnostic(
+    context: &AdapterContext<'_, '_>,
+    node: Node<'_>,
+) -> ExtractionDiagnostic {
+    ExtractionDiagnostic::with_kind(
+        ExtractionDiagnosticKind::Incomplete,
+        ExtractionDiagnosticLevel::Warning,
+        node_location(context.file, node, context.source),
+        "step registration has no static handler, so its definition is not analyzed",
     )
 }
 

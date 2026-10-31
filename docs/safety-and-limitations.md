@@ -34,6 +34,13 @@ resource limits keep failures visible and bound the work performed.
   would invent meaning the code does not have, so each such registration warns that the handler
   cannot be compared statically and is excluded from handler rules.
 
+- Parentheses, `as`, `satisfies`, `!` and `<T>` around a matcher or handler are removed before
+  analysis, because they do not exist at runtime. The handler is the last argument, past an options
+  object. A function, name, member, subscript or call there is a definition; one that does not
+  resolve to a body is not compared, and an unresolved call also warns. Any other shape, a spread or
+  conditional for example, and a registration with no handler, yield no definition and mark analysis
+  incomplete.
+
 When analysis is incomplete, existing findings remain valid but the absence of a finding proves
 nothing. Machine reports expose the incomplete or truncated status. Pass `--fail-on-incomplete`
 when CI must reject degraded analysis.

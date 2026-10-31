@@ -844,8 +844,9 @@ pub(super) fn forwarded_callee<'tree>(
         return None;
     }
     for (position, argument) in arguments.iter().take(2).enumerate() {
+        let argument = unwrap_registration_callee(*argument)?;
         if argument.kind() != "identifier"
-            || Some(node_text(*argument, source)) != parameters.get(position).map(String::as_str)
+            || Some(node_text(argument, source)) != parameters.get(position).map(String::as_str)
         {
             return None;
         }

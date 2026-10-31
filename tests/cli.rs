@@ -8354,3 +8354,50 @@ fn regression_276_ambient_scopes_do_not_abort_the_run() {
         }
     }
 }
+
+/// Checks a wrapped handler is analyzed through the built binary, so the two identical handlers
+/// are reported as duplicates, and that a registration with no handler fails an incomplete run
+/// where the same suite without it passes.
+#[test]
+fn regression_278_dropped_registrations_are_analyzed_or_reported() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        "a.feature",
+        "Feature: f\n  Scenario: s\n    Given one\n    Given two\n",
+    );
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\n\
+         Given('one', function () { expect(state.value).toBe(1); });\n\
+         Given('two', (function () { expect(state.value).toBe(1); }) as Fn);\n",
+    );
+    let run = |flags: &[&str]| {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(directory.path())
+            .args(flags)
+            .assert()
+    };
+    run(&[])
+        .code(1)
+        .stdout(predicate::str::contains("2 definitions"))
+        .stdout(predicate::str::contains("duplicate-handler"));
+
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('one', () => first());\nGiven('two', () => second());\n",
+    );
+    run(&["--fail-on-incomplete"]).success();
+    write(
+        directory.path(),
+        "steps.ts",
+        "import { Given } from '@cucumber/cucumber';\nGiven('one', () => first());\nGiven('two', () => second());\nGiven('three', ...rest);\n",
+    );
+    run(&["--fail-on-incomplete"])
+        .code(2)
+        .stderr(predicate::str::contains("steps.ts:4:1"))
+        .stderr(predicate::str::contains("no static handler"));
+}

@@ -56,7 +56,8 @@ pub(super) fn collect_handler_bindings<'tree>(
         } else if node.kind() == "variable_declarator" {
             if let (Some(name), Some(value), Some(scope)) = (
                 node.child_by_field_name("name"),
-                node.child_by_field_name("value"),
+                node.child_by_field_name("value")
+                    .and_then(super::registrations::unwrap_registration_callee),
                 nearest_scope(node.parent()),
             ) {
                 if name.kind() == "identifier"
@@ -99,9 +100,7 @@ pub(super) fn resolve_handler<'tree>(
     source: &[u8],
     bindings: &BTreeMap<String, Vec<HandlerBinding<'tree>>>,
 ) -> Option<Node<'tree>> {
-    while handler.kind() == "parenthesized_expression" {
-        handler = handler.named_child(0)?;
-    }
+    handler = super::registrations::unwrap_registration_callee(handler)?;
     if matches!(
         handler.kind(),
         "arrow_function" | "function_expression" | "generator_function"

@@ -7,6 +7,7 @@ The corpus is marked incomplete when, for example:
 
 - An imported registration module cannot be resolved statically.
 - A recognized registration has a dynamic, missing or malformed matcher, so its definition cannot be extracted. Other valid definitions and findings remain available.
+- A recognized registration has no handler, or a handler in an unsupported shape such as a spread or conditional, so its definition cannot be extracted.
 - A discovered source file cannot be parsed (tolerated by default; `--fail-on-unparseable` fails it).
 - A converted Gherkin Markdown file parses but yields no concrete steps.
 - Candidate analysis reaches a configured or hard work limit.

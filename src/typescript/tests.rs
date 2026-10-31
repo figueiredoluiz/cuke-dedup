@@ -540,9 +540,13 @@ class InvalidSteps {
     assert!(extracted.diagnostics.iter().any(|diagnostic| diagnostic
         .message
         .contains("dynamic or unsupported step matcher")));
-    assert!(extracted.diagnostics.iter().any(|diagnostic| diagnostic
-        .message
-        .contains("dynamic or unsupported step handler")));
+    let dropped = extracted
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains("no static handler"))
+        .unwrap();
+    assert!(crate::source_adapter::is_completeness_diagnostic(dropped));
+    assert_eq!((dropped.location.line, dropped.location.column), (7, 4));
 }
 
 /// Verify project imports and workspace exports propagate the resolved framework to definitions.
@@ -2922,6 +2926,163 @@ fn ambient_declarations_do_not_change_assertion_trust() {
             keeps_trust,
             "{declaration}"
         );
+    }
+}
+
+/// Verify parentheses and type syntax around a handler change nothing: each wrapped form has the
+/// bare handler's behaviour, and a different handler in the same wrapper does not.
+#[test]
+fn wrapped_handlers_are_the_handler_they_wrap() {
+    let signature = |arguments: &str| {
+        let source = format!(
+            "import {{ Given }} from '@cucumber/cucumber';\ndeclare const cb: Fn;\nconst run = function () {{ expect(1).toBe(1); }};\nconst other = function () {{ expect(2).toBe(2); }};\nGiven('x', {arguments});\n"
+        );
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        assert_eq!(extracted.definitions.len(), 1, "{source}");
+        assert!(extracted.diagnostics.is_empty(), "{source}");
+        extracted.definitions[0].handler.behavior_signature.clone()
+    };
+    let named = signature("run");
+    for arguments in [
+        "(run)",
+        "((run))",
+        "run as any",
+        "run satisfies Fn",
+        "run!",
+        "<any>run",
+        "((run as any)!)",
+        "{ timeout: 1 }, run as any",
+        "cb, run as any",
+        "/* note */ run as any",
+        "run /* note */",
+        "run, { timeout: 1 }",
+        "run, ({ timeout: 1 })",
+        "run, { timeout: 1 } as const",
+    ] {
+        assert_eq!(signature(arguments), named, "{arguments}");
+    }
+    assert_ne!(signature("other as any"), named);
+    assert_ne!(signature("run, other as any"), named);
+    let inline = signature("function () { expect(1).toBe(1); }");
+    for arguments in [
+        "(function () { expect(1).toBe(1); })",
+        "(function () { expect(1).toBe(1); }) as Fn",
+        "{ timeout: 1 }, (function () { expect(1).toBe(1); } as Fn)",
+    ] {
+        assert_eq!(signature(arguments), inline, "{arguments}");
+    }
+    assert_ne!(
+        signature("(function () { expect(2).toBe(2); }) as Fn"),
+        inline
+    );
+}
+
+/// Verify wrappers stay transparent wherever a handler or matcher is followed: a wrapped initializer,
+/// a wrapped `.bind` receiver, a wrapped forwarder and a wrapped matcher, each against its bare form.
+#[test]
+fn wrappers_are_transparent_through_bindings_forwarders_and_matchers() {
+    let extract = |body: &str| {
+        let source = format!(
+            "import {{ Given }} from '@cucumber/cucumber';\ndeclare const fn0: Fn;\n{body}\n"
+        );
+        extract_detailed(&source, &file(TYPESCRIPT)).unwrap()
+    };
+    let handler = |body: &str| {
+        let extracted = extract(body);
+        assert_eq!(extracted.definitions.len(), 1, "{body}");
+        assert!(extracted.diagnostics.is_empty(), "{body}");
+        let definition = &extracted.definitions[0];
+        assert!(definition.handler.comparable, "{body}");
+        definition.handler.behavior_signature.clone()
+    };
+    let bare = handler("const run = function () { expect(1).toBe(1); };\nGiven('x', run);");
+    for body in [
+        "const run = (function () { expect(1).toBe(1); }) as Fn;\nGiven('x', run);",
+        "const run = <Fn>function () { expect(1).toBe(1); };\nGiven('x', run);",
+        "const run = function () { expect(1).toBe(1); };\nGiven('x', (run as any).bind(this));",
+        "const run = function () { expect(1).toBe(1); };\nGiven('x', run!.bind(this));",
+    ] {
+        assert_eq!(handler(body), bare, "{body}");
+    }
+    assert_ne!(
+        handler("const run = (function () { expect(2).toBe(2); }) as Fn;\nGiven('x', run);"),
+        bare
+    );
+    for forwarded in ["fn", "fn as any", "fn!", "(fn)"] {
+        let extracted = extract(&format!(
+            "function step(p: string, fn: any) {{ Given(p, {forwarded}); }}\nstep('one', () => a());\nstep('two', () => b());"
+        ));
+        assert_eq!(extracted.definitions.len(), 2, "{forwarded}");
+        assert!(extracted.diagnostics.is_empty(), "{forwarded}");
+    }
+    for matcher in [
+        "'one'",
+        "'one' as string",
+        "('one')",
+        "<string>'one'",
+        "/* note */ 'one'",
+    ] {
+        let extracted = extract(&format!("Given({matcher}, () => a());"));
+        assert_eq!(extracted.definitions.len(), 1, "{matcher}");
+        assert_eq!(extracted.definitions[0].matcher, "one", "{matcher}");
+    }
+}
+
+/// Verify a subscripted handler stays a definition, as a member handler does, because the step
+/// exists at runtime even though its body cannot be compared.
+#[test]
+fn subscript_handlers_are_definitions() {
+    for handler in ["o.m", "o['m']", "o[name]", "o['m'] as Fn"] {
+        let source =
+            format!("import {{ Given }} from '@cucumber/cucumber';\nGiven('x', {handler});\n");
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        assert_eq!(extracted.definitions.len(), 1, "{source}");
+        assert!(!extracted.definitions[0].handler.comparable, "{source}");
+        assert!(extracted.diagnostics.is_empty(), "{source}");
+    }
+}
+
+/// Verify a resolved registration that yields no definition marks the corpus incomplete at the
+/// call. Each row is an unmodeled handler shape, so a new one fails closed rather than vanishing.
+#[test]
+fn registrations_without_a_static_handler_are_incomplete() {
+    for arguments in [
+        "'x'",
+        "'x', ...rest",
+        "'x', { timeout: 1 }, ...rest",
+        "'x', flag ? run : other",
+        "'x', run || other",
+        "'x', (0, run)",
+        "'x', await make()",
+        "'x', null",
+        "'x', undefined",
+        "'x', 'text'",
+        "'x', { handler: run }",
+        "'x', run, ...rest",
+        "'x', run, flag ? run : other",
+        "'x', opts, ...rest",
+        "'x' /* note */",
+        "'x', [run]",
+        "'x', class {}",
+        "'x', `t`",
+        "'x', new Handler()",
+    ] {
+        let source =
+            format!("import {{ Given }} from '@cucumber/cucumber';\n  Given({arguments});\n");
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        assert!(extracted.definitions.is_empty(), "{source}");
+        let completeness: Vec<_> = extracted
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+            .collect();
+        assert_eq!(completeness.len(), 1, "{source}: {completeness:?}");
+        assert!(
+            completeness[0].message.contains("no static handler"),
+            "{source}"
+        );
+        let location = &completeness[0].location;
+        assert_eq!((location.line, location.column), (2, 3), "{source}");
     }
 }
 
