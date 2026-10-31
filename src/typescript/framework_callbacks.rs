@@ -4,8 +4,8 @@
 //! synchronous framework callbacks are the only origins; writes invalidate the binding.
 
 use super::assertions::{
-    collect_binding_names, collect_binding_scopes, is_erased_declaration, is_local_scope,
-    nearest_function_scope,
+    collect_binding_names, is_erased_declaration, is_local_scope, nearest_function_scope,
+    BindingScopes, FileScopes, ScopeParents,
 };
 use super::ast::{
     call_string_argument, import_has_runtime_bindings, import_statement_module,
@@ -112,8 +112,8 @@ struct Binding<'tree> {
 struct Bindings<'tree, 'source> {
     root: usize,
     source: &'source [u8],
-    scopes: BTreeMap<usize, BTreeSet<String>>,
-    parents: BTreeMap<usize, usize>,
+    scopes: &'source BindingScopes,
+    parents: &'source ScopeParents,
     enclosing: BTreeMap<usize, usize>,
     bindings: BTreeMap<Key, Option<Binding<'tree>>>,
     writes: BTreeSet<Key>,
@@ -545,6 +545,7 @@ pub(super) fn discover<'tree>(
     file: &Path,
     resolver: &mut RegistrationResolver,
     registrations: &super::registrations::RegistrationNames,
+    file_scopes: &FileScopes,
 ) -> Result<FrameworkCalls> {
     let callback_framework = registrations.has_callback_framework();
     if !callback_framework {
@@ -561,12 +562,11 @@ pub(super) fn discover<'tree>(
             return Ok(FrameworkCalls::default());
         }
     }
-    let (scopes, _, parents) = collect_binding_scopes(root, source);
     let mut bindings = Bindings {
         root: root.id(),
         source,
-        scopes,
-        parents,
+        scopes: &file_scopes.bindings,
+        parents: &file_scopes.parents,
         enclosing: BTreeMap::new(),
         bindings: BTreeMap::new(),
         writes: BTreeSet::new(),
