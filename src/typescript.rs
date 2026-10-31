@@ -42,6 +42,7 @@ pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
 use anyhow::{Context, Result};
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
@@ -192,9 +193,37 @@ struct AdapterContext<'source, 'tree> {
     framework: Framework,
     registrations: &'source RegistrationNames,
     framework_calls: &'source framework_callbacks::FrameworkCalls,
-    assertions: &'source AssertionBindings,
-    handler_bindings: &'source BTreeMap<String, Vec<HandlerBinding<'tree>>>,
-    module_scope: &'source ModuleScope<'tree>,
+    root: Node<'tree>,
+    configured_assertion_modules: &'source BTreeSet<String>,
+    handler_evidence: OnceCell<HandlerEvidence<'tree>>,
+}
+
+/// What only a handler reads. Built on a file's first handler: most files have none, and building
+/// this walks the whole tree several times.
+struct HandlerEvidence<'tree> {
+    assertions: AssertionBindings,
+    bindings: BTreeMap<String, Vec<HandlerBinding<'tree>>>,
+    module_scope: ModuleScope<'tree>,
+}
+
+impl<'tree> AdapterContext<'_, 'tree> {
+    /// Returns the file's handler evidence, building it on first use.
+    fn handler_evidence(&self) -> &HandlerEvidence<'tree> {
+        self.handler_evidence.get_or_init(|| {
+            let mut bindings = BTreeMap::new();
+            collect_handler_bindings(self.root, self.source, &mut bindings);
+            HandlerEvidence {
+                assertions: AssertionBindings::discover(
+                    self.root,
+                    self.source,
+                    self.registrations,
+                    self.configured_assertion_modules,
+                ),
+                bindings,
+                module_scope: ModuleScope::new(self.root),
+            }
+        })
+    }
 }
 
 #[derive(Default)]
@@ -283,15 +312,6 @@ fn extract_detailed_impl(
         &mut session.resolver,
         &registrations,
     )?;
-    let assertions = AssertionBindings::discover(
-        root,
-        source_bytes,
-        &registrations,
-        &session.configured_assertion_modules,
-    );
-    let mut handler_bindings = BTreeMap::new();
-    collect_handler_bindings(root, source_bytes, &mut handler_bindings);
-    let module_scope = ModuleScope::new(root);
     let context = AdapterContext {
         source: source_bytes,
         source_lines: &source_lines,
@@ -299,9 +319,9 @@ fn extract_detailed_impl(
         framework,
         registrations: &registrations,
         framework_calls: &framework_calls,
-        assertions: &assertions,
-        handler_bindings: &handler_bindings,
-        module_scope: &module_scope,
+        root,
+        configured_assertion_modules: &session.configured_assertion_modules,
+        handler_evidence: OnceCell::new(),
     };
     let mut definitions = Vec::new();
     let mut diagnostics = Vec::new();
@@ -697,7 +717,8 @@ fn extract_call<'tree>(
         return None;
     };
     let bound_arguments = bind_arguments(handler, source);
-    let resolved_handler = resolve_handler(handler, source, context.handler_bindings);
+    let evidence = context.handler_evidence();
+    let resolved_handler = resolve_handler(handler, source, &evidence.bindings);
     if resolved_handler.is_none() && handler.kind() == "call_expression" {
         diagnostics.push(unsupported_handler_diagnostic(context, handler));
     }
@@ -714,8 +735,8 @@ fn extract_call<'tree>(
             bound_arguments,
             source,
             comparable,
-            context.assertions,
-            context.module_scope,
+            &evidence.assertions,
+            &evidence.module_scope,
         ),
     ))
 }
@@ -743,8 +764,9 @@ fn extract_decorator<'tree>(
         diagnostics.push(unsupported_handler_diagnostic(context, call));
         return None;
     };
+    let evidence = context.handler_evidence();
     let Some(handler) =
-        fingerprint_method_handler(method, source, context.assertions, context.module_scope)
+        fingerprint_method_handler(method, source, &evidence.assertions, &evidence.module_scope)
     else {
         diagnostics.push(unsupported_handler_diagnostic(context, method));
         return None;
