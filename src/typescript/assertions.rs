@@ -172,13 +172,12 @@ impl AssertionBindings {
                         collect_binding_names(name, source, &mut shadowed);
                     }
                 }
-                "internal_module" | "module"
-                    if !is_erased_declaration(node) && is_module_declaration(node) =>
-                {
+                "internal_module" | "module" if is_module_declaration(node) => {
                     if let Some(name) = node.child_by_field_name("name") {
                         collect_binding_names(name, source, &mut shadowed);
                     }
                 }
+                "ambient_declaration" => continue,
                 _ => {
                     if let Some(left) = assignment_target(node) {
                         let mut assigned = BTreeSet::new();
@@ -702,6 +701,9 @@ fn module_runtime_binding_exists(
 ) -> bool {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
+        if node.kind() == "ambient_declaration" {
+            continue;
+        }
         let assignment = assignment_target(node);
         let pattern = match node.kind() {
             "import_statement" if import_has_runtime_bindings(node) => Some(node),
@@ -726,9 +728,7 @@ fn module_runtime_binding_exists(
             {
                 node.child_by_field_name("name")
             }
-            "internal_module" | "module"
-                if !is_erased_declaration(node) && is_module_declaration(node) =>
-            {
+            "internal_module" | "module" if is_module_declaration(node) => {
                 node.child_by_field_name("name")
             }
             _ => assignment.filter(|left| {
@@ -763,8 +763,8 @@ fn module_runtime_binding_exists(
 pub(super) type BindingScopes = BTreeMap<usize, BTreeSet<String>>;
 type ShadowRanges = BTreeMap<String, Vec<(usize, usize)>>;
 type ScopeRanges = BTreeMap<usize, (usize, usize)>;
-/// Nearest enclosing local scope for every local-scope node; scopes at top level map to the
-/// root's id. Built on the same walk that collects bindings, so the chain and the binding map
+/// Nearest enclosing local scope for every local-scope node outside ambient declarations; scopes
+/// at top level map to the root's id. Built on the same walk that collects bindings, so the chain and the binding map
 /// agree on which nodes count as scopes.
 pub(super) type ScopeParents = BTreeMap<usize, usize>;
 
@@ -1002,7 +1002,6 @@ fn collect_binding_scopes(
             enclosing
         };
         match node.kind() {
-            "ambient_declaration" => continue,
             "function_declaration"
             | "generator_function_declaration"
             | "function_expression"
@@ -1099,9 +1098,7 @@ fn collect_binding_scopes(
                     add_scope_binding(&mut scopes, scope, name, source);
                 }
             }
-            "internal_module" | "module"
-                if !is_erased_declaration(node) && !is_module_declaration(node) =>
-            {
+            "internal_module" | "module" if !is_module_declaration(node) => {
                 if let (Some(scope), Some(name)) = (
                     nearest_lexical_scope(node.parent()),
                     node.child_by_field_name("name"),
@@ -1180,12 +1177,11 @@ pub(super) fn loop_binding_keyword(loop_node: Node<'_>, binding: Node<'_>) -> Op
     })
 }
 
-/// Recognizes non-erased `var` declarations with no enclosing function-like scope.
+/// Recognizes `var` declarations with no enclosing function-like scope.
 fn is_module_var(declarator: Node<'_>) -> bool {
     declarator
         .parent()
         .is_some_and(|declaration| declaration.kind() == "variable_declaration")
-        && !is_erased_declaration(declarator)
         && nearest_function_scope(declarator.parent()).is_none()
 }
 
@@ -1274,22 +1270,6 @@ fn is_module_declaration(node: Node<'_>) -> bool {
         }
     }
     false
-}
-
-/// Reports whether a node lies within an ambient declaration erased at runtime.
-pub(super) fn is_erased_declaration(mut node: Node<'_>) -> bool {
-    loop {
-        if node.kind() == "ambient_declaration" {
-            return true;
-        }
-        if node.kind() == "program" {
-            return false;
-        }
-        let Some(parent) = node.parent() else {
-            return false;
-        };
-        node = parent;
-    }
 }
 
 /// Returns a literal module argument from a direct identifier call spelled `require` without checking loader provenance.

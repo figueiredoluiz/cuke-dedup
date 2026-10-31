@@ -582,7 +582,8 @@ fn push_returned_values<'tree>(body: Node<'tree>, stack: &mut Vec<Node<'tree>>) 
             | "generator_function_declaration"
             | "method_definition"
             | "class"
-            | "class_declaration" => continue,
+            | "class_declaration"
+            | "ambient_declaration" => continue,
             "return_statement" | "yield_expression" => {
                 let mut cursor = node.walk();
                 stack.extend(node.named_children(&mut cursor));

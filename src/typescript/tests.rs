@@ -2805,6 +2805,126 @@ fn unresolved_registration_imports_name_the_module_in_diagnostics() {
     }
 }
 
+/// Verify ambient declarations are erased for every scoped pass, in each ambient form: none aborts
+/// extraction, and each file keeps the definitions of the same file without the block.
+#[test]
+fn ambient_declarations_do_not_abort_or_change_extraction() {
+    let handler = (
+        "import { Given } from '@cucumber/cucumber';\n",
+        "Given('one', function () { expect(1).toBe(1); });\n",
+    );
+    let callback = (
+        "import { defineFeature, loadFeature } from 'jest-cucumber';\nconst feature = loadFeature('a.feature');\n",
+        "defineFeature(feature, (test) => { test('s', ({ given }) => { given('one', () => work()); given('two', () => work()); }); });\n",
+    );
+    for (import, runtime, expected) in [(handler, 1), (callback, 2)]
+        .map(|((import, runtime), expected)| (import, runtime, expected))
+    {
+        for ambient in [
+            "",
+            "declare namespace N { const a = b; }",
+            "declare namespace N { const VERSION = 1; }",
+            "declare namespace N { namespace M { const a = b; } }",
+            "declare namespace N { const a = require('x'); const h = { given: 1 }; const z = h.given; }",
+            "declare module 'x' { const a = b; }",
+            "declare module M { const a = b; }",
+            "declare global { const a = b; }",
+            "export declare namespace N { const a = b; }",
+            "export declare const a = b;",
+            "declare class C { m(a = 1): void; }",
+            "function outer() { declare namespace N { const a = b; } }",
+            "const o = { f() { declare const a = b; } }; escape(o);",
+            "export default () => { declare const a = b; };",
+            "const o = { f() { declare namespace N { return x; } } };",
+            "work(function* () { declare namespace N { yield x; } });",
+            "work(() => { declare global { return x; } });",
+        ] {
+            let source = format!("{import}{ambient}\n{runtime}");
+            let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+            assert_eq!(extracted.definitions.len(), expected, "{source}");
+            let completeness = extracted
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic));
+            assert_eq!(completeness.count(), 0, "{source}");
+        }
+    }
+}
+
+/// Verify an erased name never shadows or writes a jest-cucumber import, while the same shape at
+/// runtime does. The runtime rows are the opposite answer that makes the ambient rows meaningful.
+#[test]
+fn ambient_declarations_do_not_shadow_callback_frameworks() {
+    let import = "import { defineFeature, loadFeature } from 'jest-cucumber';\nconst feature = loadFeature('a.feature');\n";
+    let scenario = "defineFeature(feature, (test) => { test('s', ({ given }) => { given('one', () => work()); given('two', () => work()); }); });\n";
+    for (shape, expected) in [
+        ("declare namespace N { function defineFeature() {} }", 2),
+        ("function defineFeature() {}", 0),
+        ("declare namespace N { const f = (defineFeature) => 1; }", 2),
+        ("declare namespace N { defineFeature = 1; }", 2),
+        ("defineFeature = 1;", 0),
+        (
+            "declare module 'x' { import { defineFeature } from 'jest-cucumber'; }",
+            2,
+        ),
+    ] {
+        let source = format!("{import}{shape}\n{scenario}");
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        assert_eq!(extracted.definitions.len(), expected, "{source}");
+    }
+    let erased = format!("{import}declare namespace N {{ {scenario} }}\n");
+    let extracted = extract_detailed(&erased, &file(TYPESCRIPT)).unwrap();
+    assert!(extracted.definitions.is_empty(), "{erased}");
+}
+
+/// Verify an erased write or import leaves the CommonJS loader available, while a runtime write
+/// removes it.
+#[test]
+fn ambient_declarations_do_not_shadow_the_commonjs_loader() {
+    for (shape, expected) in [
+        ("", 1),
+        ("declare namespace N { require = make(); }", 1),
+        ("declare module 'x' { import require from 'y'; }", 1),
+        ("require = make();", 0),
+    ] {
+        let source = format!(
+            "{shape}\nconst {{ Given }} = require('@cucumber/cucumber');\nGiven('one', function () {{ expect(1).toBe(1); }});\n"
+        );
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        assert_eq!(extracted.definitions.len(), expected, "{source}");
+    }
+}
+
+/// Verify erased declarations leave assertion trust alone: each ambient row keeps the signature of
+/// the file without it, and the runtime form of the same shape changes it.
+#[test]
+fn ambient_declarations_do_not_change_assertion_trust() {
+    let signature = |declaration: &str| {
+        let source = format!(
+            "import {{ Given }} from '@cucumber/cucumber';\nimport {{ expect }} from 'vitest';\n{declaration}\na.objectContaining = make();\nGiven('one', function (state) {{ expect(state).toEqual(expect.objectContaining({{ a: 1 }})); }});\n"
+        );
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        extracted.definitions[0].handler.behavior_signature.clone()
+    };
+    let trusted = signature("");
+    for (declaration, keeps_trust) in [
+        ("declare namespace N { const a = expect; }", true),
+        ("const a = expect;", false),
+        ("declare namespace N { expect = make(); }", true),
+        ("expect = make();", false),
+        (
+            "declare module 'x' { import { expect } from 'unrelated'; }",
+            true,
+        ),
+    ] {
+        assert_eq!(
+            signature(declaration) == trusted,
+            keeps_trust,
+            "{declaration}"
+        );
+    }
+}
+
 /// Verify only an unshadowed binding of an unresolved import names its module; a local binding of the
 /// same name is unknown code, and each `true` row is the opposite-answer control for its import form.
 #[test]

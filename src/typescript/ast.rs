@@ -20,7 +20,9 @@ pub(super) fn push_named_children_reverse<'tree>(node: Node<'tree>, stack: &mut 
     stack[start..].reverse();
 }
 
-/// Pushes a node's named children tagged with an enclosing-scope id, in source order.
+/// Pushes a node's named children tagged with an enclosing-scope id, in source order, leaving out
+/// ambient declarations. They are erased at runtime and the scope index does not hold their scopes,
+/// so a walk that carries a scope must stay out of them.
 ///
 /// Walks that resolve lexical bindings carry the nearest enclosing scope alongside each node
 /// instead of asking tree-sitter for ancestors: `Node::parent` restarts its search from the tree
@@ -33,7 +35,11 @@ pub(super) fn push_named_children_reverse_scoped<'tree>(
 ) {
     let mut cursor = node.walk();
     let start = stack.len();
-    stack.extend(node.named_children(&mut cursor).map(|child| (child, scope)));
+    stack.extend(
+        node.named_children(&mut cursor)
+            .filter(|child| child.kind() != "ambient_declaration")
+            .map(|child| (child, scope)),
+    );
     stack[start..].reverse();
 }
 

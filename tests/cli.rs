@@ -8313,3 +8313,44 @@ fn regression_267_playwright_features_root_accepts_dot_slash() {
     .stdout(predicate::str::contains("1 feature step"))
     .stderr(predicate::str::contains("matched no files").not());
 }
+
+/// Checks one ambient block no longer aborts the whole run on either path that read the scope index:
+/// assertion analysis behind a handler, and jest-cucumber callback discovery. Each file without the
+/// block is the control, so the outcome cannot pass by accident.
+#[test]
+fn regression_276_ambient_scopes_do_not_abort_the_run() {
+    let handler = (
+        "import { Given } from '@cucumber/cucumber';\n",
+        "Given('one', function () { expect(1).toBe(1); });\n",
+        "declare namespace N { const VERSION = 1; }\n",
+        "1 definition",
+    );
+    let callbacks = (
+        "import { defineFeature, loadFeature } from 'jest-cucumber';\nconst feature = loadFeature('a.feature');\n",
+        "defineFeature(feature, (test) => { test('s', ({ given }) => { given('one', () => first()); given('two', () => second()); }); });\n",
+        "declare namespace N { const a = require('x'); const h = { given: 1 }; const z = h.given; }\n",
+        "2 definitions",
+    );
+    for (import, runtime, block, outcome) in [handler, callbacks] {
+        for ambient in ["", block] {
+            let directory = tempfile::tempdir().unwrap();
+            write(
+                directory.path(),
+                "a.feature",
+                "Feature: f\n  Scenario: s\n    Given one\n",
+            );
+            write(
+                directory.path(),
+                "steps.ts",
+                &format!("{import}{ambient}{runtime}"),
+            );
+            Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .arg(directory.path())
+                .assert()
+                .success()
+                .stdout(predicate::str::contains(outcome))
+                .stderr(predicate::str::contains("panicked").not());
+        }
+    }
+}
