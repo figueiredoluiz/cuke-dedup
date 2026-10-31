@@ -87,7 +87,8 @@ function documentationContract() {
     // Ref deletion remains allowed without checking documentation or requiring a clean tree.
     assert.equal(push("0".repeat(40), documented).status, 0);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    // Windows can hold a handle on the fixture briefly after its hook processes exit.
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }
 
@@ -115,6 +116,6 @@ test("fixture Git ignores the caller's repository overrides", () => {
     }
     assert.deepEqual({ bare: inspect("config", "core.bare"), refs: inspect("for-each-ref") }, before);
   } finally {
-    rmSync(sentinel, { recursive: true, force: true });
+    rmSync(sentinel, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });

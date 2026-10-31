@@ -1,7 +1,15 @@
 {
   "schemaVersion": 2,
   "core": [
+    ["src/analysis/parameter_types.rs","text:ruby",1],
+    ["src/analysis/usage.rs","text:ruby",1],
+    ["src/cli.rs","text:js",1],
+    ["src/cli.rs","text:nodemodules",1],
+    ["src/cli.rs","text:ruby",1],
+    ["src/cli.rs","text:ts",1],
     ["src/config.rs","name:ruby",2],
+    ["src/config.rs","text:javascript",1],
+    ["src/framework_descriptor.rs","text:npm-scope",1],
     ["src/source_adapter/config.rs","crate::ruby",1],
     ["src/source_adapter/config.rs","name:ruby",6],
     ["src/source_adapter/semantics.rs","crate::typescript",1],
@@ -14,6 +22,16 @@
     ["src/source_adapter.rs","name:javascript",1],
     ["src/source_adapter.rs","name:ruby",4],
     ["src/source_adapter.rs","name:tsx",1],
-    ["src/source_adapter.rs","name:typescript",4]
+    ["src/source_adapter.rs","name:typescript",4],
+    ["src/source_adapter.rs","text:cjs",1],
+    ["src/source_adapter.rs","text:cts",2],
+    ["src/source_adapter.rs","text:javascript",2],
+    ["src/source_adapter.rs","text:js",1],
+    ["src/source_adapter.rs","text:jsx",1],
+    ["src/source_adapter.rs","text:mjs",1],
+    ["src/source_adapter.rs","text:mts",2],
+    ["src/source_adapter.rs","text:rb",1],
+    ["src/source_adapter.rs","text:ts",2],
+    ["src/source_adapter.rs","text:typescript",1]
   ]
 }

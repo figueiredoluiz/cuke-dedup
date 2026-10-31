@@ -1,9 +1,11 @@
 // Language-knowledge ratchet: counts how much of the language-neutral core still names a language,
 // framework or grammar, and fails when a count differs from the committed baseline.
-// Lexical, not Rust name resolution. Comments are skipped; string literals are skipped except
-// `method:<lang>:` markers and whole-token strings (config keys). Inline `#[cfg(test)]` modules are
-// counted; only dedicated `tests`/`tests.rs` files are outside the scan. Kinds overlap: an
-// identifier that is part of an edge (`crate::ruby`) also counts under `name:`.
+// Lexical, not Rust name resolution. Comments are skipped, except `///` and `/**` doc comments in a
+// file naming `clap`, which prints doc comments as help; counting all of them is simpler than
+// proving which it prints, and can only over-count. A string literal counts as a `method:<lang>:`
+// marker, as a key when it is one whole token, and as text for every ecosystem word in the rest. Inline
+// `#[cfg(test)]` modules are counted; only dedicated `tests`/`tests.rs` files are outside the scan.
+// Kinds overlap: an identifier that is part of an edge (`crate::ruby`) also counts under `name:`.
 import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,11 +20,14 @@ const classes = [
 ];
 const sections = ["core", "registry"];
 const words = ["ruby", "typescript", "javascript", "tsx", "jest", "vitest", "playwright", "cypress", "cucumberjs"];
+// Text names an ecosystem in more ways than code does: abbreviations, its tools and its files.
+const textWords = [...words, "js", "jsx", "mjs", "cjs", "ts", "mts", "cts", "rb", "tsconfig", "gemfile", "npm", "nodemodules"];
 const shapes = {
   module: /^crate::(ruby|typescript)$/,
   marker: /^marker:method:[A-Za-z0-9_-]+$/,
   name: new RegExp(`^name:(${words.join("|")})$`),
   key: new RegExp(`^key:(${words.join("|")})$`),
+  text: new RegExp(`^text:(${textWords.join("|")}|npm-scope)$`),
   grammar: /^grammar:tree_sitter_\w+$/,
 };
 const identifier = /^[A-Za-z_][A-Za-z_0-9]*$/;
@@ -33,17 +38,28 @@ const cmpRow = (a, b) => cmp(a[0], b[0]) || cmp(a[1], b[1]);
 /** Return the kind of an edge key, or undefined when the key matches no known shape. */
 const kindOf = (key) => Object.keys(shapes).find((kind) => shapes[kind].test(key));
 // Words that may also be spelled as two segments (`TypeScript`, `java_script`, `cucumber-js`).
-const compounds = { typescript: ["type", "script"], javascript: ["java", "script"], cucumberjs: ["cucumber", "js"] };
-const nameCache = new Map();
-/** Return the language words a name spells as whole snake_case, camelCase or digit-delimited segments (memoized per distinct name). */
-const named = (text) => {
-  if (!nameCache.has(text)) {
-    const parts = ` ${text.split(/[_.-]|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])/).filter(Boolean).join(" ").toLowerCase()} `;
-    nameCache.set(text, words.filter((word) => [[word], compounds[word] ?? []].some((seq) => seq.length && parts.includes(` ${seq.join(" ")} `))));
-  }
-  return nameCache.get(text);
+const compounds = {
+  typescript: ["type", "script"], javascript: ["java", "script"], cucumberjs: ["cucumber", "js"], nodemodules: ["node", "modules"],
 };
-
+const nameCache = new Map();
+/** Return the words of `vocabulary` a name spells as whole snake_case, camelCase or digit-delimited segments (memoized per distinct name). */
+const named = (text, vocabulary = words) => {
+  const cacheKey = `${vocabulary === words ? "name" : "text"}:${text}`;
+  if (!nameCache.has(cacheKey)) {
+    const parts = ` ${text.split(/[_.-]|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])/).filter(Boolean).join(" ").toLowerCase()} `;
+    nameCache.set(cacheKey, vocabulary.filter((word) => [[word], compounds[word] ?? []].some((seq) => seq.length && parts.includes(` ${seq.join(" ")} `))));
+  }
+  return nameCache.get(cacheKey);
+};
+/** Return the ecosystem words in text, once per token, and one `npm-scope` per npm scope. */
+const prose = (text) => [
+  ...text.split(/[^\w.-]+/).filter(Boolean).flatMap((token) => {
+    const found = named(token, textWords);
+    // `cucumber-js` is one word, not also `js`.
+    return found.includes("cucumberjs") ? found.filter((word) => word !== "js") : found;
+  }),
+  ...[...text.matchAll(/(?<!\w)@[\w.-]+\//g)].map(() => "npm-scope"),
+];
 /** Classify a repository-relative `src/` path; a trailing `/` marks a directory. Unknown non-Rust files fail closed. */
 export function classify(path) {
   if (!path.startsWith("src/")) throw Error(`${path}: unclassified file in boundary scope`);
@@ -53,15 +69,21 @@ export function classify(path) {
   if (path.endsWith(".rs") || path.endsWith("/")) return "core";
   throw Error(`${path}: unclassified file in boundary scope`);
 }
-/** Tokenize Rust outside comments and literals, record raw-identifier positions and string contents, and reject unterminated comments or strings. */
+/** Tokenize Rust outside comments and literals, record raw-identifier positions, string contents and doc comments, and reject unterminated comments or strings. */
 function tokens(source) {
   const result = [];
   result.rawIdentifiers = new Set();
   result.strings = [];
+  result.docs = [];
   for (let i = 0; i < source.length;) {
     if (/\s/.test(source[i])) { i++; continue; }
-    if (source.startsWith("//", i)) { i = source.indexOf("\n", i); if (i < 0) break; continue; }
+    if (source.startsWith("//", i)) {
+      const end = source.indexOf("\n", i);
+      if (/^\/\/\/(?!\/)/.test(source.slice(i, i + 4))) result.docs.push(source.slice(i + 3, end < 0 ? source.length : end));
+      i = end; if (i < 0) break; continue;
+    }
     if (source.startsWith("/*", i)) {
+      const start = i;
       let depth = 1; i += 2;
       while (i < source.length && depth) {
         if (source.startsWith("/*", i)) { depth++; i += 2; }
@@ -69,6 +91,7 @@ function tokens(source) {
         else i++;
       }
       if (depth) throw Error("unterminated block comment");
+      if (/^\/\*\*[^*/]/.test(source.slice(start, start + 4))) result.docs.push(source.slice(start + 3, i - 2));
       continue;
     }
     const raw = /^(?:b|c)?r(#{0,255})"/.exec(source.slice(i));
@@ -82,7 +105,8 @@ function tokens(source) {
       const start = ++i;
       while (i < source.length && source[i] !== '"') i += source[i] === "\\" ? 2 : 1;
       if (i >= source.length) throw Error("unterminated string");
-      result.strings.push(source.slice(start, i));
+      // An escape separates words: `\nruby` reads as `ruby`. Raw strings have none.
+      result.strings.push(source.slice(start, i).replace(/\\(?:x[0-9a-fA-F]{2}|.)/gs, " "));
       i++; continue;
     }
     const character = /^'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^'\\\r\n])'/u.exec(source.slice(i));
@@ -254,8 +278,13 @@ export function inventorySources(sources) {
       }
       for (const text of input.strings) {
         for (const marker of text.matchAll(/(?<!\w)method:([A-Za-z0-9_-]+):/g)) bump(`marker:method:${marker[1]}`);
-        if (/^[\w.-]+$/.test(text)) for (const word of named(text)) bump(`key:${word}`);
+        const keyed = /^[\w.-]+$/.test(text) ? named(text) : [];
+        for (const word of keyed) bump(`key:${word}`);
+        // A marker names its language already.
+        const unmarked = text.replace(/(?<!\w)method:[A-Za-z0-9_-]+:/g, " ");
+        for (const word of prose(unmarked)) if (!keyed.includes(word)) bump(`text:${word}`);
       }
+      if (input.includes("clap")) for (const doc of input.docs) for (const word of prose(doc)) bump(`text:${word}`);
       inventory[file] = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => cmp(a, b)));
     } catch (error) { throw Error(`${file}: ${error.message}`); }
   }
