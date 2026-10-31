@@ -4,8 +4,8 @@
 //! synchronous framework callbacks are the only origins; writes invalidate the binding.
 
 use super::assertions::{
-    collect_binding_names, is_erased_declaration, is_local_scope, nearest_function_scope,
-    BindingScopes, FileScopes, ScopeParents,
+    collect_binding_names, is_local_scope, nearest_function_scope, BindingScopes, FileScopes,
+    ScopeParents,
 };
 use super::ast::{
     call_string_argument, import_has_runtime_bindings, import_statement_module,
@@ -531,7 +531,7 @@ impl<'tree> Bindings<'tree, '_> {
                     stack.extend(node.child_by_field_name("object"))
                 }
                 "pair_pattern" => stack.extend(node.child_by_field_name("value")),
-                "call_expression" => {}
+                "call_expression" | "ambient_declaration" => {}
                 _ => push_named_children_reverse(node, &mut stack),
             }
         }
@@ -672,7 +672,7 @@ pub(super) fn discover<'tree>(
                     }
                 }
             }
-            "variable_declarator" if !is_erased_declaration(node) => {
+            "variable_declarator" => {
                 if let Some(pattern) = node.child_by_field_name("name") {
                     let mut names = BTreeSet::new();
                     collect_binding_names(pattern, source, &mut names);
@@ -714,9 +714,7 @@ pub(super) fn discover<'tree>(
                     bindings.shadow_declaration(node, root);
                 }
             }
-            "class_declaration" | "abstract_class_declaration" | "enum_declaration"
-                if !is_erased_declaration(node) =>
-            {
+            "class_declaration" | "abstract_class_declaration" | "enum_declaration" => {
                 bindings.shadow_declaration(node, root);
             }
             _ => {}

@@ -4640,6 +4640,30 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "ambient_declarations_do_not_abort_or_change_extraction",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript `declare` blocks erased at runtime; Ruby has no ambient declarations. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "ambient_declarations_do_not_shadow_callback_frameworks",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript `declare` blocks erased at runtime; Ruby has no ambient declarations. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "ambient_declarations_do_not_shadow_the_commonjs_loader",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript `declare` blocks erased at runtime; Ruby has no ambient declarations. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "ambient_declarations_do_not_change_assertion_trust",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript `declare` blocks erased at runtime; Ruby has no ambient declarations. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "shadowed_unresolved_imports_do_not_name_the_module",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: ESM import bindings shadowed by a local binding name no unresolved module; Ruby has no import binding to shadow. Semantic residue: none.",
@@ -6407,6 +6431,12 @@
           "name": "regression_267_playwright_features_root_accepts_dot_slash",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: Playwright-BDD `featuresRoot` discovery (`regression 267 playwright features root accepts dot slash`). Semantic residue: Ruby project configuration is cucumber.yml, covered by `cucumber_yaml_paths_are_detected`.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_276_ambient_scopes_do_not_abort_the_run",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript `declare` blocks erased at runtime; Ruby has no ambient declarations. Semantic residue: none.",
           "behaviorClass": "language-specific-api"
         }
       ]
