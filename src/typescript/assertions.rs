@@ -6,6 +6,7 @@ use super::node_text;
 use super::registrations::{registration_callee, RegistrationCallee, RegistrationNames};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 use tree_sitter::Node;
 
 // These modules expose an `expect` factory CukeDedup can identify without module resolution. Exact
@@ -41,20 +42,38 @@ const ASSERTION_MODULES: [&str; 7] = [
 /// Module writes are conservatively unordered; local declarations affect only their own scope.
 pub(super) struct RequireBindings {
     module_shadowed: bool,
-    shadow_ranges: BTreeMap<String, Vec<(usize, usize)>>,
+    shadow_ranges: Rc<ShadowRanges>,
+}
+
+/// One file's lexical scopes. Every pass over a file reads this, so it is built once.
+pub(super) struct FileScopes {
+    pub(super) bindings: Rc<BindingScopes>,
+    pub(super) parents: ScopeParents,
+    pub(super) loader: RequireBindings,
+}
+
+impl FileScopes {
+    /// Indexes the file's local bindings and the shadowing that can replace the CommonJS loader.
+    pub(super) fn new(root: Node<'_>, source: &[u8]) -> Self {
+        let (bindings, ranges, parents) = collect_binding_scopes(root, source);
+        let shadow_ranges = collect_scoped_bindings(&bindings, ranges);
+        let module_shadowed =
+            module_runtime_binding_exists(root, source, "require", &shadow_ranges);
+        Self {
+            bindings: Rc::new(bindings),
+            parents,
+            loader: RequireBindings {
+                module_shadowed,
+                shadow_ranges: Rc::new(shadow_ranges),
+            },
+        }
+    }
 }
 
 impl RequireBindings {
     /// Collects module and lexical shadowing that can replace the CommonJS loader.
     pub(super) fn discover(root: Node<'_>, source: &[u8]) -> Self {
-        let (scopes, ranges, _) = collect_binding_scopes(root, source);
-        let shadow_ranges = collect_scoped_bindings(scopes, ranges);
-        let module_shadowed =
-            module_runtime_binding_exists(root, source, "require", &shadow_ranges);
-        Self {
-            module_shadowed,
-            shadow_ranges,
-        }
+        FileScopes::new(root, source).loader
     }
 
     /// Reports whether the CommonJS loader remains unshadowed at this use site.
@@ -67,7 +86,7 @@ impl RequireBindings {
 pub(super) struct AssertionBindings {
     identifiers: BTreeSet<String>,
     namespaces: BTreeSet<String>,
-    shadow_ranges: BTreeMap<String, Vec<(usize, usize)>>,
+    shadow_ranges: Rc<ShadowRanges>,
     mutated_matcher_factories: BTreeSet<String>,
 }
 
@@ -78,28 +97,28 @@ impl AssertionBindings {
         source: &[u8],
         registrations: &RegistrationNames,
         configured_modules: &BTreeSet<String>,
+        file_scopes: &FileScopes,
     ) -> Self {
         let mut facade_modules = resolved_facade_modules(root, source, registrations);
         // A project-declared module is trusted exactly like a recognized package: the analyzer
         // cannot see through a local re-export, so the declaration is the evidence.
         facade_modules.extend(configured_modules.iter().cloned());
-        let (scopes, scope_ranges, scope_parents) = collect_binding_scopes(root, source);
-        let shadow_ranges = collect_scoped_bindings(scopes.clone(), scope_ranges);
-        let require_shadowed =
-            module_runtime_binding_exists(root, source, "require", &shadow_ranges);
+        let scopes = file_scopes.bindings.as_ref();
+        let shadow_ranges = &*file_scopes.loader.shadow_ranges;
+        let require_shadowed = file_scopes.loader.module_shadowed;
         let alias_writes = namespace_alias_writes(
             root,
             source,
-            &scopes,
-            &scope_parents,
+            scopes,
+            &file_scopes.parents,
             false,
             require_shadowed,
         );
         let mutated_matcher_factories = namespace_alias_writes(
             root,
             source,
-            &scopes,
-            &scope_parents,
+            scopes,
+            &file_scopes.parents,
             true,
             require_shadowed,
         );
@@ -168,12 +187,12 @@ impl AssertionBindings {
                         factory_writes.extend(
                             writes
                                 .into_keys()
-                                .filter(|name| !position_is_shadowed(&shadow_ranges, name, node)),
+                                .filter(|name| !position_is_shadowed(shadow_ranges, name, node)),
                         );
                         shadowed.extend(
                             assigned
                                 .into_iter()
-                                .filter(|name| !position_is_shadowed(&shadow_ranges, name, node)),
+                                .filter(|name| !position_is_shadowed(shadow_ranges, name, node)),
                         );
                     }
                 }
@@ -198,7 +217,7 @@ impl AssertionBindings {
         if !shadowed.contains("expect") && !bindings.namespaces.contains("expect") {
             bindings.identifiers.insert("expect".to_owned());
         }
-        bindings.shadow_ranges = shadow_ranges;
+        bindings.shadow_ranges = Rc::clone(&file_scopes.loader.shadow_ranges);
         bindings.mutated_matcher_factories = mutated_matcher_factories;
         bindings
     }
@@ -679,7 +698,7 @@ fn module_runtime_binding_exists(
     root: Node<'_>,
     source: &[u8],
     expected: &str,
-    shadow_ranges: &BTreeMap<String, Vec<(usize, usize)>>,
+    shadow_ranges: &ShadowRanges,
 ) -> bool {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -741,12 +760,13 @@ fn module_runtime_binding_exists(
     false
 }
 
-type BindingScopes = BTreeMap<usize, BTreeSet<String>>;
+pub(super) type BindingScopes = BTreeMap<usize, BTreeSet<String>>;
+type ShadowRanges = BTreeMap<String, Vec<(usize, usize)>>;
 type ScopeRanges = BTreeMap<usize, (usize, usize)>;
 /// Nearest enclosing local scope for every local-scope node; scopes at top level map to the
 /// root's id. Built on the same walk that collects bindings, so the chain and the binding map
 /// agree on which nodes count as scopes.
-type ScopeParents = BTreeMap<usize, usize>;
+pub(super) type ScopeParents = BTreeMap<usize, usize>;
 
 /// Propagates writes through lexical alias and shallow-copy edges to identify module names that lose trust.
 fn namespace_alias_writes(
@@ -965,7 +985,7 @@ fn namespace_alias_writes(
 }
 
 /// Indexes runtime local bindings, scope byte ranges and enclosing scope links, skipping ambient declarations.
-pub(super) fn collect_binding_scopes(
+fn collect_binding_scopes(
     root: Node<'_>,
     source: &[u8],
 ) -> (BindingScopes, ScopeRanges, ScopeParents) {
@@ -1097,17 +1117,19 @@ pub(super) fn collect_binding_scopes(
 }
 
 /// Converts scope bindings to sorted, merged byte ranges for each shadowed name.
-fn collect_scoped_bindings(
-    scopes: BindingScopes,
-    scope_ranges: ScopeRanges,
-) -> BTreeMap<String, Vec<(usize, usize)>> {
-    let mut ranges = BTreeMap::<String, Vec<(usize, usize)>>::new();
+fn collect_scoped_bindings(scopes: &BindingScopes, scope_ranges: ScopeRanges) -> ShadowRanges {
+    let mut ranges = ShadowRanges::new();
     for (scope, names) in scopes {
-        let Some(range) = scope_ranges.get(&scope).copied() else {
+        let Some(range) = scope_ranges.get(scope).copied() else {
             continue;
         };
         for name in names {
-            ranges.entry(name).or_default().push(range);
+            match ranges.get_mut(name) {
+                Some(entries) => entries.push(range),
+                None => {
+                    ranges.insert(name.clone(), vec![range]);
+                }
+            }
         }
     }
     for entries in ranges.values_mut() {
@@ -1126,11 +1148,7 @@ fn collect_scoped_bindings(
 }
 
 /// Checks whether one merged shadow range contains the node's complete byte span.
-fn position_is_shadowed(
-    shadow_ranges: &BTreeMap<String, Vec<(usize, usize)>>,
-    expected: &str,
-    node: Node<'_>,
-) -> bool {
+fn position_is_shadowed(shadow_ranges: &ShadowRanges, expected: &str, node: Node<'_>) -> bool {
     let Some(ranges) = shadow_ranges.get(expected) else {
         return false;
     };

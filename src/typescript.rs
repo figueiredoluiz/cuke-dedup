@@ -14,7 +14,7 @@ mod project_resolution;
 mod registrations;
 mod source_filter;
 
-use self::assertions::AssertionBindings;
+use self::assertions::{AssertionBindings, FileScopes};
 #[cfg(test)]
 use self::handler::MAX_HANDLER_SNIPPET_CHARS;
 use self::handler::{
@@ -194,6 +194,7 @@ struct AdapterContext<'source, 'tree> {
     registrations: &'source RegistrationNames,
     framework_calls: &'source framework_callbacks::FrameworkCalls,
     root: Node<'tree>,
+    file_scopes: &'source FileScopes,
     configured_assertion_modules: &'source BTreeSet<String>,
     handler_evidence: OnceCell<HandlerEvidence<'tree>>,
 }
@@ -218,6 +219,7 @@ impl<'tree> AdapterContext<'_, 'tree> {
                     self.source,
                     self.registrations,
                     self.configured_assertion_modules,
+                    self.file_scopes,
                 ),
                 bindings,
                 module_scope: ModuleScope::new(self.root),
@@ -295,7 +297,8 @@ fn extract_detailed_impl(
     let root = tree.root_node();
     let source_bytes = source.as_bytes();
     let source_lines: Vec<_> = source.lines().collect();
-    let framework = detect_framework(root, source_bytes);
+    let file_scopes = FileScopes::new(root, source_bytes);
+    let framework = detect_framework(root, source_bytes, &file_scopes.loader);
     let registrations = detect_registrations(
         root,
         source_bytes,
@@ -303,6 +306,7 @@ fn extract_detailed_impl(
         &file.path,
         &mut session.resolver,
         &session.configured_registrations,
+        &file_scopes,
     )?;
     let framework = registrations.framework;
     let framework_calls = framework_callbacks::discover(
@@ -311,6 +315,7 @@ fn extract_detailed_impl(
         &file.path,
         &mut session.resolver,
         &registrations,
+        &file_scopes,
     )?;
     let context = AdapterContext {
         source: source_bytes,
@@ -320,6 +325,7 @@ fn extract_detailed_impl(
         registrations: &registrations,
         framework_calls: &framework_calls,
         root,
+        file_scopes: &file_scopes,
         configured_assertion_modules: &session.configured_assertion_modules,
         handler_evidence: OnceCell::new(),
     };

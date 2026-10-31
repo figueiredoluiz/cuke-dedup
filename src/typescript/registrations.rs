@@ -1,4 +1,4 @@
-use super::assertions::{collect_binding_scopes, RequireBindings};
+use super::assertions::{BindingScopes, FileScopes, RequireBindings};
 use super::ast::{
     call_string_argument, export_has_runtime_bindings, import_has_runtime_bindings,
     import_has_runtime_module_reference, import_module, import_requires_loader,
@@ -19,6 +19,7 @@ use anyhow::Result;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::rc::Rc;
 use tree_sitter::Node;
 
 /// A specifier that failed static resolution, with the import that requested it.
@@ -54,19 +55,18 @@ type BindingKey = (String, usize);
 #[derive(Default)]
 struct ScopedRegistrations {
     root: usize,
-    bindings: BTreeMap<usize, BTreeSet<String>>,
+    bindings: Rc<BindingScopes>,
     aliases: BTreeMap<BindingKey, RegistrationExport>,
     namespaces: BTreeMap<BindingKey, RegistrationExports>,
     factories: BTreeSet<BindingKey>,
 }
 
 impl ScopedRegistrations {
-    /// Indexes lexical binding scopes and initializes empty registration evidence for each binding.
-    fn new(root: Node<'_>, source: &[u8]) -> Self {
-        let (bindings, _, _) = collect_binding_scopes(root, source);
+    /// Shares the file's lexical scopes and starts with no registration evidence.
+    fn new(root: Node<'_>, scopes: &FileScopes) -> Self {
         Self {
             root: root.id(),
-            bindings,
+            bindings: Rc::clone(&scopes.bindings),
             aliases: BTreeMap::new(),
             namespaces: BTreeMap::new(),
             factories: BTreeSet::new(),
@@ -187,7 +187,7 @@ pub(super) enum RegistrationCallee<'tree, 'source> {
 
 #[derive(Default)]
 struct RegistrationDiscovery<'tree> {
-    loader: Option<RequireBindings>,
+    loader: Option<&'tree RequireBindings>,
     aliases: RegistrationExports,
     fallback_aliases: BTreeSet<String>,
     namespaces: BTreeMap<String, RegistrationExports>,
@@ -360,10 +360,13 @@ pub(super) fn unwrap_registration_callee(mut function: Node<'_>) -> Option<Node<
 }
 
 /// Merges framework evidence from runtime module references and available static `require` calls.
-pub(super) fn detect_framework(root: Node<'_>, source: &[u8]) -> Framework {
+pub(super) fn detect_framework(
+    root: Node<'_>,
+    source: &[u8],
+    loader: &RequireBindings,
+) -> Framework {
     let mut stack = vec![root];
     let mut framework = Framework::UNKNOWN;
-    let loader = RequireBindings::discover(root, source);
     while let Some(node) = stack.pop() {
         let runtime_module_reference = match node.kind() {
             "import_statement" => import_has_runtime_module_reference(node),
@@ -395,11 +398,12 @@ pub(super) fn detect_registrations(
     file_path: &Path,
     resolver: &mut RegistrationResolver,
     configured: &BTreeSet<String>,
+    file_scopes: &FileScopes,
 ) -> Result<RegistrationNames> {
-    let loader = RequireBindings::discover(root, source);
+    let loader = &file_scopes.loader;
     let create_bdd_factories =
-        collect_create_bdd_factories(root, source, file_path, resolver, &loader)?;
-    let mut scoped = ScopedRegistrations::new(root, source);
+        collect_create_bdd_factories(root, source, file_path, resolver, loader)?;
+    let mut scoped = ScopedRegistrations::new(root, file_scopes);
     for name in &create_bdd_factories {
         scoped.factories.insert((name.clone(), root.id()));
     }
@@ -419,7 +423,6 @@ pub(super) fn detect_registrations(
                 let module = (!import_requires_loader(node)
                     || discovered
                         .loader
-                        .as_ref()
                         .is_some_and(|loader| loader.available(node)))
                 .then(|| import_statement_module(node, source))
                 .flatten();
@@ -1111,7 +1114,6 @@ fn collect_variable_registration<'tree>(
             let exports = if function == Some("require")
                 && discovered
                     .loader
-                    .as_ref()
                     .is_some_and(|loader| loader.available(value))
             {
                 match call_string_argument(value, source) {

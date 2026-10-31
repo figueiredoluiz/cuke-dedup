@@ -4568,16 +4568,19 @@ fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, lab
     let tree = parser.parse(source, None).unwrap();
     let (root, bytes) = (tree.root_node(), source.as_bytes());
     let mut session = TypeScriptExtractionSession::default();
+    let file_scopes = FileScopes::new(root, bytes);
     let registrations = detect_registrations(
         root,
         bytes,
-        detect_framework(root, bytes),
+        detect_framework(root, bytes, &file_scopes.loader),
         std::path::Path::new("steps.ts"),
         &mut session.resolver,
         &session.configured_registrations,
+        &file_scopes,
     )
     .unwrap();
-    let assertions = AssertionBindings::discover(root, bytes, &registrations, &BTreeSet::new());
+    let assertions =
+        AssertionBindings::discover(root, bytes, &registrations, &BTreeSet::new(), &file_scopes);
     let (cached, walked) = (ModuleScope::new(root), ModuleScope::uncached(root));
     let mut compared = 0;
     let mut stack = vec![root];
