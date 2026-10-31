@@ -690,12 +690,7 @@ fn extract_call<'tree>(
             registration_name(function, source, context.registrations)
                 .filter(|(_, _, framework)| !framework_callbacks::uses_callbacks(*framework))
         })?;
-    let arguments = call.child_by_field_name("arguments")?;
-    let mut cursor = arguments.walk();
-    let arguments: Vec<_> = arguments
-        .named_children(&mut cursor)
-        .filter(|argument| argument.kind() != "comment")
-        .collect();
+    let arguments = registrations::registration_arguments(call)?;
     let Some(&matcher_node) = arguments.first() else {
         warn_unsupported_matcher(call, context, diagnostics);
         return None;
@@ -708,31 +703,38 @@ fn extract_call<'tree>(
     {
         matcher_kind = MatcherKind::Literal;
     }
-    // The handler is the last argument, past an options object. Parentheses and type syntax do not
-    // exist at runtime, so a wrapped handler is that handler. Nothing earlier stands in for an
-    // unmodeled last argument: that would compare a value that is not the handler.
-    let handler = arguments[1..]
-        .iter()
-        .filter_map(|argument| registrations::unwrap_registration_callee(*argument))
-        .rfind(|argument| argument.kind() != "object")
-        .filter(|node| {
-            matches!(
-                node.kind(),
-                "arrow_function"
-                    | "function_expression"
-                    | "generator_function"
-                    | "identifier"
-                    | "member_expression"
-                    | "subscript_expression"
-                    | "call_expression"
-            )
-        });
+    let handler = registrations::registration_handler(&arguments).filter(|node| {
+        matches!(
+            node.kind(),
+            "arrow_function"
+                | "function_expression"
+                | "generator_function"
+                | "identifier"
+                | "member_expression"
+                | "subscript_expression"
+                | "call_expression"
+        )
+    });
     let Some(handler) = handler else {
         diagnostics.push(dropped_registration_diagnostic(context, call));
         return None;
     };
-    let bound_arguments = bind_arguments(handler, source);
     let evidence = context.handler_evidence();
+    // Frameworks disagree when a function precedes another candidate: Cucumber runs the function,
+    // Playwright-BDD the last argument. Neither reading can be assumed.
+    let contested = arguments
+        .get(1)
+        .copied()
+        .and_then(registrations::unwrap_registration_callee)
+        .is_some_and(|second| {
+            second.id() != handler.id()
+                && resolve_handler(second, source, &evidence.bindings).is_some()
+        });
+    if contested {
+        diagnostics.push(dropped_registration_diagnostic(context, call));
+        return None;
+    }
+    let bound_arguments = bind_arguments(handler, source);
     let resolved_handler = resolve_handler(handler, source, &evidence.bindings);
     if resolved_handler.is_none() && handler.kind() == "call_expression" {
         diagnostics.push(unsupported_handler_diagnostic(context, handler));

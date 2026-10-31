@@ -39,7 +39,8 @@ resource limits keep failures visible and bound the work performed.
   object. A function, name, member, subscript or call there is a definition; one that does not
   resolve to a body is not compared, and an unresolved call also warns. Any other shape, a spread or
   conditional for example, and a registration with no handler, yield no definition and mark analysis
-  incomplete.
+  incomplete. So does a function followed by another candidate, because frameworks disagree on which
+  one runs: Cucumber runs the function and Playwright-BDD the last argument.
 
 When analysis is incomplete, existing findings remain valid but the absence of a finding proves
 nothing. Machine reports expose the incomplete or truncated status. Pass `--fail-on-incomplete`

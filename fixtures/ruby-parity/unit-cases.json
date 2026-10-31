@@ -6504,6 +6504,12 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: TypeScript and JavaScript handler argument shapes (`regression 278 dropped registrations are analyzed or reported`). Semantic residue: none.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_278_forwarders_must_register_the_handler_they_receive",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JavaScript forwarding wrappers (`regression 278 forwarders must register the handler they receive`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     },

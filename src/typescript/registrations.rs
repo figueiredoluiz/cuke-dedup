@@ -837,21 +837,40 @@ pub(super) fn forwarded_callee<'tree>(
     if callee == name {
         return None;
     }
+    let arguments = registration_arguments(call)?;
+    let is_parameter = |argument: Option<Node<'_>>, position: usize| {
+        argument.is_some_and(|argument| {
+            argument.kind() == "identifier"
+                && Some(node_text(argument, source)) == parameters.get(position).map(String::as_str)
+        })
+    };
+    let matcher = arguments
+        .first()
+        .and_then(|matcher| unwrap_registration_callee(*matcher));
+    (is_parameter(matcher, 0) && is_parameter(registration_handler(&arguments), 1))
+        .then_some(function)
+}
+
+/// Returns a registration call's arguments. Comments are named nodes but not arguments.
+pub(super) fn registration_arguments(call: Node<'_>) -> Option<Vec<Node<'_>>> {
     let arguments = call.child_by_field_name("arguments")?;
     let mut cursor = arguments.walk();
-    let arguments: Vec<_> = arguments.named_children(&mut cursor).collect();
-    if arguments.len() < 2 {
-        return None;
-    }
-    for (position, argument) in arguments.iter().take(2).enumerate() {
-        let argument = unwrap_registration_callee(*argument)?;
-        if argument.kind() != "identifier"
-            || Some(node_text(argument, source)) != parameters.get(position).map(String::as_str)
-        {
-            return None;
-        }
-    }
-    Some(function)
+    let arguments = arguments
+        .named_children(&mut cursor)
+        .filter(|argument| argument.kind() != "comment")
+        .collect();
+    Some(arguments)
+}
+
+/// Selects a registration's handler: the last argument after the matcher, past an options object,
+/// with parentheses and type syntax removed because they do not exist at runtime. Nothing earlier
+/// stands in for an unmodeled last argument: that would compare a value that is not the handler.
+pub(super) fn registration_handler<'tree>(arguments: &[Node<'tree>]) -> Option<Node<'tree>> {
+    arguments
+        .get(1..)?
+        .iter()
+        .filter_map(|argument| unwrap_registration_callee(*argument))
+        .rfind(|argument| argument.kind() != "object")
 }
 
 /// A runtime binding introduced by an import clause.

@@ -2935,7 +2935,7 @@ fn ambient_declarations_do_not_change_assertion_trust() {
 fn wrapped_handlers_are_the_handler_they_wrap() {
     let signature = |arguments: &str| {
         let source = format!(
-            "import {{ Given }} from '@cucumber/cucumber';\ndeclare const cb: Fn;\nconst run = function () {{ expect(1).toBe(1); }};\nconst other = function () {{ expect(2).toBe(2); }};\nGiven('x', {arguments});\n"
+            "import {{ Given }} from '@cucumber/cucumber';\ndeclare const opts: Options;\nconst run = function () {{ expect(1).toBe(1); }};\nconst other = function () {{ expect(2).toBe(2); }};\nGiven('x', {arguments});\n"
         );
         let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
         assert_eq!(extracted.definitions.len(), 1, "{source}");
@@ -2952,7 +2952,7 @@ fn wrapped_handlers_are_the_handler_they_wrap() {
         "<any>run",
         "((run as any)!)",
         "{ timeout: 1 }, run as any",
-        "cb, run as any",
+        "opts, run as any",
         "/* note */ run as any",
         "run /* note */",
         "run, { timeout: 1 }",
@@ -2962,7 +2962,6 @@ fn wrapped_handlers_are_the_handler_they_wrap() {
         assert_eq!(signature(arguments), named, "{arguments}");
     }
     assert_ne!(signature("other as any"), named);
-    assert_ne!(signature("run, other as any"), named);
     let inline = signature("function () { expect(1).toBe(1); }");
     for arguments in [
         "(function () { expect(1).toBe(1); })",
@@ -3008,12 +3007,38 @@ fn wrappers_are_transparent_through_bindings_forwarders_and_matchers() {
         handler("const run = (function () { expect(2).toBe(2); }) as Fn;\nGiven('x', run);"),
         bare
     );
-    for forwarded in ["fn", "fn as any", "fn!", "(fn)"] {
-        let extracted = extract(&format!(
-            "function step(p: string, fn: any) {{ Given(p, {forwarded}); }}\nstep('one', () => a());\nstep('two', () => b());"
-        ));
+    let forwarder = |forwarded: &str| {
+        extract(&format!(
+            "function step(p: string, fn: any) {{ Given({forwarded}); }}\nstep('one', () => a());\nstep('two', () => b());"
+        ))
+    };
+    for forwarded in [
+        "p, fn",
+        "p, fn as any",
+        "p as string, fn!",
+        "(p), (fn)",
+        "p, /* note */ fn",
+        "p, { timeout: 1 }, fn",
+        "p, fn, { timeout: 1 }",
+    ] {
+        let extracted = forwarder(forwarded);
         assert_eq!(extracted.definitions.len(), 2, "{forwarded}");
         assert!(extracted.diagnostics.is_empty(), "{forwarded}");
+    }
+    // Frameworks disagree on which of two functions runs, so the wrapper proves nothing.
+    for forwarded in [
+        "p, fn, () => other()",
+        "p as string, fn as Fn, () => other()",
+    ] {
+        let extracted = forwarder(forwarded);
+        assert!(extracted.definitions.is_empty(), "{forwarded}");
+        assert!(
+            extracted
+                .diagnostics
+                .iter()
+                .any(crate::source_adapter::is_completeness_diagnostic),
+            "{forwarded}"
+        );
     }
     for matcher in [
         "'one'",
@@ -3062,13 +3087,18 @@ fn registrations_without_a_static_handler_are_incomplete() {
         "'x', run, flag ? run : other",
         "'x', opts, ...rest",
         "'x' /* note */",
+        "'x', run, other",
+        "'x', run, other as any",
+        "'x', (run), () => work()",
+        "'x', function () {}, other",
+        "'x', run.bind(this), other",
         "'x', [run]",
         "'x', class {}",
         "'x', `t`",
         "'x', new Handler()",
     ] {
         let source =
-            format!("import {{ Given }} from '@cucumber/cucumber';\n  Given({arguments});\n");
+            format!("import {{ Given }} from '@cucumber/cucumber';\nconst run = function () {{}};\nconst other = function () {{}};\n  Given({arguments});\n");
         let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
         assert!(extracted.definitions.is_empty(), "{source}");
         let completeness: Vec<_> = extracted
@@ -3082,7 +3112,7 @@ fn registrations_without_a_static_handler_are_incomplete() {
             "{source}"
         );
         let location = &completeness[0].location;
-        assert_eq!((location.line, location.column), (2, 3), "{source}");
+        assert_eq!((location.line, location.column), (4, 3), "{source}");
     }
 }
 

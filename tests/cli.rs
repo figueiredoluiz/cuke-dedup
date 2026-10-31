@@ -8401,3 +8401,41 @@ fn regression_278_dropped_registrations_are_analyzed_or_reported() {
         .stderr(predicate::str::contains("steps.ts:4:1"))
         .stderr(predicate::str::contains("no static handler"));
 }
+
+/// Checks a helper is a forwarder only when its inner call settles on the parameter it was given.
+/// Frameworks disagree on which of two functions runs, so that form proves nothing and reports no
+/// duplicate, while trailing options leave the parameter as the handler and the duplicate stands.
+#[test]
+fn regression_278_forwarders_must_register_the_handler_they_receive() {
+    for (inner, status, outcome) in [
+        ("Given(p, fn, { timeout: 1 });", 1, "2 definitions"),
+        (
+            "Given(p as string, fn as Fn, () => other());",
+            0,
+            "0 definitions",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "a.feature",
+            "Feature: f\n  Scenario: s\n    Given one\n    Given two\n",
+        );
+        write(
+            directory.path(),
+            "steps.ts",
+            &format!(
+                "import {{ Given }} from '@cucumber/cucumber';\n\
+                 function step(p: string, fn: any) {{ {inner} }}\n\
+                 step('one', function () {{ expect(state.value).toBe(1); }});\n\
+                 step('two', function () {{ expect(state.value).toBe(1); }});\n"
+            ),
+        );
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(directory.path())
+            .assert()
+            .code(status)
+            .stdout(predicate::str::contains(outcome));
+    }
+}
