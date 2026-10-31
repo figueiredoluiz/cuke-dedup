@@ -3916,6 +3916,42 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "resolutions_are_memoized_by_directory_and_specifier",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json module resolution (`resolutions are memoized by directory and specifier`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "memoized_resolutions_keep_each_directory_config_and_package_scope",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json module resolution (`memoized resolutions keep each directory config and package scope`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "replaying_a_resolution_charges_nothing",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json module resolution (`replaying a resolution charges nothing`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "failed_resolutions_are_not_memoized",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json module resolution (`failed resolutions are not memoized`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "resolutions_past_the_memo_limit_are_resolved_again",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json module resolution (`resolutions past the memo limit are resolved again`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "resolutions_without_a_root_are_not_memoized",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig/package.json module resolution (`resolutions without a root are not memoized`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "only_top_level_project_config_failures_are_kept",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/package.json resolution keeps only top-level project config failures, not failures reached through `extends` (`only top level project config failures are kept`). Semantic residue: Ruby load failures are pinned by the `load-unresolved` group.",
