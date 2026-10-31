@@ -4700,6 +4700,30 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "wrapped_handlers_are_the_handler_they_wrap",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript and JavaScript handler argument shapes (`wrapped handlers are the handler they wrap`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "wrappers_are_transparent_through_bindings_forwarders_and_matchers",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript and JavaScript handler argument shapes (`wrappers are transparent through bindings forwarders and matchers`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "subscript_handlers_are_definitions",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript and JavaScript handler argument shapes (`subscript handlers are definitions`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "registrations_without_a_static_handler_are_incomplete",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JavaScript argument shapes (`registrations without a static handler are incomplete`). Ruby skips a nested call with no possible handler because it cannot add a step; here the name resolved to a registration, so it is reported. Semantic residue: `ruby_unresolved_registrations_warn_and_expose_the_corpus_census` carries Ruby's incomplete registration diagnostic.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "shadowed_unresolved_imports_do_not_name_the_module",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: ESM import bindings shadowed by a local binding name no unresolved module; Ruby has no import binding to shadow. Semantic residue: none.",
@@ -6473,6 +6497,18 @@
           "name": "regression_276_ambient_scopes_do_not_abort_the_run",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: TypeScript `declare` blocks erased at runtime; Ruby has no ambient declarations. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_278_dropped_registrations_are_analyzed_or_reported",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript and JavaScript handler argument shapes (`regression 278 dropped registrations are analyzed or reported`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_278_forwarders_must_register_the_handler_they_receive",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JavaScript forwarding wrappers (`regression 278 forwarders must register the handler they receive`). Semantic residue: none.",
           "behaviorClass": "language-specific-api"
         }
       ]
