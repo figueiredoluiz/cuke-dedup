@@ -39,8 +39,9 @@ function documentationContract() {
   }
   /** Invoke the hook with Git's ref-update protocol. */
   function push(head, remote = "0".repeat(40)) {
+    // The hook loads TypeScript, which can pass 10 s on a slow Windows host.
     return spawnSync(bashExecutable(), [".githooks/pre-push", "origin"], {
-      cwd: root, env, encoding: "utf8", timeout: 10_000,
+      cwd: root, env, encoding: "utf8", timeout: 60_000,
       input: `refs/heads/topic ${head} refs/heads/topic ${remote}\n`,
     });
   }
