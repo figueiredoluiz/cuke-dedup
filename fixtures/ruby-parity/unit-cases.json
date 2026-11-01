@@ -3159,6 +3159,13 @@
           "behaviorClass": "ruby-behavior"
         },
         {
+          "name": "registry_uncertainty_covers_unattached_definitions",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Adapter-independent stage `session-plumbing`: a registry-scoped uncertainty reaches a definition under the core unattached policy; the adapter only supplies the control definition.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "public_session_finalization_applies_late_ruby_effects_in_either_order",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -6772,6 +6779,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
           "rationale": "Adapter-independent stage `bounded-analysis`: definitions and policies are caller-built over caller domains and dialects; no adapter produces any input.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "unattached_definitions_do_not_compare_as_a_builtin_language",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: hand-built definitions under the core unattached policy, with the built-in ECMAScript policy as control; no adapter produces any input.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

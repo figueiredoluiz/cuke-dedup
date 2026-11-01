@@ -118,6 +118,10 @@ const fn adapter(
 static CALLER: TestAdapter = adapter("caller", &CALLER_DOMAIN, &CONTRACTS);
 // Same fields as `CALLER`, different object.
 static CALLER_COPY: TestAdapter = adapter("caller", &CALLER_DOMAIN, &CONTRACTS);
+static UNATTACHED: TestAdapter = TestAdapter {
+    policy: AnalysisPolicy::unattached(),
+    ..adapter("unattached-adapter", &CALLER_DOMAIN, &[])
+};
 static CALLER_OTHER_LANGUAGE: TestAdapter = TestAdapter {
     language: SourceLanguage::new("other"),
     ..adapter("caller", &CALLER_DOMAIN, &[])
@@ -292,6 +296,12 @@ fn registry_construction_rejects_each_conflict() {
             ContractDomainMismatch {
                 adapter: "scoped-other",
                 framework: SCOPED,
+            },
+        ),
+        (
+            vec![registration(".a", &CALLER), registration(".b", &UNATTACHED)],
+            UnattachedPolicy {
+                adapter: "unattached-adapter",
             },
         ),
     ];

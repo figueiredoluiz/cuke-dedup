@@ -58,12 +58,14 @@
 //! one its location's suffix routes to when that adapter declares `framework` or `framework` is
 //! `unknown`, else the first one declaring `framework`. Plain `Deserialize` reads against the
 //! built-in adapters and [`model::RegistrySeed`] against its registry; a definition no adapter
-//! claims gets [`source_adapter::AnalysisPolicy::default`], the JavaScript/TypeScript baseline.
-//! Built-in definitions round-trip with their extracted policy; a caller adapter that attaches a
-//! policy on other grounds does not. A definition
-//! built by hand has the default whatever its `framework`; a hand-built Ruby definition takes
-//! `adapter_for_language(ruby::RUBY).map(|ruby| ruby.analysis_policy())`, and a built-in
-//! framework-specific policy (Jest-Cucumber, vitest-cucumber-plugin) comes from
+//! claims gets [`source_adapter::AnalysisPolicy::unattached`], which compares only with other
+//! unattached definitions, translates no regex, keeps each handler's declared evidence regime and
+//! needs indirect step usage for unused findings; adapters cannot declare it. Built-in definitions
+//! round-trip with their extracted policy, except one with framework `unknown` at a path that routes
+//! to no adapter; a caller adapter that attaches a policy on other grounds does not. A definition
+//! built by hand names its policy: [`source_adapter::AnalysisPolicy::unattached`], or for a
+//! built-in language `adapter_for_language(ruby::RUBY).map(|ruby| ruby.analysis_policy())`, and a
+//! built-in framework-specific policy (Jest-Cucumber, vitest-cucumber-plugin) comes from
 //! [`source_adapter::FrameworkContract::policy_of`] over the adapter's
 //! [`source_adapter::SourceAdapter::framework_contracts`]. A caller builds its own policy from a
 //! [`source_adapter::DomainSpec`] declared in a `static`, a [`source_adapter::RegexDialect`] and

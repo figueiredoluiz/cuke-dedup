@@ -1,4 +1,6 @@
-use cuke_dedup::analysis::{analyze, analyze_with_diagnostics, merge_parameter_types};
+use cuke_dedup::analysis::{
+    analyze, analyze_with_diagnostics, analyze_with_step_usage, merge_parameter_types,
+};
 use cuke_dedup::config::{Config, ConfigOverrides, ReporterKind};
 use cuke_dedup::discovery::{ExcludeSet, SourceFile, SourceLanguage};
 use cuke_dedup::model::SourceLocation;
@@ -15,9 +17,10 @@ use cuke_dedup::ruby::RUBY;
 use cuke_dedup::source_adapter::{
     AdapterRegistry, AdapterSessionState, AnalysisPolicy, DependencyGap, DiscoveredFeatures,
     DiscoveryInput, DomainSpec, Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel,
-    FrameworkContract, FrameworkDescriptor, HandlerScope, IdentityFlags, RegexDialect, RegexKey,
-    SourceAdapter, SourceAdapterRegistration, SourceDependency, SourceExtractionSession,
-    SourceParameterType, StatefulSourceAdapter, StepMatching, StreamEvidence, TranslatedRegex,
+    FrameworkContract, FrameworkDescriptor, HandlerScope, IdentityFlags, IndirectStepUsage,
+    RegexDialect, RegexKey, SourceAdapter, SourceAdapterRegistration, SourceDependency,
+    SourceExtractionSession, SourceParameterType, StatefulSourceAdapter, StepMatching,
+    StreamEvidence, TranslatedRegex,
 };
 use cuke_dedup::typescript;
 use cuke_dedup::typescript::{JAVASCRIPT, TYPESCRIPT};
@@ -56,6 +59,10 @@ fn extraction_session_preserves_public_constructors_auto_traits_and_adapter_defa
         /// Returns a sentinel failure to verify default session delegation reaches the external adapter.
         fn extract(&self, _: &str, _: &SourceFile) -> anyhow::Result<Extraction> {
             anyhow::bail!("external adapter reached")
+        }
+        /// Extraction fails before a comparison.
+        fn analysis_policy(&self) -> AnalysisPolicy {
+            AnalysisPolicy::unattached()
         }
     }
     let project = tempfile::tempdir().unwrap();
@@ -611,8 +618,12 @@ fn caller_built_policies_separate_domains_and_drive_usage() {
     assert!(pair(shared).unwrap().contains(&Rule::DuplicateMatcher));
     for (foreign, refused) in [
         (
-            AnalysisPolicy::default(),
+            registered_adapter(TYPESCRIPT).analysis_policy(),
             "definitions from comparison domains `caller` and `ecmascript`",
+        ),
+        (
+            AnalysisPolicy::unattached(),
+            "definitions from comparison domains `caller` and `unattached`",
         ),
         (
             caller_policy(&CALLER_TWIN, StepMatching::ByText),
@@ -659,6 +670,175 @@ fn caller_built_policies_separate_domains_and_drive_usage() {
     };
     assert_eq!(unmatched(StepMatching::ByText), [Rule::UnusedDefinition]);
     assert_eq!(unmatched(StepMatching::Positional), []);
+}
+
+/// Two hand-built definitions under `policy` and the rules they raise against `feature`. Their
+/// handlers are identical when `same_handler`; otherwise they differ in structure and overlap in
+/// nine of ten events, which only a complete stream can show. `stream` is their evidence regime.
+fn hand_built_rules(
+    policy: AnalysisPolicy,
+    pair: [(&str, &str); 2],
+    (kind, same_handler, stream): (MatcherKind, bool, EffectStream),
+    feature: &str,
+) -> Vec<Rule> {
+    let definitions = pair
+        .into_iter()
+        .enumerate()
+        .map(|(index, (matcher, flags))| {
+            let line = if same_handler { 2 } else { index + 2 };
+            let mut definition = caller_definition(policy, matcher, kind, line);
+            definition.normalized_matcher = policy.normalized_matcher(kind, matcher, flags, None);
+            definition.matcher_flags = flags.to_owned();
+            definition.handler.effect_stream = stream;
+            definition
+                .handler
+                .behavior_signature
+                .extend((0..9).map(|event| format!("call:shared{event}()")));
+            definition.location.line = index + 2;
+            definition.location.end_line = index + 2;
+            definition
+        })
+        .collect();
+    let mut rules = caller_rules(definitions, feature).unwrap();
+    rules.dedup();
+    rules
+}
+
+/// Checks an unattached definition stops comparing as JavaScript/TypeScript. Each row's built-in
+/// policy is the control: it raises the rule, so a bare `[]` cannot mean "nothing analyzed".
+#[test]
+fn unattached_definitions_do_not_compare_as_a_builtin_language() {
+    use EffectStream::{Complete, Partial};
+    use MatcherKind::{CucumberExpression, RegularExpression};
+    let unattached = AnalysisPolicy::unattached();
+    let ecmascript = registered_adapter(TYPESCRIPT).analysis_policy();
+    let shared = (RegularExpression, false, Complete);
+    for (case, pair, shape, feature, rule) in [
+        // JavaScript's inert `g` separates nothing there; an unknown dialect's flag might.
+        (
+            "inert flag",
+            [("a b", ""), ("a b", "g")],
+            shared,
+            "x",
+            Rule::DuplicateMatcher,
+        ),
+        // JavaScript's whitespace folding is a dialect rule.
+        (
+            "folded form",
+            [("a b", ""), (r"a\s+b", "")],
+            shared,
+            "x",
+            Rule::NormalizedMatcher,
+        ),
+        // Wording variants need equal flags.
+        (
+            "flags differ",
+            [("I log in now", "i"), ("I log on now", "")],
+            (RegularExpression, true, Complete),
+            "x",
+            Rule::NearDuplicateStep,
+        ),
+        // A partial stream cannot show that different handlers behave alike.
+        (
+            "partial stream",
+            [("I log in now", ""), ("I log on now", "")],
+            (CucumberExpression, false, Partial),
+            "I log in now",
+            Rule::NearDuplicateStep,
+        ),
+    ] {
+        assert!(
+            hand_built_rules(ecmascript, pair, shape, feature).contains(&rule),
+            "control: {case}"
+        );
+        assert!(
+            !hand_built_rules(unattached, pair, shape, feature).contains(&rule),
+            "{case}"
+        );
+    }
+
+    // An unclaimed definition beside extracted ones is refused, not compared as theirs.
+    let error = caller_rules(
+        vec![
+            caller_definition(ecmascript, "I log in", CucumberExpression, 2),
+            caller_definition(unattached, "I log in", CucumberExpression, 3),
+        ],
+        "I log in",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.starts_with("definitions from comparison domains `ecmascript` and `unattached`"),
+        "{error}"
+    );
+
+    // Read back where no adapter claims it, a stored JS key stops comparing; claimed, it does not.
+    let read_back = |path: &str| {
+        let definitions = ["a b", r"a\s+b"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, matcher)| {
+                let mut definition =
+                    caller_definition(ecmascript, matcher, RegularExpression, index + 2);
+                definition.framework = Framework::UNKNOWN;
+                definition.location.path = PathBuf::from(path);
+                serde_json::from_value(serde_json::to_value(definition).unwrap()).unwrap()
+            })
+            .collect();
+        caller_rules(definitions, "x").unwrap()
+    };
+    assert!(read_back("steps.ts").contains(&Rule::NormalizedMatcher));
+    assert!(!read_back("steps").contains(&Rule::NormalizedMatcher));
+
+    // Within the domain, matchers written alike still compare.
+    let equal = [("a b", "i"), ("a b", "i")];
+    assert!(hand_built_rules(unattached, equal, shared, "x").contains(&Rule::DuplicateMatcher));
+    // Equal flags restore the wording variant the flags row refused.
+    assert!(hand_built_rules(
+        unattached,
+        [("I log in now", "i"), ("I log on now", "i")],
+        (RegularExpression, true, Complete),
+        "x",
+    )
+    .contains(&Rule::NearDuplicateStep));
+
+    // With indirect usage evidence, no regex translates, so an unmatched regex is not unused; an
+    // expression still is.
+    let run = |policy, kind, usage: Option<&IndirectStepUsage>| {
+        let directory = tempfile::tempdir().unwrap();
+        let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+        let definitions = vec![caller_definition(policy, "a cat", kind, 2)];
+        let outcome = match usage {
+            Some(usage) => analyze_with_step_usage(definitions, Vec::new(), &config, usage),
+            None => analyze_with_diagnostics(definitions, Vec::new(), &config),
+        }
+        .unwrap();
+        let rules: Vec<_> = outcome.result.findings.iter().map(|f| f.rule).collect();
+        (rules, outcome.incomplete)
+    };
+    let known = IndirectStepUsage::default();
+    let unused = vec![Rule::UnusedDefinition];
+    assert_eq!(
+        run(ecmascript, RegularExpression, None),
+        (unused.clone(), vec![])
+    );
+    assert_eq!(
+        run(unattached, RegularExpression, Some(&known)),
+        (vec![], vec![])
+    );
+    assert_eq!(
+        run(unattached, CucumberExpression, Some(&known)),
+        (unused, vec![])
+    );
+    // Without that evidence nothing is proven unused, and the result says so.
+    let unresolved =
+        "Unattached indirect step usage is unresolved; unused-definition findings are disabled";
+    for kind in [RegularExpression, CucumberExpression] {
+        assert_eq!(
+            run(unattached, kind, None),
+            (vec![], vec![unresolved.to_owned()])
+        );
+    }
 }
 
 /// Checks caller policies key regex matchers as their dialect declares, translations render with
@@ -853,6 +1033,10 @@ impl SourceAdapter for LoadsAdapter {
         session.state::<LoadsState>()?.extracted += 1;
         Ok(Extraction::new(Vec::new(), Vec::new()))
     }
+    /// Compares in the caller domain.
+    fn analysis_policy(&self) -> AnalysisPolicy {
+        caller_policy(&CALLER, StepMatching::ByText)
+    }
 }
 
 impl StatefulSourceAdapter for LoadsAdapter {
@@ -1012,13 +1196,13 @@ static CALLER_BDD_CONTRACTS: [FrameworkContract; 1] =
     [FrameworkContract::new(Framework::new("caller-bdd"))
         .with_discovery(FrameworkDescriptor::new("Caller BDD", caller_bdd_discovery))];
 
-/// A caller adapter that extracts nothing, declares `contracts` and compares with `policy` (the
-/// default when `None`). With `nested_seed`, reading its policy starts a seeded read, as an adapter
-/// loading its policy lazily might.
+/// A caller adapter that extracts nothing, declares `contracts` and compares with `policy`. With
+/// `nested_seed`, reading its policy starts a seeded read, as an adapter loading its policy lazily
+/// might.
 struct ContractAdapter {
     name: &'static str,
     contracts: &'static [FrameworkContract],
-    policy: Option<AnalysisPolicy>,
+    policy: AnalysisPolicy,
     nested_seed: bool,
 }
 
@@ -1043,7 +1227,7 @@ impl SourceAdapter for ContractAdapter {
                 .deserialize(serde_json::json!("unknown"))
                 .unwrap();
         }
-        self.policy.unwrap_or_default()
+        self.policy
     }
     /// Declares the configured contracts.
     fn framework_contracts(&self) -> &'static [FrameworkContract] {
@@ -1055,7 +1239,7 @@ impl SourceAdapter for ContractAdapter {
 static BDD: ContractAdapter = ContractAdapter {
     name: "caller-bdd-steps",
     contracts: &CALLER_BDD_CONTRACTS,
-    policy: None,
+    policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
 };
 
@@ -1308,7 +1492,11 @@ fn caller_framework_ids_read_back_through_their_registry() {
     let definition = |framework| StepDefinition {
         framework,
         ..caller_definition(
-            AnalysisPolicy::default(),
+            if framework == cucumber {
+                registered_adapter(TYPESCRIPT).analysis_policy()
+            } else {
+                caller_policy(&CALLER, StepMatching::ByText)
+            },
             "I log in",
             MatcherKind::CucumberExpression,
             3,
@@ -1413,7 +1601,7 @@ static POLICY_CONTRACTS: [FrameworkContract; 2] = [
 static POLICY: ContractAdapter = ContractAdapter {
     name: "caller-policy-steps",
     contracts: &POLICY_CONTRACTS,
-    policy: Some(caller_policy(&CALLER, StepMatching::ByText)),
+    policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
 };
 
@@ -1443,7 +1631,7 @@ fn read_back_definitions_get_the_policy_extraction_attaches() {
     );
     let definition = |id: &str, path: &str| {
         let mut definition = caller_definition(
-            AnalysisPolicy::default(),
+            AnalysisPolicy::unattached(),
             "I log in",
             MatcherKind::CucumberExpression,
             3,
@@ -1463,17 +1651,17 @@ fn read_back_definitions_get_the_policy_extraction_attaches() {
         ("policy-plain", "steps.pol", adapter),
         // The declaring adapter wins over the path's.
         ("policy-plain", "steps.ts", adapter),
-        ("cucumber-js", "steps.pol", AnalysisPolicy::default()),
+        ("cucumber-js", "steps.pol", ts.analysis_policy()),
         ("jest-cucumber", "steps.pol", jest),
-        // `unknown` takes the adapter its path routes to, and the default when none does.
+        // `unknown` takes the adapter its path routes to, and is unattached when none does.
         ("unknown", "steps.pol", adapter),
-        ("unknown", "steps.txt", AnalysisPolicy::default()),
+        ("unknown", "steps.txt", AnalysisPolicy::unattached()),
     ] {
         assert_eq!(seeded(definition(id, path)), expected, "{id} at {path}");
     }
     assert_ne!(contract, adapter);
-    assert_ne!(adapter, AnalysisPolicy::default());
-    assert_ne!(jest, AnalysisPolicy::default());
+    assert_ne!(adapter, AnalysisPolicy::unattached());
+    assert_ne!(jest, AnalysisPolicy::unattached());
 
     // Without the seed, the built-in adapters decide: `.pol` routes nowhere.
     let plain = |json: serde_json::Value| {
@@ -1483,7 +1671,7 @@ fn read_back_definitions_get_the_policy_extraction_attaches() {
     };
     assert_eq!(
         plain(definition("unknown", "steps.pol")),
-        AnalysisPolicy::default()
+        AnalysisPolicy::unattached()
     );
     assert_eq!(plain(definition("jest-cucumber", "steps.ts")), jest);
     let elsewhere = RegistrySeed::<ReadOnAnotherThread<StepDefinition>>::new(&registry)
@@ -1491,7 +1679,7 @@ fn read_back_definitions_get_the_policy_extraction_attaches() {
         .unwrap()
         .0
         .unwrap();
-    assert_eq!(elsewhere.analysis_policy, AnalysisPolicy::default());
+    assert_eq!(elsewhere.analysis_policy, AnalysisPolicy::unattached());
 }
 
 static SHARED_CONTRACTS: [FrameworkContract; 1] =
@@ -1502,14 +1690,14 @@ static SHARED_CONTRACTS: [FrameworkContract; 1] =
 static SHARED_BY_TEXT: ContractAdapter = ContractAdapter {
     name: "shared-text",
     contracts: &SHARED_CONTRACTS,
-    policy: Some(caller_policy(&CALLER, StepMatching::ByText)),
+    policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: true,
 };
 
 static SHARED_POSITIONAL: ContractAdapter = ContractAdapter {
     name: "shared-positional",
     contracts: &SHARED_CONTRACTS,
-    policy: Some(caller_policy(&CALLER, StepMatching::Positional)),
+    policy: caller_policy(&CALLER, StepMatching::Positional),
     nested_seed: false,
 };
 
@@ -1533,7 +1721,7 @@ fn read_back_policy_prefers_the_routed_adapter_of_a_shared_contract() {
         ("steps.txt", by_text),
     ] {
         let mut definition = caller_definition(
-            AnalysisPolicy::default(),
+            AnalysisPolicy::unattached(),
             "I log in",
             MatcherKind::CucumberExpression,
             3,

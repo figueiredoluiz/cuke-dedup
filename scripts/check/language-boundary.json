@@ -11,9 +11,7 @@
     ["src/config.rs","text:javascript",1],
     ["src/framework_descriptor.rs","text:npm-scope",1],
     ["src/source_adapter/config.rs","crate::ruby",1],
-    ["src/source_adapter/config.rs","name:ruby",6],
-    ["src/source_adapter/semantics.rs","crate::typescript",1],
-    ["src/source_adapter/semantics.rs","name:typescript",1]
+    ["src/source_adapter/config.rs","name:ruby",6]
   ],
   "registry": [
     ["src/source_adapter.rs","crate::ruby",2],

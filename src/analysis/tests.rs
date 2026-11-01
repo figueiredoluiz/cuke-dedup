@@ -31,7 +31,7 @@ pub(super) fn set_framework(definition: &mut StepDefinition, framework: crate::m
                 adapter.analysis_policy(),
             )
         })
-        .unwrap_or_default();
+        .unwrap_or(typescript::semantics::default_policy());
 }
 
 /// Builds one synthetic Given feature step for adapter contract tests.

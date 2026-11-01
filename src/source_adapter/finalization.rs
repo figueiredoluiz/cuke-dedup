@@ -56,14 +56,18 @@ impl SourceUncertainty {
 
     /// Whether `definition` falls in this scope: an equal full location span, an equal file path,
     /// or the comparison domain `adapters` declares for the registry language. A language no
-    /// registered adapter declares has no known domain, so its registry scope covers every definition.
+    /// registered adapter declares has no known domain, so its registry scope covers every
+    /// definition; an unattached definition has no known language, so every registry scope covers it.
     fn affects(&self, adapters: &super::AdapterRegistry, definition: &StepDefinition) -> bool {
         match &self.scope {
             UncertaintyScope::Definition(location) => &definition.location == location,
             UncertaintyScope::File(path) => &definition.location.path == path,
-            UncertaintyScope::Registry(language) => adapters
-                .comparison_domain(*language)
-                .is_none_or(|domain| definition.analysis_profile().domain == domain),
+            UncertaintyScope::Registry(language) => {
+                adapters.comparison_domain(*language).is_none_or(|domain| {
+                    definition.analysis_policy.is_unattached()
+                        || definition.analysis_profile().domain == domain
+                })
+            }
         }
     }
 }

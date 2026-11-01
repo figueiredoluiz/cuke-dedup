@@ -59,12 +59,18 @@ pub enum RegistryError {
         /// The shared label.
         label: &'static str,
     },
-    /// A contract policy compares in a domain other than its adapter's default policy.
+    /// A contract policy compares in a domain other than its adapter's policy.
     ContractDomainMismatch {
         /// The declaring adapter.
         adapter: &'static str,
         /// The framework whose policy differs.
         framework: Framework,
+    },
+    /// An adapter declares [`super::AnalysisPolicy::unattached`], which is for definitions no
+    /// adapter claims.
+    UnattachedPolicy {
+        /// The declaring adapter.
+        adapter: &'static str,
     },
 }
 
@@ -115,6 +121,10 @@ impl std::fmt::Display for RegistryError {
                 f,
                 "framework `{}` of adapter `{adapter}` compares in a domain other than the adapter's",
                 framework.id()
+            ),
+            Self::UnattachedPolicy { adapter } => write!(
+                f,
+                "adapter `{adapter}` declares the unattached policy, which is for definitions no adapter claims"
             ),
         }
     }
@@ -185,7 +195,11 @@ impl Contracts {
     /// Checks one newly registered adapter's contracts and domains against those seen before.
     fn adapter(&mut self, adapter: &'static dyn SourceAdapter) -> Result<(), RegistryError> {
         let name = adapter.name();
-        let domain = adapter.analysis_policy().domain();
+        let policy = adapter.analysis_policy();
+        if policy.is_unattached() {
+            return Err(RegistryError::UnattachedPolicy { adapter: name });
+        }
+        let domain = policy.domain();
         self.domain(domain)?;
         let contracts = adapter.framework_contracts();
         for contract in contracts {
