@@ -227,6 +227,489 @@ fn ruby_configuration_keeps_flat_compatibility_key() {
     );
 }
 
+/// How one configuration text reads: the load paths it yields, or the parse error after
+/// `failed to parse <path>: `.
+type ConfigResult = Result<&'static [&'static str], &'static str>;
+
+const NO_PATHS: ConfigResult = Ok(&[]);
+const LIB: ConfigResult = Ok(&["lib"]);
+const NOT_SEQUENCE: &str = "invalid type: integer `1`, expected a sequence";
+const NOT_SECTION: &str = "invalid type: integer `42`, expected struct RawRubySection";
+
+/// One config text as a file and as `package.json#cukeDedup`, in that order. Errors differ: a file
+/// carries a position, and `package.json` is read through `Value`, so its last duplicate wins. The
+/// rows record current text, including the internal type names serde prints; a change to one
+/// should be a decision, not an accident.
+const CONFIG_BEHAVIOUR: &[(&str, ConfigResult, ConfigResult)] = &[
+    // An unknown key is reported at the end of the root object, first in document order.
+    (
+        r#"{"foo":1}"#,
+        Err("unknown field `foo` at line 1 column 9"),
+        Err("unknown field `foo`"),
+    ),
+    (
+        r#"{"foo":1,"bar":2}"#,
+        Err("unknown field `foo` at line 1 column 17"),
+        Err("unknown field `foo`"),
+    ),
+    (
+        "{\n  \"definitions\": [\"a\"],\n  \"foo\": 1\n}\n",
+        Err("unknown field `foo` at line 4 column 1"),
+        Err("unknown field `foo`"),
+    ),
+    (
+        r#"{"definitions":["a"],"foo":1}"#,
+        Err("unknown field `foo` at line 1 column 29"),
+        Err("unknown field `foo`"),
+    ),
+    // Language keys are also checked at the end of the object.
+    (
+        r#"{"ruby":{"x":1}}"#,
+        Err("unknown field `x`, expected `loadPaths` at line 1 column 16"),
+        Err("unknown field `x`, expected `loadPaths`"),
+    ),
+    (
+        r#"{"ruby":{"loadPaths":"lib"}}"#,
+        Err(r#"invalid type: string "lib", expected a sequence at line 1 column 28"#),
+        Err(r#"invalid type: string "lib", expected a sequence"#),
+    ),
+    (
+        r#"{"ruby":[1]}"#,
+        Err("invalid type: integer `1`, expected a sequence at line 1 column 12"),
+        Err(NOT_SEQUENCE),
+    ),
+    (
+        r#"{"ruby":42}"#,
+        Err("invalid type: integer `42`, expected struct RawRubySection at line 1 column 11"),
+        Err(NOT_SECTION),
+    ),
+    (
+        r#"{"rubyLoadPaths":"lib"}"#,
+        Err(r#"invalid type: string "lib", expected a sequence at line 1 column 23"#),
+        Err(r#"invalid type: string "lib", expected a sequence"#),
+    ),
+    (
+        r#"{"rubyLoadPaths":[1]}"#,
+        Err("invalid type: integer `1`, expected path string at line 1 column 21"),
+        Err("invalid type: integer `1`, expected path string"),
+    ),
+    // A core key is checked where it stands, so it wins over everything checked at the end.
+    (
+        r#"{"definitions":1}"#,
+        Err("invalid type: integer `1`, expected a sequence at line 1 column 16"),
+        Err(NOT_SEQUENCE),
+    ),
+    (
+        r#"{"foo":1,"definitions":2}"#,
+        Err("invalid type: integer `2`, expected a sequence at line 1 column 24"),
+        Err("invalid type: integer `2`, expected a sequence"),
+    ),
+    (
+        r#"{"rubyLoadPaths":1,"definitions":2}"#,
+        Err("invalid type: integer `2`, expected a sequence at line 1 column 34"),
+        Err("invalid type: integer `2`, expected a sequence"),
+    ),
+    // A repeated key fails in a file, and the last one wins in `package.json`.
+    (
+        r#"{"rubyLoadPaths":["a"],"rubyLoadPaths":["b"]}"#,
+        Err("duplicate field `rubyLoadPaths` at line 1 column 45"),
+        Ok(&["b"]),
+    ),
+    (
+        r#"{"ruby":{},"ruby":{}}"#,
+        Err("duplicate field `ruby` at line 1 column 21"),
+        NO_PATHS,
+    ),
+    (
+        r#"{"ruby":{"loadPaths":[],"loadPaths":["lib"]}}"#,
+        Err("duplicate field `loadPaths` at line 1 column 45"),
+        LIB,
+    ),
+    (
+        r#"{"ruby":{"loadPaths":null,"loadPaths":[]}}"#,
+        Err("duplicate field `loadPaths` at line 1 column 42"),
+        NO_PATHS,
+    ),
+    (
+        r#"{"definitions":[],"definitions":[]}"#,
+        Err("duplicate field `definitions` at line 1 column 31"),
+        NO_PATHS,
+    ),
+    // A language key's error wins over an unknown key, wherever each stands.
+    (
+        r#"{"foo":1,"ruby":42}"#,
+        Err("invalid type: integer `42`, expected struct RawRubySection at line 1 column 19"),
+        Err(NOT_SECTION),
+    ),
+    (
+        r#"{"ruby":42,"foo":1}"#,
+        Err("invalid type: integer `42`, expected struct RawRubySection at line 1 column 19"),
+        Err(NOT_SECTION),
+    ),
+    // Between two language keys, document order decides.
+    (
+        r#"{"ruby":{"x":1},"rubyLoadPaths":1}"#,
+        Err("unknown field `x`, expected `loadPaths` at line 1 column 34"),
+        Err("unknown field `x`, expected `loadPaths`"),
+    ),
+    (
+        r#"{"rubyLoadPaths":1,"ruby":{"x":1}}"#,
+        Err("invalid type: integer `1`, expected a sequence at line 1 column 34"),
+        Err(NOT_SEQUENCE),
+    ),
+    // The first value is read before the repeat is noticed, so its error wins over the duplicate.
+    (
+        r#"{"ruby":42,"ruby":[]}"#,
+        Err("invalid type: integer `42`, expected struct RawRubySection at line 1 column 21"),
+        NO_PATHS,
+    ),
+    (
+        r#"{"definitions":1,"definitions":[]}"#,
+        Err("invalid type: integer `1`, expected a sequence at line 1 column 16"),
+        NO_PATHS,
+    ),
+    (
+        r#"{"ruby":null,"ruby":[]}"#,
+        Err("duplicate field `ruby` at line 1 column 23"),
+        NO_PATHS,
+    ),
+    (
+        r#"{"ruby":[],"ruby":42}"#,
+        Err("duplicate field `ruby` at line 1 column 21"),
+        Err(NOT_SECTION),
+    ),
+    // A `null` sets nothing, so it does not conflict with the other form.
+    (
+        r#"{"ruby":{"loadPaths":null},"rubyLoadPaths":["a"]}"#,
+        Ok(&["a"]),
+        Ok(&["a"]),
+    ),
+    (
+        r#"{"ruby":null,"rubyLoadPaths":["a"]}"#,
+        Ok(&["a"]),
+        Ok(&["a"]),
+    ),
+    (r#"{"ruby":{"loadPaths":["lib"]}}"#, LIB, LIB),
+    (r#"{"rubyLoadPaths":["lib"]}"#, LIB, LIB),
+    (r#"{"ruby":{}}"#, NO_PATHS, NO_PATHS),
+    (r#"{"ruby":null}"#, NO_PATHS, NO_PATHS),
+    (r#"{"rubyLoadPaths":null}"#, NO_PATHS, NO_PATHS),
+    (r#"{"rubyLoadPaths":[]}"#, NO_PATHS, NO_PATHS),
+    (r#"{"ruby":{"loadPaths":[]}}"#, NO_PATHS, NO_PATHS),
+    // Not an object at all.
+    (
+        "[]",
+        Err("invalid type: sequence, expected struct RawConfig at line 1 column 0"),
+        Err("invalid type: sequence, expected struct RawConfig"),
+    ),
+    (
+        "1",
+        Err("invalid type: integer `1`, expected struct RawConfig at line 1 column 1"),
+        Err("invalid type: integer `1`, expected struct RawConfig"),
+    ),
+    (
+        "null",
+        Err("invalid type: null, expected struct RawConfig at line 1 column 4"),
+        NO_PATHS,
+    ),
+    // Syntax errors come from reading the text, so `package.json`'s wrapper shifts the column. An
+    // unknown key is reported before text after the object is.
+    (
+        "{",
+        Err("EOF while parsing an object at line 1 column 1"),
+        Err("EOF while parsing an object at line 1 column 15"),
+    ),
+    (
+        r#"{"ruby":{"loadPaths":["a"],}}"#,
+        Err("trailing comma at line 1 column 28"),
+        Err("trailing comma at line 1 column 41"),
+    ),
+    (
+        "{} x",
+        Err("trailing characters at line 1 column 4"),
+        Err("expected `,` or `}` at line 1 column 17"),
+    ),
+    (
+        r#"{"foo":1} x"#,
+        Err("unknown field `foo` at line 1 column 9"),
+        Err("expected `,` or `}` at line 1 column 24"),
+    ),
+];
+
+/// A temporary project root as the tool prints it: canonical, without the `\\?\` lead Windows adds.
+fn printed_root(directory: &tempfile::TempDir) -> PathBuf {
+    let root = directory.path().canonicalize().unwrap();
+    let root = root.to_string_lossy();
+    PathBuf::from(root.strip_prefix(r"\\?\").unwrap_or(&root))
+}
+
+/// Runs `--print-config` on `root`, returning the exit code, stderr and printed configuration.
+fn print_config(root: &std::path::Path, extra: &[&str]) -> (i32, String, Option<Value>) {
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .arg(root)
+        .arg("--print-config")
+        .args(extra)
+        .output()
+        .unwrap();
+    let printed = serde_json::from_slice(&output.stdout).ok();
+    (
+        output.status.code().unwrap(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        printed,
+    )
+}
+
+/// The load paths a printed configuration holds: none when `rubyLoadPaths` is absent.
+fn printed_paths(printed: &Option<Value>) -> Vec<String> {
+    printed
+        .as_ref()
+        .unwrap()
+        .get("rubyLoadPaths")
+        .map_or_else(Vec::new, |paths| {
+            paths
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|path| path.as_str().unwrap().to_owned())
+                .collect()
+        })
+}
+
+/// Checks one `--print-config` run: the paths it yields, or the exact parse error naming `file`.
+fn assert_config_result(
+    root: &std::path::Path,
+    file: &std::path::Path,
+    extra: &[&str],
+    expected: ConfigResult,
+    source: &str,
+) {
+    let (code, stderr, printed) = print_config(root, extra);
+    match expected {
+        Ok(paths) => {
+            assert_eq!(code, 0, "{source}: {stderr}");
+            assert_eq!(printed_paths(&printed), paths, "{source}");
+        }
+        Err(message) => {
+            assert_eq!(code, 2, "{source}");
+            assert_eq!(
+                stderr.trim_end(),
+                format!("error: failed to parse {}: {message}", file.display()),
+                "{source}"
+            );
+        }
+    }
+}
+
+/// Checks each configuration text through `--config` and `package.json#cukeDedup` with its exact
+/// text, position and precedence.
+#[test]
+fn configuration_errors_keep_their_text_position_and_precedence() {
+    for (source, file, package) in CONFIG_BEHAVIOUR.iter().copied() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = printed_root(&directory);
+        let path = root.join("config.json");
+        fs::write(&path, source).unwrap();
+        assert_config_result(
+            &root,
+            &path,
+            &["--config", path.to_str().unwrap()],
+            file,
+            source,
+        );
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = printed_root(&directory);
+        let path = root.join("package.json");
+        fs::write(&path, format!(r#"{{"cukeDedup":{source}}}"#)).unwrap();
+        assert_config_result(&root, &path, &[], package, source);
+    }
+}
+
+/// Checks an auto-discovered file that fails to parse warns with its whole text and analysis
+/// continues, while one that parses leaves no warning.
+#[test]
+fn an_unreadable_auto_discovered_config_warns_and_analysis_continues() {
+    for (source, file, _) in CONFIG_BEHAVIOUR.iter().copied() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = printed_root(&directory);
+        let path = root.join(".cuke-dedup.json");
+        fs::write(&path, source).unwrap();
+        let output = run(&root, None, &[]);
+        assert_eq!(output.status.code(), Some(0), "{source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        match file {
+            Ok(_) => assert!(!stderr.contains("could not load"), "{source}: {stderr}"),
+            Err(message) => {
+                let path = path.display();
+                let warning = format!("could not load auto-discovered config {path} (failed to parse {path}: {message}); trying the next configuration source");
+                assert!(stderr.contains(&warning), "{source}: {stderr}");
+            }
+        }
+    }
+}
+
+/// Checks the one-form rule comes from applying a source, so it names that source, and that it
+/// holds for empty lists too, in all three sources.
+#[test]
+fn ruby_load_path_conflicts_name_their_source() {
+    for ruby_keys in [
+        r#"{"ruby":{"loadPaths":["a"]},"rubyLoadPaths":["b"]}"#,
+        r#"{"ruby":{"loadPaths":[]},"rubyLoadPaths":[]}"#,
+    ] {
+        for (name, contents, label, extra) in [
+            (
+                "config.json",
+                ruby_keys.to_owned(),
+                "config.json",
+                &["--config", "config.json"][..],
+            ),
+            (
+                ".cuke-dedup.json",
+                ruby_keys.to_owned(),
+                ".cuke-dedup.json",
+                &[][..],
+            ),
+            (
+                "package.json",
+                format!(r#"{{"cukeDedup":{ruby_keys}}}"#),
+                "package.json#cukeDedup",
+                &[][..],
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = printed_root(&directory);
+            fs::write(root.join(name), contents).unwrap();
+            let (code, stderr, _) = print_config(&root, extra);
+            assert_eq!(code, 2, "{name}");
+            assert_eq!(
+                stderr.trim_end(),
+                format!("error: invalid configuration in {label}: set Ruby load paths with `ruby.loadPaths` or `rubyLoadPaths`, not both"),
+                "{name}"
+            );
+        }
+    }
+}
+
+/// Checks the first readable source is the only one applied: a standalone file replaces
+/// `package.json` whole, an unreadable one falls through to the next, and `--config` replaces the
+/// rest. A `package.json` that does not parse is fatal in every case, because it is read first.
+#[test]
+fn the_first_readable_configuration_source_replaces_the_others() {
+    let a = r#"{"rubyLoadPaths":["a"]}"#;
+    let b = r#"{"rubyLoadPaths":["b"]}"#;
+    let conflict = r#"{"ruby":{"loadPaths":["a"]},"rubyLoadPaths":["b"]}"#;
+    let unreadable = r#"{"foo":1}"#;
+    for (package, files, extra, expected) in [
+        (
+            a,
+            &[(".cuke-dedup.json", r#"{"definitions":["x"]}"#)][..],
+            &[][..],
+            Vec::new(),
+        ),
+        (
+            a,
+            &[(".cuke-dedup.json", r#"{"rubyLoadPaths":null}"#)][..],
+            &[][..],
+            Vec::new(),
+        ),
+        (
+            a,
+            &[(".cuke-dedup.json", r#"{"ruby":{}}"#)][..],
+            &[][..],
+            Vec::new(),
+        ),
+        (a, &[(".cuke-dedup.json", b)][..], &[][..], vec!["b"]),
+        (
+            r#"{"ruby":{"loadPaths":["a"]}}"#,
+            &[(".cuke-dedup.json", b)][..],
+            &[][..],
+            vec!["b"],
+        ),
+        // Replaced before it is applied, so its conflict never surfaces.
+        (conflict, &[(".cuke-dedup.json", b)][..], &[][..], vec!["b"]),
+        (
+            conflict,
+            &[("config.json", b)][..],
+            &["--config", "config.json"][..],
+            vec!["b"],
+        ),
+        // An unreadable file falls through to the next candidate, then to `package.json`.
+        (
+            a,
+            &[(".cuke-dedup.json", unreadable)][..],
+            &[][..],
+            vec!["a"],
+        ),
+        (
+            a,
+            &[
+                (".cuke-dedup.json", unreadable),
+                (".config/cuke-dedup.json", b),
+            ][..],
+            &[][..],
+            vec!["b"],
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = printed_root(&directory);
+        fs::create_dir(root.join(".config")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            format!(r#"{{"cukeDedup":{package}}}"#),
+        )
+        .unwrap();
+        for (name, contents) in files {
+            fs::write(root.join(name), contents).unwrap();
+        }
+        let (code, stderr, printed) = print_config(&root, extra);
+        assert_eq!(code, 0, "{package} {files:?}: {stderr}");
+        assert_eq!(printed_paths(&printed), expected, "{package} {files:?}");
+    }
+
+    for extra in [&[][..], &["--config", ".cuke-dedup.json"][..]] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = printed_root(&directory);
+        let package = root.join("package.json");
+        fs::write(&package, r#"{"cukeDedup":{"foo":1}}"#).unwrap();
+        fs::write(root.join(".cuke-dedup.json"), b).unwrap();
+        let (code, stderr, _) = print_config(&root, extra);
+        assert_eq!(code, 2, "{extra:?}");
+        assert_eq!(
+            stderr.trim_end(),
+            format!(
+                "error: failed to parse {}: unknown field `foo`",
+                package.display()
+            ),
+            "{extra:?}"
+        );
+    }
+}
+
+/// Checks `--print-config` prints the flat key first, only when it holds paths, and never `ruby`.
+#[test]
+fn ruby_load_path_key_prints_first_and_only_when_set() {
+    for (ruby_keys, first) in [
+        (r#"{"rubyLoadPaths":["lib"]}"#, "rubyLoadPaths"),
+        (r#"{"ruby":{"loadPaths":["lib"]}}"#, "rubyLoadPaths"),
+        (r#"{"rubyLoadPaths":[]}"#, "root"),
+        (r#"{"ruby":{}}"#, "root"),
+        (r#"{"definitions":["a"]}"#, "root"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join(".cuke-dedup.json"), ruby_keys).unwrap();
+        let (_, _, printed) = print_config(directory.path(), &[]);
+        let printed = printed.unwrap();
+        let printed = printed.as_object().unwrap();
+        assert_eq!(
+            printed.keys().next().map(String::as_str),
+            Some(first),
+            "{ruby_keys}"
+        );
+        assert!(!printed.contains_key("ruby"), "{ruby_keys}");
+    }
+}
+
 /// Whether the handler of the only definition `source` registers counts as a stub.
 fn handler_is_stub(language: SourceLanguage, path: &str, source: &str) -> bool {
     let adapter = AdapterRegistry::builtin()

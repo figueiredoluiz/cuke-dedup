@@ -6910,6 +6910,47 @@
           "behaviorClass": "ruby-behavior"
         },
         {
+          "name": "configuration_errors_keep_their_text_position_and_precedence",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: Exact text, position and precedence of configuration errors through `--config` and `package.json`.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "an_unreadable_auto_discovered_config_warns_and_analysis_continues",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: The auto-discovered fallback warning across the same configuration table.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ruby_load_path_conflicts_name_their_source",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/frontend_conformance.rs",
+            "name": "ruby_load_path_conflicts_name_their_source"
+          },
+          "rationale": "Pins the Ruby load-path conflict message and the source it names in all three sources; Ruby-specific, run under completion.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "the_first_readable_configuration_source_replaces_the_others",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: One configuration source applies, and which one.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ruby_load_path_key_prints_first_and_only_when_set",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/frontend_conformance.rs",
+            "name": "ruby_load_path_key_prints_first_and_only_when_set"
+          },
+          "rationale": "Pins where `--print-config` prints the Ruby load-path key; Ruby-specific, run under completion.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "adapters_share_one_stub_vocabulary",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
