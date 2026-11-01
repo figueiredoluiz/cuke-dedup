@@ -881,20 +881,19 @@ pub(super) fn apply_indirect_usage(
     config: &Config,
     outcome: &mut FeatureUsageOutcome,
 ) {
-    if !definitions
+    let Some(invoking) = definitions
         .iter()
-        .any(|d| d.analysis_profile().step_invocation)
-    {
+        .map(StepDefinition::analysis_profile)
+        .find(|profile| profile.step_invocation)
+    else {
         return;
-    }
+    };
     let Some(usage) = usage.filter(|usage| !usage.unknown) else {
         outcome.used.extend(0..definitions.len());
-        let unresolved = if definitions[0].analysis_policy.is_unattached() {
-            "Unattached indirect step usage is unresolved; unused-definition findings are disabled"
-        } else {
-            "Ruby indirect step usage is unresolved; unused-definition findings are disabled"
-        };
-        outcome.incomplete.push(unresolved.to_owned());
+        outcome.incomplete.push(format!(
+            "{} indirect step usage is unresolved; unused-definition findings are disabled",
+            invoking.domain.display_name
+        ));
         return;
     };
     if usage.texts.is_empty() {

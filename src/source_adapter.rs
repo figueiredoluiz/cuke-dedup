@@ -288,6 +288,9 @@ pub struct SourceParameterType {
     pub expression: Option<String>,
     /// Location of the declaration, used to diagnose collisions across files.
     pub location: SourceLocation,
+    /// Comparison domain of the declaring source, which names it in diagnostics; unattached until
+    /// [`SourceParameterType::with_domain`] sets it.
+    pub domain: &'static DomainSpec,
 }
 
 impl SourceParameterType {
@@ -297,7 +300,13 @@ impl SourceParameterType {
             name,
             expression,
             location,
+            domain: AnalysisPolicy::unattached().domain(),
         }
+    }
+
+    /// This declaration, attributed to `domain` in diagnostics.
+    pub fn with_domain(self, domain: &'static DomainSpec) -> Self {
+        Self { domain, ..self }
     }
 }
 
@@ -896,6 +905,23 @@ impl AdapterRegistry {
             .map(|adapter| adapter.analysis_policy().domain())
     }
 
+    /// The display names of the comparison domains `languages` fall in, in registry order, each
+    /// once.
+    pub(crate) fn domain_names(
+        &self,
+        languages: impl Iterator<Item = SourceLanguage>,
+    ) -> Vec<&'static str> {
+        let languages: Vec<_> = languages.collect();
+        let mut domains = Vec::new();
+        for registration in self.registrations.iter() {
+            let domain = registration.adapter.analysis_policy().domain();
+            if languages.contains(&registration.adapter.language()) && !domains.contains(&domain) {
+                domains.push(domain);
+            }
+        }
+        domains.iter().map(|domain| domain.display_name).collect()
+    }
+
     /// Every registered framework contract, in registry order and then each adapter's precedence
     /// order. Adapter types serving several suffixes are read once: a repeated id is skipped.
     pub(crate) fn framework_contracts(
@@ -965,15 +991,27 @@ impl AdapterRegistry {
     /// `core` followed by the default exclude globs every registered adapter declares, its own
     /// before its frameworks', in registry order without repeats.
     pub(crate) fn default_excludes(&self, core: &[&'static str]) -> Vec<&'static str> {
+        self.collect_excludes(core, true)
+    }
+
+    /// The default exclude globs adapters declare for themselves, leaving out their frameworks',
+    /// in registry order without repeats.
+    pub(crate) fn adapter_excludes(&self) -> Vec<&'static str> {
+        self.collect_excludes(&[], false)
+    }
+
+    /// `core`, then each adapter's own exclude globs and, when asked, its frameworks'.
+    fn collect_excludes(&self, core: &[&'static str], frameworks: bool) -> Vec<&'static str> {
         let mut excludes = core.to_vec();
         for registration in self.registrations.iter() {
             let adapter = registration.adapter;
             let own = adapter.default_excludes().iter();
-            let frameworks = adapter
+            let declared = adapter
                 .framework_contracts()
                 .iter()
+                .filter(|_| frameworks)
                 .flat_map(|contract| contract.excludes);
-            for glob in own.chain(frameworks) {
+            for glob in own.chain(declared) {
                 if !excludes.contains(glob) {
                     excludes.push(*glob);
                 }

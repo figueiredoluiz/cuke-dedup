@@ -1578,6 +1578,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "join_names_reads_as_prose",
+          "requiredStatus": "engine-invariant",
+          "stage": "cli-parsing",
+          "rationale": "Adapter-independent stage `cli-parsing`: a pure string helper for diagnostics and help; no adapter produces any input.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "supports_implicit_and_explicit_check_forms",
           "requiredStatus": "engine-invariant",
           "stage": "cli-parsing",
@@ -3157,6 +3164,13 @@
           },
           "rationale": "`registry_uncertainty_isolates_languages_but_groups_ecmascript_variants` extracts `.rb` sources through the shared extraction session beside ECMAScript ones (registry uncertainty isolation, late Ruby finalization effects) in-process.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "domain_names_follow_the_registry_for_the_languages_present",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Adapter-independent stage `session-plumbing`: registry lookup over language ids; no source is read.",
+          "behaviorClass": "shared-engine-invariant"
         },
         {
           "name": "registry_uncertainty_covers_unattached_definitions",
@@ -6789,6 +6803,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "diagnostics_word_the_domain_that_raised_them",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: diagnostics name a caller-built domain; no adapter produces any input.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "caller_policies_key_matchers_and_resolve_contract_policies",
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
@@ -6935,6 +6956,33 @@
           "requiredStatus": "engine-invariant",
           "stage": "config-decoding",
           "rationale": "Adapter-independent stage `config-decoding`: The auto-discovered fallback warning across the same configuration table.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ruby_declaration_only_file_words_its_parameter_diagnostic",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/frontend_conformance.rs",
+            "name": "ruby_declaration_only_file_words_its_parameter_diagnostic"
+          },
+          "rationale": "A Ruby file with duplicate parameter declarations and no definitions words its diagnostic from the declaration. Parameter declarations are Ruby-only.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_mixed_sources_are_named_in_registry_order",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/frontend_conformance.rs",
+            "name": "ruby_mixed_sources_are_named_in_registry_order"
+          },
+          "rationale": "A Ruby file beside a JS file is refused, naming Ruby first whichever file sorts first, because Ruby registers first.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "help_names_exclusions_from_the_adapters",
+          "requiredStatus": "engine-invariant",
+          "stage": "cli-parsing",
+          "rationale": "Adapter-independent stage `cli-parsing`: help text built from the registry; no source is read.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

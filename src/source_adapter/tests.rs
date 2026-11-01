@@ -1164,6 +1164,26 @@ fn language_domains_follow_the_registered_adapters() {
         .unwrap();
     let alias: &'static DomainSpec = Box::leak(Box::new(DomainSpec::new(ruby.label, ruby.dialect)));
     assert_ne!(alias, ruby);
+    // A domain reads as its label in diagnostics until it is named.
+    let unnamed = DomainSpec::new("unnamed", ruby.dialect);
+    assert_eq!(unnamed.display_name, "unnamed");
+    assert_eq!(unnamed.with_display_name("Named").display_name, "Named");
+}
+
+/// Domain names come in registry order, each once, for the languages present only.
+#[test]
+fn domain_names_follow_the_registry_for_the_languages_present() {
+    let names = |languages: &[SourceLanguage]| {
+        AdapterRegistry::builtin().domain_names(languages.iter().copied())
+    };
+    assert_eq!(names(&[]), [""; 0]);
+    assert_eq!(names(&[SourceLanguage::new("python")]), [""; 0]);
+    assert_eq!(names(&[TSX, JAVASCRIPT]), ["JS/TS"]);
+    assert_eq!(names(&[crate::ruby::RUBY]), ["Ruby"]);
+    assert_eq!(
+        names(&[TYPESCRIPT, crate::ruby::RUBY, JAVASCRIPT]),
+        ["Ruby", "JS/TS"]
+    );
 }
 
 /// The attached policy, not the framework label, selects the comparison behaviour: flipping only

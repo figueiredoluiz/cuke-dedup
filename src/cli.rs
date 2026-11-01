@@ -134,8 +134,8 @@ struct CheckOptions {
     #[arg(long, global = true, value_delimiter = ',')]
     exclude: Option<Vec<String>>,
 
-    /// Disable built-in exclusions such as node_modules and target.
-    #[arg(long, global = true)]
+    /// Disable built-in exclusions.
+    #[arg(long, global = true, help = exclusions_help())]
     no_default_excludes: bool,
 
     /// Descend into dot-directories such as .steps.
@@ -229,6 +229,25 @@ struct PhaseTimings {
 /// Parses the process arguments, runs the configured analysis, and returns its exit code.
 pub fn run_cli() -> Result<i32> {
     execute(Cli::parse())
+}
+
+/// The `--no-default-excludes` help, naming the exclusions of the built-in adapters.
+fn exclusions_help() -> String {
+    let excluded = crate::config::excluded_directories(source_adapter::AdapterRegistry::builtin());
+    format!(
+        "Disable built-in exclusions such as {}",
+        join_names(&excluded)
+    )
+}
+
+/// `names` as prose: `a`, `a and b`, `a, b and c`.
+fn join_names(names: &[&str]) -> String {
+    match names {
+        [leading @ .., last] if !leading.is_empty() => {
+            format!("{} and {last}", leading.join(", "))
+        }
+        _ => names.concat(),
+    }
 }
 
 /// Runs discovery, extraction, analysis, finding modes and baseline, writes reports and stderr
@@ -516,7 +535,13 @@ fn extract_definitions(
             .any(|file| domain(file) != first_domain)
         {
             corpus.incomplete = true;
-            diagnostics.errors.push("Ruby and JS/TS sources require separate analysis runs with explicit definition and feature roots".to_owned());
+            let names = config
+                .adapters()
+                .domain_names(files.definitions.iter().map(|file| file.language));
+            diagnostics.errors.push(format!(
+                "{} sources require separate analysis runs with explicit definition and feature roots",
+                join_names(&names)
+            ));
             return;
         }
     }

@@ -49,9 +49,12 @@ pub fn merge_parameter_types(
             }
             _ => {
                 patterns.remove(&name);
-                // Only the Ruby adapter declares parameter types; the wording is part of the
-                // report contract.
-                diagnostics.push(format!("Ruby parameter type {name:?} has an unresolved or duplicate declaration at {}:{}", declaration.location.path.display(), declaration.location.line));
+                diagnostics.push(format!(
+                    "{} parameter type {name:?} has an unresolved or duplicate declaration at {}:{}",
+                    declaration.domain.display_name,
+                    declaration.location.path.display(),
+                    declaration.location.line
+                ));
             }
         }
     }

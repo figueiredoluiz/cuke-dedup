@@ -83,6 +83,69 @@ fn ruby_selection_dependencies_and_mixed_domain_keep_cli_outcomes() {
     assert!(String::from_utf8_lossy(&mixed.stderr).contains("separate analysis runs"));
 }
 
+/// Checks the mixed-source refusal names its languages in registry order, whichever sorts first.
+#[test]
+fn ruby_mixed_sources_are_named_in_registry_order() {
+    for (ruby, javascript) in [("a.rb", "b.js"), ("b.rb", "a.js")] {
+        let project = tempfile::tempdir().unwrap();
+        fs::write(project.path().join(ruby), "Given('a') { work }").unwrap();
+        fs::write(project.path().join(javascript), "Given('a', () => work());").unwrap();
+        let mixed = run(project.path(), Some("*.rb,*.js"), &[]);
+        assert_eq!(mixed.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&mixed.stderr);
+        assert!(
+            stderr.contains(
+                "Ruby and JS/TS sources require separate analysis runs with explicit definition \
+                 and feature roots"
+            ),
+            "{stderr}"
+        );
+    }
+}
+
+/// Checks the help names each adapter's own exclusions, once, before the core's, at the root and on
+/// the subcommand that inherits the option.
+#[test]
+fn help_names_exclusions_from_the_adapters() {
+    for args in [
+        &["--help"][..],
+        &["-h"][..],
+        &["check", "--help"][..],
+        &["check", "-h"][..],
+    ] {
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .args(args)
+            .output()
+            .unwrap();
+        let help = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            help.contains("Disable built-in exclusions such as node_modules and target\n"),
+            "{help}"
+        );
+    }
+}
+
+/// Checks a file holding only parameter declarations words its diagnostic, with no definition to
+/// take a language from.
+#[test]
+fn ruby_declaration_only_file_words_its_parameter_diagnostic() {
+    let project = tempfile::tempdir().unwrap();
+    let declaration = "ParameterType(name: 'size', regexp: /small/, transformer: ->(s) { s })\n";
+    fs::write(
+        project.path().join("types.rb"),
+        format!("{declaration}{declaration}"),
+    )
+    .unwrap();
+    let output = run(project.path(), Some("types.rb"), &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr
+            .contains("Ruby parameter type \"size\" has an unresolved or duplicate declaration at"),
+        "{stderr}"
+    );
+}
+
 /// Checks NUL-byte binary exclusion belongs to the JavaScript adapter and does not reject Ruby source.
 #[test]
 fn source_exclusion_stays_with_javascript_adapter() {

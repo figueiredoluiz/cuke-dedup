@@ -17,6 +17,16 @@ use std::str::FromStr;
 /// Build output of any toolchain; adapters add their ecosystem's and frameworks' globs after it.
 const CORE_EXCLUDES: [&str; 1] = ["**/target/**"];
 
+/// The directories `--no-default-excludes` help names: every adapter's own, then the core's.
+pub(crate) fn excluded_directories(adapters: &AdapterRegistry) -> Vec<&'static str> {
+    adapters
+        .adapter_excludes()
+        .into_iter()
+        .chain(CORE_EXCLUDES)
+        .map(|glob| glob.trim_start_matches("**/").trim_end_matches("/**"))
+        .collect()
+}
+
 /// The default exclude globs: the core's, then every adapter's in `adapters`, without repeats.
 fn default_excludes(adapters: &AdapterRegistry) -> impl Iterator<Item = String> {
     adapters

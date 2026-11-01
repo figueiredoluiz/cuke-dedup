@@ -535,7 +535,7 @@ static TRANSLATED_BODY: CallerDialect = CallerDialect {
     key: RegexKey::TranslatedBody,
     identity: IdentityFlags::All,
 };
-static CALLER: DomainSpec = DomainSpec::new("caller", &NEVER_MATCHES);
+static CALLER: DomainSpec = DomainSpec::new("caller", &NEVER_MATCHES).with_display_name("Caller");
 // Same label and dialect as `CALLER`, but a different static: a different domain.
 static CALLER_TWIN: DomainSpec = DomainSpec::new("caller", &NEVER_MATCHES);
 static OPAQUE: DomainSpec = DomainSpec::new("opaque", &UNTRANSLATABLE);
@@ -837,6 +837,49 @@ fn unattached_definitions_do_not_compare_as_a_builtin_language() {
         assert_eq!(
             run(unattached, kind, None),
             (vec![], vec![unresolved.to_owned()])
+        );
+    }
+}
+
+/// Checks diagnostics name the caller domain that raised them, with no shared-code edit: its
+/// display name, else its label; a declaration with no domain reads as unattached.
+#[test]
+fn diagnostics_word_the_domain_that_raised_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    for (domain, name) in [(&CALLER, "Caller"), (&OPAQUE, "opaque")] {
+        let policy = AnalysisPolicy::new(
+            domain,
+            HandlerScope::Shared,
+            StepMatching::ByText,
+            StreamEvidence::Complete,
+            true,
+        );
+        let definition = caller_definition(policy, "a cat", MatcherKind::CucumberExpression, 2);
+        assert_eq!(
+            analyze_with_diagnostics(vec![definition], Vec::new(), &config)
+                .unwrap()
+                .incomplete,
+            [format!(
+                "{name} indirect step usage is unresolved; unused-definition findings are disabled"
+            )]
+        );
+    }
+
+    let declaration = SourceParameterType::new(
+        Some("size".to_owned()),
+        None,
+        SourceLocation::new(PathBuf::from("steps.caller"), 4, 1, 4, 2),
+    );
+    for (declaration, name) in [
+        (declaration.clone().with_domain(&CALLER), "Caller"),
+        (declaration, "Unattached"),
+    ] {
+        assert_eq!(
+            merge_parameter_types(vec![declaration], &BTreeMap::new()).1,
+            [format!(
+                "{name} parameter type \"size\" has an unresolved or duplicate declaration at steps.caller:4"
+            )]
         );
     }
 }
