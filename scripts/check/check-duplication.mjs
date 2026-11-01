@@ -117,7 +117,7 @@ const SCOPES = [
     // partition assertion below is the backstop for a file neither scope selects.
     files: () => ALL_RUST_SOURCES.filter((path) => path.startsWith("src/") && !isTestPath(path)),
     maximumPercentage: 0.27,
-    maximumDuplicatedLines: 96,
+    maximumDuplicatedLines: 95,
     minimumFiles: 30,
     minimumLines: 15_000,
   },

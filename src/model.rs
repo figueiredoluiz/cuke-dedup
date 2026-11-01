@@ -278,9 +278,10 @@ pub struct StepDefinition {
     /// serialized: a deserialized definition gets its framework contract's policy, else its
     /// adapter's. The adapter is the one `location.path` routes to when that adapter declares
     /// `framework` or `framework` is [`Framework::UNKNOWN`], else the first one declaring
-    /// `framework`; with neither, and for a hand-built definition, [`AnalysisPolicy::default`].
-    /// Built-in extraction attaches the same policy, so built-in definitions round-trip; a caller
-    /// adapter that attaches a policy on other grounds does not.
+    /// `framework`; with neither, [`AnalysisPolicy::unattached`], which also re-keys
+    /// `normalized_matcher`. Built-in extraction attaches the same policy, so built-in definitions
+    /// round-trip, except one with framework `unknown` at a path that routes to no adapter; a
+    /// caller adapter that attaches a policy on other grounds does not.
     #[serde(skip)]
     pub analysis_policy: AnalysisPolicy,
     /// Registration name resolved from direct, aliased, or namespaced usage.
@@ -305,7 +306,7 @@ struct StepDefinitionFields {
     matcher_flags: String,
     handler: HandlerFingerprint,
     framework: Framework,
-    #[serde(skip)]
+    #[serde(skip, default = "AnalysisPolicy::unattached")]
     analysis_policy: AnalysisPolicy,
     registration: String,
     location: SourceLocation,
@@ -328,8 +329,17 @@ impl<'de> Deserialize<'de> for StepDefinition {
         let registry = seeded
             .as_deref()
             .unwrap_or(crate::source_adapter::AdapterRegistry::builtin());
-        definition.analysis_policy =
-            registry.policy_for(definition.framework, &definition.location.path);
+        let policy = registry.policy_for(definition.framework, &definition.location.path);
+        definition.analysis_policy = policy;
+        // The stored key follows a dialect nothing claims any more.
+        if policy.is_unattached() {
+            definition.normalized_matcher = policy.normalized_matcher(
+                definition.matcher_kind,
+                &definition.matcher,
+                &definition.matcher_flags,
+                None,
+            );
+        }
         Ok(definition)
     }
 }

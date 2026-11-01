@@ -167,9 +167,35 @@ pub(crate) fn builtin_parameter_sample(pattern: &str) -> Option<String> {
         .or_else(|| alternative_sample(pattern))
 }
 
+/// The dialect of a definition no adapter claims. Its regex semantics are unknown: nothing
+/// translates, and matchers compare only as written.
+struct UnattachedRegex;
+static UNATTACHED_REGEX: UnattachedRegex = UnattachedRegex;
+
+impl RegexDialect for UnattachedRegex {
+    /// Declines: no translation is faithful to an unknown dialect.
+    fn translate(&self, _: &str, _: &str) -> Option<TranslatedRegex> {
+        None
+    }
+    /// Keys on the source pattern as written, without canonicalization.
+    fn regex_key(&self) -> RegexKey {
+        RegexKey::TranslatedBody
+    }
+    /// Every flag counts: which ones are inert depends on the dialect.
+    fn identity_flags(&self) -> IdentityFlags {
+        IdentityFlags::All
+    }
+    /// Requires identical flag strings, for the same reason.
+    fn similarity_flags_match(&self, left: &str, right: &str) -> bool {
+        left == right
+    }
+}
+
+static UNATTACHED: DomainSpec = DomainSpec::new("unattached", &UNATTACHED_REGEX);
+
 /// How the analyzer compares one definition with others, declared by the adapter that extracted
-/// it. A [`StepDefinition`] built by hand gets [`AnalysisPolicy::default`] unless the caller
-/// attaches one built with [`AnalysisPolicy::new`].
+/// it. A [`StepDefinition`] built by hand names one: [`AnalysisPolicy::unattached`], an adapter's,
+/// or one built with [`AnalysisPolicy::new`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnalysisPolicy {
@@ -197,6 +223,27 @@ impl AnalysisPolicy {
             stream_evidence,
             step_invocation,
         }
+    }
+
+    /// The policy of a definition no adapter claims. Its domain is its own, so analysis refuses
+    /// to mix it with an adapter's definitions, and registration refuses an adapter that declares
+    /// it. No regex translates, so usage treats regex matchers as non-authoritative. Handlers may
+    /// invoke steps by text as far as anyone knows, so without indirect usage evidence unused
+    /// findings are disabled and the result is incomplete. Handlers keep the evidence regime they
+    /// declare, in the shared scope, matched by text.
+    pub const fn unattached() -> Self {
+        Self::new(
+            &UNATTACHED,
+            HandlerScope::Shared,
+            StepMatching::ByText,
+            StreamEvidence::Declared,
+            true,
+        )
+    }
+
+    /// Whether this is [`AnalysisPolicy::unattached`]'s domain.
+    pub(crate) fn is_unattached(self) -> bool {
+        self.domain == &UNATTACHED
     }
 
     /// The comparison domain this policy declares.
@@ -244,14 +291,6 @@ impl AnalysisPolicy {
             scores_event_overlap,
             excludes_identical_event_streams,
         }
-    }
-}
-
-impl Default for AnalysisPolicy {
-    /// The policy of a definition nobody attached one to: the shared-scope, text-matched,
-    /// complete-stream policy of the JavaScript/TypeScript adapter.
-    fn default() -> Self {
-        crate::typescript::semantics::default_policy()
     }
 }
 

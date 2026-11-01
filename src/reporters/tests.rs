@@ -6,6 +6,7 @@ use crate::model::{
     HandlerFingerprint, MatcherDiff, MatcherKind, Rule, Severity, SourceLocation, StepDefinition,
     Suppression,
 };
+use crate::typescript::semantics::default_policy;
 use std::path::{Path, PathBuf};
 
 /// Builds a synthetic Cucumber-expression definition with an empty non-comparable handler.
@@ -28,7 +29,7 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
             capture_scope: None,
         },
         framework: Framework::UNKNOWN,
-        analysis_policy: Default::default(),
+        analysis_policy: default_policy(),
         registration: "Given".to_owned(),
         location,
         inline_suppressions: Vec::new(),

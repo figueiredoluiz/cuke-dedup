@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::{ConfigOverrides, SuppressionConfig};
 use crate::discovery::SourceFile;
+use crate::typescript::semantics::default_policy;
 use crate::typescript::TYPESCRIPT;
 use std::path::{Path, PathBuf};
 
@@ -355,7 +356,7 @@ fn scan_windows_stop_at_a_break() {
             exact: String::new(),
         },
         framework: crate::model::Framework::UNKNOWN,
-        analysis_policy: Default::default(),
+        analysis_policy: default_policy(),
         registration: "Given".to_owned(),
         location: crate::model::SourceLocation::new("synthetic", 1, 1, 1, 1),
         inline_suppressions: Vec::new(),

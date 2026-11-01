@@ -1,4 +1,5 @@
 use super::*;
+use crate::typescript::semantics::default_policy;
 
 /// Builds a synthetic non-comparable step definition at the requested source line.
 fn definition(line: usize) -> StepDefinition {
@@ -20,7 +21,7 @@ fn definition(line: usize) -> StepDefinition {
             capture_scope: None,
         },
         framework: Framework::UNKNOWN,
-        analysis_policy: Default::default(),
+        analysis_policy: default_policy(),
         registration: "Given".to_owned(),
         location: SourceLocation::new("steps.ts", line, 1, line, 10),
         inline_suppressions: Vec::new(),

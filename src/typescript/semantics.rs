@@ -59,7 +59,7 @@ pub(crate) fn policy(framework: Framework) -> AnalysisPolicy {
     FrameworkContract::policy_of(&FRAMEWORK_CONTRACTS, framework, default_policy())
 }
 
-/// The policy of a definition with no framework-specific scope: [`Framework::UNKNOWN`]'s.
+/// The policy of a JS/TS definition with no framework-specific scope: [`Framework::UNKNOWN`]'s.
 pub(crate) const fn default_policy() -> AnalysisPolicy {
     ecmascript(HandlerScope::Shared, StepMatching::ByText)
 }

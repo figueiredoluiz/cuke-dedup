@@ -234,6 +234,11 @@ impl SourceAdapter for DefaultSessionAdapter {
     fn extract(&self, _source: &str, _file: &SourceFile) -> Result<Extraction> {
         anyhow::bail!("default extract delegation reached")
     }
+
+    /// Delegation never reaches a comparison.
+    fn analysis_policy(&self) -> AnalysisPolicy {
+        AnalysisPolicy::unattached()
+    }
 }
 
 /// Checks every supported suffix routes to the expected language and named adapter.
@@ -338,14 +343,6 @@ fn adapter_session_default_preserves_existing_extract_implementations() {
     let adapter = DefaultSessionAdapter;
     assert_eq!(adapter.name(), "default-session-test");
     assert_eq!(adapter.language(), JAVASCRIPT);
-    // An adapter that declares no policy inherits the baseline; Ruby's own differs from it.
-    assert_eq!(adapter.analysis_policy(), AnalysisPolicy::default());
-    assert_ne!(
-        adapter_for_language(crate::ruby::RUBY)
-            .unwrap()
-            .analysis_policy(),
-        adapter.analysis_policy()
-    );
     // An adapter that declares no framework attributes definitions to none and excludes nothing;
     // Ruby declares one framework, JavaScript one ecosystem exclude.
     assert!(adapter.framework_contracts().is_empty());
@@ -662,6 +659,10 @@ impl SourceAdapter for ReplacementRuby {
     fn extract(&self, _: &str, _: &SourceFile) -> Result<Extraction> {
         Ok(Extraction::new(Vec::new(), Vec::new()))
     }
+    /// Declares Ruby's comparison policy.
+    fn analysis_policy(&self) -> AnalysisPolicy {
+        crate::ruby::semantics::policy()
+    }
 }
 
 static REPLACEMENT_RUBY: ReplacementRuby = ReplacementRuby;
@@ -792,6 +793,21 @@ fn finalization_scopes_preserve_independent_final_findings() {
     }
 }
 
+/// `definitions` after a registration effect scoped to `language`'s registry.
+fn after_registry_effect(
+    mut definitions: Vec<StepDefinition>,
+    language: SourceLanguage,
+) -> Vec<StepDefinition> {
+    let mut finalization = SourceFinalization::default();
+    finalization.uncertainties.push(SourceUncertainty::new(
+        UncertaintyScope::Registry(language),
+        UncertaintyCause::Registration,
+        "registry effect",
+    ));
+    finalization.apply(&mut definitions);
+    definitions
+}
+
 /// Checks registry uncertainty groups ECMAScript variants together while keeping Ruby findings
 /// independent, and covers every definition for a language no registered adapter declares.
 #[test]
@@ -817,14 +833,7 @@ fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
         (crate::ruby::RUBY, 3, 2),
         (SourceLanguage::new("python"), 0, 0),
     ] {
-        let mut actual = definitions.clone();
-        let mut finalization = SourceFinalization::default();
-        finalization.uncertainties.push(SourceUncertainty::new(
-            UncertaintyScope::Registry(language),
-            UncertaintyCause::Registration,
-            "registry effect",
-        ));
-        finalization.apply(&mut actual);
+        let actual = after_registry_effect(definitions.clone(), language);
         assert_eq!(actual.len(), retained, "{language:?}");
         let result = crate::analysis::analyze_with_diagnostics(actual, vec![], &config)
             .unwrap()
@@ -832,6 +841,34 @@ fn registry_uncertainty_isolates_languages_but_groups_ecmascript_variants() {
         let rule = Rule::DuplicateMatcher;
         let actual = result.findings.iter().filter(|f| f.rule == rule).count();
         assert_eq!(actual, matcher_findings, "{language:?}");
+    }
+}
+
+/// A registry-scoped effect reaches an unattached definition, whose language nothing shows, and
+/// leaves an extracted definition of another domain alone.
+#[test]
+fn registry_uncertainty_covers_unattached_definitions() {
+    let extracted = adapter_for_language(JAVASCRIPT)
+        .unwrap()
+        .extract(
+            "import { Given } from '@cucumber/cucumber'; Given('a', () => work());",
+            &SourceFile {
+                path: "steps.js".into(),
+                language: JAVASCRIPT,
+            },
+        )
+        .unwrap()
+        .definitions;
+    let mut unattached = extracted.clone();
+    unattached[0].analysis_policy = AnalysisPolicy::unattached();
+    for (definitions, language, retained) in [
+        (&extracted, crate::ruby::RUBY, 1),
+        (&extracted, JAVASCRIPT, 0),
+        (&unattached, crate::ruby::RUBY, 0),
+        (&unattached, JAVASCRIPT, 0),
+    ] {
+        let actual = after_registry_effect(definitions.clone(), language);
+        assert_eq!(actual.len(), retained, "{language:?}");
     }
 }
 
@@ -1002,17 +1039,17 @@ fn adapter_policies_resolve_to_their_declared_capabilities() {
     }
 }
 
-/// An unconfigured definition keeps the baseline JavaScript/TypeScript policy; extraction attaches
-/// the policy of the framework that registered each definition, and Ruby its own. A serialized
-/// definition reads back with the policy extraction attached.
+/// Extraction attaches the policy of the framework that registered each definition, and Ruby its
+/// own. A serialized definition reads back with the policy extraction attached.
 #[test]
 fn extraction_attaches_the_policy_of_the_registering_framework() {
+    let baseline = crate::typescript::semantics::default_policy();
     assert_eq!(
-        AnalysisPolicy::default(),
+        baseline,
         crate::typescript::semantics::policy(Framework::UNKNOWN)
     );
     // The debug form names the domain label, so a failing assertion shows which domain differed.
-    assert!(format!("{:?}", AnalysisPolicy::default()).contains("DomainSpec(ecmascript)"));
+    assert!(format!("{baseline:?}").contains("DomainSpec(ecmascript)"));
     // Every definition carries one policy; keep it to a pointer plus packed flags.
     assert!(std::mem::size_of::<AnalysisPolicy>() <= 16);
     let mut extracted = Vec::new();
@@ -1063,18 +1100,15 @@ fn extraction_attaches_the_policy_of_the_registering_framework() {
         ruby.definitions[0].analysis_policy,
         crate::ruby::semantics::policy()
     );
-    assert_ne!(
-        ruby.definitions[0].analysis_policy,
-        AnalysisPolicy::default()
-    );
+    assert_ne!(ruby.definitions[0].analysis_policy, baseline);
     extracted.push(ruby.definitions[0].clone());
     // The policy is not serialized; reading back attaches the one extraction did, which differs
-    // from the default for Jest-Cucumber, vitest-cucumber-plugin and Ruby.
-    let defaults = extracted
+    // from the baseline for Jest-Cucumber, vitest-cucumber-plugin and Ruby.
+    let baselines = extracted
         .iter()
-        .filter(|definition| definition.analysis_policy == AnalysisPolicy::default())
+        .filter(|definition| definition.analysis_policy == baseline)
         .count();
-    assert_eq!(defaults, extracted.len() - 3);
+    assert_eq!(baselines, extracted.len() - 3);
     for definition in extracted {
         let restored: StepDefinition =
             serde_json::from_str(&serde_json::to_string(&definition).unwrap()).unwrap();
@@ -1273,27 +1307,27 @@ fn public_framework_contracts_start_without_discovery_or_excludes() {
 fn contract_builders_attach_discovery_and_policy() {
     let framework = Framework::new("external-framework");
     let discovery = FrameworkDescriptor::new("External", |_| Ok(None));
-    let default = AnalysisPolicy::default();
+    let baseline = crate::typescript::semantics::default_policy();
     let local = AnalysisPolicy::new(
-        default.domain(),
+        baseline.domain(),
         HandlerScope::Local,
         StepMatching::ByText,
         StreamEvidence::Complete,
         false,
     );
-    assert_ne!(local, default);
+    assert_ne!(local, baseline);
     let plain = FrameworkContract::new(framework).with_discovery(discovery);
     assert!(plain.discovery.is_some() && plain.policy.is_none());
     let scoped = FrameworkContract::new(framework).with_policy(local);
     assert_eq!(scoped.policy, Some(local));
-    for (contracts, expected) in [([plain], default), ([scoped], local)] {
+    for (contracts, expected) in [([plain], baseline), ([scoped], local)] {
         assert_eq!(
-            FrameworkContract::policy_of(&contracts, framework, default),
+            FrameworkContract::policy_of(&contracts, framework, baseline),
             expected
         );
         assert_eq!(
-            FrameworkContract::policy_of(&contracts, Framework::UNKNOWN, default),
-            default
+            FrameworkContract::policy_of(&contracts, Framework::UNKNOWN, baseline),
+            baseline
         );
     }
 }

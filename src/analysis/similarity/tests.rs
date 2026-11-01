@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
+use crate::typescript::semantics::default_policy;
 
 /// A `Framework::UNKNOWN` definition using `matcher` as raw and normalized text, empty handler.
 fn definition(matcher: &str, kind: MatcherKind) -> StepDefinition {
@@ -21,7 +22,7 @@ fn definition(matcher: &str, kind: MatcherKind) -> StepDefinition {
             capture_scope: None,
         },
         framework: Framework::UNKNOWN,
-        analysis_policy: Default::default(),
+        analysis_policy: default_policy(),
         registration: "Given".to_owned(),
         location: SourceLocation::new("steps.ts", 1, 1, 1, 1),
         inline_suppressions: Vec::new(),

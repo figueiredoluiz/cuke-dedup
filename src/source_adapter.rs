@@ -556,6 +556,10 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
     /// Extracts definitions from in-memory source using `file` for source locations.
     fn extract(&self, source: &str, file: &SourceFile) -> Result<Extraction>;
 
+    /// The comparison policy this adapter attaches to the definitions it extracts; a
+    /// framework-specific policy is attached per definition.
+    fn analysis_policy(&self) -> AnalysisPolicy;
+
     /// Whether this frontend participates when no definition globs are configured.
     fn discover_by_default(&self) -> bool {
         true
@@ -568,12 +572,6 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
         _registrations: &[String],
     ) -> Option<SourceExclusion> {
         None
-    }
-
-    /// The comparison policy this adapter attaches to the definitions it extracts. The default is
-    /// [`AnalysisPolicy::default`]; a framework-specific policy is attached per definition.
-    fn analysis_policy(&self) -> AnalysisPolicy {
-        AnalysisPolicy::default()
     }
 
     /// The frameworks this adapter attributes definitions to, in precedence order. Their ids are
@@ -924,7 +922,7 @@ impl AdapterRegistry {
     /// The policy of a definition of `framework` at `path`: its contract's policy, else its
     /// adapter's. The adapter is the one `path` routes to when that adapter declares `framework` or
     /// `framework` is [`Framework::UNKNOWN`], else the first one declaring `framework`; with
-    /// neither, [`AnalysisPolicy::default`]. Adapters sharing one contract slice may differ in
+    /// neither, [`AnalysisPolicy::unattached`]. Adapters sharing one contract slice may differ in
     /// policy, so the routed adapter comes first.
     pub(crate) fn policy_for(&self, framework: Framework, path: &Path) -> AnalysisPolicy {
         let declares = |adapter: &&'static dyn SourceAdapter| {
@@ -948,7 +946,7 @@ impl AdapterRegistry {
                     adapter.analysis_policy(),
                 )
             })
-            .unwrap_or_default()
+            .unwrap_or(AnalysisPolicy::unattached())
     }
 
     /// [`Framework::UNKNOWN`] followed by every registered contract's framework.

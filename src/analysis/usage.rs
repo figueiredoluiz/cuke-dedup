@@ -889,10 +889,12 @@ pub(super) fn apply_indirect_usage(
     }
     let Some(usage) = usage.filter(|usage| !usage.unknown) else {
         outcome.used.extend(0..definitions.len());
-        outcome.incomplete.push(
+        let unresolved = if definitions[0].analysis_policy.is_unattached() {
+            "Unattached indirect step usage is unresolved; unused-definition findings are disabled"
+        } else {
             "Ruby indirect step usage is unresolved; unused-definition findings are disabled"
-                .to_owned(),
-        );
+        };
+        outcome.incomplete.push(unresolved.to_owned());
         return;
     };
     if usage.texts.is_empty() {
