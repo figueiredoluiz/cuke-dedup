@@ -3,18 +3,14 @@
 mod config;
 mod finalization;
 mod registry_validation;
-pub(crate) use config::FrontendConfig;
-// Every frontend's keys of one configuration source, flattened into the core config. Only Ruby
-// has keys today. A wrapper struct flattening it would nest two flattens, and serde then rejects
-// every frontend key under the core's `deny_unknown_fields`, so a second frontend's keys need a
-// single flattened struct, not a wrapper.
-pub(crate) use crate::ruby::config::RawRubyConfig as RawFrontendConfig;
+pub(crate) use config::{reading_with, AdapterKeys, AdapterSections};
 pub(crate) mod semantics;
 pub(crate) mod suppression;
 pub use crate::framework_descriptor::{
     DiscoveredFeatures, DiscoveryInput, FeatureDiscovery, FrameworkDescriptor,
 };
 pub use crate::matcher::{IdentityFlags, RegexKey, TranslatedRegex};
+pub use erased_serde;
 pub use finalization::{
     SourceAdvisory, SourceFinalization, SourceUncertainty, UncertaintyCause, UncertaintyScope,
 };
@@ -22,6 +18,9 @@ pub use registry_validation::RegistryError;
 pub use semantics::{
     AnalysisPolicy, DomainSpec, HandlerScope, RegexDialect, StepMatching, StreamEvidence,
 };
+
+/// Configuration keys and their values as one source sets them, as an adapter stores them.
+pub type ConfigKeys = serde_json::Map<String, serde_json::Value>;
 
 use crate::model::{Framework, SourceLocation, StepDefinition};
 use crate::resource_limits::{read_utf8, MAX_PROJECT_INPUT_BYTES};
@@ -595,6 +594,33 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
         Ok(())
     }
 
+    /// The top-level configuration keys this adapter owns, as configuration sources spell them.
+    /// Registration refuses a key the core reads or prints, one another adapter claims, and an
+    /// empty, dotted or repeated one; adapters of one ecosystem let one of them claim a shared key.
+    fn config_keys(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Reads one source's value for `key`, one of [`SourceAdapter::config_keys`], into `into`.
+    /// Deserializing a typed value here keeps the source's error text and position. The default
+    /// stores the value as JSON, where an integer beyond 64 bits becomes a float.
+    fn read_config_key(
+        &self,
+        key: &str,
+        value: &mut dyn erased_serde::Deserializer<'_>,
+        into: &mut ConfigKeys,
+    ) -> std::result::Result<(), erased_serde::Error> {
+        into.insert(key.to_owned(), erased_serde::deserialize(value)?);
+        Ok(())
+    }
+
+    /// Checks the keys one configuration source set, as [`SourceAdapter::read_config_key`] stored
+    /// them, and returns the section the configuration keeps and prints. One source applies, so
+    /// nothing merges. The default keeps the keys as read.
+    fn apply_config(&self, keys: ConfigKeys) -> Result<ConfigKeys> {
+        Ok(keys)
+    }
+
     /// Whether this frontend participates when no definition globs are configured.
     fn discover_by_default(&self) -> bool {
         true
@@ -892,6 +918,61 @@ impl AdapterRegistry {
                 "no source adapter is registered for language `{}`",
                 language.0
             )
+        })
+    }
+
+    /// The adapters that claim configuration keys, in registry order; an adapter several
+    /// suffixes route to appears once.
+    pub(crate) fn config_claimants(&self) -> Vec<&'static dyn SourceAdapter> {
+        let mut claimants: Vec<&'static dyn SourceAdapter> = Vec::new();
+        for adapter in self
+            .registrations
+            .iter()
+            .map(|registration| registration.adapter)
+        {
+            if !adapter.config_keys().is_empty()
+                && !claimants
+                    .iter()
+                    .any(|claimant| claimant.name() == adapter.name())
+            {
+                claimants.push(adapter);
+            }
+        }
+        claimants
+    }
+
+    /// Every configuration key a registered adapter claims, in registry order. Each distinct list
+    /// is built once and kept for the process, since serde reads field names as `'static`.
+    pub(crate) fn config_keys(&self) -> &'static [&'static str] {
+        static LISTS: std::sync::Mutex<Vec<&'static [&'static str]>> =
+            std::sync::Mutex::new(Vec::new());
+        let keys: Vec<&'static str> = self
+            .config_claimants()
+            .into_iter()
+            .flat_map(|adapter| adapter.config_keys().iter().copied())
+            .collect();
+        let mut lists = LISTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let list = lists.iter().copied().find(|list| *list == keys.as_slice());
+        list.unwrap_or_else(|| {
+            let list: &'static [&'static str] = Box::leak(keys.into_boxed_slice());
+            lists.push(list);
+            list
+        })
+    }
+
+    /// The claimed key spelled `key`, with the adapter that claims it.
+    pub(crate) fn config_key_owner(
+        &self,
+        key: &str,
+    ) -> Option<(&'static str, &'static dyn SourceAdapter)> {
+        self.config_claimants().into_iter().find_map(|adapter| {
+            adapter
+                .config_keys()
+                .iter()
+                .find(|claimed| **claimed == key)
+                .map(|claimed| (*claimed, adapter))
         })
     }
 

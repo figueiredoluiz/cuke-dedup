@@ -108,7 +108,9 @@
 //! configuration warning, except an input-limit error from
 //! [`source_adapter::DiscoveryInput::read`], which fails loading.
 //! [`source_adapter::DiscoveryInput::package`] returns a `serde_json::Value`, so `serde_json` 1.x
-//! is part of the public API.
+//! is part of the public API. [`source_adapter::SourceAdapter::read_config_key`] takes an
+//! `erased_serde` 0.4 deserializer, re-exported as [`source_adapter::erased_serde`], so that
+//! version is part of it too.
 //! [`config::Config::load_with_adapters`] attaches a registry; discovery, default excludes,
 //! framework detection, [`source_adapter::SourceExtractionSession::for_config`] and session
 //! finalization read it, and [`source_adapter::SourceFinalization::apply_with`] takes one. These

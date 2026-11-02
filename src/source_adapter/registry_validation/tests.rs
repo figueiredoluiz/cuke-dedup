@@ -76,6 +76,7 @@ struct TestAdapter {
     language: SourceLanguage,
     policy: AnalysisPolicy,
     contracts: &'static [FrameworkContract],
+    config_keys: &'static [&'static str],
 }
 
 impl SourceAdapter for TestAdapter {
@@ -99,6 +100,10 @@ impl SourceAdapter for TestAdapter {
     fn framework_contracts(&self) -> &'static [FrameworkContract] {
         self.contracts
     }
+    /// Returns the fixed configuration keys.
+    fn config_keys(&self) -> &'static [&'static str] {
+        self.config_keys
+    }
 }
 
 /// A caller adapter named and keyed by `id`, in `domain`, declaring `contracts`.
@@ -112,6 +117,7 @@ const fn adapter(
         language: SourceLanguage::new(id),
         policy: policy(domain),
         contracts,
+        config_keys: &[],
     }
 }
 
@@ -138,6 +144,45 @@ static REPEATS_JS: TestAdapter = adapter("repeats-js", &CALLER_DOMAIN, &CUCUMBER
 static DECLARES_UNKNOWN: TestAdapter = adapter("unknowns", &CALLER_DOMAIN, &UNKNOWN);
 static TWIN: TestAdapter = adapter("twin", &CALLER_TWIN, &[]);
 static RUBY_LABELLED: TestAdapter = adapter("labelled", &RUBY_LABEL, &[]);
+// Two adapters returning one key slice still claim its key twice: identical literals may share an
+// address, so a shared slice cannot mean a shared owner.
+static SHARED_KEYS: [&str; 1] = ["callerOption"];
+static KEYED: TestAdapter = TestAdapter {
+    config_keys: &SHARED_KEYS,
+    ..adapter("keyed", &CALLER_DOMAIN, &[])
+};
+static KEYED_SIBLING: TestAdapter = TestAdapter {
+    config_keys: &SHARED_KEYS,
+    ..adapter("keyed-sibling", &CALLER_DOMAIN, &[])
+};
+static KEYED_AGAIN: TestAdapter = TestAdapter {
+    config_keys: &["callerOption"],
+    ..adapter("keyed-again", &CALLER_DOMAIN, &[])
+};
+static PRINTED_KEY: TestAdapter = TestAdapter {
+    config_keys: &["configSource"],
+    ..adapter("printed-key", &CALLER_DOMAIN, &[])
+};
+static CORE_KEY: TestAdapter = TestAdapter {
+    config_keys: &["definitions"],
+    ..adapter("core-key", &CALLER_DOMAIN, &[])
+};
+static EMPTY_KEY: TestAdapter = TestAdapter {
+    config_keys: &[""],
+    ..adapter("empty-key", &CALLER_DOMAIN, &[])
+};
+static DOTTED_KEY: TestAdapter = TestAdapter {
+    config_keys: &["ruby.loadPaths"],
+    ..adapter("dotted-key", &CALLER_DOMAIN, &[])
+};
+static REPEATED_KEY: TestAdapter = TestAdapter {
+    config_keys: &["callerOption", "callerOption"],
+    ..adapter("repeated-key", &CALLER_DOMAIN, &[])
+};
+static RUBY_KEY: TestAdapter = TestAdapter {
+    config_keys: &["rubyLoadPaths"],
+    ..adapter("ruby-key", &CALLER_DOMAIN, &[])
+};
 static SCOPED_CALLER: TestAdapter = adapter("scoped", &CALLER_DOMAIN, &SCOPED_CONTRACTS);
 // Shares `SCOPED_CALLER`'s contracts from another domain: the contract policy leaves its domain.
 static SCOPED_OTHER: TestAdapter = adapter("scoped-other", &OTHER_DOMAIN, &SCOPED_CONTRACTS);
@@ -171,6 +216,9 @@ fn registry_construction_rejects_each_conflict() {
         vec![registration(".a", &CALLER), registration(".b", &CALLER)],
         vec![registration(".a", &CALLER), registration(".b", &SIBLING)],
         vec![registration(".a", &SCOPED_CALLER)],
+        builtin_and(&[registration(".keyed", &KEYED)]),
+        // One adapter on two suffixes claims its keys once.
+        vec![registration(".a", &KEYED), registration(".b", &KEYED)],
         vec![
             registration(".c++", &CALLER),
             registration(".x_y-z9", &SIBLING),
@@ -183,6 +231,68 @@ fn registry_construction_rejects_each_conflict() {
 
     use RegistryError::*;
     let rejected: Vec<(Vec<SourceAdapterRegistration>, RegistryError)> = vec![
+        (
+            vec![registration(".a", &EMPTY_KEY)],
+            InvalidConfigKey {
+                adapter: "empty-key",
+                key: "",
+            },
+        ),
+        (
+            vec![registration(".a", &DOTTED_KEY)],
+            InvalidConfigKey {
+                adapter: "dotted-key",
+                key: "ruby.loadPaths",
+            },
+        ),
+        (
+            vec![registration(".a", &REPEATED_KEY)],
+            InvalidConfigKey {
+                adapter: "repeated-key",
+                key: "callerOption",
+            },
+        ),
+        (
+            vec![registration(".a", &CORE_KEY)],
+            CoreConfigKey {
+                adapter: "core-key",
+                key: "definitions",
+            },
+        ),
+        (
+            vec![registration(".a", &PRINTED_KEY)],
+            CoreConfigKey {
+                adapter: "printed-key",
+                key: "configSource",
+            },
+        ),
+        (
+            vec![
+                registration(".a", &KEYED),
+                registration(".b", &KEYED_SIBLING),
+            ],
+            ConfigKeyClaimedTwice {
+                key: "callerOption",
+                first: "keyed",
+                second: "keyed-sibling",
+            },
+        ),
+        (
+            vec![registration(".a", &KEYED), registration(".b", &KEYED_AGAIN)],
+            ConfigKeyClaimedTwice {
+                key: "callerOption",
+                first: "keyed",
+                second: "keyed-again",
+            },
+        ),
+        (
+            builtin_and(&[registration(".ruby-key", &RUBY_KEY)]),
+            ConfigKeyClaimedTwice {
+                key: "rubyLoadPaths",
+                first: "cucumber-ruby",
+                second: "ruby-key",
+            },
+        ),
         (
             vec![registration("caller", &CALLER)],
             InvalidSuffix { suffix: "caller" },

@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { cliFlags, configSurface, findConfigStruct, flagDocumented, structBody } from "./lib/docs-parity.mjs";
+import { camel, cliFlags, configFields, configSurface, findConfigStruct, flagDocumented, structBody } from "./lib/docs-parity.mjs";
 
 const root = resolve(process.argv[2] || ".");
 const cliSource = readFileSync(join(root, "src/cli.rs"), "utf8");
@@ -46,11 +46,60 @@ const docs = readdirSync(join(root, "docs"), { recursive: true })
   .join("\n");
 
 const flags = cliFlags(structBody(cliSource, "CheckOptions"));
-const keys = configSurface((name) => findConfigStruct(rustSources, name), "RawConfig");
+// `AdapterKeys` routes each claimed key to its adapter, so the walk stops there and reads each
+// adapter's config struct instead.
+const ADAPTER_CONFIG_STRUCTS = [["src/ruby/config.rs", "RawRubyConfig", "CONFIG_KEYS"]];
+/** A config struct body by name; `AdapterKeys` contributes no fields of its own. */
+const findStruct = (name) => (name === "AdapterKeys" ? "" : findConfigStruct(rustSources, name));
+const keys = [
+  ...configSurface(findStruct, "RawConfig"),
+  ...ADAPTER_CONFIG_STRUCTS.flatMap(([, name]) => configSurface(findStruct, name)),
+];
 // Floors guard the parser itself: if a refactor makes the struct scan silently return fewer
 // surfaces, that must fail loudly rather than pass by checking nothing.
 assert.ok(flags.length >= 22, `expected to parse the CheckOptions flags, found only ${flags.length}`);
 assert.ok(keys.length >= 18, `expected to parse the RawConfig keys, found only ${keys.length}`);
+
+// Adapters may not claim a core key, so the core's list must be exactly RawConfig's own fields.
+const configSource = readFileSync(join(root, "src/config.rs"), "utf8");
+const coreList = configSource.match(/CORE_CONFIG_KEYS: \[&str; \d+\] = \[([^\]]*)\]/);
+assert.ok(coreList, "CORE_CONFIG_KEYS not found in src/config.rs");
+const coreKeys = [...coreList[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+// `Config`'s serialized fields: the ones without `#[serde(skip)]` and not flattened.
+const printedKeys = [];
+let skipped = false;
+for (const line of structBody(configSource, "Config").split("\n").map((line) => line.trim())) {
+  if (line.startsWith("#[")) {
+    skipped ||= /^#\[serde\((skip|flatten)\b/.test(line);
+    continue;
+  }
+  const field = line.match(/^(?:pub\s+)?([a-z_][a-z0-9_]*)\s*:/);
+  if (!field) continue;
+  if (!skipped) printedKeys.push(camel(field[1]));
+  skipped = false;
+}
+assert.deepEqual(coreKeys, printedKeys, "CORE_CONFIG_KEYS must list Config's serialized fields in order");
+const readKeys = configFields(findConfigStruct(rustSources, "RawConfig"))
+  .filter((field) => !field.flatten)
+  .map((field) => field.key);
+assert.deepEqual(readKeys.filter((key) => !coreKeys.includes(key)), [], "every RawConfig field must be in CORE_CONFIG_KEYS");
+// Every adapter that declares claimed keys is listed above, so none escapes these checks.
+const declaring = readdirSync(join(root, "src"), { recursive: true })
+  .filter((name) => String(name).endsWith(".rs"))
+  .filter((name) => /\bstatic CONFIG_KEYS\b/.test(readFileSync(join(root, "src", String(name)), "utf8")))
+  .map((name) => `src/${String(name).replace(/\\/g, "/")}`)
+  .sort();
+assert.deepEqual(declaring, ADAPTER_CONFIG_STRUCTS.map(([file]) => file).sort(), "list each adapter declaring CONFIG_KEYS");
+// An adapter's claimed keys are its config struct's top-level fields, or registration would let
+// another adapter claim one the struct reads.
+for (const [file, name, list] of ADAPTER_CONFIG_STRUCTS) {
+  const source = readFileSync(join(root, file), "utf8");
+  const declared = source.match(new RegExp(`${list}: \\[&str; \\d+\\] = \\[([^\\]]*)\\]`));
+  assert.ok(declared, `${list} not found in ${file}`);
+  const claimed = [...declared[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const fields = configFields(findConfigStruct(rustSources, name)).map((field) => field.key);
+  assert.deepEqual(claimed, fields, `${file} ${list} must list ${name}'s fields in order`);
+}
 
 const missing = [];
 for (const flag of flags) {

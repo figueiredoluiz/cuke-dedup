@@ -285,10 +285,13 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   declaring one), from the same registry; built-in definitions round-trip with their extracted
   policy.
 - An adapter not discovered by default is selected only by definition patterns that depend on its
-  suffix. Ruby owns its configuration keys: the `ruby`
-  section and the flat `rubyLoadPaths` alias are flattened into the core config from
-  `ruby::config::RawRubyConfig`, which rejects both forms in one source; `--print-config` keeps the
-  flat key.
+  suffix. An adapter owns the configuration keys it lists in `SourceAdapter::config_keys`: the
+  core reads only those it claims through `read_config_key`, applies them with `apply_config`, and
+  keeps the returned section for `Config::adapter_config` and `--print-config`. Registration
+  refuses a key the core reads or prints (`CoreConfigKey`), one another adapter claims
+  (`ConfigKeyClaimedTwice`), and an empty, dotted or repeated one (`InvalidConfigKey`). Ruby owns
+  the `ruby` section and the flat `rubyLoadPaths` alias, rejects both forms in one source, and
+  prints the flat key; `ruby::load_paths` reads it back.
 - Ruby preparation parses one bounded source snapshot for registration and assertion proofs; a
   later source-byte mismatch withdraws the optional proof. File-count, byte, per-source and
   proof-work limits fall back conservatively; exhausting any collector withdraws every optional

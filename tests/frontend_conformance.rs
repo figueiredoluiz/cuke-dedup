@@ -185,7 +185,10 @@ fn source_exclusion_stays_with_javascript_adapter() {
 fn ruby_configuration_keeps_flat_compatibility_key() {
     let root = tempfile::tempdir().unwrap();
     let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
-    assert!(config.ruby_load_paths().is_empty());
+    assert_eq!(
+        config.adapter_config("cucumber-ruby"),
+        Some(&serde_json::Map::new())
+    );
     assert!(serde_json::to_value(&config)
         .unwrap()
         .get("rubyLoadPaths")
@@ -224,8 +227,8 @@ fn ruby_configuration_keeps_flat_compatibility_key() {
             config.config_warnings
         );
         assert_eq!(
-            config.ruby_load_paths(),
-            expected.as_slice(),
+            cuke_dedup::ruby::load_paths(&config),
+            expected,
             "{package:?} {standalone:?}"
         );
         let printed = serde_json::to_value(&config).unwrap();

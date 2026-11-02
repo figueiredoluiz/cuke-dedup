@@ -904,6 +904,7 @@ static RULES: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
     rules: true,
+    keys: &[],
 };
 
 /// Checks path and registration rules belong to the adapter that declares them: built-in rules do
@@ -974,6 +975,100 @@ fn path_and_registration_rules_stay_behind_their_adapter() {
     );
 }
 
+/// The fields of a caller adapter owning the `callerOption` configuration key.
+const KEYED_FIELDS: ContractAdapter = ContractAdapter {
+    name: "caller-keyed",
+    contracts: &[],
+    policy: caller_policy(&CALLER, StepMatching::ByText),
+    nested_seed: false,
+    rules: false,
+    keys: &["callerOption"],
+};
+static KEYED: ContractAdapter = KEYED_FIELDS;
+
+/// Checks a caller adapter declares configuration keys: registration refuses a key the core or
+/// another adapter owns, and the default hooks keep a value as read.
+#[test]
+fn caller_adapters_declare_configuration_keys() {
+    use cuke_dedup::source_adapter::erased_serde;
+    let builtin = AdapterRegistry::builtin().registrations().iter().copied();
+    assert!(AdapterRegistry::new(
+        builtin
+            .clone()
+            .chain([SourceAdapterRegistration::new(".keyed", &KEYED)])
+    )
+    .is_ok());
+    static CORE: ContractAdapter = ContractAdapter {
+        name: "caller-core",
+        keys: &["definitions"],
+        ..KEYED_FIELDS
+    };
+    static RUBY_OPTION: ContractAdapter = ContractAdapter {
+        name: "caller-ruby-option",
+        keys: &["ruby"],
+        ..KEYED_FIELDS
+    };
+    let error = |adapter: &'static ContractAdapter| {
+        AdapterRegistry::new(
+            builtin
+                .clone()
+                .chain([SourceAdapterRegistration::new(".x", adapter)]),
+        )
+        .err()
+        .map(|error| error.to_string())
+    };
+    assert_eq!(
+        error(&CORE),
+        Some(
+            "adapter `caller-core` claims the configuration key `definitions`, which the core owns"
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        error(&RUBY_OPTION),
+        Some("configuration key `ruby` is claimed by adapters `cucumber-ruby` and `caller-ruby-option`".to_owned())
+    );
+
+    let mut json = serde_json::Deserializer::from_str("[1, 2]");
+    let mut keys = serde_json::Map::new();
+    KEYED
+        .read_config_key(
+            "callerOption",
+            &mut <dyn erased_serde::Deserializer>::erase(&mut json),
+            &mut keys,
+        )
+        .unwrap();
+    assert_eq!(keys["callerOption"], serde_json::json!([1, 2]));
+    assert_eq!(KEYED.apply_config(keys.clone()).unwrap(), keys);
+
+    // Loaded from a standalone file or `package.json`, the key reaches the adapter, which keeps
+    // and prints it; a registry without Ruby refuses Ruby's key as unknown.
+    let caller_only =
+        || AdapterRegistry::new([SourceAdapterRegistration::new(".keyed", &KEYED)]).unwrap();
+    let load = |file: &str, text: &str, registry: AdapterRegistry| {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(file), text).unwrap();
+        Config::load_with_adapters(root.path(), ConfigOverrides::default(), registry)
+            .map_err(|error| format!("{error:#}"))
+    };
+    for (file, text) in [
+        (".cuke-dedup.json", r#"{"callerOption":[1,2]}"#),
+        ("package.json", r#"{"cukeDedup":{"callerOption":[1,2]}}"#),
+    ] {
+        let config = load(file, text, caller_only()).unwrap();
+        assert_eq!(config.adapter_config("caller-keyed"), Some(&keys), "{file}");
+        assert_eq!(
+            serde_json::to_value(&config).unwrap()["callerOption"],
+            serde_json::json!([1, 2])
+        );
+    }
+    // An unreadable auto-discovered file only warns, so the refusal is read from `package.json`.
+    let ruby = r#"{"cukeDedup":{"ruby":null}}"#;
+    let error = load("package.json", ruby, caller_only()).unwrap_err();
+    assert!(error.ends_with("unknown field `ruby`"), "{error}");
+    assert!(load("package.json", ruby, AdapterRegistry::builtin().clone()).is_ok());
+}
+
 /// Discovers one path with a line suffix, which only Cucumber normalization drops.
 fn suffixed_path_discovery(
     input: &DiscoveryInput<'_>,
@@ -1002,6 +1097,7 @@ static NORMALIZED: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
     rules: false,
+    keys: &[],
 };
 static VERBATIM: ContractAdapter = ContractAdapter {
     name: "caller-verbatim",
@@ -1009,6 +1105,7 @@ static VERBATIM: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
     rules: false,
+    keys: &[],
 };
 
 /// Checks a caller descriptor can opt out of Cucumber path normalization, which keeps a `:line`
@@ -1393,6 +1490,7 @@ struct ContractAdapter {
     policy: AnalysisPolicy,
     nested_seed: bool,
     rules: bool,
+    keys: &'static [&'static str],
 }
 
 impl SourceAdapter for ContractAdapter {
@@ -1417,6 +1515,10 @@ impl SourceAdapter for ContractAdapter {
                 .unwrap();
         }
         self.policy
+    }
+    /// Returns the configured configuration keys.
+    fn config_keys(&self) -> &'static [&'static str] {
+        self.keys
     }
     /// Leaves `.skip.caller` paths out under `rules`.
     fn accepts_path(&self, path: &Path) -> bool {
@@ -1443,6 +1545,7 @@ static BDD: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
     rules: false,
+    keys: &[],
 };
 
 /// Checks a caller framework contract's discovery sets normalized feature patterns, their origin
@@ -1806,6 +1909,7 @@ static POLICY: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
     rules: false,
+    keys: &[],
 };
 
 /// Checks a read-back definition gets the policy extraction attaches: its contract's, else the
@@ -1896,6 +2000,7 @@ static SHARED_BY_TEXT: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: true,
     rules: false,
+    keys: &[],
 };
 
 static SHARED_POSITIONAL: ContractAdapter = ContractAdapter {
@@ -1904,6 +2009,7 @@ static SHARED_POSITIONAL: ContractAdapter = ContractAdapter {
     policy: caller_policy(&CALLER, StepMatching::Positional),
     nested_seed: false,
     rules: false,
+    keys: &[],
 };
 
 /// Checks adapters sharing a contract slice keep their own policies on read-back: the adapter a

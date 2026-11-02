@@ -1,16 +1,12 @@
 {
   "schemaVersion": 2,
-  "core": [
-    ["src/config.rs","name:ruby",2],
-    ["src/source_adapter/config.rs","crate::ruby",1],
-    ["src/source_adapter/config.rs","name:ruby",6]
-  ],
+  "core": [],
   "registry": [
-    ["src/source_adapter.rs","crate::ruby",2],
+    ["src/source_adapter.rs","crate::ruby",1],
     ["src/source_adapter.rs","crate::typescript",3],
     ["src/source_adapter.rs","key:tsx",1],
     ["src/source_adapter.rs","name:javascript",1],
-    ["src/source_adapter.rs","name:ruby",4],
+    ["src/source_adapter.rs","name:ruby",2],
     ["src/source_adapter.rs","name:tsx",1],
     ["src/source_adapter.rs","name:typescript",4],
     ["src/source_adapter.rs","text:cjs",1],

@@ -107,8 +107,7 @@ fn resolve_graph(
     budget: (usize, usize),
 ) -> anyhow::Result<()> {
     let root = config.root.clone();
-    let load_paths = config
-        .ruby_load_paths()
+    let load_paths = super::config::load_paths(config)
         .iter()
         .map(|path| canonical_platform_path(&root.join(path)))
         .collect::<Result<Vec<_>, _>>()?;

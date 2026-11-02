@@ -72,6 +72,29 @@ pub enum RegistryError {
         /// The declaring adapter.
         adapter: &'static str,
     },
+    /// An adapter claims a configuration key the core owns.
+    CoreConfigKey {
+        /// The declaring adapter.
+        adapter: &'static str,
+        /// The claimed key.
+        key: &'static str,
+    },
+    /// An adapter declares an empty or dotted configuration key, or one key twice.
+    InvalidConfigKey {
+        /// The declaring adapter.
+        adapter: &'static str,
+        /// The declared key.
+        key: &'static str,
+    },
+    /// Two adapters claim one configuration key.
+    ConfigKeyClaimedTwice {
+        /// The claimed key.
+        key: &'static str,
+        /// The adapter registered first.
+        first: &'static str,
+        /// The adapter registered later.
+        second: &'static str,
+    },
 }
 
 impl std::fmt::Display for RegistryError {
@@ -125,6 +148,18 @@ impl std::fmt::Display for RegistryError {
             Self::UnattachedPolicy { adapter } => write!(
                 f,
                 "adapter `{adapter}` declares the unattached policy, which is for definitions no adapter claims"
+            ),
+            Self::CoreConfigKey { adapter, key } => write!(
+                f,
+                "adapter `{adapter}` claims the configuration key `{key}`, which the core owns"
+            ),
+            Self::InvalidConfigKey { adapter, key } => write!(
+                f,
+                "adapter `{adapter}` declares the configuration key `{key}`, which is empty, dotted or repeated"
+            ),
+            Self::ConfigKeyClaimedTwice { key, first, second } => write!(
+                f,
+                "configuration key `{key}` is claimed by adapters `{first}` and `{second}`"
             ),
         }
     }
@@ -183,12 +218,13 @@ pub(super) fn validate(registrations: &[SourceAdapterRegistration]) -> Result<()
     Ok(())
 }
 
-/// The framework ids and domain labels the adapters checked so far declare.
+/// The framework ids, domain labels and configuration keys the adapters checked so far declare.
 #[derive(Default)]
 struct Contracts {
     slices: Vec<(*const FrameworkContract, usize)>,
     frameworks: Vec<Framework>,
     domains: Vec<&'static super::DomainSpec>,
+    keys: Vec<(&'static str, &'static str)>,
 }
 
 impl Contracts {
@@ -201,6 +237,7 @@ impl Contracts {
         }
         let domain = policy.domain();
         self.domain(domain)?;
+        self.config_keys(adapter)?;
         let contracts = adapter.framework_contracts();
         for contract in contracts {
             if contract
@@ -228,6 +265,35 @@ impl Contracts {
                 return Err(RegistryError::FrameworkDeclaredTwice { framework });
             }
             self.frameworks.push(framework);
+        }
+        Ok(())
+    }
+
+    /// Records `adapter`'s configuration keys, rejecting one the core owns or another adapter
+    /// claims. Each adapter is checked once, however many suffixes route to it.
+    fn config_keys(&mut self, adapter: &'static dyn SourceAdapter) -> Result<(), RegistryError> {
+        let keys = adapter.config_keys();
+        for (index, &key) in keys.iter().enumerate() {
+            if key.is_empty() || key.contains('.') || keys[..index].contains(&key) {
+                return Err(RegistryError::InvalidConfigKey {
+                    adapter: adapter.name(),
+                    key,
+                });
+            }
+            if crate::config::CORE_CONFIG_KEYS.contains(&key) {
+                return Err(RegistryError::CoreConfigKey {
+                    adapter: adapter.name(),
+                    key,
+                });
+            }
+            if let Some(&(_, first)) = self.keys.iter().find(|(claimed, _)| *claimed == key) {
+                return Err(RegistryError::ConfigKeyClaimedTwice {
+                    key,
+                    first,
+                    second: adapter.name(),
+                });
+            }
+            self.keys.push((key, adapter.name()));
         }
         Ok(())
     }

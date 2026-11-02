@@ -24,6 +24,7 @@ static FRAMEWORK_CONTRACTS: [crate::source_adapter::FrameworkContract; 1] =
 mod assertions;
 mod bindings;
 pub(crate) mod config;
+pub use config::load_paths;
 mod dependencies;
 mod handler;
 mod load_phase;
@@ -109,6 +110,26 @@ impl SourceAdapter for RubyAdapter {
     /// Declares the Ruby comparison policy.
     fn analysis_policy(&self) -> crate::source_adapter::AnalysisPolicy {
         semantics::policy()
+    }
+    /// Owns the `ruby` section and its `rubyLoadPaths` alias.
+    fn config_keys(&self) -> &'static [&'static str] {
+        &config::CONFIG_KEYS
+    }
+    /// Reads a Ruby key with its typed reader.
+    fn read_config_key(
+        &self,
+        key: &str,
+        value: &mut dyn erased_serde::Deserializer<'_>,
+        into: &mut crate::source_adapter::ConfigKeys,
+    ) -> std::result::Result<(), erased_serde::Error> {
+        config::read_key(key, value, into)
+    }
+    /// Rejects a source that sets both load-path keys and keeps the paths it sets.
+    fn apply_config(
+        &self,
+        keys: crate::source_adapter::ConfigKeys,
+    ) -> Result<crate::source_adapter::ConfigKeys> {
+        config::apply_keys(keys)
     }
     /// Enable accounting for Ruby step delegation and unresolved dynamic usage.
     fn supports_indirect_usage(&self) -> bool {
