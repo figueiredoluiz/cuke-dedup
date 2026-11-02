@@ -619,14 +619,7 @@ impl Config {
             }
         }
         for name in &self.registrations {
-            if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
-                || name.starts_with(|character: char| character.is_ascii_digit())
-            {
-                bail!("registration `{name}` must be a JavaScript identifier");
-            }
+            self.adapters.validate_registration(name)?;
         }
         self.validate_analysis_limits()?;
         if self.output_from_project_config {

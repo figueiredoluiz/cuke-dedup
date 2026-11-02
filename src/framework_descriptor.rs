@@ -18,9 +18,8 @@ const CUCUMBER_STRUCTURED_CONFIGS: [(&str, StructuredPaths); 3] = [
     ("cucumber.yaml", cucumber_yaml_paths),
     ("cucumber.yml", cucumber_yaml_paths),
 ];
-const CUCUMBER_DEFAULT: &str = "features/**/*.{feature,feature.md}";
+pub(crate) const CUCUMBER_DEFAULT: &str = "features/**/*.{feature,feature.md}";
 const CUCUMBER_EXTENSIONS: &str = "{feature,feature.md}";
-const CUCUMBER_DEPENDENCIES: [&str; 2] = ["@cucumber/cucumber", "cucumber"];
 
 /// The discovery match `detect` returns: a descriptor's name with the features it found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,7 +140,7 @@ impl FrameworkDescriptor {
 
     /// A descriptor whose patterns lose only a leading `./`, for frameworks whose own path rules
     /// differ from Cucumber `paths`.
-    pub(crate) const fn verbatim(name: &'static str, discover: FeatureDiscovery) -> Self {
+    pub const fn verbatim(name: &'static str, discover: FeatureDiscovery) -> Self {
         Self {
             name,
             discover,
@@ -201,7 +200,7 @@ pub(crate) fn detect<'d>(
 }
 
 /// Uses the first Cucumber configuration: structured files, then each extension of `script_readers`
-/// in order; else default feature paths when a Cucumber dependency is present.
+/// in order.
 pub(crate) fn cucumber_discovery(
     input: &DiscoveryInput<'_>,
     script_readers: &[ScriptConfigReader],
@@ -223,12 +222,6 @@ pub(crate) fn cucumber_discovery(
                 return cucumber_config(&path, read).map(Some);
             }
         }
-    }
-    if package_has_any_dependency(input.package, &CUCUMBER_DEPENDENCIES) {
-        return Ok(Some(DiscoveredFeatures::new(
-            vec![CUCUMBER_DEFAULT.to_owned()],
-            input.root.join("package.json"),
-        )));
     }
     Ok(None)
 }

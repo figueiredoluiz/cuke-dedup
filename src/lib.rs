@@ -121,9 +121,10 @@
 //! ([`model::StepDefinition`], [`model::AnalysisResult`]), and the JavaScript/TypeScript
 //! extraction functions and module resolution. A caller framework id reads back through
 //! [`source_adapter::AdapterRegistry::framework`], [`model::FrameworkSeed`] or
-//! [`model::RegistrySeed`], which reads any type with a registry's framework ids in scope. Path
-//! routing never sends a `.map` file or a TypeScript declaration file (`.d.ts`, `.d.mts`,
-//! `.d.cts`) to an adapter, whichever adapter claims the suffix.
+//! [`model::RegistrySeed`], which reads any type with a registry's framework ids in scope. No
+//! adapter can register `.map`. The built-in JavaScript/TypeScript adapters refuse declaration
+//! files (`.d.ts`, `.d.mts`, `.d.cts`) through [`source_adapter::SourceAdapter::accepts_path`]; a
+//! caller adapter claiming those suffixes gets them unless it does the same.
 //!
 //! When adding a public type, follow that rule rather than copying a neighbour: mark it
 //! `#[non_exhaustive]` if the analyzer returns it, leave it exhaustive if a caller has to build it,

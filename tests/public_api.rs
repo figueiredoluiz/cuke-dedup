@@ -896,6 +896,138 @@ fn diagnostics_word_the_domain_that_raised_them() {
     }
 }
 
+/// A caller adapter with rules of its own, claiming `.ts`, where the declaration rule belongs to
+/// the built-in adapter.
+static RULES: ContractAdapter = ContractAdapter {
+    name: "caller-rules",
+    contracts: &[],
+    policy: caller_policy(&CALLER, StepMatching::ByText),
+    nested_seed: false,
+    rules: true,
+};
+
+/// Checks path and registration rules belong to the adapter that declares them: built-in rules do
+/// not bind a registry without their adapter, and a caller's bind it with no shared-code edit.
+#[test]
+fn path_and_registration_rules_stay_behind_their_adapter() {
+    let caller = AdapterRegistry::new([
+        SourceAdapterRegistration::new(".ts", &RULES),
+        SourceAdapterRegistration::new(".caller", &RULES),
+    ])
+    .unwrap();
+    let builtin = AdapterRegistry::builtin();
+    let routed = |registry: &AdapterRegistry, path: &str| {
+        registry
+            .adapter_for_path(Path::new(path))
+            .map(|adapter| adapter.name())
+    };
+    assert_eq!(routed(&caller, "types.d.ts"), Some("caller-rules"));
+    assert_eq!(routed(builtin, "types.d.ts"), None);
+    assert_eq!(routed(builtin, "types.ts"), Some("typescript"));
+    assert_eq!(routed(&caller, "steps.caller"), Some("caller-rules"));
+    assert_eq!(routed(&caller, "steps.skip.caller"), None);
+
+    let load = |registry: AdapterRegistry, name: &str| {
+        let root = tempfile::tempdir().unwrap();
+        let text = serde_json::json!({ "registrations": [name] }).to_string();
+        fs::write(root.path().join(".cuke-dedup.json"), text).unwrap();
+        Config::load_with_adapters(root.path(), ConfigOverrides::default(), registry)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    };
+    let javascript = "registration `not-an-identifier` must be a JavaScript identifier";
+    assert_eq!(load(caller.clone(), "step_a"), Ok(()));
+    assert_eq!(
+        load(caller.clone(), "other"),
+        Err("`other` lacks `step_`".to_owned())
+    );
+    assert_eq!(load(builtin.clone(), "other"), Ok(()));
+    assert_eq!(
+        load(builtin.clone(), "not-an-identifier"),
+        Err(javascript.to_owned())
+    );
+    assert_eq!(
+        load(caller, "step_a-b"),
+        Ok(()),
+        "no built-in rule binds a registry without its adapter"
+    );
+
+    // `registrations` is one list: with both adapters, each one's rule applies to every name.
+    let both = || {
+        AdapterRegistry::new(
+            builtin
+                .registrations()
+                .iter()
+                .copied()
+                .chain([SourceAdapterRegistration::new(".caller", &RULES)]),
+        )
+        .unwrap()
+    };
+    assert_eq!(load(both(), "step_a"), Ok(()));
+    assert_eq!(
+        load(both(), "other"),
+        Err("`other` lacks `step_`".to_owned())
+    );
+    assert_eq!(
+        load(both(), "step_a-b"),
+        Err("registration `step_a-b` must be a JavaScript identifier".to_owned())
+    );
+}
+
+/// Discovers one path with a line suffix, which only Cucumber normalization drops.
+fn suffixed_path_discovery(
+    input: &DiscoveryInput<'_>,
+) -> anyhow::Result<Option<DiscoveredFeatures>> {
+    Ok(Some(DiscoveredFeatures::new(
+        vec!["./specs/a.feature:3".to_owned()],
+        input.root().join("caller.paths"),
+    )))
+}
+
+static NORMALIZED_CONTRACTS: [FrameworkContract; 1] =
+    [
+        FrameworkContract::new(Framework::new("caller-normalized")).with_discovery(
+            FrameworkDescriptor::new("Caller normalized", suffixed_path_discovery),
+        ),
+    ];
+static VERBATIM_CONTRACTS: [FrameworkContract; 1] =
+    [
+        FrameworkContract::new(Framework::new("caller-verbatim")).with_discovery(
+            FrameworkDescriptor::verbatim("Caller verbatim", suffixed_path_discovery),
+        ),
+    ];
+static NORMALIZED: ContractAdapter = ContractAdapter {
+    name: "caller-normalized",
+    contracts: &NORMALIZED_CONTRACTS,
+    policy: caller_policy(&CALLER, StepMatching::ByText),
+    nested_seed: false,
+    rules: false,
+};
+static VERBATIM: ContractAdapter = ContractAdapter {
+    name: "caller-verbatim",
+    contracts: &VERBATIM_CONTRACTS,
+    policy: caller_policy(&CALLER, StepMatching::ByText),
+    nested_seed: false,
+    rules: false,
+};
+
+/// Checks a caller descriptor can opt out of Cucumber path normalization, which keeps a `:line`
+/// suffix, and still loses a leading `./`.
+#[test]
+fn verbatim_descriptors_keep_their_framework_paths() {
+    for (adapter, expected) in [
+        (&NORMALIZED, "specs/a.feature"),
+        (&VERBATIM, "specs/a.feature:3"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let registry =
+            AdapterRegistry::new([SourceAdapterRegistration::new(".caller", adapter)]).unwrap();
+        let config =
+            Config::load_with_adapters(root.path(), ConfigOverrides::default(), registry).unwrap();
+        assert_eq!(config.features, [expected], "{}", adapter.name);
+    }
+}
+
 /// Checks caller policies key regex matchers as their dialect declares, translations render with
 /// their flag group, contract policies resolve per framework, and policy-carrying types keep their
 /// auto traits.
@@ -1253,12 +1385,14 @@ static CALLER_BDD_CONTRACTS: [FrameworkContract; 1] =
 
 /// A caller adapter that extracts nothing, declares `contracts` and compares with `policy`. With
 /// `nested_seed`, reading its policy starts a seeded read, as an adapter loading its policy lazily
-/// might.
+/// might. With `rules`, registrations need the `step_` prefix and `.skip.caller` paths are not
+/// sources.
 struct ContractAdapter {
     name: &'static str,
     contracts: &'static [FrameworkContract],
     policy: AnalysisPolicy,
     nested_seed: bool,
+    rules: bool,
 }
 
 impl SourceAdapter for ContractAdapter {
@@ -1284,6 +1418,18 @@ impl SourceAdapter for ContractAdapter {
         }
         self.policy
     }
+    /// Leaves `.skip.caller` paths out under `rules`.
+    fn accepts_path(&self, path: &Path) -> bool {
+        !self.rules || !path.to_string_lossy().ends_with(".skip.caller")
+    }
+    /// Requires the `step_` prefix under `rules`.
+    fn validate_registration(&self, name: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.rules || name.starts_with("step_"),
+            "`{name}` lacks `step_`"
+        );
+        Ok(())
+    }
     /// Declares the configured contracts.
     fn framework_contracts(&self) -> &'static [FrameworkContract] {
         self.contracts
@@ -1296,6 +1442,7 @@ static BDD: ContractAdapter = ContractAdapter {
     contracts: &CALLER_BDD_CONTRACTS,
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
+    rules: false,
 };
 
 /// Checks a caller framework contract's discovery sets normalized feature patterns, their origin
@@ -1658,6 +1805,7 @@ static POLICY: ContractAdapter = ContractAdapter {
     contracts: &POLICY_CONTRACTS,
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: false,
+    rules: false,
 };
 
 /// Checks a read-back definition gets the policy extraction attaches: its contract's, else the
@@ -1747,6 +1895,7 @@ static SHARED_BY_TEXT: ContractAdapter = ContractAdapter {
     contracts: &SHARED_CONTRACTS,
     policy: caller_policy(&CALLER, StepMatching::ByText),
     nested_seed: true,
+    rules: false,
 };
 
 static SHARED_POSITIONAL: ContractAdapter = ContractAdapter {
@@ -1754,6 +1903,7 @@ static SHARED_POSITIONAL: ContractAdapter = ContractAdapter {
     contracts: &SHARED_CONTRACTS,
     policy: caller_policy(&CALLER, StepMatching::Positional),
     nested_seed: false,
+    rules: false,
 };
 
 /// Checks adapters sharing a contract slice keep their own policies on read-back: the adapter a

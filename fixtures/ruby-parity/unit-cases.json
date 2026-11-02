@@ -6810,6 +6810,20 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "path_and_registration_rules_stay_behind_their_adapter",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: routing and configuration read a caller adapter's rules; no source is read.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_descriptors_keep_their_framework_paths",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: a caller descriptor's discovered paths with and without normalization; no source is read.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "caller_policies_key_matchers_and_resolve_contract_policies",
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",

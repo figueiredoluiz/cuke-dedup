@@ -117,6 +117,19 @@ impl AdapterSessionState for TypeScriptExtractionSession {
     }
 }
 
+/// Whether `path` is a declaration file: extension `ts`, `mts` or `cts` and a stem that is `.d` or
+/// ends in `.d`. Comparisons are case-sensitive.
+fn is_declaration_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| matches!(extension.to_str(), Some("ts" | "mts" | "cts")))
+        && path.file_stem().is_some_and(|stem| {
+            stem == ".d"
+                || std::path::Path::new(stem)
+                    .extension()
+                    .is_some_and(|extension| extension == "d")
+        })
+}
+
 impl StatefulSourceAdapter for TreeSitterSourceAdapter {
     type State = TypeScriptExtractionSession;
 }
@@ -140,6 +153,24 @@ impl SourceAdapter for TreeSitterSourceAdapter {
     /// Excludes installed packages, which every JavaScript/TypeScript framework shares.
     fn default_excludes(&self) -> &'static [&'static str] {
         &["**/node_modules/**"]
+    }
+
+    /// Leaves declaration files out: they register no steps.
+    fn accepts_path(&self, path: &std::path::Path) -> bool {
+        !is_declaration_file(path)
+    }
+
+    /// Requires an identifier, since a registration names a function in source.
+    fn validate_registration(&self, name: &str) -> anyhow::Result<()> {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
+            || name.starts_with(|character: char| character.is_ascii_digit())
+        {
+            anyhow::bail!("registration `{name}` must be a JavaScript identifier");
+        }
+        Ok(())
     }
 
     /// Declares the baseline JavaScript/TypeScript comparison policy; each definition carries the

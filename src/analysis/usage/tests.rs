@@ -711,11 +711,13 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
             );
         }
     }
-    // A caller dialect's default has no scoped-array shortcut.
+    // A caller dialect's default reads the same Rust regex forms.
     use crate::source_adapter::semantics::RegexDialect;
     assert_eq!(
-        IdentityDialect.parameter_sample("(?:(?m:red)|(?ms:green))"),
-        None
+        IdentityDialect
+            .parameter_sample("(?:(?m:red)|(?ms:green))")
+            .as_deref(),
+        Some("red")
     );
     assert_eq!(
         IdentityDialect
