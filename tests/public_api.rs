@@ -871,6 +871,18 @@ fn diagnostics_word_the_domain_that_raised_them() {
         None,
         SourceLocation::new(PathBuf::from("steps.caller"), 4, 1, 4, 2),
     );
+    // The domain words a declaration; the fields it was declared with identify it.
+    assert_eq!(declaration.clone().with_domain(&CALLER), declaration);
+    let mut renamed = declaration.clone();
+    renamed.name = Some("colour".to_owned());
+    let mut resolved = declaration.clone();
+    resolved.expression = Some(".+".to_owned());
+    let mut moved = declaration.clone();
+    moved.location.line = 5;
+    for other in [renamed, resolved, moved] {
+        assert_ne!(other, declaration);
+    }
+
     for (declaration, name) in [
         (declaration.clone().with_domain(&CALLER), "Caller"),
         (declaration, "Unattached"),

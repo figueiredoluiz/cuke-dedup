@@ -280,7 +280,7 @@ impl IndirectStepUsage {
 
 /// A source-declared parameter type, resolved without executing its transformer.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SourceParameterType {
     /// Literal registry name, or unknown when static name resolution failed.
     pub name: Option<String>,
@@ -288,8 +288,8 @@ pub struct SourceParameterType {
     pub expression: Option<String>,
     /// Location of the declaration, used to diagnose collisions across files.
     pub location: SourceLocation,
-    /// Comparison domain of the declaring source, which names it in diagnostics; unattached until
-    /// [`SourceParameterType::with_domain`] sets it.
+    /// Comparison domain of the declaring source, which names it in diagnostics and takes no part
+    /// in equality; unattached until [`SourceParameterType::with_domain`] sets it.
     pub domain: &'static DomainSpec,
 }
 
@@ -309,6 +309,17 @@ impl SourceParameterType {
         Self { domain, ..self }
     }
 }
+
+impl PartialEq for SourceParameterType {
+    /// Declarations are equal when declared alike; the domain only words their diagnostics.
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.expression == other.expression
+            && self.location == other.location
+    }
+}
+
+impl Eq for SourceParameterType {}
 
 /// Definitions and non-fatal diagnostics extracted from one source.
 #[non_exhaustive]
