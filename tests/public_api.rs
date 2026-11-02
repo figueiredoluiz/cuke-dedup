@@ -1067,6 +1067,27 @@ fn caller_adapters_declare_configuration_keys() {
     let error = load("package.json", ruby, caller_only()).unwrap_err();
     assert!(error.ends_with("unknown field `ruby`"), "{error}");
     assert!(load("package.json", ruby, AdapterRegistry::builtin().clone()).is_ok());
+
+    // A caller adapter named like Ruby's keeps `rubyLoadPaths` unread; `load_paths` then returns
+    // no paths instead of panicking on a value that is not an array.
+    static NAMED_RUBY: ContractAdapter = ContractAdapter {
+        name: "cucumber-ruby",
+        keys: &["rubyLoadPaths"],
+        ..KEYED_FIELDS
+    };
+    let registry =
+        AdapterRegistry::new([SourceAdapterRegistration::new(".keyed", &NAMED_RUBY)]).unwrap();
+    let config = load(
+        "package.json",
+        r#"{"cukeDedup":{"rubyLoadPaths":"lib"}}"#,
+        registry,
+    )
+    .unwrap();
+    assert_eq!(
+        config.adapter_config("cucumber-ruby").unwrap()["rubyLoadPaths"],
+        "lib"
+    );
+    assert!(cuke_dedup::ruby::load_paths(&config).is_empty());
 }
 
 /// Discovers one path with a line suffix, which only Cucumber normalization drops.

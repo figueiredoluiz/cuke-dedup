@@ -481,6 +481,8 @@ fn parameter_type_metadata_is_available_without_running_a_transformer() {
         assert!(extraction.diagnostics.is_empty(), "{source}: {:?}", extraction.diagnostics);
         assert_eq!(extraction.parameter_types.len(), 1);
         assert_eq!(extraction.parameter_types[0].name.as_deref(), Some("channel"));
+        // A direct caller of `extract` gets Ruby wording without the shared extraction loop.
+        assert_eq!(extraction.parameter_types[0].domain.display_name, "Ruby");
         let pattern = extraction.parameter_types[0].expression.as_ref().unwrap();
         let matcher = regex::Regex::new(pattern).unwrap();
         assert!(matcher.is_match("stdout"));

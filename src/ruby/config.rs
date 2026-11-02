@@ -81,14 +81,15 @@ pub(crate) fn apply_keys(keys: Map<String, Value>) -> Result<Map<String, Value>>
         .unwrap_or_default())
 }
 
-/// The configured `rubyLoadPaths`, as written, before resolution against the project root.
+/// The configured `rubyLoadPaths`, as written, before resolution against the project root; empty
+/// when the registry's `cucumber-ruby` adapter is not the built-in one and kept something else.
 pub fn load_paths(config: &crate::config::Config) -> Vec<PathBuf> {
     config
         .adapter_config(crate::source_adapter::SourceAdapter::name(
             &super::RUBY_ADAPTER,
         ))
         .and_then(|section| section.get("rubyLoadPaths"))
-        .map(|paths| serde_json::from_value(paths.clone()).expect("Ruby keeps the paths it read"))
+        .and_then(|paths| serde_json::from_value(paths.clone()).ok())
         .unwrap_or_default()
 }
 

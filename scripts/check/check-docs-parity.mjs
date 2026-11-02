@@ -48,12 +48,13 @@ const docs = readdirSync(join(root, "docs"), { recursive: true })
 const flags = cliFlags(structBody(cliSource, "CheckOptions"));
 // `AdapterKeys` routes each claimed key to its adapter, so the walk stops there and reads each
 // adapter's config struct instead.
-const ADAPTER_CONFIG_STRUCTS = [["src/ruby/config.rs", "RawRubyConfig", "CONFIG_KEYS"]];
+// [file implementing `config_keys`, file holding the config struct, struct, path of the key list it returns]
+const ADAPTER_CONFIG_STRUCTS = [["src/ruby.rs", "src/ruby/config.rs", "RawRubyConfig", "config::CONFIG_KEYS"]];
 /** A config struct body by name; `AdapterKeys` contributes no fields of its own. */
 const findStruct = (name) => (name === "AdapterKeys" ? "" : findConfigStruct(rustSources, name));
 const keys = [
   ...configSurface(findStruct, "RawConfig"),
-  ...ADAPTER_CONFIG_STRUCTS.flatMap(([, name]) => configSurface(findStruct, name)),
+  ...ADAPTER_CONFIG_STRUCTS.flatMap(([, , name]) => configSurface(findStruct, name)),
 ];
 // Floors guard the parser itself: if a refactor makes the struct scan silently return fewer
 // surfaces, that must fail loudly rather than pass by checking nothing.
@@ -83,16 +84,23 @@ const readKeys = configFields(findConfigStruct(rustSources, "RawConfig"))
   .filter((field) => !field.flatten)
   .map((field) => field.key);
 assert.deepEqual(readKeys.filter((key) => !coreKeys.includes(key)), [], "every RawConfig field must be in CORE_CONFIG_KEYS");
-// Every adapter that declares claimed keys is listed above, so none escapes these checks.
+// Every adapter implementing `config_keys` is listed above, so none escapes these checks, however
+// it spells its key list. The trait and its test adapters live in `source_adapter*` and test files.
 const declaring = readdirSync(join(root, "src"), { recursive: true })
-  .filter((name) => String(name).endsWith(".rs"))
-  .filter((name) => /\bstatic CONFIG_KEYS\b/.test(readFileSync(join(root, "src", String(name)), "utf8")))
-  .map((name) => `src/${String(name).replace(/\\/g, "/")}`)
+  .map((name) => String(name).replace(/\\/g, "/"))
+  .filter((name) => name.endsWith(".rs") && !/^source_adapter(\.rs|\/)|(^|\/)tests?(\.rs|\/)/.test(name))
+  .filter((name) => /\bfn config_keys\(&self\)/.test(readFileSync(join(root, "src", name), "utf8")))
+  .map((name) => `src/${name}`)
   .sort();
-assert.deepEqual(declaring, ADAPTER_CONFIG_STRUCTS.map(([file]) => file).sort(), "list each adapter declaring CONFIG_KEYS");
+assert.deepEqual(declaring, ADAPTER_CONFIG_STRUCTS.map(([impl]) => impl).sort(), "list each adapter implementing config_keys");
 // An adapter's claimed keys are its config struct's top-level fields, or registration would let
 // another adapter claim one the struct reads.
-for (const [file, name, list] of ADAPTER_CONFIG_STRUCTS) {
+for (const [impl, file, name, path] of ADAPTER_CONFIG_STRUCTS) {
+  const list = path.split("::").pop();
+  const implSource = readFileSync(join(root, impl), "utf8");
+  assert.equal(implSource.match(/\bfn config_keys\(&self\)/g).length, 1, `${impl} must hold one config_keys, listed here`);
+  const returned = new RegExp(`fn config_keys\\(&self\\)[^{]*\\{\\s*&${path}\\s*\\}`);
+  assert.ok(returned.test(implSource), `${impl} config_keys must return all of ${path}`);
   const source = readFileSync(join(root, file), "utf8");
   const declared = source.match(new RegExp(`${list}: \\[&str; \\d+\\] = \\[([^\\]]*)\\]`));
   assert.ok(declared, `${list} not found in ${file}`);
