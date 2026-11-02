@@ -48,8 +48,8 @@ const docs = readdirSync(join(root, "docs"), { recursive: true })
 const flags = cliFlags(structBody(cliSource, "CheckOptions"));
 // `AdapterKeys` routes each claimed key to its adapter, so the walk stops there and reads each
 // adapter's config struct instead.
-// [file implementing `config_keys`, file holding the config struct, struct, key list it returns]
-const ADAPTER_CONFIG_STRUCTS = [["src/ruby.rs", "src/ruby/config.rs", "RawRubyConfig", "CONFIG_KEYS"]];
+// [file implementing `config_keys`, file holding the config struct, struct, path of the key list it returns]
+const ADAPTER_CONFIG_STRUCTS = [["src/ruby.rs", "src/ruby/config.rs", "RawRubyConfig", "config::CONFIG_KEYS"]];
 /** A config struct body by name; `AdapterKeys` contributes no fields of its own. */
 const findStruct = (name) => (name === "AdapterKeys" ? "" : findConfigStruct(rustSources, name));
 const keys = [
@@ -95,11 +95,12 @@ const declaring = readdirSync(join(root, "src"), { recursive: true })
 assert.deepEqual(declaring, ADAPTER_CONFIG_STRUCTS.map(([impl]) => impl).sort(), "list each adapter implementing config_keys");
 // An adapter's claimed keys are its config struct's top-level fields, or registration would let
 // another adapter claim one the struct reads.
-for (const [impl, file, name, list] of ADAPTER_CONFIG_STRUCTS) {
+for (const [impl, file, name, path] of ADAPTER_CONFIG_STRUCTS) {
+  const list = path.split("::").pop();
   const implSource = readFileSync(join(root, impl), "utf8");
   assert.equal(implSource.match(/\bfn config_keys\(&self\)/g).length, 1, `${impl} must hold one config_keys, listed here`);
-  const returned = new RegExp(`fn config_keys\\(&self\\)[^{]*\\{\\s*&(?:\\w+::)*${list}\\s*\\}`);
-  assert.ok(returned.test(implSource), `${impl} config_keys must return all of ${list}`);
+  const returned = new RegExp(`fn config_keys\\(&self\\)[^{]*\\{\\s*&${path}\\s*\\}`);
+  assert.ok(returned.test(implSource), `${impl} config_keys must return all of ${path}`);
   const source = readFileSync(join(root, file), "utf8");
   const declared = source.match(new RegExp(`${list}: \\[&str; \\d+\\] = \\[([^\\]]*)\\]`));
   assert.ok(declared, `${list} not found in ${file}`);
