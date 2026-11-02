@@ -32,7 +32,7 @@ impl RegexDialect for RubyRegex {
     }
 }
 
-static DOMAIN: DomainSpec = DomainSpec::new("ruby", &REGEX);
+static DOMAIN: DomainSpec = DomainSpec::new("ruby", &REGEX).with_display_name("Ruby");
 
 /// The Ruby comparison policy: one shared handler scope, text-matched steps, step invocation by
 /// text, and the effect-stream regime each handler declares.

@@ -1,12 +1,6 @@
 {
   "schemaVersion": 2,
   "core": [
-    ["src/analysis/parameter_types.rs","text:ruby",1],
-    ["src/analysis/usage.rs","text:ruby",1],
-    ["src/cli.rs","text:js",1],
-    ["src/cli.rs","text:nodemodules",1],
-    ["src/cli.rs","text:ruby",1],
-    ["src/cli.rs","text:ts",1],
     ["src/config.rs","name:ruby",2],
     ["src/config.rs","text:javascript",1],
     ["src/framework_descriptor.rs","text:npm-scope",1],

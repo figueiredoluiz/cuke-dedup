@@ -11,6 +11,7 @@ fn declaration(file: &str, name: Option<&str>, pattern: Option<&str>) -> SourceP
         pattern.map(str::to_owned),
         location,
     )
+    .with_domain(crate::ruby::semantics::policy().domain())
 }
 
 /// A declaration that invalidates the registry withdraws every pattern, configured ones

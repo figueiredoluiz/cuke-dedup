@@ -10,15 +10,29 @@ use crate::model::{BehaviorEventRef, EffectStream, MatcherKind, StepDefinition};
 pub struct DomainSpec {
     /// Stable label reported in `--emit-fingerprints` records.
     pub(crate) label: &'static str,
+    /// Name of the domain's sources in diagnostics.
+    pub(crate) display_name: &'static str,
     /// Regex semantics of the domain's matchers.
     pub(crate) dialect: &'static dyn RegexDialect,
 }
 
 impl DomainSpec {
-    /// A domain reported as `label` in `--emit-fingerprints` records, matching regexes with
-    /// `dialect`.
+    /// A domain reported as `label` in `--emit-fingerprints` records and diagnostics, matching
+    /// regexes with `dialect`.
     pub const fn new(label: &'static str, dialect: &'static dyn RegexDialect) -> Self {
-        Self { label, dialect }
+        Self {
+            label,
+            display_name: label,
+            dialect,
+        }
+    }
+
+    /// This domain, named `display_name` in diagnostics instead of its label.
+    pub const fn with_display_name(self, display_name: &'static str) -> Self {
+        Self {
+            display_name,
+            ..self
+        }
     }
 }
 
@@ -191,7 +205,8 @@ impl RegexDialect for UnattachedRegex {
     }
 }
 
-static UNATTACHED: DomainSpec = DomainSpec::new("unattached", &UNATTACHED_REGEX);
+static UNATTACHED: DomainSpec =
+    DomainSpec::new("unattached", &UNATTACHED_REGEX).with_display_name("Unattached");
 
 /// How the analyzer compares one definition with others, declared by the adapter that extracted
 /// it. A [`StepDefinition`] built by hand names one: [`AnalysisPolicy::unattached`], an adapter's,

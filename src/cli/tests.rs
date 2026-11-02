@@ -206,6 +206,19 @@ fn typed_adapter_diagnostics_route_independently_of_language_and_wording() {
     }
 }
 
+/// Names read as prose at every length.
+#[test]
+fn join_names_reads_as_prose() {
+    for (names, joined) in [
+        (&[][..], ""),
+        (&["a"][..], "a"),
+        (&["a", "b"][..], "a and b"),
+        (&["a", "b", "c"][..], "a, b and c"),
+    ] {
+        assert_eq!(join_names(names), joined);
+    }
+}
+
 /// Both `cuke-dedup PATH` and `cuke-dedup check PATH` parse; `check` without a path fails.
 #[test]
 fn supports_implicit_and_explicit_check_forms() {

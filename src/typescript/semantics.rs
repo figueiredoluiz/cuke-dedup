@@ -34,7 +34,7 @@ impl RegexDialect for JavaScriptRegex {
     }
 }
 
-static DOMAIN: DomainSpec = DomainSpec::new("ecmascript", &REGEX);
+static DOMAIN: DomainSpec = DomainSpec::new("ecmascript", &REGEX).with_display_name("JS/TS");
 
 /// An ECMAScript policy: every handler's event stream counts as complete.
 const fn ecmascript(handler_scope: HandlerScope, step_matching: StepMatching) -> AnalysisPolicy {
