@@ -673,12 +673,29 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
         "Given('I have {int} item(s) in red/blue', () => work());\nGiven(/^regex$/, () => work());",
     );
     assert_eq!(
-        witness_for(&definitions[0], &BTreeMap::new()).as_deref(),
+        witness_for(&definitions[0], &BTreeMap::new(), &mut HashMap::new()).as_deref(),
         Some("I have 1 items in red")
     );
-    assert!(witness_for(&definitions[1], &BTreeMap::new()).is_none());
+    assert!(witness_for(&definitions[1], &BTreeMap::new(), &mut HashMap::new()).is_none());
     definitions[0].matcher = "a {colour}".to_owned();
-    assert!(witness_for(&definitions[0], &BTreeMap::new()).is_none());
+    assert!(witness_for(&definitions[0], &BTreeMap::new(), &mut HashMap::new()).is_none());
+    // A sample is derived once per domain and type name: a shared memo answers from the first
+    // pattern, where a fresh one derives from the second.
+    let mut memo = HashMap::new();
+    let first = BTreeMap::from([("colour".to_owned(), "red|green".to_owned())]);
+    let second = BTreeMap::from([("colour".to_owned(), "blue|green".to_owned())]);
+    assert_eq!(
+        witness_for(&definitions[0], &first, &mut memo).as_deref(),
+        Some("a red")
+    );
+    assert_eq!(
+        witness_for(&definitions[0], &second, &mut memo).as_deref(),
+        Some("a red")
+    );
+    assert_eq!(
+        witness_for(&definitions[0], &second, &mut HashMap::new()).as_deref(),
+        Some("a blue")
+    );
     for (pattern, expected) in [
         ("red|green", Some("red")),
         ("(red|green)", Some("red")),

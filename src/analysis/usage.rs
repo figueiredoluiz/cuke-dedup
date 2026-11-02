@@ -550,6 +550,8 @@ fn analyze_matcher_overlap(
     // silently losing the overlap coverage of every authoritative member behind it.
     let mut witnessed_groups = HashSet::new();
     let mut witnesses: Vec<(usize, String)> = Vec::new();
+    // A parameter type's sample is derived per domain and name once, however many matchers use it.
+    let mut samples = HashMap::new();
     // Scanning a witness evaluates no comparison, so it is bounded by the configured limit rather
     // than by what the pair stage left: at an exact limit, witnesses that accept nothing complete.
     let witness_scan_budget = config
@@ -562,7 +564,7 @@ fn analyze_matcher_overlap(
         if !witnessed_groups.insert((definition.matcher_kind, &definition.normalized_matcher)) {
             continue;
         }
-        if let Some(witness) = witness_for(definition, &config.parameter_types) {
+        if let Some(witness) = witness_for(definition, &config.parameter_types, &mut samples) {
             witnesses.push((left, witness));
         }
     }
@@ -787,10 +789,14 @@ fn cached_overlap_proposals(
     Some(proposals)
 }
 
+/// Parameter-type samples already derived, by comparison domain label and type name.
+type ParameterSamples = HashMap<&'static str, HashMap<String, Option<String>>>;
+
 /// Builds one concrete step text a Cucumber Expression would accept, or `None` when unknown.
 fn witness_for(
     definition: &StepDefinition,
     parameter_types: &BTreeMap<String, String>,
+    samples: &mut ParameterSamples,
 ) -> Option<String> {
     if definition.matcher_kind != MatcherKind::CucumberExpression {
         return None;
@@ -808,10 +814,15 @@ fn witness_for(
             // A declared type contributes a sample only when its pattern is plainly enumerable.
             // An undeclared type is unknown outright, and a pattern with real regex syntax has no
             // sample that can be derived soundly, so both leave the matcher without a witness.
-            name => definition
-                .analysis_profile()
-                .dialect()
-                .parameter_sample(parameter_types.get(name)?)?,
+            name => {
+                let pattern = parameter_types.get(name)?;
+                let profile = definition.analysis_profile();
+                let by_name = samples.entry(profile.domain.label).or_default();
+                if !by_name.contains_key(name) {
+                    by_name.insert(name.to_owned(), profile.dialect().parameter_sample(pattern));
+                }
+                by_name[name].clone()?
+            }
         };
         witness.push_str(&sample);
         offset = whole.end();

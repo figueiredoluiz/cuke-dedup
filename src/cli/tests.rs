@@ -230,3 +230,31 @@ fn supports_implicit_and_explicit_check_forms() {
     assert!(matches!(explicit.command, Some(Command::Check { .. })));
     assert!(Cli::try_parse_from(["cuke-dedup", "check"]).is_err());
 }
+
+/// Ruby's parameter-type declarations reach the corpus attributed to Ruby's domain, which the
+/// shared extraction loop sets: the extractor leaves them unattributed.
+#[test]
+fn extracted_parameter_types_are_attributed_to_the_extracting_adapter() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join(".cuke-dedup.json"),
+        r#"{"definitions":["features/step_definitions/*.rb"]}"#,
+    )
+    .unwrap();
+    let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+    std::fs::create_dir_all(root.path().join("features/step_definitions")).unwrap();
+    std::fs::write(
+        root.path().join("features/step_definitions/steps.rb"),
+        "ParameterType(name: 'size', regexp: /small|large/, transformer: ->(v) { v })\n",
+    )
+    .unwrap();
+    let files = discovery::discover(&config).unwrap();
+    let mut diagnostics = discovery_diagnostics(&config, &files, &None);
+    let corpus = extract_corpus(&config, &files, &None, &mut diagnostics);
+    let domains: Vec<_> = corpus
+        .parameter_types
+        .iter()
+        .map(|declaration| declaration.domain.display_name)
+        .collect();
+    assert_eq!(domains, ["Ruby"]);
+}

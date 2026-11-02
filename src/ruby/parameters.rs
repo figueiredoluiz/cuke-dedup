@@ -48,7 +48,6 @@ pub(super) fn collect(
                 pattern(*options.get("regexp")?, source)
             });
             SourceParameterType::new(name, expression, location(file, node, source))
-                .with_domain(super::semantics::policy().domain())
         })
         .collect()
 }

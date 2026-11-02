@@ -1534,6 +1534,13 @@
     "src/cli/tests.rs": {
       "tests": [
         {
+          "name": "extracted_parameter_types_are_attributed_to_the_extracting_adapter",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: the shared extraction loop attributes an unattributed declaration to the adapter that extracted it; the Ruby declaration is only the carrier.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "terminal_color_requires_tty_and_allows_no_color_opt_out",
           "requiredStatus": "engine-invariant",
           "stage": "cli-parsing",
@@ -3240,6 +3247,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
           "rationale": "Adapter-independent stage `api-shape`: the crate-internal `FrameworkContract` builders and `policy_of` fallback over a caller-built id, descriptor and policies (the engine default and a scope variant of it); no adapter declares or produces the values.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "parameter_type_domain_defaults_to_the_extracting_adapter",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: the crate-internal `SourceParameterType::defaulting_domain` over a declaration built by hand, which no adapter extracts.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

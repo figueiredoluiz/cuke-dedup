@@ -1351,3 +1351,21 @@ fn contract_builders_attach_discovery_and_policy() {
         );
     }
 }
+
+/// Checks the adapter's domain fills in an unattributed declaration and never replaces one an extractor set.
+#[test]
+fn parameter_type_domain_defaults_to_the_extracting_adapter() {
+    let location = SourceLocation::new("a.rb", 1, 1, 1, 2);
+    let ruby = crate::ruby::semantics::policy().domain();
+    let javascript = crate::typescript::semantics::default_policy().domain();
+    let bare = SourceParameterType::new(Some("size".to_owned()), None, location);
+    assert_eq!(bare.domain, AnalysisPolicy::unattached().domain());
+    assert_eq!(
+        bare.clone().defaulting_domain(javascript).domain,
+        javascript
+    );
+    assert_eq!(
+        bare.with_domain(ruby).defaulting_domain(javascript).domain,
+        ruby
+    );
+}

@@ -290,7 +290,8 @@ pub struct SourceParameterType {
     /// Location of the declaration, used to diagnose collisions across files.
     pub location: SourceLocation,
     /// Comparison domain of the declaring source, which names it in diagnostics and takes no part
-    /// in equality; unattached until [`SourceParameterType::with_domain`] sets it.
+    /// in equality; the extracting adapter's domain unless [`SourceParameterType::with_domain`]
+    /// sets another.
     pub domain: &'static DomainSpec,
 }
 
@@ -308,6 +309,15 @@ impl SourceParameterType {
     /// This declaration, attributed to `domain` in diagnostics.
     pub fn with_domain(self, domain: &'static DomainSpec) -> Self {
         Self { domain, ..self }
+    }
+
+    /// This declaration, attributed to `domain` unless its extractor already set one.
+    pub(crate) fn defaulting_domain(self, domain: &'static DomainSpec) -> Self {
+        if self.domain == AnalysisPolicy::unattached().domain() {
+            self.with_domain(domain)
+        } else {
+            self
+        }
     }
 }
 
@@ -602,7 +612,8 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
     }
 
     /// Reads one source's value for `key`, one of [`SourceAdapter::config_keys`], into `into`.
-    /// Deserializing a typed value here keeps the source's error text and position. The default
+    /// Deserializing a typed value here keeps the source's error text; a file source reports the
+    /// end of the enclosing object as the position, since the value is buffered first. The default
     /// stores the value as JSON, where an integer beyond 64 bits becomes a float.
     fn read_config_key(
         &self,

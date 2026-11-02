@@ -586,7 +586,14 @@ fn extract_definitions(
                     corpus.indirect_usage.extend(extracted.indirect_usage);
                     corpus.incomplete |= corpus.indirect_usage.unknown;
                 }
-                corpus.parameter_types.extend(extracted.parameter_types);
+                // An extractor that leaves a declaration unattributed is worded as its adapter.
+                let domain = adapter.analysis_policy().domain();
+                corpus.parameter_types.extend(
+                    extracted
+                        .parameter_types
+                        .into_iter()
+                        .map(|declaration| declaration.defaulting_domain(domain)),
+                );
                 if !extracted.definitions.is_empty() {
                     corpus.definition_files_with_definitions += 1;
                 }
