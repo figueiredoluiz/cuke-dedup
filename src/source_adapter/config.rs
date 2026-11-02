@@ -1,7 +1,7 @@
 //! Adapter-owned configuration: reading the keys adapters claim from one source and keeping the
 //! sections they return.
 use super::{AdapterRegistry, ConfigKeys, SourceAdapter};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::de::{self, DeserializeSeed, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -133,7 +133,8 @@ pub(crate) struct AdapterSections(Vec<(&'static str, ConfigKeys)>);
 
 impl AdapterSections {
     /// Replaces each claiming adapter's section with the one it returns for the keys one source
-    /// set; an adapter whose keys the source left out still applies, with none.
+    /// set; an adapter whose keys the source left out still applies, with none. A returned key the
+    /// adapter does not claim is refused.
     pub(crate) fn apply(
         &mut self,
         adapters: &AdapterRegistry,
@@ -141,10 +142,18 @@ impl AdapterSections {
     ) -> Result<()> {
         let mut sections = Vec::new();
         for adapter in adapters.config_claimants() {
-            sections.push((
-                adapter.name(),
-                adapter.apply_config(keys.take(adapter.name()))?,
-            ));
+            let section = adapter.apply_config(keys.take(adapter.name()))?;
+            // An unclaimed key would print beside the core's or another adapter's value.
+            if let Some(key) = section
+                .keys()
+                .find(|key| !adapter.config_keys().contains(&key.as_str()))
+            {
+                bail!(
+                    "adapter `{}` returned the configuration key `{key}`, which it does not claim",
+                    adapter.name()
+                );
+            }
+            sections.push((adapter.name(), section));
         }
         self.0 = sections;
         Ok(())

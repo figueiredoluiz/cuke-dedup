@@ -615,8 +615,8 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
     }
 
     /// Checks the keys one configuration source set, as [`SourceAdapter::read_config_key`] stored
-    /// them, and returns the section the configuration keeps and prints. One source applies, so
-    /// nothing merges. The default keeps the keys as read.
+    /// them, and returns the section the configuration keeps and prints, holding only keys this
+    /// adapter claims. One source applies, so nothing merges. The default keeps the keys as read.
     fn apply_config(&self, keys: ConfigKeys) -> Result<ConfigKeys> {
         Ok(keys)
     }

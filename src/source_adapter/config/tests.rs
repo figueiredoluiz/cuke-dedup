@@ -24,8 +24,11 @@ impl SourceAdapter for Defaulted {
     fn config_keys(&self) -> &'static [&'static str] {
         &["level"]
     }
-    /// Defaults `level` to 1.
+    /// Defaults `level` to 1; a `level` of 0 also returns `threshold`, which it does not claim.
     fn apply_config(&self, mut keys: ConfigKeys) -> Result<ConfigKeys> {
+        if keys.get("level") == Some(&serde_json::json!(0)) {
+            keys.insert("threshold".to_owned(), serde_json::json!(1));
+        }
         keys.entry("level").or_insert(serde_json::json!(1));
         Ok(keys)
     }
@@ -111,6 +114,12 @@ fn adapter_sections_apply_every_claimant_and_print_entries() {
     let mut sections = AdapterSections::default();
     sections.apply(&defaulted, AdapterKeys::default()).unwrap();
     assert_eq!(serde_json::to_string(&sections).unwrap(), r#"{"level":1}"#);
+    // A key an adapter returns without claiming it could print twice, so it is refused.
+    let stray = read(r#"{"level":0}"#, Some(&defaulted)).unwrap();
+    assert_eq!(
+        sections.apply(&defaulted, stray).unwrap_err().to_string(),
+        "adapter `defaulted` returned the configuration key `threshold`, which it does not claim"
+    );
 
     // One adapter on two suffixes claims its keys once, so its section prints once.
     let twice = AdapterRegistry::new([
