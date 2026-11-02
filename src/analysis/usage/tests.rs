@@ -690,10 +690,13 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
         ("", None),
         ("red.*", None),
         ("(red", None),
-        // A translated Ruby scoped array: built-in dialects take its first element.
+        // An alternation of inline-flag groups: the first group, when the whole pattern takes it.
         ("(?:(?m:red)|(?ms:green))", Some("red")),
         ("(?:(?ms:red-1))", Some("red-1")),
         ("(?:(?m:red.*)|(?m:green))", None),
+        ("(?:(?m:red)|(?m:green))(?:(?m:blue))", None),
+        // Matches inside `red` as `ed`, so only an anchored check refuses it.
+        ("(?:(?m:red)|(?m:e))(?:(?m:d))", None),
     ] {
         for framework in [
             crate::typescript::frameworks::CUCUMBER_JS,
@@ -711,11 +714,13 @@ fn witness_generation_covers_builtins_declared_literals_and_unknowns() {
             );
         }
     }
-    // A caller dialect's default has no scoped-array shortcut.
+    // A caller dialect's default reads the same Rust regex forms.
     use crate::source_adapter::semantics::RegexDialect;
     assert_eq!(
-        IdentityDialect.parameter_sample("(?:(?m:red)|(?ms:green))"),
-        None
+        IdentityDialect
+            .parameter_sample("(?:(?m:red)|(?ms:green))")
+            .as_deref(),
+        Some("red")
     );
     assert_eq!(
         IdentityDialect

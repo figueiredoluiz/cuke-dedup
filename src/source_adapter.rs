@@ -31,6 +31,8 @@ use std::collections::HashMap;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::path::{Path, PathBuf};
 
+// These diagnostics stay beside `ExtractionDiagnostic::new`: its public legacy classification
+// reads them, although the built-in adapters classify theirs by kind.
 pub(crate) const UNRESOLVED_REGISTRATION_DIAGNOSTIC_PREFIX: &str =
     "unresolved step-registration calls:";
 
@@ -580,6 +582,19 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
     /// framework-specific policy is attached per definition.
     fn analysis_policy(&self) -> AnalysisPolicy;
 
+    /// Whether `path`, whose suffix routes to this adapter, is one of its sources. The default
+    /// accepts every such path. `path` is root-relative in discovery and as stored when a
+    /// definition reads back, so decide from the file name.
+    fn accepts_path(&self, _path: &Path) -> bool {
+        true
+    }
+
+    /// Rejects a configured registration name. `registrations` is one list and every registered
+    /// adapter is consulted, so a rejection applies to all of them; the default accepts every name.
+    fn validate_registration(&self, _name: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// Whether this frontend participates when no definition globs are configured.
     fn discover_by_default(&self) -> bool {
         true
@@ -880,17 +895,21 @@ impl AdapterRegistry {
         })
     }
 
-    /// The adapter registered for `path`. A `.map` file and a TypeScript declaration file
-    /// (`.d.ts`, `.d.mts`, `.d.cts`) route to no adapter, whichever adapter claims the suffix.
+    /// The adapter registered for `path`'s suffix, when it accepts the path.
     pub fn adapter_for_path(&self, path: &Path) -> Option<&'static dyn SourceAdapter> {
         let extension = path.extension()?.to_str()?;
-        if extension == "map" || is_declaration_file(path, extension) {
-            return None;
-        }
         self.registrations
             .iter()
             .find(|registration| extension == registration.suffix.trim_start_matches('.'))
             .map(|registration| registration.adapter)
+            .filter(|adapter| adapter.accepts_path(path))
+    }
+
+    /// Rejects `name` when a registered adapter does, in registry order.
+    pub(crate) fn validate_registration(&self, name: &str) -> Result<()> {
+        self.registrations
+            .iter()
+            .try_for_each(|registration| registration.adapter.validate_registration(name))
     }
 
     /// The language of the adapter registered for `path`.
@@ -1117,18 +1136,6 @@ pub(crate) fn registered_adapter(language: SourceLanguage) -> Result<&'static dy
 /// Returns the built-in adapter registered for `path`, rejecting declaration and source-map files.
 pub fn adapter_for_path(path: &Path) -> Option<&'static dyn SourceAdapter> {
     AdapterRegistry::builtin().adapter_for_path(path)
-}
-
-/// Whether `path` is a TypeScript declaration file: extension `ts`, `mts` or `cts` and a stem that
-/// is `.d` or ends in `.d`. Comparisons are case-sensitive.
-fn is_declaration_file(path: &Path, extension: &str) -> bool {
-    matches!(extension, "ts" | "mts" | "cts")
-        && path.file_stem().is_some_and(|stem| {
-            stem == ".d"
-                || Path::new(stem)
-                    .extension()
-                    .is_some_and(|extension| extension == "d")
-        })
 }
 
 /// Classifies a path using the built-in suffixes.

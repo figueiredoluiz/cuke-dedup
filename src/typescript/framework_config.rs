@@ -3,7 +3,7 @@
 use crate::framework_descriptor::{
     cucumber_discovery, directory_pattern, first_matching_config, framework_pattern,
     package_has_any_dependency, read_config, DiscoveredFeatures, DiscoveryInput,
-    FrameworkDescriptor, LiteralProperty, ScriptConfigReader,
+    FrameworkDescriptor, LiteralProperty, ScriptConfigReader, CUCUMBER_DEFAULT,
 };
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -43,8 +43,18 @@ pub(crate) const CYPRESS_CUCUMBER_DISCOVERY: FrameworkDescriptor =
 /// default paths when a Cucumber dependency is present.
 pub(crate) const CUCUMBER_JS_DISCOVERY: FrameworkDescriptor =
     FrameworkDescriptor::new("Cucumber.js", |input| {
-        cucumber_discovery(input, &[SCRIPT_CONFIG_READER])
+        let default_paths =
+            package_has_any_dependency(input.package, &CUCUMBER_DEPENDENCIES).then(|| {
+                DiscoveredFeatures::new(
+                    vec![CUCUMBER_DEFAULT.to_owned()],
+                    input.root.join("package.json"),
+                )
+            });
+        Ok(cucumber_discovery(input, &[SCRIPT_CONFIG_READER])?.or(default_paths))
     });
+
+/// The npm packages that mark a Cucumber.js project.
+const CUCUMBER_DEPENDENCIES: [&str; 2] = ["@cucumber/cucumber", "cucumber"];
 
 /// Reads scripted configuration in the JavaScript and TypeScript module extensions.
 const SCRIPT_CONFIG_READER: ScriptConfigReader = ScriptConfigReader {

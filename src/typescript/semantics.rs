@@ -28,10 +28,6 @@ impl RegexDialect for JavaScriptRegex {
     fn similarity_flags_match(&self, _: &str, _: &str) -> bool {
         true
     }
-    /// Tries a translated Ruby scoped array first, as every built-in dialect does.
-    fn parameter_sample(&self, pattern: &str) -> Option<String> {
-        crate::source_adapter::semantics::builtin_parameter_sample(pattern)
-    }
 }
 
 static DOMAIN: DomainSpec = DomainSpec::new("ecmascript", &REGEX).with_display_name("JS/TS");

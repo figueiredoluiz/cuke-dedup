@@ -26,10 +26,6 @@ impl RegexDialect for RubyRegex {
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool {
         left == right
     }
-    /// Tries a translated Ruby scoped array first, as every built-in dialect does.
-    fn parameter_sample(&self, pattern: &str) -> Option<String> {
-        crate::source_adapter::semantics::builtin_parameter_sample(pattern)
-    }
 }
 
 static DOMAIN: DomainSpec = DomainSpec::new("ruby", &REGEX).with_display_name("Ruby");

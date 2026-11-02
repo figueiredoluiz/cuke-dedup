@@ -6531,6 +6531,13 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JavaScript forwarding wrappers (`regression 278 forwarders must register the handler they receive`). Semantic residue: none.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_283_witness_matches_the_whole_parameter_pattern",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the default parameter witness reads a Rust regex expression, shared by every dialect; the JS fixture only supplies definitions.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -6807,6 +6814,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
           "rationale": "Adapter-independent stage `api-shape`: diagnostics name a caller-built domain; no adapter produces any input.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "path_and_registration_rules_stay_behind_their_adapter",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: routing and configuration read a caller adapter's rules; no source is read.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "verbatim_descriptors_keep_their_framework_paths",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Adapter-independent stage `api-shape`: a caller descriptor's discovered paths with and without normalization; no source is read.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

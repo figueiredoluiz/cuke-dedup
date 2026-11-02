@@ -121,19 +121,20 @@ pub trait RegexDialect: Sync + std::panic::RefUnwindSafe {
     /// requires equal flag strings; JavaScript accepts any pair.
     fn similarity_flags_match(&self, left: &str, right: &str) -> bool;
 
-    /// One text that parameter-type `pattern` matches, used as a usage witness, or `None`. The
-    /// default takes the first `|` alternative after stripping enclosing groups, accepted only when
-    /// non-empty and made of alphanumerics, space, `_` or `-`; a group opener without a trailing
-    /// `)` yields `None`.
+    /// One text that parameter-type `pattern`, a Rust `regex` expression, matches, used as a usage
+    /// witness, or `None`. The default takes the first group of an alternation of inline-flag
+    /// groups (`(?:(?m:a)|(?m:b))`) when the whole pattern matches it, else the first `|`
+    /// alternative after stripping enclosing groups, accepted only when non-empty and made of
+    /// alphanumerics, space, `_` or `-`; a group opener without a trailing `)` yields `None`.
     fn parameter_sample(&self, pattern: &str) -> Option<String> {
-        alternative_sample(pattern)
+        flag_group_sample(pattern).or_else(|| alternative_sample(pattern))
     }
 }
 
 /// The first `|` alternative of `pattern` after stripping enclosing groups, accepted only when
 /// non-empty and made of alphanumerics, space, `_` or `-`. A group opener without a trailing `)`
 /// yields `None`. The witness must still match both compiled definitions.
-pub(crate) fn alternative_sample(pattern: &str) -> Option<String> {
+fn alternative_sample(pattern: &str) -> Option<String> {
     let mut trimmed = pattern.trim();
     loop {
         let inner = trimmed
@@ -156,9 +157,10 @@ pub(crate) fn alternative_sample(pattern: &str) -> Option<String> {
     Some(first.to_owned())
 }
 
-/// The built-in dialects' witness: the first element of a translated Ruby scoped array
-/// (`(?:(?m:a)|(?m:b))`) when it qualifies, else [`alternative_sample`].
-pub(crate) fn builtin_parameter_sample(pattern: &str) -> Option<String> {
+/// The first group of an alternation of inline-flag groups (`(?:(?m:a)|(?m:b))`), when it is
+/// non-empty, made of alphanumerics, space, `_` or `-`, and the whole pattern matches it: text
+/// after the alternation can make the group alone a non-match.
+fn flag_group_sample(pattern: &str) -> Option<String> {
     pattern
         .strip_prefix("(?:(?m:")
         .or_else(|| pattern.strip_prefix("(?:(?ms:"))
@@ -176,9 +178,10 @@ pub(crate) fn builtin_parameter_sample(pattern: &str) -> Option<String> {
                 && first
                     .chars()
                     .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
+                && crate::resource_limits::compile_regex(&format!("^(?:{pattern})$"))
+                    .is_ok_and(|whole| whole.is_match(first))
         })
         .map(str::to_owned)
-        .or_else(|| alternative_sample(pattern))
 }
 
 /// The dialect of a definition no adapter claims. Its regex semantics are unknown: nothing
