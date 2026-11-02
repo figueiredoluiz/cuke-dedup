@@ -8468,11 +8468,23 @@ fn regression_283_witness_matches_the_whole_parameter_pattern() {
             &serde_json::json!({ "parameterTypes": { "colour": pattern } }).to_string(),
         );
         let output = run_on(directory.path(), &["--reporters", "jsonl", "--no-metrics"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let context = format!("{pattern}: {stdout}{stderr}");
+        assert_eq!(output.status.code(), Some(0), "{context}");
+        // A config that fails to load only warns; the pattern must have been read.
+        assert!(stderr.is_empty(), "{context}");
+        // The run analyzed both definitions: no feature step reads `a {colour}`.
+        assert!(
+            stdout.contains("Step definition `a {colour}` is not used"),
+            "{context}"
+        );
         assert_eq!(
             stdout.contains("overlapping-matcher"),
             overlaps,
-            "{pattern}: {stdout}"
+            "{context}"
         );
     }
 }
