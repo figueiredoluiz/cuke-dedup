@@ -123,9 +123,9 @@ pub trait RegexDialect: Sync + std::panic::RefUnwindSafe {
 
     /// One text that parameter-type `pattern`, a Rust `regex` expression, matches, used as a usage
     /// witness, or `None`. The default takes the first group of an alternation of inline-flag
-    /// groups (`(?:(?m:a)|(?m:b))`) when it qualifies, else the first `|` alternative after
-    /// stripping enclosing groups, accepted only when non-empty and made of alphanumerics, space,
-    /// `_` or `-`; a group opener without a trailing `)` yields `None`.
+    /// groups (`(?:(?m:a)|(?m:b))`) when the whole pattern matches it, else the first `|`
+    /// alternative after stripping enclosing groups, accepted only when non-empty and made of
+    /// alphanumerics, space, `_` or `-`; a group opener without a trailing `)` yields `None`.
     fn parameter_sample(&self, pattern: &str) -> Option<String> {
         flag_group_sample(pattern).or_else(|| alternative_sample(pattern))
     }
@@ -158,7 +158,8 @@ fn alternative_sample(pattern: &str) -> Option<String> {
 }
 
 /// The first group of an alternation of inline-flag groups (`(?:(?m:a)|(?m:b))`), when it is
-/// non-empty and made of alphanumerics, space, `_` or `-`.
+/// non-empty, made of alphanumerics, space, `_` or `-`, and the whole pattern matches it: text
+/// after the alternation can make the group alone a non-match.
 fn flag_group_sample(pattern: &str) -> Option<String> {
     pattern
         .strip_prefix("(?:(?m:")
@@ -177,6 +178,8 @@ fn flag_group_sample(pattern: &str) -> Option<String> {
                 && first
                     .chars()
                     .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
+                && crate::resource_limits::compile_regex(&format!("^(?:{pattern})$"))
+                    .is_ok_and(|whole| whole.is_match(first))
         })
         .map(str::to_owned)
 }

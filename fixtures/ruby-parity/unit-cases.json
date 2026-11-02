@@ -6531,6 +6531,13 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JavaScript forwarding wrappers (`regression 278 forwarders must register the handler they receive`). Semantic residue: none.",
           "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_283_witness_matches_the_whole_parameter_pattern",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the default parameter witness reads a Rust regex expression, shared by every dialect; the JS fixture only supplies definitions.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

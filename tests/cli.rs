@@ -8439,3 +8439,40 @@ fn regression_278_forwarders_must_register_the_handler_they_receive() {
             .stdout(predicate::str::contains(outcome));
     }
 }
+
+/// A witness must match the whole parameter pattern: `a {colour}` cannot read `a red` when the type
+/// requires a trailing `blue`, so it does not overlap `^a red$`. Without the trailing group it
+/// does, which is the control.
+#[test]
+fn regression_283_witness_matches_the_whole_parameter_pattern() {
+    for (pattern, overlaps) in [
+        ("(?:(?m:red)|(?m:green))(?:(?m:blue))", false),
+        ("(?:(?m:red)|(?m:green))", true),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "a.feature",
+            "Feature: f\n  Scenario: s\n    Given a blue\n",
+        );
+        write(
+            directory.path(),
+            "steps.js",
+            "const { Given } = require('@cucumber/cucumber');\n\
+             Given('a {colour}', function (c) { first(c); });\n\
+             Given(/^a red$/, function () { second(); });\n",
+        );
+        write(
+            directory.path(),
+            ".cuke-dedup.json",
+            &serde_json::json!({ "parameterTypes": { "colour": pattern } }).to_string(),
+        );
+        let output = run_on(directory.path(), &["--reporters", "jsonl", "--no-metrics"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.contains("overlapping-matcher"),
+            overlaps,
+            "{pattern}: {stdout}"
+        );
+    }
+}
