@@ -231,23 +231,58 @@ fn supports_implicit_and_explicit_check_forms() {
     assert!(Cli::try_parse_from(["cuke-dedup", "check"]).is_err());
 }
 
-/// Ruby's parameter-type declarations reach the corpus attributed to Ruby's domain, which the
-/// shared extraction loop sets: the extractor leaves them unattributed.
+/// An adapter whose declarations carry no domain, as a caller's extractor leaves them.
+struct Bare;
+
+impl source_adapter::SourceAdapter for Bare {
+    /// Returns the adapter name.
+    fn name(&self) -> &'static str {
+        "bare"
+    }
+    /// Returns the adapter name as its language.
+    fn language(&self) -> source_adapter::SourceLanguage {
+        source_adapter::SourceLanguage::new("bare")
+    }
+    /// Extracts one unattributed parameter-type declaration.
+    fn extract(
+        &self,
+        _: &str,
+        file: &source_adapter::SourceFile,
+    ) -> anyhow::Result<source_adapter::Extraction> {
+        let mut extraction = source_adapter::Extraction::new(Vec::new(), Vec::new());
+        extraction.parameter_types = vec![source_adapter::SourceParameterType::new(
+            Some("size".to_owned()),
+            None,
+            crate::model::SourceLocation::new(&file.path, 1, 1, 1, 2),
+        )];
+        Ok(extraction)
+    }
+    /// Compares in Ruby's domain, named "Ruby".
+    fn analysis_policy(&self) -> source_adapter::AnalysisPolicy {
+        crate::ruby::semantics::policy()
+    }
+}
+
+static BARE: Bare = Bare;
+
+/// The shared extraction loop attributes a declaration its extractor left unattributed to the
+/// extracting adapter.
 #[test]
 fn extracted_parameter_types_are_attributed_to_the_extracting_adapter() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(
         root.path().join(".cuke-dedup.json"),
-        r#"{"definitions":["features/step_definitions/*.rb"]}"#,
+        r#"{"definitions":["*.bare"]}"#,
     )
     .unwrap();
-    let config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
-    std::fs::create_dir_all(root.path().join("features/step_definitions")).unwrap();
-    std::fs::write(
-        root.path().join("features/step_definitions/steps.rb"),
-        "ParameterType(name: 'size', regexp: /small|large/, transformer: ->(v) { v })\n",
-    )
-    .unwrap();
+    std::fs::write(root.path().join("steps.bare"), "").unwrap();
+    let registry =
+        source_adapter::AdapterRegistry::new([source_adapter::SourceAdapterRegistration::new(
+            ".bare", &BARE,
+        )])
+        .unwrap();
+    let config =
+        Config::load_with_adapters(root.path(), ConfigOverrides::default(), registry).unwrap();
     let files = discovery::discover(&config).unwrap();
     let mut diagnostics = discovery_diagnostics(&config, &files, &None);
     let corpus = extract_corpus(&config, &files, &None, &mut diagnostics);

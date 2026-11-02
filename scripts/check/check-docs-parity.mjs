@@ -96,8 +96,10 @@ assert.deepEqual(declaring, ADAPTER_CONFIG_STRUCTS.map(([impl]) => impl).sort(),
 // An adapter's claimed keys are its config struct's top-level fields, or registration would let
 // another adapter claim one the struct reads.
 for (const [impl, file, name, list] of ADAPTER_CONFIG_STRUCTS) {
-  const returned = new RegExp(`fn config_keys\\(&self\\)[^{]*\\{\\s*&(?:\\w+::)*${list}\\b`);
-  assert.ok(returned.test(readFileSync(join(root, impl), "utf8")), `${impl} config_keys must return ${list}`);
+  const implSource = readFileSync(join(root, impl), "utf8");
+  assert.equal(implSource.match(/\bfn config_keys\(&self\)/g).length, 1, `${impl} must hold one config_keys, listed here`);
+  const returned = new RegExp(`fn config_keys\\(&self\\)[^{]*\\{\\s*&(?:\\w+::)*${list}\\s*\\}`);
+  assert.ok(returned.test(implSource), `${impl} config_keys must return all of ${list}`);
   const source = readFileSync(join(root, file), "utf8");
   const declared = source.match(new RegExp(`${list}: \\[&str; \\d+\\] = \\[([^\\]]*)\\]`));
   assert.ok(declared, `${list} not found in ${file}`);

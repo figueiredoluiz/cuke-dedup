@@ -1537,7 +1537,7 @@
           "name": "extracted_parameter_types_are_attributed_to_the_extracting_adapter",
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
-          "rationale": "Adapter-independent stage `api-shape`: the shared extraction loop attributes an unattributed declaration to the adapter that extracted it; the Ruby declaration is only the carrier.",
+          "rationale": "Adapter-independent stage `api-shape`: the shared extraction loop attributes an unattributed declaration to the adapter that extracted it; a test adapter supplies the declaration.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
