@@ -1,7 +1,11 @@
 //! Ruby-owned configuration: the `ruby` section and its flat `rubyLoadPaths` alias.
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::path::PathBuf;
+
+/// The top-level configuration keys the Ruby adapter owns.
+pub(crate) static CONFIG_KEYS: [&str; 2] = ["ruby", "rubyLoadPaths"];
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub(crate) struct RubyConfig {
@@ -9,8 +13,8 @@ pub(crate) struct RubyConfig {
     pub(crate) load_paths: Vec<PathBuf>,
 }
 
-/// The Ruby keys of one configuration source. Flattened into the core config, so unknown keys at
-/// the top level are rejected there; the section rejects its own.
+/// The Ruby keys of one configuration source, as [`read_key`] stores them; [`apply_keys`] reads
+/// them back here. The section rejects keys of its own; the core rejects unknown top-level keys.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawRubyConfig {
@@ -20,7 +24,7 @@ pub(crate) struct RawRubyConfig {
     ruby_load_paths: Option<Vec<PathBuf>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawRubySection {
     #[serde(default)]
@@ -42,3 +46,51 @@ impl RubyConfig {
         Ok(())
     }
 }
+
+/// Reads one source's value for a Ruby key with its typed reader, so a bad value keeps today's
+/// error text, and stores it as read; `null` stores as unset.
+pub(crate) fn read_key(
+    key: &str,
+    value: &mut dyn erased_serde::Deserializer<'_>,
+    into: &mut Map<String, Value>,
+) -> std::result::Result<(), erased_serde::Error> {
+    let read = match key {
+        "ruby" => serde_json::to_value(erased_serde::deserialize::<Option<RawRubySection>>(value)?),
+        "rubyLoadPaths" => {
+            serde_json::to_value(erased_serde::deserialize::<Option<Vec<PathBuf>>>(value)?)
+        }
+        // fail-closed: registration routes only `CONFIG_KEYS` here; any other key is refused.
+        _ => {
+            return Err(serde::de::Error::custom(format!(
+                "`{key}` is not a Ruby configuration key"
+            )))
+        }
+    };
+    into.insert(key.to_owned(), read.expect("a decoded Ruby value encodes"));
+    Ok(())
+}
+
+/// Applies the Ruby keys one source set, as [`read_key`] stored them, and returns the section the
+/// configuration keeps and prints: `rubyLoadPaths` when it holds paths.
+pub(crate) fn apply_keys(keys: Map<String, Value>) -> Result<Map<String, Value>> {
+    let mut config = RubyConfig::default();
+    config.apply_raw(serde_json::from_value(Value::Object(keys))?)?;
+    Ok(serde_json::to_value(config)?
+        .as_object()
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// The configured `rubyLoadPaths`, as written, before resolution against the project root.
+pub fn load_paths(config: &crate::config::Config) -> Vec<PathBuf> {
+    config
+        .adapter_config(crate::source_adapter::SourceAdapter::name(
+            &super::RUBY_ADAPTER,
+        ))
+        .and_then(|section| section.get("rubyLoadPaths"))
+        .map(|paths| serde_json::from_value(paths.clone()).expect("Ruby keeps the paths it read"))
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests;

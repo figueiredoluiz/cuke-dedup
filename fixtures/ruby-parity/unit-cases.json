@@ -3291,6 +3291,31 @@
         }
       ]
     },
+    "src/source_adapter/config/tests.rs": {
+      "tests": [
+        {
+          "name": "adapter_keys_read_claimed_keys_and_refuse_others",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: the reader routes claimed keys to their adapter and refuses unclaimed and repeated ones; adapter values arrive as JSON.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "adapter_sections_apply_every_claimant_and_print_entries",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: sections apply per claiming adapter and serialize as their entries.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "configuration_loads_apply_each_claimant_once",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: a test adapter's section through a configuration load, with and without a source.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
     "src/source_adapter/registry_validation/tests.rs": {
       "tests": [
         {
@@ -6828,6 +6853,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "api-shape",
           "rationale": "Adapter-independent stage `api-shape`: a caller descriptor's discovered paths with and without normalization; no source is read.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "caller_adapters_declare_configuration_keys",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: registration refuses caller configuration keys and the default hooks keep values as read; no source is read.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

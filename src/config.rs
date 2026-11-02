@@ -6,7 +6,7 @@ use crate::resource_limits::{
     is_input_limit_error, read_utf8, MAX_CANDIDATE_COMPARISONS, MAX_CONFIG_INPUT_BYTES,
     MAX_STRUCTURAL_CLASS_COMPARISONS, MAX_SUPPRESSION_REASON_CHARS,
 };
-use crate::source_adapter::AdapterRegistry;
+use crate::source_adapter::{AdapterKeys, AdapterRegistry};
 use anyhow::{bail, Context, Result};
 use globset::Glob;
 use serde::{Deserialize, Serialize};
@@ -67,11 +67,41 @@ impl FromStr for ReporterKind {
     }
 }
 
+/// The top-level configuration keys the core reads or prints: `Config`'s serialized fields, which
+/// `check-docs-parity.mjs` compares with this list and with `RawConfig`. No adapter may claim one,
+/// or its section would print a second value under the same name.
+pub(crate) const CORE_CONFIG_KEYS: [&str; 25] = [
+    "root",
+    "definitions",
+    "features",
+    "featurePatternOrigin",
+    "configWarnings",
+    "configSource",
+    "exclude",
+    "excludeDefaults",
+    "includeHidden",
+    "reporters",
+    "output",
+    "threshold",
+    "nearDuplicateHandlerSimilarity",
+    "requireFeatures",
+    "requireDefinitions",
+    "failOnIncomplete",
+    "failOnUnparseable",
+    "registrations",
+    "assertionModules",
+    "parameterTypes",
+    "maxCandidateComparisons",
+    "maxStructuralClassComparisons",
+    "noMetrics",
+    "rules",
+    "suppressions",
+];
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawConfig {
     #[serde(flatten)]
-    frontend: crate::source_adapter::RawFrontendConfig,
+    frontend: crate::source_adapter::AdapterKeys,
     #[serde(default)]
     definitions: Option<Vec<String>>,
     #[serde(default)]
@@ -184,7 +214,7 @@ pub(crate) struct CliConfigOverrides {
 /// Fully resolved and validated analyzer configuration.
 pub struct Config {
     #[serde(flatten)]
-    frontend: crate::source_adapter::FrontendConfig,
+    frontend: crate::source_adapter::AdapterSections,
     #[serde(skip)]
     adapters: AdapterRegistry,
     /// Canonical repository root being analyzed.
@@ -246,9 +276,11 @@ pub struct Config {
 }
 
 impl Config {
-    /// Ordered, explicitly configured Ruby dependency source roots.
-    pub fn ruby_load_paths(&self) -> &[PathBuf] {
-        self.frontend.ruby_load_paths()
+    /// The configuration section adapter `name` keeps: the keys it claims, as it applied them
+    /// from the configuration source, or with none when no source set them. `None` for a name that
+    /// claims no keys.
+    pub fn adapter_config(&self, name: &str) -> Option<&crate::source_adapter::ConfigKeys> {
+        self.frontend.get(name)
     }
 
     /// Loads framework, package, and standalone configuration beneath `root`, then applies
@@ -301,8 +333,10 @@ impl Config {
             // serde_json's default recursion limit remains enabled for untrusted config input.
             let value = serde_json::from_str::<serde_json::Value>(&text)
                 .with_context(|| format!("failed to parse {}", package_path.display()))?;
-            let package = serde_json::from_value::<PackageJson>(value.clone())
-                .with_context(|| format!("failed to parse {}", package_path.display()))?;
+            let package = crate::source_adapter::reading_with(&adapters, || {
+                serde_json::from_value::<PackageJson>(value.clone())
+            })
+            .with_context(|| format!("failed to parse {}", package_path.display()))?;
             (package.cuke_dedup, Some(value))
         } else {
             (None, None)
@@ -317,9 +351,9 @@ impl Config {
         });
         let mut config_warnings = Vec::new();
         let (standalone_config, standalone_path) = if let Some(path) = explicit_config {
-            (Some(read_raw_config(&path)?), Some(path))
+            (Some(read_raw_config(&path, &adapters)?), Some(path))
         } else {
-            discover_config_file(&root, &mut config_warnings)?
+            discover_config_file(&root, &adapters, &mut config_warnings)?
         };
 
         let package_config = if standalone_config.is_none() {
@@ -327,6 +361,7 @@ impl Config {
         } else {
             None
         };
+        let source_applies = package_config.is_some() || standalone_config.is_some();
 
         let has_explicit_features = overrides.features.is_some()
             || standalone_config
@@ -379,6 +414,11 @@ impl Config {
             if replaces_features {
                 config.feature_pattern_origin = config.config_source.clone();
             }
+        }
+        if !source_applies {
+            // Every claiming adapter applies once: with no keys when no source sets any.
+            let empty = AdapterKeys::default();
+            config.frontend.apply(&config.adapters, empty)?;
         }
         let cli_replaces_features = overrides.features.is_some();
         config.apply_overrides(overrides);
@@ -458,7 +498,7 @@ impl Config {
     /// `output` is marked for project-output containment checks.
     fn apply_raw(&mut self, raw: RawConfig, source: &str) -> Result<()> {
         self.frontend
-            .apply_raw(raw.frontend)
+            .apply(&self.adapters, raw.frontend)
             .with_context(|| format!("invalid configuration in {source}"))?;
         if let Some(value) = raw.definitions {
             self.definitions = value;
@@ -894,11 +934,12 @@ pub(crate) fn canonical_platform_path(path: &Path) -> std::io::Result<PathBuf> {
     path.canonicalize().map(normalize_platform_path)
 }
 
-/// Reads and parses a standalone config file within the config byte limit; unknown keys fail.
-fn read_raw_config(path: &Path) -> Result<RawConfig> {
+/// Reads and parses a standalone config file within the config byte limit, with `adapters`
+/// claiming their keys; unknown keys fail.
+fn read_raw_config(path: &Path, adapters: &AdapterRegistry) -> Result<RawConfig> {
     let text = read_utf8(path, "CukeDedup configuration", MAX_CONFIG_INPUT_BYTES)?;
     // serde_json's default recursion limit remains enabled for untrusted config input.
-    serde_json::from_str::<RawConfig>(&text)
+    crate::source_adapter::reading_with(adapters, || serde_json::from_str::<RawConfig>(&text))
         .with_context(|| format!("failed to parse {}", path.display()))
 }
 
@@ -906,6 +947,7 @@ fn read_raw_config(path: &Path) -> Result<RawConfig> {
 /// pushed to `warnings` and the next candidate is tried, except input-limit errors, which return.
 fn discover_config_file(
     root: &Path,
+    adapters: &AdapterRegistry,
     warnings: &mut Vec<String>,
 ) -> Result<(Option<RawConfig>, Option<PathBuf>)> {
     const CANDIDATES: [&str; 4] = [
@@ -919,7 +961,7 @@ fn discover_config_file(
         if !path.is_file() {
             continue;
         }
-        match read_raw_config(&path) {
+        match read_raw_config(&path, adapters) {
             Ok(config) => return Ok((Some(config), Some(path))),
             Err(error) if is_input_limit_error(&error) => return Err(error),
             Err(error) => warnings.push(format!(
