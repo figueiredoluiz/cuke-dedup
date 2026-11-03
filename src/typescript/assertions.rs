@@ -1090,6 +1090,14 @@ fn collect_binding_scopes(
                     }
                 }
             }
+            // `import X = Y.Z` inside a namespace binds `X` there, whatever `Z` is.
+            "import_alias" if !is_module_declaration(node) => {
+                if let (Some(scope), Some(name)) =
+                    (nearest_lexical_scope(node.parent()), node.named_child(0))
+                {
+                    add_scope_binding(&mut scopes, scope, name, source);
+                }
+            }
             "enum_declaration" if !is_module_declaration(node) => {
                 if let (Some(scope), Some(name)) = (
                     nearest_lexical_scope(node.parent()),
@@ -1259,7 +1267,7 @@ fn nearest_lexical_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
 }
 
 /// Checks whether only expression or export wrappers separate a declaration from the program root.
-fn is_module_declaration(node: Node<'_>) -> bool {
+pub(super) fn is_module_declaration(node: Node<'_>) -> bool {
     let mut parent = node.parent();
     while let Some(candidate) = parent {
         match candidate.kind() {

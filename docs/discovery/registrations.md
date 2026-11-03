@@ -25,8 +25,18 @@ Jest-Cucumber binds steps positionally inside a scenario, so its definitions par
 
 These integrations use the built-in source and feature patterns. Jest/Vitest runner configuration and dynamic `loadFeature` calls are not executed or used to infer discovery paths; configure `features` and `definitions` explicitly when needed.
 
-Any runtime import of a name — named, default, namespace or `import x = require()` — means that name
-is not the ambient registration global. A type-only import is erased, so it does not.
+Any runtime import of a name — named, default, namespace, `import x = require()` or
+`import x = ns.member` — means that name is not the ambient registration global. A type-only import
+is erased, so it does not. `import x = ns.member` binds `x` in the scope that declares it, so inside
+a namespace it hides an outer import of the same name. When `ns` is an imported namespace and
+`member` one of its registrations, `x` is that registration.
+
+A local alias of a registration imported from an unresolved module (`const G = Given`, `G = Given`,
+a chain of them, or `const { Given: G } = ns` over an unresolved namespace, with or without a
+default on `G`) is reported against that module, as the import itself is. Aliases written with a
+type assertion, parentheses or a member access (`ns.Given`), and a registration used as a
+destructuring default (`const { x: G = Given } = obj`), are not followed, whether the module
+resolves or not.
 
 Package entrypoints are matched exactly. The root of the legacy Cypress package is not a step
 registration module; use its `/steps` entrypoint. Plain Playwright projects are supported when

@@ -1,4 +1,4 @@
-use super::assertions::{BindingScopes, FileScopes, RequireBindings};
+use super::assertions::{is_module_declaration, BindingScopes, FileScopes, RequireBindings};
 use super::ast::{
     call_string_argument, export_has_runtime_bindings, import_has_runtime_bindings,
     import_has_runtime_module_reference, import_module, import_requires_loader,
@@ -37,8 +37,6 @@ pub(super) struct RegistrationNames {
     aliases: RegistrationExports,
     fallback_aliases: BTreeSet<String>,
     namespaces: BTreeMap<String, RegistrationExports>,
-    unresolved_aliases: BTreeMap<String, String>,
-    unresolved_namespaces: BTreeMap<String, String>,
     /// Why a specifier could not be resolved statically, keyed by module specifier.
     unresolved_reasons: BTreeMap<String, UnresolvedModuleReason>,
     pub(super) framework: Framework,
@@ -59,6 +57,10 @@ struct ScopedRegistrations {
     aliases: BTreeMap<BindingKey, RegistrationExport>,
     namespaces: BTreeMap<BindingKey, RegistrationExports>,
     factories: BTreeSet<BindingKey>,
+    /// Bindings that name a registration of a module that failed to resolve, with that module.
+    unresolved_aliases: BTreeMap<BindingKey, String>,
+    /// Bindings that name a namespace or default import of a module that failed to resolve.
+    unresolved_namespaces: BTreeMap<BindingKey, String>,
 }
 
 impl ScopedRegistrations {
@@ -70,6 +72,8 @@ impl ScopedRegistrations {
             aliases: BTreeMap::new(),
             namespaces: BTreeMap::new(),
             factories: BTreeSet::new(),
+            unresolved_aliases: BTreeMap::new(),
+            unresolved_namespaces: BTreeMap::new(),
         }
     }
 
@@ -112,6 +116,20 @@ impl ScopedRegistrations {
     /// Returns namespace exports for the name at its nearest lexical binding.
     fn namespace(&self, node: Node<'_>, name: &str) -> Option<&RegistrationExports> {
         self.evidence(&self.namespaces, node, name)
+    }
+
+    /// Returns the unresolved module behind the name's nearest lexical binding, when that binding
+    /// is an unresolved registration import or a local alias of one.
+    fn unresolved_alias(&self, node: Node<'_>, name: &str) -> Option<&str> {
+        self.evidence(&self.unresolved_aliases, node, name)
+            .map(String::as_str)
+    }
+
+    /// Returns the unresolved module behind the name's nearest lexical binding, when that binding
+    /// is an unresolved namespace or default import.
+    fn unresolved_namespace(&self, node: Node<'_>, name: &str) -> Option<&str> {
+        self.evidence(&self.unresolved_namespaces, node, name)
+            .map(String::as_str)
     }
 
     /// Checks whether the nearest lexical binding has registration-factory evidence.
@@ -194,9 +212,9 @@ struct RegistrationDiscovery<'tree> {
     assignments: Vec<(String, String)>,
     scoped_assignments: Vec<(Node<'tree>, Node<'tree>)>,
     namespace_destructures: Vec<(Node<'tree>, String)>,
+    /// `import X = ns.Member` bindings: the alias name, the namespace and the member.
+    namespace_aliases: Vec<(Node<'tree>, String, String)>,
     shadowed_defaults: BTreeSet<String>,
-    unresolved_aliases: BTreeMap<String, String>,
-    unresolved_namespaces: BTreeMap<String, String>,
     unresolved_reasons: BTreeMap<String, UnresolvedModuleReason>,
     /// Local identifiers proven to be Playwright-BDD's `createBdd` export.
     create_bdd_factories: BTreeSet<String>,
@@ -291,27 +309,21 @@ pub(super) fn unresolved_module_reasons(
         .map(|(module, recorded)| (module.as_str(), recorded))
 }
 
-/// Returns the unresolved module behind an unshadowed root alias or recognized registration member.
+/// Returns the unresolved module behind an alias, a local alias of one, or a recognized
+/// registration member of an unresolved namespace, each at its nearest lexical binding.
 pub(super) fn unresolved_registration_module<'a>(
     function: Node<'_>,
     source: &[u8],
     registrations: &'a RegistrationNames,
 ) -> Option<&'a str> {
     match registration_callee(function, source)? {
-        RegistrationCallee::Identifier(name) => registrations
-            .unresolved_aliases
-            .get(name)
-            .filter(|_| registrations.scoped.key(function, name).1 == registrations.scoped.root)
-            .map(String::as_str),
+        RegistrationCallee::Identifier(name) => {
+            registrations.scoped.unresolved_alias(function, name)
+        }
         RegistrationCallee::Property { object, name } if REGISTRATIONS.contains(&name.as_ref()) => {
-            let namespace = node_text(object, source);
             registrations
-                .unresolved_namespaces
-                .get(namespace)
-                .filter(|_| {
-                    registrations.scoped.key(object, namespace).1 == registrations.scoped.root
-                })
-                .map(String::as_str)
+                .scoped
+                .unresolved_namespace(object, node_text(object, source))
         }
         RegistrationCallee::Property { .. } => None,
     }
@@ -503,6 +515,9 @@ pub(super) fn detect_registrations(
             "generator_function_declaration" => {
                 shadow_named_declaration(node, source, &mut discovered.shadowed_defaults)
             }
+            // `import X = Y.Z` binds `X`; at the top level it shadows the ambient registration of
+            // that name like any import, and an alias of a namespace member is resolved below.
+            "import_alias" => collect_import_alias(node, source, &mut discovered),
             "class_declaration"
             | "abstract_class_declaration"
             | "interface_declaration"
@@ -529,7 +544,53 @@ pub(super) fn detect_registrations(
         push_named_children_reverse(node, &mut stack);
     }
 
+    for (name, namespace, member) in &discovered.namespace_aliases {
+        let local = node_text(*name, source);
+        let key = discovered.scoped.key(*name, local);
+        if let Some(registration) = discovered
+            .scoped
+            .namespace(*name, namespace)
+            .and_then(|exports| exports.get(member))
+            // A factory alias is not modeled: its calls are found before this pass, so the
+            // registrations it produces stay unresolved and are reported by name.
+            .filter(|registration| registration.kind != RegistrationExportKind::Factory)
+            .cloned()
+        {
+            discovered
+                .scoped
+                .aliases
+                .insert(key.clone(), registration.clone());
+            // The unscoped map answers for the root only: a namespace-local alias must not stop
+            // the ambient registration of the same name from applying outside the namespace.
+            if key.1 == discovered.scoped.root {
+                discovered.aliases.insert(local.to_owned(), registration);
+            }
+        }
+        if REGISTRATIONS.contains(&member.as_str()) {
+            if let Some(module) = discovered
+                .scoped
+                .unresolved_namespace(*name, namespace)
+                .map(str::to_owned)
+            {
+                discovered.scoped.unresolved_aliases.insert(key, module);
+            }
+        }
+    }
+
     for (pattern, namespace) in &discovered.namespace_destructures {
+        if let Some(module) = discovered
+            .scoped
+            .unresolved_namespace(*pattern, namespace)
+            .map(str::to_owned)
+        {
+            for local in pattern_registration_locals(*pattern, source) {
+                let key = discovered.scoped.key(*pattern, &local);
+                discovered
+                    .scoped
+                    .unresolved_aliases
+                    .insert(key, module.clone());
+            }
+        }
         if let Some(exports) = discovered.scoped.namespace(*pattern, namespace).cloned() {
             let mut aliases = RegistrationExports::new();
             let mut factories = BTreeSet::new();
@@ -587,15 +648,25 @@ pub(super) fn detect_registrations(
         changed = false;
         for (local, target) in &discovered.scoped_assignments {
             let target_name = node_text(*target, source);
-            let Some(registration) = discovered.scoped.alias(*target, target_name).cloned() else {
-                continue;
-            };
             let key = discovered.scoped.key(*local, node_text(*local, source));
-            changed |= discovered
+            if let Some(registration) = discovered.scoped.alias(*target, target_name).cloned() {
+                changed |= discovered
+                    .scoped
+                    .aliases
+                    .insert(key.clone(), registration)
+                    .is_none();
+            }
+            if let Some(module) = discovered
                 .scoped
-                .aliases
-                .insert(key, registration)
-                .is_none();
+                .unresolved_alias(*target, target_name)
+                .map(str::to_owned)
+            {
+                changed |= discovered
+                    .scoped
+                    .unresolved_aliases
+                    .insert(key, module)
+                    .is_none();
+            }
         }
     }
 
@@ -629,8 +700,6 @@ pub(super) fn detect_registrations(
         aliases: discovered.aliases,
         fallback_aliases: discovered.fallback_aliases,
         namespaces: discovered.namespaces,
-        unresolved_aliases: discovered.unresolved_aliases,
-        unresolved_namespaces: discovered.unresolved_namespaces,
         unresolved_reasons: discovered.unresolved_reasons,
         framework: effective_framework,
         scoped: discovered.scoped,
@@ -938,16 +1007,20 @@ fn collect_unresolved_imports(
     for_each_import_binding(import, source, |binding| match binding {
         ImportBinding::Named { exported, local } => {
             if REGISTRATIONS.contains(&exported) {
+                let root = discovered.scoped.root;
                 discovered
+                    .scoped
                     .unresolved_aliases
-                    .insert(local.to_owned(), module.to_owned());
+                    .insert((local.to_owned(), root), module.to_owned());
             }
         }
         // A member call on either names the unresolved module in its warning.
         ImportBinding::Namespace(namespace) | ImportBinding::Default(namespace) => {
+            let root = discovered.scoped.root;
             discovered
+                .scoped
                 .unresolved_namespaces
-                .insert(namespace.to_owned(), module.to_owned());
+                .insert((namespace.to_owned(), root), module.to_owned());
         }
     });
 }
@@ -1479,35 +1552,95 @@ fn collect_pattern_aliases(
     aliases: &mut RegistrationExports,
     create_bdd_factories: &mut BTreeSet<String>,
 ) {
-    let mut cursor = pattern.walk();
-    for child in pattern.named_children(&mut cursor) {
-        let (original, alias) = match child.kind() {
-            "shorthand_property_identifier_pattern" => {
-                let name = node_text(child, source);
-                (name, name)
-            }
-            "pair_pattern" => {
-                let (Some(key), Some(value)) = (
-                    child.child_by_field_name("key"),
-                    child.child_by_field_name("value"),
-                ) else {
-                    continue;
-                };
-                (node_text(key, source), node_text(value, source))
-            }
-            _ => continue,
-        };
+    for (original, alias) in pattern_bindings(pattern, source) {
         if let Some(registration) = exports.get(original) {
-            if alias.chars().all(is_identifier_character) {
-                // A destructured factory (Playwright-BDD's `createBdd`) enters the factory path, as
-                // it does for an ESM import; every other export is a call alias.
-                if registration.kind == RegistrationExportKind::Factory {
-                    create_bdd_factories.insert(alias.to_owned());
-                } else {
-                    aliases.insert(alias.to_owned(), registration.clone());
-                }
+            // A destructured factory (Playwright-BDD's `createBdd`) enters the factory path, as
+            // it does for an ESM import; every other export is a call alias.
+            if registration.kind == RegistrationExportKind::Factory {
+                create_bdd_factories.insert(alias.to_owned());
+            } else {
+                aliases.insert(alias.to_owned(), registration.clone());
             }
         }
+    }
+}
+
+/// The `(exported, local)` names an object pattern binds, as `{ Given }`, `{ Given: G }` or either
+/// with a default value; a rest element and a nested pattern bind no name a call can start from.
+fn pattern_bindings<'source>(
+    pattern: Node<'_>,
+    source: &'source [u8],
+) -> Vec<(&'source str, &'source str)> {
+    let mut cursor = pattern.walk();
+    pattern
+        .named_children(&mut cursor)
+        .filter_map(|child| match child.kind() {
+            "shorthand_property_identifier_pattern" => Some((child, child)),
+            "pair_pattern" => child
+                .child_by_field_name("key")
+                .zip(child.child_by_field_name("value").and_then(without_default)),
+            "object_assignment_pattern" => child
+                .child_by_field_name("left")
+                .map(|local| (local, local)),
+            _ => None, // fail-closed: a rest element's member calls report by name
+        })
+        .map(|(original, local)| (node_text(original, source), node_text(local, source)))
+        .filter(|(_, local)| local.chars().all(is_identifier_character))
+        .collect()
+}
+
+/// Checks whether a node sits inside an ambient (`declare`) declaration, which is erased.
+fn is_ambient(node: Node<'_>) -> bool {
+    std::iter::successors(node.parent(), |ancestor| ancestor.parent())
+        .any(|ancestor| ancestor.kind() == "ambient_declaration")
+}
+
+/// The bound target of a pattern element, without its default value (`G` for `G = fallback`).
+fn without_default(element: Node<'_>) -> Option<Node<'_>> {
+    if element.kind() == "assignment_pattern" {
+        element.child_by_field_name("left")
+    } else {
+        Some(element)
+    }
+}
+
+/// The local names an object pattern binds to a registration name.
+fn pattern_registration_locals(pattern: Node<'_>, source: &[u8]) -> Vec<String> {
+    pattern_bindings(pattern, source)
+        .into_iter()
+        .filter(|(original, _)| REGISTRATIONS.contains(original))
+        .map(|(_, local)| local.to_owned())
+        .collect()
+}
+
+/// Records an `import X = ns.Member` binding: at the top level `X` shadows the ambient
+/// registration of that name, and a namespace member is resolved once every import is known.
+fn collect_import_alias<'tree>(
+    alias: Node<'tree>,
+    source: &[u8],
+    discovered: &mut RegistrationDiscovery<'tree>,
+) {
+    // An import alias always names its binding first, then the entity it aliases.
+    // An erased `declare namespace` binds nothing at runtime.
+    let name = alias.named_child(0).filter(|_| !is_ambient(alias));
+    if let Some(name) = name.filter(|_| is_module_declaration(alias)) {
+        shadow_default_name(name, source, &mut discovered.shadowed_defaults);
+    }
+    let member = alias
+        .named_child(1)
+        .filter(|target| target.kind() == "nested_identifier")
+        .and_then(|target| {
+            target
+                .child_by_field_name("object")
+                .filter(|object| object.kind() == "identifier")
+                .zip(target.child_by_field_name("property"))
+        });
+    if let Some((name, (object, property))) = name.zip(member) {
+        discovered.namespace_aliases.push((
+            name,
+            node_text(object, source).to_owned(),
+            node_text(property, source).to_owned(),
+        ));
     }
 }
 

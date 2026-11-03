@@ -2809,6 +2809,100 @@ fn unresolved_registration_imports_name_the_module_in_diagnostics() {
     }
 }
 
+/// Extracts `source` and returns its definition count and completeness diagnostics.
+fn definitions_and_completeness(source: &str) -> (usize, Vec<String>) {
+    let extracted = extract_detailed(source, &file(TYPESCRIPT)).unwrap();
+    let completeness = extracted
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| crate::source_adapter::is_completeness_diagnostic(diagnostic))
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect();
+    (extracted.definitions.len(), completeness)
+}
+
+/// Pins that registration evidence from an unresolved module follows a local alias exactly as
+/// evidence from a resolved one does: through `const`, assignment, a chain, a nested function and
+/// a destructured namespace, each reported against the module. The controls give the opposite
+/// answer, so a report cannot come from the generic registration-name guess: an alias of another
+/// value, a shadowed name, a sibling scope and a destructured non-registration report nothing.
+#[test]
+fn unresolved_registration_evidence_follows_local_aliases() {
+    let module = "unresolved module `@company/bdd`";
+    for (body, reported) in [
+        ("import { Given } from '@company/bdd'; const G = Given; G('x', () => work());", true),
+        ("import { Given as A } from '@company/bdd'; const B = A; const C = B; C('x', () => work());", true),
+        ("import { Given } from '@company/bdd'; let G; G = Given; G('x', () => work());", true),
+        ("import { Given } from '@company/bdd'; function f() { const G = Given; G('x', () => work()); }", true),
+        ("import * as bdd from '@company/bdd'; const { Given: G } = bdd; G('x', () => work());", true),
+        ("import * as bdd from '@company/bdd'; const { Given } = bdd; Given('x', () => work());", true),
+        ("import * as bdd from '@company/bdd'; const { /* note */ Given: G } = bdd; G('x', () => work());", true),
+        ("import * as bdd from '@company/bdd'; const { Given: G = fallback } = bdd; G('x', () => work());", true),
+        ("import * as bdd from '@company/bdd'; const { Given = fallback } = bdd; Given('x', () => work());", true),
+        ("import * as bdd from '@company/bdd'; import G = bdd.Given; G('x', () => work());", true),
+        ("import * as bdd from '@company/bdd'; namespace N { import G = bdd.Given; G('x', () => work()); }", true),
+        ("import * as bdd from '@company/bdd'; import W = bdd.World; W('x', () => work());", false),
+        ("import { Given } from '@company/bdd'; const G = other; G('x', () => work());", false),
+        ("import { Given } from '@company/bdd'; function f(Given) { const G = Given; G('x', () => work()); }", false),
+        ("import { Given } from '@company/bdd'; function f() { const G = Given; } G('x', () => work());", false),
+        ("import * as bdd from '@company/bdd'; const { World: W } = bdd; W('x', () => work());", false),
+    ] {
+        let (definitions, completeness) = definitions_and_completeness(body);
+        assert_eq!(definitions, 0, "{body}");
+        assert_eq!(
+            completeness.iter().filter(|message| message.contains(module)).count(),
+            usize::from(reported),
+            "{body}: {completeness:?}"
+        );
+    }
+}
+
+/// Pins that a default value on a destructured registration does not hide it: the alias is the
+/// registration whether the pattern reads a namespace import or a `require` result, and a default
+/// on a name that is not a registration gives no definition.
+#[test]
+fn destructuring_defaults_keep_registration_aliases() {
+    for (body, definitions) in [
+        ("import * as cc from '@cucumber/cucumber'; const { Given: G = fallback } = cc; G('x', () => work());", 1),
+        ("import * as cc from '@cucumber/cucumber'; const { Given = fallback } = cc; Given('x', () => work());", 1),
+        ("const { Given: G = fallback } = require('@cucumber/cucumber'); G('x', () => work());", 1),
+        ("import * as cc from '@cucumber/cucumber'; const { World: W = fallback } = cc; W('x', () => work());", 0),
+    ] {
+        assert_eq!(extract_ts(body).len(), definitions, "{body}");
+    }
+}
+
+/// Pins that `import X = Y.Z` binds `X` in the namespace holding it, so a call there is not the
+/// outer import's registration and a top-level one is not the ambient global. A call outside the
+/// namespace, a different bound name and an ambient namespace leave the registration intact, and
+/// an alias of a registration exported by an imported namespace is that registration, in the
+/// namespace that declares it and nowhere else.
+#[test]
+fn import_equals_aliases_bind_their_name_in_the_declaring_scope() {
+    for (body, definitions, reported) in [
+        ("import { Given } from '@cucumber/cucumber'; namespace N { import Given = Other.Given; Given('x', () => work()); }", 0, true),
+        ("import { Given } from '@cucumber/cucumber'; namespace N { export import Given = Other.Given; Given('x', () => work()); }", 0, true),
+        ("import Given = Other.Given; Given('x', () => work());", 0, true),
+        ("import { Given } from '@cucumber/cucumber'; namespace N { import Given = Other.Given; } Given('x', () => work());", 1, false),
+        ("import { Given } from '@cucumber/cucumber'; namespace N { import Other2 = A.B; Given('x', () => work()); }", 1, false),
+        ("import { Given } from '@cucumber/cucumber'; declare namespace N { import Given = Other.Given; } Given('x', () => work());", 1, false),
+        ("Given('x', () => work());", 1, false),
+        ("import * as cc from '@cucumber/cucumber'; import Given = cc.Given; Given('x', () => work());", 1, false),
+        ("import * as cc from '@cucumber/cucumber'; import G = cc.Given; G('x', () => work());", 1, false),
+        ("import * as cc from '@cucumber/cucumber'; namespace N { import G = cc.Given; G('x', () => work()); }", 1, false),
+        ("import * as cc from '@cucumber/cucumber'; namespace N { import G = cc.Given; } G('x', () => work());", 0, false),
+        ("import * as cc from '@cucumber/cucumber'; import W = cc.World; W('x', () => work());", 0, false),
+        ("import * as cc from '@cucumber/cucumber'; namespace N { import Given = cc.Given; } Given('x', () => work());", 1, false),
+        ("import * as cc from '@cucumber/cucumber'; const G = other; declare namespace N { import G = cc.Given; } G('x', () => work());", 0, false),
+        ("import * as pw from 'playwright-bdd'; import make = pw.createBdd; const { Given } = make(); Given('x', () => work());", 0, true),
+        ("import * as pw from 'playwright-bdd'; import make = pw.createBdd; make('x', () => work());", 0, false),
+    ] {
+        let (found, completeness) = definitions_and_completeness(body);
+        assert_eq!(found, definitions, "{body}");
+        assert_eq!(!completeness.is_empty(), reported, "{body}: {completeness:?}");
+    }
+}
+
 /// Verify ambient declarations are erased for every scoped pass, in each ambient form: none aborts
 /// extraction, and each file keeps the definitions of the same file without the block.
 #[test]
