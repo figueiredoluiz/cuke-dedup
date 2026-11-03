@@ -4876,6 +4876,24 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "unresolved_registration_evidence_follows_local_aliases",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: CommonJS/ESM module forms (barrels, re-exports, `require`, import specifiers) (`unresolved registration evidence follows local aliases`). Semantic residue: Ruby `require`, `require_relative` and `load` provenance is pinned by the `load-relative`, `load-cycle`, `load-unresolved` and `load-provider-root` groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "destructuring_defaults_keep_registration_aliases",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: CommonJS/ESM module forms (barrels, re-exports, `require`, import specifiers) (`destructuring defaults keep registration aliases`). Semantic residue: Ruby `require`, `require_relative` and `load` provenance is pinned by the `load-relative`, `load-cycle`, `load-unresolved` and `load-provider-root` groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "import_equals_aliases_bind_their_name_in_the_declaring_scope",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript `import X = Y.Z` namespace bindings; Ruby has no import-equals form. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "type_only_specifiers_never_alias_registrations_in_resolved_or_unresolved_imports",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: CommonJS/ESM module forms (barrels, re-exports, `require`, import specifiers) (`type only specifiers never alias registrations in resolved or unresolved imports`). Semantic residue: Ruby `require`, `require_relative` and `load` provenance is pinned by the `load-relative`, `load-cycle`, `load-unresolved` and `load-provider-root` groups.",
@@ -6569,6 +6587,12 @@
           "name": "regression_278_forwarders_must_register_the_handler_they_receive",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JavaScript forwarding wrappers (`regression 278 forwarders must register the handler they receive`). Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "regression_r46_r47_aliases_of_unresolved_and_namespace_imports",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript local aliases and `import X = Y.Z` namespace bindings (`regression r46 r47 aliases of unresolved and namespace imports`). Semantic residue: none.",
           "behaviorClass": "language-specific-api"
         },
         {

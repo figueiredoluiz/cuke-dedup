@@ -8488,3 +8488,30 @@ fn regression_283_witness_matches_the_whole_parameter_pattern() {
         );
     }
 }
+
+/// A registration imported from an unresolved module is still reported through a local alias, and
+/// `import X = Y.Z` in a namespace stops its name resolving to the outer import. Both used to run
+/// clean: the first dropped the definition silently, the second invented one. The controls call
+/// the registration directly, and outside the namespace.
+#[test]
+fn regression_r46_r47_aliases_of_unresolved_and_namespace_imports() {
+    for (source, code, found, warning) in [
+        ("import { Given } from './missing';\nconst G = Given;\nG('x', () => work());\n", 2, "0 definitions", "through unresolved module `./missing`"),
+        ("import { Given } from './missing';\nGiven('x', () => work());\n", 2, "0 definitions", "through unresolved module `./missing`"),
+        ("import { Given } from '@cucumber/cucumber';\nnamespace N {\n  import Given = Other.Given;\n  Given('x', () => work());\n}\n", 2, "0 definitions", "could not be resolved"),
+        ("import { Given } from '@cucumber/cucumber';\nnamespace N {\n  import Given = Other.Given;\n}\nGiven('x', () => work());\n", 0, "1 definition", ""),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), "a.feature", "Feature: f\n  Scenario: s\n    Given x\n");
+        write(directory.path(), "steps.ts", source);
+        let output = run_on(directory.path(), &["--fail-on-incomplete", "--no-metrics"]);
+        let context = format!(
+            "{source}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(code), "{context}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains(found), "{context}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains(warning), "{context}");
+    }
+}
