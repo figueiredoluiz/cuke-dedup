@@ -32,12 +32,14 @@ impl Sha256 {
     }
 
     /// Absorbs `input`, compressing each full 64-byte block and buffering the remainder.
-    /// Panics if the total input length overflows `u64`.
+    /// Panics once the total input reaches 2^61 bytes: its bit length no longer fits the `u64`
+    /// length field that padding appends.
     pub(super) fn update(&mut self, mut input: &[u8]) {
         self.input_len = self
             .input_len
             .checked_add(u64::try_from(input.len()).expect("input length fits in u64"))
-            .expect("SHA-256 input is shorter than 2^64 bytes");
+            .filter(|total| total.checked_mul(8).is_some())
+            .expect("SHA-256 input is shorter than 2^61 bytes");
 
         if self.buffer_len > 0 {
             let copied = input.len().min(64 - self.buffer_len);

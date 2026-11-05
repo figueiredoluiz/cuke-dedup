@@ -2479,6 +2479,20 @@
           "stage": "sha256",
           "rationale": "Adapter-independent stage `sha256`: SHA-256 digest primitive over bytes; no adapter data enters the function.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "input_below_2_pow_61_bytes_is_accepted",
+          "requiredStatus": "engine-invariant",
+          "stage": "sha256",
+          "rationale": "Adapter-independent stage `sha256`: SHA-256 input-length limit over a byte count; no adapter data enters the function.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "input_of_2_pow_61_bytes_panics",
+          "requiredStatus": "engine-invariant",
+          "stage": "sha256",
+          "rationale": "Adapter-independent stage `sha256`: SHA-256 input-length limit over a byte count; no adapter data enters the function.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -3020,6 +3034,13 @@
             "name": "ruby_load_bytes_budget_preserves_findings_and_marks_the_cut_incomplete"
           },
           "rationale": "Eight near-8 MiB Ruby providers remain within the shared 64 MiB graph budget and a ninth crosses it: strict exit 2 and incomplete corpus replace a clean run while independent local duplicate-matcher survives. `ruby_load_budget_is_shared_across_selected_definition_files` independently pins the 1,024-file boundary; the Rust unit test checks the remaining documented release constants.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "every_release_limit_constant_is_pinned",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: source-text check that every `pub(crate) const` in `resource_limits.rs` has an `assert_eq!` in the policy test; no adapter data enters it.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
