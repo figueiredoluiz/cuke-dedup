@@ -106,6 +106,7 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 | Raw overlap witness proposals | Four times the remaining unique-pair budget |
 | Overlap witness index scans | Four times the configured unique-pair limit |
 | Retained overlap findings | 10,000 |
+| Retained pair / static-overlap evidence | 16 MiB each |
 | Trigram keys per definition / per run | 4,096 / 250,000 |
 | Matcher-blocking posting proposals | 2,000,000 |
 | Combined handler events | 10,000,000 |

@@ -36,6 +36,7 @@ fn finding(
     severity: Severity,
 ) -> Finding {
     Finding {
+        original_fingerprint: None,
         rule: Rule::DuplicateMatcher,
         severity,
         message: "duplicate".to_owned(),

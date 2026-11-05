@@ -34,6 +34,56 @@ pub(crate) const MAX_STRUCTURAL_CLASS_COMPARISONS: usize = 250_000;
 pub(crate) const SOURCE_CLASSIFICATION_PREFIX_BYTES: usize = 64 * 1024;
 pub(crate) const MINIFIED_MEAN_LINE_BYTES: usize = 200;
 
+/// Maximum retained bytes for one buffered-report text field, including its omission marker.
+pub(crate) const MAX_REPORT_FIELD_BYTES: usize = 8 * 1024;
+/// Includes escaping, repeated HTML evidence, and report structure.
+pub(crate) const MAX_BUFFERED_REPORT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Borrows short text; samples long text on a UTF-8 boundary before allocating or sanitizing it.
+/// The marker counts omitted source bytes, including bytes removed to make room for the marker.
+/// The fixed internal limit must leave at least 64 bytes for that marker.
+pub(crate) fn sample_text(value: &str, limit: usize) -> std::borrow::Cow<'_, str> {
+    assert!(
+        limit >= 64,
+        "text limit must accommodate the omission marker"
+    );
+    if value.len() <= limit {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let mut end = limit.saturating_sub(64);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!(
+        "{}… [{} bytes omitted]",
+        &value[..end],
+        value.len() - end
+    ))
+}
+
+/// Rejects a write before it would exceed the byte ceiling, including serialization escapes.
+pub(crate) struct LimitedWriter<W> {
+    pub(crate) inner: W,
+    pub(crate) remaining: usize,
+}
+
+impl<W: std::io::Write> std::io::Write for LimitedWriter<W> {
+    /// Forwards a fitting write and charges only bytes actually accepted by the inner writer.
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.remaining {
+            return Err(std::io::Error::other("buffered report byte limit exceeded"));
+        }
+        let written = self.inner.write(bytes)?;
+        self.remaining -= written;
+        Ok(written)
+    }
+
+    /// Flushes the wrapped writer, preserving its error.
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Work counted against a limit. `charge` always takes the work and reports a total past the limit;
 /// `admit` takes it only when the total stays within the limit.
 #[derive(Clone, Copy, Debug)]

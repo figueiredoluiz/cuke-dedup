@@ -189,6 +189,8 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_STRUCTURAL_CLASS_COMPARISONS, 250_000);
     assert_eq!(SOURCE_CLASSIFICATION_PREFIX_BYTES, 64 * 1024);
     assert_eq!(MINIFIED_MEAN_LINE_BYTES, 200);
+    assert_eq!(MAX_REPORT_FIELD_BYTES, 8 * 1024);
+    assert_eq!(MAX_BUFFERED_REPORT_BYTES, 16 * 1024 * 1024);
 }
 
 /// Every `pub(crate) const` in `resource_limits.rs` has an `assert_eq!` in the policy test above.
@@ -210,4 +212,31 @@ fn every_release_limit_constant_is_pinned() {
         .filter(|name| !policy.contains(&format!("assert_eq!({name},")))
         .collect::<Vec<_>>();
     assert_eq!(unpinned, Vec::<&str>::new());
+}
+
+/// The writer accepts exactly its ceiling and rejects the next write before forwarding bytes.
+#[test]
+fn limited_writer_enforces_exact_byte_boundary() {
+    use std::io::Write;
+    let mut writer = LimitedWriter {
+        inner: Vec::new(),
+        remaining: 4,
+    };
+    writer.write_all("🦀".as_bytes()).unwrap();
+    writer.flush().unwrap();
+    assert!(writer.write_all(b"x").is_err());
+    assert_eq!(writer.inner, "🦀".as_bytes());
+    assert_eq!(writer.remaining, 0);
+}
+
+/// Sampling preserves short inputs, cuts at UTF-8 boundaries, and counts the original bytes cut.
+#[test]
+fn sampled_text_counts_omitted_bytes_at_unicode_boundaries() {
+    let exact = "🦀".repeat(32);
+    assert_eq!(sample_text(&exact, 128), exact);
+    let longer = format!("{exact}a");
+    let sampled = sample_text(&longer, 127);
+    let expected_prefix = "🦀".repeat(15);
+    assert_eq!(sampled, format!("{expected_prefix}… [69 bytes omitted]"));
+    assert!(sampled.len() <= 127);
 }

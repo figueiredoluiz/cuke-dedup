@@ -186,3 +186,39 @@ fn semantic_fingerprint_distinguishes_matcher_syntax() {
         definition_semantic_fingerprint(&pair[1])
     );
 }
+
+/// Comparison construction samples full fields before copying, without changing semantic identity
+/// or losing the differing tail when the common prefix is large.
+#[test]
+fn large_pair_evidence_is_sampled_before_copying() {
+    let mut pair = definitions("Given('left', () => first()); Given('right', () => second());");
+    let prefix = "界".repeat(20_000);
+    pair[0].matcher = format!("{prefix}left");
+    pair[1].matcher = format!("{prefix}right");
+    pair[0].handler.source_snippet = prefix.clone();
+    pair[1].handler.source_snippet = prefix;
+    let comparison = definition_comparison(&pair[0], &pair[1]);
+    for text in [
+        &comparison.left_matcher,
+        &comparison.right_matcher,
+        &comparison.left_handler,
+        &comparison.right_handler,
+        &comparison.matcher_diff.prefix,
+    ] {
+        assert!(text.len() <= 8192, "{} bytes", text.len());
+        assert!(text.contains("bytes omitted"));
+    }
+    assert_eq!(comparison.matcher_diff.left_change, "lef");
+    assert_eq!(comparison.matcher_diff.right_change, "righ");
+    assert_eq!(comparison.matcher_diff.suffix, "t");
+    assert_ne!(comparison.left_matcher, comparison.right_matcher);
+    assert_eq!(
+        comparison.left_fingerprint,
+        definition_semantic_fingerprint(&pair[0])
+    );
+    assert_eq!(
+        comparison.right_fingerprint,
+        definition_semantic_fingerprint(&pair[1])
+    );
+    assert!(matcher_difference(&pair[0], &pair[1]).len() <= 2 * 8192 + 16);
+}

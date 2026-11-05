@@ -540,6 +540,9 @@ pub fn finding_fingerprint(finding: &Finding) -> String {
                 .chain(sides),
         );
     }
+    if let Some(original) = &finding.original_fingerprint {
+        return crate::model::fingerprint_hex(original);
+    }
     stable_fingerprint_parts([
         "finding-fallback",
         rule.as_str(),

@@ -169,7 +169,7 @@ fn render_jsonl_context(context: &ReportContext<'_>) -> Result<String> {
 /// Converts a finding to a JSONL record with free text capped by `bounded_jsonl_text`.
 ///
 /// Keeps up to `MAX_REPORTED_CLUSTER_MEMBERS` cluster fingerprints and one fewer related
-/// locations, flagging either cut; comparison and cluster fingerprints are copied unsanitized.
+/// locations, flagging either cut; fingerprint strings are also bounded and sanitized.
 fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding {
     let mut truncated_fields = Vec::new();
     let message = bounded_jsonl_text(&finding.message, "message", &mut truncated_fields);
@@ -188,8 +188,8 @@ fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding
         .comparison
         .as_ref()
         .map(|comparison| JsonlComparison {
-            left_fingerprint: comparison.left_fingerprint.clone(),
-            right_fingerprint: comparison.right_fingerprint.clone(),
+            left_fingerprint: report_safe(&comparison.left_fingerprint),
+            right_fingerprint: report_safe(&comparison.right_fingerprint),
             left_matcher: bounded_jsonl_text(
                 &comparison.left_matcher,
                 "evidence.comparison.leftMatcher",
@@ -243,7 +243,7 @@ fn jsonl_finding(finding: &Finding, context: &ReportContext<'_>) -> JsonlFinding
                 .definition_fingerprints
                 .iter()
                 .take(MAX_REPORTED_CLUSTER_MEMBERS)
-                .cloned()
+                .map(|fingerprint| report_safe(fingerprint))
                 .collect(),
             pair_findings_collapsed: cluster.pair_findings_collapsed,
             members_truncated: cluster.members_truncated
@@ -306,11 +306,17 @@ fn bounded_jsonl_text(
     field: &'static str,
     truncated_fields: &mut Vec<&'static str>,
 ) -> String {
+    let sampled = value.len() > crate::resource_limits::MAX_REPORT_FIELD_BYTES;
     let value = report_safe(value);
+    if sampled {
+        truncated_fields.push(field);
+    }
     if value.chars().count() <= JSONL_TEXT_LIMIT_CHARS {
         return value;
     }
-    truncated_fields.push(field);
+    if !sampled {
+        truncated_fields.push(field);
+    }
     value
         .chars()
         .take(JSONL_TEXT_LIMIT_CHARS.saturating_sub(1))

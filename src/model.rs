@@ -543,9 +543,9 @@ pub struct DefinitionComparison {
     pub left_fingerprint: String,
     /// Location-independent semantic fingerprint of the right definition.
     pub right_fingerprint: String,
-    /// Left definition's original matcher.
+    /// Left definition's matcher sample, with an omission marker for oversized text.
     pub left_matcher: String,
-    /// Right definition's original matcher.
+    /// Right definition's matcher sample, with an omission marker for oversized text.
     pub right_matcher: String,
     /// Left definition's bounded handler source.
     pub left_handler: String,
@@ -589,6 +589,10 @@ pub struct Finding {
     pub severity: Severity,
     /// Human-readable diagnostic message.
     pub message: String,
+    /// Original-text fallback identity when presentation evidence was sampled. Fixed-size storage
+    /// keeps model round trips lossless without introducing an unbounded report field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) original_fingerprint: Option<[u8; 16]>,
     /// Main source span.
     pub primary: SourceLocation,
     /// Additional spans involved in the finding.
@@ -724,15 +728,45 @@ pub(crate) fn stable_fingerprint_parts<'a>(parts: impl IntoIterator<Item = &'a s
     truncated_sha256(hasher)
 }
 
-/// Finalizes the hasher and returns the first 16 digest bytes as 32 lowercase hex characters.
-fn truncated_sha256(hasher: Sha256) -> String {
+/// Hashes length-prefixed parts supplied as repeatable fragments, without joining their text.
+/// Fragment boundaries inside a part do not affect the version-3 fingerprint.
+pub(crate) fn fingerprint_fragments<'a, I>(parts: impl IntoIterator<Item = I>) -> [u8; 16]
+where
+    I: Iterator<Item = &'a str> + Clone,
+{
+    let mut hasher = Sha256::new();
+    hasher.update(MULTIPART_FINGERPRINT_DOMAIN);
+    for fragments in parts {
+        let length: u64 = fragments
+            .clone()
+            .map(|fragment| fragment.len() as u64)
+            .sum();
+        hasher.update(&length.to_be_bytes());
+        for fragment in fragments {
+            hasher.update(fragment.as_bytes());
+        }
+    }
+    let mut digest = [0; 16];
+    digest.copy_from_slice(&hasher.finalize()[..16]);
+    digest
+}
+
+/// Writes a fixed-size original evidence digest in the same hexadecimal form as other identities.
+pub(crate) fn fingerprint_hex(digest: &[u8; 16]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut fingerprint = String::with_capacity(32);
-    for byte in &hasher.finalize()[..16] {
+    for byte in digest {
         fingerprint.push(HEX[usize::from(byte >> 4)] as char);
         fingerprint.push(HEX[usize::from(byte & 0x0f)] as char);
     }
     fingerprint
+}
+
+/// Finalizes the hasher and returns the first 16 digest bytes as 32 lowercase hex characters.
+fn truncated_sha256(hasher: Sha256) -> String {
+    let mut digest = [0; 16];
+    digest.copy_from_slice(&hasher.finalize()[..16]);
+    fingerprint_hex(&digest)
 }
 
 #[cfg(test)]

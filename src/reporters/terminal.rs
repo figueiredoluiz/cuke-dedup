@@ -1,4 +1,6 @@
-use super::shared::{bounded_findings, count_label, terminal_safe, MAX_REPORTED_CLUSTER_MEMBERS};
+use super::shared::{
+    bounded_findings, count_label, display_location, terminal_safe, MAX_REPORTED_CLUSTER_MEMBERS,
+};
 use super::ReportContext;
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -16,6 +18,11 @@ pub(super) fn write_terminal_with_color(
     writer: &mut dyn Write,
     color: bool,
 ) -> Result<()> {
+    let mut limited = crate::resource_limits::LimitedWriter {
+        inner: writer,
+        remaining: crate::resource_limits::MAX_BUFFERED_REPORT_BYTES,
+    };
+    let writer = &mut limited;
     let result = context.result;
     let root = context.root;
     let summary = &context.summary;
@@ -23,7 +30,7 @@ pub(super) fn write_terminal_with_color(
     writeln!(writer)?;
     let mut wrote_rule = false;
     let mut findings_by_rule: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    let selected = bounded_findings(result, true);
+    let selected = bounded_findings(result, root, true);
     let findings_truncated = selected.truncated;
     for finding in selected.findings {
         findings_by_rule
@@ -53,14 +60,18 @@ pub(super) fn write_terminal_with_color(
             writeln!(
                 writer,
                 "    --> {}",
-                colorize(terminal_safe(&finding.primary.display(root)), "94", color)
+                colorize(
+                    terminal_safe(&display_location(&finding.primary, root)),
+                    "94",
+                    color
+                )
             )?;
             let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
             for related in finding.related.iter().take(retained_related) {
                 writeln!(
                     writer,
                     "    related: {}",
-                    colorize(terminal_safe(&related.display(root)), "94", color)
+                    colorize(terminal_safe(&display_location(related, root)), "94", color)
                 )?;
             }
             if finding.related.len() > retained_related {

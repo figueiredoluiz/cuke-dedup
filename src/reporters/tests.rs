@@ -47,6 +47,7 @@ fn result(root: &Path) -> AnalysisResult {
         ],
         feature_steps: Vec::new(),
         findings: vec![Finding {
+            original_fingerprint: None,
             rule: Rule::DuplicateMatcher,
             severity: Severity::Error,
             message: "Duplicate <matcher>".to_owned(),
@@ -1277,4 +1278,128 @@ fn ruby_findings_respect_every_reporter_bound() {
         .iter()
         .any(|result| result["level"] == "error"));
     assert!(ruby_terminal(&context).contains(&expected));
+}
+
+/// Repeated accepted-size fields must hit a byte budget before the record cap, in every
+/// buffered format, while preserving full summary counts and consistent omission counts.
+#[test]
+fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let large = "界<&\"".repeat(2_000);
+    let template = &mut analysis.findings[0];
+    template.message = large.clone();
+    template.suggested_action = large.clone();
+    template.evidence.matcher_difference = large.clone();
+    template.evidence.handler_evidence = large.clone();
+    let comparison = template.evidence.comparison.as_mut().unwrap();
+    comparison.left_matcher = large.clone();
+    comparison.right_matcher = large.clone();
+    comparison.left_handler = large.clone();
+    comparison.right_handler = large.clone();
+    comparison.matcher_diff.prefix = large.clone();
+    comparison.matcher_diff.left_change = large.clone();
+    comparison.matcher_diff.right_change = large.clone();
+    comparison.matcher_diff.suffix = large;
+    template.severity = Severity::Warning;
+    analysis.findings = vec![template.clone(); 70];
+    analysis.findings[69].severity = Severity::Error;
+    analysis.findings[69]
+        .message
+        .insert_str(0, "highest-priority: ");
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    let json_text = render_json(&context).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+    let retained = json["findings"].as_array().unwrap().len();
+    assert!(retained > 0 && retained < 70, "retained {retained}");
+    assert_eq!(json["findingsTruncated"], 70 - retained);
+    assert!(json["findings"][0]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("highest-priority: "));
+    assert_eq!(json["summary"]["findings"], 70);
+    assert!(json_text.contains("bytes omitted"));
+    assert!(json["findings"][0]["message"].as_str().unwrap().len() <= 8_192);
+    assert!(
+        json["findings"][0]["evidence"]["comparison"]["leftMatcher"]
+            .as_str()
+            .unwrap()
+            .len()
+            <= 8_192
+    );
+
+    let html = render_html(&context).unwrap();
+    assert_eq!(html.matches("<article class=\"finding\"").count(), retained);
+    assert!(html.contains(&format!("{} additional findings", 70 - retained)));
+    assert!(html.contains("bytes omitted"));
+    let sarif_text = render_sarif(&context).unwrap();
+    let sarif: serde_json::Value = serde_json::from_str(&sarif_text).unwrap();
+    assert_eq!(
+        sarif["runs"][0]["results"].as_array().unwrap().len(),
+        retained
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["findingsTruncated"],
+        70 - retained
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["activeFindings"],
+        70
+    );
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(terminal.contains(&format!(
+        "{} additional active findings omitted",
+        70 - retained
+    )));
+    for output in [&json_text, &html, &sarif_text, &terminal] {
+        assert!(output.len() <= 16 * 1024 * 1024);
+    }
+    // JSONL remains the streaming escape hatch: every finding and its summary is retained.
+    let jsonl = render_jsonl(&context).unwrap();
+    assert_eq!(jsonl.lines().count(), 71);
+    let last: serde_json::Value = serde_json::from_str(jsonl.lines().last().unwrap()).unwrap();
+    assert_eq!(last["recordCount"], 71);
+}
+
+/// Long action, suppression and caller-supplied fingerprint strings cannot bypass field bounds.
+#[test]
+fn buffered_report_bounds_all_string_fields_without_changing_source_findings() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let large = "🦀".repeat(5_000);
+    let finding = &mut analysis.findings[0];
+    finding.suppression = Some(Suppression {
+        reason: large.clone(),
+    });
+    finding.suggested_action = large.clone();
+    finding.primary.path = PathBuf::from(&large);
+    let comparison = finding.evidence.comparison.as_mut().unwrap();
+    comparison.left_fingerprint = large.clone();
+    comparison.right_fingerprint = large.clone();
+    finding.evidence.cluster = Some(DefinitionCluster {
+        member_count: 1,
+        definition_fingerprints: vec![large.clone()],
+        pair_findings_collapsed: 0,
+        members_truncated: false,
+    });
+    let before = finding.clone();
+    let json: serde_json::Value =
+        serde_json::from_str(&render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap())
+            .unwrap();
+    let finding = &json["findings"][0];
+    for value in [
+        &finding["suppression"]["reason"],
+        &finding["suggestedAction"],
+        &finding["primary"]["path"],
+        &finding["evidence"]["comparison"]["leftFingerprint"],
+        &finding["evidence"]["comparison"]["rightFingerprint"],
+        &finding["evidence"]["cluster"]["definitionFingerprints"][0],
+    ] {
+        let text = value.as_str().unwrap();
+        assert!(text.len() <= 8_192);
+        assert!(text.contains("bytes omitted"));
+    }
+    assert_eq!(analysis.findings[0], before);
 }

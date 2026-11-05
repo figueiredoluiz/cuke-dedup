@@ -8515,3 +8515,56 @@ fn regression_r46_r47_aliases_of_unresolved_and_namespace_imports() {
         assert!(String::from_utf8_lossy(&output.stderr).contains(warning), "{context}");
     }
 }
+
+/// A literal equal to an oversized matcher's display sample must remain a new baseline finding;
+/// unchanged inputs still subtract, and both directions preserve the distinction.
+#[test]
+fn regression_sampled_evidence_keeps_original_baseline_identity() {
+    let long = "x".repeat(9_000);
+    let sample = format!(
+        "{}… [920 bytes omitted] [digest: 508fdd4a446df81bc97dd926920b81ad]",
+        "x".repeat(8_080)
+    );
+    for (before, after) in [(&long, &sample), (&sample, &long)] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write(
+            root,
+            ".cuke-dedup.json",
+            r#"{
+            "definitions": ["steps.ts"], "features": ["use.feature"],
+            "reporters": ["jsonl"], "noMetrics": true,
+            "rules": {"unused-definition": "error"}
+        }"#,
+        );
+        write(
+            root,
+            "use.feature",
+            "Feature: Control\n  Scenario: Control\n    Given control\n",
+        );
+        let source = |matcher: &str| {
+            format!(
+                "Given({}, () => action());\n",
+                serde_json::to_string(matcher).unwrap()
+            )
+        };
+        write(root, "steps.ts", &source(before));
+        Command::new(assert_cmd::cargo::cargo_bin!("cuke-dedup"))
+            .arg(root)
+            .args(["--baseline", "baseline.json", "--update-baseline"])
+            .assert()
+            .success();
+        Command::new(assert_cmd::cargo::cargo_bin!("cuke-dedup"))
+            .arg(root)
+            .args(["--baseline", "baseline.json", "--fail-on-new"])
+            .assert()
+            .success();
+        write(root, "steps.ts", &source(after));
+        Command::new(assert_cmd::cargo::cargo_bin!("cuke-dedup"))
+            .arg(root)
+            .args(["--baseline", "baseline.json", "--fail-on-new"])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("\"active\":true"));
+    }
+}

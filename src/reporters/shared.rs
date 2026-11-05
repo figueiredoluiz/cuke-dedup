@@ -1,8 +1,11 @@
 use super::{CliReportMetadata, CorpusCensus, ReportContext, Summary, JSON_SCHEMA_VERSION};
 use crate::analysis::AnalysisCensus;
 use crate::model::{
-    AnalysisResult, DefinitionCluster, Finding, FindingEvidence, Rule, Severity, SourceLocation,
-    Suppression,
+    AnalysisResult, DefinitionCluster, DefinitionComparison, Finding, FindingEvidence, MatcherDiff,
+    Rule, Severity, SourceLocation, Suppression,
+};
+use crate::resource_limits::{
+    sample_text, LimitedWriter, MAX_BUFFERED_REPORT_BYTES, MAX_REPORT_FIELD_BYTES,
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -63,24 +66,43 @@ pub(super) struct BoundedFindings<'a> {
 }
 
 /// Selects up to `MAX_BUFFERED_REPORT_FINDINGS` findings by `finding_priority`, keeping input
-/// order within each priority.
+/// order within each priority, stopping when the conservative output byte budget is exhausted.
 ///
 /// `active_only` excludes inactive findings first; `truncated` counts the eligible findings left
 /// out.
-pub(super) fn bounded_findings(result: &AnalysisResult, active_only: bool) -> BoundedFindings<'_> {
+pub(super) fn bounded_findings<'a>(
+    result: &'a AnalysisResult,
+    root: &Path,
+    active_only: bool,
+) -> BoundedFindings<'a> {
     let eligible = |finding: &&Finding| !active_only || finding.is_active();
     let total = result.findings.iter().filter(eligible).count();
     let mut findings = Vec::with_capacity(total.min(MAX_BUFFERED_REPORT_FINDINGS));
+    // Reserve space for the template, summaries, rule descriptors, and CLI metadata.
+    let mut remaining = MAX_BUFFERED_REPORT_BYTES - 64 * 1024;
     for priority in 0..4 {
         for finding in result.findings.iter().filter(eligible) {
             if finding_priority(finding) == priority {
-                findings.push(finding);
-                if findings.len() == MAX_BUFFERED_REPORT_FINDINGS {
+                // Count bounded, sanitized evidence with no serialized buffer. A conservative
+                // multiplier covers HTML's visible and embedded copies (including escaping and
+                // repeated diff segments); fixed overhead covers cards and SARIF locations.
+                let converted = convert_finding(finding, root);
+                let mut counter = LimitedWriter {
+                    inner: std::io::sink(),
+                    remaining: MAX_BUFFERED_REPORT_BYTES,
+                };
+                let fits = serde_json::to_writer(&mut counter, &converted).is_ok();
+                let cost = (MAX_BUFFERED_REPORT_BYTES - counter.remaining)
+                    .saturating_mul(18)
+                    .saturating_add(4096);
+                if !fits || cost > remaining || findings.len() == MAX_BUFFERED_REPORT_FINDINGS {
                     return BoundedFindings {
+                        truncated: total - findings.len(),
                         findings,
-                        truncated: total.saturating_sub(MAX_BUFFERED_REPORT_FINDINGS),
                     };
                 }
+                remaining -= cost;
+                findings.push(finding);
             }
         }
     }
@@ -111,7 +133,7 @@ pub(super) fn report_value_with_metadata<'a>(
     context: &ReportContext<'a>,
     metadata: Option<&CliReportMetadata<'_>>,
 ) -> JsonReport<'a> {
-    let selected = bounded_findings(context.result, false);
+    let selected = bounded_findings(context.result, context.root, false);
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
         summary: context.summary.clone(),
@@ -130,25 +152,32 @@ pub(super) fn report_value_with_metadata<'a>(
 /// Converts a finding for structured reports, sanitizing text with `report_safe`.
 ///
 /// Keeps up to `MAX_REPORTED_CLUSTER_MEMBERS` cluster fingerprints and one fewer related
-/// locations, flagging either cut; comparison and cluster fingerprints are copied unsanitized.
+/// locations, flagging either cut. Every string is sampled before copying and sanitizing.
 fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
-    let mut comparison = finding.evidence.comparison.clone();
-    if let Some(comparison) = comparison.as_mut() {
-        comparison.left_matcher = report_safe(&comparison.left_matcher);
-        comparison.right_matcher = report_safe(&comparison.right_matcher);
-        comparison.left_handler = report_safe(&comparison.left_handler);
-        comparison.right_handler = report_safe(&comparison.right_handler);
-        comparison.matcher_diff.prefix = report_safe(&comparison.matcher_diff.prefix);
-        comparison.matcher_diff.left_change = report_safe(&comparison.matcher_diff.left_change);
-        comparison.matcher_diff.right_change = report_safe(&comparison.matcher_diff.right_change);
-        comparison.matcher_diff.suffix = report_safe(&comparison.matcher_diff.suffix);
-    }
+    let comparison = finding
+        .evidence
+        .comparison
+        .as_ref()
+        .map(|comparison| DefinitionComparison {
+            left_fingerprint: report_safe(&comparison.left_fingerprint),
+            right_fingerprint: report_safe(&comparison.right_fingerprint),
+            left_matcher: report_safe(&comparison.left_matcher),
+            right_matcher: report_safe(&comparison.right_matcher),
+            left_handler: report_safe(&comparison.left_handler),
+            right_handler: report_safe(&comparison.right_handler),
+            matcher_diff: MatcherDiff {
+                prefix: report_safe(&comparison.matcher_diff.prefix),
+                left_change: report_safe(&comparison.matcher_diff.left_change),
+                right_change: report_safe(&comparison.matcher_diff.right_change),
+                suffix: report_safe(&comparison.matcher_diff.suffix),
+            },
+        });
     let cluster = finding.evidence.cluster.as_ref().map(|cluster| {
         let definition_fingerprints = cluster
             .definition_fingerprints
             .iter()
             .take(MAX_REPORTED_CLUSTER_MEMBERS)
-            .cloned()
+            .map(|fingerprint| report_safe(fingerprint))
             .collect::<Vec<_>>();
         DefinitionCluster {
             member_count: cluster.member_count,
@@ -194,8 +223,8 @@ pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> Report
         .path
         .strip_prefix(root)
         .unwrap_or(&location.path)
-        .to_string_lossy()
-        .replace('\\', "/");
+        .to_string_lossy();
+    let relative_path = sample_text(&relative_path, MAX_REPORT_FIELD_BYTES).replace('\\', "/");
     ReportLocation {
         path: report_safe(&relative_path),
         line: location.line,
@@ -203,6 +232,12 @@ pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> Report
         end_line: location.end_line,
         end_column: location.end_column,
     }
+}
+
+/// Formats a sampled root-relative path and its source position without copying the full path.
+pub(super) fn display_location(location: &SourceLocation, root: &Path) -> String {
+    let location = convert_location(location, root);
+    format!("{}:{}:{}", location.path, location.line, location.column)
 }
 
 /// Creates the parent directories of `path`; does nothing when `path` has no parent.
@@ -226,7 +261,7 @@ pub(super) fn count_label(count: usize, singular: &str) -> String {
 /// analyzed repository. Control characters can rewrite a terminal line, and bidirectional or
 /// invisible-format characters can make one string display as another.
 fn sanitize(value: &str, keep_whitespace: bool) -> String {
-    value
+    sample_text(value, MAX_REPORT_FIELD_BYTES)
         .chars()
         .filter(|character| {
             let allowed_control = keep_whitespace && matches!(*character, '\n' | '\r' | '\t');
@@ -253,4 +288,18 @@ pub(super) fn terminal_safe(value: &str) -> String {
 /// Sanitizes text for structured reports, which preserve intentional line breaks and tabs.
 pub(super) fn report_safe(value: &str) -> String {
     sanitize(value, true)
+}
+
+/// Serializes through a capped writer so escape expansion cannot allocate an oversized output.
+pub(super) fn bounded_json(value: &impl Serialize, pretty: bool) -> Result<String> {
+    let mut writer = LimitedWriter {
+        inner: Vec::new(),
+        remaining: MAX_BUFFERED_REPORT_BYTES,
+    };
+    if pretty {
+        serde_json::to_writer_pretty(&mut writer, value)?;
+    } else {
+        serde_json::to_writer(&mut writer, value)?;
+    }
+    Ok(String::from_utf8(writer.inner)?)
 }

@@ -1,5 +1,5 @@
 use super::shared::{
-    bounded_findings, convert_location, report_safe, MAX_REPORTED_CLUSTER_MEMBERS,
+    bounded_findings, bounded_json, convert_location, report_safe, MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::{CliReportMetadata, ReportContext};
 use crate::model::{Severity, SourceLocation};
@@ -22,7 +22,7 @@ pub(super) fn render_sarif_context_with_metadata(
 ) -> Result<String> {
     let result = context.result;
     let root = context.root;
-    let selected = bounded_findings(result, true);
+    let selected = bounded_findings(result, root, true);
     let findings_truncated = selected.truncated;
     let rules = result
         .findings
@@ -121,7 +121,7 @@ pub(super) fn render_sarif_context_with_metadata(
             serde_json::to_value(metadata.analysis)
                 .context("failed to serialize SARIF analysis census")?;
     }
-    serde_json::to_string_pretty(&sarif).context("failed to serialize SARIF report")
+    bounded_json(&sarif, true).context("failed to serialize SARIF report")
 }
 
 /// Builds a SARIF location with a root-relative URI and region; sets `id` only when one is given.
