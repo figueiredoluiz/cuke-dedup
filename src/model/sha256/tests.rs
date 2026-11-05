@@ -93,3 +93,21 @@ fn chunk_boundaries_do_not_change_the_digest() {
         assert_eq!(hex(hasher.finalize()), expected, "chunk size {chunk_size}");
     }
 }
+
+/// Input of 2^61 - 1 bytes in total is accepted: its bit length still fits the `u64` field.
+#[test]
+fn input_below_2_pow_61_bytes_is_accepted() {
+    let mut hasher = Sha256::new();
+    hasher.input_len = (1 << 61) - 2;
+    hasher.update(&[0]);
+    assert_eq!(hasher.input_len, (1 << 61) - 1);
+}
+
+/// Input reaching 2^61 bytes in total panics: its bit length overflows the `u64` field.
+#[test]
+#[should_panic(expected = "SHA-256 input is shorter than 2^61 bytes")]
+fn input_of_2_pow_61_bytes_panics() {
+    let mut hasher = Sha256::new();
+    hasher.input_len = (1 << 61) - 1;
+    hasher.update(&[0]);
+}

@@ -59,6 +59,8 @@ when CI must reject degraded analysis.
 | Imported registration modules | 1,024 modules / 64 MiB total |
 | Ruby files reached only through `require`/`require_relative` | 1,024 files / 64 MiB total |
 | Ruby provider and assertion proofs (selected plus loaded Ruby files) | 1,024 files / 64 MiB total |
+| Ruby registration proof work | 1,000,000 units per proof pass; load resolution 1,000,000 units across all passes |
+| Ruby assertion proof work | 1,000,000 units |
 | Memoized module path/depth states | 16,384 |
 | Memoized module resolutions | 16 MiB |
 

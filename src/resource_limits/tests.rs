@@ -160,7 +160,7 @@ fn pass_budget_latches_exhaustion_across_passes() {
     assert!(!at_limit.charge_run(usize::MAX) && !at_limit.charge_pass(usize::MAX));
 }
 
-/// Pins each release limit constant except `MAX_ASSERTION_RESOLUTION_WORK` to its value.
+/// Pins each release limit constant to its value.
 #[test]
 fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_PROJECT_INPUT_BYTES, 8 * 1024 * 1024);
@@ -173,11 +173,13 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_STATIC_OVERLAP_FINDINGS, 10_000);
     assert_eq!(MAX_REGISTRATION_MODULES, 1_024);
     assert_eq!(MAX_REGISTRATION_MODULE_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_ASSERTION_RESOLUTION_WORK, 1_000_000);
     assert_eq!(MAX_REGISTRATION_RESOLUTION_STATES, 16_384);
     assert_eq!(MAX_PROJECT_CONFIG_EXTENDS_DEPTH, 16);
     assert_eq!(MAX_PROJECT_METADATA_FILES, 1_024);
     assert_eq!(MAX_PROJECT_METADATA_BYTES, 16 * 1024 * 1024);
     assert_eq!(MAX_PROJECT_MODULE_MAPPINGS, 16_384);
+    assert_eq!(MAX_MEMOIZED_RESOLUTION_BYTES, 16 * 1024 * 1024);
     assert_eq!(MAX_WORKSPACE_SCAN_ENTRIES, 100_000);
     assert_eq!(MAX_GHERKIN_MARKDOWN_CANDIDATES, 10_000);
     assert_eq!(MAX_GHERKIN_MARKDOWN_PROBE_BYTES, 64 * 1024 * 1024);
@@ -187,4 +189,25 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_STRUCTURAL_CLASS_COMPARISONS, 250_000);
     assert_eq!(SOURCE_CLASSIFICATION_PREFIX_BYTES, 64 * 1024);
     assert_eq!(MINIFIED_MEAN_LINE_BYTES, 200);
+}
+
+/// Every `pub(crate) const` in `resource_limits.rs` has an `assert_eq!` in the policy test above.
+#[test]
+fn every_release_limit_constant_is_pinned() {
+    let policy = include_str!("tests.rs")
+        .split("fn release_resource_limits_match_the_documented_policy")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("policy test body");
+    let declared = include_str!("../resource_limits.rs")
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub(crate) const "))
+        .filter_map(|rest| rest.split(':').next())
+        .collect::<Vec<_>>();
+    assert!(declared.len() >= 26);
+    let unpinned = declared
+        .into_iter()
+        .filter(|name| !policy.contains(&format!("assert_eq!({name},")))
+        .collect::<Vec<_>>();
+    assert_eq!(unpinned, Vec::<&str>::new());
 }
