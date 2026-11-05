@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import test from "node:test";
 
 import {
@@ -80,6 +81,20 @@ test("action resolves relative reports from the analyzed root", () => {
     resolveReportDirectory(workspace, "tests/e2e", absoluteOutput),
     absoluteOutput,
   );
+});
+
+/** Verify anchoring follows native path semantics without erasing filesystem traversal. */
+test("action preserves native POSIX and Windows path semantics", () => {
+  for (const [paths, cwd, root, output, expected] of [
+    [posix, "/work", "/work", "alias/..", "/work/alias/.."],
+    [posix, "/work", "analysis", "../reports", "/work/analysis/../reports"],
+    [win32, "C:\\work", "C:\\work\\analysis", "C:reports\\cuke-dedup.json", "C:\\work\\reports\\cuke-dedup.json"],
+    [win32, "C:\\work", "D:\\analysis", "\\reports", "D:\\reports"],
+    [win32, "C:\\work", "D:\\analysis", "C:\\reports", "C:\\reports"],
+    [win32, "C:\\work", "C:\\work\\analysis", "alias\\..", "C:\\work\\analysis\\alias\\.."],
+    [win32, "C:\\work", "\\\\server\\share\\analysis", "\\reports", "\\\\server\\share\\reports"],
+    [win32, "C:\\work", "C:\\analysis", "\\\\server\\share\\reports", "\\\\server\\share\\reports"],
+  ]) assert.equal(resolveReportDirectory(cwd, root, output, paths), expected);
 });
 
 /** Verify explicit inputs form separate CLI arguments and include the internal JSON reporter. */
@@ -370,29 +385,55 @@ if (process.argv.includes("--print-config")) {
   console.log(${JSON.stringify(JSON.stringify({ root, output: "reports" }))});
 } else {
   fs.writeFileSync(${JSON.stringify(marker)}, "ran");
-  fs.writeFileSync(${JSON.stringify(json)}, JSON.stringify({ schemaVersion: "3", summary: {
-    duplication: { percentage: 25, duplicatedDefinitions: 1, totalDefinitions: 4 }
-  } }));
+  const baselineIndex = process.argv.indexOf("--baseline");
+  const baselinePath = require("node:path").resolve(${JSON.stringify(root)}, process.argv[baselineIndex + 1]);
+  if (!fs.existsSync(baselinePath)) {
+    process.exitCode = 2;
+  } else {
+    fs.writeFileSync(${JSON.stringify(json)}, JSON.stringify({ schemaVersion: "3", summary: {
+      duplication: { percentage: 25, duplicatedDefinitions: 1, totalDefinitions: 4 }
+    } }));
+  }
 }
 `);
   await chmod(binary, 0o755);
   await symlink(json, join(root, "baseline-link.json"));
   await symlink(output, join(root, "report-alias"), "dir");
+  await mkdir(join(output, "child"));
+  await symlink(join(output, "child"), join(root, "traversal-alias"), "dir");
   const separate = join(directory, "cuke-dedup.json");
   await writeFile(separate, baseline);
-  for (const input of ["reports/cuke-dedup.json", "reports/../reports/cuke-dedup.json",
-    json, "baseline-link.json", "report-alias/cuke-dedup.json", separate]) {
+  await writeFile(json, baseline);
+  await link(json, join(root, "baseline-hardlink.json"));
+  const collisions = ["reports/cuke-dedup.json", "reports/../reports/cuke-dedup.json",
+    json, "baseline-link.json", "report-alias/cuke-dedup.json", "baseline-hardlink.json",
+    "traversal-alias/../cuke-dedup.json"];
+  if (existsSync(join(root, "REPORTS", "CUKE-DEDUP.JSON"))) {
+    collisions.push("REPORTS/CUKE-DEDUP.JSON");
+  }
+  for (const input of [...collisions, separate, "missing-baseline.json", "missing-report", "missing-both"]) {
     await writeFile(json, baseline);
     await writeFile(githubOutput, "");
+    await rm(marker, { force: true });
+    if (input === "missing-report" || input === "missing-both") await rm(json);
     const invocation = runAction({ cwd: directory, env: {
-      CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput, INPUT_PATH: "analysis", INPUT_BASELINE: input,
+      CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput, INPUT_PATH: "analysis",
+      INPUT_BASELINE: input === "missing-report" ? separate
+        : input === "missing-both" ? "reports/cuke-dedup.json" : input,
     } });
-    if (input === separate) {
-      assert.equal(await invocation, 0);
+    if (!collisions.includes(input)) {
+      const missingBaseline = input === "missing-baseline.json" || input === "missing-both";
+      assert.equal(await invocation, missingBaseline ? 2 : 0);
       assert.equal(await readFile(marker, "utf8"), "ran");
       assert.equal(await readFile(separate, "utf8"), baseline);
-      assert.equal(JSON.parse(await readFile(json, "utf8")).summary.duplication.percentage, 25);
-      assert.match(await readFile(githubOutput, "utf8"), /duplicate-rate<<[^\n]+\n25\n/);
+      if (missingBaseline) {
+        await assert.rejects(readFile(json), { code: "ENOENT" });
+        assert.match(await readFile(githubOutput, "utf8"), /exit-code<<[^\n]+\n2\n/);
+        assert.match(await readFile(githubOutput, "utf8"), /duplicate-rate<<[^\n]+\n0\n/);
+      } else {
+        assert.equal(JSON.parse(await readFile(json, "utf8")).summary.duplication.percentage, 25);
+        assert.match(await readFile(githubOutput, "utf8"), /duplicate-rate<<[^\n]+\n25\n/);
+      }
     } else {
       await assert.rejects(invocation, /baseline path conflicts with the JSON report path/, input);
       assert.equal(await readFile(json, "utf8"), baseline, input);
@@ -400,6 +441,19 @@ if (process.argv.includes("--print-config")) {
       assert.equal(await readFile(githubOutput, "utf8"), "");
     }
   }
+  const sentinel = join(root, "cuke-dedup.json");
+  await writeFile(sentinel, "unrelated input");
+  await writeFile(json, baseline);
+  await writeFile(githubOutput, "");
+  assert.equal(await runAction({ cwd: directory, env: {
+    CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput, INPUT_PATH: "analysis",
+    INPUT_OUTPUT: "traversal-alias/..", INPUT_BASELINE: separate,
+  } }), 0);
+  assert.equal(await readFile(sentinel, "utf8"), "unrelated input");
+  const emitted = await readFile(githubOutput, "utf8");
+  assert.match(emitted, /duplicate-rate<<[^\n]+\n25\n/);
+  const reportPath = emitted.match(/json-report<<[^\n]+\n([^\n]+)\n/)[1];
+  assert.equal(await readFile(reportPath, "utf8"), await readFile(json, "utf8"));
 });
 
 /** Verify valid archive checksums pass while malformed digests and mismatched bytes fail. */

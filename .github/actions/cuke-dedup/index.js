@@ -6,11 +6,11 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
+  statSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import path, { basename, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { spawnSync } from "node:child_process";
@@ -133,12 +133,15 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     effectiveConfig.root || inputs.path,
     output,
   );
-  const jsonReport = join(outputDirectory, "cuke-dedup.json");
+  const jsonReport = appendPath(outputDirectory, "cuke-dedup.json");
   if (inputs.baseline) {
     const baseline = resolveReportDirectory(cwd, effectiveConfig.root || inputs.path, inputs.baseline);
-    if (baseline === jsonReport || (
-      existsSync(baseline) && existsSync(jsonReport) && realpathSync(baseline) === realpathSync(jsonReport)
-    )) {
+    const baselineStat = statSync(baseline, { bigint: true, throwIfNoEntry: false });
+    const reportStat = statSync(jsonReport, { bigint: true, throwIfNoEntry: false });
+    if (
+      baselineStat && reportStat &&
+      baselineStat.dev === reportStat.dev && baselineStat.ino === reportStat.ino
+    ) {
       throw new Error(`baseline path conflicts with the JSON report path: ${jsonReport}`);
     }
   }
@@ -184,9 +187,25 @@ function readEffectiveConfig(binary, inputs, cwd) {
   }
 }
 
-/** Returns an absolute output path unchanged or resolves it against the analysis path and working directory. */
-export function resolveReportDirectory(cwd, analysisPath, output) {
-  return isAbsolute(output) ? output : resolve(cwd, analysisPath, output);
+/** Anchors paths like the native CLI, retaining dot components for filesystem traversal through symlinks. */
+export function resolveReportDirectory(cwd, analysisPath, output, paths = path) {
+  const root = anchorPath(cwd, cwd, analysisPath, paths);
+  return anchorPath(cwd, root, output, paths);
+}
+
+/** Resolves only a path's prefix; Windows drive-relative paths use the invocation cwd rather than the analysis root. */
+function anchorPath(cwd, base, value, paths) {
+  const prefix = paths.parse(value).root;
+  const driveRelative = paths.sep === "\\" && /^[a-z]:$/i.test(prefix);
+  const anchor = prefix ? paths.resolve(driveRelative ? cwd : base, prefix) : base;
+  const tail = value.slice(prefix.length);
+  return appendPath(anchor, paths.sep === "\\" ? tail.replaceAll("/", "\\") : tail, paths);
+}
+
+/** Appends a relative component without lexically collapsing symlink-sensitive parent components. */
+function appendPath(directory, name, paths = path) {
+  if (!name) return directory;
+  return `${directory}${directory.endsWith(paths.sep) ? "" : paths.sep}${name}`;
 }
 
 /** Builds report paths and validated schema-3 metrics for completed analysis (status 0/1), retaining zero metrics for errors or invalid reports. */
@@ -198,10 +217,10 @@ export function reportOutputs(jsonPath, outputDirectory, requestedReporters, exi
     "total-definitions": "0",
     "json-report": jsonPath,
     "html-report": requestedReporters.includes("html")
-      ? join(outputDirectory, "cuke-dedup.html")
+      ? appendPath(outputDirectory, "cuke-dedup.html")
       : "",
     "sarif-report": requestedReporters.includes("sarif")
-      ? join(outputDirectory, "cuke-dedup.sarif")
+      ? appendPath(outputDirectory, "cuke-dedup.sarif")
       : "",
   };
   if ((exitCode !== 0 && exitCode !== 1) || !existsSync(jsonPath)) {
