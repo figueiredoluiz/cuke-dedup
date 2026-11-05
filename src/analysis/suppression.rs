@@ -138,15 +138,6 @@ impl<'a> SuppressionIndex<'a> {
         outcome
     }
 
-    /// Number of config suppressions that declare a path, whether or not its glob compiled.
-    #[cfg(test)]
-    pub(super) fn compiled_path_count(&self) -> usize {
-        self.compiled
-            .iter()
-            .filter(|suppression| suppression.config.path.is_some())
-            .count()
-    }
-
     /// Saturating cost of selecting one definition: 1 plus its relative path and raw matcher bytes.
     fn selection_work(&self, definition_index: usize) -> u64 {
         let path_bytes =

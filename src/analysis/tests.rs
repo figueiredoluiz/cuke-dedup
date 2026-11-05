@@ -1,4 +1,6 @@
-use super::pairs::{analyze_definition_pairs, definition_pair_candidates};
+use super::pairs::{
+    analyze_definition_pairs, definition_pair_candidates, MAX_TOTAL_PAIR_SUPPRESSION_WORK,
+};
 use super::similarity::{
     handler_similarity, is_near_matcher, matcher_similarity, matcher_words,
     ordered_common_subsequence_len,
@@ -2461,55 +2463,94 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     assert!(pair_analysis.incomplete.is_some());
 }
 
-/// 1,000 path globs compile once across lookups; unmatched detection and pair analysis over 700
-/// deep-path definitions both truncate at their work budgets.
-#[test]
-fn suppression_globs_compile_once_and_pair_lookups_share_the_work_budget() {
+/// `count` definitions with one shared handler, fixed-width matchers and fixed-width paths under
+/// 30 nested directories, so every pair has the same suppression lookup work.
+fn deep_path_definitions(root: &Path, count: usize) -> Vec<StepDefinition> {
     let base = definitions("Given('base', () => sharedImplementation());").remove(0);
-    let (directory, mut config) = config();
     let long_directory = "nested/".repeat(30);
-    let definitions = (0..700)
+    (0..count)
         .map(|index| {
             let mut definition = base.clone();
             definition.matcher = format!("operation label {index:04}");
             definition.normalized_matcher = definition.matcher.clone();
-            definition.location.path = directory
-                .path()
-                .join(format!("{long_directory}steps-{index}.ts"));
+            definition.location.path = root.join(format!("{long_directory}steps-{index:04}.ts"));
             definition.location.line = index + 1;
             definition
         })
-        .collect::<Vec<_>>();
-    config.suppressions = (0..1_000)
+        .collect()
+}
+
+/// `count` duplicate-handler suppressions whose path globs select no definition.
+fn missing_path_suppressions(count: usize) -> Vec<SuppressionConfig> {
+    (0..count)
         .map(|index| SuppressionConfig {
             rule: Rule::DuplicateHandler,
             reason: format!("legacy exception {index}"),
             path: Some(format!("missing-{index}/**")),
             matcher: None,
         })
-        .collect();
+        .collect()
+}
 
-    let suppressions = super::suppression::SuppressionIndex::new(&config, &definitions);
-    assert_eq!(suppressions.compiled_path_count(), 1_000);
-    for _ in 0..10 {
-        assert!(suppressions
-            .find_reason(Rule::DuplicateHandler, &[0, 1])
-            .is_none());
+/// Runs `check` over 700 deep-path definitions with 1,000 missing-path suppressions (expected to
+/// truncate) and with 10 (expected not to), passing the suppression count and that expectation.
+fn for_each_missing_path_suppression_row(check: impl Fn(&Config, &[StepDefinition], usize, bool)) {
+    let (directory, mut config) = config();
+    let definitions = deep_path_definitions(directory.path(), 700);
+    for (suppression_count, expect_truncated) in [(1_000, true), (10, false)] {
+        config.suppressions = missing_path_suppressions(suppression_count);
+        check(&config, &definitions, suppression_count, expect_truncated);
     }
-    assert_eq!(suppressions.compiled_path_count(), 1_000);
-    let unmatched = suppressions.unmatched();
-    assert!(unmatched.truncated);
-    assert!(unmatched.indices.len() < config.suppressions.len());
+}
 
-    let mut findings = Vec::new();
-    let pair_analysis =
-        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
-    assert!(pair_analysis.census.truncated);
-    assert!(pair_analysis.census.candidate_comparisons_evaluated < definitions.len() - 1);
-    assert!(pair_analysis
-        .incomplete
-        .as_deref()
-        .is_some_and(|error| error.contains("after safety limits")));
+/// Pair suppression lookups charge one run-wide budget: each lookup fits alone, 1,000 suppressions
+/// stop evaluation after `budget / per-pair work` candidates, and 10 evaluate all 1,397.
+#[test]
+fn pair_suppression_lookups_share_one_run_wide_work_budget() {
+    for_each_missing_path_suppression_row(|config, definitions, _, expect_truncated| {
+        let suppressions = super::suppression::SuppressionIndex::new(config, definitions);
+        let pair_work = suppressions.lookup_work(Rule::DuplicateHandler, &[0, 1]);
+        assert!(pair_work < MAX_TOTAL_PAIR_SUPPRESSION_WORK);
+        let budgeted_pairs = usize::try_from(MAX_TOTAL_PAIR_SUPPRESSION_WORK / pair_work).unwrap();
+
+        let mut findings = Vec::new();
+        let pair_analysis =
+            analyze_definition_pairs(definitions, config, &suppressions, &mut findings, None);
+        let census = &pair_analysis.census;
+        let candidates = census.candidate_comparisons_evaluated
+            + usize::try_from(census.skipped_candidate_comparisons).unwrap();
+        assert_eq!(candidates, 1_397);
+        assert_eq!(census.truncated, expect_truncated);
+        assert_eq!(budgeted_pairs < candidates, expect_truncated);
+        assert_eq!(
+            census.candidate_comparisons_evaluated,
+            budgeted_pairs.min(candidates)
+        );
+        assert_eq!(
+            pair_analysis
+                .incomplete
+                .as_deref()
+                .is_some_and(|error| error.contains("after safety limits")),
+            expect_truncated
+        );
+    });
+}
+
+/// Unmatched-suppression detection stops at its own work budget: 1,000 missing-path suppressions
+/// over 700 deep-path definitions truncate with fewer indices than suppressions; 10 do not.
+#[test]
+fn unmatched_suppression_detection_truncates_at_its_work_budget() {
+    for_each_missing_path_suppression_row(
+        |config, definitions, suppression_count, expect_truncated| {
+            let unmatched =
+                super::suppression::SuppressionIndex::new(config, definitions).unmatched();
+            assert_eq!(unmatched.truncated, expect_truncated);
+            assert_eq!(
+                unmatched.indices.len() < suppression_count,
+                expect_truncated
+            );
+        },
+    );
 }
 
 /// Suppression lookup returns a borrowed reason capped at `MAX_SUPPRESSION_REASON_CHARS`; the
@@ -2656,54 +2697,51 @@ fn candidate_limits_do_not_count_structural_pairs_that_cannot_reach_a_rule() {
     );
 }
 
-/// Under a structural class limit of 1, three same-matcher definitions yield two
-/// `normalizedMatcher` candidates, no truncation and no structural evaluation.
+/// Same-matcher pairs do not consume the structural class limit: 3 and 4 same-matcher members at
+/// limit 1 evaluate only `normalizedMatcher` pairs without truncation; 3 distinct matchers truncate.
 #[test]
 fn same_normalized_pairs_do_not_consume_the_structural_limit() {
-    let definitions = definitions(
-        "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));",
-    );
-    let (_directory, mut config) = config();
-    config.max_candidate_comparisons = 3;
-    config.max_structural_class_comparisons = 1;
+    for (source, normalized, structural, truncated_classes) in [
+        (
+            "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));",
+            2,
+            0,
+            0,
+        ),
+        (
+            "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));\nGiven('same', () => action(4));",
+            3,
+            0,
+            0,
+        ),
+        (
+            "Given('one', () => action(1));\nGiven('two', () => action(2));\nGiven('three', () => action(3));",
+            0,
+            1,
+            1,
+        ),
+    ] {
+        let definitions = definitions(source);
+        let (_directory, mut config) = config();
+        config.max_candidate_comparisons = 10;
+        config.max_structural_class_comparisons = 1;
 
-    let generated = definition_pair_candidates(&definitions, &config);
-    assert_eq!(generated.len(), 2);
-    assert!(!generated.census.truncated);
-    assert_eq!(generated.census.skipped_candidate_comparisons, 0);
-    assert_eq!(generated.census.truncated_structural_classes, 0);
-    assert_eq!(
-        generated.census.candidate_sources["normalizedMatcher"].evaluated,
-        2
-    );
-    assert_eq!(
-        generated.census.candidate_sources["structuralHandler"].evaluated,
-        0
-    );
-}
-
-/// Four same-matcher definitions under a structural class limit of 1 report no truncation; all
-/// three spanning pairs come from `normalizedMatcher`.
-#[test]
-fn same_normalized_class_does_not_report_false_structural_truncation() {
-    let definitions = definitions(
-        "Given('same', () => action(1));\nGiven('same', () => action(2));\nGiven('same', () => action(3));\nGiven('same', () => action(4));",
-    );
-    let (_directory, mut config) = config();
-    config.max_candidate_comparisons = 10;
-    config.max_structural_class_comparisons = 1;
-
-    let generated = definition_pair_candidates(&definitions, &config);
-    assert!(!generated.census.truncated);
-    assert_eq!(generated.census.skipped_candidate_comparisons, 0);
-    assert_eq!(
-        generated.census.candidate_sources["normalizedMatcher"].evaluated,
-        3
-    );
-    assert_eq!(
-        generated.census.candidate_sources["structuralHandler"].evaluated,
-        0
-    );
+        let generated = definition_pair_candidates(&definitions, &config);
+        let census = &generated.census;
+        assert_eq!(census.truncated, truncated_classes > 0, "{source}");
+        assert_eq!(census.truncated_structural_classes, truncated_classes, "{source}");
+        assert_eq!(
+            census.candidate_sources["normalizedMatcher"].evaluated,
+            normalized,
+            "{source}"
+        );
+        assert_eq!(
+            census.candidate_sources["structuralHandler"].evaluated,
+            structural,
+            "{source}"
+        );
+        assert_eq!(generated.len(), normalized + structural, "{source}");
+    }
 }
 
 /// A same-handler pair inside a structural class is not counted as skipped work: with a class
@@ -2785,10 +2823,11 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
     assert!(!outcome.incomplete[0].contains("and 0 more"));
 }
 
-/// An over-limit regex fails `analyze` with a resource error; `analyze_with_diagnostics` keeps the
-/// definition and records one incomplete entry.
+/// An over-limit regex fails strict `analyze` with a resource error; `analyze_with_diagnostics`
+/// keeps the definition and records one incomplete entry. CLI reporting is pinned in
+/// `tests/cli.rs`; the diagnostic text through the public API in `tests/public_api.rs`.
 #[test]
-fn regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers() {
+fn regex_resource_errors_fail_analyze_and_are_kept_as_diagnostics() {
     let definitions = definitions("Given(/a{1000000}/, () => work());");
     let (_directory, config) = config();
 

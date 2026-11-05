@@ -637,13 +637,23 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "suppression_globs_compile_once_and_pair_lookups_share_the_work_budget",
+          "name": "pair_suppression_lookups_share_one_run_wide_work_budget",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_suppression_lookups_share_the_pair_work_budget"
           },
           "rationale": "700 Ruby definitions in one identical-handler class with 1,000 duplicate-handler path suppressions exhaust the pair work budget (truncated, identicalHandler evaluated < 699, one safety-limit diagnostic); the same suppressions under unused-definition charge no pair work (1,397 comparisons evaluated). Globs compile once in `SuppressionIndex::new`; lookups take `&self` and read the compiled list, so no source text can trigger recompilation.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "unmatched_suppression_detection_truncates_at_its_work_budget",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_suppression_lookups_share_the_pair_work_budget"
+          },
+          "rationale": "Unmatched-suppression validation over 700 Ruby files stops at its own safety limit with the stopped-after-limit warning; three unmatched suppressions in the same run stay within the limit and are all reported.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -703,17 +713,7 @@
             "file": "tests/ruby.rs",
             "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
           },
-          "rationale": "The same three-member Ruby group at structural limit 1 evaluates 2 normalizedMatcher and 0 structuralHandler pairs with no truncation; distinct-matcher rows with the same handlers are the truncating control.",
-          "behaviorClass": "shared-engine-invariant"
-        },
-        {
-          "name": "same_normalized_class_does_not_report_false_structural_truncation",
-          "requiredStatus": "rust-evidence",
-          "evidenceTest": {
-            "file": "tests/ruby.rs",
-            "name": "ruby_candidate_census_pins_buckets_and_limit_boundaries"
-          },
-          "rationale": "Four same-matcher Ruby registrations in one structural class at structural limit 1 evaluate 3 normalizedMatcher pairs with 0 skipped and no truncation.",
+          "rationale": "Three- and four-member same-matcher Ruby groups at structural limit 1 evaluate 2 and 3 normalizedMatcher pairs, 0 structuralHandler pairs, 0 skipped and no truncation; distinct-matcher rows with the same handlers are the truncating control.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -747,7 +747,7 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "regex_resource_errors_are_preserved_for_cli_reporting_and_library_callers",
+          "name": "regex_resource_errors_fail_analyze_and_are_kept_as_diagnostics",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
             "file": "tests/ruby.rs",
