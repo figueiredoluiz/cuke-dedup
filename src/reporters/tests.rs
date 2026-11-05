@@ -37,7 +37,7 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
 }
 
 /// Builds a two-definition report fixture with comparison evidence and script-like handler text for escaping checks.
-fn result(root: &Path) -> AnalysisResult {
+pub(super) fn result(root: &Path) -> AnalysisResult {
     let primary = SourceLocation::new(root.join("steps/a.ts"), 2, 1, 2, 20);
     let related = SourceLocation::new(root.join("steps/b.ts"), 3, 1, 3, 20);
     AnalysisResult {
@@ -219,18 +219,28 @@ impl std::io::Write for LimitedWriter {
     }
 }
 
-/// A terminal write failure at the footer propagates to the caller instead of being dropped.
+/// Terminal finding and footer write failures propagate to the caller instead of being dropped.
 #[test]
 fn terminal_report_propagates_footer_write_failures() {
     let root = PathBuf::from("/repo");
-    let analysis = result(&root);
+    let mut analysis = result(&root);
+    analysis.findings[0].related = vec![analysis.findings[0].related[0].clone(); 20];
     let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
     let context = ReportContext::with_metrics(&analysis, &root, 100.0, &metrics);
     let mut complete = Vec::new();
     write_terminal(&context, &mut complete).unwrap();
     let complete = String::from_utf8(complete).unwrap();
 
-    for marker in ["Found 1 finding.", "Detection time:"] {
+    for marker in [
+        "    -->",
+        "    related:",
+        "    related: ...",
+        "    evidence:",
+        "    handler:",
+        "    action:",
+        "Found 1 finding.",
+        "Detection time:",
+    ] {
         let mut writer = LimitedWriter {
             remaining: complete.find(marker).unwrap(),
         };
@@ -241,6 +251,16 @@ fn terminal_report_propagates_footer_write_failures() {
             "write failure at {marker} should propagate"
         );
     }
+    analysis.findings[0].evidence.matcher_difference.clear();
+    analysis.findings[0].evidence.handler_evidence.clear();
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    let mut output = Vec::new();
+    write_terminal(&context, &mut output).unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Duplicate <matcher>"));
+    assert!(!output.contains("    evidence:"));
+    assert!(!output.contains("    handler:"));
+    assert!(output.contains("    action:"));
 }
 
 /// Checks JSONL emits a self-contained finding, bounded Unicode evidence, and a final summary record.
@@ -1280,8 +1300,8 @@ fn ruby_findings_respect_every_reporter_bound() {
     assert!(ruby_terminal(&context).contains(&expected));
 }
 
-/// Repeated accepted-size fields must hit a byte budget before the record cap, in every
-/// buffered format, while preserving full summary counts and consistent omission counts.
+/// Each format uses its own byte costs while preserving full summary counts, explicit HTML
+/// omissions, field bounds, and complete non-HTML output when all findings fit.
 #[test]
 fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
     let root = PathBuf::from("/repo");
@@ -1311,7 +1331,7 @@ fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
     let json_text = render_json(&context).unwrap();
     let json: serde_json::Value = serde_json::from_str(&json_text).unwrap();
     let retained = json["findings"].as_array().unwrap().len();
-    assert!(retained > 0 && retained < 70, "retained {retained}");
+    assert_eq!(retained, 70, "JSON must use its own serialized cost");
     assert_eq!(json["findingsTruncated"], 70 - retained);
     assert!(json["findings"][0]["message"]
         .as_str()
@@ -1329,8 +1349,9 @@ fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
     );
 
     let html = render_html(&context).unwrap();
-    assert_eq!(html.matches("<article class=\"finding\"").count(), retained);
-    assert!(html.contains(&format!("{} additional findings", 70 - retained)));
+    let html_retained = html.matches("<article class=\"finding\"").count();
+    assert!(html_retained > 0 && html_retained < 70);
+    assert!(html.contains(&format!("{} additional findings", 70 - html_retained)));
     assert!(html.contains("bytes omitted"));
     let sarif_text = render_sarif(&context).unwrap();
     let sarif: serde_json::Value = serde_json::from_str(&sarif_text).unwrap();
@@ -1349,10 +1370,7 @@ fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
     let mut terminal = Vec::new();
     write_terminal(&context, &mut terminal).unwrap();
     let terminal = String::from_utf8(terminal).unwrap();
-    assert!(terminal.contains(&format!(
-        "{} additional active findings omitted",
-        70 - retained
-    )));
+    assert!(!terminal.contains("additional active findings omitted"));
     for output in [&json_text, &html, &sarif_text, &terminal] {
         assert!(output.len() <= 16 * 1024 * 1024);
     }
@@ -1402,4 +1420,42 @@ fn buffered_report_bounds_all_string_fields_without_changing_source_findings() {
         assert!(text.contains("bytes omitted"));
     }
     assert_eq!(analysis.findings[0], before);
+}
+
+/// A non-fitting item cannot hide a later small error; inactive findings never become cards.
+#[test]
+fn buffered_selection_keeps_later_small_findings_after_a_non_fitting_item() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let small = analysis.findings[0].clone();
+    let mut large = small.clone();
+    large.message = "large".repeat(2_000);
+    large.related = vec![SourceLocation::new(root.join("x".repeat(8_192)), 1, 1, 1, 1); 15];
+    analysis.findings = vec![large; 70];
+    let mut later = small.clone();
+    later.message = "later-small-error".to_owned();
+    analysis.findings.push(later);
+    let mut inactive = small;
+    inactive.message = "suppressed-control".to_owned();
+    inactive.suppression = Some(Suppression {
+        reason: "fixture".to_owned(),
+    });
+    analysis.findings.push(inactive);
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    let html = render_html(&context).unwrap();
+    assert!(html.contains("<h2>later-small-error</h2>"));
+    assert!(!html.contains("<h2>suppressed-control</h2>"));
+    let json = render_json(&context).unwrap();
+    let sarif = render_sarif(&context).unwrap();
+    let mut terminal = Vec::new();
+    super::terminal::write_terminal_with_color(&context, &mut terminal, true).unwrap();
+    for output in [&html, &json, &sarif] {
+        assert!(output.contains("later-small-error"));
+        assert!(output.len() <= 16 * 1024 * 1024);
+    }
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(terminal.contains("later-small-error"));
+    assert!(!terminal.contains("suppressed-control"));
+    assert!(!sarif.contains("suppressed-control"));
+    assert!(terminal.len() <= 16 * 1024 * 1024);
 }

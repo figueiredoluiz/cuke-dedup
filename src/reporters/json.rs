@@ -1,4 +1,4 @@
-use super::shared::{bounded_json, report_value, report_value_with_metadata};
+use super::shared::{bounded_json, json_finding_cost, report_value, report_value_with_metadata};
 use super::{CliReportMetadata, ReportContext};
 use anyhow::{Context, Result};
 
@@ -14,6 +14,6 @@ pub(super) fn render_json_context_with_metadata(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,
 ) -> Result<String> {
-    let report = report_value_with_metadata(context, metadata);
+    let report = report_value_with_metadata(context, metadata, json_finding_cost);
     bounded_json(&report, true).context("failed to serialize JSON report")
 }

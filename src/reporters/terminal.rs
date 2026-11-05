@@ -2,9 +2,11 @@ use super::shared::{
     bounded_findings, count_label, display_location, terminal_safe, MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::ReportContext;
+use crate::model::Finding;
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::Path;
 
 /// Writes a plain-text terminal report to `writer`.
 pub fn write_terminal(context: &ReportContext<'_>, writer: &mut dyn Write) -> Result<()> {
@@ -30,7 +32,14 @@ pub(super) fn write_terminal_with_color(
     writeln!(writer)?;
     let mut wrote_rule = false;
     let mut findings_by_rule: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    let selected = bounded_findings(result, root, true);
+    let selected = bounded_findings(result, true, |finding| {
+        let mut counter = crate::resource_limits::LimitedWriter {
+            inner: std::io::sink(),
+            remaining: crate::resource_limits::MAX_BUFFERED_REPORT_BYTES,
+        };
+        write_finding(finding, root, &mut counter, color).ok()?;
+        Some(crate::resource_limits::MAX_BUFFERED_REPORT_BYTES - counter.remaining + 1)
+    });
     let findings_truncated = selected.truncated;
     for finding in selected.findings {
         findings_by_rule
@@ -49,57 +58,7 @@ pub(super) fn write_terminal_with_color(
             if index > 0 {
                 writeln!(writer)?;
             }
-            // The active-finding selection excludes Off.
-            let severity_color = if finding.severity == crate::model::Severity::Error {
-                "31"
-            } else {
-                "33"
-            };
-            let severity = colorize(format!("[{}]", finding.severity), severity_color, color);
-            writeln!(writer, "  {severity} {}", terminal_safe(&finding.message))?;
-            writeln!(
-                writer,
-                "    --> {}",
-                colorize(
-                    terminal_safe(&display_location(&finding.primary, root)),
-                    "94",
-                    color
-                )
-            )?;
-            let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
-            for related in finding.related.iter().take(retained_related) {
-                writeln!(
-                    writer,
-                    "    related: {}",
-                    colorize(terminal_safe(&display_location(related, root)), "94", color)
-                )?;
-            }
-            if finding.related.len() > retained_related {
-                writeln!(
-                    writer,
-                    "    related: ... {} more locations omitted",
-                    finding.related.len() - retained_related
-                )?;
-            }
-            if !finding.evidence.matcher_difference.is_empty() {
-                writeln!(
-                    writer,
-                    "    evidence: {}",
-                    terminal_safe(&finding.evidence.matcher_difference)
-                )?;
-            }
-            if !finding.evidence.handler_evidence.is_empty() {
-                writeln!(
-                    writer,
-                    "    handler: {}",
-                    terminal_safe(&finding.evidence.handler_evidence)
-                )?;
-            }
-            writeln!(
-                writer,
-                "    action: {}",
-                terminal_safe(&finding.suggested_action)
-            )?;
+            write_finding(finding, root, writer, color)?;
         }
     }
     if summary.findings > 0 {
@@ -171,6 +130,67 @@ pub(super) fn write_terminal_with_color(
             )
         )?;
     }
+    Ok(())
+}
+
+/// Writes one bounded finding identically during byte accounting and final rendering.
+fn write_finding(
+    finding: &Finding,
+    root: &Path,
+    writer: &mut dyn Write,
+    color: bool,
+) -> Result<()> {
+    // The active-finding selection excludes Off.
+    let severity_color = if finding.severity == crate::model::Severity::Error {
+        "31"
+    } else {
+        "33"
+    };
+    let severity = colorize(format!("[{}]", finding.severity), severity_color, color);
+    writeln!(writer, "  {severity} {}", terminal_safe(&finding.message))?;
+    writeln!(
+        writer,
+        "    --> {}",
+        colorize(
+            terminal_safe(&display_location(&finding.primary, root)),
+            "94",
+            color
+        )
+    )?;
+    let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
+    for related in finding.related.iter().take(retained_related) {
+        writeln!(
+            writer,
+            "    related: {}",
+            colorize(terminal_safe(&display_location(related, root)), "94", color)
+        )?;
+    }
+    if finding.related.len() > retained_related {
+        writeln!(
+            writer,
+            "    related: ... {} more locations omitted",
+            finding.related.len() - retained_related
+        )?;
+    }
+    if !finding.evidence.matcher_difference.is_empty() {
+        writeln!(
+            writer,
+            "    evidence: {}",
+            terminal_safe(&finding.evidence.matcher_difference)
+        )?;
+    }
+    if !finding.evidence.handler_evidence.is_empty() {
+        writeln!(
+            writer,
+            "    handler: {}",
+            terminal_safe(&finding.evidence.handler_evidence)
+        )?;
+    }
+    writeln!(
+        writer,
+        "    action: {}",
+        terminal_safe(&finding.suggested_action)
+    )?;
     Ok(())
 }
 

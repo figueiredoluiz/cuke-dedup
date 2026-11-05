@@ -1,5 +1,5 @@
 use super::shared::{
-    bounded_findings, bounded_json, count_label, display_location, report_safe,
+    bounded_findings, bounded_json, count_label, display_location, html_finding_cost, report_safe,
     report_value_with_metadata, MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::{CliReportMetadata, ReportContext};
@@ -56,11 +56,14 @@ pub(super) fn render_html_context_with_metadata(
         )
     };
     let report_json = json_for_html(
-        &bounded_json(&report_value_with_metadata(context, metadata), false)
-            .context("failed to serialize HTML report data")?,
+        &bounded_json(
+            &report_value_with_metadata(context, metadata, html_finding_cost),
+            false,
+        )
+        .context("failed to serialize HTML report data")?,
     );
     let mut cards = String::new();
-    let selected = bounded_findings(result, root, true);
+    let selected = bounded_findings(result, true, |finding| html_finding_cost(finding, root));
     let truncated = selected.truncated;
     for finding in selected.findings {
         let location = display_location(&finding.primary, root);

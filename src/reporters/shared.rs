@@ -10,6 +10,7 @@ use crate::resource_limits::{
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 
 #[cfg(not(test))]
@@ -66,14 +67,14 @@ pub(super) struct BoundedFindings<'a> {
 }
 
 /// Selects up to `MAX_BUFFERED_REPORT_FINDINGS` findings by `finding_priority`, keeping input
-/// order within each priority, stopping when the conservative output byte budget is exhausted.
+/// order within each priority and skipping findings that do not fit the format byte budget.
 ///
 /// `active_only` excludes inactive findings first; `truncated` counts the eligible findings left
 /// out.
 pub(super) fn bounded_findings<'a>(
     result: &'a AnalysisResult,
-    root: &Path,
     active_only: bool,
+    mut finding_cost: impl FnMut(&Finding) -> Option<usize>,
 ) -> BoundedFindings<'a> {
     let eligible = |finding: &&Finding| !active_only || finding.is_active();
     let total = result.findings.iter().filter(eligible).count();
@@ -83,32 +84,79 @@ pub(super) fn bounded_findings<'a>(
     for priority in 0..4 {
         for finding in result.findings.iter().filter(eligible) {
             if finding_priority(finding) == priority {
-                // Count bounded, sanitized evidence with no serialized buffer. A conservative
-                // multiplier covers HTML's visible and embedded copies (including escaping and
-                // repeated diff segments); fixed overhead covers cards and SARIF locations.
-                let converted = convert_finding(finding, root);
-                let mut counter = LimitedWriter {
-                    inner: std::io::sink(),
-                    remaining: MAX_BUFFERED_REPORT_BYTES,
-                };
-                let fits = serde_json::to_writer(&mut counter, &converted).is_ok();
-                let cost = (MAX_BUFFERED_REPORT_BYTES - counter.remaining)
-                    .saturating_mul(18)
-                    .saturating_add(4096);
-                if !fits || cost > remaining || findings.len() == MAX_BUFFERED_REPORT_FINDINGS {
+                if findings.len() == MAX_BUFFERED_REPORT_FINDINGS {
                     return BoundedFindings {
                         truncated: total - findings.len(),
                         findings,
                     };
                 }
+                let Some(cost) = finding_cost(finding).filter(|cost| *cost <= remaining) else {
+                    continue;
+                };
                 remaining -= cost;
                 findings.push(finding);
             }
         }
     }
     BoundedFindings {
+        truncated: total - findings.len(),
         findings,
-        truncated: 0,
+    }
+}
+
+/// Counts a JSON finding at its actual depth inside the report's findings array.
+pub(super) fn json_finding_cost(finding: &Finding, root: &Path) -> Option<usize> {
+    pretty_json_cost(&convert_finding(finding, root), 2)
+}
+
+/// Retains the conservative HTML charge for visible cards, escaped embedded data and markup.
+pub(super) fn html_finding_cost(finding: &Finding, root: &Path) -> Option<usize> {
+    let mut counter = LimitedWriter {
+        inner: io::sink(),
+        remaining: MAX_BUFFERED_REPORT_BYTES,
+    };
+    serde_json::to_writer(&mut counter, &convert_finding(finding, root)).ok()?;
+    Some(
+        (MAX_BUFFERED_REPORT_BYTES - counter.remaining)
+            .saturating_mul(18)
+            .saturating_add(4096),
+    )
+}
+
+/// Counts actual pretty JSON bytes plus enclosing indentation and the array separator.
+pub(super) fn pretty_json_cost(value: &impl Serialize, depth: usize) -> Option<usize> {
+    let mut counter = JsonCostCounter {
+        bytes: depth * 2 + 2,
+        extra_indent: depth * 2,
+    };
+    serde_json::to_writer_pretty(&mut counter, value).ok()?;
+    Some(counter.bytes)
+}
+
+/// Accounts for the indentation added when a pretty JSON value is nested in its report.
+struct JsonCostCounter {
+    bytes: usize,
+    extra_indent: usize,
+}
+
+impl Write for JsonCostCounter {
+    /// Rejects oversized values while counting every newline's enclosing indentation.
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let indent = bytes.iter().filter(|byte| **byte == b'\n').count() * self.extra_indent;
+        let next = self
+            .bytes
+            .saturating_add(bytes.len())
+            .saturating_add(indent);
+        if next > MAX_BUFFERED_REPORT_BYTES {
+            return Err(io::Error::other("report finding exceeds byte budget"));
+        }
+        self.bytes = next;
+        Ok(bytes.len())
+    }
+
+    /// The counter has no buffered output to flush.
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -124,7 +172,7 @@ fn finding_priority(finding: &Finding) -> u8 {
 
 /// Builds the JSON report value without corpus or analysis censuses.
 pub(super) fn report_value<'a>(context: &ReportContext<'a>) -> JsonReport<'a> {
-    report_value_with_metadata(context, None)
+    report_value_with_metadata(context, None, json_finding_cost)
 }
 
 /// Builds the JSON report value from up to `MAX_BUFFERED_REPORT_FINDINGS` findings, active before
@@ -132,8 +180,11 @@ pub(super) fn report_value<'a>(context: &ReportContext<'a>) -> JsonReport<'a> {
 pub(super) fn report_value_with_metadata<'a>(
     context: &ReportContext<'a>,
     metadata: Option<&CliReportMetadata<'_>>,
+    finding_cost: fn(&Finding, &Path) -> Option<usize>,
 ) -> JsonReport<'a> {
-    let selected = bounded_findings(context.result, context.root, false);
+    let selected = bounded_findings(context.result, false, |finding| {
+        finding_cost(finding, context.root)
+    });
     JsonReport {
         schema_version: JSON_SCHEMA_VERSION,
         summary: context.summary.clone(),
@@ -303,3 +354,6 @@ pub(super) fn bounded_json(value: &impl Serialize, pretty: bool) -> Result<Strin
     }
     Ok(String::from_utf8(writer.inner)?)
 }
+
+#[cfg(test)]
+mod tests;

@@ -2745,7 +2745,9 @@
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_changed_since_preserves_non_utf8_linux_names",
-            "platforms": ["linux"]
+            "platforms": [
+              "linux"
+            ]
           },
           "rationale": "The changed-mode run decodes non-UTF-8 Git path bytes for tracked and untracked .rb files into findings; gated to Linux because macOS filesystems reject non-UTF-8 names.",
           "behaviorClass": "shared-engine-invariant"
@@ -2756,7 +2758,9 @@
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_changed_since_preserves_non_utf8_linux_names",
-            "platforms": ["linux"]
+            "platforms": [
+              "linux"
+            ]
           },
           "rationale": "A tracked steps/tracked-\\xfe.rb modified after commit contributes a finding in changed mode (2 active total) after a no-change control (Linux-gated).",
           "behaviorClass": "shared-engine-invariant"
@@ -3027,6 +3031,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent stage `bounded-io`: Report byte and field limits preserve source findings and explicit omission counts.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "buffered_selection_keeps_later_small_findings_after_a_non_fitting_item",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Later small active findings survive non-fitting earlier findings while suppression and output bounds remain intact.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -5981,7 +5992,9 @@
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_changed_since_preserves_non_utf8_linux_names",
-            "platforms": ["linux"]
+            "platforms": [
+              "linux"
+            ]
           },
           "rationale": "An untracked steps/non-utf8-\\xff.rb duplicate is reported with exit 1 (Linux-gated as the original; compiled locally, runs only on Linux CI).",
           "behaviorClass": "shared-engine-invariant"
@@ -7217,6 +7230,28 @@
           },
           "rationale": "Ruby and TypeScript handlers written with the same pending, not-implemented and todo spellings are stubs in each listed syntax (Ruby call and `raise`; TypeScript call, `throw new Error` and string body); near misses are not.",
           "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
+    "src/reporters/shared/tests.rs": {
+      "tests": [
+        {
+          "name": "pretty_finding_cost_counts_nested_output_and_enforces_the_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Pretty JSON accounting matches actual nested rendering and rejects byte-limit overflow atomically.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/reporters/sarif/tests.rs": {
+      "tests": [
+        {
+          "name": "sarif_result_levels_preserve_active_filtering",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF result levels and final active-only filtering.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     }
