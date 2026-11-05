@@ -1,5 +1,5 @@
 use super::evidence::{
-    definition_comparison, handler_evidence, matcher_difference, retain_finding,
+    definition_comparison, evidence_text, handler_evidence, matcher_difference, retain_finding,
     MAX_FINDING_EVIDENCE_BYTES,
 };
 use super::pair_records::PairRecord;
@@ -386,7 +386,8 @@ pub(super) fn analyze_definition_pairs(
                     handler_similarity,
                     matcher_difference: Cow::Owned(format!(
                         "`{}` normalizes to `{}`",
-                        right.matcher, right.normalized_matcher
+                        evidence_text(&right.matcher),
+                        evidence_text(&right.normalized_matcher)
                     )),
                     handler_evidence: Cow::Owned(handler_evidence(left, right)),
                     suggested_action:

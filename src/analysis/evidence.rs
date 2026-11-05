@@ -1,7 +1,9 @@
 use crate::model::{
-    stable_fingerprint_parts, DefinitionComparison, MatcherDiff, MatcherKind, StepDefinition,
+    stable_fingerprint_parts, DefinitionComparison, Finding, MatcherDiff, MatcherKind,
+    SourceLocation, StepDefinition,
 };
 use crate::resource_limits::{sample_text, LimitedWriter};
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 use std::borrow::Cow;
 
 pub(super) const MAX_EVIDENCE_TEXT_BYTES: usize = 8 * 1024;
@@ -41,7 +43,77 @@ pub(super) fn original_fallback_fingerprint(
     )
 }
 
-/// Charges serialized finding bytes without an output buffer. A refusal leaves the finding out;
+/// Borrows finding contents for byte accounting while accepting every filesystem path.
+/// The stored finding and its raw path bytes remain untouched.
+struct FindingForBudget<'a>(&'a Finding);
+
+impl Serialize for FindingForBudget<'_> {
+    /// Serializes every finding field, replacing only location views. Exhaustive destructuring
+    /// forces new model fields to be included in the accounting view.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Finding {
+            rule,
+            severity,
+            message,
+            original_fingerprint,
+            primary,
+            related,
+            evidence,
+            suggested_action,
+            suppression,
+        } = self.0;
+        let mut state = serializer
+            .serialize_struct("Finding", 8 + usize::from(original_fingerprint.is_some()))?;
+        state.serialize_field("rule", rule)?;
+        state.serialize_field("severity", severity)?;
+        state.serialize_field("message", message)?;
+        if original_fingerprint.is_some() {
+            state.serialize_field("original_fingerprint", original_fingerprint)?;
+        }
+        state.serialize_field("primary", &LocationForBudget(primary))?;
+        state.serialize_field("related", &LocationsForBudget(related))?;
+        state.serialize_field("evidence", evidence)?;
+        state.serialize_field("suggested_action", suggested_action)?;
+        state.serialize_field("suppression", suppression)?;
+        state.end()
+    }
+}
+
+/// A location's accounting view uses the same lossy path conversion as displayed reports.
+struct LocationForBudget<'a>(&'a SourceLocation);
+
+impl Serialize for LocationForBudget<'_> {
+    /// Counts displayable path bytes and the complete span without changing the source location.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let SourceLocation {
+            path,
+            line,
+            column,
+            end_line,
+            end_column,
+        } = self.0;
+        let mut state = serializer.serialize_struct("SourceLocation", 5)?;
+        state.serialize_field("path", &path.to_string_lossy())?;
+        state.serialize_field("line", line)?;
+        state.serialize_field("column", column)?;
+        state.serialize_field("end_line", end_line)?;
+        state.serialize_field("end_column", end_column)?;
+        state.end()
+    }
+}
+
+/// Streams related location views without copying their paths or allocating a second list.
+struct LocationsForBudget<'a>(&'a [SourceLocation]);
+
+impl Serialize for LocationsForBudget<'_> {
+    /// Visits every related location in its original order.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter().map(LocationForBudget))
+    }
+}
+
+/// Charges serialized finding bytes without an output buffer, using displayable path views.
+/// A refusal leaves the finding out;
 /// the caller must mark its analysis incomplete and stop producing findings for this pass.
 pub(super) fn retain_finding(
     findings: &mut Vec<crate::model::Finding>,
@@ -52,7 +124,7 @@ pub(super) fn retain_finding(
         inner: std::io::sink(),
         remaining: *remaining,
     };
-    if serde_json::to_writer(&mut counter, &finding).is_err() {
+    if serde_json::to_writer(&mut counter, &FindingForBudget(&finding)).is_err() {
         return false;
     }
     *remaining = counter.remaining;

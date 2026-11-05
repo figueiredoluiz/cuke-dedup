@@ -41,6 +41,13 @@
           "stage": "matcher-text",
           "rationale": "Adapter-independent stage `matcher-text`: Sampling retains bounded Unicode evidence and identifies omitted text.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "non_utf8_paths_preserve_findings_and_exact_evidence_budgets",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: non-UTF-8 primary and related locations preserve pair and overlap findings, raw path identity, and exact byte-budget boundaries.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -247,6 +254,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
           "rationale": "Adapter-independent stage `bounded-analysis`: Evidence byte exhaustion retains positive findings and marks pair analysis incomplete.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "normalized_matcher_evidence_is_bounded_without_losing_findings",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: normalized-matcher diagnostic sampling preserves semantic identity and independent later findings.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

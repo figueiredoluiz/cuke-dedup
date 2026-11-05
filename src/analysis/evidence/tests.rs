@@ -222,3 +222,77 @@ fn large_pair_evidence_is_sampled_before_copying() {
     );
     assert!(matcher_difference(&pair[0], &pair[1]).len() <= 2 * 8192 + 16);
 }
+
+/// Invalid filesystem bytes in either endpoint preserve pair and overlap findings without
+/// mutating raw locations; accounting still rejects only an actually exhausted byte budget.
+#[cfg(unix)]
+#[test]
+fn non_utf8_paths_preserve_findings_and_exact_evidence_budgets() {
+    use crate::config::{Config, ConfigOverrides};
+    use crate::model::Rule;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+    for name in ["first", "second"] {
+        config
+            .parameter_types
+            .insert(name.to_owned(), "red|blue".to_owned());
+    }
+    for (source, rule) in [
+        (
+            "Given('same', () => first()); Given('same', () => second());",
+            Rule::DuplicateMatcher,
+        ),
+        (
+            "Given('value {first}', () => first()); Given('value {second}', () => second());",
+            Rule::OverlappingMatcher,
+        ),
+    ] {
+        for invalid in [0, 1, 2, 3] {
+            let mut input = definitions(source);
+            for (index, definition) in input.iter_mut().enumerate() {
+                let mut path = format!("steps/{index}-").into_bytes();
+                path.extend(if invalid & (1 << index) != 0 {
+                    b"\xff.ts"
+                } else {
+                    b"x.ts"
+                });
+                definition.location.path = PathBuf::from(OsString::from_vec(path));
+            }
+            let locations = input.iter().map(|d| d.location.clone()).collect::<Vec<_>>();
+            let outcome =
+                crate::analysis::analyze_with_diagnostics(input, Vec::new(), &config).unwrap();
+            assert!(
+                outcome.incomplete.is_empty(),
+                "{rule:?}, invalid={invalid}: {:?}",
+                outcome.incomplete
+            );
+            let finding = outcome
+                .result
+                .findings
+                .iter()
+                .find(|f| f.rule == rule)
+                .expect("required finding");
+            assert_eq!(finding.primary, locations[0]);
+            assert_eq!(finding.related, locations[1..]);
+            let mut display = finding.clone();
+            display.primary.path = PathBuf::from(display.primary.path.to_string_lossy().as_ref());
+            for location in &mut display.related {
+                location.path = PathBuf::from(location.path.to_string_lossy().as_ref());
+            }
+            let bytes = serde_json::to_vec(&display).unwrap().len();
+            let mut kept = Vec::new();
+            for limit in [0, bytes - 1] {
+                let mut remaining = limit;
+                assert!(!retain_finding(&mut kept, &mut remaining, finding.clone()));
+                assert_eq!(remaining, limit);
+                assert!(kept.is_empty());
+            }
+            let mut remaining = bytes;
+            assert!(retain_finding(&mut kept, &mut remaining, finding.clone()));
+            assert_eq!(remaining, 0);
+            assert_eq!(kept.as_slice(), std::slice::from_ref(finding));
+        }
+    }
+}
