@@ -48,11 +48,11 @@ outputs:
   exit-code:
     description: Native CukeDedup exit code (0, 1, or 2)
   duplicate-rate:
-    description: Unrounded duplicated-definition percentage
+    description: Unrounded duplicated-definition percentage; zero on analysis errors or unavailable/invalid schema-3 metrics
   duplicate-definitions:
-    description: Unique definitions contributing to the duplication threshold
+    description: Unique definitions contributing to the duplication threshold; zero on analysis errors or unavailable/invalid schema-3 metrics
   total-definitions:
-    description: Total analyzed definitions
+    description: Total analyzed definitions; zero on analysis errors or unavailable/invalid schema-3 metrics
   json-report:
     description: Path to the JSON report
   html-report:

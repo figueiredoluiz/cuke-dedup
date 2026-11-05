@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -11,6 +11,7 @@ import {
   releaseTarget,
   reportOutputs,
   resolveReportDirectory,
+  runAction,
   validateArchiveMemberNames,
   verifyChecksum,
   verifyProvenance,
@@ -227,6 +228,7 @@ test("action exposes threshold metrics and requested report paths", async () => 
   await mkdir(output);
   const json = join(output, "cuke-dedup.json");
   await writeFile(json, JSON.stringify({
+    schemaVersion: "3",
     summary: {
       duplication: {
         percentage: 12.5,
@@ -244,6 +246,110 @@ test("action exposes threshold metrics and requested report paths", async () => 
     "html-report": join(output, "cuke-dedup.html"),
     "sarif-report": join(output, "cuke-dedup.sarif"),
   });
+});
+
+/** Verify failed analysis never consumes even a well-formed pre-existing report. */
+test("action ignores reports after an analysis error", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-action-error-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const json = join(directory, "cuke-dedup.json");
+  for (const content of [JSON.stringify({
+    schemaVersion: "3",
+    summary: { duplication: { percentage: 75, duplicatedDefinitions: 3, totalDefinitions: 4 } },
+  }), "invalid JSON"]) {
+    await writeFile(json, content);
+    for (const exitCode of [2, 9]) {
+      const outputs = reportOutputs(json, directory, [], exitCode);
+      assert.equal(outputs["exit-code"], String(exitCode));
+      assert.equal(outputs["duplicate-rate"], "0");
+      assert.equal(outputs["duplicate-definitions"], "0");
+      assert.equal(outputs["total-definitions"], "0");
+    }
+  }
+});
+
+/** Verify unsupported schemas and invalid metric types cannot become Action outputs. */
+test("action rejects invalid report metrics", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-action-schema-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const json = join(directory, "cuke-dedup.json");
+  const valid = { percentage: 25, duplicatedDefinitions: 1, totalDefinitions: 4 };
+  const reports = [null, {}, { schemaVersion: "3" },
+    ...[undefined, 3, "2", "99"].map((schemaVersion) => ({
+      schemaVersion, summary: { duplication: valid },
+    })),
+    ...Object.keys(valid).flatMap((key) => [undefined, null, true, "1", {}, [], -1, 1e309].map((value) => ({
+      schemaVersion: "3", summary: { duplication: { ...valid, [key]: value } },
+    }))),
+    ...[{ percentage: 101 }, { duplicatedDefinitions: 1.5 },
+      { totalDefinitions: 4.5 }, { duplicatedDefinitions: 5 },
+      { totalDefinitions: Number.MAX_SAFE_INTEGER + 1 }].map((override) => ({
+      schemaVersion: "3", summary: { duplication: { ...valid, ...override } },
+    })),
+  ];
+  for (const content of [...reports.map((report) => JSON.stringify(report)),
+    '{"schemaVersion":"3","summary":{"duplication":{"percentage":1e309,"duplicatedDefinitions":1,"totalDefinitions":4}}}',
+    "invalid JSON"]) {
+    await writeFile(json, content);
+    const outputs = reportOutputs(json, directory, [], 0);
+    assert.equal(outputs["duplicate-rate"], "0", content);
+    assert.equal(outputs["duplicate-definitions"], "0", content);
+    assert.equal(outputs["total-definitions"], "0", content);
+  }
+});
+
+/** Verify each invocation publishes only newly written metrics while preserving native status and configured paths. */
+test("action binds metrics to the current run", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-action-run-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "analysis");
+  const output = join(root, "reports");
+  await mkdir(output, { recursive: true });
+  const json = join(output, "cuke-dedup.json");
+  const binary = join(directory, "analyzer.cjs");
+  const githubOutput = join(directory, "github-output");
+  /** Build a schema-3 report with four definitions and the requested duplication metrics. */
+  const report = (percentage, duplicatedDefinitions) => JSON.stringify({
+    schemaVersion: "3", summary: { duplication: { percentage, duplicatedDefinitions, totalDefinitions: 4 } },
+  });
+  for (const exitCode of [0, 1, 2]) {
+    for (const writesReport of [false, true]) {
+      await writeFile(json, report(75, 3));
+      await writeFile(githubOutput, "");
+      await writeFile(binary, `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.argv.includes("--print-config")) {
+  console.log(${JSON.stringify(JSON.stringify({ root, output: "reports", reporters: ["html"] }))});
+} else {
+  ${writesReport ? `fs.writeFileSync(${JSON.stringify(json)}, ${JSON.stringify(report(25, 1))});` : ""}
+  process.exitCode = ${exitCode};
+}
+`);
+      await chmod(binary, 0o755);
+      assert.equal(await runAction({ cwd: directory, env: {
+        CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput,
+      } }), exitCode);
+      const outputs = Object.fromEntries(
+        [...(await readFile(githubOutput, "utf8")).matchAll(/([^\n]+)<<([^\n]+)\n([^\n]*)\n\2\n/g)]
+          .map((match) => [match[1], match[3]]),
+      );
+      assert.equal(outputs["exit-code"], String(exitCode));
+      const accepted = writesReport && exitCode !== 2;
+      assert.equal(outputs["duplicate-rate"], accepted ? "25" : "0");
+      assert.equal(outputs["duplicate-definitions"], accepted ? "1" : "0");
+      assert.equal(outputs["total-definitions"], accepted ? "4" : "0");
+      assert.equal(outputs["json-report"], json);
+      assert.equal(outputs["html-report"], join(output, "cuke-dedup.html"));
+    }
+  }
+  await rm(json);
+  await mkdir(json);
+  const sentinel = join(json, "keep.txt");
+  await writeFile(sentinel, "preserve this directory");
+  await assert.rejects(runAction({ cwd: directory, env: {
+    CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput,
+  } }), (error) => ["EISDIR", "ERR_FS_EISDIR", "EPERM"].includes(error.code));
+  assert.equal(await readFile(sentinel, "utf8"), "preserve this directory");
 });
 
 /** Verify valid archive checksums pass while malformed digests and mismatched bytes fail. */

@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  rmSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -125,6 +126,16 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     : await installRelease(inputs.version, env);
   const effectiveConfig = readEffectiveConfig(binary, inputs, cwd);
   const args = buildArguments(inputs, effectiveConfig);
+  const output = inputs.output || effectiveConfig.output || "reports/cuke-dedup";
+  const outputDirectory = resolveReportDirectory(
+    cwd,
+    effectiveConfig.root || inputs.path,
+    output,
+  );
+  const jsonReport = join(outputDirectory, "cuke-dedup.json");
+  // Keep the configured report location, but never reuse a previous run's metrics.
+  // Removal errors abort before analysis; directories are never removed recursively.
+  rmSync(jsonReport, { force: true });
   const result = spawnSync(binary, args, { cwd, stdio: "inherit" });
   let exitCode = result.status ?? 2;
   if (result.error) {
@@ -135,13 +146,6 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     exitCode = 2;
   }
 
-  const output = inputs.output || effectiveConfig.output || "reports/cuke-dedup";
-  const outputDirectory = resolveReportDirectory(
-    cwd,
-    effectiveConfig.root || inputs.path,
-    output,
-  );
-  const jsonReport = join(outputDirectory, "cuke-dedup.json");
   const requestedReporters = splitList(
     inputs.reporters || effectiveConfig.reporters?.join(",") || "terminal",
   );
@@ -176,7 +180,7 @@ export function resolveReportDirectory(cwd, analysisPath, output) {
   return isAbsolute(output) ? output : resolve(cwd, analysisPath, output);
 }
 
-/** Builds Action report paths and duplication metrics from JSON, retaining zero defaults when the report or duplication summary is absent. */
+/** Builds report paths and validated schema-3 metrics for completed analysis (status 0/1), retaining zero metrics for errors or invalid reports. */
 export function reportOutputs(jsonPath, outputDirectory, requestedReporters, exitCode) {
   const defaults = {
     "exit-code": String(exitCode),
@@ -191,19 +195,33 @@ export function reportOutputs(jsonPath, outputDirectory, requestedReporters, exi
       ? join(outputDirectory, "cuke-dedup.sarif")
       : "",
   };
-  if (!existsSync(jsonPath)) {
+  if ((exitCode !== 0 && exitCode !== 1) || !existsSync(jsonPath)) {
     return defaults;
   }
-  const report = JSON.parse(readFileSync(jsonPath, "utf8"));
+  let report;
+  try {
+    report = JSON.parse(readFileSync(jsonPath, "utf8"));
+  } catch {
+    return defaults;
+  }
   const duplication = report?.summary?.duplication;
-  if (!duplication) {
+  if (report?.schemaVersion !== "3" || !duplication) {
+    return defaults;
+  }
+  const { percentage, duplicatedDefinitions, totalDefinitions } = duplication;
+  if (
+    !Number.isFinite(percentage) || percentage < 0 || percentage > 100 ||
+    !Number.isSafeInteger(duplicatedDefinitions) || duplicatedDefinitions < 0 ||
+    !Number.isSafeInteger(totalDefinitions) || totalDefinitions < 0 ||
+    duplicatedDefinitions > totalDefinitions
+  ) {
     return defaults;
   }
   return {
     ...defaults,
-    "duplicate-rate": String(duplication.percentage ?? 0),
-    "duplicate-definitions": String(duplication.duplicatedDefinitions ?? 0),
-    "total-definitions": String(duplication.totalDefinitions ?? 0),
+    "duplicate-rate": String(percentage),
+    "duplicate-definitions": String(duplicatedDefinitions),
+    "total-definitions": String(totalDefinitions),
   };
 }
 
