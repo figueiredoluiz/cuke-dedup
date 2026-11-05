@@ -1,3 +1,7 @@
+use super::evidence::{
+    evidence_text, original_fallback_fingerprint, retain_finding, MAX_EVIDENCE_TEXT_BYTES,
+    MAX_FINDING_EVIDENCE_BYTES,
+};
 use super::suppression::SuppressionIndex;
 use super::CandidateSourceCensus;
 use crate::config::Config;
@@ -443,15 +447,65 @@ fn analyze_feature_usage_in_windows(
                 .iter()
                 .map(|index| &definitions[*index])
                 .collect();
+            let original_fingerprint =
+                (matched_definitions.len() > 16
+                    || matched_definitions
+                        .iter()
+                        .any(|definition| definition.matcher.len() > MAX_EVIDENCE_TEXT_BYTES)
+                    || (expansion_count == 1 && step.text.len() > MAX_EVIDENCE_TEXT_BYTES))
+                    .then(|| {
+                        let count = matches.len().to_string();
+                        let expansions = expansion_count.to_string();
+                        let message = if expansion_count == 1 {
+                            vec![
+                                "Feature step `",
+                                step.text.as_str(),
+                                "` matches ",
+                                &count,
+                                " definitions",
+                            ]
+                        } else {
+                            vec![
+                                "Scenario outline step has ",
+                                &expansions,
+                                " ambiguous expansions matching ",
+                                &count,
+                                " definitions",
+                            ]
+                        };
+                        let mut matchers = Vec::new();
+                        for (index, definition) in matched_definitions.iter().enumerate() {
+                            if index > 0 {
+                                matchers.push(", ");
+                            }
+                            matchers.extend(["`", definition.matcher.as_str(), "`"]);
+                        }
+                        original_fallback_fingerprint(Rule::AmbiguousStep, &message, &matchers,
+                        &["More than one definition accepts at least one concrete feature step"])
+                    });
             let matcher_list = matched_definitions
                 .iter()
-                .map(|definition| format!("`{}`", definition.matcher))
+                .take(16)
+                .map(|definition| format!("`{}`", evidence_text(&definition.matcher)))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let matcher_list = if matched_definitions.len() > 16 {
+                format!(
+                    "{matcher_list}, … [{} matchers omitted; digest: {}]",
+                    matched_definitions.len() - 16,
+                    crate::model::stable_fingerprint_parts(
+                        matched_definitions
+                            .iter()
+                            .map(|definition| definition.matcher.as_str())
+                    )
+                )
+            } else {
+                matcher_list
+            };
             let message = if expansion_count == 1 {
                 format!(
                     "Feature step `{}` matches {} definitions",
-                    step.text,
+                    evidence_text(&step.text),
                     matches.len()
                 )
             } else {
@@ -461,6 +515,7 @@ fn analyze_feature_usage_in_windows(
                 )
             };
             findings.push(Finding {
+                original_fingerprint,
                 rule: Rule::AmbiguousStep,
                 severity,
                 message,
@@ -596,6 +651,7 @@ fn analyze_matcher_overlap(
     let mut considered = HashSet::new();
     let mut evaluated = 0_usize;
     let mut retained = 0_usize;
+    let mut evidence_remaining = MAX_FINDING_EVIDENCE_BYTES;
     let mut truncated = scan_truncated || overflow;
     let mut suppression_work = 0_u64;
     'definitions: for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter()) {
@@ -636,12 +692,40 @@ fn analyze_matcher_overlap(
                 .map(|reason| crate::model::Suppression {
                     reason: reason.to_owned(),
                 });
-            findings.push(Finding {
+            let left_matcher = definitions[pair.0].matcher.as_str();
+            let right_matcher = definitions[pair.1].matcher.as_str();
+            let original_fingerprint = [left_matcher, right_matcher, witness.as_str()]
+                .iter()
+                .any(|text| text.len() > MAX_EVIDENCE_TEXT_BYTES)
+                .then(|| {
+                    original_fallback_fingerprint(
+                        Rule::OverlappingMatcher,
+                        &[
+                            "Matchers `",
+                            left_matcher,
+                            "` and `",
+                            right_matcher,
+                            "` both accept the step `",
+                            witness,
+                            "`",
+                        ],
+                        &["`", left_matcher, "` ↔ `", right_matcher, "`"],
+                        &[
+                            "No feature step exercises this overlap yet; `",
+                            witness,
+                            "` would be ambiguous at runtime",
+                        ],
+                    )
+                });
+            // Sample before formatting: no temporary contains both full matchers or witnesses.
+            let witness = evidence_text(witness);
+            if !retain_finding(findings, &mut evidence_remaining, Finding {
+                original_fingerprint,
                 rule: Rule::OverlappingMatcher,
                 severity,
                 message: format!(
                     "Matchers `{}` and `{}` both accept the step `{witness}`",
-                    definitions[pair.0].matcher, definitions[pair.1].matcher
+                    evidence_text(&definitions[pair.0].matcher), evidence_text(&definitions[pair.1].matcher)
                 ),
                 primary: definitions[pair.0].location.clone(),
                 related: vec![definitions[pair.1].location.clone()],
@@ -650,7 +734,7 @@ fn analyze_matcher_overlap(
                     handler_similarity: None,
                     matcher_difference: format!(
                         "`{}` ↔ `{}`",
-                        definitions[pair.0].matcher, definitions[pair.1].matcher
+                        evidence_text(&definitions[pair.0].matcher), evidence_text(&definitions[pair.1].matcher)
                     ),
                     handler_evidence: format!(
                         "No feature step exercises this overlap yet; `{witness}` would be ambiguous at runtime"
@@ -661,7 +745,10 @@ fn analyze_matcher_overlap(
                 suggested_action: "Make the matchers mutually exclusive before a feature reaches both"
                     .to_owned(),
                 suppression,
-            });
+            }) {
+                truncated = true;
+                break 'definitions;
+            }
             retained += 1;
         }
     }
@@ -945,11 +1032,23 @@ pub(super) fn analyze_unused(
             continue;
         }
         findings.push(Finding {
+            original_fingerprint: (definition.matcher.len() > MAX_EVIDENCE_TEXT_BYTES).then(|| {
+                original_fallback_fingerprint(
+                    Rule::UnusedDefinition,
+                    &[
+                        "Step definition `",
+                        &definition.matcher,
+                        "` is not used by the feature corpus",
+                    ],
+                    &["No discovered feature step matched this definition"],
+                    &[""],
+                )
+            }),
             rule: Rule::UnusedDefinition,
             severity,
             message: format!(
                 "Step definition `{}` is not used by the feature corpus",
-                definition.matcher
+                evidence_text(&definition.matcher)
             ),
             primary: definition.location.clone(),
             related: Vec::new(),

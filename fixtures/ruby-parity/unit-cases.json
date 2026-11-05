@@ -34,6 +34,20 @@
           "stage": "model-codec",
           "rationale": "Adapter-independent stage `model-codec`: Semantic fingerprint includes the matcher kind component.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "large_pair_evidence_is_sampled_before_copying",
+          "requiredStatus": "engine-invariant",
+          "stage": "matcher-text",
+          "rationale": "Adapter-independent stage `matcher-text`: Sampling retains bounded Unicode evidence and identifies omitted text.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "non_utf8_paths_preserve_findings_and_exact_evidence_budgets",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: non-UTF-8 primary and related locations preserve pair and overlap findings, raw path identity, and exact byte-budget boundaries.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -234,6 +248,20 @@
           },
           "rationale": "`exact_matcher_class_keys_on_effective_flags` compares exact-matcher classes under the effective flags the `ruby::RUBY` adapter policy declares (Ruby keeps `n` and `u`) beside the JavaScript rows, in-process.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "pair_evidence_byte_budget_marks_analysis_incomplete",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Evidence byte exhaustion retains positive findings and marks pair analysis incomplete.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "normalized_matcher_evidence_is_bounded_without_losing_findings",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: normalized-matcher diagnostic sampling preserves semantic identity and independent later findings.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -1528,6 +1556,27 @@
           },
           "rationale": "The five original axes as Ruby corpora run at CUKE_DEDUP_MATCHER_WINDOW 1, 2 and wider than the corpus produce identical JSONL records and stderr, and the pinned ambiguous-step, overlapping-matcher and unused-definition locations show each axis discriminates.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "overlap_evidence_byte_budget_marks_analysis_incomplete",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Bounded evidence preserves original fallback baseline identities, occurrence counts and incomplete analysis signals.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "sampled_fallback_rules_preserve_legacy_baselines",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Bounded evidence preserves original fallback baseline identities, occurrence counts and incomplete analysis signals.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "sampled_ambiguity_members_keep_original_identity",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: Bounded evidence preserves original fallback baseline identities, occurrence counts and incomplete analysis signals.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -2696,7 +2745,9 @@
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_changed_since_preserves_non_utf8_linux_names",
-            "platforms": ["linux"]
+            "platforms": [
+              "linux"
+            ]
           },
           "rationale": "The changed-mode run decodes non-UTF-8 Git path bytes for tracked and untracked .rb files into findings; gated to Linux because macOS filesystems reject non-UTF-8 names.",
           "behaviorClass": "shared-engine-invariant"
@@ -2707,7 +2758,9 @@
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_changed_since_preserves_non_utf8_linux_names",
-            "platforms": ["linux"]
+            "platforms": [
+              "linux"
+            ]
           },
           "rationale": "A tracked steps/tracked-\\xfe.rb modified after commit contributes a finding in changed mode (2 active total) after a no-change control (Linux-gated).",
           "behaviorClass": "shared-engine-invariant"
@@ -2965,6 +3018,27 @@
           },
           "rationale": "Ruby reporter-bounds evidence: a large Ruby cluster, more Ruby findings than the buffered cap, and error priority over Ruby warnings.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "repeated_large_evidence_has_bounded_reports_and_explicit_omissions",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Report byte and field limits preserve source findings and explicit omission counts.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "buffered_report_bounds_all_string_fields_without_changing_source_findings",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Report byte and field limits preserve source findings and explicit omission counts.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "buffered_selection_keeps_later_small_findings_after_a_non_fitting_item",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Later small active findings survive non-fitting earlier findings while suppression and output bounds remain intact.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -3041,6 +3115,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
           "rationale": "Adapter-independent stage `bounded-analysis`: source-text check that every `pub(crate) const` in `resource_limits.rs` has an `assert_eq!` in the policy test; no adapter data enters it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "limited_writer_enforces_exact_byte_boundary",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Byte limits enforce exact boundaries and preserve valid UTF-8 samples.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "sampled_text_counts_omitted_bytes_at_unicode_boundaries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Byte limits enforce exact boundaries and preserve valid UTF-8 samples.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -5904,7 +5992,9 @@
           "evidenceTest": {
             "file": "tests/ruby.rs",
             "name": "ruby_changed_since_preserves_non_utf8_linux_names",
-            "platforms": ["linux"]
+            "platforms": [
+              "linux"
+            ]
           },
           "rationale": "An untracked steps/non-utf8-\\xff.rb duplicate is reported with exit 1 (Linux-gated as the original; compiled locally, runs only on Linux CI).",
           "behaviorClass": "shared-engine-invariant"
@@ -6622,6 +6712,13 @@
           "stage": "bounded-analysis",
           "rationale": "Adapter-independent stage `bounded-analysis`: the default parameter witness reads a Rust regex expression, shared by every dialect; the JS fixture only supplies definitions.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_sampled_evidence_keeps_original_baseline_identity",
+          "requiredStatus": "engine-invariant",
+          "stage": "model-codec",
+          "rationale": "Adapter-independent stage `model-codec`: Sampled display text remains distinct from the original fallback baseline identity in either direction.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7133,6 +7230,28 @@
           },
           "rationale": "Ruby and TypeScript handlers written with the same pending, not-implemented and todo spellings are stubs in each listed syntax (Ruby call and `raise`; TypeScript call, `throw new Error` and string body); near misses are not.",
           "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
+    "src/reporters/shared/tests.rs": {
+      "tests": [
+        {
+          "name": "pretty_finding_cost_counts_nested_output_and_enforces_the_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Pretty JSON accounting matches actual nested rendering and rejects byte-limit overflow atomically.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/reporters/sarif/tests.rs": {
+      "tests": [
+        {
+          "name": "sarif_result_levels_preserve_active_filtering",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF result levels and final active-only filtering.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     }

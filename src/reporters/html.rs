@@ -1,6 +1,6 @@
 use super::shared::{
-    bounded_findings, count_label, report_safe, report_value_with_metadata,
-    MAX_REPORTED_CLUSTER_MEMBERS,
+    bounded_findings, bounded_json, count_label, display_location, html_finding_cost, report_safe,
+    report_value_with_metadata, MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::{CliReportMetadata, ReportContext};
 use crate::model::{DefinitionComparison, MatcherDiff};
@@ -18,7 +18,7 @@ pub fn render_html(context: &ReportContext<'_>) -> Result<String> {
 /// the slots active findings leave.
 ///
 /// Adds a notice when cards are truncated and, with `metadata`, when analysis was truncated or
-/// the corpus is incomplete. Errors only when the embedded JSON fails to serialize.
+/// the corpus is incomplete. Errors on serialization failure or an exceeded output byte limit.
 pub(super) fn render_html_context_with_metadata(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,
@@ -56,14 +56,17 @@ pub(super) fn render_html_context_with_metadata(
         )
     };
     let report_json = json_for_html(
-        &serde_json::to_string(&report_value_with_metadata(context, metadata))
-            .context("failed to serialize HTML report data")?,
+        &bounded_json(
+            &report_value_with_metadata(context, metadata, html_finding_cost),
+            false,
+        )
+        .context("failed to serialize HTML report data")?,
     );
     let mut cards = String::new();
-    let selected = bounded_findings(result, true);
+    let selected = bounded_findings(result, true, |finding| html_finding_cost(finding, root));
     let truncated = selected.truncated;
     for finding in selected.findings {
-        let location = finding.primary.display(root);
+        let location = display_location(&finding.primary, root);
         let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
         let mut related_locations = finding
             .related
@@ -72,7 +75,7 @@ pub(super) fn render_html_context_with_metadata(
             .map(|related| {
                 format!(
                     r#"<li><code>{}</code></li>"#,
-                    html_escape(&related.display(root))
+                    html_escape(&display_location(related, root))
                 )
             })
             .collect::<String>();
@@ -196,16 +199,21 @@ pub(super) fn render_html_context_with_metadata(
         ("{{CARDS}}", cards),
         ("{{REPORT_JSON}}", report_json),
     ];
-    Ok(render_template(
+    render_template(
         HTML_TEMPLATE.strip_suffix('\n').unwrap_or(HTML_TEMPLATE),
         &replacements,
-    ))
+    )
 }
 
 /// Replaces placeholders in one left-to-right pass; inserted values are not rescanned, so a
 /// placeholder inside a value stays literal. On a tie, the earlier `replacements` entry wins.
-fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
-    let mut rendered = String::with_capacity(template.len());
+fn render_template(template: &str, replacements: &[(&str, String)]) -> Result<String> {
+    use crate::resource_limits::{LimitedWriter, MAX_BUFFERED_REPORT_BYTES};
+    use std::io::Write;
+    let mut rendered = LimitedWriter {
+        inner: Vec::new(),
+        remaining: MAX_BUFFERED_REPORT_BYTES,
+    };
     let mut remaining = template;
     while let Some((index, placeholder, value)) = replacements
         .iter()
@@ -216,12 +224,12 @@ fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
         })
         .min_by_key(|(index, _, _)| *index)
     {
-        rendered.push_str(&remaining[..index]);
-        rendered.push_str(value);
+        rendered.write_all(&remaining.as_bytes()[..index])?;
+        rendered.write_all(value.as_bytes())?;
         remaining = &remaining[index + placeholder.len()..];
     }
-    rendered.push_str(remaining);
-    rendered
+    rendered.write_all(remaining.as_bytes())?;
+    Ok(String::from_utf8(rendered.inner)?)
 }
 
 /// Renders the primary and related definitions side by side: highlighted matcher, escaped handler.

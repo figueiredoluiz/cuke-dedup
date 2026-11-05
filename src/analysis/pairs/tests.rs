@@ -32,6 +32,7 @@ fn pair_finding(
     suppression: Option<&str>,
 ) -> Finding {
     Finding {
+        original_fingerprint: None,
         rule,
         severity: Severity::Error,
         message: "pair".to_owned(),
@@ -63,6 +64,15 @@ fn located_definitions(count: usize) -> Vec<StepDefinition> {
             definition
         })
         .collect()
+}
+
+/// Runs pair verification with the supplied configuration and returns retained evidence and census.
+fn analyzed_pairs(definitions: &[StepDefinition], config: &Config) -> (Vec<Finding>, PairAnalysis) {
+    let suppressions = SuppressionIndex::new(config, definitions);
+    let mut findings = Vec::new();
+    let analysis =
+        analyze_definition_pairs(definitions, config, &suppressions, &mut findings, None);
+    (findings, analysis)
 }
 
 /// Four near-duplicate pair findings stay separate, each keeping comparison and no cluster.
@@ -468,10 +478,7 @@ fn matcher_blocking_rejections_do_not_spend_handler_lcs_work() {
         matcher_similarity(&definitions[0], &definitions[1])
     ));
 
-    let suppressions = SuppressionIndex::new(&config, &definitions);
-    let mut findings = Vec::new();
-    let analysis =
-        analyze_definition_pairs(&definitions, &config, &suppressions, &mut findings, None);
+    let (findings, analysis) = analyzed_pairs(&definitions, &config);
 
     assert!(!analysis.census.truncated);
     assert_eq!(analysis.census.candidate_comparisons_evaluated, 1);
@@ -1239,4 +1246,74 @@ fn matcher_blocking_stores_each_charged_pair_once_under_its_own_key() {
     assert_eq!(considered.len(), 2);
     assert_eq!(event_work, 0);
     assert!(builder.candidates.is_empty());
+}
+
+/// Repeated large pair evidence stops the verifier before allocation can grow with every edge;
+/// the retained prefix stays usable and the census identifies the unevaluated remainder.
+#[test]
+fn pair_evidence_byte_budget_marks_analysis_incomplete() {
+    let template = definition();
+    let matcher = "界".repeat(6_000);
+    let definitions = (0..800)
+        .map(|index| {
+            let mut definition = template.clone();
+            definition.matcher = matcher.clone();
+            definition.normalized_matcher = matcher.clone();
+            definition.location.path = PathBuf::from(format!("steps/{index}.ts"));
+            definition
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), Default::default()).unwrap();
+    let (findings, analysis) = analyzed_pairs(&definitions, &config);
+    assert!(analysis.census.truncated);
+    assert!(analysis.census.skipped_candidate_comparisons > 0);
+    assert!(analysis.incomplete.is_some());
+    assert!(!findings.is_empty());
+    assert!(analysis.census.candidate_comparisons_evaluated < 799);
+    assert!(serde_json::to_vec(&findings).unwrap().len() <= MAX_FINDING_EVIDENCE_BYTES);
+}
+
+/// Normalized matcher diagnostics sample both source and normalized text while preserving
+/// semantic baseline identity and unrelated later duplicate findings.
+#[test]
+fn normalized_matcher_evidence_is_bounded_without_losing_findings() {
+    let mut definitions = located_definitions(4);
+    for (index, definition) in definitions.iter_mut().enumerate() {
+        definition.matcher = match index {
+            0 => "A".repeat(9_000),
+            1 => "a".repeat(9_000),
+            _ => "later duplicate".to_owned(), // fixture: remaining definitions form the positive control
+        };
+        definition.normalized_matcher = definition.matcher.to_lowercase();
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), Default::default()).unwrap();
+    let (findings, analysis) = analyzed_pairs(&definitions, &config);
+    assert!(analysis.incomplete.is_none());
+    let finding = findings
+        .iter()
+        .find(|finding| finding.rule == Rule::NormalizedMatcher)
+        .unwrap();
+    assert!(
+        finding.evidence.matcher_difference.len()
+            <= 2 * super::super::evidence::MAX_EVIDENCE_TEXT_BYTES + 32
+    );
+    assert!(finding
+        .evidence
+        .matcher_difference
+        .contains("bytes omitted"));
+    let mut legacy = finding.clone();
+    legacy.evidence.matcher_difference = format!(
+        "`{}` normalizes to `{}`",
+        definitions[1].matcher, definitions[1].normalized_matcher
+    );
+    assert_eq!(
+        crate::modes::finding_fingerprint(finding),
+        crate::modes::finding_fingerprint(&legacy)
+    );
+    assert!(findings
+        .iter()
+        .any(|finding| finding.rule == Rule::DuplicateMatcher
+            && finding.primary == definitions[2].location));
 }

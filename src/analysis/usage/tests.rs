@@ -39,6 +39,25 @@ fn config() -> (tempfile::TempDir, Config) {
     (directory, config)
 }
 
+/// Runs static overlap with an empty feature corpus and returns findings with its budget census.
+fn static_overlap(
+    definitions: &[StepDefinition],
+    config: &Config,
+    budget: usize,
+) -> (Vec<Finding>, FeatureUsageOutcome) {
+    let suppressions = SuppressionIndex::new(config, definitions);
+    let mut findings = Vec::new();
+    let outcome = analyze_feature_usage(
+        definitions,
+        &[],
+        config,
+        &suppressions,
+        &mut findings,
+        budget,
+    );
+    (findings, outcome)
+}
+
 type OverlapFixture = (
     tempfile::TempDir,
     Vec<StepDefinition>,
@@ -157,11 +176,7 @@ fn matcher_overlap_respects_the_shared_candidate_budget() {
             .parameter_types
             .insert(name.to_owned(), "red|green".to_owned());
     }
-    let suppressions = SuppressionIndex::new(&config, &definitions);
-    let mut findings = Vec::new();
-
-    let outcome =
-        analyze_feature_usage(&definitions, &[], &config, &suppressions, &mut findings, 1);
+    let (_findings, outcome) = static_overlap(&definitions, &config, 1);
 
     assert_eq!(outcome.overlap_census.evaluated, 1);
     assert_eq!(outcome.overlap_census.skipped, 1);
@@ -423,17 +438,7 @@ fn matcher_overlap_caps_finding_storms_and_marks_the_result_incomplete() {
     let definitions = definitions(&source);
     let (_directory, mut config) = config();
     config.parameter_types = parameter_types;
-    let suppressions = SuppressionIndex::new(&config, &definitions);
-    let mut findings = Vec::new();
-
-    let outcome = analyze_feature_usage(
-        &definitions,
-        &[],
-        &config,
-        &suppressions,
-        &mut findings,
-        30_000,
-    );
+    let (findings, outcome) = static_overlap(&definitions, &config, 30000);
 
     assert_eq!(findings.len(), MAX_STATIC_OVERLAP_FINDINGS);
     assert_eq!(outcome.overlap_census.skipped, 1);
@@ -941,4 +946,252 @@ fn windowing_does_not_change_findings_on_any_axis() {
             case.axis
         );
     }
+}
+
+/// Ordinary accepted matchers repeated across overlaps hit the evidence-byte ceiling before
+/// the count ceiling, and the result reports that analysis is incomplete.
+#[test]
+fn overlap_evidence_byte_budget_marks_analysis_incomplete() {
+    let prefix = "x".repeat(3_000);
+    let source = (0..50)
+        .map(|index| format!("Given('{prefix} {{type_{index}}}', () => action_{index}());\n"))
+        .collect::<String>();
+    let definitions = definitions(&source);
+    let (_directory, mut config) = config();
+    for index in 0..50 {
+        config
+            .parameter_types
+            .insert(format!("type_{index}"), "red|green".to_owned());
+    }
+    let (findings, outcome) = static_overlap(&definitions, &config, 30000);
+    assert!(!findings.is_empty());
+    assert!(findings.len() < 50 * 49 / 2);
+    assert_eq!(outcome.overlap_census.skipped, 1);
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("matcher-overlap analysis is incomplete")));
+    let bytes: usize = findings
+        .iter()
+        .map(|finding| serde_json::to_vec(finding).unwrap().len())
+        .sum();
+    assert!(bytes <= MAX_FINDING_EVIDENCE_BYTES);
+    assert!(
+        bytes > MAX_FINDING_EVIDENCE_BYTES - 100_000,
+        "{bytes} retained bytes"
+    );
+}
+
+/// A legacy raw-text baseline suppresses one occurrence after sampling and model round trips,
+/// while an additional occurrence and a literal presentation sample remain new findings.
+fn assert_original_identity(finding: &Finding, message: String, difference: String) {
+    use crate::modes::{apply_reference_baseline, finding_fingerprint};
+    let mut legacy = finding.clone();
+    legacy.original_fingerprint = None;
+    legacy.message = message;
+    legacy.evidence.matcher_difference = difference;
+    if legacy.rule == Rule::OverlappingMatcher {
+        let witness = legacy
+            .message
+            .split("both accept the step `")
+            .nth(1)
+            .unwrap()
+            .strip_suffix('`')
+            .unwrap();
+        legacy.evidence.handler_evidence = format!(
+            "No feature step exercises this overlap yet; `{witness}` would be ambiguous at runtime"
+        );
+    }
+    let expected = finding_fingerprint(&legacy);
+    assert_eq!(finding_fingerprint(finding), expected);
+    let restored: Finding = serde_json::from_value(serde_json::to_value(finding).unwrap()).unwrap();
+    let mut current = [restored.clone(), restored];
+    let outcome = apply_reference_baseline(&mut current, &[legacy.clone()], "accepted").unwrap();
+    assert_eq!((outcome.suppressed, outcome.new_findings), (1, 1));
+    assert!(!current[0].is_active());
+    assert!(current[1].is_active());
+    let old_json = serde_json::to_value(&legacy).unwrap();
+    assert!(old_json.get("original_fingerprint").is_none());
+    let old_restored: Finding = serde_json::from_value(old_json).unwrap();
+    assert_eq!(finding_fingerprint(&old_restored), expected);
+    if finding.original_fingerprint.is_some() {
+        let mut literal = finding.clone();
+        literal.original_fingerprint = None;
+        let outcome =
+            apply_reference_baseline(std::slice::from_mut(&mut literal), &[legacy], "accepted")
+                .unwrap();
+        assert_eq!(outcome.new_findings, 1);
+        assert!(literal.is_active());
+    }
+}
+
+/// Short, large ASCII and large Unicode evidence preserve legacy identities for unused,
+/// overlap, single-step ambiguity and repeated outline expansions.
+#[test]
+fn sampled_fallback_rules_preserve_legacy_baselines() {
+    for (prefix, pattern, witness, values) in [
+        (
+            "value".to_owned(),
+            "red|blue",
+            "red",
+            ["red".to_owned(), "blue".to_owned()],
+        ),
+        (
+            "x".repeat(9_000),
+            "red|blue",
+            "red",
+            ["red".to_owned(), "blue".to_owned()],
+        ),
+        (
+            "界".repeat(3_000),
+            "red|blue",
+            "red",
+            ["red".to_owned(), "blue".to_owned()],
+        ),
+        (
+            "value".to_owned(),
+            "x+",
+            "x",
+            ["x".repeat(9_000), "x".repeat(9_001)],
+        ),
+    ] {
+        let left = format!("{prefix} {{first}}");
+        let right = format!("{prefix} {{second}}");
+        let source = format!(
+            "Given({}, () => first());\nGiven({}, () => second());",
+            serde_json::to_string(&left).unwrap(),
+            serde_json::to_string(&right).unwrap()
+        );
+        let definitions = definitions(&source);
+        let (_directory, mut config) = config();
+        for name in ["first", "second"] {
+            config
+                .parameter_types
+                .insert(name.to_owned(), pattern.to_owned());
+        }
+        config.rules.insert(Rule::UnusedDefinition, Severity::Error);
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let mut unused = Vec::new();
+        analyze_unused(
+            &definitions,
+            &BTreeSet::new(),
+            &config,
+            &suppressions,
+            &mut unused,
+        );
+        assert_eq!(unused.len(), 2);
+        for (finding, matcher) in unused.iter().zip([&left, &right]) {
+            assert_original_identity(
+                finding,
+                format!("Step definition `{matcher}` is not used by the feature corpus"),
+                "No discovered feature step matched this definition".to_owned(),
+            );
+        }
+        let mut overlap = Vec::new();
+        let outcome =
+            analyze_feature_usage(&definitions, &[], &config, &suppressions, &mut overlap, 10);
+        assert!(outcome.incomplete.is_empty());
+        if pattern == "x+" {
+            // Unbounded custom parameters have no static witness; concrete steps still match.
+            assert!(overlap.is_empty());
+        } else {
+            assert_eq!(overlap.len(), 1);
+            assert_eq!(overlap[0].rule, Rule::OverlappingMatcher);
+            assert_original_identity(
+                &overlap[0],
+                format!(
+                    "Matchers `{left}` and `{right}` both accept the step `{prefix} {witness}`"
+                ),
+                format!("`{left}` ↔ `{right}`"),
+            );
+        }
+        for expansions in [1, 2] {
+            let steps = values
+                .iter()
+                .take(expansions)
+                .map(|color| FeatureStep {
+                    keyword: "Given".to_owned(),
+                    text: format!("{prefix} {color}"),
+                    location: crate::model::SourceLocation::new("use.feature", 3, 1, 3, 20),
+                })
+                .collect::<Vec<_>>();
+            let mut findings = Vec::new();
+            let outcome = analyze_feature_usage(
+                &definitions,
+                &steps,
+                &config,
+                &suppressions,
+                &mut findings,
+                10,
+            );
+            assert!(outcome.incomplete.is_empty());
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].rule, Rule::AmbiguousStep);
+            let message = if expansions == 1 {
+                format!("Feature step `{}` matches 2 definitions", steps[0].text)
+            } else {
+                "Scenario outline step has 2 ambiguous expansions matching 2 definitions".to_owned()
+            };
+            assert_original_identity(&findings[0], message, format!("`{left}`, `{right}`"));
+        }
+    }
+}
+
+/// Omitting matcher-list members changes presentation only; a change after the displayed prefix
+/// still produces a new ambiguous-step finding when compared with the original baseline.
+#[test]
+fn sampled_ambiguity_members_keep_original_identity() {
+    let (_directory, mut config) = config();
+    for index in 0..21 {
+        config
+            .parameter_types
+            .insert(format!("type_{index}"), "red".to_owned());
+    }
+    let mut variants = Vec::new();
+    for last in [19, 20] {
+        let matchers = (0..20)
+            .map(|index| format!("value {{type_{}}}", if index == 19 { last } else { index }))
+            .collect::<Vec<_>>();
+        let source = matchers
+            .iter()
+            .map(|matcher| {
+                format!(
+                    "Given({}, () => action());\n",
+                    serde_json::to_string(matcher).unwrap()
+                )
+            })
+            .collect::<String>();
+        let definitions = definitions(&source);
+        let suppressions = SuppressionIndex::new(&config, &definitions);
+        let steps = [FeatureStep {
+            keyword: "Given".to_owned(),
+            text: "value red".to_owned(),
+            location: crate::model::SourceLocation::new("use.feature", 3, 1, 3, 20),
+        }];
+        let mut findings = Vec::new();
+        analyze_feature_usage(
+            &definitions,
+            &steps,
+            &config,
+            &suppressions,
+            &mut findings,
+            500,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_original_identity(
+            &findings[0],
+            "Feature step `value red` matches 20 definitions".to_owned(),
+            matchers
+                .iter()
+                .map(|matcher| format!("`{matcher}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        variants.push(findings.remove(0));
+    }
+    let mut changed = [variants[1].clone()];
+    let outcome =
+        crate::modes::apply_reference_baseline(&mut changed, &variants[..1], "accepted").unwrap();
+    assert_eq!(outcome.new_findings, 1);
+    assert!(changed[0].is_active());
 }

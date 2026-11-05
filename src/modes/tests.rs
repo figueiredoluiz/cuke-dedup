@@ -36,6 +36,7 @@ fn fixture_git() -> Command {
 /// Builds a duplicate-matcher finding with primary and shared related locations beneath the supplied root.
 fn finding(root: &Path, file: &str) -> Finding {
     Finding {
+        original_fingerprint: None,
         rule: Rule::DuplicateMatcher,
         severity: Severity::Error,
         message: "duplicate".to_owned(),

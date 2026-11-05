@@ -107,11 +107,13 @@ Fields, in this order: `schemaVersion` (`"1"`), `left` and `right` (each `path`,
 
 ## Output safety and bounds
 
-- Handler snippets are bounded before reports embed them.
+- Matchers, witnesses, diff segments, and handler snippets are sampled to 8 KiB before finding construction. Samples carry omitted-byte counts and a digest of the full source text. Ambiguous-step evidence lists at most 16 matchers and states how many were omitted.
+- Pair and static-overlap analysis each retain at most 16 MiB of serialized finding evidence; reaching this limit marks analysis incomplete. Definition and fallback baseline fingerprints still use the full original inputs. Presentation sampling preserves existing version-3 baseline keys.
 - HTML-visible text is escaped.
 - Bidirectional, invisible-format, and Unicode Tag characters are removed.
 - Embedded JSON characters that could close an HTML script element are encoded.
-- Terminal, JSON, HTML, and SARIF retain at most 10,000 findings, prioritizing active errors.
+- Terminal, JSON, HTML, and SARIF retain at most 10,000 findings, prioritizing active errors, and use a 16 MiB presentation budget. Terminal, JSON, and SARIF account for their rendered finding sizes; HTML uses a conservative estimate for escaping and repeated evidence. Findings that do not fit are omitted while selection continues for smaller later findings. Long text fields are sampled to 8 KiB with explicit omitted-byte markers. The byte budget can omit findings before the count limit; `findingsTruncated` and visible notices include those omissions. Output writers also enforce a 16 MiB ceiling and return an error if it is exceeded; string renderers never return partial documents.
+- JSONL streams every retained analysis finding, with its existing per-field character bounds; it is not subject to the aggregate buffered-report limit.
 - A finding retains at most 256 cluster members; full counts and truncation fields remain visible.
 - Summaries and thresholds describe the complete analysis even when presentation is bounded.
 

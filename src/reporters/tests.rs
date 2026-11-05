@@ -37,7 +37,7 @@ fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
 }
 
 /// Builds a two-definition report fixture with comparison evidence and script-like handler text for escaping checks.
-fn result(root: &Path) -> AnalysisResult {
+pub(super) fn result(root: &Path) -> AnalysisResult {
     let primary = SourceLocation::new(root.join("steps/a.ts"), 2, 1, 2, 20);
     let related = SourceLocation::new(root.join("steps/b.ts"), 3, 1, 3, 20);
     AnalysisResult {
@@ -47,6 +47,7 @@ fn result(root: &Path) -> AnalysisResult {
         ],
         feature_steps: Vec::new(),
         findings: vec![Finding {
+            original_fingerprint: None,
             rule: Rule::DuplicateMatcher,
             severity: Severity::Error,
             message: "Duplicate <matcher>".to_owned(),
@@ -218,18 +219,28 @@ impl std::io::Write for LimitedWriter {
     }
 }
 
-/// A terminal write failure at the footer propagates to the caller instead of being dropped.
+/// Terminal finding and footer write failures propagate to the caller instead of being dropped.
 #[test]
 fn terminal_report_propagates_footer_write_failures() {
     let root = PathBuf::from("/repo");
-    let analysis = result(&root);
+    let mut analysis = result(&root);
+    analysis.findings[0].related = vec![analysis.findings[0].related[0].clone(); 20];
     let metrics = ExecutionMetrics::new(1, 1, 1.0, 2.0, 3.0);
     let context = ReportContext::with_metrics(&analysis, &root, 100.0, &metrics);
     let mut complete = Vec::new();
     write_terminal(&context, &mut complete).unwrap();
     let complete = String::from_utf8(complete).unwrap();
 
-    for marker in ["Found 1 finding.", "Detection time:"] {
+    for marker in [
+        "    -->",
+        "    related:",
+        "    related: ...",
+        "    evidence:",
+        "    handler:",
+        "    action:",
+        "Found 1 finding.",
+        "Detection time:",
+    ] {
         let mut writer = LimitedWriter {
             remaining: complete.find(marker).unwrap(),
         };
@@ -240,6 +251,16 @@ fn terminal_report_propagates_footer_write_failures() {
             "write failure at {marker} should propagate"
         );
     }
+    analysis.findings[0].evidence.matcher_difference.clear();
+    analysis.findings[0].evidence.handler_evidence.clear();
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    let mut output = Vec::new();
+    write_terminal(&context, &mut output).unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Duplicate <matcher>"));
+    assert!(!output.contains("    evidence:"));
+    assert!(!output.contains("    handler:"));
+    assert!(output.contains("    action:"));
 }
 
 /// Checks JSONL emits a self-contained finding, bounded Unicode evidence, and a final summary record.
@@ -1277,4 +1298,164 @@ fn ruby_findings_respect_every_reporter_bound() {
         .iter()
         .any(|result| result["level"] == "error"));
     assert!(ruby_terminal(&context).contains(&expected));
+}
+
+/// Each format uses its own byte costs while preserving full summary counts, explicit HTML
+/// omissions, field bounds, and complete non-HTML output when all findings fit.
+#[test]
+fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let large = "界<&\"".repeat(2_000);
+    let template = &mut analysis.findings[0];
+    template.message = large.clone();
+    template.suggested_action = large.clone();
+    template.evidence.matcher_difference = large.clone();
+    template.evidence.handler_evidence = large.clone();
+    let comparison = template.evidence.comparison.as_mut().unwrap();
+    comparison.left_matcher = large.clone();
+    comparison.right_matcher = large.clone();
+    comparison.left_handler = large.clone();
+    comparison.right_handler = large.clone();
+    comparison.matcher_diff.prefix = large.clone();
+    comparison.matcher_diff.left_change = large.clone();
+    comparison.matcher_diff.right_change = large.clone();
+    comparison.matcher_diff.suffix = large;
+    template.severity = Severity::Warning;
+    analysis.findings = vec![template.clone(); 70];
+    analysis.findings[69].severity = Severity::Error;
+    analysis.findings[69]
+        .message
+        .insert_str(0, "highest-priority: ");
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    let json_text = render_json(&context).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+    let retained = json["findings"].as_array().unwrap().len();
+    assert_eq!(retained, 70, "JSON must use its own serialized cost");
+    assert_eq!(json["findingsTruncated"], 70 - retained);
+    assert!(json["findings"][0]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("highest-priority: "));
+    assert_eq!(json["summary"]["findings"], 70);
+    assert!(json_text.contains("bytes omitted"));
+    assert!(json["findings"][0]["message"].as_str().unwrap().len() <= 8_192);
+    assert!(
+        json["findings"][0]["evidence"]["comparison"]["leftMatcher"]
+            .as_str()
+            .unwrap()
+            .len()
+            <= 8_192
+    );
+
+    let html = render_html(&context).unwrap();
+    let html_retained = html.matches("<article class=\"finding\"").count();
+    assert!(html_retained > 0 && html_retained < 70);
+    assert!(html.contains(&format!("{} additional findings", 70 - html_retained)));
+    assert!(html.contains("bytes omitted"));
+    let sarif_text = render_sarif(&context).unwrap();
+    let sarif: serde_json::Value = serde_json::from_str(&sarif_text).unwrap();
+    assert_eq!(
+        sarif["runs"][0]["results"].as_array().unwrap().len(),
+        retained
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["findingsTruncated"],
+        70 - retained
+    );
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["properties"]["activeFindings"],
+        70
+    );
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(!terminal.contains("additional active findings omitted"));
+    for output in [&json_text, &html, &sarif_text, &terminal] {
+        assert!(output.len() <= 16 * 1024 * 1024);
+    }
+    // JSONL remains the streaming escape hatch: every finding and its summary is retained.
+    let jsonl = render_jsonl(&context).unwrap();
+    assert_eq!(jsonl.lines().count(), 71);
+    let last: serde_json::Value = serde_json::from_str(jsonl.lines().last().unwrap()).unwrap();
+    assert_eq!(last["recordCount"], 71);
+}
+
+/// Long action, suppression and caller-supplied fingerprint strings cannot bypass field bounds.
+#[test]
+fn buffered_report_bounds_all_string_fields_without_changing_source_findings() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let large = "🦀".repeat(5_000);
+    let finding = &mut analysis.findings[0];
+    finding.suppression = Some(Suppression {
+        reason: large.clone(),
+    });
+    finding.suggested_action = large.clone();
+    finding.primary.path = PathBuf::from(&large);
+    let comparison = finding.evidence.comparison.as_mut().unwrap();
+    comparison.left_fingerprint = large.clone();
+    comparison.right_fingerprint = large.clone();
+    finding.evidence.cluster = Some(DefinitionCluster {
+        member_count: 1,
+        definition_fingerprints: vec![large.clone()],
+        pair_findings_collapsed: 0,
+        members_truncated: false,
+    });
+    let before = finding.clone();
+    let json: serde_json::Value =
+        serde_json::from_str(&render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap())
+            .unwrap();
+    let finding = &json["findings"][0];
+    for value in [
+        &finding["suppression"]["reason"],
+        &finding["suggestedAction"],
+        &finding["primary"]["path"],
+        &finding["evidence"]["comparison"]["leftFingerprint"],
+        &finding["evidence"]["comparison"]["rightFingerprint"],
+        &finding["evidence"]["cluster"]["definitionFingerprints"][0],
+    ] {
+        let text = value.as_str().unwrap();
+        assert!(text.len() <= 8_192);
+        assert!(text.contains("bytes omitted"));
+    }
+    assert_eq!(analysis.findings[0], before);
+}
+
+/// A non-fitting item cannot hide a later small error; inactive findings never become cards.
+#[test]
+fn buffered_selection_keeps_later_small_findings_after_a_non_fitting_item() {
+    let root = PathBuf::from("/repo");
+    let mut analysis = result(&root);
+    let small = analysis.findings[0].clone();
+    let mut large = small.clone();
+    large.message = "large".repeat(2_000);
+    large.related = vec![SourceLocation::new(root.join("x".repeat(8_192)), 1, 1, 1, 1); 15];
+    analysis.findings = vec![large; 70];
+    let mut later = small.clone();
+    later.message = "later-small-error".to_owned();
+    analysis.findings.push(later);
+    let mut inactive = small;
+    inactive.message = "suppressed-control".to_owned();
+    inactive.suppression = Some(Suppression {
+        reason: "fixture".to_owned(),
+    });
+    analysis.findings.push(inactive);
+    let context = ReportContext::new(&analysis, &root, 100.0);
+    let html = render_html(&context).unwrap();
+    assert!(html.contains("<h2>later-small-error</h2>"));
+    assert!(!html.contains("<h2>suppressed-control</h2>"));
+    let json = render_json(&context).unwrap();
+    let sarif = render_sarif(&context).unwrap();
+    let mut terminal = Vec::new();
+    super::terminal::write_terminal_with_color(&context, &mut terminal, true).unwrap();
+    for output in [&html, &json, &sarif] {
+        assert!(output.contains("later-small-error"));
+        assert!(output.len() <= 16 * 1024 * 1024);
+    }
+    let terminal = String::from_utf8(terminal).unwrap();
+    assert!(terminal.contains("later-small-error"));
+    assert!(!terminal.contains("suppressed-control"));
+    assert!(!sarif.contains("suppressed-control"));
+    assert!(terminal.len() <= 16 * 1024 * 1024);
 }

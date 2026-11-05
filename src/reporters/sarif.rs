@@ -1,8 +1,9 @@
 use super::shared::{
-    bounded_findings, convert_location, report_safe, MAX_REPORTED_CLUSTER_MEMBERS,
+    bounded_findings, bounded_json, convert_location, pretty_json_cost, report_safe,
+    MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::{CliReportMetadata, ReportContext};
-use crate::model::{Severity, SourceLocation};
+use crate::model::{Finding, Severity, SourceLocation};
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -22,7 +23,9 @@ pub(super) fn render_sarif_context_with_metadata(
 ) -> Result<String> {
     let result = context.result;
     let root = context.root;
-    let selected = bounded_findings(result, true);
+    let selected = bounded_findings(result, true, |finding| {
+        pretty_json_cost(&sarif_finding(finding, root), 4)
+    });
     let findings_truncated = selected.truncated;
     let rules = result
         .findings
@@ -43,42 +46,7 @@ pub(super) fn render_sarif_context_with_metadata(
     let findings = selected
         .findings
         .into_iter()
-        .map(|finding| {
-            let primary = sarif_location(&finding.primary, root, None);
-            let related = finding
-                .related
-                .iter()
-                .take(MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1))
-                .enumerate()
-                .map(|(index, location)| sarif_location(location, root, Some(index + 1)))
-                .collect::<Vec<_>>();
-            serde_json::json!({
-                "ruleId": finding.rule.to_string(),
-                "level": match finding.severity {
-                    Severity::Error => "error",
-                    Severity::Warning => "warning",
-                    Severity::Off => "note",
-                },
-                "message": { "text": report_safe(&finding.message) },
-                "locations": [primary],
-                "relatedLocations": related,
-                "partialFingerprints": {
-                    "cukeDedupFingerprint/v3": crate::modes::finding_fingerprint(finding)
-                },
-                "properties": {
-                    "suggestedAction": report_safe(&finding.suggested_action),
-                    "matcherSimilarity": finding.evidence.matcher_similarity,
-                    "handlerSimilarity": finding.evidence.handler_similarity,
-                    "clusterSize": finding.evidence.cluster.as_ref().map(|cluster| cluster.member_count),
-                    "pairFindingsCollapsed": finding.evidence.cluster.as_ref().map(|cluster| cluster.pair_findings_collapsed),
-                    "clusterMembersTruncated": finding.evidence.cluster.as_ref().is_some_and(|cluster| {
-                        cluster.members_truncated
-                            || cluster.member_count > MAX_REPORTED_CLUSTER_MEMBERS
-                    }),
-                    "relatedLocationsTruncated": finding.related.len() > MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1),
-                }
-            })
-        })
+        .map(|finding| sarif_finding(finding, root))
         .collect::<Vec<_>>();
     let retained_findings = findings.len();
     let mut sarif = serde_json::json!({
@@ -121,7 +89,45 @@ pub(super) fn render_sarif_context_with_metadata(
             serde_json::to_value(metadata.analysis)
                 .context("failed to serialize SARIF analysis census")?;
     }
-    serde_json::to_string_pretty(&sarif).context("failed to serialize SARIF report")
+    bounded_json(&sarif, true).context("failed to serialize SARIF report")
+}
+
+/// Builds the exact result object used by both byte accounting and final SARIF output.
+fn sarif_finding(finding: &Finding, root: &Path) -> serde_json::Value {
+    let primary = sarif_location(&finding.primary, root, None);
+    let related = finding
+        .related
+        .iter()
+        .take(MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1))
+        .enumerate()
+        .map(|(index, location)| sarif_location(location, root, Some(index + 1)))
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "ruleId": finding.rule.to_string(),
+        "level": match finding.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Off => "note",
+        },
+        "message": { "text": report_safe(&finding.message) },
+        "locations": [primary],
+        "relatedLocations": related,
+        "partialFingerprints": {
+            "cukeDedupFingerprint/v3": crate::modes::finding_fingerprint(finding)
+        },
+        "properties": {
+            "suggestedAction": report_safe(&finding.suggested_action),
+            "matcherSimilarity": finding.evidence.matcher_similarity,
+            "handlerSimilarity": finding.evidence.handler_similarity,
+            "clusterSize": finding.evidence.cluster.as_ref().map(|cluster| cluster.member_count),
+            "pairFindingsCollapsed": finding.evidence.cluster.as_ref().map(|cluster| cluster.pair_findings_collapsed),
+            "clusterMembersTruncated": finding.evidence.cluster.as_ref().is_some_and(|cluster| {
+                cluster.members_truncated
+                    || cluster.member_count > MAX_REPORTED_CLUSTER_MEMBERS
+            }),
+            "relatedLocationsTruncated": finding.related.len() > MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1),
+        }
+    })
 }
 
 /// Builds a SARIF location with a root-relative URI and region; sets `id` only when one is given.
@@ -143,3 +149,6 @@ fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> 
     }
     value
 }
+
+#[cfg(test)]
+mod tests;

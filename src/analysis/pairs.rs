@@ -1,4 +1,7 @@
-use super::evidence::{definition_comparison, handler_evidence, matcher_difference};
+use super::evidence::{
+    definition_comparison, evidence_text, handler_evidence, matcher_difference, retain_finding,
+    MAX_FINDING_EVIDENCE_BYTES,
+};
 use super::pair_records::PairRecord;
 use super::similarity::{
     event_overlap_available, handler_runtime_compatible, handler_similarity_with_relationship,
@@ -383,7 +386,8 @@ pub(super) fn analyze_definition_pairs(
                     handler_similarity,
                     matcher_difference: Cow::Owned(format!(
                         "`{}` normalizes to `{}`",
-                        right.matcher, right.normalized_matcher
+                        evidence_text(&right.matcher),
+                        evidence_text(&right.normalized_matcher)
                     )),
                     handler_evidence: Cow::Owned(handler_evidence(left, right)),
                     suggested_action:
@@ -473,6 +477,9 @@ pub(super) fn analyze_definition_pairs(
                         "Check for wording drift and consolidate if the steps express one behavior",
                 },
             );
+        }
+        if forests.evidence_exhausted {
+            break;
         }
         if let Some(records) = records.as_deref_mut() {
             records.push(PairRecord {
@@ -1619,6 +1626,8 @@ impl CandidateGeneration {
 struct FindingForests {
     definition_count: usize,
     forests: HashMap<(Rule, bool), DisjointSet>,
+    evidence_remaining: usize,
+    evidence_exhausted: bool,
 }
 
 impl FindingForests {
@@ -1627,6 +1636,8 @@ impl FindingForests {
         Self {
             definition_count,
             forests: HashMap::new(),
+            evidence_remaining: MAX_FINDING_EVIDENCE_BYTES,
+            evidence_exhausted: false,
         }
     }
 
@@ -1710,7 +1721,7 @@ fn push_pair_finding(
     finding: PairFindingDescriptor<'_>,
 ) {
     let severity = config.severity(finding.rule);
-    if severity == Severity::Off {
+    if severity == Severity::Off || forests.evidence_exhausted {
         return;
     }
     let suppression_reason =
@@ -1726,23 +1737,28 @@ fn push_pair_finding(
     let suppression = suppression_reason.map(|reason| Suppression {
         reason: reason.to_owned(),
     });
-    findings.push(Finding {
-        rule: finding.rule,
-        severity,
-        message: finding.message.to_owned(),
-        primary: finding.left.location.clone(),
-        related: vec![finding.right.location.clone()],
-        evidence: FindingEvidence {
-            matcher_similarity: Some(round_score(finding.matcher_similarity)),
-            handler_similarity: Some(round_score(finding.handler_similarity)),
-            matcher_difference: finding.matcher_difference.into_owned(),
-            handler_evidence: finding.handler_evidence.into_owned(),
-            comparison: Some(definition_comparison(finding.left, finding.right)),
-            cluster: None,
+    forests.evidence_exhausted = !retain_finding(
+        findings,
+        &mut forests.evidence_remaining,
+        Finding {
+            original_fingerprint: None,
+            rule: finding.rule,
+            severity,
+            message: finding.message.to_owned(),
+            primary: finding.left.location.clone(),
+            related: vec![finding.right.location.clone()],
+            evidence: FindingEvidence {
+                matcher_similarity: Some(round_score(finding.matcher_similarity)),
+                handler_similarity: Some(round_score(finding.handler_similarity)),
+                matcher_difference: finding.matcher_difference.into_owned(),
+                handler_evidence: finding.handler_evidence.into_owned(),
+                comparison: Some(definition_comparison(finding.left, finding.right)),
+                cluster: None,
+            },
+            suggested_action: finding.suggested_action.to_owned(),
+            suppression,
         },
-        suggested_action: finding.suggested_action.to_owned(),
-        suppression,
-    });
+    );
 }
 
 /// Replaces each connected component of pair findings that spans at least `MIN_CLUSTER_DEFINITIONS`
@@ -1866,6 +1882,7 @@ fn build_cluster_finding(findings: &[Finding], edge_indices: &[usize]) -> Option
     let representative = &findings[edge_indices[0]];
     let definition_count = locations.len();
     Some(Finding {
+        original_fingerprint: None,
         rule: representative.rule,
         severity: representative.severity,
         message: format!(
