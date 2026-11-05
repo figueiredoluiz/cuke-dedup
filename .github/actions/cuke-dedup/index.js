@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -133,6 +134,14 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
     output,
   );
   const jsonReport = join(outputDirectory, "cuke-dedup.json");
+  if (inputs.baseline) {
+    const baseline = resolveReportDirectory(cwd, effectiveConfig.root || inputs.path, inputs.baseline);
+    if (baseline === jsonReport || (
+      existsSync(baseline) && existsSync(jsonReport) && realpathSync(baseline) === realpathSync(jsonReport)
+    )) {
+      throw new Error(`baseline path conflicts with the JSON report path: ${jsonReport}`);
+    }
+  }
   // Keep the configured report location, but never reuse a previous run's metrics.
   // Removal errors abort before analysis; directories are never removed recursively.
   rmSync(jsonReport, { force: true });

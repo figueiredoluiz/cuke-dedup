@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -350,6 +350,56 @@ if (process.argv.includes("--print-config")) {
     CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput,
   } }), (error) => ["EISDIR", "ERR_FS_EISDIR", "EPERM"].includes(error.code));
   assert.equal(await readFile(sentinel, "utf8"), "preserve this directory");
+});
+
+/** Verify baseline aliases are rejected without deleting input or starting analysis, while distinct paths still publish metrics. */
+test("action protects baseline inputs from report cleanup", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-action-baseline-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "analysis");
+  const output = join(root, "reports");
+  await mkdir(output, { recursive: true });
+  const json = join(output, "cuke-dedup.json");
+  const baseline = '{"schemaVersion":3,"fingerprints":{}}';
+  const marker = join(directory, "analyzed");
+  const binary = join(directory, "analyzer.cjs");
+  const githubOutput = join(directory, "github-output");
+  await writeFile(binary, `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.argv.includes("--print-config")) {
+  console.log(${JSON.stringify(JSON.stringify({ root, output: "reports" }))});
+} else {
+  fs.writeFileSync(${JSON.stringify(marker)}, "ran");
+  fs.writeFileSync(${JSON.stringify(json)}, JSON.stringify({ schemaVersion: "3", summary: {
+    duplication: { percentage: 25, duplicatedDefinitions: 1, totalDefinitions: 4 }
+  } }));
+}
+`);
+  await chmod(binary, 0o755);
+  await symlink(json, join(root, "baseline-link.json"));
+  await symlink(output, join(root, "report-alias"), "dir");
+  const separate = join(directory, "cuke-dedup.json");
+  await writeFile(separate, baseline);
+  for (const input of ["reports/cuke-dedup.json", "reports/../reports/cuke-dedup.json",
+    json, "baseline-link.json", "report-alias/cuke-dedup.json", separate]) {
+    await writeFile(json, baseline);
+    await writeFile(githubOutput, "");
+    const invocation = runAction({ cwd: directory, env: {
+      CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput, INPUT_PATH: "analysis", INPUT_BASELINE: input,
+    } });
+    if (input === separate) {
+      assert.equal(await invocation, 0);
+      assert.equal(await readFile(marker, "utf8"), "ran");
+      assert.equal(await readFile(separate, "utf8"), baseline);
+      assert.equal(JSON.parse(await readFile(json, "utf8")).summary.duplication.percentage, 25);
+      assert.match(await readFile(githubOutput, "utf8"), /duplicate-rate<<[^\n]+\n25\n/);
+    } else {
+      await assert.rejects(invocation, /baseline path conflicts with the JSON report path/, input);
+      assert.equal(await readFile(json, "utf8"), baseline, input);
+      await assert.rejects(readFile(marker), { code: "ENOENT" });
+      assert.equal(await readFile(githubOutput, "utf8"), "");
+    }
+  }
 });
 
 /** Verify valid archive checksums pass while malformed digests and mismatched bytes fail. */
