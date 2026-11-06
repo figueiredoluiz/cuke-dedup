@@ -259,7 +259,10 @@ impl Origins {
                     if statement.kind() == "call" {
                         for edge in edges.iter().filter(|edge| {
                             edge.location.path == input.file.path
-                                && edge.location == location(&input.file, statement, &input.source)
+                                && edge.location
+                                    == input
+                                        .columns
+                                        .location(&input.file, statement, &input.source)
                         }) {
                             let Some(provider) = units
                                 .iter()
@@ -788,7 +791,11 @@ fn preceding_context<'a>(
             return None;
         }
         let load = nodes.iter().find(|node| {
-            location(&units[parent].file, **node, source) == edge.location && node.kind() == "call"
+            node.kind() == "call"
+                && units[parent]
+                    .columns
+                    .location(&units[parent].file, **node, source)
+                    == edge.location
         })?;
         if load.parent() != Some(root) {
             return None;
@@ -801,7 +808,10 @@ fn preceding_context<'a>(
         {
             let Some(call) = nodes.iter().find(|node| {
                 node.kind() == "call"
-                    && location(&units[parent].file, **node, source) == previous.location
+                    && units[parent]
+                        .columns
+                        .location(&units[parent].file, **node, source)
+                        == previous.location
             }) else {
                 continue;
             };

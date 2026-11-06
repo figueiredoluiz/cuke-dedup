@@ -1,6 +1,6 @@
 //! Explicit provider provenance and value-sensitive assertion evidence, without execution.
 
-use super::{descendants, literal_string, location, text};
+use super::{descendants, literal_string, text};
 use crate::model::BehaviorEvent;
 use crate::resource_limits::WorkBudget;
 
@@ -203,7 +203,8 @@ impl AssertionProviders {
                     return Self::unavailable();
                 }
                 let Some(load) = nodes[unit].iter().copied().find(|node| {
-                    node.kind() == "call" && location(file, *node, source) == edge.location
+                    node.kind() == "call"
+                        && loaded[unit].columns.location(file, *node, source) == edge.location
                 }) else {
                     continue;
                 };

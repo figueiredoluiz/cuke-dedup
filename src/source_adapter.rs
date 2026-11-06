@@ -4,6 +4,7 @@ mod config;
 mod finalization;
 mod registry_validation;
 pub(crate) use config::{reading_with, AdapterKeys, AdapterSections};
+pub(crate) mod columns;
 pub(crate) mod semantics;
 pub(crate) mod suppression;
 pub use crate::framework_descriptor::{

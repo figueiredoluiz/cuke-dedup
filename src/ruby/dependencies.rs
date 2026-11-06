@@ -1,6 +1,6 @@
 //! Bounded source-only resolution. No Ruby, gem metadata or installation hooks are executed.
 
-use super::{descendants, literal_string, location, syntax_error, text};
+use super::{descendants, literal_string, syntax_error, text};
 use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::discovery::ExcludeSet;
@@ -8,6 +8,7 @@ use crate::resource_limits::{
     known_input_limit_exceeded, read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES,
     MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
 };
+use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile};
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -149,6 +150,7 @@ fn resolve_graph(
             continue;
         };
         let source = super::prepare_nuls(&source).into_owned();
+        let columns = ColumnIndex::new(&source);
         let tree = parser
             .parse(&source, None)
             .ok_or_else(|| anyhow::anyhow!("Ruby parser produced no dependency tree"))?;
@@ -217,15 +219,17 @@ fn resolve_graph(
                     "Ruby dependency source",
                     MAX_PROJECT_INPUT_BYTES,
                 ) {
-                    files
-                        .dependency_gaps
-                        .push(DependencyGap::new(location(&file, node, &source), reason));
+                    files.dependency_gaps.push(DependencyGap::new(
+                        columns.location(&file, node, &source),
+                        reason,
+                    ));
                     continue;
                 }
                 if let Some(reason) = expansion.admit(&target) {
-                    files
-                        .dependency_gaps
-                        .push(DependencyGap::new(location(&file, node, &source), reason));
+                    files.dependency_gaps.push(DependencyGap::new(
+                        columns.location(&file, node, &source),
+                        reason,
+                    ));
                     continue;
                 }
                 known.insert(target.clone());
@@ -241,7 +245,7 @@ fn resolve_graph(
             }
             let dependency_only = !entry_points.contains(&target);
             files.dependencies.push(
-                SourceDependency::new(location(&file, node, &source), target)
+                SourceDependency::new(columns.location(&file, node, &source), target)
                     .with_dependency_only_target(dependency_only),
             );
         }

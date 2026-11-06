@@ -3,6 +3,8 @@
 pub(crate) mod semantics;
 
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
+use crate::source_adapter::columns::ColumnIndex;
+use crate::source_adapter::suppression::InlineSuppressions;
 use crate::source_adapter::{
     AdapterSessionState, Extraction, ExtractionDiagnostic, ExtractionDiagnosticKind as Kind,
     ExtractionDiagnosticLevel as Level, SourceAdapter, SourceExtractionSession, SourceFile,
@@ -404,6 +406,8 @@ fn extract_with_proof(
     let assertions = assertions.filter(|_| syntax_valid);
     let nodes = descendants(root);
     let lines: Vec<_> = source.lines().collect();
+    let suppressions = InlineSuppressions::new("#", &lines, file);
+    let columns = ColumnIndex::new(source);
     let mut aliases = if syntax_valid {
         registration_aliases::RegistrationAliases::collect(root, source)
     } else {
@@ -423,16 +427,20 @@ fn extract_with_proof(
     };
     if let Some(cause) = syntax_error {
         result.diagnostics.push(diagnostic(
-            file,
-            cause,
-            source,
+            columns.location(file, cause, source),
             Kind::Unparseable,
             "Ruby source contains syntax errors; extraction is incomplete",
         ));
     }
-    result.parameter_types = parameters::collect(&nodes, source, file);
+    result.parameter_types = parameters::collect(&nodes, source, &columns, file);
     let mut effects = ownership::RegistrationEffects::collect(
-        file, finalized, root, source, &aliases, &wrappers, proof,
+        &|node| columns.location(file, node, source),
+        finalized,
+        root,
+        source,
+        &aliases,
+        &wrappers,
+        proof,
     );
     if let Some(declaration) = result
         .parameter_types
@@ -440,7 +448,7 @@ fn extract_with_proof(
         .find(|declaration| parameters::invalidates_registry(declaration))
     {
         effects.invalidate(nodes.iter().copied().find(|node| {
-            node.kind() == "call" && location(file, *node, source) == declaration.location
+            node.kind() == "call" && columns.location(file, *node, source) == declaration.location
         }));
     }
     let replaced = effects.invalidated();
@@ -450,9 +458,7 @@ fn extract_with_proof(
             .and_then(|(start, end)| root.descendant_for_byte_range(start, end))
             .unwrap_or(root);
         result.diagnostics.push(diagnostic(
-            file,
-            cause,
-            source,
+            columns.location(file, cause, source),
             Kind::Incomplete,
             "Ruby registration ownership or executable source effects are unresolved",
         ));
@@ -464,9 +470,7 @@ fn extract_with_proof(
                 .get_or_insert_with(Default::default)
                 .unknown = true;
             result.diagnostics.push(diagnostic(
-                file,
-                node,
-                source,
+                columns.location(file, node, source),
                 Kind::Incomplete,
                 "Ruby constant provider callable has unresolved registration provenance",
             ));
@@ -486,9 +490,7 @@ fn extract_with_proof(
             && has_operands(node)
         {
             result.diagnostics.push(diagnostic(
-                file,
-                node,
-                source,
+                columns.location(file, node, source),
                 Kind::Dependency,
                 "Ruby source dependency is unresolved",
             ));
@@ -505,9 +507,11 @@ fn extract_with_proof(
                 } else {
                     "Ruby registration through a receiver is not resolved; definitions may be missing"
                 };
-                result
-                    .diagnostics
-                    .push(diagnostic(file, node, source, Kind::Incomplete, message));
+                result.diagnostics.push(diagnostic(
+                    columns.location(file, node, source),
+                    Kind::Incomplete,
+                    message,
+                ));
             }
             continue;
         }
@@ -515,20 +519,18 @@ fn extract_with_proof(
             name,
             "eval" | "send" | "public_send" | "define_method" | "alias_method"
         ) {
-            result.diagnostics.push(diagnostic(file, node, source, Kind::Incomplete,
+            result.diagnostics.push(diagnostic(columns.location(file, node, source), Kind::Incomplete,
                     "Ruby dependency, dynamic dispatch or parameter type is not resolved; definitions may be missing"));
         }
         if name == "ParameterType"
             && result.parameter_types.iter().any(|declaration| {
-                declaration.location == location(file, node, source)
+                declaration.location == columns.location(file, node, source)
                     && (declaration.expression.is_none()
                         || parameters::invalidates_registry(declaration))
             })
         {
             result.diagnostics.push(diagnostic(
-                file,
-                node,
-                source,
+                columns.location(file, node, source),
                 Kind::Incomplete,
                 "Ruby parameter type declaration is not statically resolved",
             ));
@@ -553,9 +555,7 @@ fn extract_with_proof(
                 && !proof.is_some_and(|p| p.executed.contains(&node.start_byte())))
         {
             result.diagnostics.push(diagnostic(
-                file,
-                node,
-                source,
+                columns.location(file, node, source),
                 Kind::Incomplete,
                 "Ruby registration is redefined or not a direct top-level call",
             ));
@@ -567,9 +567,7 @@ fn extract_with_proof(
             proof.is_some_and(|p| p.handlers.contains_key(&node.start_byte())),
         ) else {
             result.diagnostics.push(diagnostic(
-                file,
-                node,
-                source,
+                columns.location(file, node, source),
                 Kind::Incomplete,
                 "Ruby registration requires a static matcher and a statically resolved handler",
             ));
@@ -580,9 +578,7 @@ fn extract_with_proof(
                 Ok(translated) => Some(translated),
                 Err(RegexConversionError::Unsupported) => {
                     result.diagnostics.push(diagnostic(
-                        file,
-                        node,
-                        source,
+                        columns.location(file, node, source),
                         Kind::Incomplete,
                         "Ruby regular expression is outside the supported static matching subset",
                     ));
@@ -590,9 +586,7 @@ fn extract_with_proof(
                 }
                 Err(RegexConversionError::CompiledTooBig) => {
                     result.diagnostics.push(diagnostic(
-                        file,
-                        node,
-                        source,
+                        columns.location(file, node, source),
                         Kind::Incomplete,
                         "Ruby regular expression exceeds the regex resource limit",
                     ));
@@ -615,9 +609,7 @@ fn extract_with_proof(
             })
         {
             result.diagnostics.push(diagnostic(
-                file,
-                block,
-                source,
+                columns.location(file, block, source),
                 Kind::Incomplete,
                 "Ruby handler comparison has unresolved syntax, captures or receiver identity",
             ));
@@ -644,14 +636,9 @@ fn extract_with_proof(
             framework: CUCUMBER_RUBY,
             analysis_policy,
             registration: name.to_owned(),
-            location: location(file, node, source),
-            inline_suppressions: crate::source_adapter::suppression::inline_suppressions(
-                node.start_position().row,
-                "#",
-                &lines,
-                file,
-                &mut result.diagnostics,
-            ),
+            location: columns.location(file, node, source),
+            inline_suppressions: suppressions
+                .at(node.start_position().row, &mut result.diagnostics),
         });
     }
     result
@@ -1646,35 +1633,9 @@ fn repetition_bound(
     Some(None)
 }
 
-/// Convert node byte offsets to one-based lines and Unicode character columns.
-fn location(file: &SourceFile, node: Node<'_>, source: &str) -> SourceLocation {
-    let column = |byte: usize| {
-        source[..byte]
-            .rsplit('\n')
-            .next()
-            .unwrap_or("")
-            .chars()
-            .count()
-            + 1
-    };
-    SourceLocation::new(
-        &file.path,
-        node.start_position().row + 1,
-        column(node.start_byte()),
-        node.end_position().row + 1,
-        column(node.end_byte()),
-    )
-}
-
-/// Create an extraction warning at the syntax node location.
-fn diagnostic(
-    file: &SourceFile,
-    node: Node<'_>,
-    source: &str,
-    kind: Kind,
-    message: &str,
-) -> ExtractionDiagnostic {
-    ExtractionDiagnostic::with_kind(kind, Level::Warning, location(file, node, source), message)
+/// Creates an extraction warning at `location`.
+fn diagnostic(location: SourceLocation, kind: Kind, message: &str) -> ExtractionDiagnostic {
+    ExtractionDiagnostic::with_kind(kind, Level::Warning, location, message)
 }
 
 #[cfg(test)]

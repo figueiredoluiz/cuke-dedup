@@ -31,7 +31,8 @@ use self::registrations::{
 #[cfg(test)]
 use crate::model::bounded_source_snippet;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
-use crate::source_adapter::suppression::inline_suppressions;
+use crate::source_adapter::columns::ColumnIndex;
+use crate::source_adapter::suppression::InlineSuppressions;
 use crate::source_adapter::{
     registered_adapter, AdapterSessionState, ExtractionDiagnosticKind, SourceAdapter,
     SourceExtractionSession, StatefulSourceAdapter, INVALID_MATCHER_DIAGNOSTIC,
@@ -219,7 +220,8 @@ impl SourceAdapter for TreeSitterSourceAdapter {
 
 struct AdapterContext<'source, 'tree> {
     source: &'source [u8],
-    source_lines: &'source [&'source str],
+    columns: &'source ColumnIndex,
+    suppressions: &'source InlineSuppressions<'source>,
     file: &'source SourceFile,
     framework: Framework,
     registrations: &'source RegistrationNames,
@@ -228,6 +230,13 @@ struct AdapterContext<'source, 'tree> {
     file_scopes: &'source FileScopes,
     configured_assertion_modules: &'source BTreeSet<String>,
     handler_evidence: OnceCell<HandlerEvidence<'tree>>,
+}
+
+impl AdapterContext<'_, '_> {
+    /// Maps a node of this file to its one-based location in characters.
+    fn location(&self, node: Node<'_>) -> SourceLocation {
+        self.columns.location(self.file, node, self.source)
+    }
 }
 
 /// What only a handler reads. Built on a file's first handler: most files have none, and building
@@ -328,6 +337,8 @@ fn extract_detailed_impl(
     let root = tree.root_node();
     let source_bytes = source.as_bytes();
     let source_lines: Vec<_> = source.lines().collect();
+    let columns = ColumnIndex::new(source);
+    let suppressions = InlineSuppressions::new("//", &source_lines, file);
     let file_scopes = FileScopes::new(root, source_bytes);
     let framework = detect_framework(root, source_bytes, &file_scopes.loader);
     let registrations = detect_registrations(
@@ -350,7 +361,8 @@ fn extract_detailed_impl(
     )?;
     let context = AdapterContext {
         source: source_bytes,
-        source_lines: &source_lines,
+        columns: &columns,
+        suppressions: &suppressions,
         file,
         framework,
         registrations: &registrations,
@@ -372,7 +384,7 @@ fn extract_detailed_impl(
         diagnostics.push(ExtractionDiagnostic {
             kind: ExtractionDiagnosticKind::Unparseable,
             level: ExtractionDiagnosticLevel::Warning,
-            location: node_location(file, syntax_node, source_bytes),
+            location: columns.location(file, syntax_node, source_bytes),
             message: format!("{UNPARSEABLE_SOURCE_DIAGNOSTIC_PREFIX}, so analysis is incomplete; fix the syntax, use a .tsx extension for JSX, or narrow definition discovery"),
         });
     }
@@ -429,7 +441,7 @@ fn extract_detailed_impl(
             continue;
         }
         let line = recorded.row + 1;
-        let column = unicode_column(source_bytes, recorded.byte_offset, recorded.byte_column);
+        let column = columns.column(source_bytes, recorded.byte_offset, recorded.byte_column);
         diagnostics.push(ExtractionDiagnostic {
             kind: ExtractionDiagnosticKind::Incomplete,
             level: ExtractionDiagnosticLevel::Warning,
@@ -461,7 +473,7 @@ fn collect_calls<'tree>(
     while let Some(node) = stack.pop() {
         if node.kind() == "call_expression" {
             if let Some(unresolved) = unresolved_registration_call(node, context) {
-                let location = node_location(context.file, node, context.source);
+                let location = context.location(node);
                 match unresolved {
                     UnresolvedRegistration::Generic => {
                         unresolved_registration_calls.record(location)
@@ -859,14 +871,10 @@ fn step_definition<'tree>(
         } else {
             registration
         },
-        location: node_location(context.file, call, context.source),
-        inline_suppressions: inline_suppressions(
-            call.start_position().row,
-            "//",
-            context.source_lines,
-            context.file,
-            diagnostics,
-        ),
+        location: context.location(call),
+        inline_suppressions: context
+            .suppressions
+            .at(call.start_position().row, diagnostics),
     }
 }
 
@@ -908,7 +916,7 @@ fn warn_unsupported_matcher(
     diagnostics.push(ExtractionDiagnostic::with_kind(
         ExtractionDiagnosticKind::Incomplete,
         ExtractionDiagnosticLevel::Warning,
-        node_location(context.file, node, context.source),
+        context.location(node),
         UNSUPPORTED_MATCHER_DIAGNOSTIC,
     ));
 }
@@ -928,7 +936,7 @@ fn extract_matcher(
             diagnostics.push(ExtractionDiagnostic {
                 kind: ExtractionDiagnosticKind::Incomplete,
                 level: ExtractionDiagnosticLevel::Error,
-                location: node_location(context.file, matcher_node, source),
+                location: context.location(matcher_node),
                 message: INVALID_MATCHER_DIAGNOSTIC.to_owned(),
             });
             return None;
@@ -943,7 +951,7 @@ fn extract_matcher(
             RegexSupport::Unsupported => diagnostics.push(ExtractionDiagnostic {
                 kind: ExtractionDiagnosticKind::Other,
                 level: ExtractionDiagnosticLevel::Warning,
-                location: node_location(context.file, matcher_node, source),
+                location: context.location(matcher_node),
                 message: "regular expression uses syntax unsupported by static usage analysis; unused and ambiguity checks will treat this definition as indeterminate".to_owned(),
             }),
             // Analysis compiles the matcher in its matcher set, which has no capture groups, and
@@ -962,7 +970,7 @@ fn unsupported_handler_diagnostic(
     ExtractionDiagnostic::with_kind(
         ExtractionDiagnosticKind::Other,
         ExtractionDiagnosticLevel::Warning,
-        node_location(context.file, node, context.source),
+        context.location(node),
         "dynamic or unsupported step handler cannot be compared statically",
     )
 }
@@ -976,31 +984,9 @@ fn dropped_registration_diagnostic(
     ExtractionDiagnostic::with_kind(
         ExtractionDiagnosticKind::Incomplete,
         ExtractionDiagnosticLevel::Warning,
-        node_location(context.file, node, context.source),
+        context.location(node),
         "step registration has no static handler, so its definition is not analyzed",
     )
-}
-
-/// Maps a syntax node's byte span to one-based lines and Unicode character columns.
-fn node_location(file: &SourceFile, node: Node<'_>, source: &[u8]) -> SourceLocation {
-    let start = node.start_position();
-    let end = node.end_position();
-    SourceLocation::new(
-        &file.path,
-        start.row + 1,
-        unicode_column(source, node.start_byte(), start.column),
-        end.row + 1,
-        unicode_column(source, node.end_byte(), end.column),
-    )
-}
-
-/// Converts a byte column to a one-based character column, falling back on invalid UTF-8.
-fn unicode_column(source: &[u8], byte_offset: usize, byte_column: usize) -> usize {
-    let line_start = byte_offset.saturating_sub(byte_column);
-    let end = byte_offset.min(source.len());
-    std::str::from_utf8(&source[line_start.min(end)..end])
-        .map_or(byte_column, |prefix| prefix.chars().count())
-        + 1
 }
 
 /// Finds the first error or missing node in a source-order named-node traversal.

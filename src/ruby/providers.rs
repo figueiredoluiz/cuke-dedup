@@ -4,6 +4,7 @@ use super::{descendants, registration, static_method_name, text};
 use crate::resource_limits::{read_utf8, PassBudget, WorkBudget, MAX_PROJECT_INPUT_BYTES};
 #[cfg(test)]
 use crate::resource_limits::{MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES};
+use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::{SourceDependency, SourceFile};
 use anyhow::{Context, Result};
 use std::cell::{Cell, RefCell};
@@ -33,6 +34,7 @@ pub(super) struct Unit {
     pub(super) file: SourceFile,
     pub(super) canonical_path: PathBuf,
     pub(super) source: String,
+    pub(super) columns: ColumnIndex,
     pub(super) tree: Tree,
 }
 
@@ -129,6 +131,7 @@ pub(super) fn load_proof_sources(
         units.push(Unit {
             file: file.clone(),
             canonical_path,
+            columns: ColumnIndex::new(&source),
             source,
             tree,
         });
@@ -679,7 +682,7 @@ impl<'a> Graph<'a> {
     /// Uses the same character-based columns as resolved dependency locations.
     fn position(&self, unit: usize, node: Node<'_>, end: bool) -> (usize, usize, usize) {
         let input = &self.units[unit];
-        let location = super::location(&input.file, node, &input.source);
+        let location = input.columns.location(&input.file, node, &input.source);
         if end {
             (unit, location.end_line, location.end_column)
         } else {
@@ -912,6 +915,7 @@ fn test_unit(source: &str) -> Unit {
         },
         canonical_path: PathBuf::from("steps.rb"),
         source: source.to_owned(),
+        columns: ColumnIndex::new(source),
         tree: parser.parse(source, None).unwrap(),
     }
 }
