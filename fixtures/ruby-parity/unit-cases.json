@@ -7254,6 +7254,32 @@
           "behaviorClass": "shared-engine-invariant"
         }
       ]
+    },
+    "src/typescript/handler/tests.rs": {
+      "tests": [
+        {
+          "name": "identifier_numbering_preserves_first_seen_bindings",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: TypeScript handler binding collection and its exact first-seen vN numbering for declarations, typed parameters and nested locals. Semantic residue: none; Ruby does not use this collector or its canonical-name map.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "identifier_membership_growth_stays_below_quadratic",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Isolated growth of the TypeScript identifier-membership collector with exact insertion-order controls. Semantic residue: none; Ruby does not call this collector.",
+          "behaviorClass": "language-specific-api"
+        }
+      ]
+    },
+    "tests/identifier_membership.rs": {
+      "tests": [
+        {
+          "name": "identifier_collection_preserves_handler_findings",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: ESM/CommonJS registrations, arrow/function/generator handlers, typed and destructured bindings, ambient expect shadowing and Playwright decorators exercise the TypeScript collector through final findings. Semantic residue: renamed-handler and conflicting-assertion outcomes are covered by assertion_fingerprint_outcomes_preserve_identity_and_conflicts in tests/ruby_assertion_provenance.rs; Ruby has no TypeScript type annotations or Playwright decorators.",
+          "behaviorClass": "language-specific-api"
+        }
+      ]
     }
   }
 }

@@ -14,6 +14,9 @@ use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
 
+#[cfg(test)]
+mod tests;
+
 struct FingerprintFlags {
     comparable: bool,
     trivial: bool,
@@ -202,7 +205,7 @@ pub(super) fn fingerprint_method_handler<'tree>(
     let name = method.child_by_field_name("name")?;
     let parameters = method.child_by_field_name("parameters")?;
     let body = method.child_by_field_name("body")?;
-    let mut identifiers = Vec::new();
+    let mut identifiers = IdentifierNames::default();
     collect_parameter_bindings(parameters, source, &mut identifiers);
     collect_declared_locals(body, source, &mut identifiers);
     let declared = identifier_map(identifiers);
@@ -429,7 +432,7 @@ fn has_parameter_initializer(parameters: Node<'_>) -> bool {
 }
 
 /// Collects parameter-bound names in traversal order without treating keys, default values or types as bindings.
-fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut Vec<String>) {
+fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut IdentifierNames) {
     let mut stack = vec![parameters];
     while let Some(node) = stack.pop() {
         match node.kind() {
@@ -894,7 +897,7 @@ fn is_literal_value(node: Node<'_>) -> bool {
 
 /// Builds alpha-renaming entries from the handler's declaration name, parameter bindings and variable declarations.
 fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
-    let mut identifiers = Vec::new();
+    let mut identifiers = IdentifierNames::default();
     if matches!(
         handler.kind(),
         "function_declaration" | "generator_function_declaration"
@@ -917,7 +920,7 @@ fn declared_identifiers(handler: Node<'_>, source: &[u8]) -> BTreeMap<String, St
 }
 
 /// Assigns each collected identifier its ordered canonical `vN` name.
-fn identifier_map(identifiers: Vec<String>) -> BTreeMap<String, String> {
+fn identifier_map(identifiers: IdentifierNames) -> BTreeMap<String, String> {
     identifiers
         .into_iter()
         .enumerate()
@@ -926,7 +929,7 @@ fn identifier_map(identifiers: Vec<String>) -> BTreeMap<String, String> {
 }
 
 /// Collects variable-declarator names throughout the subtree for alpha renaming.
-fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut Vec<String>) {
+fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut IdentifierNames) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         if node.kind() == "variable_declarator" {
@@ -939,7 +942,7 @@ fn collect_declared_locals(node: Node<'_>, source: &[u8], output: &mut Vec<Strin
 }
 
 /// Collects identifier and shorthand-pattern spellings from a subtree without duplicating names.
-fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut Vec<String>) {
+fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut IdentifierNames) {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
         if matches!(
@@ -952,10 +955,28 @@ fn collect_identifier_text(node: Node<'_>, source: &[u8], output: &mut Vec<Strin
     }
 }
 
-/// Appends an identifier only when its spelling has not already been collected.
-fn push_identifier(output: &mut Vec<String>, identifier: &str) {
-    if !output.iter().any(|existing| existing == identifier) {
-        output.push(identifier.to_owned());
+/// Keeps first-seen order for canonical names and indexed membership for repeated bindings.
+#[derive(Default)]
+struct IdentifierNames {
+    ordered: Vec<String>,
+    seen: BTreeSet<String>,
+}
+
+impl IntoIterator for IdentifierNames {
+    type Item = String;
+    type IntoIter = std::vec::IntoIter<String>;
+
+    /// Consumes names in source traversal order, independently of membership-key ordering.
+    fn into_iter(self) -> Self::IntoIter {
+        self.ordered.into_iter()
+    }
+}
+
+/// Appends an unseen spelling using logarithmic membership lookup, preserving its first index.
+fn push_identifier(output: &mut IdentifierNames, identifier: &str) {
+    if !output.seen.contains(identifier) {
+        output.seen.insert(identifier.to_owned());
+        output.ordered.push(identifier.to_owned());
     }
 }
 
@@ -1164,7 +1185,7 @@ impl<'m> LocalConstants<'m> {
                     .child_by_field_name("parameters")
                     .or_else(|| node.child_by_field_name("parameter"))
                 {
-                    let mut names = Vec::new();
+                    let mut names = IdentifierNames::default();
                     collect_parameter_bindings(parameters, source, &mut names);
                     for name in names {
                         self.bindings.entry(name).or_default().push(LocalConstant {
@@ -1228,7 +1249,7 @@ impl<'m> LocalConstants<'m> {
                 ) {
                     // Register shadows before evaluating any initializer: a later lexical
                     // declaration must never expose an outer constant through its TDZ.
-                    let mut names = Vec::new();
+                    let mut names = IdentifierNames::default();
                     collect_parameter_bindings(name, source, &mut names);
                     for binding_name in names {
                         let lexical =
@@ -1334,7 +1355,7 @@ impl<'m> LocalConstants<'m> {
         scope: Node<'_>,
         lexical: bool,
     ) {
-        let mut names = Vec::new();
+        let mut names = IdentifierNames::default();
         if pattern.kind() == "type_identifier" {
             push_identifier(&mut names, node_text(pattern, source));
         } else {
@@ -1784,12 +1805,12 @@ fn local_function_declarations<'tree>(
         if let Some(bound) = bound {
             // The declaration currently being recorded is not a shadow of itself.
             if node.kind() != "function_declaration" {
-                let mut names = Vec::new();
+                let mut names = IdentifierNames::default();
                 match bound.kind() {
                     // A class or enum name is a `type_identifier`, which the pattern collector does
                     // not treat as a binding, so name nodes are read directly.
                     "identifier" | "type_identifier" | "property_identifier" => {
-                        names.push(node_text(bound, source).to_owned());
+                        push_identifier(&mut names, node_text(bound, source));
                     }
                     _ => collect_parameter_bindings(bound, source, &mut names),
                 }
