@@ -55,6 +55,7 @@ if [[ "$mode" == "full" ]]; then
   RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features --locked
   cargo +stable package --list --allow-dirty >/dev/null
   cargo +stable build --release --locked
+  RUSTUP_TOOLCHAIN=stable bash scripts/check/check-identifier-growth.sh
   node scripts/check/check-corpus.mjs target/release/cuke-dedup fixtures/corpus
   # Matcher compilation is windowed, and every fixture is far smaller than the default window, so
   # the default run never crosses a window boundary. Forcing one definition per window makes every
