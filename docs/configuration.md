@@ -81,6 +81,8 @@ the corresponding value from a lower-precedence layer. Scalar settings and indiv
 severities merge by setting or rule name. Configured excludes replace lower-precedence custom
 excludes, but built-in generated-directory exclusions remain a separate policy.
 
+Repeated reporter names are deduplicated after precedence is resolved, preserving their first-selected order.
+
 ## Discovery patterns
 
 `definitions`, `features`, `exclude`, and suppression `path` values use `globset` syntax against

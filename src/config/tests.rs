@@ -1,4 +1,47 @@
 use super::*;
+
+/// Deduplicates each resolved reporter plan without changing precedence or first-selected order.
+#[test]
+fn reporter_plans_preserve_unique_selection_order() {
+    let directory = tempfile::tempdir().unwrap();
+    for source in [".cuke-dedup.json", "package.json"] {
+        let plan = serde_json::json!({"reporters": ["sarif", "jsonl", "sarif", "json", "jsonl"]});
+        let value = if source == "package.json" {
+            serde_json::json!({"cukeDedup": plan})
+        } else {
+            plan
+        };
+        fs::write(directory.path().join(source), value.to_string()).unwrap();
+        for override_plan in [
+            None,
+            Some(vec![
+                ReporterKind::Html,
+                ReporterKind::Html,
+                ReporterKind::Json,
+            ]),
+        ] {
+            let expected = if override_plan.is_some() {
+                vec![ReporterKind::Html, ReporterKind::Json]
+            } else {
+                vec![ReporterKind::Sarif, ReporterKind::Jsonl, ReporterKind::Json]
+            };
+            let config = Config::load(
+                directory.path(),
+                ConfigOverrides {
+                    reporters: override_plan,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(config.reporters, expected);
+            assert_eq!(
+                serde_json::to_value(&config).unwrap()["reporters"],
+                serde_json::json!(expected)
+            );
+        }
+        fs::remove_file(directory.path().join(source)).unwrap();
+    }
+}
 use std::fs;
 
 /// Checks that CLI reporter, threshold, and rule settings override both standalone and package configuration.

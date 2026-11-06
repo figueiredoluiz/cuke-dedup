@@ -9,6 +9,8 @@ use crate::model::{
 use crate::typescript::semantics::default_policy;
 use std::path::{Path, PathBuf};
 
+mod output_limits;
+
 /// Builds a synthetic Cucumber-expression definition with an empty non-comparable handler.
 fn definition(location: SourceLocation, matcher: &str) -> StepDefinition {
     StepDefinition {
@@ -1374,7 +1376,7 @@ fn repeated_large_evidence_has_bounded_reports_and_explicit_omissions() {
     for output in [&json_text, &html, &sarif_text, &terminal] {
         assert!(output.len() <= 16 * 1024 * 1024);
     }
-    // JSONL remains the streaming escape hatch: every finding and its summary is retained.
+    // These sampled JSONL records fit within the aggregate count and byte limits.
     let jsonl = render_jsonl(&context).unwrap();
     assert_eq!(jsonl.lines().count(), 71);
     let last: serde_json::Value = serde_json::from_str(jsonl.lines().last().unwrap()).unwrap();

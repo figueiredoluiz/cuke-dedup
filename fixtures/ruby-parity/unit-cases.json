@@ -1868,6 +1868,13 @@
           "stage": "config-decoding",
           "rationale": "Adapter-independent stage `config-decoding`: a canonicalized path strips against the normalized analysis root; no adapter runs, and Ruby load targets are covered end to end by `regression_119_ruby_loaded_file_paths_stay_relative_to_the_root`.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "reporter_plans_preserve_unique_selection_order",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent configuration precedence and first-selected reporter normalization; no adapter executes.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7278,6 +7285,59 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: ESM/CommonJS registrations, arrow/function/generator handlers, typed and destructured bindings, ambient expect shadowing and Playwright decorators exercise the TypeScript collector through final findings. Semantic residue: renamed-handler and conflicting-assertion outcomes are covered by assertion_fingerprint_outcomes_preserve_identity_and_conflicts in tests/ruby_assertion_provenance.rs; Ruby has no TypeScript type annotations or Playwright decorators.",
           "behaviorClass": "language-specific-api"
+        }
+      ]
+    },
+    "src/reporters/tests/output_limits.rs": {
+      "tests": [
+        {
+          "name": "jsonl_count_limits_preserve_complete_summaries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Real finding-count boundaries preserve complete totals and matching string/stream records.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "jsonl_byte_limits_preserve_valid_records_and_totals",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Serialized Unicode byte limits retain valid records and exact omission counts.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "public_report_dispatch_deduplicates_each_format",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Direct public reporter dispatch preserves distinct formats and emits each destination once.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "jsonl_budget_boundaries_keep_records_atomic",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Exact serialized-byte boundaries reserve metadata and retain later fitting records without partial JSON.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "jsonl_keeps_inactive_records_and_propagates_io_failures",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent report contract: Inactive finding visibility and buffered write/flush errors retain their report contract.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "jsonl_record_capacity_does_not_hide_serialization_errors",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent bounded JSONL serialization and writer error propagation.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "jsonl_summary_write_failure_is_not_swallowed",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent bounded JSONL serialization and writer error propagation.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     }

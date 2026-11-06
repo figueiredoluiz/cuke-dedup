@@ -16,7 +16,7 @@ pub use jsonl::render_jsonl;
 pub use sarif::render_sarif;
 pub use terminal::write_terminal;
 
-use crate::config::{Config, ReporterKind};
+use crate::config::{unique_reporters, Config, ReporterKind};
 use crate::model::AnalysisResult;
 use anyhow::{Context, Result};
 use shared::{ensure_parent, terminal_safe};
@@ -63,7 +63,7 @@ pub(crate) fn write_cli_reports(
     write_reports_context(&context, config, Some(metadata), terminal, terminal_color)
 }
 
-/// Writes each configured reporter in order and returns the file-report paths.
+/// Writes each distinct configured reporter in first-selected order and returns the file-report paths.
 ///
 /// Terminal and JSONL output go to `terminal`; JSON, HTML and SARIF go to `config.output_path`.
 /// File paths are listed on `terminal` only when no terminal or JSONL reporter is configured.
@@ -80,7 +80,7 @@ fn write_reports_context(
         .reporters
         .iter()
         .any(|reporter| matches!(reporter, ReporterKind::Terminal | ReporterKind::Jsonl));
-    for reporter in &config.reporters {
+    for reporter in unique_reporters(&config.reporters) {
         match reporter {
             ReporterKind::Terminal => {
                 terminal::write_terminal_with_color(context, terminal, terminal_color)?
