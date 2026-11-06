@@ -3,9 +3,64 @@
 use crate::model::{InlineSuppression, Rule, SourceLocation};
 use crate::resource_limits::MAX_SUPPRESSION_REASON_CHARS;
 use crate::source_adapter::{ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+/// One row's suppressions and the directive diagnostics its parse produced.
+type ParsedRow = (Vec<InlineSuppression>, Vec<ExtractionDiagnostic>);
+
+/// Directive comments of one file, parsed once per registration row.
+///
+/// Registrations sharing a row read the same lines above it; reparsing them per registration is
+/// quadratic when many registrations share a row under a long line.
+pub(crate) struct InlineSuppressions<'source> {
+    comment_prefix: &'source str,
+    lines: &'source [&'source str],
+    file: &'source SourceFile,
+    rows: RefCell<HashMap<usize, ParsedRow>>,
+}
+
+impl<'source> InlineSuppressions<'source> {
+    /// Prepares lookups over `lines`, the file's lines split on `\n`.
+    pub(crate) fn new(
+        comment_prefix: &'source str,
+        lines: &'source [&'source str],
+        file: &'source SourceFile,
+    ) -> Self {
+        Self {
+            comment_prefix,
+            lines,
+            file,
+            rows: RefCell::default(),
+        }
+    }
+
+    /// Returns the suppressions above the zero-based `registration_row` and appends that row's
+    /// directive diagnostics, as each registration on the row did before the row was cached.
+    pub(crate) fn at(
+        &self,
+        registration_row: usize,
+        diagnostics: &mut Vec<ExtractionDiagnostic>,
+    ) -> Vec<InlineSuppression> {
+        let mut rows = self.rows.borrow_mut();
+        let (suppressions, row_diagnostics) = rows.entry(registration_row).or_insert_with(|| {
+            let mut row_diagnostics = Vec::new();
+            let suppressions = inline_suppressions(
+                registration_row,
+                self.comment_prefix,
+                self.lines,
+                self.file,
+                &mut row_diagnostics,
+            );
+            (suppressions, row_diagnostics)
+        });
+        diagnostics.extend(row_diagnostics.iter().cloned());
+        suppressions.clone()
+    }
+}
 
 /// Reads the contiguous directive comments directly above the zero-based `registration_row`.
-pub(crate) fn inline_suppressions(
+fn inline_suppressions(
     registration_row: usize,
     comment_prefix: &str,
     lines: &[&str],
@@ -84,3 +139,6 @@ fn inline_suppression_diagnostic(
         message: message.to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests;

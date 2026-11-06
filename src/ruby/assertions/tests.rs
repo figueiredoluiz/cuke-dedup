@@ -98,7 +98,8 @@ fn proof_budget_checkpoints_and_invalid_edges_never_grant_trust() {
     loads.sort_by_key(|node| node.start_byte());
     let edge = |node| {
         SourceDependency::new(
-            location(&files[0], node, source),
+            crate::source_adapter::columns::ColumnIndex::new(source)
+                .location(&files[0], node, source),
             crate::config::canonical_platform_path(&files[1].path).unwrap(),
         )
     };
@@ -167,7 +168,7 @@ fn assertion_work_boundary_is_decided_by_its_own_counter() {
         .unwrap();
     let load = units[0].tree.root_node().named_child(0).unwrap();
     let edges = [SourceDependency::new(
-        location(&files[0], load, source),
+        crate::source_adapter::columns::ColumnIndex::new(source).location(&files[0], load, source),
         units[1].canonical_path.clone(),
     )];
     let configured = ["./assertions".into()];
@@ -211,7 +212,7 @@ fn shared_snapshot_retains_proofs_without_reloading_and_checks_current_source_by
     let root_node = units[0].tree.root_node();
     let load = root_node.named_child(0).unwrap();
     let edges = [SourceDependency::new(
-        location(&files[0], load, source),
+        crate::source_adapter::columns::ColumnIndex::new(source).location(&files[0], load, source),
         crate::config::canonical_platform_path(&files[1].path).unwrap(),
     )];
     for file in &files {

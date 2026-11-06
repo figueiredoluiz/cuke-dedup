@@ -8568,3 +8568,104 @@ fn regression_sampled_evidence_keeps_original_baseline_identity() {
             .stdout(predicate::str::contains("\"active\":true"));
     }
 }
+
+/// Registrations sharing one long line cost one column lookup each, not a rescan of the line, and
+/// the comments above a shared row are read once per row. Each timed case runs the calls after a
+/// long prefix (characters on the calls' line, or spaces on the line above) and again with the
+/// same bytes moved off that line; rescanning per call made the first run 7-18 times slower. The
+/// bound is relative, on the faster of two runs each, so machine speed and parallel tests cancel.
+/// The spaces cases need static matchers: only a definition reads the comments above it. The
+/// Ruby column case is untimed: its old prefix scan was too cheap to time against parsing, and
+/// both adapters share the column index that the TypeScript case times.
+#[test]
+fn regression_registrations_on_one_long_line_are_located_in_linear_time() {
+    const WIDE: usize = 1_000_000;
+    let wide = "é".repeat(WIDE);
+    let head = "import { Given } from '@cucumber/cucumber';\nconst m = String(1);\n";
+    let dynamic = "Given(m, () => {}); ".repeat(2_000);
+    let ts_definitions: String = (0..1_000)
+        .map(|index| format!("Given('s{index}', () => {{}}); "))
+        .collect();
+    let rb_definitions: String = (0..1_000)
+        .map(|index| format!("Given(/^s{index}$/) {{ }}; "))
+        .collect();
+    let spaces = " ".repeat(6_000_000);
+    let unused = "\"rule\":\"unused-definition\"";
+    let cases = [
+        (
+            "steps.ts",
+            format!("{head}/*{wide}*/ {dynamic}\n"),
+            Some(format!("{head}/*{wide}*/\n{dynamic}\n")),
+            ("steps.ts:", 2_000),
+            format!("steps.ts:3:{}:", WIDE + 12),
+        ),
+        (
+            "steps.ts",
+            format!("{head}{spaces}\n{ts_definitions}\n"),
+            Some(format!("{head}{spaces}\nconst k = 1;\n{ts_definitions}\n")),
+            (unused, 1_000),
+            "\"line\":4,\"column\":24,\"endLine\":4,\"endColumn\":45}".to_owned(),
+        ),
+        (
+            "steps.rb",
+            format!("{spaces}\n{rb_definitions}\n"),
+            Some(format!("{spaces}\nk = 1\n{rb_definitions}\n")),
+            (unused, 1_000),
+            "\"line\":2,\"column\":20,\"endLine\":2,\"endColumn\":37}".to_owned(),
+        ),
+        (
+            "steps.rb",
+            format!("m = 1; x = '{wide}'; {}\n", "Given(m) { }; ".repeat(2_000)),
+            None,
+            ("steps.rb:", 2_000),
+            format!("steps.rb:1:{}:", WIDE + 16),
+        ),
+    ];
+    let run = |file: &str, source: &str, (counted, count): (&str, usize)| {
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), file, source);
+        write(
+            directory.path(),
+            "a.feature",
+            "Feature: f\n  Scenario: s\n    Given done\n",
+        );
+        let started = std::time::Instant::now();
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(directory.path())
+            .args([
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+                "--definitions",
+                file,
+            ])
+            .timeout(std::time::Duration::from_secs(300))
+            .output()
+            .unwrap();
+        let elapsed = started.elapsed();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(0), "{file}: {text}");
+        assert_eq!(text.matches(counted).count(), count, "{file}: {counted}");
+        (elapsed, text)
+    };
+    for (file, shared_line, control, counted, expected_location) in cases {
+        let (_, text) = run(file, &shared_line, counted);
+        assert!(
+            text.contains(&expected_location),
+            "{file}: {expected_location}"
+        );
+        if let Some(control) = control {
+            let fastest = |source: &str| (0..2).map(|_| run(file, source, counted).0).min();
+            let (control_time, shared_time) = (fastest(&control), fastest(&shared_line));
+            assert!(
+                shared_time < control_time.map(|time| time * 3 + std::time::Duration::from_secs(1)),
+                "{file}: shared line {shared_time:?}, control {control_time:?}"
+            );
+        }
+    }
+}

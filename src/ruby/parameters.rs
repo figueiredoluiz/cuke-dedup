@@ -1,6 +1,7 @@
 //! Static matching patterns, independent of transformer execution and handler fingerprints.
-use super::{descendants, literal_string, location, regex_expression, regex_literal, text};
+use super::{descendants, literal_string, regex_expression, regex_literal, text};
 pub(super) use crate::analysis::parameter_types::invalidates_registry;
+use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::{SourceFile, SourceParameterType};
 use std::collections::BTreeMap;
 use tree_sitter::Node;
@@ -9,6 +10,7 @@ use tree_sitter::Node;
 pub(super) fn collect(
     nodes: &[Node<'_>],
     source: &str,
+    columns: &ColumnIndex,
     file: &SourceFile,
 ) -> Vec<SourceParameterType> {
     nodes
@@ -47,7 +49,7 @@ pub(super) fn collect(
                 }
                 pattern(*options.get("regexp")?, source)
             });
-            SourceParameterType::new(name, expression, location(file, node, source))
+            SourceParameterType::new(name, expression, columns.location(file, node, source))
                 .with_domain(super::semantics::policy().domain())
         })
         .collect()

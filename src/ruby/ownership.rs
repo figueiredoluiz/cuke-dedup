@@ -41,9 +41,10 @@ fn site(node: Node<'_>) -> (usize, usize) {
 }
 
 impl RegistrationEffects {
-    /// Collects source-local ownership evidence while preserving resolved captures and deferred bodies.
+    /// Collects source-local ownership evidence while preserving resolved captures and deferred bodies;
+    /// `location` maps a node of this source to its reported location.
     pub(super) fn collect(
-        file: &crate::source_adapter::SourceFile,
+        location: &dyn Fn(Node<'_>) -> crate::model::SourceLocation,
         finalized: bool,
         root: Node<'_>,
         source: &str,
@@ -57,7 +58,7 @@ impl RegistrationEffects {
             wrappers: wrappers.effects.clone(),
             open_load_phase: !closed,
             load_requires: super::load_phase::load_requires(root, source)
-                .map(|call| super::location(file, call, source))
+                .map(location)
                 .collect(),
             ..Self::default()
         };
@@ -173,7 +174,7 @@ impl RegistrationEffects {
                         .is_some_and(Option::is_some)
                 })
             {
-                effects.contained.push(super::location(file, node, source));
+                effects.contained.push(location(node));
                 continue;
             }
             effects.mark_unknown(node);

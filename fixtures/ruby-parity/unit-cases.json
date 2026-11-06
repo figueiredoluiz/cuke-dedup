@@ -3133,6 +3133,17 @@
         }
       ]
     },
+    "src/source_adapter/suppression/tests.rs": {
+      "tests": [
+        {
+          "name": "cached_rows_replay_suppressions_and_diagnostics_per_registration",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: directive comments above a row are parsed once and every registration on the row gets the same suppressions and its own copy of the diagnostics; both adapters read directives through this cache.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
     "src/source_adapter/tests.rs": {
       "tests": [
         {
@@ -3410,6 +3421,24 @@
           "requiredStatus": "engine-invariant",
           "stage": "session-plumbing",
           "rationale": "Adapter-independent stage `session-plumbing`: Extraction session or registry mechanics (initialization, root snapshots, suffix tables, legacy diagnostic shapes) that no source text can vary.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/source_adapter/columns/tests.rs": {
+      "tests": [
+        {
+          "name": "indexed_columns_match_the_prefix_scan_at_every_boundary",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the shared column index returns the character column the line-prefix scan gave at every character boundary, across multibyte, BOM, CRLF and block-boundary geometry; both adapters locate nodes through it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "node_location_converts_start_and_end_columns_to_characters",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: a syntax node's rows come from tree-sitter and both byte columns become character columns; the same mapping serves the Ruby adapter.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -6719,6 +6748,16 @@
           "stage": "model-codec",
           "rationale": "Adapter-independent stage `model-codec`: Sampled display text remains distinct from the original fallback baseline identity in either direction.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_registrations_on_one_long_line_are_located_in_linear_time",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "regression_registrations_on_one_long_line_are_located_in_linear_time"
+          },
+          "rationale": "`regression_registrations_on_one_long_line_are_located_in_linear_time` runs 2,000 Ruby and TypeScript registrations on one long line through the built binary and pins their character columns; TypeScript cases bound the run against a control with the same bytes off that line, for column lookup and directive parsing.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     },

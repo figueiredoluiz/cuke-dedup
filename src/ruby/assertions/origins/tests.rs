@@ -29,7 +29,7 @@ fn origin_work_limits_never_publish_partial_authority() {
         .map(|index| {
             let unit = &units[index];
             SourceDependency::new(
-                location(
+                unit.columns.location(
                     &unit.file,
                     unit.tree.root_node().named_child(0).unwrap(),
                     &unit.source,
@@ -84,7 +84,9 @@ fn origin_work_limits_never_publish_partial_authority() {
         })
         .unwrap();
     let nested_edge = SourceDependency::new(
-        location(&nested[1].file, call, &nested[1].source),
+        nested[1]
+            .columns
+            .location(&nested[1].file, call, &nested[1].source),
         nested[0].canonical_path.clone(),
     );
     assert!(preceding_context(
