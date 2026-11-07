@@ -7444,6 +7444,27 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent stage `bounded-io`: Filesystem errors and publication races preserve existing data and fail operationally.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "descriptor_guards_preserve_original_and_external_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Real filesystem descriptors and entry substitutions exercise output guards and cleanup without following links or changing original bytes.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "staging_guards_validate_real_entries_and_preserve_substitutions",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Real filesystem descriptors and entry substitutions exercise output guards and cleanup without following links or changing original bytes.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "windows_failure_cleanup_preserves_foreign_entries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Windows preparation and replacement failures clean only verified temporary entries and preserve substituted bytes and destination directories.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     }

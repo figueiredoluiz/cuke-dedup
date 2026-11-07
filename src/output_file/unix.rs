@@ -1,6 +1,8 @@
 //! POSIX directory-relative opens and atomic replacement.
 use anyhow::{bail, Result};
-use rustix::fs::{mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode, OFlags};
+use rustix::fs::{
+    mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode, OFlags, Stat,
+};
 use rustix::io::Errno;
 use std::{
     ffi::OsStr,
@@ -29,9 +31,7 @@ pub(super) fn existing(parent: &Dir, name: &OsStr, read: bool) -> Result<Option<
         access | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )?);
-    if !file.metadata()?.is_file() {
-        bail!("output destination changed while opening it");
-    }
+    require_regular(&file)?;
     Ok(Some(file))
 }
 
@@ -98,6 +98,51 @@ fn names_file(dir: &Dir, name: &OsStr, file: &File) -> Result<bool> {
     Ok(entry.st_dev == handle.st_dev && entry.st_ino == handle.st_ino)
 }
 
+/// Rejects a descriptor whose entry stopped being a regular file while it was opened.
+pub(super) fn require_regular(file: &File) -> Result<()> {
+    if !file.metadata()?.is_file() {
+        bail!("output destination changed while opening it");
+    }
+    Ok(())
+}
+
+/// Checks the name against the still-open prepared file, including missing and substituted entries.
+pub(super) fn require_entry(dir: &Dir, name: &OsStr, file: &File, message: &str) -> Result<()> {
+    if !names_file(dir, name, file)? {
+        bail!("{message}");
+    }
+    Ok(())
+}
+
+/// Opens a staging directory without following a link and checks its creation snapshot.
+pub(super) fn open_stage(parent: &Dir, name: &OsStr, initial: &Stat) -> Result<File> {
+    let stage = File::from(openat(
+        parent,
+        name,
+        OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?);
+    let opened = rustix::fs::fstat(&stage)?;
+    if opened.st_uid != rustix::process::geteuid().as_raw()
+        || (opened.st_dev, opened.st_ino, opened.st_mode & 0o777)
+            != (initial.st_dev, initial.st_ino, initial.st_mode & 0o777)
+    {
+        bail!("output staging directory changed after creation");
+    }
+    Ok(stage)
+}
+
+/// Removes only the caller-owned staging directory that still matches the creation snapshot.
+pub(super) fn cleanup_stage(parent: &Dir, name: &OsStr, initial: &Stat) {
+    let owned = initial.st_uid == rustix::process::geteuid().as_raw()
+        && FileType::from_raw_mode(initial.st_mode) == FileType::Directory;
+    if let Ok(current) = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        if owned && (initial.st_dev, initial.st_ino) == (current.st_dev, current.st_ino) {
+            let _ = unlinkat(parent, name, AtFlags::REMOVEDIR);
+        }
+    }
+}
+
 /// Binds the staging directory and validates the prepared file before and after atomic publication.
 pub(super) fn publish(
     parent: &Dir,
@@ -113,46 +158,33 @@ pub(super) fn publish(
     let stage_name = OsStr::new(&temp);
     mkdirat(parent, stage_name, Mode::RWXU)?;
     let initial = statat(parent, stage_name, AtFlags::SYMLINK_NOFOLLOW)?;
-    let owned = initial.st_uid == rustix::process::geteuid().as_raw()
-        && FileType::from_raw_mode(initial.st_mode) == FileType::Directory;
     let result = (|| {
-        let stage = File::from(openat(
-            parent,
-            stage_name,
-            OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )?);
-        let opened = rustix::fs::fstat(&stage)?;
-        if opened.st_uid != rustix::process::geteuid().as_raw()
-            || (opened.st_dev, opened.st_ino, opened.st_mode & 0o777)
-                != (initial.st_dev, initial.st_ino, initial.st_mode & 0o777)
-        {
-            bail!("output staging directory changed after creation");
-        }
+        let stage = open_stage(parent, stage_name, &initial)?;
         let payload = OsStr::new("payload");
         let mode = Mode::from_raw_mode(if replacing { 0o600 } else { 0o666 });
         let flags = OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC;
         let mut file = File::from(openat(&stage, payload, flags, mode)?);
         let result = prepare(&mut file).and_then(|()| {
-            if !names_file(&stage, payload, &file)? {
-                bail!("temporary output entry changed before replacement");
-            }
+            require_entry(
+                &stage,
+                payload,
+                &file,
+                "temporary output entry changed before replacement",
+            )?;
             renameat(&stage, payload, parent, name)?;
-            if !names_file(parent, name, &file)? {
-                bail!("published output no longer names the prepared file");
-            }
-            Ok(())
+            require_entry(
+                parent,
+                name,
+                &file,
+                "published output no longer names the prepared file",
+            )
         });
         if result.is_err() && names_file(&stage, payload, &file).unwrap_or(false) {
             let _ = unlinkat(&stage, payload, AtFlags::empty());
         }
         result
     })();
-    if let Ok(current) = statat(parent, stage_name, AtFlags::SYMLINK_NOFOLLOW) {
-        if owned && (initial.st_dev, initial.st_ino) == (current.st_dev, current.st_ino) {
-            let _ = unlinkat(parent, stage_name, AtFlags::REMOVEDIR);
-        }
-    }
+    cleanup_stage(parent, stage_name, &initial);
     result
 }
 

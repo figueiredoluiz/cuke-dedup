@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix, resolve, win32 } from "node:path";
 import test from "node:test";
@@ -386,10 +386,9 @@ if (process.argv.includes("--print-config")) console.log(JSON.stringify({ root: 
 else process.exitCode = 2;
 `);
   await chmod(binary, 0o755);
-  const status = await runAction({ cwd: root, env: {
+  await assert.rejects(runAction({ cwd: root, env: {
     CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: join(directory, "github-output"),
-  } }).catch(() => 2);
-  assert.equal(status, 2);
+  } }), /real directory/);
   assert.equal(await readFile(sentinel, "utf8"), "preserve external report");
 });
 
@@ -633,6 +632,48 @@ test("report preparation refuses Windows junctions", { skip: process.platform !=
   const run = spawnSync(process.execPath, [helper, alias], { encoding: "utf8" });
   assert.equal(run.status, 2, run.stderr);
   assert.equal(await readFile(join(target, "cuke-dedup.json"), "utf8"), "old");
-  assert.equal(spawnSync(process.execPath, [helper, target]).status, 0);
+  const regular = spawnSync(process.execPath, [helper, target], { encoding: "utf8" });
+  assert.equal(regular.status, 0, regular.stderr);
   assert.equal(existsSync(join(target, "cuke-dedup.json")), false);
+});
+
+/** Missing or relative helper arguments fail with an intentional diagnostic. */
+test("report preparation validates its directory argument", () => {
+  const helper = fileURLToPath(new URL("../../.github/actions/cuke-dedup/prepare-report.mjs", import.meta.url));
+  for (const args of [[], [""], ["relative"]]) {
+    const run = spawnSync(process.execPath, [helper, ...args], { encoding: "utf8" });
+    assert.equal(run.status, 2, run.stderr);
+    assert.equal(JSON.parse(run.stderr).message, "expected an absolute report directory");
+  }
+});
+
+/** A helper startup error retains raw stderr, while structured errors preserve their code. */
+test("action retains report preparation diagnostics", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "action-preparation-error-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const action = join(directory, ".github/actions/cuke-dedup");
+  const targets = join(directory, "npm/lib");
+  await mkdir(action, { recursive: true });
+  await mkdir(targets, { recursive: true });
+  await copyFile(new URL("../../.github/actions/cuke-dedup/index.js", import.meta.url), join(action, "index.mjs"));
+  await copyFile(new URL("../lib/targets.mjs", import.meta.url), join(targets, "targets.mjs"));
+  await copyFile(new URL("../prebuilt-targets.json", import.meta.url), join(directory, "npm/prebuilt-targets.json"));
+  const binary = join(directory, "analyzer.cjs");
+  await writeFile(binary, `#!/usr/bin/env node
+if (process.argv.includes("--print-config")) console.log(JSON.stringify({root: process.cwd(), output:"reports"}));
+else process.exitCode = 2;
+`);
+  await chmod(binary, 0o755);
+  const isolated = await import(pathToFileURL(join(action, "index.mjs")).href);
+  for (const [stderr, message, code] of [
+    ['{"message":"owned diagnostic","code":"EACCES"}', "owned diagnostic", "EACCES"],
+    ["  helper startup failed\n", "helper startup failed", undefined],
+    ["", "failed to prepare JSON report directory", undefined],
+    ["null", "null", undefined],
+  ]) {
+    await writeFile(join(action, "prepare-report.mjs"),
+      `process.stderr.write(${JSON.stringify(stderr)}); process.exitCode = 2;`);
+    await assert.rejects(isolated.runAction({ cwd: directory, env: { CUKE_DEDUP_BINARY: binary } }),
+      (error) => error.message === message && error.code === code);
+  }
 });

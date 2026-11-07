@@ -119,17 +119,43 @@ pub(super) fn publish(
     _replacing: bool,
     prepare: impl FnOnce(&mut File) -> Result<()>,
 ) -> Result<()> {
-    let mut temp = tempfile::NamedTempFile::new_in(&dir.path)?;
-    prepare(temp.as_file_mut())?;
-    let source = temp.path().file_name().expect("named temporary file");
-    if !names_file(dir, source, temp.as_file())? {
-        bail!("temporary output entry changed before replacement");
+    // Cleanup is explicit so removal follows an identity check of the temporary entry.
+    let mut temp = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .tempfile_in(&dir.path)?;
+    let source = temp
+        .path()
+        .file_name()
+        .expect("named temporary file")
+        .to_owned();
+    let prepared = prepare(temp.as_file_mut()).and_then(|()| {
+        if !names_file(dir, &source, temp.as_file())? {
+            bail!("temporary output entry changed before replacement");
+        }
+        Ok(())
+    });
+    if let Err(error) = prepared {
+        cleanup_temporary(dir, &source, temp.as_file());
+        return Err(error);
     }
-    let published = temp.persist(dir.path.join(name))?;
+    let published = match temp.persist(dir.path.join(name)) {
+        Ok(file) => file,
+        Err(error) => {
+            cleanup_temporary(dir, &source, error.file.as_file());
+            return Err(error.error.into());
+        }
+    };
     if !names_file(dir, name, &published)? {
         bail!("published output no longer names the prepared file");
     }
     Ok(())
+}
+
+/// Removes a failed temporary name only after checking it against the original open file.
+fn cleanup_temporary(dir: &Dir, name: &OsStr, file: &File) {
+    if names_file(dir, name, file).unwrap_or(false) {
+        let _ = fs::remove_file(dir.path.join(name));
+    }
 }
 
 /// Opens the named entry without following reparse points and compares it with the prepared file.

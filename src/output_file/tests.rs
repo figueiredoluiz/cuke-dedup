@@ -91,6 +91,17 @@ fn concurrent_staging_entry_replacement_cannot_publish_other_bytes() {
     #[cfg(windows)]
     if result.is_err() {
         assert!(!report.exists());
+        let entries: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(fs::read(root.path().join("moved")).unwrap(), b"prepared");
+        let substituted = entries
+            .iter()
+            .find(|path| path.file_name().unwrap() != "moved")
+            .unwrap();
+        assert_eq!(fs::read(substituted).unwrap(), b"substitution");
         return;
     }
     assert_eq!(fs::read(report).unwrap(), b"prepared");
@@ -114,17 +125,19 @@ fn output_failures_preserve_files_and_remove_owned_staging_entries() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("report");
     fs::write(&path, b"previous").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
-    let refused = OutputFile::open(&path, false).is_err();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(refused);
-    assert_eq!(fs::read(&path).unwrap(), b"previous");
+    if !rustix::process::geteuid().is_root() {
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+        let refused = OutputFile::open(&path, false).is_err();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(refused);
+        assert_eq!(fs::read(&path).unwrap(), b"previous");
 
-    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o500)).unwrap();
-    let refused = OutputFile::open(&root.path().join("new/report"), false).is_err();
-    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(refused);
-    assert!(!root.path().join("new").exists());
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o500)).unwrap();
+        let refused = OutputFile::open(&root.path().join("new/report"), false).is_err();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(refused);
+        assert!(!root.path().join("new").exists());
+    }
 
     let dir = super::platform::open_parent(root.path()).unwrap();
     for substitute in [false, true] {
@@ -153,4 +166,143 @@ fn output_failures_preserve_files_and_remove_owned_staging_entries() {
         }
     }
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+/// Descriptor guards reject nonregular files and missing, replaced or linked names without changing data.
+#[cfg(unix)]
+#[test]
+fn descriptor_guards_preserve_original_and_external_bytes() {
+    use std::{ffi::OsStr, os::unix::fs::symlink};
+    let root = tempfile::tempdir().unwrap();
+    let original = root.path().join("original");
+    let external = root.path().join("external");
+    fs::write(&original, b"original").unwrap();
+    fs::write(&external, b"external").unwrap();
+    let file = fs::File::open(&original).unwrap();
+    let dir = super::platform::open_parent(root.path()).unwrap();
+    assert!(super::platform::require_regular(&file).is_ok());
+    assert!(super::platform::require_regular(&dir).is_err());
+    let check = |parent: &fs::File, name: &str| {
+        super::platform::require_entry(parent, OsStr::new(name), &file, "entry changed")
+    };
+    assert!(check(&dir, "original").is_ok());
+    assert!(check(&file, "child").is_err());
+    assert!(check(&dir, "missing").is_err());
+    let entry = root.path().join("entry");
+    fs::write(&entry, b"other").unwrap();
+    assert!(check(&dir, "entry").is_err());
+    assert_eq!(fs::read(&entry).unwrap(), b"other");
+    fs::remove_file(&entry).unwrap();
+    symlink(&external, &entry).unwrap();
+    assert!(check(&dir, "entry").is_err());
+    assert!(entry.is_symlink());
+    assert_eq!(fs::read(&original).unwrap(), b"original");
+    assert_eq!(fs::read(&external).unwrap(), b"external");
+}
+
+/// Stage guards and cleanup preserve substitutions and handle entries removed by another writer.
+#[cfg(unix)]
+#[test]
+fn staging_guards_validate_real_entries_and_preserve_substitutions() {
+    use rustix::fs::{statat, AtFlags};
+    use std::{
+        ffi::OsStr,
+        os::unix::fs::{symlink, PermissionsExt},
+    };
+    for case in ["ordinary", "mode-changed", "replaced", "linked", "removed"] {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("sentinel"), b"external").unwrap();
+        let stage = root.path().join("stage");
+        let saved = root.path().join("saved");
+        fs::create_dir(&stage).unwrap();
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+        let dir = super::platform::open_parent(root.path()).unwrap();
+        let name = OsStr::new("stage");
+        let initial = statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        match case {
+            "ordinary" => {}
+            "mode-changed" => {
+                fs::set_permissions(&stage, fs::Permissions::from_mode(0o755)).unwrap()
+            }
+            "replaced" => {
+                fs::rename(&stage, &saved).unwrap();
+                fs::create_dir(&stage).unwrap();
+                fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            "linked" => {
+                fs::rename(&stage, &saved).unwrap();
+                symlink(external.path(), &stage).unwrap();
+            }
+            "removed" => fs::remove_dir(&stage).unwrap(),
+            _ => unreachable!(),
+        }
+        let opened = super::platform::open_stage(&dir, name, &initial);
+        assert_eq!(opened.is_ok(), case == "ordinary", "{case}");
+        drop(opened);
+        super::platform::cleanup_stage(&dir, name, &initial);
+        match case {
+            "replaced" => assert!(stage.is_dir() && saved.is_dir()),
+            "linked" => assert!(stage.is_symlink() && saved.is_dir()),
+            _ => assert!(!stage.exists(), "{case}"),
+        }
+        assert_eq!(
+            fs::read(external.path().join("sentinel")).unwrap(),
+            b"external"
+        );
+
+        let ordinary = root.path().join("ordinary-file");
+        fs::write(&ordinary, b"preserve").unwrap();
+        let initial = statat(&dir, OsStr::new("ordinary-file"), AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        super::platform::cleanup_stage(&dir, OsStr::new("ordinary-file"), &initial);
+        assert_eq!(fs::read(&ordinary).unwrap(), b"preserve");
+    }
+}
+
+/// Windows failures remove only unchanged temporary entries and preserve substitutions and destination directories.
+#[cfg(windows)]
+#[test]
+fn windows_failure_cleanup_preserves_foreign_entries() {
+    use std::{ffi::OsStr, io::Write};
+    for case in ["prepare", "substitute", "persist"] {
+        let root = tempfile::tempdir().unwrap();
+        let report = root.path().join("report");
+        let dir = super::platform::open_parent(root.path()).unwrap();
+        let result = super::platform::publish(&dir, OsStr::new("report"), false, |file| {
+            file.write_all(b"prepared")?;
+            if case == "persist" {
+                fs::create_dir(&report)?;
+                return Ok(());
+            }
+            if case == "substitute" {
+                let source = fs::read_dir(root.path())?.next().unwrap()?.path();
+                fs::rename(&source, root.path().join("moved"))?;
+                fs::write(source, b"substitute")?;
+            }
+            anyhow::bail!("owned preparation failure")
+        });
+        assert!(result.is_err(), "{case}");
+        let entries: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        match case {
+            "prepare" => assert!(entries.is_empty()),
+            "substitute" => {
+                assert_eq!(entries.len(), 2);
+                assert_eq!(fs::read(root.path().join("moved")).unwrap(), b"prepared");
+                let substitute = entries
+                    .iter()
+                    .find(|entry| entry.file_name().unwrap() != "moved")
+                    .unwrap();
+                assert_eq!(fs::read(substitute).unwrap(), b"substitute");
+                assert!(!report.exists());
+            }
+            "persist" => {
+                assert_eq!(entries.len(), 1);
+                assert!(report.is_dir());
+            }
+            _ => unreachable!(),
+        }
+    }
 }

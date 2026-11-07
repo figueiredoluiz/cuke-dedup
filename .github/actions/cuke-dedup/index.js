@@ -151,7 +151,8 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
   if (prepared.status !== 0) {
     let detail;
     try { detail = JSON.parse(prepared.stderr); } catch { detail = {}; }
-    throw Object.assign(new Error(detail.message || "failed to prepare JSON report directory"), { code: detail.code });
+    const fallback = prepared.stderr?.trim() || "failed to prepare JSON report directory";
+    throw Object.assign(new Error(detail?.message || fallback), { code: detail?.code });
   }
   const result = spawnSync(binary, args, { cwd, stdio: "inherit" });
   let exitCode = result.status ?? 2;

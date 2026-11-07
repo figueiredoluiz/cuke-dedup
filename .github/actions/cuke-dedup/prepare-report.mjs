@@ -4,11 +4,13 @@ import path from "node:path";
 
 /** Removes the previous regular JSON report relative to a verified working directory. */
 function prepareReport(directory) {
+  if (!directory) throw new Error("expected an absolute report directory");
   const volume = path.parse(directory).root;
   if (!volume) throw new Error("expected an absolute report directory");
   const components = directory.slice(volume.length).split(path.sep).filter(Boolean);
   process.chdir(volume);
-  // The native writer uses the physical system directories behind these Darwin volume aliases.
+  // The native writer expands these three Darwin system aliases.
+  // Other symlinked parents require their physical paths.
   if (process.platform === "darwin" && ["etc", "tmp", "var"].includes(components[0])) {
     process.chdir(`/private/${components.shift()}`);
   }
@@ -31,6 +33,8 @@ function prepareReport(directory) {
     if (entry.isDirectory()) error.code = "EISDIR";
     throw error;
   }
+  // Another writer may replace this name between inspection and removal.
+  // Unlink removes the named file or link within the verified cwd. A directory replacement makes unlink fail.
   unlinkSync(filename);
 }
 
