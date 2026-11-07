@@ -6,7 +6,6 @@ use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -406,15 +405,20 @@ pub(crate) fn apply_reference_baseline(
 
 /// Rewrites a baseline from the current active findings and suppresses those findings.
 pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
-    let previous = if baseline_path.is_file() {
-        load_baseline_for_update(baseline_path)?
+    let destination = crate::output_file::OutputFile::open(baseline_path, true)?;
+    let previous = if let Some(file) = destination.previous() {
+        load_baseline_for_update(baseline_path, file)?
     } else {
         BaselineFile::empty()
     };
     let current = build_baseline(findings);
     let added = count_added(&previous.fingerprints, &current.fingerprints);
     let removed = count_added(&current.fingerprints, &previous.fingerprints);
-    save_baseline(baseline_path, &current)?;
+    let mut text = serde_json::to_vec_pretty(&current).context("failed to serialize baseline")?;
+    text.push(b'\n');
+    destination
+        .replace(&text)
+        .with_context(|| format!("failed to write baseline {}", baseline_path.display()))?;
     let mut outcome = apply_loaded_baseline(findings, baseline_path, &current)?;
     outcome.added = added;
     outcome.removed = removed;
@@ -436,8 +440,14 @@ fn load_baseline(baseline_path: &Path) -> Result<BaselineFile> {
 
 /// Parses a baseline that is about to be replaced; accepts older schema versions and errors on a
 /// newer one.
-fn load_baseline_for_update(baseline_path: &Path) -> Result<BaselineFile> {
-    let baseline = parse_baseline(baseline_path)?;
+fn load_baseline_for_update(baseline_path: &Path, file: &std::fs::File) -> Result<BaselineFile> {
+    let text = crate::resource_limits::read_file_utf8(
+        file.try_clone()?,
+        baseline_path,
+        "baseline",
+        MAX_BASELINE_INPUT_BYTES,
+    )?;
+    let baseline = decode_baseline(&text, baseline_path)?;
     if baseline.schema_version > BASELINE_SCHEMA_VERSION {
         bail!(
             "baseline schema version `{}` is newer than supported version `{}` and cannot be replaced safely",
@@ -453,21 +463,14 @@ fn load_baseline_for_update(baseline_path: &Path) -> Result<BaselineFile> {
 /// Errors on I/O failure, input over `MAX_BASELINE_INPUT_BYTES`, invalid UTF-8, or invalid JSON.
 fn parse_baseline(baseline_path: &Path) -> Result<BaselineFile> {
     let text = read_utf8(baseline_path, "baseline", MAX_BASELINE_INPUT_BYTES)?;
-    // serde_json's default recursion limit remains enabled for untrusted baseline input.
-    serde_json::from_str(&text)
-        .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))
+    decode_baseline(&text, baseline_path)
 }
 
-/// Writes `baseline` as pretty JSON with a trailing newline, creating parent directories; the
-/// existing file is overwritten in place, not atomically.
-fn save_baseline(path: &Path, baseline: &BaselineFile) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create baseline directory {}", parent.display()))?;
-    }
-    let text = serde_json::to_string_pretty(baseline).context("failed to serialize baseline")?;
-    fs::write(path, format!("{text}\n"))
-        .with_context(|| format!("failed to write baseline {}", path.display()))
+/// Decodes one bounded semantic baseline with path context on malformed input.
+fn decode_baseline(text: &str, baseline_path: &Path) -> Result<BaselineFile> {
+    // serde_json's default recursion limit remains enabled for untrusted baseline input.
+    serde_json::from_str(text)
+        .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))
 }
 
 /// Counts active findings per `finding_fingerprint`; suppressed and `Off` findings are left out.

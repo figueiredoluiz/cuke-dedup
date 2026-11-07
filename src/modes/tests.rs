@@ -2,6 +2,7 @@ use super::*;
 use crate::model::{
     DefinitionCluster, DefinitionComparison, FindingEvidence, Rule, Severity, SourceLocation,
 };
+use std::fs;
 
 /// Initializes a temporary Git repository with a test identity and commits its fixture files.
 fn initialize_repository(root: &Path) {
@@ -376,4 +377,19 @@ fn comparison_fingerprints_are_independent_of_pair_order() {
         ),
         0
     );
+}
+
+/// Updating an oversized baseline fails before replacement and preserves its original bytes.
+#[test]
+fn oversized_baseline_update_preserves_the_original_file() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("baseline.json");
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(crate::resource_limits::MAX_BASELINE_INPUT_BYTES + 1)
+        .unwrap();
+    drop(file);
+    let before = fs::metadata(&path).unwrap().len();
+    assert!(update_baseline(&mut [], &path).is_err());
+    assert_eq!(fs::metadata(&path).unwrap().len(), before);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }

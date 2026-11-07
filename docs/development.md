@@ -112,8 +112,6 @@ Rules:
 - `src/config.rs`, `src/typescript/project_resolution.rs`, existing-ancestor walks:
   `Path::parent()` is `None` only for root-like paths; an ancestor that passed `exists()` and then
   fails `canonicalize()` vanished between the calls.
-- `src/modes.rs`, `src/reporters/shared.rs`, no-parent arms of report-path creation: a path
-  without a parent is a filesystem root.
 
 ### Arithmetic overflow guards
 

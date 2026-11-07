@@ -2821,6 +2821,13 @@
           },
           "rationale": "The moved Ruby file lists the pair in reverse order, so the primary and related sides swap, and the baseline still suppresses it.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "oversized_baseline_update_preserves_the_original_file",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Filesystem errors and publication races preserve existing data and fail operationally.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -6765,6 +6772,20 @@
           },
           "rationale": "`regression_registrations_on_one_long_line_are_located_in_linear_time` runs 2,000 Ruby and TypeScript registrations on one long line through the built binary and pins their character columns; TypeScript cases bound the run against a control with the same bytes off that line, for column lookup and directive parsing.",
           "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "regression_report_and_baseline_writes_preserve_external_targets",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Report and baseline file publication uses the same destination checks after every language has finished analysis.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "report_publication_rejects_syscall_races_and_io_failures",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Filesystem errors and publication races preserve existing data and fail operationally.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7376,6 +7397,52 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent bounded JSONL serialization and writer error propagation.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/output_file/tests.rs": {
+      "tests": [
+        {
+          "name": "replacement_stays_in_the_open_directory_and_refuses_changed_leaves",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Directory handles and replacement identity checks operate directly on filesystem entries.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "refuses_junction_before_creating_report_directory",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: The Windows filesystem refuses a junction before creating any directories for report output.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "writes_through_search_only_directories",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Output publication traverses a real parent with search permission alone.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "concurrent_staging_entry_replacement_cannot_publish_other_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Replacing a staging entry cannot make publication accept another file.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "relative_directory_handles_preserve_current_directory",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Filesystem errors and publication races preserve existing data and fail operationally.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "output_failures_preserve_files_and_remove_owned_staging_entries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Filesystem errors and publication races preserve existing data and fail operationally.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

@@ -14,6 +14,8 @@ JSON, HTML, and SARIF default to `reports/cuke-dedup/` and can be redirected wit
 Relative output paths are resolved from the analysis root, not the shell's working directory. A
 file-only run prints the generated paths to stdout.
 
+Report files and baseline updates require real parent directories and a regular or absent destination. A symlink or Windows junction in the output path causes an operational error, including a directory link that points back inside the project. Explicit output paths can still select an ordinary directory outside the project. Successful writes replace the directory entry atomically, leaving any other hard links to the previous file intact. The GitHub Action applies the same rule when clearing its previous JSON report.
+
 Each reporter runs once in first-selected order, even when selected repeatedly in configuration or CLI arguments. Terminal and JSONL both own stdout and cannot be selected together. JSONL can be combined with file reporters without contaminating the stream.
 
 The terminal report shows the tool version, leaves a blank line after each rule heading and between findings, and ends with the total number of active findings and detection time. Timing covers discovery, parsing, and analysis; `--no-metrics` omits it.

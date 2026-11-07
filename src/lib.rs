@@ -155,6 +155,7 @@ pub mod gherkin;
 mod matcher;
 pub mod model;
 pub mod modes;
+mod output_file;
 pub mod reporters;
 mod resource_limits;
 pub mod ruby;

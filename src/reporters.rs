@@ -19,8 +19,7 @@ pub use terminal::write_terminal;
 use crate::config::{unique_reporters, Config, ReporterKind};
 use crate::model::AnalysisResult;
 use anyhow::{Context, Result};
-use shared::{ensure_parent, terminal_safe};
-use std::fs;
+use shared::terminal_safe;
 use std::io::Write;
 
 /// Schema version written into JSON and embedded HTML report data.
@@ -87,33 +86,27 @@ fn write_reports_context(
             }
             ReporterKind::Json => {
                 let path = config.output_path(JSON_REPORT_FILE);
-                ensure_parent(&path)?;
-                fs::write(
-                    &path,
-                    json::render_json_context_with_metadata(context, metadata)?,
-                )
-                .with_context(|| format!("failed to write JSON report {}", path.display()))?;
+                let bytes = json::render_json_context_with_metadata(context, metadata)?;
+                crate::output_file::OutputFile::open(&path, false)?
+                    .replace(bytes.as_bytes())
+                    .with_context(|| format!("failed to write JSON report {}", path.display()))?;
                 written.push(path);
             }
             ReporterKind::Jsonl => jsonl::write_jsonl_context(context, metadata, terminal)?,
             ReporterKind::Html => {
                 let path = config.output_path(HTML_REPORT_FILE);
-                ensure_parent(&path)?;
-                fs::write(
-                    &path,
-                    html::render_html_context_with_metadata(context, metadata)?,
-                )
-                .with_context(|| format!("failed to write HTML report {}", path.display()))?;
+                let bytes = html::render_html_context_with_metadata(context, metadata)?;
+                crate::output_file::OutputFile::open(&path, false)?
+                    .replace(bytes.as_bytes())
+                    .with_context(|| format!("failed to write HTML report {}", path.display()))?;
                 written.push(path);
             }
             ReporterKind::Sarif => {
                 let path = config.output_path(SARIF_REPORT_FILE);
-                ensure_parent(&path)?;
-                fs::write(
-                    &path,
-                    sarif::render_sarif_context_with_metadata(context, metadata)?,
-                )
-                .with_context(|| format!("failed to write SARIF report {}", path.display()))?;
+                let bytes = sarif::render_sarif_context_with_metadata(context, metadata)?;
+                crate::output_file::OutputFile::open(&path, false)?
+                    .replace(bytes.as_bytes())
+                    .with_context(|| format!("failed to write SARIF report {}", path.display()))?;
                 written.push(path);
             }
         }

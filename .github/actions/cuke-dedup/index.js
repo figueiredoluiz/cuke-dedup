@@ -6,7 +6,6 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  rmSync,
   statSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -14,7 +13,7 @@ import path, { basename, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { TARGETS, targetFor } from "../../../npm/lib/targets.mjs";
 
 /** Returns gnu when the process report identifies glibc, otherwise musl, including when report access throws. */
@@ -147,7 +146,13 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
   }
   // Keep the configured report location, but never reuse a previous run's metrics.
   // Removal errors abort before analysis; directories are never removed recursively.
-  rmSync(jsonReport, { force: true });
+  const prepared = spawnSync(process.execPath, [fileURLToPath(new URL("./prepare-report.mjs", import.meta.url)), outputDirectory], { cwd, encoding: "utf8" });
+  if (prepared.error) throw prepared.error;
+  if (prepared.status !== 0) {
+    let detail;
+    try { detail = JSON.parse(prepared.stderr); } catch { detail = {}; }
+    throw Object.assign(new Error(detail.message || "failed to prepare JSON report directory"), { code: detail.code });
+  }
   const result = spawnSync(binary, args, { cwd, stdio: "inherit" });
   let exitCode = result.status ?? 2;
   if (result.error) {

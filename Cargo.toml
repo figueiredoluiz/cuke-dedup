@@ -52,6 +52,8 @@ unicode-normalization = "0.1"
 yaml_serde = "0.10"
 
 [target.'cfg(unix)'.dependencies]
+getrandom = { version = "0.4", features = ["std"] }
+rustix = { version = "1", features = ["fs", "process"] }
 # `O_NONBLOCK`, so opening an existing fingerprint destination never waits on a FIFO.
 libc = "0.2"
 
