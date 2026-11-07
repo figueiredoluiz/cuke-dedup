@@ -10,7 +10,13 @@ fn finalization_failure_discards_provisional_definitions_and_reports_incompleten
     std::fs::write(root.path().join("steps.ts"), "import { Given, Then } from '@cucumber/cucumber'; Given('same', () => work()); Then('same', () => work());").unwrap();
     let files = discovery::discover(&config).unwrap();
     let mut diagnostics = discovery_diagnostics(&config, &files, &None);
-    let mut corpus = extract_corpus(&config, &files, &None, &mut diagnostics);
+    let mut corpus = extract_corpus(
+        &config,
+        &files,
+        &None,
+        &mut diagnostics,
+        &mut gherkin::FeatureStepBudget::default(),
+    );
     assert_eq!(corpus.definitions.len(), 2);
     let before = corpus.definitions.clone();
     collect_finalization(Ok(Default::default()), &mut corpus, &mut diagnostics);
@@ -285,7 +291,13 @@ fn extracted_parameter_types_are_attributed_to_the_extracting_adapter() {
         Config::load_with_adapters(root.path(), ConfigOverrides::default(), registry).unwrap();
     let files = discovery::discover(&config).unwrap();
     let mut diagnostics = discovery_diagnostics(&config, &files, &None);
-    let corpus = extract_corpus(&config, &files, &None, &mut diagnostics);
+    let corpus = extract_corpus(
+        &config,
+        &files,
+        &None,
+        &mut diagnostics,
+        &mut gherkin::FeatureStepBudget::default(),
+    );
     let domains: Vec<_> = corpus
         .parameter_types
         .iter()

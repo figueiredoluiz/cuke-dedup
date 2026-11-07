@@ -1,5 +1,193 @@
 use super::*;
 
+/// Checks exact quotas, one-over refusals and rollback across every concrete-step source.
+#[test]
+fn feature_step_admission_boundaries_preserve_text_and_locations() {
+    let path = Path::new("日本.feature");
+    let headers = (0..512)
+        .map(|i| format!("h{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let wide = format!(
+        "Feature: wide\n Scenario Outline: rows\n  Given <h0>/<h511>/<unknown>\n  Then <h255>\n Examples:\n | {headers} |\n | {} |\n | {} |\n",
+        vec!["v"; 512].join(" | "),
+        vec!["z"; 512].join(" | ")
+    );
+    for (format, source, expected) in [
+        (FeatureFormat::Gherkin, wide.as_str(), vec!["v/v/<unknown>", "z/z/<unknown>", "v", "z"]),
+        (FeatureFormat::Gherkin, "Feature: outline\n Scenario Outline: rows\n  Given <v>/<v>/<unknown>\n Examples:\n | v | v |\n | 界\\nZ | ignored |\n | <v> | ignored |\n", vec!["界\nZ/界\nZ/<unknown>", "<v>/<v>/<unknown>"]),
+        (FeatureFormat::GherkinMarkdown, "# Feature: outline\n## Scenario Outline: rows\n* Given path <v>\n* Then copy <v>\n### Examples:\n  | v |\n  | 界\\nZ |\n", vec!["path 界\nZ", "copy 界\nZ"]),
+        (FeatureFormat::Gherkin, "Feature: sections\n Scenario Outline: rows\n  Given <v>\n Examples: first\n | v |\n | first |\n Examples: second\n | other |\n | second |\n", vec!["first", "<v>"]),
+        (FeatureFormat::Gherkin, "Feature: ordinary\n Scenario: ordinary\n  Given <literal>\n", vec!["<literal>"]),
+        (FeatureFormat::Gherkin, "Feature: structure\n Background: feature\n  Given outer\n Scenario: first\n  Then first\n Rule: nested\n  Background: rule\n   Given inner\n  Scenario: last\n   Then last\n", vec!["outer", "first", "inner", "last"]),
+        (FeatureFormat::Gherkin, "Feature: no table\n Scenario Outline: fallback\n  Given <v>\n Examples:\n", vec!["<v>"]),
+        (FeatureFormat::Gherkin, "Feature: empty\n Scenario Outline: fallback\n  Given <v>\n Examples:\n | v |\n", vec!["<v>"]),
+    ] {
+        let baseline = extract_with_format(source, path, format).unwrap();
+        assert_eq!(baseline.iter().map(|s|s.text.as_str()).collect::<Vec<_>>(), expected, "{format:?}");
+        let payload = retained_payload(&baseline);
+        for (count, bytes, admitted) in [
+            (baseline.len(), payload, true),
+            (baseline.len()-1, payload, false),
+            (baseline.len(), payload-1, false),
+        ] {
+            let mut budget = FeatureStepBudget {steps: WorkBudget::new(count), bytes: WorkBudget::new(bytes), ..FeatureStepBudget::default()};
+            let result = extract_with_budget(source, path, format, &mut budget);
+            if admitted {
+                assert_eq!(result.unwrap(), baseline);
+                assert_eq!(budget.steps.spent(), baseline.len());
+                assert_eq!(budget.bytes.spent(), payload);
+            } else {
+                assert!(result.is_err());
+                assert_eq!((budget.steps.spent(),budget.bytes.spent()), (0,0));
+            }
+        }
+    }
+    let mut empty = FeatureStepBudget {
+        steps: WorkBudget::new(0),
+        bytes: WorkBudget::new(0),
+        scan: WorkBudget::new(0),
+    };
+    assert!(
+        extract_with_budget("Feature: empty\n", path, FeatureFormat::Gherkin, &mut empty)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(extract_with_budget("invalid", path, FeatureFormat::Gherkin, &mut empty).is_err());
+    assert_eq!((empty.steps.spent(), empty.bytes.spent()), (0, 0));
+    let source = "Feature: shared\n Scenario: rows\n  Given one\n  Then two\n";
+    let payload = retained_payload(&extract(source, path).unwrap());
+    let mut byte_budget = FeatureStepBudget {
+        steps: WorkBudget::new(10),
+        bytes: WorkBudget::new(2 * payload - 1),
+        ..FeatureStepBudget::default()
+    };
+    extract_with_budget(source, path, FeatureFormat::Gherkin, &mut byte_budget).unwrap();
+    assert!(extract_with_budget(source, path, FeatureFormat::Gherkin, &mut byte_budget).is_err());
+    assert_eq!(
+        (byte_budget.steps.spent(), byte_budget.bytes.spent()),
+        (2, payload)
+    );
+    let mut budget = FeatureStepBudget {
+        steps: WorkBudget::new(3),
+        bytes: WorkBudget::new(1024),
+        ..FeatureStepBudget::default()
+    };
+    assert_eq!(
+        extract_with_budget(source, path, FeatureFormat::Gherkin, &mut budget)
+            .unwrap()
+            .len(),
+        2
+    );
+    let before = budget.bytes.spent();
+    assert!(extract_with_budget(source, path, FeatureFormat::Gherkin, &mut budget).is_err());
+    assert_eq!((budget.steps.spent(), budget.bytes.spent()), (2, before));
+    let small = "Feature: shared\n Scenario: last\n  Given last\n";
+    assert_eq!(
+        extract_with_budget(small, path, FeatureFormat::Gherkin, &mut budget)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(budget.steps.spent(), 3);
+    assert!(budget.admit_bytes(usize::MAX).is_err());
+}
+
+/// Scan admission keeps completed work charged through scan, count and payload refusals.
+#[test]
+fn template_scan_admission_preserves_work_and_fitting_outcomes() {
+    let usage = |budget: &FeatureStepBudget| {
+        (
+            budget.steps.spent(),
+            budget.bytes.spent(),
+            budget.scan.spent(),
+        )
+    };
+    let path = Path::new("scan.feature");
+    let source =
+        "Feature: scan\n Scenario Outline: rows\n  Given <v>/<v>\n Examples:\n | v |\n | |\n | |\n";
+    let baseline = extract(source, path).unwrap();
+    assert_eq!(
+        baseline.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
+        ["/", "/"]
+    );
+    let payload = retained_payload(&baseline);
+    for limit in [15, 14, 13] {
+        let mut budget = FeatureStepBudget {
+            scan: WorkBudget::new(limit),
+            ..FeatureStepBudget::default()
+        };
+        let result = extract_with_budget(source, path, FeatureFormat::Gherkin, &mut budget);
+        if limit >= 14 {
+            assert_eq!(result.unwrap(), baseline);
+            assert_eq!(budget.scan.spent(), 14);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(usage(&budget), (0, 0, 7));
+            assert!(
+                extract_with_budget(source, path, FeatureFormat::Gherkin, &mut budget).is_err()
+            );
+            assert_eq!(budget.scan.spent(), 7);
+            assert!(
+                extract_with_budget("invalid", path, FeatureFormat::Gherkin, &mut budget).is_err()
+            );
+            assert_eq!(budget.scan.spent(), 7);
+            let fitting =
+                "Feature: small\n Scenario Outline: row\n  Given <v>\n Examples:\n | v |\n | x |\n";
+            let steps =
+                extract_with_budget(fitting, path, FeatureFormat::Gherkin, &mut budget).unwrap();
+            assert_eq!(steps.len(), 1);
+            assert_eq!(steps[0].text, "x");
+            assert_eq!(budget.scan.spent(), 10);
+        }
+    }
+    for (count, bytes) in [(1, 1024), (10, payload / 2)] {
+        let mut budget = FeatureStepBudget {
+            steps: WorkBudget::new(count),
+            bytes: WorkBudget::new(bytes),
+            ..FeatureStepBudget::default()
+        };
+        assert!(extract_with_budget(source, path, FeatureFormat::Gherkin, &mut budget).is_err());
+        assert_eq!(usage(&budget), (0, 0, 7));
+    }
+    for (literal, expected) in [
+        (
+            "Feature: literal\n Background: setup\n  Given base\n Scenario: row\n  Given <v>\n",
+            vec!["base", "<v>"],
+        ),
+        (
+            "Feature: fallback\n Scenario Outline: row\n  Given <v>\n Examples:\n | v |\n",
+            vec!["<v>"],
+        ),
+    ] {
+        let mut budget = FeatureStepBudget {
+            scan: WorkBudget::new(0),
+            ..FeatureStepBudget::default()
+        };
+        let steps =
+            extract_with_budget(literal, path, FeatureFormat::Gherkin, &mut budget).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(budget.scan.spent(), 0);
+    }
+}
+
+/// Shrinking substitutions reserve the admitted output size rather than the original template size.
+#[test]
+fn shrinking_outline_substitutions_do_not_retain_template_capacity() {
+    for suffix in ["", "keep"] {
+        let source=format!("Feature: shrinking\n Scenario Outline: rows\n  Given {}{suffix}\n Examples:\n | v |\n | |\n | |\n", "<v>".repeat(8_192));
+        let steps = extract(&source, Path::new("shrinking.feature")).unwrap();
+        assert_eq!(steps.len(), 2);
+        for step in steps {
+            assert_eq!(step.text, suffix);
+            assert_eq!(step.text.capacity(), suffix.len());
+        }
+    }
+}
+
 /// Checks outline table escapes preserve expanded text and source positions across plain/Markdown formats and newline styles.
 #[test]
 fn table_escape_matrix_preserves_outline_text_and_source_positions() {
@@ -999,4 +1187,26 @@ fn markdown_step_end_columns_follow_the_converted_line() {
             ("When".to_owned(), 6, 3, 17),
         ]
     );
+}
+
+/// Counts actual retained text, keywords and owned path bytes for quota-boundary assertions.
+fn retained_payload(steps: &[FeatureStep]) -> usize {
+    steps
+        .iter()
+        .map(|s| {
+            s.text.len() + s.keyword.len() + s.location.path.as_os_str().as_encoded_bytes().len()
+        })
+        .sum()
+}
+
+/// Reassembles the exact text traversal used by admission and materialization.
+fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> String {
+    let mut output = String::new();
+    let values = OutlineValues::new(values.clone());
+    visit_step_text(text, Some(&values), |part| {
+        output.push_str(part);
+        Ok(())
+    })
+    .unwrap();
+    output
 }

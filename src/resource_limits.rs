@@ -8,6 +8,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub(crate) const MAX_PROJECT_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_CONCRETE_FEATURE_STEPS: usize = 250_000;
+pub(crate) const MAX_FEATURE_STEP_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_FEATURE_STEP_SCAN_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_CONFIG_INPUT_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_SUPPRESSION_REASON_CHARS: usize = 512;
 pub(crate) const MAX_BASELINE_INPUT_BYTES: u64 = 8 * 1024 * 1024;

@@ -164,6 +164,9 @@ fn pass_budget_latches_exhaustion_across_passes() {
 #[test]
 fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_PROJECT_INPUT_BYTES, 8 * 1024 * 1024);
+    assert_eq!(MAX_CONCRETE_FEATURE_STEPS, 250_000);
+    assert_eq!(MAX_FEATURE_STEP_PAYLOAD_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_FEATURE_STEP_SCAN_BYTES, 64 * 1024 * 1024);
     assert_eq!(MAX_CONFIG_INPUT_BYTES, 1024 * 1024);
     assert_eq!(MAX_SUPPRESSION_REASON_CHARS, 512);
     assert_eq!(MAX_BASELINE_INPUT_BYTES, 8 * 1024 * 1024);

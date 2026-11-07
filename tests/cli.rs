@@ -5,6 +5,9 @@ use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
+#[path = "common/feature_expansion.rs"]
+mod feature_fixtures;
+
 /// Git exports `GIT_DIR`, `GIT_INDEX_FILE`, and friends to the processes it spawns. When this
 /// suite runs from a Git hook, those variables outrank the `current_dir` and `-C` of a nested
 /// invocation, so a fixture's `git add` would stage temporary paths into the real repository's
@@ -41,6 +44,37 @@ fn init_repository(root: &Path) {
             .status()
             .unwrap()
             .success());
+    }
+}
+
+/// Current and historical feature corpora share one invocation's concrete-step admission budget.
+#[test]
+fn reference_baselines_share_the_feature_expansion_budget() {
+    let count = format!(
+        "Feature: shared\n Scenario Outline: rows\n{} Examples:\n | v |\n{}",
+        "  Given noise <v>\n".repeat(500),
+        " | x |\n".repeat(251)
+    );
+    for feature in [count, feature_fixtures::shrinking_outline(513)] {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "steps.ts", "Given('noise x', () => work());\n");
+        write(root.path(), "input.feature", &feature);
+        init_repository(root.path());
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .current_dir(root.path())
+            .timeout(std::time::Duration::from_secs(30))
+            .args([".", "--baseline-from-ref", "HEAD", "--reporters", "json"]);
+        command
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("feature expansion"));
+        write(
+            root.path(),
+            "input.feature",
+            "Feature: fitting\n Scenario: retained\n  Given noise x\n",
+        );
+        command.assert().success();
     }
 }
 
