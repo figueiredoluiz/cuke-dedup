@@ -226,6 +226,16 @@ impl Error for InputLimitExceeded {}
 pub(crate) fn read_utf8(path: &Path, kind: &'static str, limit: u64) -> Result<String> {
     let file =
         File::open(path).with_context(|| format!("failed to read {kind} {}", path.display()))?;
+    read_file_utf8(file, path, kind, limit)
+}
+
+/// Reads bounded UTF-8 from an already opened file, including files bound to a verified directory.
+pub(crate) fn read_file_utf8(
+    file: File,
+    path: &Path,
+    kind: &'static str,
+    limit: u64,
+) -> Result<String> {
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect {kind} {}", path.display()))?;

@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix, resolve, win32 } from "node:path";
 import test from "node:test";
@@ -367,6 +369,29 @@ if (process.argv.includes("--print-config")) {
   assert.equal(await readFile(sentinel, "utf8"), "preserve this directory");
 });
 
+/** A failed native invocation must leave an external report behind a checkout directory link intact. */
+test("action preserves external reports through linked parents", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-action-output-link-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "project");
+  const outside = join(directory, "external");
+  await mkdir(root);
+  await mkdir(outside);
+  await symlink(outside, join(root, "reports"), "dir");
+  const sentinel = join(outside, "cuke-dedup.json");
+  await writeFile(sentinel, "preserve external report");
+  const binary = join(directory, "analyzer.cjs");
+  await writeFile(binary, `#!/usr/bin/env node
+if (process.argv.includes("--print-config")) console.log(JSON.stringify({ root: process.cwd(), output: "reports" }));
+else process.exitCode = 2;
+`);
+  await chmod(binary, 0o755);
+  await assert.rejects(runAction({ cwd: root, env: {
+    CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: join(directory, "github-output"),
+  } }), /real directory/);
+  assert.equal(await readFile(sentinel, "utf8"), "preserve external report");
+});
+
 /** Verify baseline aliases are rejected without deleting input or starting analysis, while distinct paths still publish metrics. */
 test("action protects baseline inputs from report cleanup", { skip: process.platform === "win32" }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-action-baseline-"));
@@ -445,15 +470,14 @@ if (process.argv.includes("--print-config")) {
   await writeFile(sentinel, "unrelated input");
   await writeFile(json, baseline);
   await writeFile(githubOutput, "");
-  assert.equal(await runAction({ cwd: directory, env: {
+  const before = await readFile(json, "utf8");
+  await assert.rejects(runAction({ cwd: directory, env: {
     CUKE_DEDUP_BINARY: binary, GITHUB_OUTPUT: githubOutput, INPUT_PATH: "analysis",
     INPUT_OUTPUT: "traversal-alias/..", INPUT_BASELINE: separate,
-  } }), 0);
+  } }), /real directory/);
   assert.equal(await readFile(sentinel, "utf8"), "unrelated input");
-  const emitted = await readFile(githubOutput, "utf8");
-  assert.match(emitted, /duplicate-rate<<[^\n]+\n25\n/);
-  const reportPath = emitted.match(/json-report<<[^\n]+\n([^\n]+)\n/)[1];
-  assert.equal(await readFile(reportPath, "utf8"), await readFile(json, "utf8"));
+  assert.equal(await readFile(json, "utf8"), before);
+  assert.equal(await readFile(githubOutput, "utf8"), "");
 });
 
 /** Verify valid archive checksums pass while malformed digests and mismatched bytes fail. */
@@ -593,4 +617,63 @@ test("action does not retry destination write failures", async (t) => {
     assert.fail("write failures must not trigger a retry");
   }), (error) => ["EISDIR", "EPERM", "EACCES"].includes(error.code));
   assert.equal(fetchMock.mock.callCount(), 1);
+});
+
+/** A real directory may contain an old report, but cleanup must refuse a Windows junction. */
+test("report preparation refuses Windows junctions", { skip: process.platform !== "win32" }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "report-junction-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = join(root, "external");
+  await mkdir(target);
+  await writeFile(join(target, "cuke-dedup.json"), "old");
+  const alias = join(root, "reports");
+  await symlink(target, alias, "junction");
+  const helper = fileURLToPath(new URL("../../.github/actions/cuke-dedup/prepare-report.mjs", import.meta.url));
+  const run = spawnSync(process.execPath, [helper, alias], { encoding: "utf8" });
+  assert.equal(run.status, 2, run.stderr);
+  assert.equal(await readFile(join(target, "cuke-dedup.json"), "utf8"), "old");
+  const regular = spawnSync(process.execPath, [helper, target], { encoding: "utf8" });
+  assert.equal(regular.status, 0, regular.stderr);
+  assert.equal(existsSync(join(target, "cuke-dedup.json")), false);
+});
+
+/** Missing or relative helper arguments fail with an intentional diagnostic. */
+test("report preparation validates its directory argument", () => {
+  const helper = fileURLToPath(new URL("../../.github/actions/cuke-dedup/prepare-report.mjs", import.meta.url));
+  for (const args of [[], [""], ["relative"]]) {
+    const run = spawnSync(process.execPath, [helper, ...args], { encoding: "utf8" });
+    assert.equal(run.status, 2, run.stderr);
+    assert.equal(JSON.parse(run.stderr).message, "expected an absolute report directory");
+  }
+});
+
+/** A helper startup error retains raw stderr, while structured errors preserve their code. */
+test("action retains report preparation diagnostics", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "action-preparation-error-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const action = join(directory, ".github/actions/cuke-dedup");
+  const targets = join(directory, "npm/lib");
+  await mkdir(action, { recursive: true });
+  await mkdir(targets, { recursive: true });
+  await copyFile(new URL("../../.github/actions/cuke-dedup/index.js", import.meta.url), join(action, "index.mjs"));
+  await copyFile(new URL("../lib/targets.mjs", import.meta.url), join(targets, "targets.mjs"));
+  await copyFile(new URL("../prebuilt-targets.json", import.meta.url), join(directory, "npm/prebuilt-targets.json"));
+  const binary = join(directory, "analyzer.cjs");
+  await writeFile(binary, `#!/usr/bin/env node
+if (process.argv.includes("--print-config")) console.log(JSON.stringify({root: process.cwd(), output:"reports"}));
+else process.exitCode = 2;
+`);
+  await chmod(binary, 0o755);
+  const isolated = await import(pathToFileURL(join(action, "index.mjs")).href);
+  for (const [stderr, message, code] of [
+    ['{"message":"owned diagnostic","code":"EACCES"}', "owned diagnostic", "EACCES"],
+    ["  helper startup failed\n", "helper startup failed", undefined],
+    ["", "failed to prepare JSON report directory", undefined],
+    ["null", "null", undefined],
+  ]) {
+    await writeFile(join(action, "prepare-report.mjs"),
+      `process.stderr.write(${JSON.stringify(stderr)}); process.exitCode = 2;`);
+    await assert.rejects(isolated.runAction({ cwd: directory, env: { CUKE_DEDUP_BINARY: binary } }),
+      (error) => error.message === message && error.code === code);
+  }
 });

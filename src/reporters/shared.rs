@@ -7,9 +7,8 @@ use crate::model::{
 use crate::resource_limits::{
     sample_text, LimitedWriter, MAX_BUFFERED_REPORT_BYTES, MAX_REPORT_FIELD_BYTES,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
-use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -289,15 +288,6 @@ pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> Report
 pub(super) fn display_location(location: &SourceLocation, root: &Path) -> String {
     let location = convert_location(location, root);
     format!("{}:{}:{}", location.path, location.line, location.column)
-}
-
-/// Creates the parent directories of `path`; does nothing when `path` has no parent.
-pub(super) fn ensure_parent(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create report directory {}", parent.display()))?;
-    }
-    Ok(())
 }
 
 /// Formats `count` and `singular`, appending `s` unless `count` is 1.
