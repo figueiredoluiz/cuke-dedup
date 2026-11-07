@@ -51,6 +51,17 @@ pub enum ReporterKind {
     Sarif,
 }
 
+/// Keeps each of the finite reporter formats once, in first-selected order.
+pub(crate) fn unique_reporters(reporters: &[ReporterKind]) -> Vec<ReporterKind> {
+    let mut unique = Vec::new();
+    for reporter in reporters {
+        if !unique.contains(reporter) {
+            unique.push(*reporter);
+        }
+    }
+    unique
+}
+
 impl FromStr for ReporterKind {
     type Err = String;
 
@@ -440,6 +451,7 @@ impl Config {
         if cli_replaces_features {
             config.feature_pattern_origin = "--features".to_owned();
         }
+        config.reporters = unique_reporters(&config.reporters);
         config.validate()?;
         Ok(config)
     }

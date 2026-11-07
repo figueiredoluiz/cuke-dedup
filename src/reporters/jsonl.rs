@@ -4,11 +4,13 @@ use super::{
 };
 use crate::analysis::AnalysisCensus;
 use crate::model::{Finding, Rule, Severity};
+use crate::resource_limits::{LimitedWriter, MAX_BUFFERED_REPORT_BYTES};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::{BufWriter, Write};
 
 pub(super) const JSONL_TEXT_LIMIT_CHARS: usize = 2_000;
+const MAX_JSONL_FINDINGS: usize = 10_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,33 +97,43 @@ struct JsonlSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     analysis: Option<AnalysisCensus>,
     record_count: usize,
+    findings_truncated: usize,
     truncated: bool,
 }
 
-/// Renders one compact JSON object per finding followed by one summary object.
-///
-/// Records are newline-delimited and the returned string ends with a newline, making it
-/// suitable for streaming consumers. Long free-text evidence is capped and named in each
-/// finding's `truncatedFields` array. Unlike buffered reporters, JSONL retains every finding.
+/// Renders at most 10,000 finding records and a final summary within 16 MiB, including newlines.
+/// Long free-text evidence is capped and named in each finding's `truncatedFields`; the summary counts omitted findings while preserving full-analysis totals.
 pub fn render_jsonl(context: &ReportContext<'_>) -> Result<String> {
-    render_jsonl_context(context)
+    let mut output = Vec::new();
+    write_jsonl_context(context, None, &mut output)?;
+    Ok(String::from_utf8(output)?)
 }
 
-/// Streams one record per finding, active or not, then a summary record to `writer` through a
-/// buffer; the summary carries corpus and analysis censuses when `metadata` is given.
+/// Streams bounded finding records in input order and a complete summary, optionally with CLI censuses.
 pub(super) fn write_jsonl_context(
     context: &ReportContext<'_>,
     metadata: Option<&CliReportMetadata<'_>>,
     writer: &mut dyn Write,
 ) -> Result<()> {
-    let mut writer = BufWriter::new(writer);
-    for finding in &context.result.findings {
-        let bytes = serde_json::to_vec(&jsonl_finding(finding, context))
-            .context("failed to serialize JSONL finding")?;
-        writer.write_all(&bytes)?;
-        writer.write_all(b"\n")?;
-    }
-    let summary = JsonlSummary {
+    write_jsonl_with_limits(
+        context,
+        metadata,
+        writer,
+        MAX_JSONL_FINDINGS,
+        MAX_BUFFERED_REPORT_BYTES,
+    )
+}
+
+/// Reserves the largest possible summary first, skips non-fitting records, and enforces both ceilings.
+pub(super) fn write_jsonl_with_limits(
+    context: &ReportContext<'_>,
+    metadata: Option<&CliReportMetadata<'_>>,
+    writer: &mut dyn Write,
+    max_findings: usize,
+    max_bytes: usize,
+) -> Result<()> {
+    let total = context.result.findings.len();
+    let mut summary = JsonlSummary {
         schema_version: JSONL_SCHEMA_VERSION,
         record_type: "summary",
         tool_version: context.tool_version,
@@ -129,41 +141,66 @@ pub(super) fn write_jsonl_context(
         metrics: context.metrics,
         corpus: metadata.map(|metadata| metadata.corpus.clone()),
         analysis: metadata.map(|metadata| metadata.analysis.clone()),
-        record_count: context.result.findings.len() + 1,
+        record_count: total + 1,
+        findings_truncated: total,
         truncated: false,
     };
-    let bytes = serde_json::to_vec(&summary).context("failed to serialize JSONL summary")?;
-    writer.write_all(&bytes)?;
-    writer.write_all(b"\n")?;
+    // Counts can only lose digits, and `false` is longer than `true`.
+    let reserved = jsonl_record(&summary, max_bytes)
+        .context("JSONL summary exceeds the report byte limit")?
+        .len();
+    let mut writer = LimitedWriter {
+        inner: BufWriter::new(writer),
+        remaining: max_bytes,
+    };
+    let mut emitted = 0;
+    for finding in &context.result.findings {
+        if emitted == max_findings {
+            break;
+        }
+        let Some(bytes) = fitting_jsonl_record(
+            &jsonl_finding(finding, context),
+            writer.remaining - reserved,
+        )
+        .context("failed to serialize JSONL finding")?
+        else {
+            continue;
+        };
+        writer.write_all(&bytes)?;
+        emitted += 1;
+    }
+    summary.record_count = emitted + 1;
+    summary.findings_truncated = total - emitted;
+    summary.truncated = emitted < total;
+    writer.write_all(
+        &jsonl_record(&summary, reserved).context("failed to serialize JSONL summary")?,
+    )?;
     writer.flush()?;
     Ok(())
 }
 
-/// Renders the finding and summary records into a string; the summary has no corpus or analysis
-/// census.
-fn render_jsonl_context(context: &ReportContext<'_>) -> Result<String> {
-    let mut output = String::new();
-    for finding in &context.result.findings {
-        let record = jsonl_finding(finding, context);
-        output.push_str(
-            &serde_json::to_string(&record).context("failed to serialize JSONL finding")?,
-        );
-        output.push('\n');
+/// Omits only capacity failures from the owned record buffer, preserving serialization errors.
+pub(super) fn fitting_jsonl_record(
+    record: &impl Serialize,
+    budget: usize,
+) -> serde_json::Result<Option<Vec<u8>>> {
+    match jsonl_record(record, budget) {
+        Ok(bytes) => Ok(Some(bytes)),
+        // The owned Vec writer can fail only when the record exceeds its remaining budget.
+        Err(error) if error.is_io() => Ok(None),
+        Err(error) => Err(error),
     }
-    let summary = JsonlSummary {
-        schema_version: JSONL_SCHEMA_VERSION,
-        record_type: "summary",
-        tool_version: context.tool_version,
-        summary: &context.summary,
-        metrics: context.metrics,
-        corpus: None,
-        analysis: None,
-        record_count: context.result.findings.len() + 1,
-        truncated: false,
+}
+
+/// Serializes a complete newline-terminated record within its byte budget.
+fn jsonl_record(record: &impl Serialize, budget: usize) -> serde_json::Result<Vec<u8>> {
+    let mut output = LimitedWriter {
+        inner: Vec::new(),
+        remaining: budget,
     };
-    output.push_str(&serde_json::to_string(&summary).context("failed to serialize JSONL summary")?);
-    output.push('\n');
-    Ok(output)
+    serde_json::to_writer(&mut output, record)?;
+    output.write_all(b"\n").map_err(serde_json::Error::io)?;
+    Ok(output.inner)
 }
 
 /// Converts a finding to a JSONL record with free text capped by `bounded_jsonl_text`.
