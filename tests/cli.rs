@@ -51,6 +51,109 @@ fn write(root: &Path, relative: &str, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
+/// Exercises report and baseline writes against external targets, including links in missing directory trees.
+#[cfg(unix)]
+#[test]
+fn regression_report_and_baseline_writes_preserve_external_targets() {
+    use std::os::unix::fs::symlink;
+
+    let mut failures = Vec::new();
+    for format in ["json", "html", "sarif", "baseline"] {
+        for case in [
+            "regular", "hardlink", "leaf", "dangling", "parent", "internal", "external", "fifo",
+        ] {
+            let sandbox = tempfile::tempdir().unwrap();
+            let root = sandbox.path().join("project");
+            let external = sandbox.path().join("external");
+            fs::create_dir(&external).unwrap();
+            write(&root, "steps.ts", "Given('owned', () => visit());");
+            write(
+                &root,
+                "sample.feature",
+                "Feature: Owned\n  Scenario: Owned\n    Given owned\n",
+            );
+            write(
+                &root,
+                ".cuke-dedup.json",
+                r#"{"definitions":["steps.ts"],"features":["sample.feature"]}"#,
+            );
+            let name = if format == "baseline" {
+                "baseline.json".to_owned()
+            } else {
+                format!("cuke-dedup.{format}")
+            };
+            let directory = if case == "external" {
+                "../external/chosen"
+            } else {
+                "reports/cuke-dedup"
+            };
+            let relative = Path::new(directory).join(&name);
+            let output = root.join(&relative);
+            let sentinel = r#"{"schemaVersion":3,"fingerprints":{}}"#;
+            let victim = external.join("sentinel");
+            if case != "dangling" {
+                fs::write(&victim, sentinel).unwrap();
+            }
+            if case == "parent" {
+                symlink(&external, root.join("reports")).unwrap();
+            } else if case == "internal" {
+                fs::create_dir(root.join("internal")).unwrap();
+                symlink(root.join("internal"), root.join("reports")).unwrap();
+            } else {
+                fs::create_dir_all(output.parent().unwrap()).unwrap();
+                if case == "fifo" {
+                    assert!(ProcessCommand::new("mkfifo")
+                        .arg(&output)
+                        .status()
+                        .unwrap()
+                        .success());
+                } else if case == "hardlink" {
+                    fs::hard_link(&victim, &output).unwrap();
+                } else if matches!(case, "regular" | "external") {
+                    fs::write(&output, sentinel).unwrap();
+                } else {
+                    symlink(&victim, &output).unwrap();
+                }
+            }
+            let mut cmd = Command::cargo_bin("cuke-dedup").unwrap();
+            cmd.timeout(std::time::Duration::from_secs(10))
+                .arg(&root)
+                .arg("--no-metrics");
+            if format == "baseline" {
+                cmd.args(["--reporters", "terminal", "--update-baseline", "--baseline"])
+                    .arg(&relative);
+            } else {
+                cmd.args(["--reporters", format]);
+                if case == "external" {
+                    cmd.args(["--output", directory]);
+                }
+            }
+            let status = cmd.output().unwrap().status.code();
+            let valid = if matches!(case, "regular" | "hardlink" | "external") {
+                status == Some(0)
+                    && fs::read_to_string(&output).unwrap() != sentinel
+                    && fs::read_to_string(&victim).unwrap() == sentinel
+            } else {
+                status == Some(2)
+                    && !external.join("cuke-dedup").exists()
+                    && !root.join("internal/cuke-dedup").exists()
+                    && if case == "dangling" {
+                        !victim.exists()
+                    } else {
+                        fs::read_to_string(&victim).unwrap() == sentinel
+                    }
+            };
+            if !valid {
+                failures.push((format, case, status));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "unexpected output effects: {failures:?}"
+    );
+}
+
 /// Checks historical comparison uses current policy, gates new findings, and preserves checkout and Git state.
 #[test]
 fn baseline_from_ref_compares_history_without_mutating_the_checkout() {
@@ -8666,6 +8769,113 @@ fn regression_registrations_on_one_long_line_are_located_in_linear_time() {
                 shared_time < control_time.map(|time| time * 3 + std::time::Duration::from_secs(1)),
                 "{file}: shared line {shared_time:?}, control {control_time:?}"
             );
+        }
+    }
+}
+
+/// Real syscall-boundary faults must fail closed while a non-faulted report still succeeds.
+#[cfg(target_os = "macos")]
+#[test]
+fn report_publication_rejects_syscall_races_and_io_failures() {
+    let library = tempfile::tempdir().unwrap();
+    let dylib = library.path().join("output-faults.dylib");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/output_io_faults.c");
+    let compiler = Command::new("cc")
+        .timeout(std::time::Duration::from_secs(30))
+        .args(["-Wall", "-Werror", "-dynamiclib"])
+        .arg(source)
+        .arg("-o")
+        .arg(&dylib)
+        .output()
+        .unwrap();
+    assert!(
+        compiler.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiler.stderr)
+    );
+    for fault in [
+        "normal",
+        "fixed-mode",
+        "stage-open-error",
+        "stage-open-remove",
+        "stage-open-swap",
+        "stage-identity-swap",
+        "stage-inspect-error",
+        "stage-metadata-error",
+        "stage-permissions",
+        "leaf-type",
+        "publish-link",
+        "publish-remove",
+        "stat-error",
+    ] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("project");
+        write(&root, "steps.ts", "Given('owned', () => visit());");
+        write(&root, ".cuke-dedup.json", r#"{"definitions":["steps.ts"]}"#);
+        let external = sandbox.path().join("external");
+        fs::write(&external, b"external sentinel").unwrap();
+        let baseline = root.join("baseline.json");
+        let baseline_bytes = r#"{"schemaVersion":3,"fingerprints":{}}"#;
+        fs::write(&baseline, baseline_bytes).unwrap();
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .timeout(std::time::Duration::from_secs(15))
+            .arg(&root)
+            .args(["--no-metrics", "--reporters", "json"])
+            .env("DYLD_INSERT_LIBRARIES", &dylib)
+            .env("OUTPUT_FAULT", fault)
+            .env("OUTPUT_SENTINEL", &external);
+        if fault == "leaf-type" {
+            command.args(["--baseline", "baseline.json", "--update-baseline"]);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(if ["normal", "fixed-mode"].contains(&fault) {
+                0
+            } else {
+                2
+            }),
+            "{fault}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read(&external).unwrap(),
+            b"external sentinel",
+            "{fault}"
+        );
+        if ["normal", "fixed-mode"].contains(&fault) {
+            let report = root.join("reports/cuke-dedup/cuke-dedup.json");
+            assert!(!report.is_symlink());
+            let json: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+            assert_eq!(json["schemaVersion"], "3");
+        }
+        if fault == "leaf-type" {
+            assert_eq!(
+                fs::read_to_string(root.join("saved-baseline")).unwrap(),
+                baseline_bytes
+            );
+        }
+        let directory = root.join("reports/cuke-dedup");
+        if [
+            "stage-open-error",
+            "stage-open-remove",
+            "stage-inspect-error",
+            "stage-metadata-error",
+            "stage-permissions",
+        ]
+        .contains(&fault)
+        {
+            assert_eq!(fs::read_dir(&directory).unwrap().count(), 0, "{fault}");
+        }
+        if ["stage-open-swap", "stage-identity-swap"].contains(&fault) {
+            assert!(directory.join("saved-stage").is_dir());
+            let staged: Vec<_> = fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            assert_eq!(staged.len(), 2);
+            assert!(staged.iter().all(|path| path.is_dir()));
         }
     }
 }

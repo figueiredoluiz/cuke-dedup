@@ -880,7 +880,7 @@ fn join_with_separator(parts: &[&std::ffi::OsStr]) -> std::ffi::OsString {
 /// (`:` starts a stream name) and control characters below U+0020. Checked on the `names` only;
 /// the head is a drive or server name the verbatim form already validated.
 #[cfg(any(windows, test))]
-fn plain_chars(name: &std::ffi::OsStr) -> bool {
+pub(crate) fn plain_chars(name: &std::ffi::OsStr) -> bool {
     name.as_encoded_bytes()
         .iter()
         .all(|&byte| byte >= 0x20 && !br#"<>:"|?*"#.contains(&byte))
@@ -891,7 +891,7 @@ fn plain_chars(name: &std::ffi::OsStr) -> bool {
 /// the encoded bytes, so names that are not valid Unicode are checked too; `plain_chars` covers
 /// the remaining characters.
 #[cfg(any(windows, test))]
-fn plain_name(name: &std::ffi::OsStr) -> bool {
+pub(crate) fn plain_name(name: &std::ffi::OsStr) -> bool {
     // Reserved names from "Naming Files, Paths, and Namespaces", and the console handles from
     // "CreateFileW".
     const RESERVED: [&[u8]; 32] = [
