@@ -271,7 +271,14 @@ fn execute(cli: Cli) -> Result<i32> {
 
     let parsing_started = Instant::now();
     let mut diagnostics = discovery_diagnostics(config, &files, &changed_files);
-    let extracted = extract_corpus(config, &files, &changed_files, &mut diagnostics);
+    let mut feature_budget = gherkin::FeatureStepBudget::default();
+    let extracted = extract_corpus(
+        config,
+        &files,
+        &changed_files,
+        &mut diagnostics,
+        &mut feature_budget,
+    );
     let parsing_ms = elapsed_ms(parsing_started);
     let analysis_started = Instant::now();
     let collect_pairs = options.emit_pairs.is_some();
@@ -301,6 +308,7 @@ fn execute(cli: Cli) -> Result<i32> {
         &mut analyzed.result,
         analyzed.run_incomplete,
         &mut diagnostics,
+        &mut feature_budget,
     )?;
     if let Some(sink) = fingerprints {
         sink.write(|out| {
@@ -488,6 +496,7 @@ fn extract_corpus(
     files: &discovery::DiscoveredFiles,
     changed_files: &Option<BTreeSet<PathBuf>>,
     diagnostics: &mut Diagnostics,
+    feature_budget: &mut gherkin::FeatureStepBudget,
 ) -> ExtractedCorpus {
     let mut corpus = ExtractedCorpus {
         parameter_types: Vec::new(),
@@ -501,7 +510,7 @@ fn extract_corpus(
         incomplete: false,
     };
     extract_definitions(config, files, changed_files, diagnostics, &mut corpus);
-    extract_feature_steps(config, files, diagnostics, &mut corpus);
+    extract_feature_steps(config, files, diagnostics, &mut corpus, feature_budget);
     corpus
 }
 
@@ -778,9 +787,10 @@ fn extract_feature_steps(
     files: &discovery::DiscoveredFiles,
     diagnostics: &mut Diagnostics,
     corpus: &mut ExtractedCorpus,
+    budget: &mut gherkin::FeatureStepBudget,
 ) {
     for file in &files.features {
-        match gherkin::extract_file_with_format(&file.path, file.format) {
+        match gherkin::extract_file_with_budget(&file.path, file.format, budget) {
             Ok(extracted) => {
                 corpus.parsed_feature_files += 1;
                 if extracted.is_empty()
@@ -939,6 +949,7 @@ fn apply_baseline_mode(
     result: &mut crate::model::AnalysisResult,
     run_incomplete: bool,
     diagnostics: &mut Diagnostics,
+    feature_budget: &mut gherkin::FeatureStepBudget,
 ) -> Result<Option<modes::BaselineOutcome>> {
     if let Some(revision) = &options.baseline_from_ref {
         let (_snapshot, root) = modes::baseline_snapshot(&config.root, revision)?;
@@ -952,7 +963,13 @@ fn apply_baseline_mode(
         base_config.root = root;
         let files = discovery::discover(&base_config)?;
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
-        let extracted = extract_corpus(&base_config, &files, &None, &mut base_diagnostics);
+        let extracted = extract_corpus(
+            &base_config,
+            &files,
+            &None,
+            &mut base_diagnostics,
+            feature_budget,
+        );
         let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics, false)?;
         // A baseline that produced a hard error, or that has definitions but no features to anchor
         // usage, cannot be subtracted at all — those always bail. A baseline that kept no

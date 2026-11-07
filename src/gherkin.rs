@@ -5,11 +5,12 @@
 
 use crate::model::{FeatureStep, SourceLocation};
 use crate::resource_limits::{
-    read_utf8, GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE, MAX_GHERKIN_MARKDOWN_CANDIDATES,
+    read_utf8, WorkBudget, GHERKIN_MARKDOWN_RESTORE_BATCH_SIZE, MAX_CONCRETE_FEATURE_STEPS,
+    MAX_FEATURE_STEP_PAYLOAD_BYTES, MAX_FEATURE_STEP_SCAN_BYTES, MAX_GHERKIN_MARKDOWN_CANDIDATES,
     MAX_GHERKIN_MARKDOWN_PROBES, MAX_GHERKIN_MARKDOWN_PROBE_BYTES, MAX_PROJECT_INPUT_BYTES,
 };
 use anyhow::{bail, Context, Result};
-use gherkin::{Background, Feature, GherkinEnv, Scenario, Step};
+use gherkin::{Feature, GherkinEnv, Scenario, Step};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -57,8 +58,17 @@ pub fn extract_file(path: &Path) -> Result<Vec<FeatureStep>> {
 
 /// Parses a feature file with an explicitly selected source format.
 pub fn extract_file_with_format(path: &Path, format: FeatureFormat) -> Result<Vec<FeatureStep>> {
+    extract_file_with_budget(path, format, &mut FeatureStepBudget::default())
+}
+
+/// Reads a feature against the concrete-step budget shared by the CLI corpus.
+pub(crate) fn extract_file_with_budget(
+    path: &Path,
+    format: FeatureFormat,
+    budget: &mut FeatureStepBudget,
+) -> Result<Vec<FeatureStep>> {
     let source = read_utf8(path, "feature file", MAX_PROJECT_INPUT_BYTES)?;
-    extract_with_format(&source, path, format)
+    extract_with_budget(&source, path, format, budget)
 }
 
 /// Parses in-memory Gherkin source, using `path` for locations and diagnostics.
@@ -71,6 +81,16 @@ pub fn extract_with_format(
     source: &str,
     path: &Path,
     format: FeatureFormat,
+) -> Result<Vec<FeatureStep>> {
+    extract_with_budget(source, path, format, &mut FeatureStepBudget::default())
+}
+
+/// Parses and admits a whole feature before materializing any concrete steps.
+fn extract_with_budget(
+    source: &str,
+    path: &Path,
+    format: FeatureFormat,
+    budget: &mut FeatureStepBudget,
 ) -> Result<Vec<FeatureStep>> {
     let parsed_source = match format {
         FeatureFormat::Gherkin => source.to_owned(),
@@ -96,7 +116,8 @@ pub fn extract_with_format(
         path,
         lines: parsed_source.lines().collect(),
     };
-    Ok(extract_feature(&feature, &source))
+    extract_feature(&feature, &source, budget)
+        .with_context(|| format!("failed to extract Gherkin feature {}", path.display()))
 }
 
 /// Sorts the expected-token set in the gherkin crate's `Error at L:C: {..}` message. The crate
@@ -595,87 +616,179 @@ struct StepSource<'a> {
     lines: Vec<&'a str>,
 }
 
-/// Collects steps from the feature's and each rule's background and scenarios, then stable-sorts
-/// them by line and column. Background steps appear once; outline expansions of one step share a
-/// position and keep their example-row order.
-fn extract_feature(feature: &Feature, source: &StepSource) -> Vec<FeatureStep> {
-    let mut steps = Vec::new();
-    if let Some(background) = &feature.background {
-        collect_background(background, source, &mut steps);
-    }
-    for scenario in &feature.scenarios {
-        collect_scenario(scenario, source, &mut steps);
-    }
-    for rule in &feature.rules {
-        if let Some(background) = &rule.background {
-            collect_background(background, source, &mut steps);
-        }
-        for scenario in &rule.scenarios {
-            collect_scenario(scenario, source, &mut steps);
+/// Transactional retained-step admission and persistent consumed template-scan work.
+#[derive(Clone, Copy)]
+pub(crate) struct FeatureStepBudget {
+    steps: WorkBudget,
+    bytes: WorkBudget,
+    scan: WorkBudget,
+}
+
+impl Default for FeatureStepBudget {
+    /// Uses the per-call limits, shared across files by the CLI.
+    fn default() -> Self {
+        Self {
+            steps: WorkBudget::new(MAX_CONCRETE_FEATURE_STEPS),
+            bytes: WorkBudget::new(MAX_FEATURE_STEP_PAYLOAD_BYTES),
+            scan: WorkBudget::new(MAX_FEATURE_STEP_SCAN_BYTES),
         }
     }
+}
+
+impl FeatureStepBudget {
+    /// Charges retained text, keyword and path bytes before allocating them.
+    fn admit_bytes(&mut self, bytes: usize) -> Result<()> {
+        if !self.bytes.admit(bytes) {
+            bail!(
+                "feature expansion exceeds {} payload bytes",
+                self.bytes.limit()
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Preflights a whole feature, then materializes it in stable source/Examples-row order.
+fn extract_feature(
+    feature: &Feature,
+    source: &StepSource,
+    budget: &mut FeatureStepBudget,
+) -> Result<Vec<FeatureStep>> {
+    let mut admitted = *budget;
+    let mut lengths = Vec::new();
+    visit_feature_steps(feature, &mut |step, values| {
+        if !admitted.steps.admit(1) {
+            bail!(
+                "feature expansion exceeds {} concrete steps",
+                admitted.steps.limit()
+            );
+        }
+        admitted.admit_bytes(source.path.as_os_str().as_encoded_bytes().len())?;
+        admitted.admit_bytes(step.keyword.trim().len())?;
+        // Scanning work is spent even if this feature later fails retained-step admission.
+        if values.is_some() && !budget.scan.admit(step.value.len()) {
+            bail!(
+                "feature expansion exceeds {} scanned template bytes",
+                budget.scan.limit()
+            );
+        }
+        let mut length = 0;
+        visit_step_text(&step.value, values, |part| {
+            admitted.admit_bytes(part.len())?;
+            length += part.len();
+            Ok(())
+        })?;
+        lengths.push(length);
+        Ok(())
+    })?;
+    let mut steps = Vec::with_capacity(lengths.len());
+    let mut lengths = lengths.into_iter();
+    let mut end_columns = BTreeMap::new();
+    visit_feature_steps(feature, &mut |step, values| {
+        // Reserve the checked expanded size, including when substitutions shrink the template.
+        let mut text = String::with_capacity(lengths.next().expect("each step was admitted"));
+        visit_step_text(&step.value, values, |part| {
+            text.push_str(part);
+            Ok(())
+        })?;
+        let row = step.position.line;
+        let column = step.position.col;
+        let end = *end_columns
+            .entry((row, column))
+            .or_insert_with(|| step_end_column(step, source));
+        steps.push(FeatureStep {
+            keyword: step.keyword.trim().to_owned(),
+            text,
+            location: SourceLocation::new(source.path, row, column, row, end),
+        });
+        Ok(())
+    })?;
     steps.sort_by(|left, right| {
         left.location
             .line
             .cmp(&right.location.line)
             .then(left.location.column.cmp(&right.location.column))
     });
-    steps
+    admitted.scan = budget.scan;
+    *budget = admitted;
+    Ok(steps)
 }
 
-/// Appends the background's steps with their source text.
-fn collect_background(background: &Background, source: &StepSource, output: &mut Vec<FeatureStep>) {
-    output.extend(
-        background
-            .steps
-            .iter()
-            .map(|step| convert_step(step, source)),
-    );
+/// Visits backgrounds once and scenarios in document order, with the same walk for both passes.
+fn visit_feature_steps(
+    feature: &Feature,
+    visit: &mut impl FnMut(&Step, Option<&OutlineValues<'_>>) -> Result<()>,
+) -> Result<()> {
+    for background in feature.background.iter() {
+        for step in &background.steps {
+            visit(step, None)?;
+        }
+    }
+    for scenario in &feature.scenarios {
+        visit_scenario_steps(scenario, visit)?;
+    }
+    for rule in &feature.rules {
+        for background in rule.background.iter() {
+            for step in &background.steps {
+                visit(step, None)?;
+            }
+        }
+        for scenario in &rule.scenarios {
+            visit_scenario_steps(scenario, visit)?;
+        }
+    }
+    Ok(())
 }
 
-/// Appends a scenario's steps, once per example data row with `<placeholders>` substituted.
-/// Examples without a table or header row are skipped; when no data row exists at all, the steps
-/// are appended once unsubstituted.
-fn collect_scenario(scenario: &Scenario, source: &StepSource, output: &mut Vec<FeatureStep>) {
-    let output_start = output.len();
-    let locations: Vec<_> = scenario
-        .steps
-        .iter()
-        .map(|step| step_location(step, source))
-        .collect();
+/// Immutable substitutions and header metadata shared by every step in one Examples row.
+struct OutlineValues<'a> {
+    values: BTreeMap<&'a str, &'a str>,
+    header_lengths: BTreeSet<usize>,
+}
+
+impl<'a> OutlineValues<'a> {
+    /// Derives header lengths once from the same first-value-wins map used for substitution.
+    fn new(values: BTreeMap<&'a str, &'a str>) -> Self {
+        let header_lengths = values.keys().map(|name| name.len()).collect();
+        Self {
+            values,
+            header_lengths,
+        }
+    }
+}
+
+/// Visits every example row, falling back to unsubstituted steps only when no data row exists.
+fn visit_scenario_steps(
+    scenario: &Scenario,
+    visit: &mut impl FnMut(&Step, Option<&OutlineValues<'_>>) -> Result<()>,
+) -> Result<()> {
+    let mut expanded = false;
     for examples in &scenario.examples {
-        let Some(table) = &examples.table else {
+        let Some((headers, rows)) = examples
+            .table
+            .as_ref()
+            .and_then(|table| table.rows.split_first())
+        else {
             continue;
         };
-        let Some(headers) = table.rows.first() else {
-            continue;
-        };
-        for row in table.rows.iter().skip(1) {
+        for row in rows {
+            expanded = true;
             let mut values = BTreeMap::new();
             for (header, value) in headers.iter().zip(row) {
                 values.entry(header.as_str()).or_insert(value.as_str());
             }
-            output.extend(
-                scenario
-                    .steps
-                    .iter()
-                    .zip(&locations)
-                    .map(|(step, location)| {
-                        let text = substitute_outline_values(&step.value, &values);
-                        feature_step(step, location.clone(), text)
-                    }),
-            );
+            let values = OutlineValues::new(values);
+            for step in &scenario.steps {
+                visit(step, Some(&values))?;
+            }
         }
     }
-    if output.len() == output_start {
-        output.extend(
-            scenario
-                .steps
-                .iter()
-                .zip(&locations)
-                .map(|(step, location)| feature_step(step, location.clone(), step.value.clone())),
-        );
+    if !expanded {
+        for step in &scenario.steps {
+            visit(step, None)?;
+        }
     }
+    Ok(())
 }
 
 /// Replaces each `<name>` with its example value, where `name` is a header and runs from a `<`
@@ -683,12 +796,17 @@ fn collect_scenario(scenario: &Scenario, source: &StepSource, output: &mut Vec<F
 /// right after it, so a stray `<` before a placeholder does not hide it. Unknown names, an
 /// unclosed `<` and a header name containing `>` stay verbatim; substituted values are not
 /// rescanned. The first of several equal headers supplies the value.
-fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> String {
-    let mut output = String::with_capacity(text.len());
+fn visit_step_text(
+    text: &str,
+    values: Option<&OutlineValues<'_>>,
+    mut emit: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    let Some(values) = values else {
+        return emit(text);
+    };
     let mut position = 0;
     // Only a name as long as some header is compared, so overlapping candidates that share a long
     // prefix with a header cost one comparison each instead of one per start.
-    let lengths: BTreeSet<usize> = values.keys().map(|name| name.len()).collect();
     // The next `>` is looked up once per stretch of `<`, so a run of stray `<` stays linear.
     let mut close = text.find('>');
     while let Some(start) = text[position..].find('<').map(|offset| position + offset) {
@@ -698,43 +816,29 @@ fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> Strin
         let Some(end) = close else {
             break;
         };
-        output.push_str(&text[position..start]);
+        emit(&text[position..start])?;
         let name = &text[start + 1..end];
-        if let Some(value) = lengths
+        if let Some(value) = values
+            .header_lengths
             .contains(&name.len())
-            .then(|| values.get(name))
+            .then(|| values.values.get(name))
             .flatten()
         {
-            output.push_str(value);
+            emit(value)?;
             position = end + 1;
         } else {
-            output.push('<');
+            emit("<")?;
             position = start + 1;
         }
     }
-    output.push_str(&text[position..]);
-    output
+    emit(&text[position..])
 }
 
-/// Converts a step, keeping its source text.
-fn convert_step(step: &Step, source: &StepSource) -> FeatureStep {
-    feature_step(step, step_location(step, source), step.value.clone())
-}
-
-/// Builds a `FeatureStep` from the step's keyword, a location and the (possibly expanded) text.
-fn feature_step(step: &Step, location: SourceLocation, text: String) -> FeatureStep {
-    FeatureStep {
-        keyword: step.keyword.trim().to_owned(),
-        text,
-        location,
-    }
-}
-
-/// Returns the step's one-line location. The end column is one past the last character of the
+/// Returns the step's end column, one past the last character of the
 /// source `step.value` on its line, whatever whitespace separates it from the keyword. The parser
 /// yields no step with empty text and only spaces and tabs may precede the keyword, so the value
 /// is always present on its line and the keyword's byte offset equals its character offset.
-fn step_location(step: &Step, source: &StepSource) -> SourceLocation {
+fn step_end_column(step: &Step, source: &StepSource) -> usize {
     let keyword = step.keyword.trim();
     let after_keyword = source
         .lines
@@ -747,13 +851,7 @@ fn step_location(step: &Step, source: &StepSource) -> SourceLocation {
         .unwrap_or_default()
         .chars()
         .count();
-    SourceLocation::new(
-        source.path,
-        step.position.line,
-        step.position.col,
-        step.position.line,
-        step.position.col + keyword.chars().count() + separator + step.value.chars().count(),
-    )
+    step.position.col + keyword.chars().count() + separator + step.value.chars().count()
 }
 
 #[cfg(test)]

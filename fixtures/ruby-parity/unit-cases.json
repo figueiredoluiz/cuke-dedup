@@ -2450,6 +2450,27 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent stage `gherkin-parser`: Markdown list items are converted to Gherkin before parsing, and step spans are measured on the converted line, independent of any adapter.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "feature_step_admission_boundaries_preserve_text_and_locations",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent concrete feature admission: Exercises exact and one-over step/payload admission for classic/Markdown outlines, ordinary scenarios, backgrounds and empty-row fallback; exact results preserve text and locations, and refused files leave retained-step admission counters unchanged.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "shrinking_outline_substitutions_do_not_retain_template_capacity",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent concrete feature admission: Checks two empty-cell expansion rows retain their exact empty or four-byte text and allocate only that admitted output capacity rather than the repeated-placeholder template size.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "template_scan_admission_preserves_work_and_fitting_outcomes",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent template scanning: exact and one-over quotas preserve output, completed scans survive scan/count/payload refusals, smaller later outlines may fit and literal/fallback steps need no scanning allowance.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -6786,6 +6807,13 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent stage `bounded-io`: Filesystem errors and publication races preserve existing data and fail operationally.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "reference_baselines_share_the_feature_expansion_budget",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent concrete feature admission: individually fitting current and historical corpora exceed one invocation step or scan budget together; the CLI refuses the historical baseline. A fitting modified current feature still accepts the same historical baseline as a positive control.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7464,6 +7492,24 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent stage `bounded-io`: Windows preparation and replacement failures clean only verified temporary entries and preserve substituted bytes and destination directories.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "tests/feature_expansion.rs": {
+      "tests": [
+        {
+          "name": "public_feature_extraction_refuses_count_and_payload_amplification",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent concrete feature admission: memory/file public APIs reject count, expanded-payload and shrinking-template scan amplification before returning partial steps; a fitting later call remains supported.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "feature_expansion_limits_preserve_findings_and_mark_reports_incomplete",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent concrete feature admission: Real CLI overflow and cross-file limits preserve valid neighboring ambiguity/duplicate-matcher findings, remove unused claims, mark JSON/SARIF incomplete and preserve existing baseline bytes; a complete small control retains its unused finding.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
