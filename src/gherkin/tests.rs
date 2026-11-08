@@ -1210,3 +1210,123 @@ fn substitute_outline_values(text: &str, values: &BTreeMap<&str, &str>) -> Strin
     .unwrap();
     output
 }
+
+/// Checks one initial encoding marker preserves meaningful classic/Markdown extraction and file locations.
+#[test]
+fn initial_bom_preserves_feature_text_keywords_and_locations() {
+    let root = tempfile::tempdir().unwrap();
+    for (name, format, source, expected, line) in [
+        ("outline", FeatureFormat::Gherkin, "Feature: markers\n Scenario Outline: rows\n  Given 名\u{feff}字 <value>\n Examples:\n | value |\n | \u{feff}界 |\n", "名\u{feff}字 \u{feff}界", 3),
+        ("localized", FeatureFormat::Gherkin, "# language: de\nFunktionalität: Tor\n Szenario: Offen\n  Angenommen das Tor ist offen\n", "das Tor ist offen", 4),
+        ("crlf", FeatureFormat::Gherkin, "Feature: crlf\r\n Scenario: open\r\n  Given done\r\n", "done", 3),
+        ("tagged", FeatureFormat::GherkinMarkdown, "`@fast`\n# Feature: tagged\n## Scenario: open\n* Given done\n", "done", 4),
+        ("localized-markdown", FeatureFormat::GherkinMarkdown, "# language: de\n# Funktionalität: Tor\n## Szenario: Offen\n* Angenommen das Tor ist offen\n", "das Tor ist offen", 4),
+        ("markdown-outline", FeatureFormat::GherkinMarkdown, "# Feature: markers\n## Scenario Outline: rows\n* Given 名\u{feff}字 <value>\n### Examples:\n  | value |\n  | \u{feff}界 |\n", "名\u{feff}字 \u{feff}界", 3),
+    ] {
+        let extension = if format == FeatureFormat::Gherkin { "feature" } else { "feature.md" };
+        let path = root.path().join(format!("日本-{name}.{extension}"));
+        let baseline = extract_with_format(source, &path, format).unwrap();
+        assert_eq!(baseline.len(), 1, "{name}");
+        assert_eq!(baseline[0].text, expected, "{name}");
+        assert_eq!((baseline[0].location.line, baseline[0].location.column), (line, 3));
+        for input in [source.to_owned(), format!("\u{feff}{source}")] {
+            assert_eq!(extract_with_format(&input, &path, format).unwrap(), baseline, "{name}");
+            std::fs::write(&path, input).unwrap();
+            assert_eq!(extract_file(&path).unwrap(), baseline, "{name}");
+        }
+    }
+}
+
+/// Rejects misplaced/repeated markers and malformed inputs instead of dropping arbitrary source characters.
+#[test]
+fn bom_normalization_preserves_invalid_feature_outcomes() {
+    let path = Path::new("invalid.feature");
+    let valid = "Feature: control\n Scenario: open\n  Given done\n";
+    for prefix in [
+        "\u{feff}\u{feff}",
+        " \u{feff}",
+        "\n\u{feff}",
+        "# comment\n\u{feff}",
+    ] {
+        assert!(
+            extract(&format!("{prefix}{valid}"), path).is_err(),
+            "{prefix:?}"
+        );
+    }
+    for source in ["", "\u{feff}"] {
+        assert!(extract(source, path).is_err());
+    }
+    for (format, source) in [
+        (
+            FeatureFormat::Gherkin,
+            "Feature: bad\n Scenario: open\n  Given done\n    | broken\n",
+        ),
+        (
+            FeatureFormat::GherkinMarkdown,
+            "# Feature: bad\n## Scenario Outline: rows\n* Given <v>\n### Examples:\n  | v |\n  | bad\\q\n## Scenario: later\n* Then done\n",
+        ),
+    ] {
+        let original = format!(
+            "{:#}",
+            extract_with_format(source, path, format).unwrap_err()
+        );
+        let marked = extract_with_format(&format!("\u{feff}{source}"), path, format).unwrap_err();
+        assert_eq!(format!("{marked:#}"), original);
+    }
+}
+
+/// Keeps concrete count, retained bytes and template scan admission identical after normalization.
+#[test]
+fn initial_bom_preserves_feature_admission_boundaries() {
+    let path = Path::new("quota.feature");
+    let source = "Feature: quota\n Scenario Outline: rows\n  Given <v>\n Examples:\n | v |\n | 界 |\n | \u{feff} |\n";
+    let mut plain = FeatureStepBudget::default();
+    let baseline = extract_with_budget(source, path, FeatureFormat::Gherkin, &mut plain).unwrap();
+    let (count, bytes, scan) = (plain.steps.spent(), plain.bytes.spent(), plain.scan.spent());
+    assert_eq!(baseline.len(), 2);
+    assert!(bytes > 0 && scan > 0);
+    for (steps, payload, work, fits) in [
+        (count, bytes, scan, true),
+        (count - 1, bytes, scan, false),
+        (count, bytes - 1, scan, false),
+        (count, bytes, scan - 1, false),
+    ] {
+        for input in [source.to_owned(), format!("\u{feff}{source}")] {
+            let mut budget = FeatureStepBudget {
+                steps: WorkBudget::new(steps),
+                bytes: WorkBudget::new(payload),
+                scan: WorkBudget::new(work),
+            };
+            let result = extract_with_budget(&input, path, FeatureFormat::Gherkin, &mut budget);
+            if fits {
+                assert_eq!(result.unwrap(), baseline);
+                assert_eq!(
+                    (
+                        budget.steps.spent(),
+                        budget.bytes.spent(),
+                        budget.scan.spent()
+                    ),
+                    (count, bytes, scan)
+                );
+            } else {
+                assert!(result.is_err());
+                assert_eq!((budget.steps.spent(), budget.bytes.spent()), (0, 0));
+            }
+        }
+    }
+}
+
+/// Charges original file bytes, including the encoding marker, before parser normalization.
+#[test]
+fn initial_bom_does_not_bypass_the_feature_file_byte_limit() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("limit.feature");
+    let mut source = "\u{feff}Feature: cap\n Scenario: open\n  Given done\n#".to_owned();
+    source.push_str(&" ".repeat(MAX_PROJECT_INPUT_BYTES as usize - source.len()));
+    std::fs::write(&path, &source).unwrap();
+    assert_eq!(extract_file(&path).unwrap()[0].text, "done");
+    source.push(' ');
+    std::fs::write(&path, source).unwrap();
+    let error = format!("{:#}", extract_file(&path).unwrap_err());
+    assert!(error.contains("8388608"), "{error}");
+}

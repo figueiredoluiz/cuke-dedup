@@ -2471,6 +2471,34 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent template scanning: exact and one-over quotas preserve output, completed scans survive scan/count/payload refusals, smaller later outlines may fit and literal/fallback steps need no scanning allowance.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "initial_bom_preserves_feature_text_keywords_and_locations",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent feature decoding: the initial encoding marker preserves parsed steps, malformed outcomes, source locations and byte/count/scan admission before any definition adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "bom_normalization_preserves_invalid_feature_outcomes",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent feature decoding: the initial encoding marker preserves parsed steps, malformed outcomes, source locations and byte/count/scan admission before any definition adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "initial_bom_preserves_feature_admission_boundaries",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent feature decoding: the initial encoding marker preserves parsed steps, malformed outcomes, source locations and byte/count/scan admission before any definition adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "initial_bom_does_not_bypass_the_feature_file_byte_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Adapter-independent feature decoding: the initial encoding marker preserves parsed steps, malformed outcomes, source locations and byte/count/scan admission before any definition adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7511,6 +7539,20 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent concrete feature admission: Real CLI overflow and cross-file limits preserve valid neighboring ambiguity/duplicate-matcher findings, remove unused claims, mark JSON/SARIF incomplete and preserve existing baseline bytes; a complete small control retains its unused finding.",
           "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "tests/feature_bom.rs": {
+      "tests": [
+        {
+          "name": "feature_bom_cli_matrix_preserves_findings_and_incomplete_controls",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/feature_bom.rs",
+            "name": "feature_bom_cli_matrix_preserves_findings_and_incomplete_controls"
+          },
+          "rationale": "Runs both JS and Ruby source definitions through the real CLI, retaining exact ambiguity/duplicate/unused outcomes across classic/Markdown encoding markers and malformed neighbors.",
+          "behaviorClass": "ruby-behavior"
         }
       ]
     }

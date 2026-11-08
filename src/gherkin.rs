@@ -92,6 +92,7 @@ fn extract_with_budget(
     format: FeatureFormat,
     budget: &mut FeatureStepBudget,
 ) -> Result<Vec<FeatureStep>> {
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let parsed_source = match format {
         FeatureFormat::Gherkin => source.to_owned(),
         FeatureFormat::GherkinMarkdown => markdown_to_gherkin(source)
