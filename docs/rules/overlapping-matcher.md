@@ -13,6 +13,8 @@ corpus needs stays complete while its witness scans fit within four times the li
 incomplete when an overlap pair exceeds the remaining budget, witness scans exceed four times the
 limit, more than 10,000 findings would be retained, or suppression lookups exceed their work limit.
 
+If [ambiguity retention](ambiguous-step.md) reaches its limits, static overlap is skipped and analysis is incomplete. An omitted concrete ambiguity must not be replaced with a confident static overlap or silently suppress one.
+
 ## Language support
 
 | JavaScript/TypeScript | Cucumber-Ruby |

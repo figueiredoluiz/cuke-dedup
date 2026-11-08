@@ -17,6 +17,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::LazyLock;
 
+mod ambiguity_budget;
+use ambiguity_budget::AmbiguityBudget;
+
 static FALLBACK_PLACEHOLDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{([^{}]+)\}").expect("static placeholder regex"));
 const MAX_OVERLAP_SUPPRESSION_WORK: u64 = 100_000_000;
@@ -269,6 +272,7 @@ enum CucumberRegexExpression {
 pub(super) struct FeatureUsageOutcome {
     pub(super) used: BTreeSet<usize>,
     pub(super) incomplete: Vec<String>,
+    pub(super) ambiguity_truncated: bool,
     pub(super) overlap_census: CandidateSourceCensus,
 }
 
@@ -290,20 +294,25 @@ impl ProvenAmbiguities {
         }
     }
 
-    /// Registers the matched definitions as one group unless the same set is already recorded;
-    /// group identifiers only increase, so every membership list stays sorted.
-    fn record(&mut self, matched: &BTreeSet<usize>) {
-        let group = matched.iter().copied().collect::<Vec<_>>();
-        let identifier = self.groups.len();
-        match self.groups.entry(group) {
-            std::collections::hash_map::Entry::Occupied(_) => {}
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                for definition in entry.key() {
-                    self.memberships[*definition].push(identifier);
-                }
-                entry.insert(identifier);
-            }
+    /// Counts the new proof key and memberships without allocating on a repeated group.
+    fn new_group_members(&self, matched: &[usize]) -> usize {
+        if self.groups.contains_key(matched) {
+            0
+        } else {
+            matched.len()
         }
+    }
+
+    /// Stores a pre-admitted sorted group once; membership identifiers stay in ascending order.
+    fn record(&mut self, matched: &[usize]) {
+        if self.groups.contains_key(matched) {
+            return;
+        }
+        let identifier = self.groups.len();
+        for &definition in matched {
+            self.memberships[definition].push(identifier);
+        }
+        self.groups.insert(matched.to_vec(), identifier);
     }
 
     /// Reports whether two definitions share a recorded group by merging their sorted memberships.
@@ -356,6 +365,30 @@ fn analyze_feature_usage_in_windows(
     overlap_budget: usize,
     window: usize,
 ) -> FeatureUsageOutcome {
+    analyze_feature_usage_with_budget(
+        definitions,
+        steps,
+        config,
+        suppressions,
+        findings,
+        overlap_budget,
+        window,
+        AmbiguityBudget::default(),
+    )
+}
+
+/// Runs complete usage matching, then admits ambiguity retention independently of overlap/report limits.
+#[allow(clippy::too_many_arguments)]
+fn analyze_feature_usage_with_budget(
+    definitions: &[StepDefinition],
+    steps: &[FeatureStep],
+    config: &Config,
+    suppressions: &SuppressionIndex<'_>,
+    findings: &mut Vec<Finding>,
+    overlap_budget: usize,
+    window: usize,
+    mut budget: AmbiguityBudget,
+) -> FeatureUsageOutcome {
     let mut summaries: Vec<MatcherSummary> = Vec::with_capacity(definitions.len());
     let mut incomplete: Vec<String> = Vec::new();
 
@@ -392,57 +425,71 @@ fn analyze_feature_usage_in_windows(
             (!matcher.has_regex || !matcher.authoritative).then_some(index)
         })
         .collect();
-    let mut ambiguities: BTreeMap<_, (&FeatureStep, BTreeSet<usize>, usize)> = BTreeMap::new();
+    // Usage is complete even if later ambiguity retention refuses a group. Deduplicated texts
+    // suffice; a refused ambiguity must not make a matched definition appear unused.
+    for matches in matched_texts.values() {
+        used.extend(matches.iter().copied());
+    }
+    let mut ambiguities: BTreeMap<_, BTreeMap<Vec<usize>, (&FeatureStep, usize)>> = BTreeMap::new();
     let mut proven = ProvenAmbiguities::new(definitions.len());
     let ambiguity_is_reported = config.severity(Rule::AmbiguousStep) != Severity::Off;
-    for step in steps {
-        // Merged across windows before anything reads it. Recording `proven` from a single
-        // window's matches would miss a pair split across windows, and `overlapping-matcher`
-        // would then report an overlap that `ambiguous-step` already owns.
-        let matches = &matched_texts[step.text.as_str()];
-        used.extend(matches.iter().copied());
-        let authoritative_matches: BTreeSet<_> = matches
-            .iter()
-            .copied()
-            .filter(|index| summaries[*index].authoritative)
-            .collect();
-        if authoritative_matches.len() > 1 && ambiguity_is_reported {
-            proven.record(&authoritative_matches);
-            let ambiguity_key = (
-                step.location.path.clone(),
+    let mut cut = false;
+    if ambiguity_is_reported {
+        for step in steps {
+            let location = (
+                step.location.path.as_path(),
                 step.location.line,
                 step.location.column,
-                authoritative_matches.clone(),
             );
-            let entry = ambiguities
-                .entry(ambiguity_key)
-                .or_insert_with(|| (step, BTreeSet::new(), 0));
-            entry.1.extend(authoritative_matches);
-            entry.2 += 1;
+            // A later expansion of an accepted source/member group must still contribute its full
+            // count after another group is refused. Unseen source positions need no member buffer.
+            if cut && !ambiguities.contains_key(&location) {
+                continue;
+            }
+            let matches = &matched_texts[step.text.as_str()];
+            let count = matches
+                .iter()
+                .filter(|&&index| summaries[index].authoritative)
+                .count();
+            if count < 2 {
+                continue;
+            }
+            if !budget.can_hold_group(count) {
+                cut = true;
+                continue;
+            }
+            let authoritative: Vec<_> = matches
+                .iter()
+                .copied()
+                .filter(|&index| summaries[index].authoritative)
+                .collect();
+            if let Some((_, expansions)) = ambiguities
+                .get_mut(&location)
+                .and_then(|groups| groups.get_mut(authoritative.as_slice()))
+            {
+                *expansions += 1;
+                continue;
+            }
+            if cut {
+                continue;
+            }
+            if !budget.admit_group(count, proven.new_group_members(&authoritative)) {
+                cut = true;
+                continue;
+            }
+            proven.record(&authoritative);
+            // Borrow paths and keep one member vector: a value union would duplicate the key's set.
+            ambiguities
+                .entry(location)
+                .or_default()
+                .insert(authoritative, (step, 1));
         }
-    }
-    // Ambiguity proven by a real step is strictly better evidence than a synthesized witness.
-    // Membership intersection answers that question without materializing every pair in a broad
-    // ambiguity group.
-    let overlap = analyze_matcher_overlap(
-        definitions,
-        &summaries,
-        &proven,
-        &matched_texts,
-        config,
-        suppressions,
-        findings,
-        overlap_budget,
-        window,
-        scan_work,
-    );
-    if let Some(diagnostic) = overlap.incomplete {
-        incomplete.push(diagnostic);
     }
     let severity = config.severity(Rule::AmbiguousStep);
     if ambiguity_is_reported {
-        for (_, (step, matches, expansion_count)) in ambiguities {
-            let matched_indices = matches.iter().copied().collect::<Vec<_>>();
+        for (matched_indices, (step, expansion_count)) in
+            ambiguities.into_values().flat_map(BTreeMap::into_iter)
+        {
             let matched_definitions: Vec<_> = matched_indices
                 .iter()
                 .map(|index| &definitions[*index])
@@ -454,7 +501,7 @@ fn analyze_feature_usage_in_windows(
                         .any(|definition| definition.matcher.len() > MAX_EVIDENCE_TEXT_BYTES)
                     || (expansion_count == 1 && step.text.len() > MAX_EVIDENCE_TEXT_BYTES))
                     .then(|| {
-                        let count = matches.len().to_string();
+                        let count = matched_indices.len().to_string();
                         let expansions = expansion_count.to_string();
                         let message = if expansion_count == 1 {
                             vec![
@@ -506,14 +553,36 @@ fn analyze_feature_usage_in_windows(
                 format!(
                     "Feature step `{}` matches {} definitions",
                     evidence_text(&step.text),
-                    matches.len()
+                    matched_indices.len()
                 )
             } else {
                 format!(
                     "Scenario outline step has {expansion_count} ambiguous expansions matching {} definitions",
-                    matches.len()
+                    matched_indices.len()
                 )
             };
+            let reason = suppressions.find_reason(Rule::AmbiguousStep, &matched_indices);
+            let handler_evidence =
+                "More than one definition accepts at least one concrete feature step";
+            let suggested_action = "Make the matchers mutually exclusive";
+            let sizes = [
+                message.len(),
+                matcher_list.len(),
+                handler_evidence.len(),
+                suggested_action.len(),
+                reason.map_or(0, str::len),
+                step.location.path.as_os_str().len(),
+            ];
+            if !budget.admit_payload(
+                sizes.into_iter().chain(
+                    matched_definitions
+                        .iter()
+                        .map(|d| d.location.path.as_os_str().len()),
+                ),
+            ) {
+                cut = true;
+                break;
+            }
             findings.push(Finding {
                 original_fingerprint,
                 rule: Rule::AmbiguousStep,
@@ -528,24 +597,46 @@ fn analyze_feature_usage_in_windows(
                     matcher_similarity: None,
                     handler_similarity: None,
                     matcher_difference: matcher_list,
-                    handler_evidence:
-                        "More than one definition accepts at least one concrete feature step"
-                            .to_owned(),
+                    handler_evidence: handler_evidence.to_owned(),
                     comparison: None,
                     cluster: None,
                 },
-                suggested_action: "Make the matchers mutually exclusive".to_owned(),
-                suppression: suppressions
-                    .find_reason(Rule::AmbiguousStep, &matched_indices)
-                    .map(|reason| crate::model::Suppression {
-                        reason: reason.to_owned(),
-                    }),
+                suggested_action: suggested_action.to_owned(),
+                suppression: reason.map(|reason| crate::model::Suppression {
+                    reason: reason.to_owned(),
+                }),
             });
         }
+    }
+    // A cut may leave proofs for groups whose final payload was refused. Do not use those proofs
+    // to suppress overlap, nor replace an omitted ambiguity with a confident static finding.
+    let overlap = if cut {
+        incomplete.push(budget.diagnostic());
+        OverlapOutcome {
+            census: CandidateSourceCensus::default(),
+            incomplete: None,
+        }
+    } else {
+        analyze_matcher_overlap(
+            definitions,
+            &summaries,
+            &proven,
+            &matched_texts,
+            config,
+            suppressions,
+            findings,
+            overlap_budget,
+            window,
+            scan_work,
+        )
+    };
+    if let Some(diagnostic) = overlap.incomplete {
+        incomplete.push(diagnostic);
     }
     FeatureUsageOutcome {
         used,
         incomplete,
+        ambiguity_truncated: cut,
         overlap_census: overlap.census,
     }
 }

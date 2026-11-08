@@ -1577,6 +1577,58 @@
           "stage": "bounded-analysis",
           "rationale": "Adapter-independent stage `bounded-analysis`: Bounded evidence preserves original fallback baseline identities, occurrence counts and incomplete analysis signals.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ambiguity_admission_boundary_matrix_preserves_complete_groups",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent ambiguity retention: complete member groups, usage certainty, native payload admission and explicit limit refusal remain consistent across the shared analyzer.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ambiguity_admission_finishes_accepted_outline_counts_after_refusal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent ambiguity retention: complete member groups, usage certainty, native payload admission and explicit limit refusal remain consistent across the shared analyzer.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ambiguity_admission_preserves_disabled_overlap_and_uncertain_usage_controls",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent ambiguity retention: complete member groups, usage certainty, native payload admission and explicit limit refusal remain consistent across the shared analyzer.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ambiguity_admission_counts_original_path_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent ambiguity retention: complete member groups, usage certainty, native payload admission and explicit limit refusal remain consistent across the shared analyzer.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ambiguity_admission_arithmetic_refusal_is_atomic",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent ambiguity retention: complete member groups, usage certainty, native payload admission and explicit limit refusal remain consistent across the shared analyzer.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ambiguity_admission_preserves_supported_outcome_matrix",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/usage/tests.rs",
+            "name": "ambiguity_admission_preserves_supported_outcome_matrix"
+          },
+          "rationale": "Runs actual JavaScript and Ruby extraction into shared ambiguity outcomes across ordinary/outline source groups, suppression and matcher windows.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ambiguity_admission_default_group_limit_is_explicit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent ambiguity retention: complete member groups, usage certainty, native payload admission and explicit limit refusal remain consistent across the shared analyzer.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7552,6 +7604,20 @@
             "name": "feature_bom_cli_matrix_preserves_findings_and_incomplete_controls"
           },
           "rationale": "Runs both JS and Ruby source definitions through the real CLI, retaining exact ambiguity/duplicate/unused outcomes across classic/Markdown encoding markers and malformed neighbors.",
+          "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
+    "tests/ambiguity_limits.rs": {
+      "tests": [
+        {
+          "name": "ambiguity_limits_preserve_cli_findings_and_baseline_on_refusal",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ambiguity_limits.rs",
+            "name": "ambiguity_limits_preserve_cli_findings_and_baseline_on_refusal"
+          },
+          "rationale": "Real JS/Ruby CLI runs retain a complete positive and enforce default ambiguity group limits with strict incomplete exit and unchanged baseline bytes.",
           "behaviorClass": "ruby-behavior"
         }
       ]

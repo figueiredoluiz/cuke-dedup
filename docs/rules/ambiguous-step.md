@@ -6,6 +6,8 @@ Narrow one matcher or remove the duplicate.
 
 The selected definitions form one comparison corpus; CukeDedup does not infer which definitions a runner loads for each feature. Before changing matchers in a monorepo or a suite with feature-local Cypress steps, check that the reported definitions actually coexist at runtime. Scope both definitions and features to that registry as described in [Corpus boundaries](../discovery/corpus-boundaries.md). Filtering only features still compares each selected step against every selected definition.
 
+Each analysis admits at most 1,000,000 owned ambiguity memberships, 25,000 finding/source groups and 64 MiB of retained ambiguity text and path payload. Membership accounting includes group/proof indices and complete related-location entries; suppressed findings consume the same allowances. Storage is admitted before retaining groups or cloning related locations. On exhaustion, previously admitted complete findings remain available, the run is marked incomplete and static matcher overlap is skipped. Complete matcher usage remains available; these limits are independent of candidate-comparison and reporter limits.
+
 ## Language support
 
 | JavaScript/TypeScript | Cucumber-Ruby |

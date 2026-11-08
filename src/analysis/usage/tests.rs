@@ -5,6 +5,322 @@ use crate::typescript::semantics::default_policy;
 use crate::typescript::TYPESCRIPT;
 use std::path::{Path, PathBuf};
 
+/// Runs final usage/overlap outcomes with test-local ambiguity admission limits.
+fn limited_ambiguities(
+    definitions: &[StepDefinition],
+    steps: &[FeatureStep],
+    config: &Config,
+    limits: [usize; 3],
+    window: usize,
+) -> (Vec<Finding>, FeatureUsageOutcome) {
+    let suppressions = SuppressionIndex::new(config, definitions);
+    let mut findings = Vec::new();
+    let outcome = analyze_feature_usage_with_budget(
+        definitions,
+        steps,
+        config,
+        &suppressions,
+        &mut findings,
+        100,
+        window,
+        AmbiguityBudget::new(limits[0], limits[1], limits[2]),
+    );
+    (findings, outcome)
+}
+
+/// Independently sums every retained ambiguity text and native path field from the final API result.
+fn ambiguity_payload(findings: &[Finding]) -> usize {
+    findings
+        .iter()
+        .map(|f| {
+            f.message.len()
+                + f.primary.path.as_os_str().len()
+                + f.related
+                    .iter()
+                    .map(|l| l.path.as_os_str().len())
+                    .sum::<usize>()
+                + f.evidence.matcher_difference.len()
+                + f.evidence.handler_evidence.len()
+                + f.suggested_action.len()
+                + f.suppression.as_ref().map_or(0, |s| s.reason.len())
+        })
+        .sum()
+}
+
+/// Covers exact/one-over membership, source-group and payload quotas without losing usage or suppression.
+#[test]
+fn ambiguity_admission_boundary_matrix_preserves_complete_groups() {
+    let definitions = definitions("Given(/^same$/,()=>first()); Given('same',()=>second());");
+    let mut steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given same\n  And same\n",
+        Path::new("a.feature"),
+    )
+    .unwrap();
+    steps[1].location.path = PathBuf::from("b.feature");
+    for suppressed in [false, true] {
+        let (_root, mut config) = config();
+        config
+            .rules
+            .insert(Rule::OverlappingMatcher, Severity::Warning);
+        if suppressed {
+            config.suppressions.push(SuppressionConfig {
+                rule: Rule::AmbiguousStep,
+                reason: "known 🌍".into(),
+                path: None,
+                matcher: None,
+            });
+        }
+        for window in [1, 250] {
+            let (full, complete) =
+                limited_ambiguities(&definitions, &steps, &config, [12, 2, usize::MAX], window);
+            assert!(complete.incomplete.is_empty());
+            assert_eq!(full.len(), 2);
+            let bytes = ambiguity_payload(&full);
+            for (slots, groups, payload, retained) in [
+                (12, 2, bytes, 2),
+                (11, 2, bytes, 1),
+                (12, 1, bytes, 1),
+                (12, 2, bytes - 1, 1),
+                (0, 2, bytes, 0),
+                (12, 2, 0, 0),
+            ] {
+                let (findings, outcome) = limited_ambiguities(
+                    &definitions,
+                    &steps,
+                    &config,
+                    [slots, groups, payload],
+                    window,
+                );
+                assert_eq!(
+                    findings.len(),
+                    retained,
+                    "{slots}/{groups}/{payload}/{window}"
+                );
+                assert_eq!(
+                    serde_json::to_value(&findings).unwrap(),
+                    serde_json::to_value(&full[..retained]).unwrap()
+                );
+                assert_eq!(outcome.used, [0, 1].into_iter().collect());
+                assert_eq!(outcome.incomplete.is_empty(), retained == 2);
+                if retained < 2 {
+                    assert_eq!(outcome.overlap_census, CandidateSourceCensus::default());
+                }
+                assert!(findings.iter().all(|f| f.rule == Rule::AmbiguousStep
+                    && f.related.len() == 2
+                    && f.suppression.is_some() == suppressed));
+            }
+        }
+    }
+}
+
+/// Completes later expansions of accepted member sets after a different set at the same source is refused.
+#[test]
+fn ambiguity_admission_finishes_accepted_outline_counts_after_refusal() {
+    let definitions = definitions("Given(/^value (red|blue)$/,()=>first()); Given('value red',()=>second()); Given('value blue',()=>third());");
+    let steps = crate::gherkin::extract("Feature: F\n Scenario Outline: S\n  Given value <v>\n Examples:\n | v |\n | red |\n | blue |\n | red |\n | blue |\n", Path::new("outline.feature")).unwrap();
+    let (_root, config) = config();
+    let (full, complete) =
+        limited_ambiguities(&definitions, &steps, &config, [100, 2, usize::MAX], 1);
+    assert!(complete.incomplete.is_empty());
+    assert_eq!(full.len(), 2);
+    let (partial, outcome) =
+        limited_ambiguities(&definitions, &steps, &config, [8, 1, usize::MAX], 1);
+    assert_eq!(partial.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&partial[0]).unwrap(),
+        serde_json::to_value(&full[0]).unwrap()
+    );
+    assert!(partial[0].message.contains("2 ambiguous expansions"));
+    assert_eq!(
+        crate::modes::finding_fingerprint(&partial[0]),
+        crate::modes::finding_fingerprint(&full[0])
+    );
+    assert!(!outcome.incomplete.is_empty());
+    assert_eq!(outcome.used, [0, 1, 2].into_iter().collect());
+}
+
+/// Keeps disabled ambiguity independent of its quota and uncertain matchers indeterminate after a cut.
+#[test]
+fn ambiguity_admission_preserves_disabled_overlap_and_uncertain_usage_controls() {
+    let definitions = definitions("Given(/^same$/,()=>first()); Given('same',()=>second()); Given('value {unknown}',()=>third()); Given('unused',()=>fourth());");
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given same\n",
+        Path::new("input.feature"),
+    )
+    .unwrap();
+    let (_root, mut config) = config();
+    config
+        .rules
+        .insert(Rule::OverlappingMatcher, Severity::Warning);
+    config
+        .rules
+        .insert(Rule::UnusedDefinition, Severity::Warning);
+    let (mut findings, outcome) = limited_ambiguities(&definitions, &steps, &config, [0, 0, 0], 1);
+    assert!(findings.is_empty());
+    assert!(!outcome.incomplete.is_empty());
+    assert_eq!(outcome.used, [0, 1, 2].into_iter().collect());
+    let suppressions = SuppressionIndex::new(&config, &definitions);
+    analyze_unused(
+        &definitions,
+        &outcome.used,
+        &config,
+        &suppressions,
+        &mut findings,
+    );
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].primary, definitions[3].location);
+    config.rules.insert(Rule::AmbiguousStep, Severity::Off);
+    let (findings, outcome) = limited_ambiguities(&definitions[..2], &steps, &config, [0, 0, 0], 1);
+    assert!(outcome.incomplete.is_empty());
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule, Rule::OverlappingMatcher);
+}
+
+/// Includes long Unicode paths in exact payload admission before preserving their original locations.
+#[test]
+fn ambiguity_admission_counts_original_path_bytes() {
+    let paths = [
+        PathBuf::from("長い🌍".repeat(200)),
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            PathBuf::from(std::ffi::OsString::from_vec(vec![b'x', 0xff, b'y']))
+        },
+    ];
+    for path in paths {
+        let mut definitions = definitions("Given('same',()=>first()); Given('same',()=>second());");
+        for d in &mut definitions {
+            d.location.path = path.clone();
+        }
+        let mut steps = crate::gherkin::extract(
+            "Feature: F\n Scenario: S\n  Given same\n",
+            Path::new("input.feature"),
+        )
+        .unwrap();
+        steps[0].location.path = path;
+        let (_root, config) = config();
+        let (full, _) = limited_ambiguities(&definitions, &steps, &config, [8, 1, usize::MAX], 1);
+        assert_eq!(full.len(), 1);
+        let bytes = ambiguity_payload(&full);
+        for (limit, expected) in [(bytes, 1), (bytes - 1, 0)] {
+            let (findings, outcome) =
+                limited_ambiguities(&definitions, &steps, &config, [8, 1, limit], 1);
+            assert_eq!(findings.len(), expected);
+            assert_eq!(outcome.incomplete.is_empty(), expected == 1);
+            if expected == 1 {
+                assert_eq!(findings[0].primary, steps[0].location);
+                assert_eq!(findings[0].related[0], definitions[0].location);
+            }
+        }
+    }
+}
+
+/// Refuses arithmetic overflow atomically so a later fitting charge still consumes the exact allowance.
+#[test]
+fn ambiguity_admission_arithmetic_refusal_is_atomic() {
+    let mut budget = AmbiguityBudget::new(8, 1, 1);
+    assert!(!budget.admit_group(usize::MAX, 1));
+    assert!(!budget.admit_group(usize::MAX / 2 + 1, 0));
+    assert!(budget.admit_group(2, 2));
+    assert!(!budget.admit_group(0, 0));
+    assert!(!budget.admit_payload([usize::MAX, 1]));
+    assert!(budget.admit_payload([1]));
+    assert!(!budget.admit_payload([1]));
+}
+
+/// Preserves complete JS/Ruby ambiguity groups, outline counts, suppression and window-independent identity.
+#[test]
+fn ambiguity_admission_preserves_supported_outcome_matrix() {
+    for language in [TYPESCRIPT, crate::ruby::RUBY] {
+        let source = if language == TYPESCRIPT {
+            "import { Given } from '@cucumber/cucumber';\nGiven(/^value (red|blue)$/,()=>first());\nGiven('value red',()=>second());\nGiven('value blue',()=>third());"
+        } else {
+            "Given(/^value (red|blue)$/) { first }; Given('value red') { second }; Given('value blue') { third }"
+        };
+        let file = SourceFile {
+            path: PathBuf::from(if language == TYPESCRIPT {
+                "steps.ts"
+            } else {
+                "steps.rb"
+            }),
+            language,
+        };
+        let definitions = crate::source_adapter::adapter_for_language(language)
+            .unwrap()
+            .extract(source, &file)
+            .unwrap()
+            .definitions;
+        assert_eq!(definitions.len(), 3);
+        for (feature, expansions) in [
+            ("Feature: F\n Scenario: S\n  Given value red\n  And value blue\n", [false, false]),
+            ("Feature: F\n Scenario Outline: S\n  Given value <v>\n Examples:\n | v |\n | red |\n | blue |\n | red |\n", [true, false]),
+        ] {
+            let steps = crate::gherkin::extract(feature, Path::new("input.feature")).unwrap();
+            for suppressed in [false, true] {
+                let (_root, mut config) = config();
+                if suppressed { config.suppressions.push(SuppressionConfig { rule: Rule::AmbiguousStep, reason: "owned overlap".into(), path: None, matcher: None }); }
+                let mut reference = None;
+                for window in [1, 2, 250] {
+                    let suppressions = SuppressionIndex::new(&config, &definitions);
+                    let mut findings = Vec::new();
+                    let outcome = analyze_feature_usage_in_windows(&definitions, &steps, &config, &suppressions, &mut findings, 100, window);
+                    assert!(outcome.incomplete.is_empty(), "{:?}", outcome.incomplete);
+                    assert_eq!(outcome.used, [0, 1, 2].into_iter().collect());
+                    assert_eq!(findings.len(), 2);
+                    for (index, finding) in findings.iter().enumerate() {
+                        assert_eq!(finding.rule, Rule::AmbiguousStep);
+                        assert_eq!(finding.related, vec![definitions[0].location.clone(), definitions[index + 1].location.clone()]);
+                        assert_eq!(finding.message.contains("2 ambiguous expansions"), expansions[index]);
+                        assert_eq!(finding.suppression.is_some(), suppressed);
+                    }
+                    let snapshot = serde_json::to_value(&findings).unwrap();
+                    let fingerprints = findings.iter().map(crate::modes::finding_fingerprint).collect::<Vec<_>>();
+                    if let Some(expected) = &reference { assert_eq!(&(snapshot, fingerprints), expected); }
+                    else { reference = Some((snapshot, fingerprints)); }
+                }
+            }
+        }
+    }
+}
+
+/// Requires the default ambiguity group ceiling to retain complete findings and expose an incomplete API result.
+#[test]
+fn ambiguity_admission_default_group_limit_is_explicit() {
+    let definitions = definitions("Given('same',()=>first()); Given('same',()=>second());");
+    let template = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given same\n",
+        Path::new("input.feature"),
+    )
+    .unwrap()
+    .remove(0);
+    let steps: Vec<_> = (0..25_001)
+        .map(|index| {
+            let mut step = template.clone();
+            step.location.line = index + 1;
+            step
+        })
+        .collect();
+    let (_root, mut config) = config();
+    for &rule in Rule::ALL {
+        config.rules.insert(rule, Severity::Off);
+    }
+    config.rules.insert(Rule::AmbiguousStep, Severity::Warning);
+    let outcome =
+        crate::analysis::analyze_with_diagnostics(definitions.clone(), steps.clone(), &config)
+            .unwrap();
+    assert_eq!(outcome.result.findings.len(), 25_000);
+    assert!(outcome
+        .result
+        .findings
+        .iter()
+        .all(|finding| finding.related.len() == 2));
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("ambiguity")));
+    assert!(crate::analysis::analyze(definitions, steps, &config).is_err());
+}
+
 /// Extracts TypeScript step definitions from a synthetic steps.ts source, panicking on extraction failure.
 fn definitions(source: &str) -> Vec<StepDefinition> {
     crate::typescript::extract(
@@ -148,7 +464,7 @@ fn regex_pattern_limit_is_inclusive() {
 /// Checks that recording a broad ambiguity twice stores one group and one membership per definition.
 #[test]
 fn broad_ambiguity_groups_use_linear_membership_storage() {
-    let matched = (0..10_000).collect::<BTreeSet<_>>();
+    let matched = (0..10_000).collect::<Vec<_>>();
     let mut proven = ProvenAmbiguities::new(matched.len());
 
     proven.record(&matched);
@@ -562,9 +878,9 @@ fn rejected_matchers_lose_their_regex_and_report_only_the_size_limit() {
 #[test]
 fn ambiguity_membership_intersection_handles_ordered_disjoint_groups() {
     let mut proven = ProvenAmbiguities::new(5);
-    proven.record(&[0, 2].into_iter().collect());
-    proven.record(&[1, 3].into_iter().collect());
-    proven.record(&[2, 4].into_iter().collect());
+    proven.record(&[0, 2]);
+    proven.record(&[1, 3]);
+    proven.record(&[2, 4]);
     assert!(!proven.contains(0, 1));
     assert!(proven.contains(0, 2));
     assert!(!proven.contains(1, 4));
