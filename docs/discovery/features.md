@@ -18,6 +18,8 @@ CukeDedup configuration to make them deterministic.
 framework pattern are parsed as classic Gherkin. This avoids treating ordinary Markdown as
 Gherkin while allowing custom names.
 
+Classic and Gherkin Markdown inputs accept one initial UTF-8 byte-order mark before parsing or Markdown conversion. U+FEFF elsewhere remains content. The marker still counts toward the source-file byte limit.
+
 Classic and Markdown tables decode `\n`, `\|`, and `\\` and preserve other backslash sequences literally, including Windows paths. Examples values retain their decoded text during outline expansion. Inconsistent table widths and malformed tables fail parsing; valid neighboring feature files remain analyzable, and the report marks the corpus incomplete.
 
 A CLI run admits at most 250,000 concrete feature steps and 64 MiB of retained step text, keywords and location paths across all selected feature files, including a historical reference baseline when selected. Ordinary scenarios, outlines and feature/rule backgrounds share these limits. Each public extraction call applies the same limits to that call. A feature that exceeds the remaining budget is refused before concrete steps are allocated; it contributes no steps, the corpus is marked incomplete, unused-definition conclusions are disabled and baseline updates are refused. Fitting neighboring files remain analyzable. These limits bound concrete-step retention; source-file parsing and matcher analysis have separate limits.
