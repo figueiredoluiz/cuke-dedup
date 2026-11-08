@@ -208,6 +208,7 @@ fn analyze_internal(
         .skipped_candidate_comparisons
         .saturating_add(usage.overlap_census.skipped);
     census.truncated |= usage.overlap_census.skipped > 0;
+    census.truncated |= usage.ambiguity_truncated;
     census
         .candidate_sources
         .insert("matcherOverlap".to_owned(), usage.overlap_census);
