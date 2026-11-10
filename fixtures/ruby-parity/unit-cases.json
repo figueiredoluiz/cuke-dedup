@@ -1493,6 +1493,37 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "large_feature_corpora_retain_the_only_late_ambiguity",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: directly constructed model inputs prove that large mostly-negative and large singleton-match corpora retain the only late ambiguity without a cache or work refusal. Ruby outcome parity remains covered by the windowing and ambiguity suites.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "late_feature_match_preserves_each_enabled_consumer",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/ruby.rs",
+            "name": "ruby_windowing_does_not_change_findings_on_any_axis"
+          },
+          "rationale": "The Ruby windowing matrix preserves ambiguity, overlap and unused-definition outcomes at matcher windows 1, 2 and wider than the corpus. This test expands the same shared-engine contract across every consumer mask and verifies a late cross-window ambiguity keeps its ordered locations.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "match_rows_preserve_sparse_and_dense_blocks",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: the compact match-row codec preserves ordered definition indices across empty, dense, sparse and word-boundary inputs. Every adapter consumes the decoded indices through the same ambiguity and overlap paths.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "scattered_match_rows_preserve_indices_without_doubling_storage",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: isolated definition matches retain their ordered identities while using one stored word per isolated index after a dense prefix. The representation is internal to the shared analyzer and does not depend on adapter syntax.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "complete_feature_matches_replace_only_an_untruncated_overlap_scan",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",

@@ -302,11 +302,7 @@ fn ambiguity_admission_default_group_limit_is_explicit() {
             step
         })
         .collect();
-    let (_root, mut config) = config();
-    for &rule in Rule::ALL {
-        config.rules.insert(rule, Severity::Off);
-    }
-    config.rules.insert(Rule::AmbiguousStep, Severity::Warning);
+    let (_root, config) = ambiguity_only_config();
     let outcome =
         crate::analysis::analyze_with_diagnostics(definitions.clone(), steps.clone(), &config)
             .unwrap();
@@ -354,6 +350,16 @@ fn summaries(definitions: &[StepDefinition], config: &Config) -> Vec<MatcherSumm
 fn config() -> (tempfile::TempDir, Config) {
     let directory = tempfile::tempdir().unwrap();
     let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    (directory, config)
+}
+
+/// Enables only ambiguity reporting for tests that exercise its capacity.
+fn ambiguity_only_config() -> (tempfile::TempDir, Config) {
+    let (directory, mut config) = config();
+    for &rule in Rule::ALL {
+        config.rules.insert(rule, Severity::Off);
+    }
+    config.rules.insert(Rule::AmbiguousStep, Severity::Warning);
     (directory, config)
 }
 
@@ -533,7 +539,7 @@ fn matcher_overlap_charges_index_scans_before_candidate_generation() {
         &definitions,
         &summaries,
         &ProvenAmbiguities::new(definitions.len()),
-        &BTreeMap::new(),
+        None,
         &config,
         &suppressions,
         &mut findings,
@@ -602,7 +608,11 @@ fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
          Given(/^value red$/, () => regex());\n\
          Given('value {colour}', () => duplicate());",
     );
-    let complete = BTreeMap::from([("value red", vec![0, 1, 2])]);
+    let mut row = MatchRow::default();
+    for index in 0..3 {
+        row.append(index);
+    }
+    let complete = BTreeMap::from([("value red", row)]);
 
     assert_eq!(
         cached_overlap_proposals(&definitions, &summaries, &witnesses, 1, &complete),
@@ -1512,4 +1522,181 @@ fn sampled_ambiguity_members_keep_original_identity() {
         crate::modes::apply_reference_baseline(&mut changed, &variants[..1], "accepted").unwrap();
     assert_eq!(outcome.new_findings, 1);
     assert!(changed[0].is_active());
+}
+
+/// A late ambiguity survives a matcher window boundary, and disabling its consumers skips direct usage.
+#[test]
+fn late_feature_match_preserves_each_enabled_consumer() {
+    let mut source = String::new();
+    for index in 0..63 {
+        source.push_str(&format!("Given('unseen {index}', () => work());\n"));
+    }
+    source.push_str("Given('last {int}', () => first());\nGiven(/^last [0-9]+$/, () => second());");
+    let definitions = definitions(&source);
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given unrelated\n  And last 1\n",
+        Path::new("late.feature"),
+    )
+    .unwrap();
+    let (_root, mut config) = config();
+    for mask in 0..8 {
+        for (bit, rule) in [
+            (1, Rule::UnusedDefinition),
+            (2, Rule::AmbiguousStep),
+            (4, Rule::OverlappingMatcher),
+        ] {
+            config.rules.insert(
+                rule,
+                if mask & bit != 0 {
+                    Severity::Warning
+                } else {
+                    Severity::Off
+                },
+            );
+        }
+        for window in [1, 64, 250] {
+            let (mut findings, outcome) =
+                limited_ambiguities(&definitions, &steps, &config, [usize::MAX; 3], window);
+            analyze_unused(
+                &definitions,
+                &outcome.used,
+                &config,
+                &SuppressionIndex::new(&config, &definitions),
+                &mut findings,
+            );
+            assert!(outcome.incomplete.is_empty());
+            let unused: Vec<_> = findings
+                .iter()
+                .filter(|f| f.rule == Rule::UnusedDefinition)
+                .map(|f| f.primary.line)
+                .collect();
+            assert_eq!(
+                unused,
+                if mask & 1 != 0 {
+                    (1..=63).collect::<Vec<_>>()
+                } else {
+                    vec![]
+                }
+            );
+            let ambiguous: Vec<_> = findings
+                .iter()
+                .filter(|f| f.rule == Rule::AmbiguousStep)
+                .collect();
+            assert_eq!(ambiguous.len(), usize::from(mask & 2 != 0));
+            if let Some(finding) = ambiguous.first() {
+                assert_eq!(finding.primary.line, 4);
+                assert_eq!(
+                    finding.related.iter().map(|l| l.line).collect::<Vec<_>>(),
+                    [64, 65]
+                );
+            }
+            assert_eq!(
+                findings
+                    .iter()
+                    .filter(|f| f.rule == Rule::OverlappingMatcher)
+                    .count(),
+                usize::from(mask & 6 == 4)
+            );
+            if mask & 3 == 0 {
+                assert!(
+                    outcome.used.is_empty(),
+                    "inactive feature consumers retained direct usage"
+                );
+            }
+        }
+    }
+}
+
+/// Compact rows preserve every matched index across gaps and keep the first block inline.
+#[test]
+fn match_rows_preserve_sparse_and_dense_blocks() {
+    let mut row = MatchRow::default();
+    assert_eq!(row.indices().count(), 0);
+    for id in [60, 62, 63] {
+        row.append(id);
+    }
+    assert!(matches!(row, MatchRow::One(_)));
+    for id in 64..128 {
+        row.append(id);
+    }
+    row.append(319);
+    assert_eq!(
+        row.indices().collect::<Vec<_>>(),
+        [60, 62, 63]
+            .into_iter()
+            .chain(64..128)
+            .chain([319])
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Preserves the final ambiguity in both a large mostly-negative scan and a large singleton cache.
+#[test]
+fn large_feature_corpora_retain_the_only_late_ambiguity() {
+    let patterns = definitions("Given(/^never$/,()=>first()); Given(/^value .*$/,()=>second()); Given(/^value zz-last$/,()=>third());");
+    let template = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given value zz-last\n",
+        Path::new("late.feature"),
+    )
+    .unwrap()
+    .remove(0);
+    let (_root, config) = ambiguity_only_config();
+    for (misses, first_matcher, count, padding) in [
+        (11_998, &patterns[2], 14_000, 245),
+        (0, &patterns[1], 120_000, 0),
+    ] {
+        let mut registry = vec![patterns[0].clone(); misses];
+        registry.extend([first_matcher.clone(), patterns[2].clone()]);
+        for (id, def) in registry.iter_mut().enumerate() {
+            def.location.line = id + 1;
+        }
+        let suffix = "x".repeat(padding);
+        let steps: Vec<_> = (1..=count)
+            .map(|line| {
+                let mut step = template.clone();
+                step.location.line = line;
+                if line < count {
+                    step.text = format!("value {line}{suffix}");
+                }
+                step
+            })
+            .collect();
+        let (findings, outcome) = limited_ambiguities(
+            &registry,
+            &steps,
+            &config,
+            [usize::MAX; 3],
+            DEFAULT_MATCHER_WINDOW,
+        );
+        assert!(outcome.incomplete.is_empty());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].primary.line, count);
+        assert_eq!(
+            findings[0]
+                .related
+                .iter()
+                .map(|location| location.line)
+                .collect::<Vec<_>>(),
+            [misses + 1, misses + 2]
+        );
+    }
+}
+
+/// Isolated matches occupy one stored word each, including after a dense prefix.
+#[test]
+fn scattered_match_rows_preserve_indices_without_doubling_storage() {
+    let width = usize::BITS as usize;
+    let mut row = MatchRow::default();
+    let ids: Vec<_> = (0..width).chain((1..=128).map(|i| i * 2 * width)).collect();
+    for &id in &ids {
+        row.append(id);
+    }
+    assert_eq!(row.indices().collect::<Vec<_>>(), ids);
+    let MatchRow::Many(words) = row else {
+        panic!("expected multiple spans")
+    };
+    assert_eq!(
+        std::mem::size_of_val(words.as_slice()),
+        130 * std::mem::size_of::<usize>()
+    );
 }

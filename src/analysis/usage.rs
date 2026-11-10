@@ -19,6 +19,8 @@ use std::sync::LazyLock;
 
 mod ambiguity_budget;
 use ambiguity_budget::AmbiguityBudget;
+mod feature_matches;
+use feature_matches::{FeatureMatches, MatchRow};
 
 static FALLBACK_PLACEHOLDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{([^{}]+)\}").expect("static placeholder regex"));
@@ -154,13 +156,14 @@ impl MatcherIndex {
     fn matches(&self, text: &str, output: &mut Vec<usize>) {
         output.clear();
         for indexed in &self.sets {
-            output.extend(
-                indexed
-                    .set
-                    .matches(text)
-                    .into_iter()
-                    .map(|pattern| indexed.definitions[pattern]),
-            );
+            let matches = indexed.set.matches(text);
+            if matches.matched_any() {
+                output.extend(
+                    matches
+                        .into_iter()
+                        .map(|pattern| indexed.definitions[pattern]),
+                );
+            }
         }
         output.extend(
             self.fallback
@@ -186,8 +189,8 @@ impl MatcherIndex {
 /// Holding every compiled matcher and one monolithic `RegexSet` alive was ~90% of peak memory on a
 /// large corpus, because a compiled program is orders of magnitude larger than the matcher text it
 /// came from. Compiling a window, scanning it, and dropping it bounds peak at window size rather
-/// than corpus size. Output is unaffected: every definition is still compiled and still scanned
-/// against every step text and every witness, only not all at the same time.
+/// than corpus size. Each window supplies compilation diagnostics, complete ambiguity matches,
+/// and the usage or witness matches needed by the enabled rules.
 /// Measured on a 10k-definition corpus with rules on: 392 MB unwindowed, 146 MB at 1,000, and
 /// 133 MB at 250, with 250 also the fastest. Smaller windows keep each automaton's lazy-DFA cache
 /// warm instead of thrashing one monolithic program.
@@ -392,13 +395,8 @@ fn analyze_feature_usage_with_budget(
     let mut summaries: Vec<MatcherSummary> = Vec::with_capacity(definitions.len());
     let mut incomplete: Vec<String> = Vec::new();
 
-    // Scenario Outline expansion repeats identical step text, and repeated text always produces
-    // the same match set, so each distinct text is matched once per window.
-    let mut matched_texts: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-    for step in steps {
-        matched_texts.entry(step.text.as_str()).or_default();
-    }
-
+    let mut matched_texts = FeatureMatches::new(steps, config);
+    let mut used = BTreeSet::new();
     let mut local = Vec::new();
     let scan_work = scan_windows(
         definitions,
@@ -407,34 +405,27 @@ fn analyze_feature_usage_with_budget(
         |start, matchers, index, diagnostics| {
             summaries.extend(matchers.iter().map(MatcherSummary::of));
             incomplete.extend(diagnostics.into_iter().flatten());
-            for (text, accumulated) in matched_texts.iter_mut() {
-                index.matches(text, &mut local);
-                accumulated.extend(local.iter().map(|index| index + start));
-            }
+            // Uncompiled and non-authoritative matchers can never be proven unused.
+            let mut window_used: Vec<_> = summaries[start..]
+                .iter()
+                .map(|matcher| !matcher.has_regex || !matcher.authoritative)
+                .collect();
+            matched_texts.scan(start, index, &mut window_used, &mut local);
+            used.extend(
+                window_used
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, &hit)| hit.then_some(start + id)),
+            );
             ControlFlow::Continue(())
         },
     );
 
-    // Definitions whose matcher cannot be modeled authoritatively cannot be proven unused.
-    // A permissive fallback may still fail to match the available feature corpus, so both
-    // uncompiled and non-authoritative matchers remain indeterminate.
-    let mut used: BTreeSet<_> = summaries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, matcher)| {
-            (!matcher.has_regex || !matcher.authoritative).then_some(index)
-        })
-        .collect();
-    // Usage is complete even if later ambiguity retention refuses a group. Deduplicated texts
-    // suffice; a refused ambiguity must not make a matched definition appear unused.
-    for matches in matched_texts.values() {
-        used.extend(matches.iter().copied());
-    }
     let mut ambiguities: BTreeMap<_, BTreeMap<Vec<usize>, (&FeatureStep, usize)>> = BTreeMap::new();
     let mut proven = ProvenAmbiguities::new(definitions.len());
     let ambiguity_is_reported = config.severity(Rule::AmbiguousStep) != Severity::Off;
     let mut cut = false;
-    if ambiguity_is_reported {
+    if let Some(rows) = matched_texts.rows() {
         for step in steps {
             let location = (
                 step.location.path.as_path(),
@@ -446,10 +437,10 @@ fn analyze_feature_usage_with_budget(
             if cut && !ambiguities.contains_key(&location) {
                 continue;
             }
-            let matches = &matched_texts[step.text.as_str()];
+            let matches = &rows[step.text.as_str()];
             let count = matches
-                .iter()
-                .filter(|&&index| summaries[index].authoritative)
+                .indices()
+                .filter(|&index| summaries[index].authoritative)
                 .count();
             if count < 2 {
                 continue;
@@ -459,8 +450,7 @@ fn analyze_feature_usage_with_budget(
                 continue;
             }
             let authoritative: Vec<_> = matches
-                .iter()
-                .copied()
+                .indices()
                 .filter(|&index| summaries[index].authoritative)
                 .collect();
             if let Some((_, expansions)) = ambiguities
@@ -621,7 +611,7 @@ fn analyze_feature_usage_with_budget(
             definitions,
             &summaries,
             &proven,
-            &matched_texts,
+            matched_texts.rows(),
             config,
             suppressions,
             findings,
@@ -662,7 +652,7 @@ fn analyze_matcher_overlap(
     definitions: &[StepDefinition],
     summaries: &[MatcherSummary],
     proven: &ProvenAmbiguities,
-    matched_texts: &BTreeMap<&str, Vec<usize>>,
+    matched_texts: Option<&BTreeMap<&str, MatchRow>>,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
@@ -736,7 +726,7 @@ fn analyze_matcher_overlap(
         window,
         &witnesses,
         proposal_budget,
-        Some(matched_texts),
+        matched_texts,
     );
 
     let mut considered = HashSet::new();
@@ -866,7 +856,7 @@ fn collect_overlap_proposals(
     window: usize,
     witnesses: &[(usize, String)],
     budget: usize,
-    matched_texts: Option<&BTreeMap<&str, Vec<usize>>>,
+    matched_texts: Option<&BTreeMap<&str, MatchRow>>,
 ) -> (Vec<Vec<usize>>, bool, OverlapProposalSource) {
     if witnesses.is_empty() {
         return (Vec::new(), false, OverlapProposalSource::FeatureCache);
@@ -939,7 +929,7 @@ fn cached_overlap_proposals(
     summaries: &[MatcherSummary],
     witnesses: &[(usize, String)],
     budget: usize,
-    matched_texts: &BTreeMap<&str, Vec<usize>>,
+    matched_texts: &BTreeMap<&str, MatchRow>,
 ) -> Option<Vec<Vec<usize>>> {
     let mut proposals = Vec::with_capacity(witnesses.len());
     let mut stored = 0_usize;
@@ -947,7 +937,7 @@ fn cached_overlap_proposals(
         let matches = matched_texts.get(witness.as_str())?;
         let definition = &definitions[*left];
         let mut accepted = Vec::new();
-        for right in matches.iter().copied() {
+        for right in matches.indices() {
             if right == *left || !summaries[right].authoritative {
                 continue;
             }
@@ -1085,7 +1075,7 @@ pub(super) fn apply_indirect_usage(
         ));
         return;
     };
-    if usage.texts.is_empty() {
+    if usage.texts.is_empty() || config.severity(Rule::UnusedDefinition) == Severity::Off {
         return;
     }
     let mut matched = Vec::new();
