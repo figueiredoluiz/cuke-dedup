@@ -504,6 +504,76 @@
       }
     },
     {
+      "id": "near-overlapping-actions",
+      "rule": "near-duplicate-step",
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-11-11",
+      "axes": ["handler-shape"],
+      "intent": "Four ordered shared actions still qualify as behavior overlap when one handler has one additional action.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\";\nGiven(\"the dashboard panel opens\", () => { page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); });\nGiven(\"the dashboard panel open\", () => { page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); page.audit(\"extra\"); });\n",
+        "ruby": "# Original paired Cucumber scenario.\nGiven(\"the dashboard panel opens\") do page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); end\nGiven(\"the dashboard panel open\") do page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); page.audit(\"extra\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [
+          {
+            "rule": "near-duplicate-step",
+            "count": 1
+          }
+        ],
+        "requiredAbsent": [
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "near-overlapping-actions-conflicting-assertions",
+      "rule": "near-duplicate-step",
+      "role": "negative",
+      "origin": "synthetic",
+      "language": "both",
+      "frameworks": ["cucumber-js", "cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-11-11",
+      "axes": ["assertion-shape", "handler-shape"],
+      "intent": "Four ordered shared actions and one additional action must not outweigh conflicting expected assertion values.",
+      "sources": {
+        "typescript": "import { Given } from \"@cucumber/cucumber\"; import { expect } from \"vitest\";\nGiven(\"the dashboard panel opens\", () => { page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); expect(page.state()).toBe(\"ready\"); });\nGiven(\"the dashboard panel open\", () => { page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); page.audit(\"extra\"); expect(page.state()).toBe(\"idle\"); });\n",
+        "ruby": "# Original paired assertion scenario.\nGiven(\"the dashboard panel opens\") do page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); expect(page.state()).to eq(\"ready\"); end\nGiven(\"the dashboard panel open\") do page.open(\"home\"); page.wait(\"panel\"); page.click(\"save\"); page.record(\"done\"); page.audit(\"extra\"); expect(page.state()).to eq(\"idle\"); end\n"
+      },
+      "feature": "Feature: Paired analysis\n  Scenario: Observed usage\n    Given unrelated observation\n",
+      "expected": {
+        "definitions": 2,
+        "featureSteps": 1,
+        "complete": true,
+        "requiredFindings": [],
+        "requiredAbsent": [
+          {
+            "rule": "near-duplicate-step"
+          },
+          {
+            "rule": "duplicate-handler"
+          },
+          {
+            "rule": "parameterization-candidate"
+          }
+        ]
+      }
+    },
+    {
       "id": "near-conflicting-actions",
       "rule": "near-duplicate-step",
       "role": "negative",
