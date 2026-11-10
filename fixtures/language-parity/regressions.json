@@ -18,6 +18,8 @@
     "handler-conflicting-argument-order": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"},
     "near-identical-handlers": {"status":"pass","digest":"1b3522a9151afa589bec4e16f2c840e89c153526dfe2e7966c5e5edcf9e199b2"},
     "near-renamed-parameters": {"status":"pass","digest":"1b3522a9151afa589bec4e16f2c840e89c153526dfe2e7966c5e5edcf9e199b2"},
+    "near-overlapping-actions": {"status":"pass","digest":"0cc263ebf044cd0e4881b069e525897bb4aae665fa7892e700450729d94a6f1c"},
+    "near-overlapping-actions-conflicting-assertions": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"},
     "near-conflicting-actions": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"},
     "parameterization-action-literals": {"status":"pass","digest":"8018699a39d1bc9de56237634136aa892bc63e5e6d3aad28d42fa402ce313654"},
     "parameterization-polarity": {"status":"pass","digest":"44a6b5961a92652290a976d224d4d4062b5d7800ad87d122cd62cc399435bf2f"},
