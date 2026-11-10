@@ -36,12 +36,15 @@ const binary = resolve(process.argv[2] || "target/release/cuke-dedup");
 /// binary measures roughly 59,000 and still fails it.
 ///
 /// Tightening macOS needs a different measurement, not a different number: an instrumented
-/// retained-bytes figure from the analyzer would be platform-independent. That is backlog H2.
-const DEFAULT_BUDGET_BYTES = process.platform === "linux" ? 9_000 : 16_000;
-const BUDGET_BYTES_PER_DEFINITION = Number.parseInt(
-  process.env.CUKE_DEDUP_MEMORY_BUDGET || String(DEFAULT_BUDGET_BYTES),
-  10,
-);
+/// retained-bytes figure from the analyzer would be platform-independent.
+///
+/// The first paired Ruby calibration measured 9,541-9,623 bytes per definition on macOS across
+/// three complete repetitions. Its 12,000-byte Linux budget preserves approximately the same
+/// relative frontend allowance as TypeScript; the 16,000-byte macOS budget retains headroom for
+/// the allocator noise described above. Override it independently with
+/// `CUKE_DEDUP_RUBY_MEMORY_BUDGET` when probing a candidate budget.
+const DEFAULT_TYPESCRIPT_BUDGET_BYTES = process.platform === "linux" ? 9_000 : 16_000;
+const DEFAULT_RUBY_BUDGET_BYTES = process.platform === "linux" ? 12_000 : 16_000;
 const SIZES = [1_000, 4_000];
 
 /// Each size is measured this many times and the **lowest** peak is used.
@@ -72,8 +75,17 @@ const PLANTED_OVERLAPS = 10;
 /// Index-derived so the corpus is identical on every run and every machine. Vocabulary is varied so
 /// unrelated definitions do not read as near-duplicates of each other; only the planted pairs
 /// overlap.
-/** Generate deterministic, non-comparable handlers and distinct matchers with a fixed number of planted overlaps. */
-function source(count, offset) {
+/** Generate one deterministic matcher with index-specific vocabulary. */
+function matcher(index) {
+  const noun = NOUNS[index % NOUNS.length];
+  const verb = VERBS[(index * 7) % VERBS.length];
+  return index % 5 < 2
+    ? `${noun}${index} ${verb}${index} at ${PLACEHOLDERS[index % PLACEHOLDERS.length]}`
+    : `${noun}${index} ${verb}${index} at rest${index}`;
+}
+
+/** Generate a deterministic Cucumber.js source batch. */
+function typescriptSource(count, offset) {
   const lines = ['import { Given, When, Then } from "@cucumber/cucumber";', ""];
   for (let index = 0; index < count; index += 1) {
     const n = offset + index;
@@ -84,14 +96,12 @@ function source(count, offset) {
     // Every token carries the index. Matcher blocking is shingle-based, so shared wording would
     // generate hundreds of thousands of pair candidates and truncate the run — work this gate does
     // not measure and which would make the two sizes incomparable.
-    const matcher = n % 5 < 2
-      ? `${noun}${n} ${verb}${n} at ${PLACEHOLDERS[n % PLACEHOLDERS.length]}`
-      : `${noun}${n} ${verb}${n} at rest${n}`;
+    const expression = matcher(n);
     // Each handler calls a uniquely named function, so no two are structurally comparable. Pair
     // candidate generation runs regardless of rule severity, and structurally similar bodies would
     // generate hundreds of thousands of candidates — work unrelated to matcher analysis that
     // truncates the run and makes the two sizes incomparable.
-    lines.push(`${keyword}('${matcher}', () => action_${n}());`);
+    lines.push(`${keyword}('${expression}', () => action_${n}());`);
     lines.push("");
     // A regex twin for the first few definitions: each yields one overlap the compiled matchers
     // must be scanned to find, so the pass cannot pass this gate by skipping compilation.
@@ -103,15 +113,56 @@ function source(count, offset) {
   return lines.join("\n");
 }
 
+/** Generate the Ruby equivalent of a deterministic Cucumber.js source batch. */
+function rubySource(count, offset) {
+  const lines = [];
+  for (let index = 0; index < count; index += 1) {
+    const n = offset + index;
+    const keyword = ["Given", "When", "Then"][n % 3];
+    const noun = NOUNS[n % NOUNS.length];
+    const verb = VERBS[(n * 7) % VERBS.length];
+    lines.push(`${keyword}('${matcher(n)}') { action_${n} }`);
+    lines.push("");
+    if (n < PLANTED_OVERLAPS) {
+      lines.push(`${keyword}(/^${noun}${n} ${verb}${n} at .+$/) { twin_${n} }`);
+      lines.push("");
+    }
+  }
+  return lines.join("\n");
+}
+
+const LANGUAGES = [
+  {
+    id: "typescript",
+    label: "TypeScript",
+    extension: "ts",
+    source: typescriptSource,
+    budget: Number.parseInt(
+      process.env.CUKE_DEDUP_MEMORY_BUDGET || String(DEFAULT_TYPESCRIPT_BUDGET_BYTES),
+      10,
+    ),
+  },
+  {
+    id: "ruby",
+    label: "Ruby",
+    extension: "rb",
+    source: rubySource,
+    budget: Number.parseInt(
+      process.env.CUKE_DEDUP_RUBY_MEMORY_BUDGET || String(DEFAULT_RUBY_BUDGET_BYTES),
+      10,
+    ),
+  },
+];
+
 /** Write definition batches, one feature step, and configuration isolating overlapping-matcher memory use. */
-async function buildCorpus(root, definitions) {
+async function buildCorpus(root, definitions, language) {
   await mkdir(join(root, "steps"), { recursive: true });
   await mkdir(join(root, "features"), { recursive: true });
   const perFile = 250;
   for (let written = 0; written < definitions; written += perFile) {
     await writeFile(
-      join(root, "steps", `steps_${written / perFile}.ts`),
-      source(Math.min(perFile, definitions - written), written),
+      join(root, "steps", `steps_${written / perFile}.${language.extension}`),
+      language.source(Math.min(perFile, definitions - written), written),
     );
   }
   // One concrete step, so feature-usage analysis runs rather than short-circuiting.
@@ -122,7 +173,7 @@ async function buildCorpus(root, definitions) {
   await writeFile(
     join(root, ".cuke-dedup.json"),
     `${JSON.stringify({
-      definitions: ["steps/**/*.ts"],
+      definitions: [`steps/**/*.${language.extension}`],
       features: ["features/**/*.feature"],
       threshold: 100,
       // `overlapping-matcher` is the consumer under test: it scans every compiled matcher. The pair
@@ -141,7 +192,7 @@ async function buildCorpus(root, definitions) {
 }
 
 /** Run the analyzer under platform time tooling and return peak bytes and report counts, or null when unsupported; assert a valid exit and memory measurement. */
-function measure(root, output, definitions) {
+function measure(root, output, definitions, language) {
   const binaryArguments = [".", "--reporters", "json", "--output", output];
   const memoryFile = join(root, ".memory");
   let command = binary;
@@ -167,7 +218,7 @@ function measure(root, output, definitions) {
   // than asserting on an empty message.
   assert.ok(
     result.status === 0 || result.status === 1,
-    `analysis of ${definitions} definitions exited with status ${result.status}`
+    `${language.label} analysis of ${definitions} definitions exited with status ${result.status}`
       + `${result.signal ? ` (signal ${result.signal})` : ""}: ${result.stderr || result.stdout || "no output"}`,
   );
   const report = JSON.parse(readFileSync(join(output, "cuke-dedup.json"), "utf8"));
@@ -192,86 +243,98 @@ function measure(root, output, definitions) {
 
 const temporary = await mkdtemp(join(tmpdir(), "cuke-dedup-memory-"));
 try {
-  const measurements = [];
-  for (const size of SIZES) {
-    const root = join(temporary, `corpus-${size}`);
-    await buildCorpus(root, size);
-    const samples = [];
-    for (let attempt = 0; attempt < SAMPLES; attempt += 1) {
-      const sample = measure(root, join(temporary, `report-${size}-${attempt}`), size);
-      if (sample === null) { samples.length = 0; break; }
-      samples.push(sample);
-    }
-    // Every sample is work-floor checked below, and the sample carried forward is one whole
-    // observation. Splicing the lowest peak onto the first sample's metadata would let the peak and
-    // the definition/finding counts come from different executions — harmless while the analyzer is
-    // deterministic, but a gate should not depend on that being true.
-    const measured = samples.length === 0
-      ? null
-      : samples.reduce((lowest, sample) => (sample.peak < lowest.peak ? sample : lowest));
-    if (measured === null) {
-      // Skipping is fine on a developer machine without `/usr/bin/time`, but in CI it would make
-      // this gate silently decorative — the exact failure mode the gate was added to close. CI
-      // runners that cannot measure must fail loudly rather than report success.
-      assert.ok(
-        !process.env.CI,
-        `no peak-memory source on ${process.platform}: the memory ratchet cannot run in CI, so it would pass without measuring anything`,
-      );
-      console.log(`Memory ratchet skipped: no peak-memory source on ${process.platform}.`);
-      process.exit(0);
-    }
-    // Work floor. Without this the gate would pass most cheaply by analyzing nothing, which is
-    // exactly the regression it is meant to catch.
-    // Checked on every sample, not only the surviving one: a run that analysed less would
-    // otherwise be free to supply the lowest peak.
-    for (const sample of samples) {
+  for (const language of LANGUAGES) {
+    const measurements = [];
+    for (const size of SIZES) {
+      const root = join(temporary, `${language.id}-corpus-${size}`);
+      await buildCorpus(root, size, language);
+      const samples = [];
+      for (let attempt = 0; attempt < SAMPLES; attempt += 1) {
+        const sample = measure(
+          root,
+          join(temporary, `${language.id}-report-${size}-${attempt}`),
+          size,
+          language,
+        );
+        if (sample === null) { samples.length = 0; break; }
+        samples.push(sample);
+      }
+      // Every sample is work-floor checked below, and the sample carried forward is one whole
+      // observation. Splicing the lowest peak onto the first sample's metadata would let the peak and
+      // the definition/finding counts come from different executions — harmless while the analyzer is
+      // deterministic, but a gate should not depend on that being true.
+      const measured = samples.length === 0
+        ? null
+        : samples.reduce((lowest, sample) => (sample.peak < lowest.peak ? sample : lowest));
+      if (measured === null) {
+        // Skipping is fine on a developer machine without `/usr/bin/time`, but in CI it would make
+        // this gate silently decorative — the exact failure mode the gate was added to close. CI
+        // runners that cannot measure must fail loudly rather than report success.
+        assert.ok(
+          !process.env.CI,
+          `no peak-memory source on ${process.platform}: the memory ratchet cannot run in CI, so it would pass without measuring anything`,
+        );
+        console.log(`Memory ratchets skipped: no peak-memory source on ${process.platform}.`);
+        process.exit(0);
+      }
+      // Work floor. Without this the gate would pass most cheaply by analyzing nothing, which is
+      // exactly the regression it is meant to catch.
+      // Checked on every sample, not only the surviving one: a run that analysed less would
+      // otherwise be free to supply the lowest peak.
+      for (const sample of samples) {
+        assert.equal(
+          sample.definitionsAnalyzed,
+          size + PLANTED_OVERLAPS,
+          `${language.label} sample analysed ${sample.definitionsAnalyzed} definitions, expected ${size + PLANTED_OVERLAPS}`,
+        );
+        assert.ok(
+          sample.findings >= PLANTED_OVERLAPS,
+          `${language.label} sample produced ${sample.findings} findings, below the ${PLANTED_OVERLAPS} planted overlaps`,
+        );
+        assert.equal(
+          sample.truncated,
+          false,
+          `${language.label} sample truncated analysis, so its peak is not comparable`,
+        );
+      }
+
+      // The planted regex twins are extra definitions on top of the requested size.
+      const expectedDefinitions = size + PLANTED_OVERLAPS;
       assert.equal(
-        sample.definitionsAnalyzed,
-        size + PLANTED_OVERLAPS,
-        `a sample analysed ${sample.definitionsAnalyzed} definitions, expected ${size + PLANTED_OVERLAPS}`,
+        measured.definitionsAnalyzed,
+        expectedDefinitions,
+        `expected ${expectedDefinitions} ${language.label} definitions to be analyzed, got ${measured.definitionsAnalyzed}`,
       );
+      // A fixed floor, not merely "> 0": the planted overlaps must actually be found, so the gate
+      // cannot be satisfied by a build that compiles matchers and then never scans them.
       assert.ok(
-        sample.findings >= PLANTED_OVERLAPS,
-        `a sample produced ${sample.findings} findings, below the ${PLANTED_OVERLAPS} planted overlaps`,
+        measured.findings >= PLANTED_OVERLAPS,
+        `expected at least ${PLANTED_OVERLAPS} ${language.label} findings from the planted overlaps, got ${measured.findings}`,
       );
-      assert.equal(sample.truncated, false, "a sample truncated analysis, so its peak is not comparable");
+      assert.equal(
+        measured.truncated,
+        false,
+        `${language.label} analysis truncated at ${size} definitions, so the two sizes did unequal work and the slope is meaningless: ${JSON.stringify(measured.analysis.candidateSources)}`,
+      );
+      measurements.push({ size, ...measured });
     }
 
-    // The planted regex twins are extra definitions on top of the requested size.
-    const expectedDefinitions = size + PLANTED_OVERLAPS;
-    assert.equal(
-      measured.definitionsAnalyzed,
-      expectedDefinitions,
-      `expected ${expectedDefinitions} definitions to be analyzed, got ${measured.definitionsAnalyzed}`,
-    );
-    // A fixed floor, not merely "> 0": the planted overlaps must actually be found, so the gate
-    // cannot be satisfied by a build that compiles matchers and then never scans them.
-    assert.ok(
-      measured.findings >= PLANTED_OVERLAPS,
-      `expected at least ${PLANTED_OVERLAPS} findings from the planted overlaps, got ${measured.findings}`,
-    );
-    assert.equal(
-      measured.truncated,
-      false,
-      `analysis truncated at ${size} definitions, so the two sizes did unequal work and the slope is meaningless: ${JSON.stringify(measured.analysis.candidateSources)}`,
-    );
-    measurements.push({ size, ...measured });
-  }
-
-  const [small, large] = measurements;
-  const marginal = (large.peak - small.peak) / (large.size - small.size);
-  for (const { size, peak, findings } of measurements) {
+    const [small, large] = measurements;
+    const marginal = (large.peak - small.peak) / (large.size - small.size);
+    console.log(`${language.label}:`);
+    for (const { size, peak, findings } of measurements) {
+      console.log(
+        `  ${String(size).padStart(6)} definitions: ${(peak / 2 ** 20).toFixed(1)} MB peak, ${findings} findings`,
+      );
+    }
     console.log(
-      `  ${String(size).padStart(6)} definitions: ${(peak / 2 ** 20).toFixed(1)} MB peak, ${findings} findings`,
+      `  Memory ratchet: ${marginal.toFixed(0)} bytes per definition (budget ${language.budget}).`,
+    );
+    assert.ok(
+      marginal <= language.budget,
+      `${language.label} marginal memory ${marginal.toFixed(0)} B/definition exceeds the ${language.budget} B budget; matcher analysis regressed`,
     );
   }
-  console.log(
-    `Memory ratchet: ${marginal.toFixed(0)} bytes per definition (budget ${BUDGET_BYTES_PER_DEFINITION}).`,
-  );
-  assert.ok(
-    marginal <= BUDGET_BYTES_PER_DEFINITION,
-    `marginal memory ${marginal.toFixed(0)} B/definition exceeds the ${BUDGET_BYTES_PER_DEFINITION} B budget; matcher analysis regressed`,
-  );
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
