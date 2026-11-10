@@ -9,18 +9,21 @@ use crate::model::{
     FeatureStep, Finding, FindingEvidence, MatcherKind, Rule, Severity, StepDefinition,
 };
 use crate::resource_limits::{
-    compile_regex_with_limits, MAX_REGEX_PATTERN_BYTES, MAX_STATIC_OVERLAP_FINDINGS,
+    compile_regex_with_limits, MAX_DIRECT_MATCH_CACHE_BYTES, MAX_REGEX_PATTERN_BYTES,
+    MAX_STATIC_OVERLAP_FINDINGS,
 };
 use cucumber_expressions::expand::IntoRegexCharIter;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 mod ambiguity_budget;
 use ambiguity_budget::AmbiguityBudget;
 mod feature_matches;
-use feature_matches::{FeatureMatches, MatchRow};
+use feature_matches::{AmbiguityRows, FeatureMatches, ScanStatus, MAX_ROW_MATCHES};
+mod matching_budget;
+use matching_budget::MatchingBudget;
 
 static FALLBACK_PLACEHOLDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{([^{}]+)\}").expect("static placeholder regex"));
@@ -214,7 +217,6 @@ fn matcher_window_size() -> usize {
 #[derive(Clone, Copy)]
 struct MatcherSummary {
     authoritative: bool,
-    has_regex: bool,
 }
 
 impl MatcherSummary {
@@ -222,7 +224,6 @@ impl MatcherSummary {
     fn of(matcher: &PreparedMatcher) -> Self {
         Self {
             authoritative: matcher.authoritative,
-            has_regex: matcher.expression.is_some(),
         }
     }
 }
@@ -284,7 +285,7 @@ pub(super) struct FeatureUsageOutcome {
 /// A broad feature step matching N definitions needs O(N) memberships. Expanding that group into
 /// all N*(N-1)/2 definition pairs was both unnecessary and an adversarial memory hazard.
 struct ProvenAmbiguities {
-    groups: HashMap<Vec<usize>, usize>,
+    groups: HashMap<Arc<[usize]>, usize>,
     memberships: Vec<Vec<usize>>,
 }
 
@@ -306,16 +307,23 @@ impl ProvenAmbiguities {
         }
     }
 
+    /// Reuses the admitted owned member set for repeated texts with the same ambiguity.
+    fn canonical(&self, matched: &[usize]) -> Option<Arc<[usize]>> {
+        self.groups
+            .get_key_value(matched)
+            .map(|(members, _)| Arc::clone(members))
+    }
+
     /// Stores a pre-admitted sorted group once; membership identifiers stay in ascending order.
-    fn record(&mut self, matched: &[usize]) {
-        if self.groups.contains_key(matched) {
+    fn record(&mut self, matched: Arc<[usize]>) {
+        if self.groups.contains_key(matched.as_ref()) {
             return;
         }
         let identifier = self.groups.len();
-        for &definition in matched {
+        for &definition in matched.iter() {
             self.memberships[definition].push(identifier);
         }
-        self.groups.insert(matched.to_vec(), identifier);
+        self.groups.insert(matched, identifier);
     }
 
     /// Reports whether two definitions share a recorded group by merging their sorted memberships.
@@ -331,6 +339,222 @@ impl ProvenAmbiguities {
             }
         }
         false
+    }
+}
+
+type AmbiguityGroups<'a> =
+    BTreeMap<(&'a std::path::Path, usize, usize), BTreeMap<Arc<[usize]>, (&'a FeatureStep, usize)>>;
+
+enum CachedAmbiguity {
+    Unseen,
+    NonAmbiguous,
+    Ambiguous(Arc<[usize]>),
+}
+
+struct AmbiguityCache<'a> {
+    offsets: HashMap<&'a str, usize>,
+    states: Vec<CachedAmbiguity>,
+}
+
+impl<'a> AmbiguityCache<'a> {
+    /// Indexes distinct feature texts and starts each shared group classification unresolved.
+    fn new(texts: &[&'a str]) -> Self {
+        Self {
+            offsets: texts
+                .iter()
+                .enumerate()
+                .map(|(offset, &text)| (text, offset))
+                .collect(),
+            states: std::iter::repeat_with(|| CachedAmbiguity::Unseen)
+                .take(texts.len())
+                .collect(),
+        }
+    }
+}
+
+/// Admits source-order steps resolved by the current row batch or an earlier complete batch.
+/// Without rows, unresolved texts are skipped while complete cached occurrences are finished.
+fn collect_ambiguity_batch<'a>(
+    steps: &'a [FeatureStep],
+    rows: Option<&AmbiguityRows<'a>>,
+    cache: &mut AmbiguityCache<'a>,
+    budget: &mut AmbiguityBudget,
+    proven: &mut ProvenAmbiguities,
+    ambiguities: &mut AmbiguityGroups<'a>,
+    cut: &mut bool,
+) -> usize {
+    let mut consumed = 0;
+    for step in steps {
+        let offset = cache.offsets[step.text.as_str()];
+        let mut candidate = None;
+        if matches!(cache.states[offset], CachedAmbiguity::Unseen) {
+            let Some(rows) = rows else {
+                consumed += 1;
+                continue;
+            };
+            let Some(matches) = rows.get(step.text.as_str()) else {
+                break;
+            };
+            if matches.overflowed() {
+                cache.states[offset] = CachedAmbiguity::NonAmbiguous;
+                *cut = true;
+            } else if matches.len() < 2 {
+                cache.states[offset] = CachedAmbiguity::NonAmbiguous;
+            } else {
+                let members: Vec<_> = matches.indices().collect();
+                if let Some(canonical) = proven.canonical(&members) {
+                    cache.states[offset] = CachedAmbiguity::Ambiguous(canonical);
+                } else {
+                    candidate = Some(Arc::from(members));
+                }
+            }
+        }
+        consumed += 1;
+        let (authoritative, new_group) = if let Some(candidate) = candidate {
+            (candidate, true)
+        } else {
+            let CachedAmbiguity::Ambiguous(authoritative) = &cache.states[offset] else {
+                continue;
+            };
+            (Arc::clone(authoritative), false)
+        };
+        let location = (
+            step.location.path.as_path(),
+            step.location.line,
+            step.location.column,
+        );
+        // A later expansion of an accepted source/member group must still contribute its full
+        // count after another group is refused. Unseen source positions need no member buffer.
+        if *cut && !ambiguities.contains_key(&location) {
+            if new_group {
+                cache.states[offset] = CachedAmbiguity::NonAmbiguous;
+            }
+            continue;
+        }
+        let count = authoritative.len();
+        if !budget.can_hold_group(count) {
+            if new_group {
+                cache.states[offset] = CachedAmbiguity::NonAmbiguous;
+            }
+            *cut = true;
+            continue;
+        }
+        if let Some((_, expansions)) = ambiguities
+            .get_mut(&location)
+            .and_then(|groups| groups.get_mut(authoritative.as_ref()))
+        {
+            *expansions += 1;
+            continue;
+        }
+        if *cut {
+            if new_group {
+                cache.states[offset] = CachedAmbiguity::NonAmbiguous;
+            }
+            continue;
+        }
+        if !budget.admit_group(count, proven.new_group_members(&authoritative)) {
+            if new_group {
+                cache.states[offset] = CachedAmbiguity::NonAmbiguous;
+            }
+            *cut = true;
+            continue;
+        }
+        if new_group {
+            proven.record(Arc::clone(&authoritative));
+            cache.states[offset] = CachedAmbiguity::Ambiguous(Arc::clone(&authoritative));
+        }
+        // Borrow paths and share the admitted member set across proof, text and finding indices.
+        ambiguities
+            .entry(location)
+            .or_default()
+            .insert(authoritative, (step, 1));
+    }
+    consumed
+}
+
+/// Returns distinct feature texts by first observation, which preserves admission order in batches.
+fn distinct_feature_texts(steps: &[FeatureStep]) -> Vec<&str> {
+    let mut seen = HashSet::new();
+    steps
+        .iter()
+        .filter_map(|step| {
+            seen.insert(step.text.as_str())
+                .then_some(step.text.as_str())
+        })
+        .collect()
+}
+
+struct FeatureBatchScan {
+    summaries: Vec<MatcherSummary>,
+    incomplete: Vec<String>,
+    used: BTreeSet<usize>,
+    status: ScanStatus,
+    scan_work: usize,
+}
+
+/// Compiles every matcher window and scans one text batch until it completes or reaches a limit.
+fn scan_feature_batch(
+    definitions: &[StepDefinition],
+    config: &Config,
+    window: usize,
+    matched_texts: &mut FeatureMatches<'_>,
+    matching_budget: &mut MatchingBudget,
+) -> FeatureBatchScan {
+    let mut summaries = Vec::with_capacity(definitions.len());
+    let mut incomplete = Vec::new();
+    let mut used = BTreeSet::new();
+    let mut local = Vec::new();
+    let mut status = if matched_texts.cache_overflowed() {
+        ScanStatus::CacheOverflow
+    } else {
+        ScanStatus::Complete
+    };
+    let scan_work = if status == ScanStatus::CacheOverflow {
+        0
+    } else {
+        scan_windows(
+            definitions,
+            &config.parameter_types,
+            window,
+            |start, matchers, index, diagnostics| {
+                summaries.extend(matchers.iter().map(MatcherSummary::of));
+                incomplete.extend(diagnostics.into_iter().flatten());
+                if status == ScanStatus::CpuExhausted {
+                    return ControlFlow::Continue(());
+                }
+                // Uncompiled and non-authoritative matchers can never be proven unused.
+                let mut window_used: Vec<_> = matchers
+                    .iter()
+                    .map(|matcher| matcher.expression.is_none() || !matcher.authoritative)
+                    .collect();
+                status = matched_texts.scan(
+                    start,
+                    matchers,
+                    index,
+                    &mut window_used,
+                    &mut local,
+                    matching_budget,
+                );
+                used.extend(
+                    window_used
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(id, &hit)| hit.then_some(start + id)),
+                );
+                if status == ScanStatus::CacheOverflow {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        )
+    };
+    FeatureBatchScan {
+        summaries,
+        incomplete,
+        used,
+        status,
+        scan_work,
     }
 }
 
@@ -377,6 +601,9 @@ fn analyze_feature_usage_in_windows(
         overlap_budget,
         window,
         AmbiguityBudget::default(),
+        MatchingBudget::default(),
+        MAX_DIRECT_MATCH_CACHE_BYTES,
+        MAX_ROW_MATCHES,
     )
 }
 
@@ -391,89 +618,124 @@ fn analyze_feature_usage_with_budget(
     overlap_budget: usize,
     window: usize,
     mut budget: AmbiguityBudget,
+    mut matching_budget: MatchingBudget,
+    cache_limit: usize,
+    row_limit: usize,
 ) -> FeatureUsageOutcome {
     let mut summaries: Vec<MatcherSummary> = Vec::with_capacity(definitions.len());
     let mut incomplete: Vec<String> = Vec::new();
-
-    let mut matched_texts = FeatureMatches::new(steps, config);
     let mut used = BTreeSet::new();
-    let mut local = Vec::new();
-    let scan_work = scan_windows(
-        definitions,
-        &config.parameter_types,
-        window,
-        |start, matchers, index, diagnostics| {
-            summaries.extend(matchers.iter().map(MatcherSummary::of));
-            incomplete.extend(diagnostics.into_iter().flatten());
-            // Uncompiled and non-authoritative matchers can never be proven unused.
-            let mut window_used: Vec<_> = summaries[start..]
-                .iter()
-                .map(|matcher| !matcher.has_regex || !matcher.authoritative)
-                .collect();
-            matched_texts.scan(start, index, &mut window_used, &mut local);
-            used.extend(
-                window_used
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(id, &hit)| hit.then_some(start + id)),
-            );
-            ControlFlow::Continue(())
-        },
-    );
-
-    let mut ambiguities: BTreeMap<_, BTreeMap<Vec<usize>, (&FeatureStep, usize)>> = BTreeMap::new();
+    let mut ambiguities = AmbiguityGroups::new();
     let mut proven = ProvenAmbiguities::new(definitions.len());
     let ambiguity_is_reported = config.severity(Rule::AmbiguousStep) != Severity::Off;
-    let mut cut = false;
-    if let Some(rows) = matched_texts.rows() {
-        for step in steps {
-            let location = (
-                step.location.path.as_path(),
-                step.location.line,
-                step.location.column,
+    let mut ambiguity_cut = false;
+    let mut direct_incomplete = None;
+    let mut retained_matches = None;
+    let mut scan_work = 0_usize;
+
+    if ambiguity_is_reported {
+        let texts = distinct_feature_texts(steps);
+        let mut cached = AmbiguityCache::new(&texts);
+        let mut pending = vec![(0_usize, texts.len())];
+        let mut step_cursor = 0;
+        let mut split = false;
+        // Even an empty feature corpus keeps its single empty batch for diagnostics and overlap.
+        while let Some((begin, end)) = pending.pop() {
+            let mut matched_texts = FeatureMatches::for_texts(
+                texts[begin..end].iter().copied(),
+                config,
+                cache_limit,
+                row_limit,
             );
-            // A later expansion of an accepted source/member group must still contribute its full
-            // count after another group is refused. Unseen source positions need no member buffer.
-            if cut && !ambiguities.contains_key(&location) {
-                continue;
+            let batch = scan_feature_batch(
+                definitions,
+                config,
+                window,
+                &mut matched_texts,
+                &mut matching_budget,
+            );
+
+            match batch.status {
+                ScanStatus::CacheOverflow if end - begin > 1 => {
+                    split = true;
+                    let middle = begin + (end - begin) / 2;
+                    pending.push((middle, end));
+                    pending.push((begin, middle));
+                }
+                ScanStatus::CacheOverflow => {
+                    direct_incomplete = Some(format!(
+                        "direct feature matching cache exceeded its {cache_limit}-byte limit for one text; ambiguity findings are partial, unused-definition findings were disabled and static matcher overlap was skipped"
+                    ));
+                    break;
+                }
+                ScanStatus::CpuExhausted => {
+                    if summaries.is_empty() {
+                        summaries = batch.summaries;
+                        incomplete.extend(batch.incomplete);
+                        scan_work = batch.scan_work;
+                    }
+                    direct_incomplete = Some(matching_budget.diagnostic());
+                    break;
+                }
+                ScanStatus::Complete => {
+                    if summaries.is_empty() {
+                        summaries = batch.summaries;
+                        incomplete.extend(batch.incomplete);
+                        scan_work = batch.scan_work;
+                    }
+                    used.extend(batch.used);
+                    if let Some(rows) = matched_texts.rows() {
+                        step_cursor += collect_ambiguity_batch(
+                            &steps[step_cursor..],
+                            Some(rows),
+                            &mut cached,
+                            &mut budget,
+                            &mut proven,
+                            &mut ambiguities,
+                            &mut ambiguity_cut,
+                        );
+                    }
+                    if !split && begin == 0 && end == texts.len() && pending.is_empty() {
+                        retained_matches = Some(matched_texts);
+                    }
+                }
             }
-            let matches = &rows[step.text.as_str()];
-            let count = matches
-                .indices()
-                .filter(|&index| summaries[index].authoritative)
-                .count();
-            if count < 2 {
-                continue;
-            }
-            if !budget.can_hold_group(count) {
-                cut = true;
-                continue;
-            }
-            let authoritative: Vec<_> = matches
-                .indices()
-                .filter(|&index| summaries[index].authoritative)
-                .collect();
-            if let Some((_, expansions)) = ambiguities
-                .get_mut(&location)
-                .and_then(|groups| groups.get_mut(authoritative.as_slice()))
-            {
-                *expansions += 1;
-                continue;
-            }
-            if cut {
-                continue;
-            }
-            if !budget.admit_group(count, proven.new_group_members(&authoritative)) {
-                cut = true;
-                continue;
-            }
-            proven.record(&authoritative);
-            // Borrow paths and keep one member vector: a value union would duplicate the key's set.
-            ambiguities
-                .entry(location)
-                .or_default()
-                .insert(authoritative, (step, 1));
         }
+        if direct_incomplete.is_some() && step_cursor < steps.len() {
+            collect_ambiguity_batch(
+                &steps[step_cursor..],
+                None,
+                &mut cached,
+                &mut budget,
+                &mut proven,
+                &mut ambiguities,
+                &mut ambiguity_cut,
+            );
+        }
+        debug_assert!(direct_incomplete.is_some() || step_cursor == steps.len());
+    } else {
+        let mut matched_texts = FeatureMatches::new(steps, config);
+        let batch = scan_feature_batch(
+            definitions,
+            config,
+            window,
+            &mut matched_texts,
+            &mut matching_budget,
+        );
+        summaries = batch.summaries;
+        incomplete.extend(batch.incomplete);
+        used = batch.used;
+        scan_work = batch.scan_work;
+        if batch.status == ScanStatus::CpuExhausted {
+            direct_incomplete = Some(matching_budget.diagnostic());
+        }
+        retained_matches = Some(matched_texts);
+    }
+
+    if let Some(diagnostic) = direct_incomplete.as_ref() {
+        // No unvisited definition can be called unused after direct matching stops.
+        used.extend(0..definitions.len());
+        incomplete.push(diagnostic.clone());
     }
     let severity = config.severity(Rule::AmbiguousStep);
     if ambiguity_is_reported {
@@ -570,7 +832,7 @@ fn analyze_feature_usage_with_budget(
                         .map(|d| d.location.path.as_os_str().len()),
                 ),
             ) {
-                cut = true;
+                ambiguity_cut = true;
                 break;
             }
             findings.push(Finding {
@@ -600,8 +862,11 @@ fn analyze_feature_usage_with_budget(
     }
     // A cut may leave proofs for groups whose final payload was refused. Do not use those proofs
     // to suppress overlap, nor replace an omitted ambiguity with a confident static finding.
-    let overlap = if cut {
+    if ambiguity_cut {
         incomplete.push(budget.diagnostic());
+    }
+    let analysis_cut = ambiguity_cut || direct_incomplete.is_some();
+    let overlap = if analysis_cut {
         OverlapOutcome {
             census: CandidateSourceCensus::default(),
             incomplete: None,
@@ -611,7 +876,7 @@ fn analyze_feature_usage_with_budget(
             definitions,
             &summaries,
             &proven,
-            matched_texts.rows(),
+            retained_matches.as_ref().and_then(FeatureMatches::rows),
             config,
             suppressions,
             findings,
@@ -626,7 +891,7 @@ fn analyze_feature_usage_with_budget(
     FeatureUsageOutcome {
         used,
         incomplete,
-        ambiguity_truncated: cut,
+        ambiguity_truncated: analysis_cut,
         overlap_census: overlap.census,
     }
 }
@@ -652,7 +917,7 @@ fn analyze_matcher_overlap(
     definitions: &[StepDefinition],
     summaries: &[MatcherSummary],
     proven: &ProvenAmbiguities,
-    matched_texts: Option<&BTreeMap<&str, MatchRow>>,
+    matched_texts: Option<&AmbiguityRows<'_>>,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
@@ -856,7 +1121,7 @@ fn collect_overlap_proposals(
     window: usize,
     witnesses: &[(usize, String)],
     budget: usize,
-    matched_texts: Option<&BTreeMap<&str, MatchRow>>,
+    matched_texts: Option<&AmbiguityRows<'_>>,
 ) -> (Vec<Vec<usize>>, bool, OverlapProposalSource) {
     if witnesses.is_empty() {
         return (Vec::new(), false, OverlapProposalSource::FeatureCache);
@@ -929,7 +1194,7 @@ fn cached_overlap_proposals(
     summaries: &[MatcherSummary],
     witnesses: &[(usize, String)],
     budget: usize,
-    matched_texts: &BTreeMap<&str, MatchRow>,
+    matched_texts: &AmbiguityRows<'_>,
 ) -> Option<Vec<Vec<usize>>> {
     let mut proposals = Vec::with_capacity(witnesses.len());
     let mut stored = 0_usize;

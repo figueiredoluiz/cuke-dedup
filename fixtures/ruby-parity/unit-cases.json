@@ -1500,6 +1500,55 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "direct_matching_budget_boundaries_preserve_only_complete_outcomes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: exact direct-scan and emitted-match boundaries preserve completed findings, while one-under controls disable uncertain unused and overlap conclusions.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cache_batches_without_reducing_visibility",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: retained-match cache batching preserves final ambiguity visibility, usage and completeness, with an explicit completed-prefix control on later work exhaustion.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cache_batches_preserve_source_order_at_retention_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: interleaved repeated texts preserve source-order ambiguity admission when cache batching and the shared retention boundary coincide.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cache_replay_does_not_rescan_unrelated_texts",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: alternating completed cache batches reuse classified text groups without consuming direct-scan or emitted-match work again.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cache_interns_only_admitted_ambiguity_groups",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: repeated texts share one admitted membership allocation across cache, proof and finding indices, while refused groups retain no member array.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cutoff_finishes_cached_outline_expansions",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: a later direct-work cutoff retains the unlimited finding identity for every expansion of an already completed outline group.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "oversized_match_row_uses_existing_incomplete_contract",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: a match row too large for ambiguity admission becomes an explicit incomplete result and never a partial finding or overlap proof.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "late_feature_match_preserves_each_enabled_consumer",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {

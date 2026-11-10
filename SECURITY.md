@@ -40,6 +40,8 @@ dialect-dependent candidates, whole-document retry is used only when
 `synthesized bytes × candidate count` is at most 64 MiB; otherwise restoration uses bounded
 32-item batches.
 
+Direct feature matching is limited to 64,000,000 matcher automaton scans and 64,000,000 emitted definition matches per analysis. Its retained authoritative match cache switches to complete-text batch recomputation above 64 MiB. Exhaustion preserves findings from completed batches, reports incomplete analysis, disables unused-definition conclusions and skips static matcher overlap; partial rows never become findings or proofs.
+
 Unreadable discovered definition or feature files, feature-parse errors, oversized directly loaded configuration or baselines, and malformed explicit CukeDedup configuration or baselines exit with code `2`; none are silently skipped. JS/TS and Ruby definition parse failures retain error-recovered definitions and warn as incomplete by default; `--fail-on-unparseable` makes them fatal. Malformed auto-detected framework configuration warns and falls back when safe. Registration-module and static project-resolution failures, including byte limits, and exhausted comparison budgets retain proven findings and warn as incomplete. Set `failOnIncomplete: true` or pass `--fail-on-incomplete` to reject incompleteness with code `2`. Repository configuration may lower candidate budgets but cannot raise their immutable 2,000,000-pair and 250,000-structural-proposal ceilings. JSON parsing retains `serde_json`'s default recursion limit.
 
 Definition and feature exclusions control discovery. An included definition can still cause
