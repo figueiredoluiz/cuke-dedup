@@ -162,3 +162,6 @@ pub mod ruby;
 pub mod source_adapter;
 mod stub_vocabulary;
 pub mod typescript;
+
+#[cfg(test)]
+pub(crate) mod tests;

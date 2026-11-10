@@ -1,4 +1,6 @@
 use super::*;
+
+mod properties;
 use crate::typescript::frameworks::{
     CUCUMBER_JS, CYPRESS_CUCUMBER, JEST_CUCUMBER, PLAYWRIGHT_BDD, VITEST_CUCUMBER,
 };

@@ -1,4 +1,6 @@
 use super::*;
+
+mod properties;
 use crate::config::{ConfigOverrides, SuppressionConfig};
 use crate::discovery::SourceFile;
 use crate::typescript::semantics::default_policy;

@@ -1,6 +1,8 @@
 use super::*;
 use std::fs;
 
+mod properties;
+
 /// Reads a file of exactly `limit` bytes and rejects one byte more as an input-limit error.
 #[test]
 fn bounded_reader_accepts_exact_limit_and_rejects_next_byte() {
