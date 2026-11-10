@@ -1,4 +1,6 @@
 use super::*;
+
+mod properties;
 use crate::typescript::TYPESCRIPT;
 
 /// A clean finalization keeps definitions; a failed one clears them, zeroes the file count,

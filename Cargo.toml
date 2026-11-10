@@ -64,6 +64,7 @@ same-file = "1.0"
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 
 [profile.release]
 # Aborting on panic drops the unwinding tables and landing pads, and stripping removes the symbol

@@ -360,20 +360,18 @@ export function partitionEvidenceTargets(targets, platform) {
 export const EVIDENCE_TARGET_DIR = "target/evidence";
 
 /**
- * Cargo arguments addressing one test exactly. Integration suites are `tests/<suite>.rs`;
- * library tests are addressed by module path (`src/config/tests.rs` -> `config::tests::<name>`,
- * `src/analysis/mod.rs` -> `analysis::tests::<name>`, `src/lib.rs` -> `tests::<name>`). Returns
- * null for files cargo cannot address this way (`src/main.rs`, files under `tests/<dir>/`).
+ * Cargo arguments addressing one test exactly. Integration suites are `tests/<suite>.rs`; library tests use conventional module paths (`src/config/tests.rs` -> `config::tests::<name>`, `src/analysis/tests/cases.rs` -> `analysis::tests::cases::<name>`).
+ * Ordinary source files add their inline `tests` module; files already within a `tests` module keep their existing path. `mod.rs` is a directory entry and only `src/lib.rs` is the library root. Returns null for unsupported targets (`src/main.rs`, integration helper directories or non-Rust files).
  */
 export function cargoTestArgs(target) {
   const { file, name } = target;
   if (/^tests\/[^/]+\.rs$/.test(file)) {
     return ["test", "--test", file.slice("tests/".length, -".rs".length), "--", "--exact", name];
   }
-  if (!file.startsWith("src/") || file === "src/main.rs") return null;
+  if (!/^src\/.+\.rs$/.test(file) || file === "src/main.rs") return null;
   const segments = file.slice("src/".length, -".rs".length).split("/");
-  if (segments.at(-1) === "mod" || segments.at(-1) === "lib") segments.pop();
-  if (segments.at(-1) !== "tests") segments.push("tests");
+  if (segments.at(-1) === "mod" || file === "src/lib.rs") segments.pop();
+  if (!segments.includes("tests")) segments.push("tests");
   return ["test", "--lib", "--", "--exact", `${segments.join("::")}::${name}`];
 }
 

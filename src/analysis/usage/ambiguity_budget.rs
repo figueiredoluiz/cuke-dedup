@@ -67,3 +67,6 @@ impl AmbiguityBudget {
         format!("ambiguity retention exceeded its safety limits ({} owned memberships, {} groups/findings or {} payload bytes); ambiguity findings are partial and static matcher overlap was skipped", self.limits[0], self.limits[1], self.limits[2])
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -200,8 +200,23 @@ test("evidence is addressed exactly per binary and every dependent entry is name
   assert.deepEqual(cargoTestArgs({ file: "src/model/behavior.rs", name: "codec" }), ["test", "--lib", "--", "--exact", "model::behavior::tests::codec"]);
   assert.deepEqual(cargoTestArgs({ file: "src/analysis/mod.rs", name: "m" }), ["test", "--lib", "--", "--exact", "analysis::tests::m"]);
   assert.deepEqual(cargoTestArgs({ file: "src/lib.rs", name: "root" }), ["test", "--lib", "--", "--exact", "tests::root"]);
+  for (const [file, module] of [
+    ["src/analysis/usage/tests/properties.rs", "analysis::usage::tests::properties"],
+    ["src/analysis/tests/cases.rs", "analysis::tests::cases"],
+    ["src/analysis/tests/cases/mod.rs", "analysis::tests::cases"],
+    ["src/analysis/tests/mod.rs", "analysis::tests"],
+    ["src/tests/properties.rs", "tests::properties"],
+    ["src/tests/mod.rs", "tests"],
+    ["src/analysis/tests/lib.rs", "analysis::tests::lib"],
+    ["src/model/lib.rs", "model::lib::tests"],
+    ["src/analysis/tests/deep/tests/checks.rs", "analysis::tests::deep::tests::checks"],
+    ["src/contests/checks.rs", "contests::checks::tests"],
+  ]) {
+    assert.deepEqual(cargoTestArgs({ file, name: "case" }), ["test", "--lib", "--", "--exact", `${module}::case`], file);
+  }
   assert.equal(cargoTestArgs({ file: "src/main.rs", name: "x" }), null);
   assert.equal(cargoTestArgs({ file: "tests/common/mod.rs", name: "x" }), null);
+  assert.equal(cargoTestArgs({ file: "src/not-rust.txt", name: "x" }), null);
   const units = { files: {
     "a.rs": { tests: [
       { name: "x", requiredStatus: "rust-evidence", evidenceTest: { file: "tests/cli.rs", name: "ruby_end_to_end" } },

@@ -6,6 +6,89 @@ use std::{fs, path::Path, time::Duration};
 #[path = "common/feature_expansion.rs"]
 mod feature_fixtures;
 
+#[path = "common/git_fixture.rs"]
+mod git_fixture;
+
+/// Reads the complete real CLI report without normalizing or discarding fields.
+fn json_report(root: &Path) -> Value {
+    serde_json::from_slice(&fs::read(root.join("reports/cuke-dedup/cuke-dedup.json")).unwrap())
+        .unwrap()
+}
+
+/// Independent public calls reset successful count, retained-payload and template-scan consumption.
+#[test]
+fn public_feature_calls_reset_each_successfully_consumed_allowance() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fresh.feature");
+    for (source, count) in [
+        (outline(500, 251, 1), 125_500),
+        (outline(200, 42, 4096), 8_400),
+        (feature_fixtures::shrinking_outline(513), 513),
+    ] {
+        fs::write(&path, &source).unwrap();
+        for _ in 0..2 {
+            assert_eq!(gherkin::extract(&source, &path).unwrap().len(), count);
+            assert_eq!(gherkin::extract_file(&path).unwrap().len(), count);
+        }
+    }
+}
+
+/// Real invocation/history extraction shares its allowance, while another invocation starts fresh.
+#[test]
+fn reference_baseline_shares_feature_allowance_and_new_invocations_reset_it() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("steps.ts"), "import { Given } from '@cucumber/cucumber'; Given('noise x',()=>first()); Given('noise x',()=>second());").unwrap();
+    let feature = root.path().join("input.feature");
+    fs::write(&feature, outline(500, 251, 1)).unwrap();
+    let revision = git_fixture::snapshot(root.path());
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root.path())
+        .timeout(Duration::from_secs(20))
+        .args([
+            ".",
+            "--baseline-from-ref",
+            &revision,
+            "--reporters",
+            "json",
+            "--no-metrics",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("baseline revision") && message.contains("concrete steps"),
+        "{message}"
+    );
+    for (small, expected) in [(false, 125_500), (true, 1)] {
+        if small {
+            fs::write(&feature, outline(1, 1, 1)).unwrap();
+        }
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command
+            .current_dir(root.path())
+            .timeout(Duration::from_secs(20))
+            .args([".", "--reporters", "json", "--no-metrics"]);
+        if small {
+            command.args(["--baseline-from-ref", &revision]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = json_report(root.path());
+        assert_eq!(report["summary"]["featureStepsAnalyzed"], expected);
+        assert_eq!(report["corpus"]["incomplete"], false);
+        assert_eq!(report["analysis"]["truncated"], false);
+        if !small {
+            assert_eq!(report["summary"]["byRule"]["ambiguous-step"], 500);
+        }
+    }
+}
+
 /// Creates a compact outline whose concrete step count and text bytes multiply independently.
 fn outline(steps: usize, rows: usize, width: usize) -> String {
     format!(
@@ -97,10 +180,7 @@ fn feature_expansion_limits_preserve_findings_and_mark_reports_incomplete() {
             "{case}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let report: Value = serde_json::from_slice(
-            &fs::read(root.path().join("reports/cuke-dedup/cuke-dedup.json")).unwrap(),
-        )
-        .unwrap();
+        let report = json_report(root.path());
         assert_eq!(report["corpus"]["incomplete"], incomplete, "{case}");
         assert_eq!(
             report["summary"]["featureStepsAnalyzed"],

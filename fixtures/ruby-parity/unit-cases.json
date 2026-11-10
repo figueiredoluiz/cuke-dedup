@@ -7591,6 +7591,20 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent concrete feature admission: Real CLI overflow and cross-file limits preserve valid neighboring ambiguity/duplicate-matcher findings, remove unused claims, mark JSON/SARIF incomplete and preserve existing baseline bytes; a complete small control retains its unused finding.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "public_feature_calls_reset_each_successfully_consumed_allowance",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Real public memory/file calls and CLI reference-baseline extraction prove successful count/payload/scan consumption resets per public call/invocation and remains shared within a run, with authored positive controls.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "reference_baseline_shares_feature_allowance_and_new_invocations_reset_it",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Real public memory/file calls and CLI reference-baseline extraction prove successful count/payload/scan consumption resets per public call/invocation and remains shared within a run, with authored positive controls.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7619,6 +7633,118 @@
           },
           "rationale": "Real JS/Ruby CLI runs retain a complete positive and enforce default ambiguity group limits with strict incomplete exit and unchanged baseline bytes.",
           "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
+    "src/resource_limits/tests/properties.rs": {
+      "tests": [
+        {
+          "name": "generated_work_budget_sequences_match_model",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent WorkBudget operation sequences compare actual decisions and retained totals against wider-integer admission arithmetic, including saturation and non-latching refusals.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "generated_pass_budget_sequences_match_model",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent PassBudget operation sequences compare separate run/pass counters and permanent exhaustion against a wider-integer state model, including pass resets and limit changes.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "small_budget_sequences_match_models_exhaustively",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Complete length-zero-to-two operation traces for small allowances validate the shared accounting primitives without adapter inputs; generated longer traces complement these deterministic boundaries.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/gherkin/tests/properties.rs": {
+      "tests": [
+        {
+          "name": "generated_feature_transactions_preserve_output_and_spent_work",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Independent decoded-text/native-path model checks real feature admission, whole-file rollback, persistent outline scan and complete source records across classic/Markdown/Portuguese inputs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "feature_transaction_boundaries_preserve_unicode_and_native_payloads",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Independent decoded-text/native-path model checks real feature admission, whole-file rollback, persistent outline scan and complete source records across classic/Markdown/Portuguese inputs.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/cli/tests/properties.rs": {
+      "tests": [
+        {
+          "name": "generated_cli_feature_sessions_share_limits_and_preserve_complete_files",
+          "requiredStatus": "engine-invariant",
+          "stage": "gherkin-parser",
+          "rationale": "Real discovery and file loading compare shared feature allowances, complete admitted files, diagnostics and fresh sessions with an independent feature ledger.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/analysis/usage/ambiguity_budget/tests.rs": {
+      "tests": [
+        {
+          "name": "generated_ambiguity_reservations_are_checked_and_atomic",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Wider-integer reference accounting verifies checked membership/proof/payload admission, exact capacities and atomic non-latching refusal without adapter inputs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "small_ambiguity_reservations_match_model_exhaustively",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Wider-integer reference accounting verifies checked membership/proof/payload admission, exact capacities and atomic non-latching refusal without adapter inputs.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/analysis/usage/tests/properties.rs": {
+      "tests": [
+        {
+          "name": "generated_ambiguity_outcomes_preserve_members_and_completeness",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/usage/tests/properties.rs",
+            "name": "generated_ambiguity_outcomes_preserve_members_and_completeness"
+          },
+          "rationale": "Real JavaScript and Ruby extraction feeds independently modeled ambiguity member sets, proof reuse, payload quotas, suppression, late expansions, complete usage and honest overlap cutoff.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ambiguity_reference_boundaries_preserve_complete_admitted_groups",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/usage/tests/properties.rs",
+            "name": "ambiguity_reference_boundaries_preserve_complete_admitted_groups"
+          },
+          "rationale": "Real JavaScript and Ruby extraction feeds independently modeled ambiguity member sets, proof reuse, payload quotas, suppression, late expansions, complete usage and honest overlap cutoff.",
+          "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
+    "src/typescript/module_resolver/tests/properties.rs": {
+      "tests": [
+        {
+          "name": "generated_source_sessions_isolate_cached_exports_and_consumed_work",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: ESM registration resolver work/cache lifetime in real rooted SourceExtractionSession objects and their public adapter calls. Semantic residue: shared_snapshot_retains_proofs_without_reloading_and_checks_current_source_bytes.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "adapter_session_callers_preserve_limits_and_fresh_positive_controls",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: ESM registration resolver work/cache lifetime in real rooted SourceExtractionSession objects and their public adapter calls. Semantic residue: shared_snapshot_retains_proofs_without_reloading_and_checks_current_source_bytes.",
+          "behaviorClass": "language-specific-api"
         }
       ]
     }

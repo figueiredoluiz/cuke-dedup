@@ -1,5 +1,7 @@
 use super::*;
 
+mod properties;
+
 /// Checks exact quotas, one-over refusals and rollback across every concrete-step source.
 #[test]
 fn feature_step_admission_boundaries_preserve_text_and_locations() {
