@@ -3943,6 +3943,24 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "cached_partial_exports_preserve_depth_and_commonjs_reasons",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: a depth-keyed registration export cache retains CommonJS and re-export diagnostics. Semantic residue: the load-* groups cover shared Ruby provider dependencies.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "shared_cutoff_diagnostics_follow_the_current_ancestry",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: re-export depth depends on active barrel ancestry across cached lookups. Semantic residue: the load-cycle group covers cyclic Ruby loads.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "cached_cutoff_keeps_an_active_sibling_out_of_registration_aliases",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: named barrel aliases cannot be replayed through a cyclic re-export. Semantic residue: the load-cycle group covers cyclic Ruby loads.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "cycles_do_not_poison_context_dependent_export_results",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: tsconfig/JSONC, package maps and workspace resolution (`cycles do not poison context dependent export results`). Semantic residue: Ruby load-path resolution and cycles are pinned by the `load-provider-root` and `load-cycle` groups.",
@@ -5867,6 +5885,18 @@
           "name": "type_only_and_over_depth_barrels_do_not_create_runtime_registrations",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: CommonJS/ESM module forms (barrels, re-exports, `require`, import specifiers) (`type only and over depth barrels do not create runtime registrations`). Semantic residue: Ruby load resolution and provider re-exports are covered by the load-* and equivalent-provider-* groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "partial_registration_barrels_keep_known_groups_and_report_the_cutoff",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: ESM and CommonJS registration re-exports have a module-depth limit. Semantic residue: registration_module_budget_is_shared_across_definition_files maps to the corresponding Ruby load-budget test.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "strict_registration_depth_only_flags_an_unvisited_source",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: ESM re-export depth ignores closed cycles and non-source targets. Semantic residue: the load-cycle group covers cyclic Ruby loads.",
           "behaviorClass": "language-specific-api"
         },
         {

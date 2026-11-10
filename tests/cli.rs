@@ -3205,6 +3205,209 @@ fn type_only_and_over_depth_barrels_do_not_create_runtime_registrations() {
     }
 }
 
+/// Checks the 16-module re-export boundary, partial siblings and depth-keyed cache in strict CLI reports.
+#[test]
+fn partial_registration_barrels_keep_known_groups_and_report_the_cutoff() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "suite.feature",
+        "Feature: resolution\n Scenario: owners\n  Given nearby\n  And shallow\n  And target\n",
+    );
+    for index in 0..16 {
+        write(
+            root,
+            &format!("p{index}.ts"),
+            &format!(
+                "export {{ When as Nearby }} from '@cucumber/cucumber';\nexport * from './p{}';",
+                index + 1
+            ),
+        );
+    }
+    write(
+        root,
+        "p16.ts",
+        "export { Given } from '@cucumber/cucumber';",
+    );
+    write(root, "types.ts", "export type { Given } from './p0';");
+    write(root, "ordinary.ts", "export const helper = () => 1;");
+    let shallow = "import { Given as Short } from './p1';";
+    let nearby = "import { When as Nearby } from '@cucumber/cucumber';";
+    let erased = format!("import type {{ Given as R }} from './p0'; {nearby} import {{ helper as Register }} from './ordinary';");
+    let erased_barrel = format!("import {{ Given as Register }} from './types'; {nearby}");
+    let cases = [
+        (
+            "import { Given as Register, Nearby } from './p1';",
+            "Register",
+            false,
+            true,
+        ),
+        (
+            "import { Given as Register, Nearby } from './p0';",
+            "Register",
+            true,
+            false,
+        ),
+        (
+            "import { Given, Nearby } from './p0';",
+            "Given",
+            true,
+            false,
+        ),
+        (
+            "import * as bdd from './p0'; const { Nearby } = bdd;",
+            "bdd.Given",
+            true,
+            false,
+        ),
+        (
+            "const { Given: Register, Nearby } = require('./p0');",
+            "Register",
+            true,
+            false,
+        ),
+        (&erased, "Register", false, false),
+        (&erased_barrel, "Register", false, false),
+    ];
+    for (binding, callee, partial, target_found) in cases {
+        for imports in [
+            format!("{shallow}\n{binding}"),
+            format!("{binding}\n{shallow}"),
+        ] {
+            let steps = format!(
+                "{imports}\n\
+                Nearby('nearby', () => a());\nNearby('nearby', () => b());\n\
+                Short('shallow', () => c());\nShort('shallow', () => d());\n\
+                {callee}('target', () => e());\n{callee}('target', () => f());"
+            );
+            write(root, "steps.ts", &steps);
+            let report = strict_barrel_report(root, partial, &imports);
+            let mut expected = vec![(3, vec![3, 4]), (4, vec![5, 6])];
+            if target_found {
+                expected.push((5, vec![7, 8]));
+            }
+            assert_eq!(ambiguity_lines(&report), expected, "{imports}");
+            assert_eq!(report["summary"]["definitionsAnalyzed"], 2 * expected.len());
+        }
+    }
+}
+
+/// Checks strict output at the last barrel for a back edge, excluded JSON, and another source module.
+#[test]
+fn strict_registration_depth_only_flags_an_unvisited_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "suite.feature",
+        "Feature: resolution\n Scenario: owners\n  Given control\n",
+    );
+    write(root, "steps.ts", "import { Given as Register } from './p0';\nRegister('control', () => a());\nRegister('control', () => b());");
+    for index in 0..15 {
+        write(
+            root,
+            &format!("p{index}.ts"),
+            &format!("export * from './p{}';", index + 1),
+        );
+    }
+    // Bare aliases need this config, relative re-exports do not.
+    write(root, "tsconfig.json", "{ invalid");
+    write(root, "data.json", r#"{"value": 1}"#);
+    write(
+        root,
+        "leaf.ts",
+        "export { When } from '@cucumber/cucumber';",
+    );
+    for (tail, incomplete) in [
+        ("export * from './p0';", false),
+        ("export { value } from './data.json';", false),
+        ("export * from './leaf';", true),
+        ("export * from 'unresolved-alias';", true),
+    ] {
+        write(
+            root,
+            "p15.ts",
+            &format!("export {{ Given }} from '@cucumber/cucumber';\n{tail}"),
+        );
+        let report = strict_barrel_report(root, incomplete, tail);
+        assert_eq!(ambiguity_lines(&report), [(3, vec![2, 3])], "{tail}");
+    }
+}
+
+/// Runs strict discovery and checks the exit code, cutoff warning and both machine reports.
+fn strict_barrel_report(root: &Path, incomplete: bool, case: &str) -> Value {
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([
+            ".",
+            "--definitions",
+            "steps.ts",
+            "--features",
+            "suite.feature",
+            "--threshold",
+            "100",
+            "--rule",
+            "ambiguous-step=warning",
+            "--fail-on-incomplete",
+            "--reporters",
+            "json,sarif",
+            "--output",
+            "out",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let read = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(root.join("out").join(name)).unwrap()).unwrap()
+    };
+    let report = read("cuke-dedup.json");
+    let sarif = read("cuke-dedup.sarif");
+    assert_eq!(
+        report["corpus"]["incomplete"], incomplete,
+        "{case}: {stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(if incomplete { 2 } else { 0 }),
+        "{case}: {stderr}"
+    );
+    assert_eq!(
+        stderr.contains("16-module re-export depth limit"),
+        incomplete,
+        "{case}: {stderr}"
+    );
+    assert_eq!(report["analysis"]["truncated"], false);
+    assert_eq!(
+        sarif["runs"][0]["invocations"][0]["executionSuccessful"],
+        !incomplete
+    );
+    report
+}
+
+/// Returns each ambiguity's feature line and sorted definition lines from the barrel fixture.
+fn ambiguity_lines(report: &Value) -> Vec<(u64, Vec<u64>)> {
+    let mut groups = Vec::new();
+    for finding in report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["rule"] == "ambiguous-step")
+    {
+        assert_eq!(finding["primary"]["path"], "suite.feature");
+        let mut lines = Vec::new();
+        for member in finding["related"].as_array().unwrap() {
+            assert_eq!(member["path"], "steps.ts");
+            lines.push(member["line"].as_u64().unwrap());
+        }
+        lines.sort_unstable();
+        groups.push((finding["primary"]["line"].as_u64().unwrap(), lines));
+    }
+    groups.sort_unstable();
+    groups
+}
+
 /// Checks configuration and baseline input-size limits produce fatal, source-specific diagnostics.
 #[test]
 fn oversized_config_and_baseline_inputs_are_fatal() {

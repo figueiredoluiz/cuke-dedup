@@ -96,6 +96,29 @@ fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
     );
     assert_eq!(state.modules.len(), 1 + layers * 2);
     assert_eq!(state.resolutions_started.spent(), 1 + layers * 2);
+
+    // A previous frontier visit to this root must not disable sharing across the diamond.
+    let mut state = ResolutionState::default();
+    resolve_exports(
+        &importer,
+        "./root",
+        &boundary,
+        &mut project,
+        &mut state,
+        MAX_REEXPORT_DEPTH,
+    )
+    .unwrap();
+    let partial = resolve_exports(
+        &importer,
+        "./root",
+        &boundary,
+        &mut project,
+        &mut state,
+        MAX_REEXPORT_DEPTH - layers,
+    )
+    .unwrap();
+    assert!(partial.depth_cutoff.is_some());
+    assert_eq!(state.resolutions_started.spent(), 1 + (layers - 1) * 2);
 }
 
 /// Verify importing the same module from separate files reuses cached parsing and export resolution.
@@ -214,6 +237,117 @@ fn depth_diverse_graphs_cache_each_module_depth_within_the_state_budget() {
     assert_eq!(exports.framework, CUCUMBER_JS);
     assert_eq!(shared_states, chain_depth + 1);
     assert!(resolver.state.resolutions_started.fits(1));
+}
+
+/// Both partial-export reasons and the known registration survive a repeated lookup at the cutoff.
+#[test]
+fn cached_partial_exports_preserve_depth_and_commonjs_reasons() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(root.join("barrel.ts"), "export { Given } from '@cucumber/cucumber'; export * from './next'; exports.extra = factory();").unwrap();
+    fs::write(
+        root.join("next.ts"),
+        "export { When } from '@cucumber/cucumber';",
+    )
+    .unwrap();
+    let mut project = ProjectResolution::for_root(root);
+    let mut state = ResolutionState::default();
+    for _ in 0..2 {
+        let resolved = resolve_exports(
+            &root.join("steps.ts"),
+            "./barrel",
+            root,
+            &mut project,
+            &mut state,
+            MAX_REEXPORT_DEPTH - 1,
+        )
+        .unwrap();
+        let reason = resolved.reason().unwrap();
+        assert!(reason.contains("CommonJS"));
+        assert!(reason.contains("re-export depth limit"));
+        let exports = resolved.exports.unwrap();
+        assert!(exports.contains_key("Given"));
+        assert!(!exports.contains_key("When"));
+        assert_eq!(state.resolutions_started.spent(), 1);
+    }
+}
+
+/// A shared barrel's last edge is cyclic for one root and exceeds the depth limit for the other.
+#[test]
+fn shared_cutoff_diagnostics_follow_the_current_ancestry() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for entry in ["cycle", "chain"] {
+        fs::write(root.join(format!("{entry}.ts")), "export * from './p1';").unwrap();
+    }
+    for index in 1..15 {
+        fs::write(
+            root.join(format!("p{index}.ts")),
+            format!("export * from './p{}';", index + 1),
+        )
+        .unwrap();
+    }
+    fs::write(
+        root.join("p15.ts"),
+        "export { Given } from '@cucumber/cucumber'; export * from './cycle';",
+    )
+    .unwrap();
+    for order in [["./chain", "./cycle"], ["./cycle", "./chain"]] {
+        let mut resolver = RegistrationResolver::for_root(root);
+        for entry in order {
+            let outcome = resolver
+                .registration_exports(&root.join("steps.ts"), entry)
+                .unwrap();
+            assert_eq!(
+                outcome.reason.is_some(),
+                entry == "./chain",
+                "{order:?} {entry}"
+            );
+            assert!(outcome.resolution.unwrap().exports.contains_key("Given"));
+        }
+    }
+}
+
+/// An independently proven cutoff still cannot replay an alias through an active interior module.
+#[test]
+fn cached_cutoff_keeps_an_active_sibling_out_of_registration_aliases() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for prefix in ["direct", "cycle"] {
+        for i in 0..14 {
+            let next = if i == 13 {
+                "barrel".to_owned()
+            } else {
+                format!("{prefix}{}", i + 1)
+            };
+            let mut source = format!("export * from './{next}';");
+            if prefix == "cycle" && i == 0 {
+                source.push_str("export { Given } from '@cucumber/cucumber';");
+            }
+            fs::write(root.join(format!("{prefix}{i}.ts")), source).unwrap();
+        }
+    }
+    fs::write(
+        root.join("barrel.ts"),
+        "export * from './side'; export { Given as ViaCycle } from './cycle0';",
+    )
+    .unwrap();
+    fs::write(root.join("side.ts"), "export * from './leaf';").unwrap();
+    fs::write(
+        root.join("leaf.ts"),
+        "export { When } from '@cucumber/cucumber';",
+    )
+    .unwrap();
+    let mut resolver = RegistrationResolver::for_root(root);
+    for entry in ["./direct0", "./cycle0"] {
+        let outcome = resolver
+            .registration_exports(&root.join("steps.ts"), entry)
+            .unwrap();
+        assert!(outcome.reason.is_some());
+        let exports = outcome.resolution.unwrap().exports;
+        assert_eq!(exports.contains_key("ViaCycle"), entry == "./direct0");
+        assert_eq!(exports.contains_key("Given"), entry == "./cycle0");
+    }
 }
 
 /// Verify resolving one side of a cycle does not suppress exports when resolving the other side later.
