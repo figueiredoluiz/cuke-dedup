@@ -21,6 +21,7 @@ use crate::typescript::frameworks::{FRAMEWORK_CONTRACTS, PLAYWRIGHT_BDD};
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tree_sitter::{Node, Parser};
 
 mod export_values;
@@ -39,7 +40,6 @@ struct ExportFacts {
 }
 
 const MAX_REEXPORT_DEPTH: usize = 16;
-type CachedExports = (Option<RegistrationExports>, Framework, bool);
 
 #[derive(Debug, Clone)]
 struct Reexport {
@@ -61,8 +61,8 @@ struct ModuleFacts {
 /// Resolution caches and work. The module count is the cache's own size, so it needs no budget.
 struct ResolutionState {
     active: BTreeSet<PathBuf>,
-    exports: BTreeMap<(PathBuf, usize), CachedExports>,
-    modules: BTreeMap<PathBuf, Option<ModuleFacts>>,
+    exports: BTreeMap<(PathBuf, usize), ResolvedExports>,
+    modules: BTreeMap<PathBuf, Option<(usize, ModuleFacts)>>,
     /// Modules that failed to load; kept apart so they do not count toward the module limit.
     failed_modules: BTreeMap<PathBuf, KeptFailure>,
     module_bytes: WorkBudget,
@@ -83,14 +83,82 @@ impl Default for ResolutionState {
     }
 }
 
-#[derive(Debug)]
+/// Evidence needed to reuse a partial result under a different chain of importing modules.
+#[derive(Clone, Debug)]
+struct DepthCutoff {
+    /// One edge that exceeded the limit. A static resolution error has no target.
+    target: Option<Arc<Path>>,
+    /// Stable module slots on partial branches. Complete acyclic branches need no ancestry check.
+    modules: [u64; MAX_REGISTRATION_MODULES.div_ceil(64)],
+}
+
+impl DepthCutoff {
+    /// A cached branch stays valid if none of its inspected partial modules or its witness is active.
+    fn reusable(&self, state: &ResolutionState) -> bool {
+        state.active.iter().all(|path| {
+            let inspected = state.modules.get(path).and_then(Option::as_ref);
+            self.target.as_deref() != Some(path.as_path())
+                && !inspected
+                    .is_some_and(|(slot, _)| self.modules[slot / 64] & (1 << (slot % 64)) != 0)
+        })
+    }
+
+    /// Propagates every partial branch's inspected slots and keeps one cutoff to justify the warning.
+    fn merge(mut self: Box<Self>, slot: usize, current: &mut Option<Box<Self>>) {
+        if let Some(previous) = current {
+            for (seen, other) in previous.modules.iter_mut().zip(self.modules) {
+                *seen |= other;
+            }
+        } else {
+            self.modules[slot / 64] |= 1 << (slot % 64);
+            *current = Some(self);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct ResolvedExports {
     exports: Option<RegistrationExports>,
     framework: Framework,
     cacheable: bool,
-    /// A resolved module (or one it re-exports) declared exports in a form the analyzer does not
-    /// model, so `exports` may be a subset of the real registration set.
-    exports_incomplete: bool,
+    unmodeled_commonjs: bool,
+    depth_cutoff: Option<Box<DepthCutoff>>,
+}
+
+impl ResolvedExports {
+    /// Empty result for an unresolved module with no known limitation.
+    fn empty() -> Self {
+        Self {
+            exports: None,
+            framework: Framework::UNKNOWN,
+            cacheable: true,
+            unmodeled_commonjs: false,
+            depth_cutoff: None,
+        }
+    }
+
+    /// Records an uninspected frontier edge without opening another registration source.
+    fn cutoff(target: Option<PathBuf>) -> Self {
+        Self {
+            depth_cutoff: Some(Box::new(DepthCutoff {
+                target: target.map(Arc::from),
+                modules: [0; MAX_REGISTRATION_MODULES.div_ceil(64)],
+            })),
+            ..Self::empty()
+        }
+    }
+
+    /// Describes each limit that made the resolved registration set partial.
+    fn reason(&self) -> Option<String> {
+        let mut reasons = Vec::new();
+        if self.unmodeled_commonjs {
+            reasons.push("some exports use a CommonJS form the analyzer does not model".to_owned());
+        }
+        if self.depth_cutoff.is_some() {
+            reasons.push(format!("registration resolution reached the {MAX_REEXPORT_DEPTH}-module re-export depth limit"));
+        }
+        (!reasons.is_empty()).then(|| reasons.join("; "))
+    }
 }
 
 #[derive(Debug)]
@@ -148,12 +216,7 @@ impl RegistrationResolver {
             0,
         ) {
             Ok(resolved) => {
-                // A module that resolved but declared some exports in an unmodeled CommonJS form
-                // may register more than the analyzer could see. Report it so the corpus is marked
-                // incomplete, while still using the exports that did resolve.
-                let reason = resolved.exports_incomplete.then(|| {
-                    "some exports use a CommonJS form the analyzer does not model".to_owned()
-                });
+                let reason = resolved.reason();
                 Ok(RegistrationOutcome {
                     resolution: resolved.exports.map(|exports| RegistrationResolution {
                         module_path: self
@@ -191,40 +254,36 @@ fn resolve_exports(
     state: &mut ResolutionState,
     depth: usize,
 ) -> Result<ResolvedExports> {
-    if depth >= MAX_REEXPORT_DEPTH {
-        return Ok(ResolvedExports {
-            exports: None,
-            framework: Framework::UNKNOWN,
-            cacheable: true,
-            exports_incomplete: false,
-        });
-    }
-    let Some(path) = project.resolve(importer, specifier, boundary)? else {
-        return Ok(ResolvedExports {
-            exports: None,
-            framework: Framework::UNKNOWN,
-            cacheable: true,
-            exports_incomplete: false,
-        });
+    let at_limit = depth >= MAX_REEXPORT_DEPTH;
+    let path = match project.resolve(importer, specifier, boundary) {
+        Ok(Some(path)) => path,
+        Ok(None) => return Ok(ResolvedExports::empty()),
+        // At the frontier a static resolution failure still leaves known sibling exports usable.
+        Err(error) if at_limit && !is_io_failure(&error) => {
+            return Ok(ResolvedExports::cutoff(None))
+        }
+        Err(error) => return Err(error),
     };
-    let remaining_depth = MAX_REEXPORT_DEPTH - depth;
-    let cache_key = (path.clone(), remaining_depth);
-    if let Some((exports, framework, exports_incomplete)) = state.exports.get(&cache_key) {
+    if state.active.contains(&path) {
         return Ok(ResolvedExports {
-            exports: exports.clone(),
-            framework: *framework,
-            cacheable: true,
-            exports_incomplete: *exports_incomplete,
-        });
-    }
-    if !state.active.insert(path.clone()) {
-        return Ok(ResolvedExports {
-            exports: None,
-            framework: Framework::UNKNOWN,
             cacheable: false,
-            exports_incomplete: false,
+            ..ResolvedExports::empty()
         });
     }
+    if at_limit {
+        return Ok(ResolvedExports::cutoff(Some(path)));
+    }
+    let cache_key = (path.clone(), MAX_REEXPORT_DEPTH - depth);
+    if let Some(resolved) = state.exports.get(&cache_key) {
+        if resolved
+            .depth_cutoff
+            .as_ref()
+            .is_none_or(|cutoff| cutoff.reusable(state))
+        {
+            return Ok(resolved.clone());
+        }
+    }
+    state.active.insert(path.clone());
     let resolved = resolve_active_exports(&path, boundary, project, state, depth);
     // Resolution failures are converted to source-local diagnostics by the caller. Always clear
     // the active-path marker before propagating one, or a later independent import is mistaken
@@ -232,14 +291,7 @@ fn resolve_exports(
     state.active.remove(&path);
     let resolved = resolved?;
     if resolved.cacheable {
-        state.exports.insert(
-            cache_key,
-            (
-                resolved.exports.clone(),
-                resolved.framework,
-                resolved.exports_incomplete,
-            ),
-        );
+        state.exports.insert(cache_key, resolved.clone());
     }
     Ok(resolved)
 }
@@ -259,18 +311,14 @@ fn resolve_active_exports(
         );
     }
 
-    let Some(module) = load_module(path, state)? else {
-        return Ok(ResolvedExports {
-            exports: None,
-            framework: Framework::UNKNOWN,
-            cacheable: true,
-            exports_incomplete: false,
-        });
+    let Some((slot, module)) = load_module(path, state)? else {
+        return Ok(ResolvedExports::empty());
     };
     let mut exports = module.direct_exports;
     let mut framework = module.framework;
     let mut cacheable = true;
-    let mut exports_incomplete = module.exports_incomplete;
+    let mut unmodeled_commonjs = module.exports_incomplete;
+    let mut depth_cutoff = None;
     for reexport in module.reexports {
         let (available, available_framework) = if is_supported_module(&reexport.module) {
             (
@@ -281,7 +329,10 @@ fn resolve_active_exports(
             let resolved =
                 resolve_exports(path, &reexport.module, boundary, project, state, depth + 1)?;
             cacheable &= resolved.cacheable;
-            exports_incomplete |= resolved.exports_incomplete;
+            unmodeled_commonjs |= resolved.unmodeled_commonjs;
+            if let Some(child) = resolved.depth_cutoff {
+                child.merge(slot, &mut depth_cutoff);
+            }
             (resolved.exports.unwrap_or_default(), resolved.framework)
         };
         framework = merge_framework(framework, available_framework);
@@ -298,7 +349,8 @@ fn resolve_active_exports(
         exports: Some(exports),
         framework,
         cacheable,
-        exports_incomplete,
+        unmodeled_commonjs,
+        depth_cutoff,
     })
 }
 
@@ -318,7 +370,7 @@ pub(super) fn merge_framework(current: Framework, evidence: Framework) -> Framew
 }
 
 /// Caches module facts, or the failure to read them, within the module count limit.
-fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<ModuleFacts>> {
+fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<(usize, ModuleFacts)>> {
     if let Some(module) = state.modules.get(path) {
         return Ok(module.clone());
     }
@@ -337,6 +389,7 @@ fn load_module(path: &Path, state: &mut ResolutionState) -> Result<Option<Module
             state.failed_modules.insert(path.to_owned(), failure);
         }
     })?;
+    let module = module.map(|facts| (state.modules.len(), facts));
     state.modules.insert(path.to_owned(), module.clone());
     Ok(module)
 }

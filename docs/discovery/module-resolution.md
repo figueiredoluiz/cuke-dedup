@@ -22,6 +22,8 @@ A resolved barrel re-exports registrations through either module system:
   `module.exports.X = X`, and `exports.X = require('./a').X` (or a local binding). Only assignments
   in the module body count; the same syntax inside a function or class is not a module export.
 
+Registration resolution follows up to 16 local modules per re-export chain. A cycle back to an active module or a re-export from a non-source file such as JSON ends that path. If a chain needs a 17th source module, the analyzer reports the depth limit at the import, retains registrations it could resolve, and marks the corpus incomplete. With `--fail-on-incomplete`, this gives exit code 2.
+
 A CommonJS `module.exports`/`exports.X` value is followed when it is an object literal or a
 `require`, directly or through a single top-level `const` (`const api = { Given };
 module.exports = api`). A value that provably cannot carry a registration is inert and exports
