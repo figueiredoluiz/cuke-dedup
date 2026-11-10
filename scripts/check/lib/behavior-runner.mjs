@@ -32,6 +32,7 @@ function parseReport(text, name, run) {
  * valid JSON throws, since the run is then not observable.
  * @param {object} options
  * @param {string} options.binary Path to the analyzer binary.
+ * @param {number} [options.timeout] Optional analyzer time limit in milliseconds.
  * @param {string} options.corpusRoot Directory holding the behavior case directories.
  * @param {string} options.scratch Directory the case's copy and outputs are written under.
  * @param {object} options.testCase Behavior manifest case.
@@ -40,7 +41,7 @@ function parseReport(text, name, run) {
  *   reach an exit status (else `null`), JSON report and raw `--emit-fingerprints` text; the last two
  *   are `null` when the run wrote none.
  */
-export async function observeBehaviorCase({ binary, corpusRoot, scratch, testCase }) {
+export async function observeBehaviorCase({ binary, corpusRoot, scratch, testCase, timeout }) {
   const caseRoot = join(scratch, "case");
   const output = join(scratch, "report");
   const fingerprints = join(scratch, "fingerprints.jsonl");
@@ -53,7 +54,7 @@ export async function observeBehaviorCase({ binary, corpusRoot, scratch, testCas
   const run = spawnSync(
     binary,
     [".", ...testCase.arguments, "--reporters", "json", "--output", output, "--emit-fingerprints", fingerprints],
-    { cwd: caseRoot, encoding: "utf8" },
+    { cwd: caseRoot, encoding: "utf8", timeout },
   );
   const reportText = await readOptional(join(output, "cuke-dedup.json"));
   return {
