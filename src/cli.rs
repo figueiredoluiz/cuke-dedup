@@ -4,6 +4,7 @@ use crate::analysis;
 use crate::config::{CliConfigOverrides, Config, ConfigOverrides, ReporterKind};
 use crate::discovery;
 use crate::model::{DuplicationThreshold, Rule, Severity};
+use crate::output_file::{OutputFile, Staged};
 use crate::source_adapter::ExtractionDiagnosticLevel;
 use crate::{gherkin, modes, reporters, source_adapter};
 use anyhow::{bail, Context, Result};
@@ -291,16 +292,34 @@ fn execute(cli: Cli) -> Result<i32> {
         analyzed.parsed_feature_files,
         analyzed.feature_files_without_steps,
     );
-    // Validated before the baseline is rewritten, so a rejected destination changes no file.
+    // Validated and serialized before the baseline is rewritten, so a rejected destination or a
+    // failed serialization changes no file.
     let fingerprints = options
         .emit_fingerprints
         .as_deref()
-        .map(|path| EmitSink::open(config, options, path, "fingerprint file", None))
+        .map(|path| {
+            EmitSink::open(config, options, path, "fingerprint file", None)?.fill(|out| {
+                analysis::fingerprints::write_fingerprints(
+                    &analyzed.result.definitions,
+                    &config.root,
+                    out,
+                )
+            })
+        })
         .transpose()?;
     let pairs = options
         .emit_pairs
         .as_deref()
-        .map(|path| EmitSink::open(config, options, path, "pair file", fingerprints.as_ref()))
+        .map(|path| {
+            EmitSink::open(config, options, path, "pair file", fingerprints.as_ref())?.fill(|out| {
+                analysis::pair_records::write_pairs(
+                    &analyzed.result.definitions,
+                    &analyzed.pair_records,
+                    &config.root,
+                    out,
+                )
+            })
+        })
         .transpose()?;
     let baseline_outcome = apply_baseline_mode(
         config,
@@ -311,23 +330,10 @@ fn execute(cli: Cli) -> Result<i32> {
         &mut feature_budget,
     )?;
     if let Some(sink) = fingerprints {
-        sink.write(|out| {
-            analysis::fingerprints::write_fingerprints(
-                &analyzed.result.definitions,
-                &config.root,
-                out,
-            )
-        })?;
+        sink.publish()?;
     }
     if let Some(sink) = pairs {
-        sink.write(|out| {
-            analysis::pair_records::write_pairs(
-                &analyzed.result.definitions,
-                &analyzed.pair_records,
-                &config.root,
-                out,
-            )
-        })?;
+        sink.publish()?;
     }
     write_reports(
         config,
@@ -1106,21 +1112,20 @@ fn write_reports(
     Ok(())
 }
 
-/// Validated `--emit-fingerprints` or `--emit-pairs` destination, opened but not yet truncated or
-/// written.
+/// Validated `--emit-fingerprints` or `--emit-pairs` destination, published like a report: no link
+/// in its path, an absent file reserved empty until the staged records replace it.
 struct EmitSink {
     path: PathBuf,
     /// Names the destination in errors.
     label: &'static str,
-    file: Option<fs::File>,
-    /// The file this run created, to remove if the run fails before writing it.
-    created: Option<PathBuf>,
+    output: Option<OutputFile>,
+    staged: Option<Staged>,
 }
 
 impl EmitSink {
-    /// Opens `path`, resolved against the root, without truncating it. Fails on a non-regular file
-    /// and on any file this run writes (each report, `earlier`) or reads back later (the
-    /// `--baseline` file).
+    /// Binds `path`, resolved against the root, without changing an existing file. Fails on a link,
+    /// a non-regular file and any file this run writes (each report, `earlier`) or reads back later
+    /// (the `--baseline` file).
     fn open(
         config: &Config,
         options: &CheckOptions,
@@ -1129,42 +1134,28 @@ impl EmitSink {
         earlier: Option<&Self>,
     ) -> Result<Self> {
         let path = config.root.join(path);
-        let context = || format!("failed to write {label} {}", path.display());
-        let (file, created) = match open_destination(&path) {
-            Ok(opened) => opened,
-            // An open that fails on a directory or a FIFO without a reader still names the cause.
-            Err(_) if fs::metadata(&path).is_ok_and(|metadata| !metadata.is_file()) => {
-                bail!("{label} {} is not a regular file", path.display())
-            }
-            Err(error) => return Err(error).with_context(context),
-        };
-        // fail-closed: a device or FIFO would fail, block or leak into another stream. The handle is
-        // checked, not the path, so nothing swapped in after the open is trusted.
-        if !file.metadata().with_context(context)?.is_file() {
-            bail!("{label} {} is not a regular file", path.display());
-        }
-        let mut sink = Self {
-            file: Some(file),
-            created: created.then(|| path.clone()),
-            path: path.clone(),
+        let output = OutputFile::reserve(&path)
+            .with_context(|| format!("failed to write {label} {}", path.display()))?;
+        let sink = Self {
+            path,
             label,
+            output: Some(output),
+            staged: None,
         };
-        // Comparing after opening resolves `..`, symlink and case-insensitive aliases, including of
-        // a report or baseline not yet written.
-        let canonical = fs::canonicalize(&path).with_context(context)?;
-        // Opening a symlink to a missing file creates its target; that target is what to remove.
-        if let Some(created) = &mut sink.created {
-            created.clone_from(&canonical);
-        }
+        let file = sink
+            .output
+            .as_ref()
+            .and_then(OutputFile::previous)
+            .expect("a reserved destination holds its file");
         let written = reporters::REPORT_FILE_NAMES
             .iter()
             .map(|name| config.output_path(name))
             .chain(options.baseline.iter().map(|path| config.root.join(path)))
             .chain(earlier.map(|sink| sink.path.clone()));
+        // The destination exists now, so `..`, case-insensitive, normalized and hard-link spellings of
+        // a report or baseline not yet written resolve to it by identity.
         for target in written {
-            // Identity as well as path: a hard link to the baseline has a different canonical path.
-            let open = sink.file.as_ref().expect("an open sink holds its file");
-            let same = match same_file_as(open, &target) {
+            let same = match same_file_as(file, &target) {
                 Ok(same) => same,
                 // An absent target, or one under a file (ENOTDIR), has nothing to overwrite.
                 Err(error)
@@ -1183,7 +1174,7 @@ impl EmitSink {
                     target.display()
                 ),
             };
-            if same || fs::canonicalize(&target).is_ok_and(|target| target == canonical) {
+            if same {
                 bail!(
                     "{} {} would overwrite {}; choose a different file",
                     sink.label,
@@ -1195,51 +1186,29 @@ impl EmitSink {
         Ok(sink)
     }
 
-    /// Replaces the file's content with the records `fill` writes.
-    fn write(mut self, fill: impl FnOnce(&mut dyn Write) -> Result<()>) -> Result<()> {
-        let context = || format!("failed to write {} {}", self.label, self.path.display());
-        let file = self.file.take().expect("an open sink holds its file");
-        file.set_len(0).with_context(context)?;
-        let mut file = io::BufWriter::new(file);
-        fill(&mut file).with_context(context)?;
-        file.flush().with_context(context)?;
-        self.created = None;
-        Ok(())
+    /// Streams the records `fill` writes into a staged file beside the destination, which changes
+    /// no destination yet.
+    fn fill(mut self, fill: impl FnOnce(&mut dyn Write) -> Result<()>) -> Result<Self> {
+        let output = self
+            .output
+            .take()
+            .expect("an open sink holds its destination");
+        let staged = output
+            .stage(fill)
+            .with_context(|| format!("failed to write {} {}", self.label, self.path.display()))?;
+        self.staged = Some(staged);
+        Ok(self)
     }
-}
 
-/// Opens `path` for writing without truncating it, and whether this call created the file. Only an
-/// exclusive create counts as created, so a file another process makes meanwhile is never removed.
-/// An existing file opens non-blocking, so a FIFO fails instead of waiting for a reader; a dangling
-/// symlink is followed to the target it would create.
-fn open_destination(path: &Path) -> io::Result<(fs::File, bool)> {
-    let mut path = path.to_path_buf();
-    loop {
-        let created = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path);
-        let error = match created {
-            Ok(file) => return Ok((file, true)),
-            Err(error) => error,
-        };
-        if error.kind() != io::ErrorKind::AlreadyExists {
-            return Err(error);
-        }
-        let mut existing = fs::OpenOptions::new();
-        existing.write(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut existing, libc::O_NONBLOCK);
-        match existing.open(&path) {
-            Ok(file) => return Ok((file, false)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound && path.is_symlink() => {
-                let target = fs::read_link(&path)?;
-                path = path
-                    .parent()
-                    .map_or(target.clone(), |parent| parent.join(&target));
-            }
-            Err(error) => return Err(error),
-        }
+    /// Replaces the destination's entry with the staged records.
+    fn publish(mut self) -> Result<()> {
+        let staged = self
+            .staged
+            .take()
+            .expect("a filled sink holds its staged records");
+        staged
+            .commit()
+            .with_context(|| format!("failed to write {} {}", self.label, self.path.display()))
     }
 }
 
@@ -1257,17 +1226,6 @@ fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
 #[cfg(not(unix))]
 fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
     Ok(same_file::Handle::from_file(file.try_clone()?)? == same_file::Handle::from_path(target)?)
-}
-
-impl Drop for EmitSink {
-    /// Removes a file this run created but did not finish writing, so a failed run leaves none.
-    fn drop(&mut self) {
-        drop(self.file.take());
-        if let Some(created) = self.created.take() {
-            // The run is already failing; a leftover empty file is the only cost of a failed removal.
-            let _ = fs::remove_file(created);
-        }
-    }
 }
 
 /// Whether terminal output uses color: stdout is a TTY and `NO_COLOR` is unset or empty.

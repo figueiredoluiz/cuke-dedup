@@ -77,15 +77,17 @@ permissions.
 
 - One compact JSON line per analyzed definition, sorted by path, line and column. A definition from an excluded, unselected or unreadable source, or one removed by an uncertain registration, has no line; an empty corpus writes an empty file.
 - Every definition extracted from the current tree is written, including under `--changed-since`; `--baseline-from-ref` does not write the baseline revision's definitions.
-- A relative `FILE` is resolved from the analysis root. Its parent directory must exist.
-- The destination is checked after analysis and before the baseline is updated; the records are written after the baseline step and before any report. A run that fails before the records are written removes a file it created and leaves an existing file unchanged, so use a fresh path per run.
+- A relative `FILE` is resolved from the analysis root. The destination follows the report-file rule above: no symlink or Windows junction anywhere in its path, a regular or absent file, and missing parent directories are created (and kept even when the run later fails).
+- Writing replaces the directory entry through a hidden file beside it, so the directory must be writable even when the file is, and other hard links to the previous file keep its bytes. The new file keeps the previous file's permission bits; its owner, group, ACLs and extended attributes are those of a newly created file.
+- The destination is checked and the records are streamed to that hidden file after analysis and before the baseline is updated; the destination is replaced after the baseline step and before any report. An absent destination is created empty when it is checked. A run that fails before the replacement removes the hidden file and that empty file, and leaves an existing file unchanged.
 - The run exits with code 2, with an error naming the path, when the destination:
-  - cannot be created (missing parent directory, no permission);
+  - has a symlink or Windows junction in its path, including a dangling or final link;
+  - cannot be created, or its directory cannot hold the hidden file (no permission, no space);
   - exists but is not a regular file (a directory, a device or a FIFO);
-  - is the same file as `cuke-dedup.json`, `cuke-dedup.html` or `cuke-dedup.sarif` in the output directory (all three, whatever reporters are enabled) or as the `--baseline` file (with or without `--update-baseline`). A `..` path, a symbolic link, a hard link or a case-insensitive spelling counts only when it leads to one of those files;
+  - is the same file as `cuke-dedup.json`, `cuke-dedup.html` or `cuke-dedup.sarif` in the output directory (all three, whatever reporters are enabled) or as the `--baseline` file (with or without `--update-baseline`), including through a `..` path, a hard link, a case-insensitive spelling, or a report or baseline path that is itself a symbolic link to the destination;
   - cannot be checked against one of those files because the file's identity cannot be read (for example, its directory cannot be searched).
 
-  A rejection truncates nothing, creates no file and changes no baseline. `--print-config` rejects the flag.
+  A rejection truncates nothing, leaves no file (only parent directories it created) and changes no baseline. `--print-config` rejects the flag.
 
 Fields, in this order: `schemaVersion` (`"1"`), `path` (root-relative, `/`-separated), `line`, `column`, `domain` (`ecmascript` or `ruby`), `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher`, `definitionFingerprint` (the value reports use as `leftFingerprint`/`rightFingerprint`), and `handler` with `exact`, `normalized`, `alphaNormalized`, `structural`, `behavior`, `comparable` and `trivial`.
 
