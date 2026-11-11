@@ -179,6 +179,9 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_AMBIGUITY_MEMBERSHIPS, 1_000_000);
     assert_eq!(MAX_AMBIGUITY_GROUPS, 25_000);
     assert_eq!(MAX_AMBIGUITY_PAYLOAD_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_DIRECT_MATCH_SCANS, 64_000_000);
+    assert_eq!(MAX_DIRECT_MATCHES, 64_000_000);
+    assert_eq!(MAX_DIRECT_MATCH_CACHE_BYTES, 64 * 1024 * 1024);
     assert_eq!(MAX_REGISTRATION_MODULES, 1_024);
     assert_eq!(MAX_REGISTRATION_MODULE_BYTES, 64 * 1024 * 1024);
     assert_eq!(MAX_ASSERTION_RESOLUTION_WORK, 1_000_000);

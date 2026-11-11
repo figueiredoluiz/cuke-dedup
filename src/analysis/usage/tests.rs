@@ -1,3 +1,4 @@
+use super::feature_matches::MatchRow;
 use super::*;
 
 mod properties;
@@ -7,12 +8,19 @@ use crate::typescript::semantics::default_policy;
 use crate::typescript::TYPESCRIPT;
 use std::path::{Path, PathBuf};
 
-/// Runs final usage/overlap outcomes with test-local ambiguity admission limits.
-fn limited_ambiguities(
+struct UsageLimits {
+    ambiguity: AmbiguityBudget,
+    matching: MatchingBudget,
+    cache: usize,
+    row: usize,
+}
+
+/// Runs final usage and overlap outcomes under explicit test-local allowances.
+fn limited_usage(
     definitions: &[StepDefinition],
     steps: &[FeatureStep],
     config: &Config,
-    limits: [usize; 3],
+    limits: UsageLimits,
     window: usize,
 ) -> (Vec<Finding>, FeatureUsageOutcome) {
     let suppressions = SuppressionIndex::new(config, definitions);
@@ -25,9 +33,73 @@ fn limited_ambiguities(
         &mut findings,
         100,
         window,
-        AmbiguityBudget::new(limits[0], limits[1], limits[2]),
+        limits.ambiguity,
+        limits.matching,
+        limits.cache,
+        limits.row,
     );
     (findings, outcome)
+}
+
+/// Runs final usage/overlap outcomes with test-local ambiguity admission limits.
+fn limited_ambiguities(
+    definitions: &[StepDefinition],
+    steps: &[FeatureStep],
+    config: &Config,
+    limits: [usize; 3],
+    window: usize,
+) -> (Vec<Finding>, FeatureUsageOutcome) {
+    limited_usage(
+        definitions,
+        steps,
+        config,
+        UsageLimits {
+            ambiguity: AmbiguityBudget::new(limits[0], limits[1], limits[2]),
+            matching: MatchingBudget::default(),
+            cache: MAX_DIRECT_MATCH_CACHE_BYTES,
+            row: MAX_ROW_MATCHES,
+        },
+        window,
+    )
+}
+
+/// Runs final outcomes with test-local direct scan, match, cache and row allowances.
+fn limited_matching(
+    definitions: &[StepDefinition],
+    steps: &[FeatureStep],
+    config: &Config,
+    limits: [usize; 4],
+    window: usize,
+) -> (Vec<Finding>, FeatureUsageOutcome) {
+    limited_usage(
+        definitions,
+        steps,
+        config,
+        UsageLimits {
+            ambiguity: AmbiguityBudget::default(),
+            matching: MatchingBudget::new(limits[0], limits[1]),
+            cache: limits[2],
+            row: limits[3],
+        },
+        window,
+    )
+}
+
+/// Runs one constrained direct-match case beside its unlimited final-outcome control.
+fn limited_matching_with_control(
+    definitions: &[StepDefinition],
+    steps: &[FeatureStep],
+    config: &Config,
+    limits: [usize; 4],
+    window: usize,
+) -> (
+    (Vec<Finding>, FeatureUsageOutcome),
+    (Vec<Finding>, FeatureUsageOutcome),
+) {
+    (
+        limited_matching(definitions, steps, config, [usize::MAX; 4], window),
+        limited_matching(definitions, steps, config, limits, window),
+    )
 }
 
 /// Independently sums every retained ambiguity text and native path field from the final API result.
@@ -472,11 +544,11 @@ fn regex_pattern_limit_is_inclusive() {
 /// Checks that recording a broad ambiguity twice stores one group and one membership per definition.
 #[test]
 fn broad_ambiguity_groups_use_linear_membership_storage() {
-    let matched = (0..10_000).collect::<Vec<_>>();
+    let matched: Arc<[usize]> = (0..10_000).collect::<Vec<_>>().into();
     let mut proven = ProvenAmbiguities::new(matched.len());
 
-    proven.record(&matched);
-    proven.record(&matched);
+    proven.record(Arc::clone(&matched));
+    proven.record(matched);
 
     assert_eq!(proven.groups.len(), 1);
     assert_eq!(
@@ -612,7 +684,10 @@ fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
     for index in 0..3 {
         row.append(index);
     }
-    let complete = BTreeMap::from([("value red", row)]);
+    let mut complete = AmbiguityRows::new(["value red"], usize::MAX, usize::MAX);
+    for index in row.indices() {
+        assert_eq!(complete.append("value red", index), ScanStatus::Complete);
+    }
 
     assert_eq!(
         cached_overlap_proposals(&definitions, &summaries, &witnesses, 1, &complete),
@@ -659,7 +734,13 @@ fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
         OverlapProposalSource::CompiledWindows
     );
     assert_eq!(
-        cached_overlap_proposals(&definitions, &summaries, &witnesses, 1, &BTreeMap::new()),
+        cached_overlap_proposals(
+            &definitions,
+            &summaries,
+            &witnesses,
+            1,
+            &AmbiguityRows::new([], usize::MAX, usize::MAX),
+        ),
         None,
         "an unobserved witness must still scan every matcher window"
     );
@@ -671,7 +752,7 @@ fn complete_feature_matches_replace_only_an_untruncated_overlap_scan() {
             1,
             &witnesses,
             1,
-            Some(&BTreeMap::new()),
+            Some(&AmbiguityRows::new([], usize::MAX, usize::MAX)),
         )
         .2,
         OverlapProposalSource::CompiledWindows
@@ -890,9 +971,9 @@ fn rejected_matchers_lose_their_regex_and_report_only_the_size_limit() {
 #[test]
 fn ambiguity_membership_intersection_handles_ordered_disjoint_groups() {
     let mut proven = ProvenAmbiguities::new(5);
-    proven.record(&[0, 2]);
-    proven.record(&[1, 3]);
-    proven.record(&[2, 4]);
+    proven.record(Arc::from([0, 2]));
+    proven.record(Arc::from([1, 3]));
+    proven.record(Arc::from([2, 4]));
     assert!(!proven.contains(0, 1));
     assert!(proven.contains(0, 2));
     assert!(!proven.contains(1, 4));
@@ -1607,6 +1688,524 @@ fn late_feature_match_preserves_each_enabled_consumer() {
     }
 }
 
+/// Exact scan and match budgets retain the late finding; one-under limits fail closed.
+#[test]
+fn direct_matching_budget_boundaries_preserve_only_complete_outcomes() {
+    let definitions = definitions(
+        "Given('only',()=>first()); Given(/^late$/,()=>second()); Given('late',()=>third());",
+    );
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given only\n  And late\n",
+        Path::new("late.feature"),
+    )
+    .unwrap();
+    let (_root, mut config) = config();
+    for &rule in Rule::ALL {
+        config.rules.insert(rule, Severity::Off);
+    }
+    for rule in [
+        Rule::AmbiguousStep,
+        Rule::UnusedDefinition,
+        Rule::OverlappingMatcher,
+    ] {
+        config.rules.insert(rule, Severity::Warning);
+    }
+
+    let (findings, complete) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [6, 3, usize::MAX, usize::MAX],
+        1,
+    );
+    assert!(complete.incomplete.is_empty());
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule, Rule::AmbiguousStep);
+    assert_eq!(findings[0].primary.line, 4);
+    assert_eq!(complete.used, (0..3).collect());
+
+    for limits in [
+        [5, usize::MAX, usize::MAX, usize::MAX],
+        [usize::MAX, 2, usize::MAX, usize::MAX],
+    ] {
+        let (findings, outcome) = limited_matching(&definitions, &steps, &config, limits, 1);
+        assert!(findings.is_empty(), "partial matching produced a finding");
+        assert_eq!(outcome.used, (0..3).collect());
+        assert!(outcome.ambiguity_truncated);
+        assert_eq!(outcome.overlap_census, CandidateSourceCensus::default());
+        assert!(outcome
+            .incomplete
+            .iter()
+            .any(|message| message.contains("direct feature matching")));
+    }
+
+    let mut matched_texts = FeatureMatches::for_texts(["only"], &config, usize::MAX, usize::MAX);
+    let mut no_work = MatchingBudget::new(0, usize::MAX);
+    let stopped = scan_feature_batch(&definitions, &config, 1, &mut matched_texts, &mut no_work);
+    assert_eq!(stopped.status, ScanStatus::CpuExhausted);
+    assert_eq!(stopped.summaries.len(), definitions.len());
+
+    let (cache_findings, cache_outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [usize::MAX, usize::MAX, 0, usize::MAX],
+        1,
+    );
+    assert!(cache_findings.is_empty());
+    assert!(cache_outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("matching cache")));
+
+    let prepared: Vec<_> = definitions
+        .iter()
+        .map(|definition| prepare_matcher(definition, &config.parameter_types).0)
+        .collect();
+    let index = MatcherIndex::build(&prepared);
+    let mut cache_blocked = FeatureMatches::for_texts(["only"], &config, 0, usize::MAX);
+    let mut window_used = vec![false; prepared.len()];
+    let mut local = Vec::new();
+    let mut unlimited = MatchingBudget::default();
+    assert_eq!(
+        cache_blocked.scan(
+            0,
+            &prepared,
+            &index,
+            &mut window_used,
+            &mut local,
+            &mut unlimited,
+        ),
+        ScanStatus::CacheOverflow
+    );
+
+    let mut usage_config = config.clone();
+    usage_config
+        .rules
+        .insert(Rule::AmbiguousStep, Severity::Off);
+    usage_config
+        .rules
+        .insert(Rule::OverlappingMatcher, Severity::Off);
+    let (_, usage_outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &usage_config,
+        [0, usize::MAX, usize::MAX, usize::MAX],
+        1,
+    );
+    assert_eq!(usage_outcome.used, (0..definitions.len()).collect());
+    assert!(usage_outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("direct feature matching")));
+}
+
+/// Cache-driven recomputation retains findings, order, usage and completeness.
+#[test]
+fn matching_cache_batches_without_reducing_visibility() {
+    let patterns =
+        definitions("Given(/^(red|blue)$/,()=>first()); Given(/^never$/,()=>unreachable());");
+    let mut definitions = vec![patterns[1].clone(); 66];
+    definitions[0] = patterns[0].clone();
+    definitions[65] = patterns[0].clone();
+    for (line, definition) in definitions.iter_mut().enumerate() {
+        definition.location.line = line + 1;
+    }
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given red\n  And blue\n",
+        Path::new("colors.feature"),
+    )
+    .unwrap();
+    let (_root, config) = ambiguity_only_config();
+    let unlimited = [usize::MAX; 4];
+    let (expected, expected_outcome) =
+        limited_matching(&definitions, &steps, &config, unlimited, 1);
+    let entry_bytes = std::mem::size_of::<(&str, MatchRow)>();
+    let cache_limit = 2 * entry_bytes + std::mem::size_of::<usize>();
+    let (actual, actual_outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [usize::MAX, usize::MAX, cache_limit, usize::MAX],
+        definitions.len(),
+    );
+    assert_eq!(
+        serde_json::to_value(&actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert_eq!(actual_outcome.used, expected_outcome.used);
+    assert_eq!(actual_outcome.incomplete, expected_outcome.incomplete);
+    assert_eq!(
+        actual_outcome.ambiguity_truncated,
+        expected_outcome.ambiguity_truncated
+    );
+    assert_eq!(
+        actual_outcome.overlap_census,
+        expected_outcome.overlap_census
+    );
+    assert_eq!(actual.len(), 2);
+
+    let (prefix, limited_outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [2, usize::MAX, cache_limit, usize::MAX],
+        definitions.len(),
+    );
+    assert_eq!(prefix.len(), 1, "one completed text batch remains visible");
+    assert_eq!(prefix[0].primary.line, 3);
+    assert!(limited_outcome.ambiguity_truncated);
+    assert!(limited_outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("direct feature matching")));
+}
+
+/// A single-text cache overflow retains matcher diagnostics collected before the cutoff.
+#[test]
+fn matching_cache_single_text_overflow_keeps_compile_diagnostics() {
+    let patterns = definitions(
+        "Given(/^red$/,()=>first()); Given(/^never$/,()=>unreachable()); Given(/^red$/,()=>second());",
+    );
+    let mut definitions = vec![patterns[1].clone(); 66];
+    definitions[0] = patterns[0].clone();
+    definitions[1].matcher = "x".repeat(MAX_REGEX_PATTERN_BYTES + 1);
+    definitions[65] = patterns[2].clone();
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given red\n",
+        Path::new("colors.feature"),
+    )
+    .unwrap();
+    let (_root, config) = ambiguity_only_config();
+    let cache_limit = std::mem::size_of::<(&str, MatchRow)>() + std::mem::size_of::<usize>();
+    let (findings, outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [usize::MAX, usize::MAX, cache_limit, usize::MAX],
+        definitions.len(),
+    );
+
+    assert!(findings.is_empty());
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("regex resource limit")));
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("matching cache")));
+}
+
+/// Cache recomputation preserves source-order admission when texts recur across batches.
+#[test]
+fn matching_cache_batches_preserve_source_order_at_retention_limit() {
+    let definitions = definitions(
+        "Given(/^a$/,()=>a1()); Given(/^a$/,()=>a2()); Given(/^a$/,()=>a3()); Given(/^b$/,()=>b1()); Given(/^b$/,()=>b2());",
+    );
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given a\n  And b\n  And b\n  And a\n",
+        Path::new("alternating.feature"),
+    )
+    .unwrap();
+    let (_root, config) = ambiguity_only_config();
+    let limits = |cache| UsageLimits {
+        ambiguity: AmbiguityBudget::new(24, usize::MAX, usize::MAX),
+        matching: MatchingBudget::default(),
+        cache,
+        row: MAX_ROW_MATCHES,
+    };
+    let (expected, expected_outcome) = limited_usage(
+        &definitions,
+        &steps,
+        &config,
+        limits(usize::MAX),
+        definitions.len(),
+    );
+    let (actual, actual_outcome) = limited_usage(
+        &definitions,
+        &steps,
+        &config,
+        limits(std::mem::size_of::<(&str, MatchRow)>()),
+        definitions.len(),
+    );
+
+    assert_eq!(
+        expected
+            .iter()
+            .map(|finding| finding.primary.line)
+            .collect::<Vec<_>>(),
+        [3, 4, 5]
+    );
+    assert_eq!(
+        serde_json::to_value(&actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert_eq!(actual_outcome.incomplete, expected_outcome.incomplete);
+    assert_eq!(
+        actual_outcome.ambiguity_truncated,
+        expected_outcome.ambiguity_truncated
+    );
+}
+
+/// Alternating between completed cache batches reuses each text without replay scans.
+#[test]
+fn matching_cache_replay_does_not_rescan_unrelated_texts() {
+    let definitions = definitions("Given(/.*/,()=>first()); Given(/.*/,()=>second());");
+    let mut source = "Feature: F\n Scenario: S\n".to_owned();
+    for text in [
+        "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v0", "v4", "v0", "v4",
+    ] {
+        source.push_str(&format!("  Given {text}\n"));
+    }
+    let steps = crate::gherkin::extract(&source, Path::new("alternating.feature")).unwrap();
+    let (_root, config) = ambiguity_only_config();
+    let ((expected, expected_outcome), (actual, actual_outcome)) = limited_matching_with_control(
+        &definitions,
+        &steps,
+        &config,
+        [
+            8,
+            16,
+            4 * std::mem::size_of::<(&str, MatchRow)>(),
+            usize::MAX,
+        ],
+        definitions.len(),
+    );
+
+    assert_eq!(expected.len(), 12);
+    assert_eq!(
+        serde_json::to_value(&actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert_eq!(actual_outcome.incomplete, expected_outcome.incomplete);
+    assert!(!actual_outcome.ambiguity_truncated);
+}
+
+/// Repeated text groups share one admitted member set, and refused groups are not cached.
+#[test]
+fn matching_cache_interns_only_admitted_ambiguity_groups() {
+    let steps = [
+        FeatureStep {
+            keyword: "Given".to_owned(),
+            text: "a".to_owned(),
+            location: crate::model::SourceLocation::new("cache.feature", 3, 1, 3, 8),
+        },
+        FeatureStep {
+            keyword: "Given".to_owned(),
+            text: "b".to_owned(),
+            location: crate::model::SourceLocation::new("cache.feature", 4, 1, 4, 8),
+        },
+        FeatureStep {
+            keyword: "Given".to_owned(),
+            text: "c".to_owned(),
+            location: crate::model::SourceLocation::new("cache.feature", 5, 1, 5, 8),
+        },
+        FeatureStep {
+            keyword: "Given".to_owned(),
+            text: "d".to_owned(),
+            location: crate::model::SourceLocation::new("cache.feature", 3, 1, 3, 8),
+        },
+    ];
+    let texts = distinct_feature_texts(&steps);
+    let mut rows = AmbiguityRows::new(texts.iter().copied(), usize::MAX, usize::MAX);
+    for text in ["a", "b"] {
+        for index in 0..100 {
+            assert_eq!(rows.append(text, index), ScanStatus::Complete);
+        }
+    }
+    for index in 100..200 {
+        assert_eq!(rows.append("c", index), ScanStatus::Complete);
+    }
+    for index in 200..300 {
+        assert_eq!(rows.append("d", index), ScanStatus::Complete);
+    }
+    let mut cache = AmbiguityCache::new(&texts);
+    let mut budget = AmbiguityBudget::new(600, usize::MAX, usize::MAX);
+    let mut proven = ProvenAmbiguities::new(300);
+    let mut ambiguities = AmbiguityState::default();
+    let mut cut = false;
+
+    assert_eq!(
+        collect_ambiguity_batch(
+            &steps,
+            Some(&rows),
+            &mut cache,
+            &mut budget,
+            &mut proven,
+            &mut ambiguities,
+            &mut cut,
+        ),
+        steps.len()
+    );
+    assert!(ambiguities.incomplete_locations.is_empty());
+    assert!(cut);
+    let CachedAmbiguity::Ambiguous(a) = &cache.states[cache.offsets["a"]] else {
+        panic!("first admitted group was not cached");
+    };
+    let CachedAmbiguity::Ambiguous(b) = &cache.states[cache.offsets["b"]] else {
+        panic!("repeated admitted group was not cached");
+    };
+    assert!(Arc::ptr_eq(a, b));
+    assert!(matches!(
+        cache.states[cache.offsets["c"]],
+        CachedAmbiguity::NonAmbiguous
+    ));
+    assert!(matches!(
+        cache.states[cache.offsets["d"]],
+        CachedAmbiguity::NonAmbiguous
+    ));
+    assert_eq!(proven.groups.len(), 1);
+    assert!(Arc::ptr_eq(
+        a,
+        proven
+            .groups
+            .keys()
+            .next()
+            .expect("one admitted proof group")
+    ));
+    assert!(ambiguities
+        .groups
+        .values()
+        .flat_map(BTreeMap::keys)
+        .all(|members| Arc::ptr_eq(a, members)));
+}
+
+/// Runs one outline-location cutoff beside its unlimited final-outcome control.
+fn outline_matching_cutoff_with_control(
+    definitions: &[StepDefinition],
+    texts: &[&str],
+    config: &Config,
+) -> (
+    (Vec<Finding>, FeatureUsageOutcome),
+    (Vec<Finding>, FeatureUsageOutcome),
+) {
+    let location = crate::model::SourceLocation::new("outline.feature", 3, 1, 3, 12);
+    let steps = texts
+        .iter()
+        .map(|&text| FeatureStep {
+            keyword: "Given".to_owned(),
+            text: text.to_owned(),
+            location: location.clone(),
+        })
+        .collect::<Vec<_>>();
+    limited_matching_with_control(
+        definitions,
+        &steps,
+        config,
+        [
+            1,
+            usize::MAX,
+            std::mem::size_of::<(&str, MatchRow)>(),
+            usize::MAX,
+        ],
+        definitions.len(),
+    )
+}
+
+/// A later CPU cutoff retains completed text groups but labels their outline count incomplete.
+#[test]
+fn matching_cutoff_marks_cached_outline_count_as_lower_bound() {
+    let definitions = definitions("Given(/^red$/,()=>first()); Given(/^red$/,()=>second());");
+    let (_root, config) = ambiguity_only_config();
+    let ((expected, expected_outcome), (actual, actual_outcome)) =
+        outline_matching_cutoff_with_control(&definitions, &["red", "blue", "red"], &config);
+
+    assert!(expected_outcome.incomplete.is_empty());
+    assert_eq!(expected.len(), 1);
+    assert!(expected[0].message.contains("2 ambiguous expansions"));
+    assert_eq!(actual.len(), 1);
+    assert!(actual[0]
+        .message
+        .contains("at least 2 ambiguous expansions"));
+    assert_ne!(
+        crate::modes::finding_fingerprint(&actual[0]),
+        crate::modes::finding_fingerprint(&expected[0])
+    );
+    let mut baseline_checked = actual.clone();
+    let baseline =
+        crate::modes::apply_reference_baseline(&mut baseline_checked, &expected, "accepted")
+            .unwrap();
+    assert_eq!(baseline.new_findings, 1);
+    assert!(baseline_checked[0].is_active());
+    assert!(actual_outcome.ambiguity_truncated);
+    assert!(actual_outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("direct feature matching")));
+}
+
+/// Unresolved outline values never turn a retained lower bound into a complete-looking count.
+#[test]
+fn matching_cutoff_marks_plural_and_singular_outline_lower_bounds() {
+    let definitions =
+        definitions("Given(/^(red|blue)$/,()=>first()); Given(/^(red|blue)$/,()=>second());");
+    let (_root, config) = ambiguity_only_config();
+
+    for (texts, complete_count, partial_count) in [
+        (&["red", "blue", "red"][..], 3, 2),
+        (&["red", "blue"][..], 2, 1),
+    ] {
+        let ((complete, complete_outcome), (partial, partial_outcome)) =
+            outline_matching_cutoff_with_control(&definitions, texts, &config);
+
+        assert!(complete_outcome.incomplete.is_empty());
+        assert_eq!(complete.len(), 1);
+        assert_eq!(partial.len(), 1);
+        assert!(complete[0]
+            .message
+            .contains(&format!("{complete_count} ambiguous expansions")));
+        assert!(partial[0].message.contains(&format!(
+            "at least {partial_count} ambiguous expansion{}",
+            if partial_count == 1 { "" } else { "s" }
+        )));
+        assert!(partial_outcome.ambiguity_truncated);
+        assert_ne!(
+            crate::modes::finding_fingerprint(&partial[0]),
+            crate::modes::finding_fingerprint(&complete[0])
+        );
+    }
+}
+
+/// A row too large for existing ambiguity admission cannot become a partial finding or proof.
+#[test]
+fn oversized_match_row_uses_existing_incomplete_contract() {
+    let definitions = definitions(
+        "Given(/^same$/,()=>first()); Given('same',()=>second()); Given(/same/,()=>third()); Given(/^same$/i,()=>fourth());",
+    );
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given same\n",
+        Path::new("same.feature"),
+    )
+    .unwrap();
+    let (_root, config) = ambiguity_only_config();
+    let (complete, outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [usize::MAX, usize::MAX, usize::MAX, 4],
+        1,
+    );
+    assert!(outcome.incomplete.is_empty());
+    assert_eq!(complete.len(), 1);
+    assert_eq!(complete[0].related.len(), 4);
+
+    let (partial, outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [usize::MAX, usize::MAX, usize::MAX, 2],
+        1,
+    );
+    assert!(partial.is_empty());
+    assert!(outcome.ambiguity_truncated);
+    assert_eq!(outcome.overlap_census, CandidateSourceCensus::default());
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("ambiguity retention")));
+}
+
 /// Compact rows preserve every matched index across gaps and keep the first block inline.
 #[test]
 fn match_rows_preserve_sparse_and_dense_blocks() {
@@ -1615,7 +2214,7 @@ fn match_rows_preserve_sparse_and_dense_blocks() {
     for id in [60, 62, 63] {
         row.append(id);
     }
-    assert!(matches!(row, MatchRow::One(_)));
+    assert!(row.is_inline());
     for id in 64..128 {
         row.append(id);
     }
@@ -1692,11 +2291,6 @@ fn scattered_match_rows_preserve_indices_without_doubling_storage() {
         row.append(id);
     }
     assert_eq!(row.indices().collect::<Vec<_>>(), ids);
-    let MatchRow::Many(words) = row else {
-        panic!("expected multiple spans")
-    };
-    assert_eq!(
-        std::mem::size_of_val(words.as_slice()),
-        130 * std::mem::size_of::<usize>()
-    );
+    assert!(row.backing_bytes() >= 130 * std::mem::size_of::<usize>());
+    assert!(row.backing_bytes() < 260 * std::mem::size_of::<usize>());
 }

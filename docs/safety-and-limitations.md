@@ -101,6 +101,9 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 
 | Work | Limit |
 | --- | ---: |
+| Direct feature matcher automaton scans | 64,000,000 |
+| Emitted direct feature matches | 64,000,000 |
+| Retained direct feature matching cache | 64 MiB before complete-batch recomputation |
 | Unique definition comparisons and static overlap pairs | 2,000,000 |
 | Structural proposals per handler class | 250,000 |
 | Raw overlap witness proposals | Four times the remaining unique-pair budget |
@@ -117,6 +120,8 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 
 Project configuration and CLI flags may lower candidate and structural limits but cannot raise the
 hard ceilings. Matcher similarity is evaluated before reserving expensive handler-LCS work.
+
+Direct feature matching charges each regex-set or fallback-regex scan separately from each emitted definition match. The cache-fitting path scans all distinct texts once. If retained authoritative match rows would exceed 64 MiB, CukeDedup recomputes complete text batches and releases each batch before continuing; discarded overflow attempts and their smaller retries each consume work from the same allowances. If either CPU allowance is exhausted, findings from completed batches remain available, the run is marked incomplete, unused-definition findings and static overlap are disabled, and no partial row becomes a finding or proof. A retained outline location with unresolved values reports its known expansion count as a lower bound with an identity distinct from a complete count.
 
 Fuzzy matcher discovery uses collision-free, fixed-width, case-folded character trigrams with
 digit runs normalized. Unsaturated posting lists are fully considered. Lists above 256 definitions
