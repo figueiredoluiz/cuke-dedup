@@ -345,6 +345,34 @@ impl ProvenAmbiguities {
 type AmbiguityGroups<'a> =
     BTreeMap<(&'a std::path::Path, usize, usize), BTreeMap<Arc<[usize]>, (&'a FeatureStep, usize)>>;
 
+#[derive(Default)]
+struct AmbiguityState<'a> {
+    groups: AmbiguityGroups<'a>,
+    incomplete_locations: BTreeSet<(&'a std::path::Path, usize, usize)>,
+}
+
+/// Formats exact feature-step or lower-bound outline ambiguity wording for reports and identities.
+fn ambiguity_message(
+    step_text: &str,
+    expansion_count: usize,
+    definition_count: usize,
+    count_is_lower_bound: bool,
+) -> String {
+    if count_is_lower_bound {
+        return format!(
+            "Scenario outline step has at least {expansion_count} ambiguous expansion{} matching {definition_count} definitions",
+            if expansion_count == 1 { "" } else { "s" }
+        );
+    }
+    if expansion_count == 1 {
+        format!("Feature step `{step_text}` matches {definition_count} definitions")
+    } else {
+        format!(
+            "Scenario outline step has {expansion_count} ambiguous expansions matching {definition_count} definitions"
+        )
+    }
+}
+
 enum CachedAmbiguity {
     Unseen,
     NonAmbiguous,
@@ -380,15 +408,21 @@ fn collect_ambiguity_batch<'a>(
     cache: &mut AmbiguityCache<'a>,
     budget: &mut AmbiguityBudget,
     proven: &mut ProvenAmbiguities,
-    ambiguities: &mut AmbiguityGroups<'a>,
+    ambiguities: &mut AmbiguityState<'a>,
     cut: &mut bool,
 ) -> usize {
     let mut consumed = 0;
     for step in steps {
         let offset = cache.offsets[step.text.as_str()];
+        let location = (
+            step.location.path.as_path(),
+            step.location.line,
+            step.location.column,
+        );
         let mut candidate = None;
         if matches!(cache.states[offset], CachedAmbiguity::Unseen) {
             let Some(rows) = rows else {
+                ambiguities.incomplete_locations.insert(location);
                 consumed += 1;
                 continue;
             };
@@ -418,14 +452,9 @@ fn collect_ambiguity_batch<'a>(
             };
             (Arc::clone(authoritative), false)
         };
-        let location = (
-            step.location.path.as_path(),
-            step.location.line,
-            step.location.column,
-        );
         // A later expansion of an accepted source/member group must still contribute its full
         // count after another group is refused. Unseen source positions need no member buffer.
-        if *cut && !ambiguities.contains_key(&location) {
+        if *cut && !ambiguities.groups.contains_key(&location) {
             if new_group {
                 cache.states[offset] = CachedAmbiguity::NonAmbiguous;
             }
@@ -440,6 +469,7 @@ fn collect_ambiguity_batch<'a>(
             continue;
         }
         if let Some((_, expansions)) = ambiguities
+            .groups
             .get_mut(&location)
             .and_then(|groups| groups.get_mut(authoritative.as_ref()))
         {
@@ -465,6 +495,7 @@ fn collect_ambiguity_batch<'a>(
         }
         // Borrow paths and share the admitted member set across proof, text and finding indices.
         ambiguities
+            .groups
             .entry(location)
             .or_default()
             .insert(authoritative, (step, 1));
@@ -625,7 +656,7 @@ fn analyze_feature_usage_with_budget(
     let mut summaries: Vec<MatcherSummary> = Vec::with_capacity(definitions.len());
     let mut incomplete: Vec<String> = Vec::new();
     let mut used = BTreeSet::new();
-    let mut ambiguities = AmbiguityGroups::new();
+    let mut ambiguities = AmbiguityState::default();
     let mut proven = ProvenAmbiguities::new(definitions.len());
     let ambiguity_is_reported = config.severity(Rule::AmbiguousStep) != Severity::Off;
     let mut ambiguity_cut = false;
@@ -663,6 +694,9 @@ fn analyze_feature_usage_with_budget(
                     pending.push((begin, middle));
                 }
                 ScanStatus::CacheOverflow => {
+                    if summaries.is_empty() {
+                        incomplete.extend(batch.incomplete);
+                    }
                     direct_incomplete = Some(format!(
                         "direct feature matching cache exceeded its {cache_limit}-byte limit for one text; ambiguity findings are partial, unused-definition findings were disabled and static matcher overlap was skipped"
                     ));
@@ -739,39 +773,31 @@ fn analyze_feature_usage_with_budget(
     }
     let severity = config.severity(Rule::AmbiguousStep);
     if ambiguity_is_reported {
-        for (matched_indices, (step, expansion_count)) in
-            ambiguities.into_values().flat_map(BTreeMap::into_iter)
-        {
-            let matched_definitions: Vec<_> = matched_indices
-                .iter()
-                .map(|index| &definitions[*index])
-                .collect();
-            let original_fingerprint =
-                (matched_definitions.len() > 16
+        let AmbiguityState {
+            groups,
+            incomplete_locations,
+        } = ambiguities;
+        'locations: for (location, groups) in groups {
+            let count_is_lower_bound = incomplete_locations.contains(&location);
+            for (matched_indices, (step, expansion_count)) in groups {
+                let matched_definitions: Vec<_> = matched_indices
+                    .iter()
+                    .map(|index| &definitions[*index])
+                    .collect();
+                let original_fingerprint = (matched_definitions.len() > 16
                     || matched_definitions
                         .iter()
                         .any(|definition| definition.matcher.len() > MAX_EVIDENCE_TEXT_BYTES)
-                    || (expansion_count == 1 && step.text.len() > MAX_EVIDENCE_TEXT_BYTES))
+                    || (!count_is_lower_bound
+                        && expansion_count == 1
+                        && step.text.len() > MAX_EVIDENCE_TEXT_BYTES))
                     .then(|| {
-                        let count = matched_indices.len().to_string();
-                        let expansions = expansion_count.to_string();
-                        let message = if expansion_count == 1 {
-                            vec![
-                                "Feature step `",
-                                step.text.as_str(),
-                                "` matches ",
-                                &count,
-                                " definitions",
-                            ]
-                        } else {
-                            vec![
-                                "Scenario outline step has ",
-                                &expansions,
-                                " ambiguous expansions matching ",
-                                &count,
-                                " definitions",
-                            ]
-                        };
+                        let message = ambiguity_message(
+                            &step.text,
+                            expansion_count,
+                            matched_indices.len(),
+                            count_is_lower_bound,
+                        );
                         let mut matchers = Vec::new();
                         for (index, definition) in matched_definitions.iter().enumerate() {
                             if index > 0 {
@@ -779,85 +805,84 @@ fn analyze_feature_usage_with_budget(
                             }
                             matchers.extend(["`", definition.matcher.as_str(), "`"]);
                         }
-                        original_fallback_fingerprint(Rule::AmbiguousStep, &message, &matchers,
-                        &["More than one definition accepts at least one concrete feature step"])
+                        original_fallback_fingerprint(
+                            Rule::AmbiguousStep,
+                            &[message.as_str()],
+                            &matchers,
+                            &["More than one definition accepts at least one concrete feature step"],
+                        )
                     });
-            let matcher_list = matched_definitions
-                .iter()
-                .take(16)
-                .map(|definition| format!("`{}`", evidence_text(&definition.matcher)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let matcher_list = if matched_definitions.len() > 16 {
-                format!(
-                    "{matcher_list}, … [{} matchers omitted; digest: {}]",
-                    matched_definitions.len() - 16,
-                    crate::model::stable_fingerprint_parts(
+                let matcher_list = matched_definitions
+                    .iter()
+                    .take(16)
+                    .map(|definition| format!("`{}`", evidence_text(&definition.matcher)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let matcher_list = if matched_definitions.len() > 16 {
+                    format!(
+                        "{matcher_list}, … [{} matchers omitted; digest: {}]",
+                        matched_definitions.len() - 16,
+                        crate::model::stable_fingerprint_parts(
+                            matched_definitions
+                                .iter()
+                                .map(|definition| definition.matcher.as_str())
+                        )
+                    )
+                } else {
+                    matcher_list
+                };
+                let message = ambiguity_message(
+                    &evidence_text(&step.text),
+                    expansion_count,
+                    matched_indices.len(),
+                    count_is_lower_bound,
+                );
+                let reason = suppressions.find_reason(Rule::AmbiguousStep, &matched_indices);
+                let handler_evidence =
+                    "More than one definition accepts at least one concrete feature step";
+                let suggested_action = "Make the matchers mutually exclusive";
+                let sizes = [
+                    message.len(),
+                    matcher_list.len(),
+                    handler_evidence.len(),
+                    suggested_action.len(),
+                    reason.map_or(0, str::len),
+                    step.location.path.as_os_str().len(),
+                ];
+                if !budget.admit_payload(
+                    sizes.into_iter().chain(
                         matched_definitions
                             .iter()
-                            .map(|definition| definition.matcher.as_str())
-                    )
-                )
-            } else {
-                matcher_list
-            };
-            let message = if expansion_count == 1 {
-                format!(
-                    "Feature step `{}` matches {} definitions",
-                    evidence_text(&step.text),
-                    matched_indices.len()
-                )
-            } else {
-                format!(
-                    "Scenario outline step has {expansion_count} ambiguous expansions matching {} definitions",
-                    matched_indices.len()
-                )
-            };
-            let reason = suppressions.find_reason(Rule::AmbiguousStep, &matched_indices);
-            let handler_evidence =
-                "More than one definition accepts at least one concrete feature step";
-            let suggested_action = "Make the matchers mutually exclusive";
-            let sizes = [
-                message.len(),
-                matcher_list.len(),
-                handler_evidence.len(),
-                suggested_action.len(),
-                reason.map_or(0, str::len),
-                step.location.path.as_os_str().len(),
-            ];
-            if !budget.admit_payload(
-                sizes.into_iter().chain(
-                    matched_definitions
+                            .map(|d| d.location.path.as_os_str().len()),
+                    ),
+                ) {
+                    ambiguity_cut = true;
+                    break 'locations;
+                }
+                findings.push(Finding {
+                    original_fingerprint,
+                    rule: Rule::AmbiguousStep,
+                    severity,
+                    message,
+                    primary: step.location.clone(),
+                    related: matched_definitions
                         .iter()
-                        .map(|d| d.location.path.as_os_str().len()),
-                ),
-            ) {
-                ambiguity_cut = true;
-                break;
+                        .map(|definition| definition.location.clone())
+                        .collect(),
+                    evidence: FindingEvidence {
+                        matcher_similarity: None,
+                        handler_similarity: None,
+                        matcher_difference: matcher_list,
+                        handler_evidence: handler_evidence.to_owned(),
+                        comparison: None,
+                        cluster: None,
+                    },
+                    suggested_action: suggested_action.to_owned(),
+                    suppression: reason.map(|reason| crate::model::Suppression {
+                        reason: reason.to_owned(),
+                    }),
+                });
             }
-            findings.push(Finding {
-                original_fingerprint,
-                rule: Rule::AmbiguousStep,
-                severity,
-                message,
-                primary: step.location.clone(),
-                related: matched_definitions
-                    .iter()
-                    .map(|definition| definition.location.clone())
-                    .collect(),
-                evidence: FindingEvidence {
-                    matcher_similarity: None,
-                    handler_similarity: None,
-                    matcher_difference: matcher_list,
-                    handler_evidence: handler_evidence.to_owned(),
-                    comparison: None,
-                    cluster: None,
-                },
-                suggested_action: suggested_action.to_owned(),
-                suppression: reason.map(|reason| crate::model::Suppression {
-                    reason: reason.to_owned(),
-                }),
-            });
         }
     }
     // A cut may leave proofs for groups whose final payload was refused. Do not use those proofs

@@ -1510,7 +1510,14 @@
           "name": "matching_cache_batches_without_reducing_visibility",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
-          "rationale": "Adapter-independent stage `bounded-analysis`: retained-match cache batching preserves final ambiguity visibility, usage and completeness, with an explicit completed-prefix control on later work exhaustion.",
+          "rationale": "Adapter-independent stage `bounded-analysis`: with unlimited matching work, retained-match cache batching preserves final ambiguity visibility, usage and completeness; the limited control retains only its completed prefix after retry work exhausts the allowance.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cache_single_text_overflow_keeps_compile_diagnostics",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: a single-text retained-cache overflow preserves matcher-compilation diagnostics collected before the cutoff.",
           "behaviorClass": "shared-engine-invariant"
         },
         {
@@ -1535,10 +1542,17 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
-          "name": "matching_cutoff_finishes_cached_outline_expansions",
+          "name": "matching_cutoff_marks_cached_outline_count_as_lower_bound",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
-          "rationale": "Adapter-independent stage `bounded-analysis`: a later direct-work cutoff retains the unlimited finding identity for every expansion of an already completed outline group.",
+          "rationale": "Adapter-independent stage `bounded-analysis`: a later direct-work cutoff retains completed outline evidence but labels unresolved expansion totals as lower bounds with a distinct baseline identity.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "matching_cutoff_marks_plural_and_singular_outline_lower_bounds",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`: unresolved outline values produce explicit singular and plural lower bounds instead of complete-looking expansion counts.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

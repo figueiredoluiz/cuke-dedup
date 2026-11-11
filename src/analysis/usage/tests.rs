@@ -1861,6 +1861,42 @@ fn matching_cache_batches_without_reducing_visibility() {
         .any(|message| message.contains("direct feature matching")));
 }
 
+/// A single-text cache overflow retains matcher diagnostics collected before the cutoff.
+#[test]
+fn matching_cache_single_text_overflow_keeps_compile_diagnostics() {
+    let patterns = definitions(
+        "Given(/^red$/,()=>first()); Given(/^never$/,()=>unreachable()); Given(/^red$/,()=>second());",
+    );
+    let mut definitions = vec![patterns[1].clone(); 66];
+    definitions[0] = patterns[0].clone();
+    definitions[1].matcher = "x".repeat(MAX_REGEX_PATTERN_BYTES + 1);
+    definitions[65] = patterns[2].clone();
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given red\n",
+        Path::new("colors.feature"),
+    )
+    .unwrap();
+    let (_root, config) = ambiguity_only_config();
+    let cache_limit = std::mem::size_of::<(&str, MatchRow)>() + std::mem::size_of::<usize>();
+    let (findings, outcome) = limited_matching(
+        &definitions,
+        &steps,
+        &config,
+        [usize::MAX, usize::MAX, cache_limit, usize::MAX],
+        definitions.len(),
+    );
+
+    assert!(findings.is_empty());
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("regex resource limit")));
+    assert!(outcome
+        .incomplete
+        .iter()
+        .any(|message| message.contains("matching cache")));
+}
+
 /// Cache recomputation preserves source-order admission when texts recur across batches.
 #[test]
 fn matching_cache_batches_preserve_source_order_at_retention_limit() {
@@ -1987,7 +2023,7 @@ fn matching_cache_interns_only_admitted_ambiguity_groups() {
     let mut cache = AmbiguityCache::new(&texts);
     let mut budget = AmbiguityBudget::new(600, usize::MAX, usize::MAX);
     let mut proven = ProvenAmbiguities::new(300);
-    let mut ambiguities = AmbiguityGroups::new();
+    let mut ambiguities = AmbiguityState::default();
     let mut cut = false;
 
     assert_eq!(
@@ -2002,6 +2038,7 @@ fn matching_cache_interns_only_admitted_ambiguity_groups() {
         ),
         steps.len()
     );
+    assert!(ambiguities.incomplete_locations.is_empty());
     assert!(cut);
     let CachedAmbiguity::Ambiguous(a) = &cache.states[cache.offsets["a"]] else {
         panic!("first admitted group was not cached");
@@ -2028,26 +2065,34 @@ fn matching_cache_interns_only_admitted_ambiguity_groups() {
             .expect("one admitted proof group")
     ));
     assert!(ambiguities
+        .groups
         .values()
         .flat_map(BTreeMap::keys)
         .all(|members| Arc::ptr_eq(a, members)));
 }
 
-/// A later CPU cutoff still counts every expansion of a completed text group.
-#[test]
-fn matching_cutoff_finishes_cached_outline_expansions() {
-    let definitions = definitions("Given(/^red$/,()=>first()); Given(/^red$/,()=>second());");
+/// Runs one outline-location cutoff beside its unlimited final-outcome control.
+fn outline_matching_cutoff_with_control(
+    definitions: &[StepDefinition],
+    texts: &[&str],
+    config: &Config,
+) -> (
+    (Vec<Finding>, FeatureUsageOutcome),
+    (Vec<Finding>, FeatureUsageOutcome),
+) {
     let location = crate::model::SourceLocation::new("outline.feature", 3, 1, 3, 12);
-    let steps = ["red", "blue", "red"].map(|text| FeatureStep {
-        keyword: "Given".to_owned(),
-        text: text.to_owned(),
-        location: location.clone(),
-    });
-    let (_root, config) = ambiguity_only_config();
-    let ((expected, expected_outcome), (actual, actual_outcome)) = limited_matching_with_control(
-        &definitions,
+    let steps = texts
+        .iter()
+        .map(|&text| FeatureStep {
+            keyword: "Given".to_owned(),
+            text: text.to_owned(),
+            location: location.clone(),
+        })
+        .collect::<Vec<_>>();
+    limited_matching_with_control(
+        definitions,
         &steps,
-        &config,
+        config,
         [
             1,
             usize::MAX,
@@ -2055,20 +2100,71 @@ fn matching_cutoff_finishes_cached_outline_expansions() {
             usize::MAX,
         ],
         definitions.len(),
-    );
+    )
+}
+
+/// A later CPU cutoff retains completed text groups but labels their outline count incomplete.
+#[test]
+fn matching_cutoff_marks_cached_outline_count_as_lower_bound() {
+    let definitions = definitions("Given(/^red$/,()=>first()); Given(/^red$/,()=>second());");
+    let (_root, config) = ambiguity_only_config();
+    let ((expected, expected_outcome), (actual, actual_outcome)) =
+        outline_matching_cutoff_with_control(&definitions, &["red", "blue", "red"], &config);
 
     assert!(expected_outcome.incomplete.is_empty());
     assert_eq!(expected.len(), 1);
     assert!(expected[0].message.contains("2 ambiguous expansions"));
-    assert_eq!(
-        serde_json::to_value(&actual).unwrap(),
-        serde_json::to_value(expected).unwrap()
+    assert_eq!(actual.len(), 1);
+    assert!(actual[0]
+        .message
+        .contains("at least 2 ambiguous expansions"));
+    assert_ne!(
+        crate::modes::finding_fingerprint(&actual[0]),
+        crate::modes::finding_fingerprint(&expected[0])
     );
+    let mut baseline_checked = actual.clone();
+    let baseline =
+        crate::modes::apply_reference_baseline(&mut baseline_checked, &expected, "accepted")
+            .unwrap();
+    assert_eq!(baseline.new_findings, 1);
+    assert!(baseline_checked[0].is_active());
     assert!(actual_outcome.ambiguity_truncated);
     assert!(actual_outcome
         .incomplete
         .iter()
         .any(|message| message.contains("direct feature matching")));
+}
+
+/// Unresolved outline values never turn a retained lower bound into a complete-looking count.
+#[test]
+fn matching_cutoff_marks_plural_and_singular_outline_lower_bounds() {
+    let definitions =
+        definitions("Given(/^(red|blue)$/,()=>first()); Given(/^(red|blue)$/,()=>second());");
+    let (_root, config) = ambiguity_only_config();
+
+    for (texts, complete_count, partial_count) in [
+        (&["red", "blue", "red"][..], 3, 2),
+        (&["red", "blue"][..], 2, 1),
+    ] {
+        let ((complete, complete_outcome), (partial, partial_outcome)) =
+            outline_matching_cutoff_with_control(&definitions, texts, &config);
+
+        assert!(complete_outcome.incomplete.is_empty());
+        assert_eq!(complete.len(), 1);
+        assert_eq!(partial.len(), 1);
+        assert!(complete[0]
+            .message
+            .contains(&format!("{complete_count} ambiguous expansions")));
+        assert!(partial[0].message.contains(&format!(
+            "at least {partial_count} ambiguous expansion{}",
+            if partial_count == 1 { "" } else { "s" }
+        )));
+        assert!(partial_outcome.ambiguity_truncated);
+        assert_ne!(
+            crate::modes::finding_fingerprint(&partial[0]),
+            crate::modes::finding_fingerprint(&complete[0])
+        );
+    }
 }
 
 /// A row too large for existing ambiguity admission cannot become a partial finding or proof.
