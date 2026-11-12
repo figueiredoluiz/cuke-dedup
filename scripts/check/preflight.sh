@@ -12,6 +12,7 @@ cargo +stable fmt --all -- --check
 cargo +stable fmt --manifest-path fuzz/Cargo.toml -- --check
 
 node scripts/check/check-ruby-step-keywords.mjs
+node scripts/check/check-ruby-syntax.mjs
 node --test scripts/check/lib/*.test.mjs
 node scripts/check/check-language-boundary.mjs
 node scripts/check/check-docs-parity.mjs

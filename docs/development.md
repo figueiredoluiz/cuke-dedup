@@ -10,12 +10,13 @@ Release steps are in [releasing.md](releasing.md).
 - `Cargo.toml` declares the MSRV (`1.90`). Check it locally with
   `cargo +1.90.0 test --all-targets --all-features --locked`.
 - `rustup update stable` refreshes the separate stable quality checks (clippy, rustdoc, shear).
+- Ruby 4.0 or later is required by preflight, which compiles Ruby sources with its Prism parser.
 
 ## Hooks and gates
 
 | Gate | Runs | Contents |
 | --- | --- | --- |
-| `scripts/check/preflight.sh` | start of both gates | whitespace, `rustfmt`, Ruby keyword metadata, checker unit tests, language boundaries, docs parity; no compilation |
+| `scripts/check/preflight.sh` | start of both gates | whitespace, `rustfmt`, Ruby keyword metadata, Ruby source compilation, checker unit tests, language boundaries, docs parity; no compilation |
 | `scripts/check/check.sh --quick` | pre-commit | preflight, clippy, tests; dependency checks only when the staged patch touches an Action, manifest, lock or policy file |
 | `scripts/check/check.sh` | pre-push, CI | everything: rustdoc with `-D warnings`, `cargo package --list`, release build, corpus, matcher-window corpus, Ruby and language parity regression, memory, duplication, benchmark smoke, skills, versions, pack, `actionlint`, `cargo-audit`, `cargo-deny`, `cargo-shear` |
 
@@ -298,6 +299,9 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   assertion providers rejected by the closed-factory proof. Advisories explain trust decisions;
   they remove no definitions and change no completeness. Incomplete evidence stays in
   `uncertainties`.
+- `check-ruby-syntax.mjs` compiles every tracked or untracked, non-ignored `.rb` file with Ruby 4.0
+  or later and the Prism parser, without running it. tree-sitter-ruby accepts some sources Ruby
+  rejects, such as `/[]a]/`. Ruby written inline in Rust tests is not checked.
 - Ruby step keywords come from the Gherkin dialect data pinned in `Cargo.lock`. After a `gherkin`
   update run `node scripts/check/check-ruby-step-keywords.mjs --write`; the check fails while the
   table is stale.

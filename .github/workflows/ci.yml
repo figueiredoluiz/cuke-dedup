@@ -294,6 +294,13 @@ jobs:
           persist-credentials: false
       - run: grep -Eq '^channel = "[0-9]+\.[0-9]+\.[0-9]+"$' rust-toolchain.toml
       - run: rustup show active-toolchain
+      # Ruby 4.0 is the version the adapter's semantics are checked against; its Prism parser
+      # rejects sources the runner's default Ruby accepts.
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        with:
+          ruby-version: "4.0"
+      - name: Check that every Ruby source compiles
+        run: node scripts/check/check-ruby-syntax.mjs
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: corpus-release

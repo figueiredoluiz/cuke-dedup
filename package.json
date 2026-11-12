@@ -36,7 +36,8 @@
     "corpus:candidate-recall": "node scripts/evaluate/candidate-recall.mjs",
     "corpus:real": "node scripts/evaluate/real-corpus.mjs",
     "check:equivalence": "node scripts/check/check-output-equivalence.mjs",
-    "check:ruby-keywords": "node scripts/check/check-ruby-step-keywords.mjs"
+    "check:ruby-keywords": "node scripts/check/check-ruby-step-keywords.mjs",
+    "check:ruby-syntax": "node scripts/check/check-ruby-syntax.mjs"
   },
   "engines": {
     "node": ">=20"
