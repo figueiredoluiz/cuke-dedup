@@ -80,11 +80,11 @@
       "language": "ruby",
       "frameworks": ["cucumber-ruby"],
       "verdict": "reviewed",
-      "classifiedAt": "2026-10-20",
+      "classifiedAt": "2026-11-12",
       "axes": ["regex-translation"],
       "path": "regex-braces/class-boundary",
       "definitions": 3,
-      "featureSteps": 1,
+      "featureSteps": 2,
       "complete": true,
       "expectedExit": 1,
       "requiredFindings": [
@@ -94,19 +94,14 @@
           "primaryLine": 1
         },
         {
-          "rule": "unused-definition",
-          "primaryPath": "steps.rb",
-          "primaryLine": 1
-        },
-        {
-          "rule": "unused-definition",
-          "primaryPath": "steps.rb",
-          "primaryLine": 2
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 4
         }
       ],
       "requiredAbsent": [
         {
-          "rule": "ambiguous-step"
+          "rule": "unused-definition"
         },
         {
           "rule": "duplicate-handler"
