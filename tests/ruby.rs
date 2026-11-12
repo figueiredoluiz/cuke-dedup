@@ -1176,8 +1176,10 @@ fn ruby_regex_classes_and_dotall_preserve_final_matching_outcomes() {
         (r"\Avalue a{2,}\z", "", "aaaa", Some(true)),
         (r"\Avalue a{,3}\z", "", "aa", Some(true)),
         (r"\Avalue [{2}]\z", "", "{", Some(true)),
-        (r"\Avalue []a{,3}]\z", "", "0", Some(false)),
-        (r"\Avalue []a{,3}]\z", "", "]", Some(true)),
+        (r"\Avalue [\]a{,3}]\z", "", "0", Some(false)),
+        (r"\Avalue [\]a{,3}]\z", "", "]", Some(true)),
+        (r"\Avalue [^]a]\z", "", "x", Some(true)),
+        (r"\Avalue [^]a]\z", "", "]", Some(false)),
         (r"\Avalue a\{2\}\z", "", "a{2}", Some(true)),
         (r"\Avalue a{z}\z", "", "a{z}", Some(true)),
         (r#"\Avalue \"([^\"]*)\"\z"#, "", "\"quoted\"", Some(true)),
@@ -5075,6 +5077,22 @@ fn ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes() 
             "steps.rb:2:10: Ruby source contains syntax errors",
             2,
         ),
+        // Ruby 4.0 rejects a regex literal whose class opens with an unescaped `]`, in any position.
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven('other') { value = /[]a]/; work(value) }",
+            "steps.rb:2:26: Ruby source contains syntax errors",
+            3,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven(/\\Avalue []a]\\z/) { work() }",
+            "steps.rb:2:7: Ruby source contains syntax errors",
+            3,
+        ),
+        (
+            "Given('same') { first() }; Then('same') { second() }\nGiven('other') { value = %r{[]a]}; work(value) }",
+            "steps.rb:2:26: Ruby source contains syntax errors",
+            3,
+        ),
     ];
     for (source, diagnostic, definitions) in invalid {
         for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
@@ -5103,6 +5121,13 @@ fn ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes() 
         r#"Given('literal') { value = %q{\u{110000}}; work(value) }"#,
         r#"Given('literal') { value = "\\u{110000}"; work(value) }"#,
         r#"Given('receiver end') { (1..2).end }"#,
+        r#"Given('literal') { value = /[^]a]/; work(value) }"#,
+        r#"Given('literal') { value = /a(?#[]b])c/; work(value) }"#,
+        r#"Given('literal') { value = /\c[]a]/; work(value) }"#,
+        r#"Given('literal') { value = /a(?#t\)[]b])c/; work(value) }"#,
+        r#"Given('literal') { value = Regexp.new('[]a]'); work(value) }"#,
+        r#"Given('literal') { value = /#{1}[]a]/; work(value) }"#,
+        "Given('literal') { value = /a # []b]\n/x; work(value) }",
     ] {
         for flag in ["--fail-on-unparseable", "--fail-on-incomplete"] {
             let (exit, rows, stderr) = analyze(source, &[flag]);
@@ -11574,7 +11599,7 @@ fn ruby_parity_manifest_groups_match_their_scalar_oracles() {
             assert_eq!(evaluated, count, "{name}: {source} candidates");
         }
     }
-    assert_eq!(groups.len(), 141, "executed parity groups");
+    assert_eq!(groups.len(), 142, "executed parity groups");
 }
 
 /// Returns the `cuke-dedup:` stderr lines without the tool prefix, keeping `warning: ` so the

@@ -108,6 +108,34 @@
         }
       ]
     },
+    "regex-braces-leading-bracket": {
+      "role": "positive",
+      "origin": "synthetic",
+      "language": "ruby",
+      "frameworks": ["cucumber-ruby"],
+      "verdict": "reviewed",
+      "classifiedAt": "2026-11-13",
+      "axes": ["regex-translation"],
+      "path": "regex-braces/leading-bracket",
+      "definitions": 2,
+      "featureSteps": 1,
+      "complete": false,
+      "expectedExit": 2,
+      "requiredFindings": [
+        {
+          "rule": "duplicate-matcher",
+          "primaryPath": "steps.rb",
+          "primaryLine": 1
+        }
+     ,
+        {
+          "rule": "ambiguous-step",
+          "primaryPath": "steps.feature",
+          "primaryLine": 3
+        }
+      ],
+      "requiredAbsent": []
+    },
     "regex-percent-delimiters-all": {
       "role": "positive",
       "origin": "regression",

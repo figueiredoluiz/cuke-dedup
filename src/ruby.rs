@@ -1195,6 +1195,13 @@ fn syntax_error<'a>(root: Node<'a>, source: &str) -> Option<Node<'a>> {
                 && node.parent() == Some(root)
                 && text(*node, source) == "end")
                 || (node.kind() == "escape_sequence" && invalid_unicode_escape(text(*node, source)))
+                || (node.kind() == "regex"
+                    && !descendants(*node)
+                        .iter()
+                        .any(|part| part.kind() == "interpolation")
+                    && regex_literal(text(*node, source)).is_some_and(|(pattern, flags)| {
+                        empty_character_class(&pattern, flags.contains('x'))
+                    }))
         })
         .collect();
     nodes
@@ -1202,6 +1209,95 @@ fn syntax_error<'a>(root: Node<'a>, source: &str) -> Option<Node<'a>> {
         .filter(|node| node.is_error() || node.is_missing())
         .chain(supplemental.iter().copied())
         .min_by_key(|node| (node.start_byte(), node.end_byte()))
+}
+
+/// Whether a regex literal opens a character class with an unescaped `]`, which Ruby 4.0's parser
+/// rejects as empty; `Regexp.new` and older parsers read the bracket as a member. `[^]` keeps it a
+/// member. Escapes are consumed whole, so `\c[` and `\C-[` hold no bracket. Comments are skipped:
+/// `(?#...)` up to an unescaped `)`, and `#` to end of line in extended mode, which the `x` flag or
+/// an inline `(?x)` or `(?x:...)` option group switches on. A backslash before a newline is a line
+/// continuation that Ruby removes first, so `[\<newline>]` is empty.
+fn empty_character_class(pattern: &str, extended: bool) -> bool {
+    // A source CRLF reads as LF, as in Ruby, so `\` before CRLF is a continuation too.
+    let pattern = pattern.replace("\r\n", "\n");
+    let mut joined = String::with_capacity(pattern.len());
+    let mut raw = pattern.chars().peekable();
+    while let Some(ch) = raw.next() {
+        if ch == '\\' && raw.next_if_eq(&'\n').is_some() {
+            continue;
+        }
+        joined.push(ch);
+        if ch == '\\' {
+            joined.extend(raw.next());
+        }
+    }
+    let mut chars = joined.chars().peekable();
+    let (mut class_depth, mut extended, mut groups) = (0usize, extended, Vec::new());
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => skip_escape(&mut chars),
+            '[' => {
+                class_depth += 1;
+                let negated = chars.next_if_eq(&'^').is_some();
+                if chars.next_if_eq(&']').is_some() && !negated {
+                    return true;
+                }
+            }
+            ']' if class_depth > 0 => class_depth -= 1,
+            _ if class_depth > 0 => {} // fail-closed: in a class only `\`, `[`, `]` matter
+            '#' if extended => {
+                chars.by_ref().find(|&c| c == '\n');
+            }
+            '(' if chars.next_if_eq(&'?').is_some() => {
+                if chars.next_if_eq(&'#').is_some() {
+                    while let Some(c) = chars.next().filter(|&c| c != ')') {
+                        if c == '\\' {
+                            chars.next();
+                        }
+                    }
+                    continue;
+                }
+                let mut on = true;
+                let mut scoped = extended;
+                while let Some(flag) =
+                    chars.next_if(|c| matches!(c, 'i' | 'm' | 'x' | 'a' | 'd' | 'u' | '-'))
+                {
+                    match flag {
+                        '-' => on = false,
+                        'x' => scoped = on,
+                        _ => {} // fail-closed: i, m, a, d, u leave extended mode as is
+                    }
+                }
+                if chars.next_if_eq(&')').is_some() {
+                    extended = scoped;
+                } else {
+                    groups.push(extended);
+                    if chars.next_if_eq(&':').is_some() {
+                        extended = scoped;
+                    }
+                }
+            }
+            '(' => groups.push(extended),
+            ')' => extended = groups.pop().unwrap_or(extended),
+            _ => {} // fail-closed: other characters open no class or comment
+        }
+    }
+    false
+}
+
+/// Consumes the escape after a backslash. A control or meta escape (`\cX`, `\C-X`, `\M-X`) takes
+/// its operand, which may itself be an escape; a chain is consumed iteratively.
+fn skip_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    loop {
+        let operand = match chars.next() {
+            Some('c') => true,
+            Some('C' | 'M') => chars.next_if_eq(&'-').is_some(),
+            _ => false, // fail-closed: other escapes stand for one character
+        };
+        if !(operand && chars.next() == Some('\\')) {
+            break;
+        }
+    }
 }
 
 /// Rejects Unicode escapes whose contents are not Ruby Unicode scalar values.
