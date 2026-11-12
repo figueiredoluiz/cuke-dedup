@@ -301,7 +301,9 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   `uncertainties`.
 - `check-ruby-syntax.mjs` compiles every tracked or untracked, non-ignored `.rb` file with Ruby 4.0
   or later and the Prism parser, without running it. tree-sitter-ruby accepts some sources Ruby
-  rejects, such as `/[]a]/`. Ruby written inline in Rust tests is not checked.
+  rejects, such as `/[]a]/`. A fixture that pins the analyzer on rejected source is listed in the
+  script with the parser message its error must contain. Ruby written inline in Rust tests is not
+  checked.
 - Ruby step keywords come from the Gherkin dialect data pinned in `Cargo.lock`. After a `gherkin`
   update run `node scripts/check/check-ruby-step-keywords.mjs --write`; the check fails while the
   table is stale.

@@ -535,6 +535,74 @@ fn parameter_type_regexps_accept_percent_r_delimiters() {
     assert!(!extraction.diagnostics.is_empty());
 }
 
+/// Each row's answer is Prism's (`Prism.parse`, Ruby 4.0.5) for the literal `/pattern/` with the
+/// `x` flag when marked: whether it reports an empty character class. A differential run over
+/// 89,000 generated patterns agreed with Prism except where an unmatched `)` precedes the class:
+/// Prism reports nothing there, and Ruby fails to load the file anyway.
+#[test]
+fn empty_character_class_matches_ruby_parser() {
+    for (pattern, extended, rejected) in [
+        ("[]a]", false, true),
+        ("[]", false, true),
+        ("[]]", false, true),
+        ("[[]a]]", false, true),
+        ("[a[]]", false, true),
+        ("[a&&[]]", false, true),
+        ("(?x) []a] ", false, true),
+        ("[]a]", true, true),
+        ("[a-[]b]", false, true),
+        ("[a[]b]", false, true),
+        ("[[:alpha:][]a]]", false, true),
+        ("a # []b]", false, true),
+        ("(?-x:[]a])", true, true),
+        ("a\\\\[]b]", false, true),
+        ("(?x)(?-x)# []a]", false, true),
+        ("(?x:a)# []b]", false, true),
+        ("(?i-x)# []b]", true, true),
+        ("(a(?x)) # []b]", false, true),
+        ("[^]a]", false, false),
+        ("[^]", false, false),
+        ("[a]]", false, false),
+        ("[\\]a]", false, false),
+        ("\\[]a]", false, false),
+        ("[\\\\]]", false, false),
+        ("(?x) a # []b]\nc", false, false),
+        ("(?x: a # []b]\n)c", false, false),
+        ("a(?#[]b])c", false, false),
+        ("a # []b]\n", true, false),
+        ("[[:alpha:]]", false, false),
+        ("x{,3}", false, false),
+        ("(?<n>[^]a])", false, false),
+        ("[#[]a]", true, true),
+        ("(?x)[#]\n[]a]", false, true),
+        ("\\c[]a]", false, false),
+        ("\\C-[]a]", false, false),
+        ("\\M-\\C-[]a]", false, false),
+        ("\\M-[]a]", false, false),
+        ("\\c\\[]a]", false, false),
+        ("a(?#text\\)[]b])c", false, false),
+        ("(?ax) # []a]\n", false, false),
+        ("(?ax: # []a]\n)", false, false),
+        ("(?ax) []a]", false, true),
+        ("[\\\n]a]", false, true),
+        ("[\\\\\n]a]", false, false),
+        (")[]", false, true),
+    ] {
+        assert_eq!(
+            super::empty_character_class(pattern, extended),
+            rejected,
+            "{pattern:?} extended={extended}"
+        );
+    }
+    // Ruby reads a source CRLF as LF: `\` before CRLF continues the line (checked with
+    // `ruby --parser=prism -c` on a CRLF file), and a CRLF ends an extended-mode comment.
+    assert!(super::empty_character_class("[\\\r\n]a]", false));
+    assert!(!super::empty_character_class("a # []b]\r\n", true));
+    // A long chain of control escapes is consumed without recursion.
+    let chain = format!("{}[]a]", r"\c".repeat(200_000));
+    assert!(!super::empty_character_class(&chain, false));
+}
+
 /// Ruby string literals decode only when complete and valid; truncated quotes and invalid escapes
 /// yield no value.
 #[test]
