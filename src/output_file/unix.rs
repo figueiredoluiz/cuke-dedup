@@ -143,49 +143,105 @@ pub(super) fn cleanup_stage(parent: &Dir, name: &OsStr, initial: &Stat) {
     }
 }
 
-/// Binds the staging directory and validates the prepared file before and after atomic publication.
-pub(super) fn publish(
-    parent: &Dir,
-    name: &OsStr,
-    replacing: bool,
-    prepare: impl FnOnce(&mut File) -> Result<()>,
-) -> Result<()> {
-    let temp = format!(
+/// A file prepared in a private staging directory beside the destination, not yet published.
+pub(super) struct Stage {
+    name: std::ffi::OsString,
+    initial: Stat,
+    dir: File,
+    file: File,
+}
+
+const PAYLOAD: &str = "payload";
+
+/// Creates the staging directory and its empty payload under the verified parent.
+pub(super) fn stage(parent: &Dir, replacing: bool) -> Result<Stage> {
+    let name = std::ffi::OsString::from(format!(
         ".cuke-dedup-{:016x}{:016x}.tmp",
         getrandom::u64()?,
         getrandom::u64()?
-    );
-    let stage_name = OsStr::new(&temp);
-    mkdirat(parent, stage_name, Mode::RWXU)?;
-    let initial = statat(parent, stage_name, AtFlags::SYMLINK_NOFOLLOW)?;
-    let result = (|| {
-        let stage = open_stage(parent, stage_name, &initial)?;
-        let payload = OsStr::new("payload");
+    ));
+    mkdirat(parent, &name, Mode::RWXU)?;
+    let initial = statat(parent, &name, AtFlags::SYMLINK_NOFOLLOW)?;
+    let opened = open_stage(parent, &name, &initial).and_then(|dir| {
         let mode = Mode::from_raw_mode(if replacing { 0o600 } else { 0o666 });
         let flags = OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC;
-        let mut file = File::from(openat(&stage, payload, flags, mode)?);
-        let result = prepare(&mut file).and_then(|()| {
-            require_entry(
-                &stage,
-                payload,
-                &file,
-                "temporary output entry changed before replacement",
-            )?;
-            renameat(&stage, payload, parent, name)?;
+        let file = File::from(openat(&dir, PAYLOAD, flags, mode)?);
+        Ok((dir, file))
+    });
+    match opened {
+        Ok((dir, file)) => Ok(Stage {
+            name,
+            initial,
+            dir,
+            file,
+        }),
+        Err(error) => {
+            cleanup_stage(parent, &name, &initial);
+            Err(error)
+        }
+    }
+}
+
+impl Stage {
+    /// The payload the caller fills before committing.
+    pub(super) fn file(&mut self) -> &mut File {
+        &mut self.file
+    }
+
+    /// Renames the payload over `name` after `check` passes, validating the entry before and after.
+    pub(super) fn commit(
+        self,
+        parent: &Dir,
+        name: &OsStr,
+        check: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let payload = OsStr::new(PAYLOAD);
+        let result = require_entry(
+            &self.dir,
+            payload,
+            &self.file,
+            "temporary output entry changed before replacement",
+        )
+        .and_then(|()| check())
+        .and_then(|()| Ok(renameat(&self.dir, payload, parent, name)?))
+        .and_then(|()| {
             require_entry(
                 parent,
                 name,
-                &file,
+                &self.file,
                 "published output no longer names the prepared file",
             )
         });
-        if result.is_err() && names_file(&stage, payload, &file).unwrap_or(false) {
-            let _ = unlinkat(&stage, payload, AtFlags::empty());
-        }
+        self.discard(parent);
         result
-    })();
-    cleanup_stage(parent, stage_name, &initial);
-    result
+    }
+
+    /// Removes an unpublished payload and the staging directory, each only while it is still ours.
+    pub(super) fn discard(self, parent: &Dir) {
+        let payload = OsStr::new(PAYLOAD);
+        if names_file(&self.dir, payload, &self.file).unwrap_or(false) {
+            let _ = unlinkat(&self.dir, payload, AtFlags::empty());
+        }
+        cleanup_stage(parent, &self.name, &self.initial);
+    }
+}
+
+/// Creates an empty leaf exclusively; an existing entry, a link included, fails instead.
+pub(super) fn create_new(parent: &Dir, name: &OsStr) -> Result<File> {
+    let flags = OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    Ok(File::from(openat(
+        parent,
+        name,
+        flags,
+        Mode::from_raw_mode(0o666),
+    )?))
+}
+
+/// Unlinks `name` only while it still names `file`, so a substituted entry is kept.
+pub(super) fn remove_if_same(parent: &Dir, name: &OsStr, file: File) {
+    if names_file(parent, name, &file).unwrap_or(false) {
+        let _ = unlinkat(parent, name, AtFlags::empty());
+    }
 }
 
 /// Compares two open regular files without resolving either pathname again.

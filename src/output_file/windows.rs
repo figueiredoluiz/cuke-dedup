@@ -108,19 +108,42 @@ pub(super) fn existing(parent: &Dir, name: &OsStr, read: bool) -> Result<Option<
             Ok(Some(file))
         }
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        // Opening a directory for writing is denied; name the cause the Unix check reports.
+        Err(e)
+            if e.kind() == ErrorKind::PermissionDenied
+                && fs::symlink_metadata(parent.path.join(name)).is_ok_and(|meta| meta.is_dir()) =>
+        {
+            bail!("output destination must be a regular file")
+        }
         Err(e) => Err(e.into()),
     }
 }
 
-/// Replaces the entry under the pinned directory only after validation and a complete write.
-pub(super) fn publish(
-    dir: &Dir,
-    name: &OsStr,
-    _replacing: bool,
-    prepare: impl FnOnce(&mut File) -> Result<()>,
-) -> Result<()> {
+/// Creates an empty destination exclusively; an existing entry, a reparse point included, fails.
+pub(super) fn create_new(parent: &Dir, name: &OsStr) -> Result<File> {
+    check_name(name)?;
+    Ok(OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(OPEN_REPARSE_POINT)
+        .open(parent.path.join(name))?)
+}
+
+/// Deletes `name` only while it still names `file`, so a substituted entry is kept.
+pub(super) fn remove_if_same(parent: &Dir, name: &OsStr, file: File) {
+    cleanup_temporary(parent, name, &file);
+}
+
+/// A file prepared beside the destination under the pinned directory, not yet published.
+pub(super) struct Stage {
+    temp: tempfile::NamedTempFile,
+    source: std::ffi::OsString,
+}
+
+/// Creates the hidden temporary file in the pinned directory.
+pub(super) fn stage(dir: &Dir, _replacing: bool) -> Result<Stage> {
     // Cleanup is explicit so removal follows an identity check of the temporary entry.
-    let mut temp = tempfile::Builder::new()
+    let temp = tempfile::Builder::new()
         .disable_cleanup(true)
         .tempfile_in(&dir.path)?;
     let source = temp
@@ -128,27 +151,49 @@ pub(super) fn publish(
         .file_name()
         .expect("named temporary file")
         .to_owned();
-    let prepared = prepare(temp.as_file_mut()).and_then(|()| {
-        if !names_file(dir, &source, temp.as_file())? {
-            bail!("temporary output entry changed before replacement");
+    Ok(Stage { temp, source })
+}
+
+impl Stage {
+    /// The payload the caller fills before committing.
+    pub(super) fn file(&mut self) -> &mut File {
+        self.temp.as_file_mut()
+    }
+
+    /// Replaces the entry after `check` passes, validating the prepared file before and after.
+    pub(super) fn commit(
+        self,
+        dir: &Dir,
+        name: &OsStr,
+        check: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let prepared = names_file(dir, &self.source, self.temp.as_file()).and_then(|same| {
+            if !same {
+                bail!("temporary output entry changed before replacement");
+            }
+            check()
+        });
+        if let Err(error) = prepared {
+            self.discard(dir);
+            return Err(error);
+        }
+        let published = match self.temp.persist(dir.path.join(name)) {
+            Ok(file) => file,
+            Err(error) => {
+                cleanup_temporary(dir, &self.source, error.file.as_file());
+                return Err(error.error.into());
+            }
+        };
+        if !names_file(dir, name, &published)? {
+            bail!("published output no longer names the prepared file");
         }
         Ok(())
-    });
-    if let Err(error) = prepared {
-        cleanup_temporary(dir, &source, temp.as_file());
-        return Err(error);
     }
-    let published = match temp.persist(dir.path.join(name)) {
-        Ok(file) => file,
-        Err(error) => {
-            cleanup_temporary(dir, &source, error.file.as_file());
-            return Err(error.error.into());
-        }
-    };
-    if !names_file(dir, name, &published)? {
-        bail!("published output no longer names the prepared file");
+
+    /// Removes the unpublished temporary file while it still names the prepared file.
+    pub(super) fn discard(self, dir: &Dir) {
+        cleanup_temporary(dir, &self.source, self.temp.as_file());
     }
-    Ok(())
 }
 
 /// Removes a failed temporary name only after checking it against the original open file.

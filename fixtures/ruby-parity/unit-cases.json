@@ -7018,6 +7018,13 @@
           "stage": "gherkin-parser",
           "rationale": "Adapter-independent concrete feature admission: individually fitting current and historical corpora exceed one invocation step or scan budget together; the CLI refuses the historical baseline. A fitting modified current feature still accepts the same historical baseline as a positive control.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "regression_emit_records_are_staged_before_the_baseline_and_create_parents",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: both emit destinations create a missing parent and stage their records before the baseline step, so a failing baseline leaves no staged file, no empty reservation and an existing destination unchanged; output publication runs after every adapter.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7696,6 +7703,27 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent stage `bounded-io`: Windows preparation and replacement failures clean only verified temporary entries and preserve substituted bytes and destination directories.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "reservation_fails_without_write_permission_on_the_directory",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: reserving an absent output in a directory the user cannot write fails at the exclusive create and leaves no entry, and a released reservation removes its empty file.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "staging_admission_failure_preserves_destination_and_cleans_owned_entries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent staging admission: permission failure removes owned staging and reservation entries while preserving existing bytes, and restored permissions permit complete publication. The process-wide umask is isolated in a child test process.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "substituted_empty_reservation_survives_a_failed_commit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: a reservation replaced by another empty file fails the commit and cleanup keeps the substitute; an unchanged reservation commits.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

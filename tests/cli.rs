@@ -85,14 +85,15 @@ fn write(root: &Path, relative: &str, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-/// Exercises report and baseline writes against external targets, including links in missing directory trees.
+/// Exercises report, baseline and emit-record writes against external targets, including links in
+/// missing directory trees.
 #[cfg(unix)]
 #[test]
 fn regression_report_and_baseline_writes_preserve_external_targets() {
     use std::os::unix::fs::symlink;
 
     let mut failures = Vec::new();
-    for format in ["json", "html", "sarif", "baseline"] {
+    for format in ["json", "html", "sarif", "baseline", "fingerprints", "pairs"] {
         for case in [
             "regular", "hardlink", "leaf", "dangling", "parent", "internal", "external", "fifo",
         ] {
@@ -113,6 +114,8 @@ fn regression_report_and_baseline_writes_preserve_external_targets() {
             );
             let name = if format == "baseline" {
                 "baseline.json".to_owned()
+            } else if matches!(format, "fingerprints" | "pairs") {
+                format!("{format}.jsonl")
             } else {
                 format!("cuke-dedup.{format}")
             };
@@ -155,6 +158,9 @@ fn regression_report_and_baseline_writes_preserve_external_targets() {
                 .arg("--no-metrics");
             if format == "baseline" {
                 cmd.args(["--reporters", "terminal", "--update-baseline", "--baseline"])
+                    .arg(&relative);
+            } else if matches!(format, "fingerprints" | "pairs") {
+                cmd.args(["--reporters", "terminal", &format!("--emit-{format}")])
                     .arg(&relative);
             } else {
                 cmd.args(["--reporters", format]);
@@ -1415,8 +1421,7 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
     fs::create_dir_all(root.join("reports/cuke-dedup")).unwrap();
     let run = |args: &[&str]| run_on(root, args);
     let mut rows = vec![
-        ("missing/fingerprints.jsonl", "failed to write"),
-        ("reports", "not a regular file"),
+        ("reports", "regular file"),
         ("reports/cuke-dedup/cuke-dedup.json", "would overwrite"),
         (
             "reports/../reports/cuke-dedup/cuke-dedup.sarif",
@@ -1425,7 +1430,7 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
     ];
     if cfg!(unix) {
         // Under the test harness stdout is a pipe, so this would leak records into the report.
-        rows.push(("/dev/stdout", "not a regular file"));
+        rows.push(("/dev/stdout", "regular file"));
     }
     for (destination, message) in rows {
         let output = run(&["--emit-fingerprints", destination]);
@@ -1446,8 +1451,7 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(fs::read_to_string(&report).unwrap(), "previous report\n");
     fs::remove_file(&report).unwrap();
-    // A symlink to a report not yet written: opening creates the target, and the rejection removes
-    // that target while the pre-existing link stays.
+    // A symlink to a report not yet written is a link, refused without creating its target.
     #[cfg(unix)]
     {
         // Relative, so the target resolves against the link's directory, not the working one.
@@ -1457,7 +1461,7 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
         assert_eq!(output.status.code(), Some(2));
         assert!(String::from_utf8(output.stderr)
             .unwrap()
-            .contains("would overwrite"));
+            .contains("must be a regular file"));
         assert!(!report.exists());
         assert!(fs::symlink_metadata(root.join("link")).is_ok());
         fs::remove_file(root.join("link")).unwrap();
@@ -1589,9 +1593,7 @@ fn emit_fingerprints_fails_closed_on_unusable_destinations() {
             .timeout(std::time::Duration::from_secs(20))
             .assert()
             .code(2)
-            .stderr(predicates::str::contains(
-                "pipe.jsonl is not a regular file",
-            ));
+            .stderr(predicates::str::contains("must be a regular file"));
         fs::remove_file(root.join("pipe.jsonl")).unwrap();
     }
     for (baseline, update, destination, message) in [
@@ -1774,10 +1776,6 @@ fn emit_pairs_fails_closed_on_unusable_destinations() {
     fs::create_dir(root.join("sub")).unwrap();
     let run = |args: &[&str]| run_on(root, args);
     for (args, message) in [
-        (
-            vec!["--emit-pairs", "missing/pairs.jsonl"],
-            "failed to write pair file",
-        ),
         (
             vec!["--emit-pairs", "reports/cuke-dedup/cuke-dedup.json"],
             "pair file",
@@ -9114,5 +9112,67 @@ fn report_publication_rejects_syscall_races_and_io_failures() {
             assert_eq!(staged.len(), 2);
             assert!(staged.iter().all(|path| path.is_dir()));
         }
+    }
+}
+
+/// Both emit flags create a missing parent like reports (it was an error), and stage their records
+/// before the baseline step: a missing baseline then fails the run, which removes the staged file and
+/// the empty reservation and leaves an existing destination's bytes. Links, hard links and FIFOs are
+/// covered by `regression_report_and_baseline_writes_preserve_external_targets`.
+#[test]
+fn regression_emit_records_are_staged_before_the_baseline_and_create_parents() {
+    for flag in ["--emit-fingerprints", "--emit-pairs"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write(
+            root,
+            "steps.ts",
+            "Given('one', () => first());\nGiven('two', () => second());\n",
+        );
+        write(root, "kept.jsonl", "kept\n");
+        // Exact listings, not a name prefix: staging names differ by platform (`.tmp*` on Windows).
+        let entries = |dir: &Path| {
+            let mut names: Vec<_> = fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        for destination in ["kept.jsonl", "fresh.jsonl"] {
+            let output = run_on(root, &[flag, destination, "--baseline", "missing.json"]);
+            assert_eq!(output.status.code(), Some(2), "{flag} {destination}");
+            assert_eq!(
+                entries(root),
+                ["kept.jsonl", "steps.ts"],
+                "{flag} {destination}"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(root.join("kept.jsonl")).unwrap(),
+            "kept\n"
+        );
+        assert!(!root.join("fresh.jsonl").exists(), "{flag}");
+        // Controls: without the failing baseline the same runs publish, also below a new directory.
+        for destination in ["fresh.jsonl", "new/dir/records.jsonl"] {
+            let output = run_on(root, &[flag, destination]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{flag} {destination}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let records = fs::read_to_string(root.join(destination)).unwrap();
+            assert!(
+                flag == "--emit-pairs" || records.contains("\"schemaVersion\""),
+                "{flag} {destination}: {records}"
+            );
+        }
+        assert_eq!(
+            entries(root),
+            ["fresh.jsonl", "kept.jsonl", "new", "steps.ts"],
+            "{flag}"
+        );
+        assert_eq!(entries(&root.join("new/dir")), ["records.jsonl"], "{flag}");
     }
 }

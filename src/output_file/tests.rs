@@ -79,7 +79,7 @@ fn concurrent_staging_entry_replacement_cannot_publish_other_bytes() {
     let root = tempfile::tempdir().unwrap();
     let dir = super::platform::open_parent(root.path()).unwrap();
     let report = root.path().join("report");
-    let result = super::platform::publish(&dir, std::ffi::OsStr::new("report"), false, |file| {
+    let result = publish(&dir, std::ffi::OsStr::new("report"), false, |file| {
         file.write_all(b"prepared")?;
         let staging = fs::read_dir(root.path())?.next().unwrap()?.path();
         fs::rename(&staging, root.path().join("moved"))?;
@@ -141,7 +141,7 @@ fn output_failures_preserve_files_and_remove_owned_staging_entries() {
 
     let dir = super::platform::open_parent(root.path()).unwrap();
     for substitute in [false, true] {
-        let result = super::platform::publish(&dir, OsStr::new("report"), true, |file| {
+        let result = publish(&dir, OsStr::new("report"), true, |file| {
             file.write_all(b"prepared")?;
             let stage = fs::read_dir(root.path())?
                 .map(|entry| entry.unwrap().path())
@@ -268,7 +268,7 @@ fn windows_failure_cleanup_preserves_foreign_entries() {
         let root = tempfile::tempdir().unwrap();
         let report = root.path().join("report");
         let dir = super::platform::open_parent(root.path()).unwrap();
-        let result = super::platform::publish(&dir, OsStr::new("report"), false, |file| {
+        let result = publish(&dir, OsStr::new("report"), false, |file| {
             file.write_all(b"prepared")?;
             if case == "persist" {
                 fs::create_dir(&report)?;
@@ -305,4 +305,128 @@ fn windows_failure_cleanup_preserves_foreign_entries() {
             _ => unreachable!(),
         }
     }
+}
+
+/// A reservation in a directory the user cannot write fails at the exclusive create and leaves no
+/// entry; the same directory made writable again reserves the file, and dropping the unpublished
+/// reservation removes it. Root writes anyway, so it skips.
+#[cfg(unix)]
+#[test]
+fn reservation_fails_without_write_permission_on_the_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    if rustix::process::geteuid().is_root() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("records.jsonl");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o500)).unwrap();
+    let refused = OutputFile::reserve(&path).is_err();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(refused);
+    assert!(!path.exists());
+    drop(OutputFile::reserve(&path).unwrap());
+    assert!(!path.exists());
+}
+
+/// A staging admission failure removes its directory and reservation, preserves existing bytes, and
+/// leaves ordinary publication available after restoring permissions.
+#[cfg(unix)]
+#[test]
+fn staging_admission_failure_preserves_destination_and_cleans_owned_entries() {
+    if rustix::process::geteuid().is_root() {
+        return;
+    }
+    const CHILD: &str = "CUKE_DEDUP_STAGE_CREATION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "output_file::tests::staging_admission_failure_preserves_destination_and_cleans_owned_entries",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    for existing in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("records.jsonl");
+        if existing {
+            fs::write(&path, b"previous").unwrap();
+        }
+        let output = OutputFile::reserve(&path).unwrap();
+        let previous = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o777));
+        let mut filled = false;
+        let result = output.stage(|out| {
+            filled = true;
+            Ok(out.write_all(b"unexpected")?)
+        });
+        rustix::process::umask(previous);
+        assert!(result.is_err(), "existing={existing}");
+        assert!(!filled);
+        assert_eq!(
+            fs::read_dir(root.path()).unwrap().count(),
+            usize::from(existing)
+        );
+        if existing {
+            assert_eq!(fs::read(&path).unwrap(), b"previous");
+        }
+        OutputFile::reserve(&path)
+            .unwrap()
+            .stage(|out| Ok(out.write_all(b"complete")?))
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"complete");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+}
+
+/// A reservation replaced by another empty file fails the commit, and cleanup keeps the substitute:
+/// emptiness is valid output, so only the reservation's identity licenses removal. The control
+/// commits over an unchanged reservation.
+#[test]
+fn substituted_empty_reservation_survives_a_failed_commit() {
+    for substitute in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("records.jsonl");
+        let staged = OutputFile::reserve(&path)
+            .unwrap()
+            .stage(|out| Ok(out.write_all(b"records")?))
+            .unwrap();
+        if substitute {
+            fs::rename(&path, root.path().join("moved")).unwrap();
+            fs::write(&path, b"").unwrap();
+        }
+        assert_eq!(staged.commit().is_err(), substitute);
+        let expected: &[u8] = if substitute { b"" } else { b"records" };
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            expected,
+            "substitute={substitute}"
+        );
+    }
+}
+
+/// Publishes through the platform stage as `OutputFile` does: `prepare` fills the staged file, then
+/// the stage commits without a destination check.
+fn publish(
+    dir: &super::platform::Dir,
+    name: &std::ffi::OsStr,
+    replacing: bool,
+    prepare: impl FnOnce(&mut fs::File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut stage = super::platform::stage(dir, replacing)?;
+    if let Err(error) = prepare(stage.file()) {
+        stage.discard(dir);
+        return Err(error);
+    }
+    stage.commit(dir, name, || Ok(()))
 }
