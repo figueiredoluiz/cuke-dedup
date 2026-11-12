@@ -1,0 +1,2 @@
+Given('an incomplete registration') do |value|
+  work(value

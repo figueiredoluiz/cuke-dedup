@@ -3,6 +3,8 @@
 
 use cuke_dedup::discovery::SourceFile;
 use cuke_dedup::gherkin::{self, FeatureFormat};
+use cuke_dedup::ruby::RUBY;
+use cuke_dedup::source_adapter::adapter_for_language;
 use cuke_dedup::typescript;
 use cuke_dedup::typescript::{JAVASCRIPT, TSX, TYPESCRIPT};
 use libfuzzer_sys::fuzz_target;
@@ -23,4 +25,11 @@ fuzz_target!(|data: &[u8]| {
         };
         let _ = typescript::extract_detailed(&source, &file);
     }
+    let file = SourceFile {
+        path: PathBuf::from("fuzz.steps.rb"),
+        language: RUBY,
+    };
+    let _ = adapter_for_language(RUBY)
+        .expect("the built-in Ruby adapter is registered")
+        .extract(&source, &file);
 });
