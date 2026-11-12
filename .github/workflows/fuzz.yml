@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   parsers:
-    name: Gherkin and TypeScript parser fuzzing
+    name: Gherkin, TypeScript and Ruby parser fuzzing
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
