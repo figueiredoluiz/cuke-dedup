@@ -9130,23 +9130,23 @@ fn regression_emit_records_are_staged_before_the_baseline_and_create_parents() {
             "Given('one', () => first());\nGiven('two', () => second());\n",
         );
         write(root, "kept.jsonl", "kept\n");
-        let staging = |root: &Path| {
-            fs::read_dir(root)
+        // Exact listings, not a name prefix: staging names differ by platform (`.tmp*` on Windows).
+        let entries = |dir: &Path| {
+            let mut names: Vec<_> = fs::read_dir(dir)
                 .unwrap()
-                .filter(|entry| {
-                    entry
-                        .as_ref()
-                        .unwrap()
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(".cuke-dedup-")
-                })
-                .count()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
         };
         for destination in ["kept.jsonl", "fresh.jsonl"] {
             let output = run_on(root, &[flag, destination, "--baseline", "missing.json"]);
             assert_eq!(output.status.code(), Some(2), "{flag} {destination}");
-            assert_eq!(staging(root), 0, "{flag} {destination}");
+            assert_eq!(
+                entries(root),
+                ["kept.jsonl", "steps.ts"],
+                "{flag} {destination}"
+            );
         }
         assert_eq!(
             fs::read_to_string(root.join("kept.jsonl")).unwrap(),
@@ -9168,6 +9168,11 @@ fn regression_emit_records_are_staged_before_the_baseline_and_create_parents() {
                 "{flag} {destination}: {records}"
             );
         }
-        assert_eq!(staging(root), 0, "{flag}");
+        assert_eq!(
+            entries(root),
+            ["fresh.jsonl", "kept.jsonl", "new", "steps.ts"],
+            "{flag}"
+        );
+        assert_eq!(entries(&root.join("new/dir")), ["records.jsonl"], "{flag}");
     }
 }
