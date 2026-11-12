@@ -118,7 +118,7 @@ pub(crate) struct Staged {
 }
 
 impl Staged {
-    /// Replaces the destination entry, failing if it no longer names the file bound at open.
+    /// Checks the bound destination before replacement; concurrent directory writers are not serialized.
     pub(crate) fn commit(mut self) -> Result<()> {
         let stage = self
             .stage

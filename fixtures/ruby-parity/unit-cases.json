@@ -7713,6 +7713,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "staging_admission_failure_preserves_destination_and_cleans_owned_entries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent staging admission: permission failure removes owned staging and reservation entries while preserving existing bytes, and restored permissions permit complete publication. The process-wide umask is isolated in a child test process.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "substituted_empty_reservation_survives_a_failed_commit",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",

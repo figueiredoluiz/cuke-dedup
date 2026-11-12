@@ -328,6 +328,67 @@ fn reservation_fails_without_write_permission_on_the_directory() {
     assert!(!path.exists());
 }
 
+/// A staging admission failure removes its directory and reservation, preserves existing bytes, and
+/// leaves ordinary publication available after restoring permissions.
+#[cfg(unix)]
+#[test]
+fn staging_admission_failure_preserves_destination_and_cleans_owned_entries() {
+    if rustix::process::geteuid().is_root() {
+        return;
+    }
+    const CHILD: &str = "CUKE_DEDUP_STAGE_CREATION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "output_file::tests::staging_admission_failure_preserves_destination_and_cleans_owned_entries",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    for existing in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("records.jsonl");
+        if existing {
+            fs::write(&path, b"previous").unwrap();
+        }
+        let output = OutputFile::reserve(&path).unwrap();
+        let previous = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o777));
+        let mut filled = false;
+        let result = output.stage(|out| {
+            filled = true;
+            Ok(out.write_all(b"unexpected")?)
+        });
+        rustix::process::umask(previous);
+        assert!(result.is_err(), "existing={existing}");
+        assert!(!filled);
+        assert_eq!(
+            fs::read_dir(root.path()).unwrap().count(),
+            usize::from(existing)
+        );
+        if existing {
+            assert_eq!(fs::read(&path).unwrap(), b"previous");
+        }
+        OutputFile::reserve(&path)
+            .unwrap()
+            .stage(|out| Ok(out.write_all(b"complete")?))
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"complete");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+}
+
 /// A reservation replaced by another empty file fails the commit, and cleanup keeps the substitute:
 /// emptiness is valid output, so only the reservation's identity licenses removal. The control
 /// commits over an unchanged reservation.
