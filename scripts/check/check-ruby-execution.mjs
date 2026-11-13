@@ -1,6 +1,6 @@
 // Loads every Ruby fixture suite under real Ruby with a recording Cucumber DSL and compares what
 // Ruby registered with what the analyzer extracted. For a suite the analyzer reports complete, the
-// registered and extracted matchers (kind, text, flags) must be the same multiset, every discovered
+// registered and extracted matchers (kind, text, flags) must be the same multiset, every selected
 // file must load, and no step keyword may be replaced. Locations are not compared: Cucumber
 // records a handler's own location. Incomplete suites are counted, not judged: the analyzer keeps
 // error-recovered definitions for them by contract. Owned control suites run first and must each
@@ -9,11 +9,11 @@
 // Usage: node scripts/check/check-ruby-execution.mjs [BINARY]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { materializeParityLane, materializeRubyGroup, rubyGroupSelection, within } from "./lib/parity-runner.mjs";
-import { problems } from "./lib/ruby-execution.mjs";
+import { hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, undiscovered } from "./lib/ruby-execution.mjs";
 
 const binary = resolve(process.argv[2] ?? "target/debug/cuke-dedup");
 const harness = resolve("scripts/check/lib/ruby-load-harness.rb");
@@ -22,7 +22,7 @@ const rubyRoot = resolve("fixtures/ruby-parity");
 /** Read a UTF-8 file and parse its JSON. */
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
-// Suites the harness cannot load faithfully, with the exact problems they show.
+// Suites whose loading depends on a value only runtime decides, with the exact problems they show.
 // A changed problem list fails, so a new defect in an exempt suite is still reported.
 const exempt = new Map([
   ["ruby-parity/review-gap-computed-key-mutation", [
@@ -34,11 +34,6 @@ const exempt = new Map([
     'extracted but not registered by Ruby: cucumber-expression "the parcel status is verified" at entry.rb:5',
     'extracted but not registered by Ruby: cucumber-expression "the parcel status is now verified" at entry.rb:8',
     "entry.rb:4 fails to load: NoMethodError: undefined method 'object_containing=' for nil",
-  ]],
-  // Discovery also lists files reached only through `require`; loading them directly breaks the
-  // order `entry.rb` sets. Cucumber loads `entry.rb` alone.
-  ["ruby-parity/equivalent-provider-legacy-provider", [
-    "alias_consumer.rb:1 fails to load: NameError: uninitialized constant RegistrationProvider",
   ]],
 ]);
 
@@ -121,6 +116,26 @@ const controls = [
   },
 ];
 
+// Owned controls for file selection, judged end to end: each must report no problem. A raising
+// file that selection must leave out makes a broken rule fail as a load error and as
+// `selected but not discovered`; dropping `steps.rb` fails as an unregistered definition.
+const step = "Given('a step') { work() }\n";
+const selectionControls = [
+  { name: "selection/ignore-file", selection: ["--definitions", "*.rb"],
+    files: { ".gitignore": "broken.rb\n", "broken.rb": "raise 'loaded'\n", "steps.rb": step } },
+  // The `ignore` crate matches case-sensitively; git on macOS defaults `core.ignoreCase` on.
+  { name: "selection/ignore-case", selection: ["--definitions", "*.rb"],
+    files: { ".gitignore": "STEPS.rb\n", "steps.rb": step } },
+  // Discovery tests feature globs first, so a `.rb` file they match is not a definition. The file
+  // is parsed as Gherkin, so it holds a feature; selecting it reports it undiscovered.
+  { name: "selection/feature-glob", selection: ["--features", "pages/**", "--definitions", "**/*.rb"],
+    files: { "pages/helper.rb": "Feature: claimed by the feature glob\n", "steps.rb": step } },
+  // The walk never enters `.hidden`, so its `.gitignore` does not conflict with the root's
+  // higher-ranked `.cuke-dedupignore`.
+  { name: "selection/pruned-ignore-file", selection: ["--definitions", "*.rb"],
+    files: { ".cuke-dedupignore": "broken.rb\n", "broken.rb": "raise 'loaded'\n", ".hidden/.gitignore": "steps.rb\n", "steps.rb": step } },
+];
+
 /** A harness result reduced to comparable strings. */
 const summarize = (ruby) => ({
   registrations: ruby.registrations.map((item) => `${item.path}:${item.line} ${item.matcherKind} ${item.matcher}${item.matcherFlags ? `/${item.matcherFlags}` : ""}`),
@@ -167,7 +182,7 @@ async function analyze(project, selection, expectsIncomplete) {
   }
   if (!summary) throw new Error("analyzer report has no summary record");
   const listed = run.stderr.split("\n").flatMap((line) => line.match(/^cuke-dedup: definition (.+)$/)?.[1] ?? [])
-    // Discovery prints native separators; fingerprint paths use `/`.
+    // Discovery prints native separators; selected paths use `/`.
     .map((path) => path.split(sep).join("/"));
   const registrations = (await readFile(join(project, "fingerprints.jsonl"), "utf8")).split("\n").filter(Boolean)
     .map((line) => JSON.parse(line))
@@ -199,14 +214,77 @@ async function execute(project, files, paths) {
 }
 
 /**
- * Problems for one prepared suite, or `null` when the analyzer reports it incomplete. Ruby loads
- * the Ruby files discovery listed, with the suite's configured load paths.
+ * The candidates that ignore files exclude, asked of git. Discovery reads `.gitignore`, `.ignore`
+ * and `.cuke-dedupignore` in each directory it enters, later files taking precedence, plus the
+ * user's global git excludes, so a mirror holds one `.gitignore` per directory with their rules in
+ * that order and keeps the global excludes. Matching stays case-sensitive, as in the `ignore`
+ * crate, also where git defaults `core.ignoreCase` on. A layout whose cross-directory precedence
+ * the mirror cannot reproduce throws.
+ * @param {string} project The project directory.
+ * @param {{path: string, rank: number, directory: string}[]} files From `ignoreFiles`.
+ * @param {string[]} candidates Files to test.
+ * @returns {Promise<Set<string>>} The ignored candidates.
+ */
+async function ignoredByFiles(project, files, candidates) {
+  const conflict = ignoreLayoutConflict(files);
+  if (conflict) throw new Error(`unsupported ignore-file layout in ${project}: ${conflict}`);
+  if (candidates.length === 0) return new Set();
+  const mirror = await mkdtemp(join(tmpdir(), "cuke-ruby-ignore-"));
+  try {
+    const rules = new Map();
+    for (const { path, rank, directory } of files) {
+      rules.set(directory, [...(rules.get(directory) ?? []), [rank, await readFile(join(project, path), "utf8")]]);
+    }
+    for (const [directory, sources] of rules) {
+      await mkdir(join(mirror, directory), { recursive: true });
+      await writeFile(join(mirror, directory, ".gitignore"), sources.sort(([a], [b]) => a - b).map(([, text]) => `${text}\n`).join(""));
+    }
+    for (const candidate of candidates) {
+      await mkdir(dirname(join(mirror, candidate)), { recursive: true });
+      await writeFile(join(mirror, candidate), "");
+    }
+    // Inherited repository variables (a pre-push hook sets GIT_DIR) would redirect git elsewhere.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    /** Runs git in the mirror, outside the caller's repository. */
+    const git = (args, input) => spawnSync("git", ["-c", "core.ignoreCase=false", ...args], { cwd: mirror, env, input, encoding: "utf8" });
+    // No template: its `info/exclude` is not a file discovery reads.
+    if (git(["init", "-q", "--template="]).status !== 0) throw new Error("git init failed");
+    const run = git(["check-ignore", "--no-index", "-z", "--stdin"], candidates.join("\0"));
+    if (![0, 1].includes(run.status)) throw new Error(`git check-ignore failed: ${run.stderr.trim()}`);
+    return new Set(run.stdout.split("\0").filter(Boolean));
+  } finally {
+    await rm(mirror, { recursive: true, force: true });
+  }
+}
+
+/** Every regular file under `directory`, root-relative and `/`-separated; links are not followed. */
+async function listFiles(root, directory = "") {
+  const entries = await readdir(join(root, directory), { withFileTypes: true });
+  const nested = await Promise.all(entries.map((entry) => {
+    const path = directory ? `${directory}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) return listFiles(root, path);
+    return entry.isFile() ? [path] : [];
+  }));
+  return nested.flat();
+}
+
+/**
+ * Problems for one prepared suite, or `null` when the analyzer reports it incomplete. The files
+ * Ruby loads come from the effective configuration and ignore files, not from discovery, and a
+ * selected file that discovery did not list is a problem of its own.
  */
 async function judge({ project, selection, expectsIncomplete }) {
   const analyzer = await analyze(project, selection, expectsIncomplete);
   if (!analyzer.complete) return null;
-  const files = analyzer.listed.filter((file) => file.endsWith(".rb"));
-  return problems(analyzer, await execute(project, files, effectiveConfig(project, selection).rubyLoadPaths ?? []));
+  const config = effectiveConfig(project, selection);
+  const paths = await listFiles(project);
+  const read = ignoreFiles(paths, config);
+  const whitelist = hiddenWhitelistConflict(paths, await Promise.all(read.map(({ path }) => readFile(join(project, path), "utf8"))), config);
+  if (whitelist) throw new Error(`unsupported ignore rules in ${project}: ${whitelist}`);
+  const configured = selectedFiles(paths, config);
+  const ignored = await ignoredByFiles(project, read, configured);
+  const files = configured.filter((file) => !ignored.has(file));
+  return [...undiscovered(files, analyzer.listed), ...problems(analyzer, await execute(project, files, config.rubyLoadPaths ?? []))];
 }
 
 const scratch = await mkdtemp(join(tmpdir(), "cuke-ruby-execution-"));
@@ -225,6 +303,15 @@ try {
     } catch {
       failures.push(`${control.name}: expected ${JSON.stringify(control.expected)}, observed ${JSON.stringify(observed)}`);
     }
+  }
+  for (const control of selectionControls) {
+    const project = join(scratch, control.name);
+    for (const [file, source] of Object.entries(control.files)) {
+      await mkdir(dirname(join(project, file)), { recursive: true });
+      await writeFile(join(project, file), source);
+    }
+    const observed = await judge({ project, selection: control.selection }).catch((error) => [`error: ${error.message}`]);
+    if (observed?.length !== 0) failures.push(`${control.name}: expected no problems, observed ${JSON.stringify(observed)}`);
   }
   const seen = new Set();
   for (const suite of await suites(scratch)) {
@@ -252,5 +339,5 @@ try {
 }
 for (const failure of failures) console.error(failure);
 console.log(`check-ruby-execution: ${counts.matched} complete Ruby suites match Ruby, ${failures.length} failures, ` +
-  `${counts.exempt} exempt, ${counts.incomplete} incomplete not judged; ${controls.length} controls`);
+  `${counts.exempt} exempt, ${counts.incomplete} incomplete not judged; ${controls.length + selectionControls.length} controls`);
 process.exit(failures.length === 0 ? 0 : 1);

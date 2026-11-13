@@ -1,6 +1,105 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { problems, surplus } from "./ruby-execution.mjs";
+import { globsetRegex, hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, surplus, undiscovered } from "./ruby-execution.mjs";
+
+const files = ["x.rb", "a/y.rb", "a/b/z.rb", "c/w.rb", "steps/s.rb", "q.rb"];
+
+/** Each row's expectation is the file list the release binary's `--explain-discovery` printed. */
+test("globs select what the analyzer's globset discovery selects", () => {
+  for (const [pattern, expected] of [
+    ["*.rb", files],
+    ["**/*.rb", files],
+    ["a/*.rb", ["a/y.rb", "a/b/z.rb"]],
+    ["a/**/*.rb", ["a/y.rb", "a/b/z.rb"]],
+    ["**/s.rb", ["steps/s.rb"]],
+    ["steps/*.rb", ["steps/s.rb"]],
+    ["?.rb", ["x.rb", "q.rb"]],
+    ["[xq].rb", ["x.rb", "q.rb"]],
+    ["[!x].rb", ["q.rb"]],
+  ]) {
+    assert.deepEqual(files.filter((file) => globsetRegex(pattern).test(file)), expected, pattern);
+  }
+  assert.ok(globsetRegex("{a,c}/w.rb").test("c/w.rb"));
+  // Checked with an `exclude` of each pattern in `.cuke-dedup.json`: `a.rb` stays discovered.
+  for (const pattern of ["a{,b}.rb", "a{b,}.rb"]) {
+    assert.ok(!globsetRegex(pattern).test("a.rb"), pattern);
+    assert.ok(globsetRegex(pattern).test("ab.rb"), pattern);
+  }
+  assert.ok(!globsetRegex("x\\*.rb").test("xy.rb"));
+  // `^` negates like `!`.
+  assert.deepEqual(files.filter((file) => globsetRegex("[^x].rb").test(file)), ["q.rb"]);
+  // globset matches bytes: `?` and a class each take one byte of a two-byte `é`.
+  assert.ok(!globsetRegex("?.rb").test("é.rb"));
+  assert.ok(globsetRegex("??.rb").test("é.rb"));
+  assert.ok(!globsetRegex("[é].rb").test("é.rb"));
+  assert.ok(globsetRegex("é.rb").test("é.rb"));
+});
+
+/** Syntax outside the tested subset fails instead of selecting a guess. */
+test("unsupported glob syntax throws", () => {
+  for (const pattern of ["[]].rb", "[!]].rb", "[a\\]].rb", "[[].rb", "{a,{b,c}}.rb", "a{b.rb", "a}.rb", "a\\", "[ab.rb", "{**/,}s.rb", "{a,**}/w.rb", "[^]].rb"]) {
+    assert.throws(() => globsetRegex(pattern), /unsupported pattern/, pattern);
+  }
+});
+
+const walk = { exclude: ["**/node_modules/**"], includeHidden: false };
+
+/** Only an ancestor directory holding a higher-ranked ignore-file name than a descendant fails. */
+test("ignore layouts the per-directory mirror cannot reproduce are reported", () => {
+  /** The conflict for a project holding `paths`. */
+  const conflict = (paths) => ignoreLayoutConflict(ignoreFiles(paths, walk));
+  assert.equal(conflict([".ignore", "a/.gitignore", "a/x.rb"]), ".ignore over a/.gitignore");
+  assert.equal(conflict([".cuke-dedupignore", "a/b/.ignore"]), ".cuke-dedupignore over a/b/.ignore");
+  // Controls: same directory, deeper higher rank, unrelated directories, same name across levels.
+  for (const paths of [[".gitignore", ".ignore"], [".gitignore", "a/.ignore"], ["a/.ignore", "b/.gitignore"],
+    [".gitignore", "a/.gitignore"], ["ab/.ignore", "a/.gitignore"], ["x.rb"]]) {
+    assert.equal(conflict(paths), null, paths.join(" "));
+  }
+});
+
+/** Ignore files in directories the walk prunes are never read. */
+test("ignore files come only from directories discovery enters", () => {
+  const paths = [".gitignore", "a/.ignore", ".hidden/.gitignore", "node_modules/m/.gitignore", "x.rb"];
+  assert.deepEqual(ignoreFiles(paths, walk).map((file) => file.path), [".gitignore", "a/.ignore"]);
+  assert.deepEqual(ignoreFiles(paths, { ...walk, includeHidden: true }).map((file) => file.path),
+    [".gitignore", "a/.ignore", ".hidden/.gitignore"]);
+  assert.deepEqual(ignoreFiles(["a/.ignore"], walk), [{ path: "a/.ignore", rank: 1, directory: "a/" }]);
+});
+
+/** A negation rule may whitelist a hidden file that selection already pruned. */
+test("negation rules with hidden files are reported", () => {
+  const config = { includeHidden: false };
+  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["!.h.rb\n"], config), "negation rule with hidden file a/.h.rb");
+  assert.equal(hiddenWhitelistConflict([".gitignore", ".hidden/x.rb"], ["x\n!y\n"], config), "negation rule with hidden file .hidden/x.rb");
+  // Controls: hidden files included, no negation, an escaped `\!` literal, only ignore files hidden.
+  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["!.h.rb\n"], { includeHidden: true }), null);
+  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["x.rb\n"], config), null);
+  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["\\!x.rb\n"], config), null);
+  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.ignore", "x.rb"], ["!x.rb\n"], config), null);
+});
+
+/** Selection follows the effective configuration, as discovery applies it, without discovery. */
+test("selected files follow definitions, excludes and hidden-file rules", () => {
+  const config = { definitions: ["**/*.rb"], features: ["**/*.feature"], exclude: ["**/node_modules/**", "skip.rb", "gen"], includeHidden: false };
+  const paths = ["a.rb", "b/c.rb", "skip.rb", "gen/x.rb", "node_modules/m/i.rb", ".hidden/h.rb", "d/.h.rb", "notes.txt"];
+  assert.deepEqual(selectedFiles(paths, config), ["a.rb", "b/c.rb"]);
+  assert.deepEqual(selectedFiles(paths, { ...config, includeHidden: true }), [".hidden/h.rb", "a.rb", "b/c.rb", "d/.h.rb"]);
+  assert.deepEqual(selectedFiles(["entry.rb", "providers/p.rb"], { ...config, definitions: ["entry.rb"] }), ["entry.rb"]);
+  // Ruby is opt-in: a glob that also matches another suffix selects nothing on its own.
+  const mixed = ["entry.rb", "other.rb", "steps/s.rb"];
+  assert.deepEqual(selectedFiles(mixed, { ...config, definitions: ["**/*", "entry.rb"] }), ["entry.rb"]);
+  assert.deepEqual(selectedFiles(mixed, { ...config, definitions: ["steps/*"] }), []);
+  assert.deepEqual(selectedFiles(mixed, { ...config, definitions: ["steps/*.rb"] }), ["steps/s.rb"]);
+  assert.deepEqual(selectedFiles(mixed, { ...config, definitions: [] }), []);
+  // Discovery tests feature globs first.
+  assert.deepEqual(selectedFiles(mixed, { ...config, features: ["steps/**"] }), ["entry.rb", "other.rb"]);
+});
+
+/** A selected file discovery did not list is a problem; a listed one is not. */
+test("undiscovered names selected files discovery dropped", () => {
+  assert.deepEqual(undiscovered(["a.rb", "b.rb"], ["a.rb"]), ["selected but not discovered: b.rb"]);
+  assert.deepEqual(undiscovered(["a.rb"], ["a.rb", "dep.rb"]), []);
+});
 
 /** A `steps.rb` Cucumber-expression registration, with optional overrides. */
 const registration = (matcher, line = 1, extra = {}) =>
