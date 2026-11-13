@@ -1412,7 +1412,7 @@ fn try_insert_matcher_blocking_candidate(
         builder.skip(CandidateSource::MatcherBlocking, 1);
         return false;
     }
-    if can_reach_handler_similarity_gate(
+    !(can_reach_handler_similarity_gate(
         relationships,
         &events.ordered[left],
         &events.ordered[right],
@@ -1420,11 +1420,7 @@ fn try_insert_matcher_blocking_candidate(
         &events.sorted[right],
         &events.anchors[left],
         &events.anchors[right],
-    ) && builder.insert(CandidateSource::MatcherBlocking, left, right) == InsertOutcome::Limit
-    {
-        return false;
-    }
-    true
+    ) && builder.insert(CandidateSource::MatcherBlocking, left, right) == InsertOutcome::Limit)
 }
 
 /// Number of pairs whose members lie in different groups.

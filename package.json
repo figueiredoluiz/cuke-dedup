@@ -37,7 +37,8 @@
     "corpus:real": "node scripts/evaluate/real-corpus.mjs",
     "check:equivalence": "node scripts/check/check-output-equivalence.mjs",
     "check:ruby-keywords": "node scripts/check/check-ruby-step-keywords.mjs",
-    "check:ruby-syntax": "node scripts/check/check-ruby-syntax.mjs"
+    "check:ruby-syntax": "node scripts/check/check-ruby-syntax.mjs",
+    "check:ruby-execution": "node scripts/check/check-ruby-execution.mjs target/release/cuke-dedup"
   },
   "engines": {
     "node": ">=20"
