@@ -1403,7 +1403,7 @@ fn ruby_matcher_overlap_budget_counts_unique_pairs_and_charges_index_scans() {
     for (context, source, window, limit, handlers, census, overlaps) in rows {
         let limit = limit.to_string();
         let arguments = ["--max-candidate-comparisons", &limit];
-        let (rows, stderr) = ruby_records_run(&[("steps.rb", source)], window, &arguments);
+        let (_, rows, stderr) = ruby_records_run(&[("steps.rb", source)], window, &arguments);
         assert_eq!(ruby_overlap_census(&rows), census, "{context}");
         let analysis = &rows.last().unwrap()["analysis"];
         assert_eq!(
@@ -1443,7 +1443,7 @@ fn ruby_matcher_overlap_caps_finding_storms_at_the_retained_limit() {
             .collect();
         let arguments = ["--max-candidate-comparisons", "30000"];
         let source = ruby_value_types(&types);
-        let (rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+        let (_, rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
         let overlaps = ruby_rule_locations(&rows, "overlapping-matcher");
         assert_eq!(overlaps.len(), findings, "{count}");
         assert_eq!(rows.len(), findings + 1, "{count}: only overlap findings");
@@ -1559,7 +1559,7 @@ fn ruby_repeated_step_text_and_suppressed_ambiguity_keep_usage() {
             ("usage.feature", feature),
             (".cuke-dedup.json", config),
         ];
-        let (rows, stderr) = ruby_records_run(&files, None, &["--features", "usage.feature"]);
+        let (_, rows, stderr) = ruby_records_run(&files, None, &["--features", "usage.feature"]);
         assert_eq!(stderr, "", "{config}");
         let ambiguous = ruby_locations("usage.feature:3 1 2;usage.feature:4 1 2");
         assert_eq!(
@@ -1667,7 +1667,8 @@ fn ruby_overlap_witnesses_cover_builtins_declared_literals_and_unknowns() {
         let config = if configured == "-" { "{}" } else { &config };
         let source = format!("{declared}Given('{expression}') {{ expression_action() }}\nGiven(/{regex}/) {{ regex_action() }}\nGiven(/regex one/) {{ one_action() }}\nGiven(/^regex .*$/) {{ any_action() }}\n");
         let files = [("steps.rb", source.as_str()), (".cuke-dedup.json", config)];
-        let (rows, stderr) = ruby_records_run(&files, None, &["--rule", "unused-definition=off"]);
+        let (_, rows, stderr) =
+            ruby_records_run(&files, None, &["--rule", "unused-definition=off"]);
         assert_eq!(
             rows.last().unwrap()["corpus"]["incomplete"],
             false,
@@ -1735,7 +1736,7 @@ fn ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax() {
     let oversized = "x".repeat(1024 * 1024 + 1);
     let source = format!("# limits\nGiven(/{oversized}/) {{ long_regex() }}\nGiven(/x{{1048566}}/) {{ compiled_big() }}\nGiven(/^a++$/) {{ possessive() }}\nGiven('{oversized}') {{ long_expression() }}\nGiven('same') {{ first() }}\nThen('same') {{ second() }}\n");
     let arguments = ["--rule", "unused-definition=off"];
-    let (rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
+    let (_, rows, stderr) = ruby_records_run(&[("steps.rb", &source)], None, &arguments);
     assert_eq!(
         ruby_rule_locations(&rows, "duplicate-matcher"),
         ruby_locations("6 7")
@@ -1955,7 +1956,7 @@ fn ruby_nul_loaded_provider_respects_execution_boundary() {
     ] {
         let provider =
             format!("Given('provider') {{ source() }}\n{middle}Then('provider') {{ target() }}\n");
-        let (records, stderr) = ruby_records_run(
+        let (_, records, stderr) = ruby_records_run(
             &[
                 ("entry.rb", entry),
                 ("support/provider.rb", &provider),
@@ -2054,7 +2055,7 @@ fn ruby_named_handlers_bind_to_their_own_selected_file() {
         let first = "def handler; alpha(); end\nGiven('shared', &method(:handler))\n";
         let second =
             format!("def handler; {second_body}; end\nThen('{matcher}', &method(:handler))\n");
-        let (records, stderr) = ruby_records_run(
+        let (_, records, stderr) = ruby_records_run(
             &[
                 ("a.rb", first),
                 ("b.rb", &second),
@@ -2174,7 +2175,7 @@ fn ruby_windowing_does_not_change_findings_on_any_axis() {
         let runs = windows.map(|window| ruby_records_run(&files, Some(window), &arguments));
         assert_eq!(runs[1], runs[0], "{step}: window 2");
         assert_eq!(runs[2], runs[0], "{step}: one window");
-        let rows = &runs[0].0;
+        let rows = &runs[0].1;
         for (rule, expected) in [
             ("ambiguous-step", ambiguous),
             ("overlapping-matcher", overlaps),
@@ -5555,34 +5556,25 @@ fn ruby_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     directory
 }
 
-/// Runs the binary with JSONL output over `files` written to a temporary root, with the `*.rb`
-/// definitions, matcher window `window` (an inherited override is removed when `None`) and `extra`
-/// arguments; returns the records and stderr, surfacing exit code and stderr when no summary is
-/// produced.
+/// Prepares a temporary Ruby project and matcher window, then returns the JSONL outcome after requiring a final summary; `None` clears an inherited window override.
 fn ruby_records_run(
     files: &[(&str, &str)],
     window: Option<usize>,
     extra: &[&str],
-) -> (Vec<Value>, String) {
+) -> (i32, Vec<Value>, String) {
     let directory = ruby_project(files);
     let mut command = ruby_cli(directory.path(), "*.rb");
     match window {
         Some(size) => command.env("CUKE_DEDUP_MATCHER_WINDOW", size.to_string()),
         None => command.env_remove("CUKE_DEDUP_MATCHER_WINDOW"),
     };
-    let output = command
-        .args(["--reporters", "jsonl", "--no-metrics"])
-        .args(extra)
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    let rows = records(output.stdout);
+    let (code, rows, stderr) = ruby_jsonl(command, extra);
     assert!(
         rows.last().is_some_and(|row| row["type"] == "summary"),
         "exit {:?}: {stderr}",
-        output.status.code()
+        Some(code)
     );
-    (rows, stderr)
+    (code, rows, stderr)
 }
 
 /// Runs `steps` as `steps.rb` over the `usage.feature` scenario body `feature` with `extra`
@@ -5590,11 +5582,12 @@ fn ruby_records_run(
 fn ruby_usage_run(steps: &str, feature: &str, extra: &[&str]) -> (Vec<Value>, String) {
     let feature = format!("Feature: Usage\n{feature}");
     let arguments = [&["--features", "usage.feature"], extra].concat();
-    ruby_records_run(
+    let (_, rows, stderr) = ruby_records_run(
         &[("steps.rb", steps), ("usage.feature", &feature)],
         None,
         &arguments,
-    )
+    );
+    (rows, stderr)
 }
 
 /// Renders each `rule` finding as `path:line` of its primary followed by its related locations,
@@ -8142,14 +8135,18 @@ fn ruby_cli(root: &Path, pattern: &str) -> Command {
     command
 }
 
-/// Runs `ruby_cli` with JSONL output and returns the exit code and the parsed records.
-fn ruby_jsonl(root: &Path, pattern: &str, extra: &[&str]) -> (i32, Vec<Value>) {
-    let output = ruby_cli(root, pattern)
+/// Executes a prepared CLI command with JSONL output and extra arguments, returning its exit code, parsed records and stderr.
+fn ruby_jsonl(mut command: Command, extra: &[&str]) -> (i32, Vec<Value>, String) {
+    let output = command
         .args(["--reporters", "jsonl", "--no-metrics"])
         .args(extra)
         .output()
         .unwrap();
-    (output.status.code().unwrap(), records(output.stdout))
+    (
+        output.status.code().unwrap(),
+        records(output.stdout),
+        String::from_utf8(output.stderr).unwrap(),
+    )
 }
 
 /// Counts finding records by `active` state: `(active, suppressed)`.
@@ -8244,9 +8241,8 @@ fn ruby_semantic_baseline_is_updated_moved_and_gated_by_new_findings() {
         "moved/copy.rb",
         "Given('same step') { first() }\nGiven('same step') { second() }\n",
     );
-    let (code, rows) = ruby_jsonl(
-        root,
-        "**/*.rb",
+    let (code, rows, _) = ruby_jsonl(
+        ruby_cli(root, "**/*.rb"),
         &["--baseline", ".cuke-dedup-baseline.json"],
     );
     assert_eq!(code, 1);
@@ -8380,7 +8376,7 @@ fn ruby_baseline_cluster_identity_ignores_location_and_member_order() {
             .collect()
     };
     ruby_write(root, "steps/a.rb", &source(&members));
-    let (_, rows) = ruby_jsonl(root, "**/*.rb", &[]);
+    let (_, rows, _) = ruby_jsonl(ruby_cli(root, "**/*.rb"), &[]);
     let clusters: Vec<_> = rows.iter().filter(|row| row["type"] == "finding").collect();
     assert_eq!(clusters.len(), 1);
     assert_eq!(
@@ -8400,11 +8396,11 @@ fn ruby_baseline_cluster_identity_ignores_location_and_member_order() {
         "moved/renamed.rb",
         &format!("\n{}", source(&reordered)),
     );
-    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--baseline", "baseline.json"]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "**/*.rb"), &["--baseline", "baseline.json"]);
     assert_eq!((code, ruby_finding_states(&rows)), (0, (0, 1)));
 
     ruby_write(root, "moved/extra.rb", &source(&["foxtrot"]));
-    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--baseline", "baseline.json"]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "**/*.rb"), &["--baseline", "baseline.json"]);
     assert_eq!((code, ruby_finding_states(&rows)), (1, (1, 0)));
 }
 
@@ -8819,7 +8815,7 @@ fn ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files(
     );
     let subdirectory = root.join("packages/e2e");
     let matcher_findings = |extra: &[&str]| -> Vec<(String, String)> {
-        let (code, rows) = ruby_jsonl(&subdirectory, "**/*.rb", extra);
+        let (code, rows, _) = ruby_jsonl(ruby_cli(&subdirectory, "**/*.rb"), extra);
         assert_eq!(code, 1);
         let mut found: Vec<_> = rows
             .iter()
@@ -8855,7 +8851,7 @@ fn ruby_assert_changed_pair_reported(root: &Path) {
         .assert()
         .code(1)
         .stdout(predicate::str::contains("duplicate-matcher"));
-    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--changed-since", "HEAD"]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "**/*.rb"), &["--changed-since", "HEAD"]);
     assert_eq!((code, ruby_finding_states(&rows)), (1, (2, 0)));
 }
 
@@ -8877,7 +8873,7 @@ fn ruby_changed_since_preserves_newlines_in_unix_names() {
     );
     ruby_init_repository(root);
     // Control: nothing changed yet, so nothing is reported.
-    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--changed-since", "HEAD"]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "**/*.rb"), &["--changed-since", "HEAD"]);
     assert_eq!((code, ruby_finding_states(&rows)), (0, (0, 0)));
     ruby_write(
         root,
@@ -8910,7 +8906,7 @@ fn ruby_changed_since_preserves_non_utf8_linux_names() {
         .join(OsString::from_vec(b"tracked-\xfe.rb".to_vec()));
     fs::write(&tracked, "Given('before') { before() }\n").unwrap();
     ruby_init_repository(root);
-    let (code, rows) = ruby_jsonl(root, "**/*.rb", &["--changed-since", "HEAD"]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "**/*.rb"), &["--changed-since", "HEAD"]);
     assert_eq!((code, ruby_finding_states(&rows)), (0, (0, 0)));
     fs::write(&tracked, "Given('tracked step') { changed_tracked() }\n").unwrap();
     fs::write(
@@ -9785,7 +9781,7 @@ fn ruby_candidate_limits_cannot_exceed_hard_safety_ceilings() {
             ("/maxStructuralClassComparisons", 250_000.into()),
         ],
     );
-    let (code, rows) = ruby_jsonl(root, "*.rb", &ceilings);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "*.rb"), &ceilings);
     assert_eq!(code, 1);
     assert_eq!(rows.last().unwrap()["analysis"]["truncated"], false);
     assert!(rows.iter().any(|row| row["rule"] == "duplicate-matcher"));
@@ -9889,7 +9885,8 @@ fn ruby_limited_run(source: &str, candidates: usize, structural: usize) -> (Vec<
         "--max-structural-class-comparisons",
         &structural,
     ];
-    ruby_records_run(&[("steps.rb", source)], None, &limits)
+    let (_, rows, stderr) = ruby_records_run(&[("steps.rb", source)], None, &limits);
+    (rows, stderr)
 }
 
 /// Joins one registration line per index.
@@ -11070,7 +11067,7 @@ fn ruby_feature_structure_decides_definition_usage_and_ambiguity_locations() {
     ];
     for (label, steps, features, feature_steps, ambiguous, unused) in rows {
         let files = [&[("steps.rb", *steps)][..], features].concat();
-        let (rows, stderr) = ruby_records_run(&files, None, &[]);
+        let (_, rows, stderr) = ruby_records_run(&files, None, &[]);
         assert_eq!(stderr, "", "{label}");
         let summary = rows.last().unwrap();
         assert_eq!(
@@ -11292,13 +11289,13 @@ fn ruby_feature_discovery_reads_markdown_by_default_and_custom_extensions_on_req
         stderr.contains("features/documentation.feature.md [gherkin-markdown]"),
         "{stderr}"
     );
-    let (_, rows) = ruby_jsonl(root, "*.rb", &[]);
+    let (_, rows, _) = ruby_jsonl(ruby_cli(root, "*.rb"), &[]);
     assert_eq!(
         ruby_rule_locations(&rows, "unused-definition"),
         ["steps.rb:2", "steps.rb:3"]
     );
     let recursive = format!("**{}*.spec", '/');
-    let (code, rows) = ruby_jsonl(root, "*.rb", &["--features", &recursive]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "*.rb"), &["--features", &recursive]);
     assert_eq!(code, 0);
     assert_eq!(rows.last().unwrap()["summary"]["featureStepsAnalyzed"], 2);
     assert_eq!(
@@ -11842,7 +11839,7 @@ fn ruby_unsupported_matchers_mark_partial_extraction_incomplete() {
 When('known') { close() }
 Given("\u{110000}") { work() }
 "#;
-    let (rows, stderr) = ruby_records_run(&[("steps.rb", malformed)], None, &[]);
+    let (_, rows, stderr) = ruby_records_run(&[("steps.rb", malformed)], None, &[]);
     assert!(
         stderr.contains(&format!("steps.rb:3:1: {dynamic}")),
         "{stderr}"
@@ -12626,7 +12623,10 @@ fn ruby_exclusions_and_discovery_flags_define_the_analysis_corpus() {
             &[hidden, nested],
         ),
     ] {
-        let (code, rows) = ruby_jsonl(root, ".steps/**/*.rb,node_modules/workspace/**/*.rb", flags);
+        let (code, rows, _) = ruby_jsonl(
+            ruby_cli(root, ".steps/**/*.rb,node_modules/workspace/**/*.rb"),
+            flags,
+        );
         assert_eq!(code, 0, "{flags:?}");
         let mut paths: Vec<&str> = rows
             .iter()
@@ -12804,7 +12804,7 @@ fn ruby_machine_reports_follow_metrics_and_stream_contracts() {
             ("/definitionsExtracted", 1.into()),
         ],
     );
-    let (code, rows) = ruby_jsonl(root, "*.rb", &[]);
+    let (code, rows, _) = ruby_jsonl(ruby_cli(root, "*.rb"), &[]);
     assert_eq!(code, 0);
     assert_eq!(rows[0]["type"], "summary");
     assert!(rows[0].get("metrics").is_none());
