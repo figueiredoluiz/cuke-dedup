@@ -79,15 +79,36 @@ async function observation(run, reportPath) {
  *   materialized, or a path escapes the fixture root; a run that fails is returned, not thrown.
  */
 export async function observeRubyGroup({ binary, root, scratch, oracle }) {
+  const project = await materializeRubyGroup({ root, scratch, oracle });
+  return runStrict(binary, project, rubyGroupSelection(oracle), join(scratch, "output"));
+}
+
+/**
+ * Copies one Ruby-parity group into `scratch/project` and applies its `materialize` copies.
+ * @param {object} options
+ * @param {string} options.root The Ruby-parity fixture directory.
+ * @param {string} options.scratch Directory the copy is written under.
+ * @param {object} options.oracle The group's manifest entry.
+ * @returns {Promise<string>} The project directory. Rejects when a path escapes its root.
+ */
+export async function materializeRubyGroup({ root, scratch, oracle }) {
   const project = join(scratch, "project");
-  const output = join(scratch, "output");
   await cp(within(root, oracle.path), project, { recursive: true });
   for (const item of oracle.materialize ?? []) {
     const destination = within(project, item.destination);
     await mkdir(dirname(destination), { recursive: true });
     await cp(within(project, item.source), destination);
   }
-  return runStrict(binary, project, oracle.arguments ?? ["--definitions", oracle.definitionsPattern ?? "*.rb"], output);
+  return project;
+}
+
+/**
+ * The analyzer arguments a Ruby-parity group selects its inputs with.
+ * @param {object} oracle The group's manifest entry.
+ * @returns {string[]} Selection and option arguments.
+ */
+export function rubyGroupSelection(oracle) {
+  return oracle.arguments ?? ["--definitions", oracle.definitionsPattern ?? "*.rb"];
 }
 
 /**
@@ -101,10 +122,23 @@ export async function observeRubyGroup({ binary, root, scratch, oracle }) {
  * @returns {Promise<object>} See {@link observation}.
  */
 export async function observeParityLane({ binary, directory, item, language, extension }) {
+  return runStrict(binary, directory, await materializeParityLane({ directory, item, language, extension }), "report");
+}
+
+/**
+ * Writes one language's side of a paired case into `directory`.
+ * @param {object} options
+ * @param {string} options.directory Empty directory the case's sources are written into.
+ * @param {object} options.item The paired manifest case.
+ * @param {"typescript"|"ruby"} options.language Which source of the pair to write.
+ * @param {string} options.extension File extension of that language's definitions.
+ * @returns {Promise<string[]>} The selection arguments that analyze it.
+ */
+export async function materializeParityLane({ directory, item, language, extension }) {
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `steps.${extension}`), item.sources[language]);
   await writeFile(join(directory, "suite.feature"), item.feature);
-  return runStrict(binary, directory, ["--definitions", `*.${extension}`, "--features", "*.feature"], "report");
+  return ["--definitions", `*.${extension}`, "--features", "*.feature"];
 }
 
 /**

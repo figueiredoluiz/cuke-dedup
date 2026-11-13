@@ -333,6 +333,9 @@ jobs:
         env:
           CUKE_DEDUP_RUBY_PARITY_REPORT: ${{ runner.temp }}/ruby-parity.json
         run: node scripts/check/check-ruby-parity.mjs --regression target/release/cuke-dedup
+      - name: Compare Ruby fixture registrations with real Ruby
+        if: ${{ !cancelled() }}
+        run: node scripts/check/check-ruby-execution.mjs target/release/cuke-dedup
       - name: Guard paired language regressions
         if: ${{ !cancelled() }}
         run: node scripts/check/check-language-parity.mjs --regression target/release/cuke-dedup "${{ runner.temp }}/language-parity.json"
