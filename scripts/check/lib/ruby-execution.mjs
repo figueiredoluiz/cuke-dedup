@@ -69,7 +69,8 @@ export function globsetRegex(glob) {
     } else emit(literal(ch));
   }
   if (frames.length > 1) unsupported("unbalanced brace");
-  const regex = new RegExp(`^${frames[0].current}$`);
+  // globset compiles with `dot_matches_new_line`, so `*` and `?` also match `\n` and `\r`.
+  const regex = new RegExp(`^${frames[0].current}$`, "s");
   return { test: (path) => regex.test(bytes(path)) };
 }
 
@@ -82,6 +83,7 @@ export function globsetRegex(glob) {
 function pruned(config) {
   const excludes = config.exclude.map(globsetRegex);
   return (path) => {
+    // pattern-ok: paths come from the project listing, which is `/`-separated on every platform.
     const parts = path.split("/");
     return (!config.includeHidden && parts.some((part) => part.startsWith(".")))
       || parts.some((_, index) => {
@@ -129,6 +131,7 @@ const IGNORE_FILES = [".gitignore", ".ignore", ".cuke-dedupignore"];
 export function ignoreFiles(paths, config) {
   const walkPrunes = pruned(config);
   return paths.flatMap((path) => {
+    // pattern-ok: `/`-separated root-relative paths, as listed.
     const name = path.split("/").at(-1);
     const rank = IGNORE_FILES.indexOf(name);
     const directory = path.slice(0, -name.length);
@@ -152,18 +155,35 @@ export function ignoreLayoutConflict(files) {
   return null;
 }
 
+const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+
+/**
+ * An ignore file's rules as the `ignore` crate reads them: every leading UTF-8 BOM removed, per
+ * file. Git removes one, and only at the start of the file it reads.
+ * @param {Buffer} bytes The file's content.
+ * @returns {Buffer} The content without leading BOMs.
+ */
+export function ruleText(bytes) {
+  let start = 0;
+  while (bytes.subarray(start, start + BOM.length).equals(BOM)) start += BOM.length;
+  return bytes.subarray(start);
+}
+
 /**
  * Why selection cannot be computed when `includeHidden` is off and an ignore file has a negation
- * rule while the project holds a hidden file, or `null`. The `ignore` crate lets a whitelist match
- * override the hidden filter; selection prunes hidden paths before ignore rules apply.
+ * rule while a hidden file would be selected without the hidden filter, or `null`. The `ignore`
+ * crate lets a whitelist match override the hidden filter; selection prunes hidden paths before
+ * ignore rules apply. Hidden files no definitions glob selects, such as `.cuke-dedup.json`, cannot
+ * change what Ruby loads.
  * @param {string[]} paths Every root-relative file in the project, `/`-separated.
- * @param {string[]} rules The text of each ignore file discovery reads.
- * @param {{includeHidden: boolean}} config From `--print-config`.
+ * @param {string[]} rules The text of each ignore file discovery reads, global excludes included.
+ * @param {{definitions: string[], features: string[], exclude: string[], includeHidden: boolean}} config From `--print-config`.
  * @returns {string | null} The reason, naming one hidden file.
  */
 export function hiddenWhitelistConflict(paths, rules, config) {
   const negation = rules.some((text) => text.split("\n").some((line) => line.startsWith("!")));
-  const hidden = paths.find((path) => !IGNORE_FILES.includes(path.split("/").at(-1)) && path.split("/").some((part) => part.startsWith(".")));
+  // pattern-ok: `paths` is `/`-separated, as documented above.
+  const hidden = selectedFiles(paths, { ...config, includeHidden: true }).find((path) => path.split("/").some((part) => part.startsWith(".")));
   return !config.includeHidden && negation && hidden ? `negation rule with hidden file ${hidden}` : null;
 }
 

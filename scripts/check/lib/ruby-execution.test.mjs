@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { globalExcludesPath, globsetRegex, hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, surplus, undiscovered } from "./ruby-execution.mjs";
+import { globalExcludesPath, globsetRegex, hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, ruleText, selectedFiles, surplus, undiscovered } from "./ruby-execution.mjs";
 
 const files = ["x.rb", "a/y.rb", "a/b/z.rb", "c/w.rb", "steps/s.rb", "q.rb"];
 
@@ -20,6 +20,9 @@ test("globs select what the analyzer's globset discovery selects", () => {
     assert.deepEqual(files.filter((file) => globsetRegex(pattern).test(file)), expected, pattern);
   }
   assert.ok(globsetRegex("{a,c}/w.rb").test("c/w.rb"));
+  // globset's `*` and `?` match line breaks in names.
+  assert.ok(globsetRegex("*.rb").test("a\nb.rb"));
+  assert.ok(globsetRegex("a?b.rb").test("a\rb.rb"));
   // Checked with an `exclude` of each pattern in `.cuke-dedup.json`: `a.rb` stays discovered.
   for (const pattern of ["a{,b}.rb", "a{b,}.rb"]) {
     assert.ok(!globsetRegex(pattern).test("a.rb"), pattern);
@@ -68,14 +71,29 @@ test("ignore files come only from directories discovery enters", () => {
 
 /** A negation rule may whitelist a hidden file that selection already pruned. */
 test("negation rules with hidden files are reported", () => {
-  const config = { includeHidden: false };
+  const config = { definitions: ["**/*.rb"], features: ["**/*.feature"], exclude: ["vendor"], includeHidden: false };
   assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["!.h.rb\n"], config), "negation rule with hidden file a/.h.rb");
   assert.equal(hiddenWhitelistConflict([".gitignore", ".hidden/x.rb"], ["x\n!y\n"], config), "negation rule with hidden file .hidden/x.rb");
   // Controls: hidden files included, no negation, an escaped `\!` literal, only ignore files hidden.
-  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["!.h.rb\n"], { includeHidden: true }), null);
+  assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["!.h.rb\n"], { ...config, includeHidden: true }), null);
   assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["x.rb\n"], config), null);
   assert.equal(hiddenWhitelistConflict([".gitignore", "a/.h.rb"], ["\\!x.rb\n"], config), null);
   assert.equal(hiddenWhitelistConflict([".gitignore", "a/.ignore", "x.rb"], ["!x.rb\n"], config), null);
+  // Hidden files no definitions glob selects: not Ruby, outside the glob, under an exclude.
+  assert.equal(hiddenWhitelistConflict([".cuke-dedup.json", "x.rb"], ["!.gitkeep\n"], config), null);
+  assert.equal(hiddenWhitelistConflict([".h/x.rb", "steps/s.rb"], ["!.h\n"], { ...config, definitions: ["steps/*.rb"] }), null);
+  assert.equal(hiddenWhitelistConflict(["vendor/.h.rb", "x.rb"], ["!.h.rb\n"], config), null);
+});
+
+/** Leading BOMs are removed per file, all of them, as the `ignore` crate's `trim_start_matches` does. */
+test("rule text drops leading BOMs only", () => {
+  /** `value` after `ruleText`, as a string. */
+  const text = (value) => ruleText(Buffer.from(value)).toString("utf8");
+  assert.equal(text("\uFEFF!x.rb\n"), "!x.rb\n");
+  assert.equal(text("\uFEFF\uFEFFx.rb\n"), "x.rb\n");
+  // Controls: no BOM, a BOM after the start.
+  assert.equal(text("x.rb\n"), "x.rb\n");
+  assert.equal(text("a\n\uFEFFx.rb\n"), "a\n\uFEFFx.rb\n");
 });
 
 /** Selection follows the effective configuration, as discovery applies it, without discovery. */
