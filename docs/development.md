@@ -307,15 +307,24 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
 - `check-ruby-execution.mjs` loads every Ruby fixture suite (Ruby parity groups and the Ruby lane of
   each paired case) under Ruby with a recording Cucumber DSL: `Cucumber::Glue::Dsl` with the
   dialect keywords as aliases of `register_rb_step_definition`, extended into the top-level
-  object. It loads the Ruby files discovery lists (`--explain-discovery`). Support `env.*` files load first, then other support files,
-  each group in reverse path order as Cucumber-Ruby 10 does, then the rest, with the suite's `rubyLoadPaths` and no gems. For a suite the analyzer reports complete, every listed
-  file must load, the registered and extracted matchers (kind, text,
+  object. It loads the files the effective configuration selects, computed without discovery:
+  `definitions`, `features`, `exclude` and `includeHidden` from `--print-config` with globset
+  semantics (byte matching; a `features` match is not a definition; glob syntax outside the tested
+  subset fails the check), and ignore files through `git check-ignore`: the ignore files in
+  directories the walk enters, plus the global excludes file the `ignore` crate resolves (git's
+  own config is not read, since git resolves `core.excludesFile` differently), matched
+  case-sensitively. An ancestor
+  directory whose ignore file outranks a descendant's, which a per-directory mirror cannot
+  reproduce, fails the check, as does a negation rule while `includeHidden` is off and the
+  project holds a hidden file (the `ignore` crate lets a whitelist override the hidden filter). Support `env.*` files load first, then other support files,
+  each group in reverse path order as Cucumber-Ruby 10 does, then the rest, with the suite's `rubyLoadPaths` and no gems. For a suite the analyzer reports complete, every selected
+  file must be discovered and must load, the registered and extracted matchers (kind, text,
   flags) must be the same multiset, and no keyword may be replaced.
   Locations are not compared: Cucumber records a handler block's own location. Incomplete suites
   are counted, not judged. An undefined method called on the top-level object returns an opaque
   value, standing in for a project helper. Suites whose loading depends on a value only runtime
   decides are listed in the script with the exact problems they must show. Owned controls check
-  the harness first. Handler blocks never run.
+  the harness and file selection first. Handler blocks never run.
 - Ruby step keywords come from the Gherkin dialect data pinned in `Cargo.lock`. After a `gherkin`
   update run `node scripts/check/check-ruby-step-keywords.mjs --write`; the check fails while the
   table is stale.
