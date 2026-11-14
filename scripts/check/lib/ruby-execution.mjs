@@ -212,3 +212,43 @@ export function problems(analyzer, ruby) {
     ...ruby.replaced.map((keyword) => `step keyword replaced at load time: ${keyword}`),
   ];
 }
+
+/** ASCII whitespace, as the crate's non-Unicode regex `\s` reads it. */
+const SPACE = "[\\t\\n\\v\\f\\r ]";
+// Rust's multi-line `^` and `$` anchor only at `\n`; JavaScript's also anchor at `\r`.
+const EXCLUDES = new RegExp(`(?<![^\\n])${SPACE}*excludesfile${SPACE}*=${SPACE}*"?${SPACE}*([^\\t\\n\\v\\f\\r ]+?)${SPACE}*"?${SPACE}*(?![^\\n])`, "i");
+
+/**
+ * The global excludes file the analyzer applies, resolved as the pinned `ignore` crate's
+ * `gitconfig_excludes_path` does, which differs from git: the first config with an
+ * `excludesfile` line wins in the order `GIT_CONFIG_GLOBAL`, `~/.gitconfig`, the XDG config,
+ * then `GIT_CONFIG_SYSTEM` or `/etc/gitconfig`, so a global config without the key falls
+ * through. The value is the first match, unquoted, with every `~` replaced by the home directory;
+ * a value with whitespace or invalid UTF-8 does not count. The fallback is `git/ignore` under
+ * the XDG config directory. Empty variables count as unset.
+ * @param {{env: Record<string, string | undefined>, home: string | undefined, read: (path: string) => Buffer | undefined}} context
+ * @returns {string | undefined} The path, which may not exist.
+ */
+export function globalExcludesPath({ env, home, read }) {
+  /** The variable `name`, with an empty value read as unset. */
+  const set = (name) => env[name] || undefined;
+  const xdg = set("XDG_CONFIG_HOME") ?? (home === undefined ? undefined : `${home}/.config`);
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  /** The `excludesfile` value in the config at `path`, if it is readable and has one. */
+  const parse = (path) => {
+    const match = path === undefined ? null : read(path)?.toString("latin1").match(EXCLUDES);
+    if (!match) return undefined;
+    try {
+      const value = decoder.decode(Buffer.from(match[1], "latin1"));
+      return home === undefined ? value : value.replaceAll("~", () => home);
+    } catch {
+      return undefined;
+    }
+  };
+  const sources = [set("GIT_CONFIG_GLOBAL"), home && `${home}/.gitconfig`, xdg && `${xdg}/git/config`, set("GIT_CONFIG_SYSTEM") ?? "/etc/gitconfig"];
+  for (const source of sources) {
+    const value = parse(source || undefined);
+    if (value !== undefined) return value;
+  }
+  return xdg && `${xdg}/git/ignore`;
+}

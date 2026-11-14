@@ -9,11 +9,12 @@
 // Usage: node scripts/check/check-ruby-execution.mjs [BINARY]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { homedir, tmpdir, userInfo } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { materializeParityLane, materializeRubyGroup, rubyGroupSelection, within } from "./lib/parity-runner.mjs";
-import { hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, undiscovered } from "./lib/ruby-execution.mjs";
+import { globalExcludesPath, hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, undiscovered } from "./lib/ruby-execution.mjs";
 
 const binary = resolve(process.argv[2] ?? "target/debug/cuke-dedup");
 const harness = resolve("scripts/check/lib/ruby-load-harness.rb");
@@ -134,6 +135,11 @@ const selectionControls = [
   // higher-ranked `.cuke-dedupignore`.
   { name: "selection/pruned-ignore-file", selection: ["--definitions", "*.rb"],
     files: { ".cuke-dedupignore": "broken.rb\n", "broken.rb": "raise 'loaded'\n", ".hidden/.gitignore": "steps.rb\n", "steps.rb": step } },
+  // Discovery reads `core.excludesFile` from `GIT_CONFIG_GLOBAL`. `broken.rb` registers a step
+  // before raising, so the analyzer listing it fails as a registration mismatch and Ruby loading it
+  // fails as a load error.
+  { name: "selection/global-excludes", selection: ["--definitions", "*.rb"], globalExcludes: "broken.rb\n",
+    files: { "broken.rb": "Given('a broken step') { work() }\nraise 'loaded'\n", "steps.rb": step } },
 ];
 
 /** A harness result reduced to comparable strings. */
@@ -243,10 +249,27 @@ async function ignoredByFiles(project, files, candidates) {
       await mkdir(dirname(join(mirror, candidate)), { recursive: true });
       await writeFile(join(mirror, candidate), "");
     }
-    // Inherited repository variables (a pre-push hook sets GIT_DIR) would redirect git elsewhere.
-    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    // Inherited variables (a pre-push hook sets GIT_DIR) would redirect git. Git resolves
+    // `core.excludesFile` differently from the analyzer's `ignore` crate, so its own config is
+    // replaced by the path the crate resolves, read relative to the analyzer's working directory.
+    const empty = join(mirror, ".empty-gitconfig");
+    await writeFile(empty, "");
+    const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))), GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_NOSYSTEM: "1" };
+    /** `path` from the analyzer's working directory; `..` is left to the OS, as symlinks need. */
+    const anchor = (path) => (isAbsolute(path) ? path : `${project}${sep}${path}`);
+    /** The file at `path` from the analyzer's working directory, if readable. */
+    const read = (path) => {
+      try {
+        return readFileSync(anchor(path));
+      } catch {
+        return undefined;
+      }
+    };
+    // Rust's `home_dir` reads an empty HOME as unset and asks the password database.
+    const excludes = globalExcludesPath({ env: process.env, home: homedir() || userInfo().homedir, read });
+    const config = ["-c", "core.ignoreCase=false", ...(excludes ? ["-c", `core.excludesFile=${anchor(excludes)}`] : [])];
     /** Runs git in the mirror, outside the caller's repository. */
-    const git = (args, input) => spawnSync("git", ["-c", "core.ignoreCase=false", ...args], { cwd: mirror, env, input, encoding: "utf8" });
+    const git = (args, input) => spawnSync("git", [...config, ...args], { cwd: mirror, env, input, encoding: "utf8" });
     // No template: its `info/exclude` is not a file discovery reads.
     if (git(["init", "-q", "--template="]).status !== 0) throw new Error("git init failed");
     const run = git(["check-ignore", "--no-index", "-z", "--stdin"], candidates.join("\0"));
@@ -310,7 +333,18 @@ try {
       await mkdir(dirname(join(project, file)), { recursive: true });
       await writeFile(join(project, file), source);
     }
+    const saved = process.env.GIT_CONFIG_GLOBAL;
+    if (control.globalExcludes) {
+      // The crate rejects an `excludesfile` value with whitespace, which a temporary directory may
+      // hold, so the value is relative to the project, the analyzer's working directory.
+      const excludes = `${project}.excludes`;
+      await writeFile(excludes, control.globalExcludes);
+      await writeFile(`${excludes}.gitconfig`, `[core]\n\texcludesFile = ../${basename(excludes)}\n`);
+      process.env.GIT_CONFIG_GLOBAL = `${excludes}.gitconfig`;
+    }
     const observed = await judge({ project, selection: control.selection }).catch((error) => [`error: ${error.message}`]);
+    if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = saved;
     if (observed?.length !== 0) failures.push(`${control.name}: expected no problems, observed ${JSON.stringify(observed)}`);
   }
   const seen = new Set();

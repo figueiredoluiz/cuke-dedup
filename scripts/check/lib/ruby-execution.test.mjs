@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { globsetRegex, hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, surplus, undiscovered } from "./ruby-execution.mjs";
+import { globalExcludesPath, globsetRegex, hiddenWhitelistConflict, ignoreFiles, ignoreLayoutConflict, problems, selectedFiles, surplus, undiscovered } from "./ruby-execution.mjs";
 
 const files = ["x.rb", "a/y.rb", "a/b/z.rb", "c/w.rb", "steps/s.rb", "q.rb"];
 
@@ -129,4 +129,38 @@ test("problems name every disagreement", () => {
     "steps.rb:2 fails to load: RuntimeError: stop",
     "step keyword replaced at load time: Then",
   ]);
+});
+
+/** Resolves against an in-memory file system; `null` home means none. */
+const excludes = (env, filesystem, home = "/h") =>
+  globalExcludesPath({ env, home: home ?? undefined, read: (path) => (path in filesystem ? Buffer.from(filesystem[path]) : undefined) });
+
+/** Each row follows `ignore` 0.4.34 `gitconfig_excludes_path`, including where git differs. */
+test("global excludes resolve as the analyzer's ignore crate resolves them", () => {
+  /** A config that sets `core.excludesFile` to `path`. */
+  const key = (path) => `[core]\n\texcludesFile = ${path}\n`;
+  const home = { "/h/.gitconfig": key("/home-x") };
+  for (const [name, env, filesystem, expected] of [
+    ["global env wins", { GIT_CONFIG_GLOBAL: "/g" }, { ...home, "/g": key("/g-x") }, "/g-x"],
+    ["global env without the key falls through to home", { GIT_CONFIG_GLOBAL: "/g" }, { ...home, "/g": "[core]\n" }, "/home-x"],
+    ["empty global env counts as unset", { GIT_CONFIG_GLOBAL: "" }, home, "/home-x"],
+    ["home beats XDG", {}, { ...home, "/h/.config/git/config": key("/xdg-x") }, "/home-x"],
+    ["XDG_CONFIG_HOME locates the XDG config", { XDG_CONFIG_HOME: "/x" }, { "/x/git/config": key("/xdg-x") }, "/xdg-x"],
+    ["system is last", { GIT_CONFIG_SYSTEM: "/s" }, { "/s": key("/s-x") }, "/s-x"],
+    ["empty system env reads /etc/gitconfig", { GIT_CONFIG_SYSTEM: "" }, { "/etc/gitconfig": key("/etc-x") }, "/etc-x"],
+    ["default under XDG_CONFIG_HOME", { XDG_CONFIG_HOME: "/x" }, {}, "/x/git/ignore"],
+    ["default under home", { XDG_CONFIG_HOME: "" }, {}, "/h/.config/git/ignore"],
+    ["every tilde expands", {}, { "/h/.gitconfig": key("~/a~b") }, "/h/a/hb"],
+    ["quotes are dropped", {}, { "/h/.gitconfig": '[core]\n  excludesfile = "/q"\n' }, "/q"],
+    ["first match in a file wins", {}, { "/h/.gitconfig": `${key("/one")}${key("/two")}` }, "/one"],
+    ["a value with a space falls through", {}, { "/h/.gitconfig": key("/a b"), "/etc/gitconfig": key("/etc-x") }, "/etc-x"],
+    ["a lone carriage return is not a line break", {}, { "/h/.gitconfig": "x\rexcludesfile = /a\n" }, "/h/.config/git/ignore"],
+    ["CRLF line endings match", {}, { "/h/.gitconfig": "[core]\r\n\texcludesFile = /c\r\n" }, "/c"],
+    ["a byte order mark in the value is kept", {}, { "/h/.gitconfig": "excludesfile = \uFEFF/b\n" }, "\uFEFF/b"],
+    ["invalid UTF-8 falls through", {}, { "/h/.gitconfig": Buffer.concat([Buffer.from("excludesfile = /"), Buffer.from([0xff])]), "/etc/gitconfig": key("/etc-x") }, "/etc-x"],
+  ]) {
+    assert.equal(excludes(env, filesystem), expected, name);
+  }
+  assert.equal(excludes({}, {}, null), undefined, "no home and no XDG directory");
+  assert.equal(excludes({}, { "/$&/.gitconfig": key("~/i") }, "/$&"), "/$&/i", "the home directory is inserted literally");
 });

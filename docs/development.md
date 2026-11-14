@@ -311,7 +311,9 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   `definitions`, `features`, `exclude` and `includeHidden` from `--print-config` with globset
   semantics (byte matching; a `features` match is not a definition; glob syntax outside the tested
   subset fails the check), and ignore files through `git check-ignore`: the ignore files in
-  directories the walk enters, plus the global git excludes, matched case-sensitively. An ancestor
+  directories the walk enters, plus the global excludes file the `ignore` crate resolves (git's
+  own config is not read, since git resolves `core.excludesFile` differently), matched
+  case-sensitively. An ancestor
   directory whose ignore file outranks a descendant's, which a per-directory mirror cannot
   reproduce, fails the check, as does a negation rule while `includeHidden` is off and the
   project holds a hidden file (the `ignore` crate lets a whitelist override the hidden filter). Support `env.*` files load first, then other support files,
