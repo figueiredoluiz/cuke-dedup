@@ -2,11 +2,10 @@
 name = "cuke-dedup"
 version = "0.17.0"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.100"
 description = "Static analysis for duplicate and reusable Cucumber step definitions"
 license = "MIT"
 repository = "https://github.com/figueiredoluiz/cuke-dedup"
-homepage = "https://github.com/figueiredoluiz/cuke-dedup"
 readme = "README.md"
 keywords = ["cucumber", "gherkin", "lint", "testing", "cli"]
 categories = ["command-line-utilities", "development-tools::testing"]

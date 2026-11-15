@@ -29,6 +29,8 @@ jobs:
         run: |
           msrv=$(sed -nE 's/^rust-version = "([0-9.]+)"$/\1/p' Cargo.toml | head -1)
           test -n "$msrv" || { echo "rust-version is missing from Cargo.toml" >&2; exit 1; }
+          # rust-version "1.100" means 1.100.0: test the floor, not the newest patch release.
+          [[ "$msrv" =~ ^[0-9]+\.[0-9]+$ ]] && msrv="$msrv.0"
           echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
 
   rust-msrv:
@@ -269,18 +271,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rustfmt
+      - run: rustup toolchain install nightly-2026-11-01 --profile minimal --component rustfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: parser-fuzzing
           workspaces: fuzz -> target
-      - run: cargo +nightly-2026-08-01 fmt --manifest-path fuzz/Cargo.toml -- --check
+      - run: cargo +nightly-2026-11-01 fmt --manifest-path fuzz/Cargo.toml -- --check
       - name: Install cargo-fuzz reproducibly
-        run: cargo +nightly-2026-08-01 install cargo-fuzz --version 0.13.2 --locked
+        run: cargo +nightly-2026-11-01 install cargo-fuzz --version 0.13.2 --locked
       - name: Exercise parser fuzz target
         run: |
           for target in parsers inputs; do
-            cargo +nightly-2026-08-01 fuzz run "$target" -- \
+            cargo +nightly-2026-11-01 fuzz run "$target" -- \
               -runs=1000 -max_len=16384 -timeout=10 -rss_limit_mb=1024 -verbosity=0
           done
 

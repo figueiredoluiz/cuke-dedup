@@ -5,10 +5,9 @@ Release steps are in [releasing.md](releasing.md).
 
 ## Toolchains
 
-- `rust-toolchain.toml` pins the development and release compiler (`1.98.1`). Update it when
-  upgrading both together.
-- `Cargo.toml` declares the MSRV (`1.90`). Check it locally with
-  `cargo +1.90.0 test --all-targets --all-features --locked`.
+- `rust-toolchain.toml` pins the development and release compiler (`1.100.0`).
+- `Cargo.toml` declares the MSRV (`1.100`), the same release. Upgrade both together. CI tests the
+  MSRV as `1.100.0` on Linux, macOS and Windows.
 - `rustup update stable` refreshes the separate stable quality checks (clippy, rustdoc, shear).
 - Ruby 4.0 or later is required by preflight, which compiles Ruby sources with its Prism parser.
 

@@ -13,8 +13,8 @@ identifiers first.
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| Rust (rustup) | `1.98.1` pinned in `rust-toolchain.toml` | Development, rust-analyzer and release builds. |
-| Rust MSRV | `1.90` in `Cargo.toml` | CI tests it separately, plus current stable. |
+| Rust (rustup) | `1.100.0` pinned in `rust-toolchain.toml` | Development, rust-analyzer and release builds. |
+| Rust MSRV | `1.100` in `Cargo.toml` | Same release as the pin. CI tests it and current stable. |
 | Node.js | 24 LTS | npm launcher and check scripts. CI also tests Node.js 20. |
 | Python 3 | any | Release packaging and docstring checks (`python` on Windows). |
 | Gitleaks, actionlint | current | Secret scan and workflow lint in the hooks. |
@@ -22,8 +22,7 @@ identifiers first.
 Install the Rust tools once:
 
 ```sh
-rustup toolchain install 1.90.0 --profile minimal
-rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt,llvm-tools-preview
+rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt,llvm-tools-preview
 rustup toolchain install stable --profile minimal --component clippy,rustfmt
 cargo install cargo-llvm-cov --locked
 cargo install cargo-audit --version 0.22.2 --locked

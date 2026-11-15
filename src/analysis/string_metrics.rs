@@ -149,7 +149,7 @@ fn bit_parallel_jaro(left: &[u8], right: &[u8]) -> f64 {
             & !low_bits(index.saturating_sub(search_range));
         let candidates = right_positions[usize::from(byte)] & window & !right_matched;
         // strsim scans the window upward, so the first match is the lowest candidate bit.
-        right_matched |= candidates & candidates.wrapping_neg();
+        right_matched |= candidates.isolate_lowest_one();
         left_matched |= u128::from(candidates != 0) << index;
     }
     // An empty side leaves both masks empty, which scores 0.0 as strsim does.
