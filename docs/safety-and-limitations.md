@@ -6,7 +6,7 @@ resource limits keep failures visible and bound the work performed.
 
 ## Compatibility
 
-- The minimum supported Rust version is 1.90.
+- The minimum supported Rust version is 1.100.
 - Node.js 24 LTS is recommended for the npm launcher. CI also tests Node.js 20 as the minimum compatible version; Node.js 20 has reached end of life upstream.
 - Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental, opt-in [Cucumber-Ruby](discovery/cucumber-ruby.md) requires explicit source selection; its supported subset and completion gaps remain separate from JS/TS support.
 - Unsupported source languages are rejected rather than guessed.

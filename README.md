@@ -32,7 +32,7 @@ npm install --save-dev cuke-dedup
 npx cuke-dedup .
 ```
 
-Building from source requires Rust 1.90 or newer:
+Building from source requires Rust 1.100 or newer:
 
 ```sh
 cargo build --release --locked
@@ -190,7 +190,7 @@ and is distributed independently from the Cargo and npm packages.
 
 ## Compatibility
 
-- Building from source requires Rust 1.90 or newer. Node.js 24 LTS is recommended for the npm launcher; Node.js 20 remains the minimum compatible version and is tested in CI.
+- Building from source requires Rust 1.100 or newer. Node.js 24 LTS is recommended for the npm launcher; Node.js 20 remains the minimum compatible version and is tested in CI.
 - Definition extraction supports JavaScript and TypeScript, including JSX and common module variants, plus an explicitly selected subset of Cucumber-Ruby. See [Ruby support](docs/discovery-and-frameworks.md#cucumber-ruby).
 - Static analysis cannot safely resolve every dynamic configuration, matcher, wrapper, or imported
   handler. CukeDedup reports incomplete analysis instead of treating missing evidence as clean.
