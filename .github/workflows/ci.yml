@@ -26,11 +26,9 @@ jobs:
       - name: Read declared Rust MSRV
         id: rust
         shell: bash
+        # Prints the release the MSRV names (x.y -> x.y.0): test the floor, not the newest patch.
         run: |
-          msrv=$(sed -nE 's/^rust-version = "([0-9.]+)"$/\1/p' Cargo.toml | head -1)
-          test -n "$msrv" || { echo "rust-version is missing from Cargo.toml" >&2; exit 1; }
-          # rust-version "1.100" means 1.100.0: test the floor, not the newest patch release.
-          [[ "$msrv" =~ ^[0-9]+\.[0-9]+$ ]] && msrv="$msrv.0"
+          msrv=$(node scripts/check/check-rust-toolchain.mjs --print msrv)
           echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
 
   rust-msrv:
@@ -294,7 +292,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - run: grep -Eq '^channel = "[0-9]+\.[0-9]+\.[0-9]+"$' rust-toolchain.toml
       - run: rustup show active-toolchain
       # Ruby 4.0 is the version the adapter's semantics are checked against; its Prism parser
       # rejects sources the runner's default Ruby accepts.

@@ -16,7 +16,7 @@ identifiers first.
 | Rust (rustup) | `1.100.0` pinned in `rust-toolchain.toml` | Development, rust-analyzer and release builds. |
 | Rust MSRV | `1.100` in `Cargo.toml` | Same release as the pin. CI tests it and current stable. |
 | Node.js | 24 LTS | npm launcher and check scripts. CI also tests Node.js 20. |
-| Python 3 | any | Release packaging and docstring checks (`python` on Windows). |
+| Python 3 | 3.11 or later | Release packaging, docstring checks and the toolchain check's TOML reader (`python` on Windows). |
 | Gitleaks, actionlint | current | Secret scan and workflow lint in the hooks. |
 
 Install the Rust tools once:
