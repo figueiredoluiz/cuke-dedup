@@ -18,7 +18,7 @@
   "scripts": {
     "test": "node --test npm/test/*.test.mjs",
     "skills:check": "node scripts/check/check-agent-skills.mjs",
-    "check:versions": "node scripts/check/check-release-version.mjs",
+    "check:versions": "node scripts/check/check-release-version.mjs && node scripts/check/check-rust-toolchain.mjs",
     "check:boundaries": "node scripts/check/check-language-boundary.mjs",
     "docs:check": "node scripts/check/check-docs-parity.mjs",
     "check:test": "node --test scripts/check/lib/*.test.mjs scripts/evaluate/lib/*.test.mjs scripts/release/lib/*.test.mjs scripts/check/preflight.test.mjs",

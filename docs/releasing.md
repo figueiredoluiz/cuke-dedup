@@ -21,7 +21,8 @@ git diff
 ```
 
 `check:versions` also runs in the development gate and in CI, where `EXPECTED_VERSION` and
-`RELEASE_TAG` pin the agreed version to the dispatched release and its tag.
+`RELEASE_TAG` pin the agreed version to the dispatched release and its tag. It also checks that the
+Rust pin matches the MSRV, which needs Python 3.11 or later.
 
 Release notes live in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 
