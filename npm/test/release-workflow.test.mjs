@@ -38,6 +38,16 @@ test("npm packages are checked against checksummed release archives", () => {
   assert.match(workflow, /verify_npm_binaries\.py --binaries native --archives release-assets/);
 });
 
+/** Verify npm-only retries recover the tagged release assets independently of the native build. */
+test("npm-only recovery uses the published native archives", () => {
+  const build = jobSlice(workflow, "build-native");
+  const publish = jobSlice(workflow, "publish-npm");
+  assert.match(build, /if: '!inputs\.publish_npm_only'/);
+  assert.match(publish, /\(inputs\.publish_npm_only \|\|\s+\(needs\.build-native\.result == 'success' && needs\.github-release\.result == 'success'\)\)/);
+  assert.match(publish, /if: inputs\.publish_npm_only\n\s+run: .*--published-release "\$RELEASE_TAG" "\$GITHUB_SHA"/);
+  assert.match(publish, /--archives release-assets\n\s+if: '!inputs\.publish_npm_only'/);
+});
+
 /** Verify npm publication requests OIDC permission, checks npm support, and avoids persistent token variables. */
 test("npm publishing uses short-lived OIDC credentials only", () => {
   assert.match(

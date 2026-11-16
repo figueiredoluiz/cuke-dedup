@@ -18,7 +18,7 @@ steps:
       fetch-depth: 0
       persist-credentials: false
 
-  - uses: figueiredoluiz/cuke-dedup@v0.17.0
+  - uses: figueiredoluiz/cuke-dedup@2f8f0eccc775b48821dfb8c7395b74e4da8b9dc1 # v0.17.0
     id: cuke-dedup
     with:
       path: .
@@ -76,6 +76,8 @@ cuke-dedup . --changed-since origin/main
 
 Paths remain correct from a repository subdirectory, and untracked files are included. Summary
 definition counts and the duplication-threshold denominator describe the complete corpus.
+
+Worktree comparison follows Git's built-in conversions, ignore rules, and sparse-checkout behavior.
 
 An empty changed-file set warns. Changed-file filtering does not relax corpus validation: operational read, extraction and feature-parse errors remain fatal even in unchanged files. JS/TS and Ruby definition parse failures and unresolved static registrations remain incomplete warnings by default. Use `--fail-on-unparseable` for definition parse failures or `--fail-on-incomplete` for all incompleteness.
 

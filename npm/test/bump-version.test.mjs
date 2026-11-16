@@ -9,6 +9,7 @@ const script = resolve("scripts/release/bump-version.mjs");
 const checkScript = resolve("scripts/check/check-release-version.mjs");
 // Child node drops NODE_* (NODE_OPTIONS preloads code); the TOML reader's Python needs PATH and HOME.
 const childEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("NODE_")));
+const actionPin = "cuke-dedup@0123456789abcdef0123456789abcdef01234567 # v0.2.0";
 const cargoAvailable =
   spawnSync("cargo", ["--version"], { encoding: "utf8" }).status === 0;
 
@@ -94,8 +95,8 @@ async function fixture({
     "on:\n  workflow_dispatch:\n    inputs:\n      version:\n" +
       "        description: Package version\n        required: true\n        default: 0.2.0\n",
   );
-  await write("README.md", "# CukeDedup\n\n  - uses: figueiredoluiz/cuke-dedup@v0.2.0\n");
-  await write("docs/ci-and-baselines.md", "  - uses: figueiredoluiz/cuke-dedup@v0.2.0\n");
+  await write("README.md", `# CukeDedup\n\n  - uses: figueiredoluiz/${actionPin}\n`);
+  await write("docs/ci-and-baselines.md", `  - uses: figueiredoluiz/${actionPin}\n`);
 
   for (const manifest of [".", "fuzz"]) {
     const locked = spawnSync("cargo", ["generate-lockfile", "--offline"], {
@@ -128,7 +129,7 @@ async function text(root, relative) {
 
 /** Group version-bump integration cases, skipping them when Cargo is unavailable. */
 describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable" }, () => {
-  /** Verify all supported manifests, lockfiles, workflow defaults, and documentation pins are bumped without a changelog. */
+  /** Verify all version sites are bumped while release examples keep their published commit. */
   test("rewrites every version site without creating a changelog", async () => {
     const root = await fixture();
     const result = bump(root, "0.3.0");
@@ -143,8 +144,8 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
       ["npm/platforms/darwin-arm64/package.json", '"version": "0.3.0"'],
       ["action.yml", 'default: "0.3.0"'],
       [".github/workflows/release.yml", "default: 0.3.0"],
-      ["README.md", "cuke-dedup@v0.3.0"],
-      ["docs/ci-and-baselines.md", "cuke-dedup@v0.3.0"],
+      ["README.md", actionPin],
+      ["docs/ci-and-baselines.md", actionPin],
       ["Cargo.lock", 'version = "0.3.0"'],
       ["fuzz/Cargo.lock", 'version = "0.3.0"'],
     ]) {
@@ -154,8 +155,8 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     await assert.rejects(readFile(join(root, "CHANGELOG.md")), { code: "ENOENT" });
   });
 
-  /** Verify ignored files stay untouched, inherited Git overrides are isolated, and discovery errors prevent writes. */
-  test("updates project pins without rewriting ignored reference or history files", async () => {
+  /** Verify pin checks respect project file selection and surface Git discovery errors. */
+  test("checks project pins independently of ignored references and Git environment overrides", async () => {
     const root = await fixture();
     const gitEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
     assert.equal(spawnSync("git", ["init", "--quiet", root], { env: gitEnvironment }).status, 0);
@@ -170,7 +171,7 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     const result = bump(root, "0.3.0", { GIT_DIR: join(root, "foreign.git"), GIT_WORK_TREE: join(root, "foreign-tree"), GIT_INDEX_FILE: foreignIndex });
     assert.equal(result.status, 0, result.stderr);
     for (const path of ["README.md", "docs/ci-and-baselines.md"]) {
-      assert.ok((await text(root, path)).includes("@v0.3.0"), path);
+      assert.ok((await text(root, path)).includes(actionPin), path);
     }
     for (const path of ignored) assert.equal(await text(root, path), note);
     const index = join(root, ".git/index");
@@ -179,6 +180,89 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     assert.equal(failed.status, 1);
     assert.match(failed.stderr, /Git version-site discovery failed/);
     assert.ok((await text(root, "Cargo.toml")).includes('version = "0.3.0"'));
+  });
+
+  /** Verify an invalid Action use in a newly added guide prevents version edits. */
+  test("rejects Action examples without a full release commit and version comment", async () => {
+    const root = await fixture();
+    const example = join(root, "docs/example.md");
+    const invalidPins = [
+      ...["v0.2.0", "main", "0123456", actionPin.split(" # ")[0].split("@")[1]].map((ref) => ["uses", ref]),
+      ['"uses"', "main"],
+      ["'uses'", "main"],
+    ];
+    for (const [key, ref] of invalidPins) {
+      await writeFile(example, `  - ${key}: figueiredoluiz/cuke-dedup@${ref}\n`);
+      const result = bump(root, "0.3.0");
+      assert.equal(result.status, 1, `${key}: ${ref}`);
+      assert.match(result.stderr, /example\.md.*full commit SHA.*version comment/);
+      const checked = checkVersions(root);
+      assert.equal(checked.status, 1, checked.stderr);
+      assert.match(checked.stderr, /example\.md.*full commit SHA.*version comment/);
+      assert.match(await text(root, "Cargo.toml"), /version = "0\.2\.0"/);
+    }
+    await writeFile(example, ["uses", '"uses"', "'uses'"].map((key) =>
+      `  - ${key}: figueiredoluiz/${actionPin}\n`,
+    ).join(""));
+    const checked = checkVersions(root);
+    assert.equal(checked.status, 0, checked.stderr);
+    assert.match(checked.stdout, /^release versions agree at 0\.2\.0$/m);
+    assert.equal(bump(root, "0.3.0").status, 0);
+  });
+
+  /** Verify Action reference validation follows the literal value across YAML scalar forms. */
+  test("validates Action pins in block, flow, and anchored YAML values", async () => {
+    const root = await fixture();
+    const example = join(root, "docs/example.md");
+    const [pin, version] = actionPin.split(" # ");
+    const layouts = [
+      (ref, tag) => `- uses: >-${tag}\r\n    ${ref}\r\n`,
+      (ref, tag) => `- 'uses': |2-${tag}\n    ${ref}\n`,
+      (ref, tag) => `- "uses": &pin !!str >-2${tag}\n    ${ref}\n`,
+      (ref, tag) => `- { uses: "${ref}" }${tag}\n`,
+      (ref, tag) => `- { id: scan, uses: "${ref}", name: Tom's scan }${tag}\n`,
+      (ref, tag) => `- { uses: "${ref}", name: "A \\"scan\\" # v9.9.9 example" }${tag}\n`,
+      (ref, tag) => `- { uses: '${ref}', name: 'A ''scan'' # v9.9.9 example', id: scan }${tag}\n`,
+      (ref, tag) => `- uses: &pin '${ref}'${tag}\n`,
+    ];
+    for (const exampleFor of layouts) {
+      for (const [ref, tag] of [["cuke-dedup@main", ` # ${version}`], [pin, ""]]) {
+        const invalid = exampleFor(`figueiredoluiz/${ref}`, tag);
+        await writeFile(example, invalid);
+        for (const result of [bump(root, "0.3.0"), checkVersions(root)]) {
+          assert.equal(result.status, 1, invalid);
+          assert.match(result.stderr, /example\.md.*full commit SHA.*version comment/);
+        }
+      }
+      const valid = exampleFor(`figueiredoluiz/${pin}`, ` # ${version}`);
+      await writeFile(example, valid);
+      const checked = checkVersions(root);
+      assert.equal(checked.status, 0, checked.stderr);
+    }
+    await writeFile(example, `- uses: another-owner/cuke-dedup@main\n- uses: otherfigueiredoluiz/cuke-dedup@main\nSee https://example.test/figueiredoluiz/cuke-dedup@main.\n${layouts[0](`figueiredoluiz/${pin}`, ` # ${version}`)}`);
+    assert.equal(bump(root, "0.3.0").status, 0);
+  });
+
+  /** Verify a Markdown inline snippet carries its own Action reference and annotation. */
+  test("validates Action pins in Markdown inline code spans", async () => {
+    const [pin, version] = actionPin.split(" # ");
+    for (const delimiter of ["`", "``"]) {
+      /** Wraps an Action reference and its optional version comment in the current delimiter. */
+      const snippet = (ref, tag) => `${delimiter}uses: figueiredoluiz/${ref}${tag}${delimiter}`;
+      const adjacent = `${delimiter}# ${version}${delimiter}`;
+      for (const [text, code] of [
+        [`See ${adjacent} and ${snippet(pin, ` # ${version}`)}.`, 0],
+        [`See ${snippet(pin, "")} # ${version}`, 0],
+        [`See ${snippet(pin, "")} and ${adjacent}.`, 1],
+        [`See ${snippet("cuke-dedup@main", ` # ${version}`)}.`, 1],
+      ]) {
+        const root = await fixture();
+        await writeFile(join(root, "docs/example.md"), `${text}\n`);
+        for (const result of [checkVersions(root), bump(root, "0.3.0")]) {
+          assert.equal(result.status, code, `${text}\n${result.stderr}`);
+        }
+      }
+    }
   });
 
   /** Verify bumping CRLF fixtures preserves their line endings without introducing mixed endings. */
@@ -191,7 +275,7 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
       const raw = await readFile(join(root, relative), "utf8");
       assert.ok(raw.includes("\r\n"), `${relative} lost its CRLF endings`);
       assert.ok(!/[^\r]\n/.test(raw), `${relative} gained mixed line endings`);
-      assert.ok(raw.replaceAll("\r\n", "\n").includes("0.3.0"), `${relative} was not bumped`);
+      assert.ok(raw.includes(relative === "README.md" ? actionPin : "0.3.0"), relative);
     }
   });
 

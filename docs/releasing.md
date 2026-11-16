@@ -2,17 +2,15 @@
 
 ## Version sites
 
-The version appears in both Cargo manifests, both Cargo lockfiles, the root and eight platform npm
-manifests, the npm lockfile, the `action.yml` and `release.yml` version inputs, and the Action pin
-in `README.md` and `docs/ci-and-baselines.md`. Never edit them by hand:
+Use the version bump script to update the Cargo and npm manifests and lockfiles, and the version inputs in `action.yml` and `release.yml`.
 
 ```bash
 npm run bump:version -- 0.3.0
 ```
 
-The script requires Git and Python 3.11 or later, updates every site and both lockfiles
-atomically, rejects unexpected file shapes, restores changes if a lockfile refresh fails, and
-preserves line endings and a Cargo manifest's leading BOM.
+The script requires Git and Python 3.11 or later. It validates the Action examples and planned Cargo manifest edits before writing, restores changes if a lockfile refresh fails, and preserves line endings and a Cargo manifest's leading BOM.
+
+After the release is published, resolve its tag to the full commit SHA with `git rev-parse 'vX.Y.Z^{commit}'`. Update the literal Action references in `README.md` and `docs/ci-and-baselines.md` to that SHA and put `# vX.Y.Z` on the same line. For a YAML block scalar, put the version comment on its header line. The examples refer to a published release throughout version preparation.
 
 Then confirm and commit:
 
@@ -106,6 +104,8 @@ The site documents the latest released version, so it rebuilds from that tag.
   package in the npm matrix must authorize the `figueiredoluiz/cuke-dedup` repository,
   `.github/workflows/release.yml` and the `npm` environment on npmjs.com, with direct
   `npm publish` allowed. The workflow rejects npm clients older than the trusted-publishing minimum.
+
+For an npm-only retry, dispatch the workflow from the release tag with `publish_npm_only` enabled. The job prepares native packages from the published GitHub archives and verifies existing npm tarballs against the prepared packages and the release workflow's provenance. It publishes missing platform packages before the launcher.
 
 ## Experimental Ruby releases
 

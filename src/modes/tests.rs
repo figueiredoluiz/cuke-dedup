@@ -28,9 +28,7 @@ fn initialize_repository(root: &Path) {
 /// index and mark every tracked file deleted. Strip that environment instead.
 fn fixture_git() -> Command {
     let mut command = Command::new("git");
-    for variable in INHERITED_GIT_VARIABLES {
-        command.env_remove(variable);
-    }
+    clear_git_environment(&mut command);
     command
 }
 
@@ -184,6 +182,62 @@ fn changed_files_are_relative_to_a_subdirectory_and_include_untracked_files() {
     assert_eq!(changed, expected);
 }
 
+/// Checks linked worktrees compare their own ordinary or split index and honor shared ignore rules.
+#[test]
+fn changed_files_use_the_linked_worktree_index() {
+    for split_index in [false, true] {
+        assert_linked_worktree_changes(split_index);
+    }
+}
+
+/// Checks clean and changed outcomes for one linked worktree index layout.
+fn assert_linked_worktree_changes(split_index: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    let linked = directory.path().join("linked");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("unstaged.ts"), "before").unwrap();
+    initialize_repository(&root);
+    let output = fixture_git()
+        .current_dir(&root)
+        .args(["worktree", "add", "--detach"])
+        .arg(&linked)
+        .arg("HEAD")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    if split_index {
+        let output = fixture_git()
+            .current_dir(&linked)
+            .args(["update-index", "--split-index"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+    }
+    assert_eq!(git_changed_files(&linked, "HEAD").unwrap(), BTreeSet::new());
+    fs::create_dir_all(root.join(".git/info")).unwrap();
+    fs::write(root.join(".git/info/exclude"), "ignored.ts\n").unwrap();
+    for name in ["ignored.ts", "unstaged.ts", "staged.ts", "untracked.ts"] {
+        fs::write(linked.join(name), "after").unwrap();
+    }
+    let output = fixture_git()
+        .current_dir(&linked)
+        .args(["add", "staged.ts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+
+    let changed = git_changed_files(&linked, "HEAD").unwrap();
+    assert_eq!(
+        changed,
+        BTreeSet::from([
+            linked.join("staged.ts"),
+            linked.join("unstaged.ts"),
+            linked.join("untracked.ts")
+        ])
+    );
+}
+
 /// Checks changed-file discovery preserves newline bytes in Unix filenames.
 #[cfg(unix)]
 #[test]
@@ -268,13 +322,22 @@ fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
     fs::write(directory.path().join("tracked.ts"), "initial").unwrap();
     initialize_repository(directory.path());
     assert!(ensure_changed_root_is_trackable(&directory.path().canonicalize().unwrap()).is_ok());
+    let git = ChangedGit::new(directory.path()).unwrap();
     for revision in ["", " ", "--all", "missing-revision"] {
         assert!(
-            resolve_commit(directory.path(), revision).is_err(),
+            resolve_commit(git.metadata_command(directory.path()), revision).is_err(),
             "{revision}"
         );
     }
-    assert!(git_paths(directory.path(), &["not-a-command"], "expected failure").is_err());
+    let failed_query = git_paths(
+        git.worktree_command(directory.path()),
+        &["not-a-command"],
+        "expected failure",
+    )
+    .unwrap_err();
+    let message = failed_query.to_string();
+    assert!(message.starts_with("expected failure: "), "{message}");
+    assert!(message.contains("not-a-command"), "{message}");
 
     let ignored = directory.path().join("ignored");
     fs::create_dir(&ignored).unwrap();
@@ -288,6 +351,185 @@ fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
 
     let outside = tempfile::tempdir().unwrap();
     assert!(ensure_changed_root_is_trackable(outside.path()).is_err());
+}
+
+/// Checks SHA-256 comparisons with absent and valueless worktree settings.
+#[test]
+fn changed_files_accept_sha256_and_implicit_git_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let initialized = fixture_git()
+        .current_dir(root)
+        .args(["init", "--quiet", "--object-format=sha256"])
+        .output()
+        .unwrap();
+    assert!(initialized.status.success(), "{:?}", initialized.stderr);
+    let source = root.join("tracked.ts");
+    fs::write(&source, "before").unwrap();
+    initialize_repository(root);
+    fs::write(&source, "after").unwrap();
+    let config =
+        "[core]\nrepositoryformatversion = 1\nbare = false\n[extensions]\nobjectformat = sha256\n";
+    for settings in [config.to_owned(), format!("{config}[core]\nfilemode\n")] {
+        fs::write(root.join(".git/config"), settings).unwrap();
+        assert_eq!(
+            git_changed_files(root, "HEAD").unwrap(),
+            BTreeSet::from([source.clone()])
+        );
+    }
+}
+
+/// Checks Git metadata copies preserve contents and reject invalid sources before writing.
+#[test]
+fn git_comparison_metadata_copy_enforces_file_and_size_limits() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let input = root.join("input");
+    let output = root.join("scratch/info");
+    copy_git_info(&input, &output).unwrap();
+    assert!(!output.exists());
+    fs::write(&input, "*.tmp\n").unwrap();
+    copy_git_info(&input, &output).unwrap();
+    fs::write(&input, vec![b'a'; (1024 * 1024) + 1]).unwrap();
+    for invalid in [input.as_path(), root] {
+        let error = copy_git_info(invalid, &output).unwrap_err();
+        assert!(
+            error.to_string().contains("regular file of at most 1 MiB"),
+            "{error}"
+        );
+    }
+    let error = copy_git_info(&root.join("invalid\0path"), &output).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert_eq!(fs::read(&output).unwrap(), b"*.tmp\n");
+}
+
+/// Checks Git comparison preserves the index timestamp and reports genuine input errors.
+#[test]
+fn changed_files_use_an_independent_index_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let source = root.join("tracked.ts");
+    fs::write(&source, "before").unwrap();
+    initialize_repository(root);
+    let original = root.join(".git/index");
+    let snapshot = root.join(".git/fixture-snapshot");
+    let timestamp = fs::FileTimes::new().set_modified(
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_200_000_000),
+    );
+    File::options()
+        .write(true)
+        .open(&original)
+        .unwrap()
+        .set_times(timestamp)
+        .unwrap();
+    copy_git_index(&original, &snapshot).unwrap();
+    assert_eq!(
+        fs::metadata(&snapshot).unwrap().modified().unwrap(),
+        fs::metadata(&original).unwrap().modified().unwrap()
+    );
+    assert_eq!(fs::read(&snapshot).unwrap(), fs::read(&original).unwrap());
+
+    fs::remove_file(&original).unwrap();
+    assert_eq!(
+        git_changed_files(root, "HEAD").unwrap(),
+        BTreeSet::from([source])
+    );
+    fs::create_dir(&original).unwrap();
+    let error = git_changed_files(root, "HEAD").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("failed to snapshot the Git index"),
+        "{error}"
+    );
+}
+
+/// Checks the private Git command retains the checkout's long-path setting.
+#[test]
+fn changed_files_read_git_long_path_setting() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(root.join("tracked.ts"), "before").unwrap();
+    initialize_repository(root);
+    for value in ["true", "false"] {
+        assert!(fixture_git()
+            .current_dir(root)
+            .args(["config", "core.longpaths", value])
+            .status()
+            .unwrap()
+            .success());
+        let git = ChangedGit::new(root).unwrap();
+        let setting = checked_git_output(
+            git.worktree_command(root)
+                .args(["config", "--type=bool", "--get", "core.longpaths"]),
+            "failed to read the comparison long-path setting",
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(setting).unwrap().trim(), value);
+    }
+}
+
+/// Checks Git can retain a compact index when comparison only touches in-cone paths.
+#[test]
+fn changed_files_keep_sparse_indexes_compact() {
+    let repository = tempfile::tempdir().unwrap();
+    let root = repository.path();
+    for path in ["inside", "outside"] {
+        fs::create_dir(root.join(path)).unwrap();
+        fs::write(root.join(path).join("step.ts"), "before").unwrap();
+    }
+    initialize_repository(root);
+    let execute = |args: &[&str]| fixture_git().current_dir(root).args(args).output().unwrap();
+    let help = execute(&["sparse-checkout", "init", "-h"]);
+    let sparse_support = help
+        .stdout
+        .iter()
+        .chain(&help.stderr)
+        .copied()
+        .collect::<Vec<_>>();
+    if !String::from_utf8_lossy(&sparse_support).contains("sparse-index") {
+        return;
+    }
+
+    for arguments in [
+        &["sparse-checkout", "init", "--cone", "--sparse-index"][..],
+        &["sparse-checkout", "set", "inside"],
+    ] {
+        let result = execute(arguments);
+        assert!(result.status.success(), "{:?}", result.stderr);
+    }
+    let native = execute(&["ls-files", "--sparse"]);
+    assert!(native.status.success(), "{:?}", native.stderr);
+    assert_eq!(native.stdout, b"inside/step.ts\noutside/\n");
+    let git = ChangedGit::new(root).unwrap();
+    let private = checked_git_output(
+        git.worktree_command(root).args(["ls-files", "--sparse"]),
+        "failed to list the private sparse index",
+    )
+    .unwrap();
+    assert_eq!(private, native.stdout);
+
+    let edit = root.join("inside/step.ts");
+    fs::write(&edit, "after").unwrap();
+    let revision = resolve_commit(git.metadata_command(root), "HEAD").unwrap();
+    let diff = git
+        .worktree_command(root)
+        .env("GIT_TRACE2_EVENT", "1")
+        .args(["diff", "--name-only", &revision, "--"])
+        .output()
+        .unwrap();
+    let trace = String::from_utf8_lossy(&diff.stderr);
+    assert!(diff.status.success(), "{trace}");
+    assert_eq!(diff.stdout, b"inside/step.ts\n");
+    assert!(trace.contains(r#""event":"#), "{trace}");
+    assert!(!trace.contains(r#""label":"ensure_full_index""#));
+    assert_eq!(
+        git_changed_files(root, "HEAD").unwrap(),
+        BTreeSet::from([edit])
+    );
 }
 
 /// Checks a changed related location retains a finding whose primary file is unchanged.
