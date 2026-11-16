@@ -63,6 +63,7 @@ test("readToml follows the TOML spec", () => {
     ['[toolchain]\n"channel" = "1.100.0"\n', "1.100.0", "quoted key"],
     ['[other]\nchannel = "1.100.0"\n[toolchain]\nprofile = "minimal"\n', undefined, "channel in another table"],
     ['# channel = "1.100.0"\n[toolchain]\n', undefined, "commented-out channel"],
+    ['\ufeff[toolchain]\nchannel = "1.100.0"\n', "1.100.0", "leading BOM, which Cargo and rustup accept"],
   ];
   for (const [text, channel, label] of rows) assert.equal(parse(text).toolchain?.channel, channel, label);
   assert.equal(parse('[package]\nrust-version = "1.100" # MSRV\n').package["rust-version"], "1.100");
@@ -87,6 +88,30 @@ test("readToml fails closed", () => {
   assert.throws(() => readToml(join(repo, "Cargo.toml"), join(repo, "no-such-python")), /cannot run .*no-such-python to read .*Cargo\.toml: .*ENOENT/);
   assert.deepEqual(readToml(join(repo, "Cargo.toml")).package.name, "cuke-dedup", "control: the real manifest parses");
 });
+
+/** TOML 1.1, which Cargo reads: Python 3.15+ parses it, an older tomllib's error names its dialect; no other error does. */
+test("readToml names the TOML dialect", () => inTemp((dir) => {
+  writeFiles(dir, { "x.toml": "a = { b = 1,\n}\n", "bad.toml": "a = \n" });
+  /** The interpreter's Python 3 minor version, or undefined when it does not run. */
+  const minor = (python) => {
+    const result = spawnSync(python, ["-I", "-c", "import sys; print(sys.version_info[1])"], { encoding: "utf8", env: childEnv });
+    return result.status === 0 ? Number(result.stdout) : undefined;
+  };
+  const found = [PYTHON, "python3.11", "python3.12", "python3.13", "python3.14", "python3.15"].filter((python) => minor(python) !== undefined);
+  assert.ok(found.length > 0, "no interpreter ran");
+  /** An error of `kind` without the dialect hint. */
+  const noHint = (kind) => (error) => error.message.includes(`${kind}: `) && !error.message.includes("reads TOML 1.0");
+  for (const python of found) {
+    const version = minor(python);
+    assert.throws(() => readToml(join(dir, "missing.toml"), python), noHint("FileNotFoundError"), python);
+    if (version >= 15) {
+      assert.deepEqual(readToml(join(dir, "x.toml"), python), { a: { b: 1 } }, python);
+      assert.throws(() => readToml(join(dir, "bad.toml"), python), noHint("TOMLDecodeError"), python);
+    } else {
+      assert.throws(() => readToml(join(dir, "x.toml"), python), new RegExp(`TOMLDecodeError: .*\\(Python 3\\.${version} reads TOML 1\\.0; Cargo reads TOML 1\\.1, which needs Python 3\\.15\\)$`), python);
+    }
+  }
+}));
 
 /** One launch reads several files, in order; a bad second file names that file. */
 test("readTomlFiles", () => inTemp((dir) => {

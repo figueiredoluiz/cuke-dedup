@@ -10,8 +10,9 @@ in `README.md` and `docs/ci-and-baselines.md`. Never edit them by hand:
 npm run bump:version -- 0.3.0
 ```
 
-The script requires Git, updates every site and both lockfiles atomically, rejects unexpected file
-shapes, restores changes if a lockfile refresh fails, and preserves line endings.
+The script requires Git and Python 3.11 or later, updates every site and both lockfiles
+atomically, rejects unexpected file shapes, restores changes if a lockfile refresh fails, and
+preserves line endings and a Cargo manifest's leading BOM.
 
 Then confirm and commit:
 
@@ -22,7 +23,8 @@ git diff
 
 `check:versions` also runs in the development gate and in CI, where `EXPECTED_VERSION` and
 `RELEASE_TAG` pin the agreed version to the dispatched release and its tag. It also checks that the
-Rust pin matches the MSRV, which needs Python 3.11 or later.
+Rust pin matches the MSRV. It reads the Cargo files as TOML with Python 3.11 or later; TOML 1.1
+syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
 
 Release notes live in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 

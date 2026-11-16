@@ -10,7 +10,8 @@ Release steps are in [releasing.md](releasing.md).
   MSRV as `1.100.0` on Linux, macOS and Windows.
 - `npm run check:versions` runs `scripts/check/check-rust-toolchain.mjs`: the pin must be the
   MSRV's release (`x.y` means `x.y.0`). CI's metadata job runs `--print msrv` for the MSRV jobs;
-  the release metadata job runs `--print pin` for the builds. It reads TOML with Python 3.11+.
+  the release metadata job runs `--print pin` for the builds. It reads TOML with Python 3.11+;
+  TOML 1.1 syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
 - `rustup update stable` refreshes the separate stable quality checks (clippy, rustdoc, shear).
 - Ruby 4.0 or later is required by preflight, which compiles Ruby sources with its Prism parser.
 

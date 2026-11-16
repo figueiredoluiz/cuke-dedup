@@ -17,8 +17,9 @@ const RUST_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?$/;
 // One launch reads every file. Floats and dates become [null, type, text]: JSON has no inf/nan or
 // dates, and TOML has no null, so no value in the file can produce that array; a float or date pin
 // (`channel = 1.100`) stays a non-string and is refused. ValueError covers TOMLDecodeError and
-// UnicodeDecodeError (a non-UTF-8 file). No f-strings: Python 2 and 3.5 must still reach the
-// version message.
+// UnicodeDecodeError (a non-UTF-8 file). Cargo and rustup accept a leading BOM, tomllib does not.
+// tomllib reads TOML 1.1, as Cargo does, from Python 3.15; older ones read TOML 1.0, so their
+// errors say so. No f-strings: Python 2 and 3.5 must still reach the version message.
 const PARSE_TOML = `import json, sys
 try:
     import tomllib
@@ -33,9 +34,12 @@ documents = []
 for path in sys.argv[1:]:
     try:
         with open(path, "rb") as handle:
-            documents.append(tomllib.load(handle, parse_float=Float))
+            text = handle.read().decode("utf-8")
+        documents.append(tomllib.loads(text[1:] if text.startswith("\\ufeff") else text, parse_float=Float))
     except (OSError, ValueError) as error:
-        sys.exit("%s: %s: %s" % (path, type(error).__name__, error))
+        dialect = isinstance(error, tomllib.TOMLDecodeError) and sys.version_info < (3, 15)
+        hint = " (Python %d.%d reads TOML 1.0; Cargo reads TOML 1.1, which needs Python 3.15)" % sys.version_info[:2] if dialect else ""
+        sys.exit("%s: %s: %s%s" % (path, type(error).__name__, error, hint))
 json.dump(documents, sys.stdout, default=encode)`;
 
 /** The interpreter that runs PARSE_TOML: `python` on Windows, `python3` elsewhere. */
@@ -62,13 +66,13 @@ export function readTomlFiles(paths, python = PYTHON) {
 }
 
 /** A TOML value for a message: floats and dates by type, arrays named, the rest as JSON. */
-function describe(value) {
+export function describe(value) {
   if (Array.isArray(value) && value[0] === null) return `${value[1]} ${value[2]}`;
   return Array.isArray(value) ? `array ${JSON.stringify(value)}` : JSON.stringify(value);
 }
 
 /** `document[key]` when it is a table or absent; an array (`[[key]]`) or a scalar throws. */
-function tableOf(document, key, path) {
+export function tableOf(document, key, path) {
   const value = document?.[key];
   if (value !== undefined && (value === null || typeof value !== "object" || Array.isArray(value))) {
     throw new Error(`${path} [${key}] must be a table, got ${describe(value)}`);
