@@ -21,10 +21,12 @@ npm run check:versions
 git diff
 ```
 
-`check:versions` also runs in the development gate and in CI, where `EXPECTED_VERSION` and
-`RELEASE_TAG` pin the agreed version to the dispatched release and its tag. It also checks that the
-Rust pin matches the MSRV. It reads the Cargo files as TOML with Python 3.11 or later; TOML 1.1
-syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
+`check:versions` also runs in the development gate and in `ci.yml`. It also checks that the Rust
+pin matches the MSRV and that the docs state both. The release workflow runs
+`check-release-version.mjs` with `EXPECTED_VERSION` and `RELEASE_TAG`, which pin the agreed version
+to the dispatched release and its tag, and `check-rust-toolchain.mjs --print pin`, which checks the
+pin against the MSRV but not the docs. Both read the Cargo files as TOML with Python 3.11 or later;
+TOML 1.1 syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
 
 Release notes live in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 

@@ -2,14 +2,16 @@
 // the CLI prints the values workflows consume.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  DOC_STATEMENTS,
   PYTHON,
+  docMismatches,
   matchPinToMsrv,
   msrvFloor,
   msrvFrom,
@@ -36,6 +38,19 @@ function inTemp(body) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+const docPaths = [...new Set(DOC_STATEMENTS.map(({ path }) => path))];
+
+/** Doc files stating `msrv` x.y (pin x.y.0) in every sentence DOC_STATEMENTS checks. */
+function docFixture(msrv) {
+  const pin = `${msrv}.0`;
+  return {
+    "README.md": `Building from source requires Rust ${msrv} or newer:\n\n- Building from source requires Rust ${msrv} or newer.\n`,
+    "CONTRIBUTING.md": `| Rust (rustup) | \`${pin}\` pinned in \`rust-toolchain.toml\` | x |\n| Rust MSRV | \`${msrv}\` in \`Cargo.toml\` | x |\n\nrustup toolchain install ${pin} --profile minimal --component clippy\n`,
+    "docs/development.md": `- pins the development and release compiler (\`${pin}\`).\n- declares the MSRV (\`${msrv}\`). CI tests the\n  MSRV as \`${pin}\` on Linux, macOS and Windows.\n`,
+    "docs/safety-and-limitations.md": `- The minimum supported Rust version is ${msrv}.\n`,
+  };
 }
 
 /** Write `files` ({relative path: text}) under `dir`. */
@@ -203,9 +218,47 @@ test("readToolchain", () => inTemp((dir) => {
   assert.throws(() => readToolchain(dir), { message: `${join(dir, "rust-toolchain")} exists; rustup prefers it over rust-toolchain.toml, so remove it` });
 }));
 
+/** Docs: the checked-in docs agree, also under CRLF or reflowed; a stale value, a reworded sentence or an unreadable file is reported. */
+test("docMismatches", () => {
+  const toolchain = readToolchain(repo);
+  const docs = Object.fromEntries(docPaths.map((path) => [path, readFileSync(join(repo, path), "utf8")]));
+  /** Reader over the checked-in docs with per-path replacements; an Error value throws. */
+  const read = (overrides = {}) => (path) => {
+    const text = overrides[path] ?? docs[path];
+    if (text instanceof Error) throw text;
+    return text;
+  };
+  /** Mismatches of `values` over the checked-in docs with `overrides`. */
+  const check = (values, overrides) => docMismatches(values, repo, read(overrides));
+  assert.deepEqual(check(toolchain), [], "control: the checked-in docs agree");
+  const crlf = Object.fromEntries(docPaths.map((path) => [path, docs[path].replace(/\r?\n/g, "\r\n")]));
+  assert.deepEqual(check(toolchain, crlf), [], "CRLF checkout");
+  const reflowed = Object.fromEntries(docPaths.map((path) => [path, docs[path]
+    .replace(/(Building|minimum|compiler|declares|on Linux,) /g, "$1\n  ")]));
+  assert.notDeepEqual(reflowed, docs, "the reflow changed the docs");
+  assert.deepEqual(check(toolchain, reflowed), [], "reflowed paragraphs");
+  const next = { pin: "9.9.0", msrv: "9.9", floor: "9.9.0" };
+  const stale = DOC_STATEMENTS.flatMap(({ path, value, count }) =>
+    Array(count).fill(`${join(repo, path)}: states ${toolchain[value]}, ${value} is ${next[value]}`));
+  assert.deepEqual(check(next), stale, "one report per stated value, in statement order");
+  const safety = "docs/safety-and-limitations.md";
+  assert.deepEqual(check(toolchain, { [safety]: docs[safety].replace("The minimum supported Rust version is", "MSRV:") }),
+    [`${join(repo, safety)}: expected 1 statement(s) matching ${DOC_STATEMENTS.at(-1).pattern}, found 0`]);
+  const readme = "README.md";
+  assert.deepEqual(check(toolchain, { [readme]: docs[readme].replace(`requires Rust ${toolchain.msrv} or newer`, "requires Rust 1.99 or newer") }),
+    [`${join(repo, readme)}: states 1.99, msrv is ${toolchain.msrv}`]);
+  const missing = Object.assign(new Error("gone"), { code: "ENOENT" });
+  const contributing = "CONTRIBUTING.md";
+  assert.deepEqual(check(toolchain, { [readme]: missing, [contributing]: docs[contributing].replace(`\`${toolchain.msrv}\` in`, "`1.99` in") }),
+    [`${join(repo, readme)}: cannot read (ENOENT)`, `${join(repo, contributing)}: states 1.99, msrv is ${toolchain.msrv}`], "a missing file does not hide another file's mismatch");
+  let reads = 0;
+  docMismatches(toolchain, repo, (path) => (reads++, docs[path]));
+  assert.equal(reads, docPaths.length, "each file read once");
+});
+
 /** CLI: check, print and usage on fixed fixtures (not the repo's live values); exit codes 0, 1 and 2. */
 test("cli", () => inTemp((dir) => {
-  writeFiles(dir, { "rust-toolchain.toml": '[toolchain]\nchannel = "1.42.0"\n', "Cargo.toml": '[package]\nname = "x"\nrust-version = "1.42"\n' });
+  writeFiles(dir, { "rust-toolchain.toml": '[toolchain]\nchannel = "1.42.0"\n', "Cargo.toml": '[package]\nname = "x"\nrust-version = "1.42"\n', ...docFixture("1.42") });
   /** Run the CLI with `args`. */
   const run = (...args) => spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: childEnv });
   /** Run the CLI through a symlink, as a linked or vendored checkout would. */
@@ -218,7 +271,7 @@ test("cli", () => inTemp((dir) => {
     }
   };
   let result = run("--root", dir);
-  assert.deepEqual([result.status, result.stdout], [0, "rust toolchain pin 1.42.0 matches MSRV 1.42\n"], result.stderr);
+  assert.deepEqual([result.status, result.stdout], [0, "rust toolchain pin 1.42.0 matches MSRV 1.42; docs agree\n"], result.stderr);
   result = run(`--root=${dir}`, "--print", "pin");
   assert.deepEqual([result.status, result.stdout], [0, "1.42.0\n"]);
   result = run("--print", "msrv", "--root", dir);
@@ -233,6 +286,18 @@ test("cli", () => inTemp((dir) => {
     result = runLinked("--root", dir);
     assert.deepEqual([result.status, result.stdout, result.stderr], [1, "", mismatch], "a symlinked CLI still checks");
   }
+  writeFiles(dir, { "rust-toolchain.toml": '[toolchain]\nchannel = "1.42.0"\n', "docs/safety-and-limitations.md": "- The minimum supported Rust version is 1.41.\n" });
+  result = run("--root", dir);
+  const staleSafety = `rust toolchain: ${join(dir, "docs/safety-and-limitations.md")}: states 1.41, msrv is 1.42\n`;
+  assert.deepEqual([result.status, result.stdout, result.stderr], [1, "", staleSafety], "a stale doc fails the check");
+  for (const [print, value] of [["pin", "1.42.0\n"], ["msrv", "1.42.0\n"]]) {
+    result = run("--root", dir, "--print", print);
+    assert.deepEqual([result.status, result.stdout, result.stderr], [0, value, ""], `--print ${print} checks pin and MSRV only`);
+  }
+  rmSync(join(dir, "README.md"));
+  result = run("--root", dir);
+  assert.deepEqual([result.status, result.stdout, result.stderr], [1, "", `rust toolchain: ${join(dir, "README.md")}: cannot read (ENOENT)\n${staleSafety}`],
+    "missing file and the other file's mismatch both reported");
   for (const args of [["--root"], ["--root", "--print"], ["--print", "--root"], ["--print", "version"], ["--root", dir, "--root", dir], ["--print", "pin", "--print", "msrv"], ["--bogus", "x"], ["pin"]]) {
     result = run(...args);
     assert.deepEqual([result.status, result.stdout], [2, ""], args.join(" "));

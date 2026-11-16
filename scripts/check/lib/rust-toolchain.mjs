@@ -1,7 +1,7 @@
 // Rust toolchain pin (`rust-toolchain.toml`) and MSRV (`Cargo.toml` `rust-version`): one reader
 // for CI, release and `check:versions`. Python's `tomllib` parses the TOML, so comments, CRLF,
 // quoting, dotted keys and table scoping follow the TOML spec instead of a regex.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -127,6 +127,51 @@ export function readToolchain(root = ".", readFiles = readTomlFiles) {
   return matchPinToMsrv(pinFrom(toolchain, toolchainPath), msrvFrom(manifest, manifestPath), toolchainPath, manifestPath);
 }
 
+// Each sentence that states a toolchain value; `value` names the field it must equal. `count` is
+// the number of occurrences, so reworded or removed text fails instead of passing unchecked. Prose
+// patterns match any whitespace between words, so a reflowed paragraph still matches; table rows
+// and the command line do not wrap.
+export const DOC_STATEMENTS = [
+  { path: "README.md", pattern: /Building\s+from\s+source\s+requires\s+Rust\s+(\S+)\s+or\s+newer/g, value: "msrv", count: 2 },
+  { path: "CONTRIBUTING.md", pattern: /^\| Rust \(rustup\) \| `([^`]+)` pinned in `rust-toolchain\.toml` \|/gm, value: "pin", count: 1 },
+  { path: "CONTRIBUTING.md", pattern: /^\| Rust MSRV \| `([^`]+)` in `Cargo\.toml` \|/gm, value: "msrv", count: 1 },
+  { path: "CONTRIBUTING.md", pattern: /^rustup toolchain install (\d\S*) --profile minimal --component /gm, value: "pin", count: 1 },
+  { path: "docs/development.md", pattern: /pins\s+the\s+development\s+and\s+release\s+compiler\s+\(`([^`]+)`\)/g, value: "pin", count: 1 },
+  { path: "docs/development.md", pattern: /declares\s+the\s+MSRV\s+\(`([^`]+)`\)/g, value: "msrv", count: 1 },
+  { path: "docs/development.md", pattern: /MSRV\s+as\s+`([^`]+)`\s+on\s+Linux,\s+macOS\s+and\s+Windows/g, value: "floor", count: 1 },
+  { path: "docs/safety-and-limitations.md", pattern: /The\s+minimum\s+supported\s+Rust\s+version\s+is\s+(\S+?)\.?$/gm, value: "msrv", count: 1 },
+];
+
+/**
+ * Every documented toolchain value under `root` that differs from `toolchain`, or whose sentence
+ * count changed; problems name `root`-joined paths, like the TOML errors. `readText` takes the
+ * relative path. Each file is read once; an unreadable file is one problem and the other files are
+ * still checked.
+ */
+export function docMismatches(toolchain, root, readText = (path) => readFileSync(join(root, path), "utf8"), statements = DOC_STATEMENTS) {
+  const problems = [];
+  const texts = new Map();
+  for (const { path, pattern, value, count } of statements) {
+    const file = join(root, path);
+    if (!texts.has(path)) {
+      try {
+        texts.set(path, readText(path));
+      } catch (error) {
+        texts.set(path, null);
+        problems.push(`${file}: cannot read (${error.code ?? error.message})`);
+      }
+    }
+    const text = texts.get(path);
+    if (text === null) continue;
+    const found = [...text.matchAll(pattern)].map((match) => match[1]);
+    if (found.length !== count) problems.push(`${file}: expected ${count} statement(s) matching ${pattern}, found ${found.length}`);
+    for (const stated of found) {
+      if (stated !== toolchain[value]) problems.push(`${file}: states ${stated}, ${value} is ${toolchain[value]}`);
+    }
+  }
+  return problems;
+}
+
 const PRINT = { pin: "pin", msrv: "floor" };
 const USAGE = "usage: check-rust-toolchain.mjs [--root DIR] [--print pin|msrv]";
 
@@ -146,7 +191,11 @@ function parseOptions(args) {
   }
 }
 
-/** CLI entry for check-rust-toolchain.mjs; returns the exit code: 0 agree, 1 disagree or unreadable, 2 usage. */
+/**
+ * CLI entry for check-rust-toolchain.mjs; returns the exit code: 0 agree, 1 disagree or unreadable, 2 usage.
+ * `--print` checks pin against MSRV only: workflows read the value. The docs are checked without
+ * `--print`, through `check:versions` and `docs:check` (development gate, ci.yml), not in release.yml.
+ */
 export function main(argv) {
   const options = parseOptions(argv);
   if (!options) {
@@ -155,7 +204,14 @@ export function main(argv) {
   }
   try {
     const toolchain = readToolchain(options.root);
-    console.log(options.print ? toolchain[PRINT[options.print]] : `rust toolchain pin ${toolchain.pin} matches MSRV ${toolchain.msrv}`);
+    if (options.print) {
+      console.log(toolchain[PRINT[options.print]]);
+      return 0;
+    }
+    const problems = docMismatches(toolchain, options.root);
+    for (const problem of problems) console.error(`rust toolchain: ${problem}`);
+    if (problems.length) return 1;
+    console.log(`rust toolchain pin ${toolchain.pin} matches MSRV ${toolchain.msrv}; docs agree`);
     return 0;
   } catch (error) {
     console.error(`rust toolchain: ${error.message}`);
