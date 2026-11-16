@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import { findActionPins } from "../release/version-sites.mjs";
+import { readCargoVersions } from "./lib/cargo-versions.mjs";
 
 const prebuilt = JSON.parse(await readFile("npm/prebuilt-targets.json", "utf8"));
 const manifests = [
@@ -14,24 +15,10 @@ const packages = await Promise.all(
   manifests.map(async (path) => [path, JSON.parse(await readFile(path, "utf8"))]),
 );
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
-const cargo = await readFile("Cargo.toml", "utf8");
 const action = await readFile("action.yml", "utf8");
 const releaseWorkflow = await readFile(".github/workflows/release.yml", "utf8");
-let inPackageSection = false;
-let cargoVersion;
-for (const line of cargo.split(/\r?\n/)) {
-  if (line.trim() === "[package]") {
-    inPackageSection = true;
-    continue;
-  }
-  if (line.trim().startsWith("[")) {
-    inPackageSection = false;
-  }
-  if (inPackageSection) {
-    cargoVersion = line.match(/^version\s*=\s*"([^"]+)"\s*$/)?.[1] ?? cargoVersion;
-  }
-}
-assert(cargoVersion, "Cargo.toml package version was not found");
+// Both manifests and both lockfiles, parsed as TOML in one launch.
+const { version: cargoVersion, fuzzPin, locked } = readCargoVersions();
 
 const actionVersion = action.match(
   /^  version:\r?\n(?: {4}.*\r?\n)*? {4}default: "([^"]+)"\s*$/m,
@@ -78,21 +65,10 @@ for (const [path, manifest] of packages.slice(1)) {
   );
 }
 
-const fuzzCargo = await readFile("fuzz/Cargo.toml", "utf8");
-const fuzzPin = fuzzCargo.match(
-  /^cuke-dedup = \{ path = "\.\.", version = "=([^"]+)" \}$/m,
-)?.[1];
-assert(fuzzPin, "fuzz/Cargo.toml cuke-dedup pin was not found");
 assert.equal(fuzzPin, cargoVersion, "fuzz/Cargo.toml pin differs from Cargo.toml");
 
-for (const path of ["Cargo.lock", "fuzz/Cargo.lock"]) {
-  const lockfile = await readFile(path, "utf8");
-  // The newline is matched explicitly to tie the version to this package's entry, so it has to
-  // tolerate CRLF the way the other patterns here do. Windows checkouts have no `.gitattributes`
-  // forcing LF, and a bare `$` would still pass because JavaScript treats `\r` as a terminator.
-  const locked = lockfile.match(/^name = "cuke-dedup"\r?\nversion = "([^"]+)"\s*$/m)?.[1];
-  assert(locked, `${path} cuke-dedup entry was not found`);
-  assert.equal(locked, cargoVersion, `${path} version differs from Cargo.toml`);
+for (const [path, version] of locked) {
+  assert.equal(version, cargoVersion, `${path} version differs from Cargo.toml`);
 }
 
 // Discovered, not listed, so a pin added to a new guide is verified without registering it here.
