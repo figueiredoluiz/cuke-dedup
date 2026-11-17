@@ -54,6 +54,8 @@ jobs:
           python-version: "3.15"
       - name: Validate inputs and load checked-in metadata
         id: metadata
+        env:
+          REQUIRE_ACTION_PIN_TAGS: "true"
         shell: bash
         run: |
           release_sha=$(git rev-parse HEAD)
@@ -74,6 +76,7 @@ jobs:
   build-native:
     name: Build ${{ matrix.target }}
     needs: metadata
+    if: '!inputs.publish_npm_only'
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -292,8 +295,8 @@ jobs:
         inputs.publish_release &&
         vars.PUBLISH_NPM == 'true' &&
         needs.metadata.result == 'success' &&
-        needs.build-native.result == 'success' &&
-        (inputs.publish_npm_only || needs.github-release.result == 'success')
+        (inputs.publish_npm_only ||
+         (needs.build-native.result == 'success' && needs.github-release.result == 'success'))
       }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -301,22 +304,26 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: '!inputs.publish_npm_only'
         with:
           pattern: binary-*
           path: native
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: '!inputs.publish_npm_only'
         with:
           pattern: release-*
           path: release-assets
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "24"
+          # Recovery packs the same release with this Node distribution and its bundled npm.
+          node-version: "24.22.3"
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
@@ -325,12 +332,20 @@ jobs:
       - run: RELEASE_TAG="$RELEASE_TAG" node scripts/check/check-release-version.mjs
       - run: node scripts/release/release-matrix.mjs >/dev/null
       - run: python3 scripts/release/verify_npm_binaries.py --binaries native --archives release-assets
+        if: '!inputs.publish_npm_only'
+      - name: Prepare binaries from the published release
+        if: inputs.publish_npm_only
+        run: python3 scripts/release/verify_npm_binaries.py --binaries native --published-release "$RELEASE_TAG" "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: node scripts/release/prepare-npm-packages.mjs native
       - run: npm ci --ignore-scripts --force
       - name: Verify npm trusted-publishing support
         run: node scripts/release/check-npm-trusted-publishing.mjs
       - name: Publish platform packages, then launcher
         run: node scripts/release/publish-npm-packages.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   # Asks the website repository to rebuild once the release is out. It waits for the registries so
   # the site never advertises a version nobody can install yet. It cannot block them: a failure

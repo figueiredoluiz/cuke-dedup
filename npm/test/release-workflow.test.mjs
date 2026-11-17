@@ -38,6 +38,28 @@ test("npm packages are checked against checksummed release archives", () => {
   assert.match(workflow, /verify_npm_binaries\.py --binaries native --archives release-assets/);
 });
 
+/** Verify npm-only retries recover the tagged release assets independently of the native build. */
+test("npm-only recovery uses the published native archives", () => {
+  const build = jobSlice(workflow, "build-native");
+  const publish = jobSlice(workflow, "publish-npm");
+  assert.match(build, /if: '!inputs\.publish_npm_only'/);
+  assert.match(publish, /\(inputs\.publish_npm_only \|\|\s+\(needs\.build-native\.result == 'success' && needs\.github-release\.result == 'success'\)\)/);
+  assert.match(publish, /if: inputs\.publish_npm_only\n\s+run: .*--published-release "\$RELEASE_TAG" "\$GITHUB_SHA"/);
+  assert.match(publish, /--archives release-assets\n\s+if: '!inputs\.publish_npm_only'/);
+  assert.match(publish, /node-version: "\d+\.\d+\.\d+"/);
+});
+
+/** Verify both CI and release metadata validate Action pins against the fetched tag refs. */
+test("Action pin validation has release tags in CI and release metadata", async () => {
+  const ci = (await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const npm = jobSlice(ci, "npm");
+  const metadata = jobSlice(workflow, "metadata");
+  assert.match(npm, /uses: actions\/checkout@[^\n]*\n\s+with:\n\s+fetch-depth: 0/);
+  assert.match(npm, /- run: npm run check:versions\n\s+env:\n\s+REQUIRE_ACTION_PIN_TAGS: "true"/);
+  assert.match(metadata, /uses: actions\/checkout@[^\n]*\n\s+with:\n\s+ref: [^\n]*\n\s+fetch-depth: 0/);
+  assert.match(metadata, /id: metadata\n\s+env:\n\s+REQUIRE_ACTION_PIN_TAGS: "true"/);
+});
+
 /** Verify npm publication requests OIDC permission, checks npm support, and avoids persistent token variables. */
 test("npm publishing uses short-lived OIDC credentials only", () => {
   assert.match(

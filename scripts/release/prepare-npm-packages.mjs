@@ -29,9 +29,7 @@ for (const target of Object.values(TARGETS)) {
   const destination = join(destinationDirectory, binaryName);
   await mkdir(destinationDirectory, { recursive: true });
   await copyFile(join(artifacts, `binary-${rustTarget}`, binaryName), destination);
-  if (binaryName !== "cuke-dedup.exe") {
-    await chmod(destination, 0o755);
-  }
+  await chmod(destination, binaryName === "cuke-dedup.exe" ? 0o644 : 0o755);
   await copyFile("LICENSE", join(packageRoot, "LICENSE"));
   await writeFile(join(packageRoot, "README.md"), renderPlatformReadme(packageManifest));
 }

@@ -10,7 +10,7 @@ import { join, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { LOCKFILES, MANIFESTS, readCargoVersions } from "../check/lib/cargo-versions.mjs";
-import { ACTION_PIN, findActionPins } from "./version-sites.mjs";
+import { checkActionPins } from "./version-sites.mjs";
 
 const run = promisify(execFile);
 
@@ -179,16 +179,7 @@ await planEdit(
   `$1${version}`,
 );
 
-// Discovered rather than listed, so a pin introduced by a new guide is bumped without anyone
-// remembering to register the file here.
-const pins = await findActionPins();
-if (pins.length === 0) {
-  throw new Error("no documented Action version pins were found");
-}
-for (const { path } of pins) {
-  const { text, format } = await read(path);
-  plan(path, text.replace(ACTION_PIN, `figueiredoluiz/cuke-dedup@v${version}`), format);
-}
+await checkActionPins();
 
 // Cargo rewrites the lockfiles from the manifests, so they can only be refreshed once the new
 // versions are on disk. Snapshot them too: if either refresh fails, everything written above is

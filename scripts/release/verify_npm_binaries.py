@@ -18,6 +18,7 @@ from verify_release import archive_in, verify_and_extract
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAFE_TARGET = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_BINARY_NAMES = frozenset({"cuke-dedup", "cuke-dedup.exe"})
+RELEASE_REPOSITORY = "figueiredoluiz/cuke-dedup"
 
 
 def validated_targets(
@@ -91,12 +92,61 @@ def verify_npm_binaries(binaries: Path, archives: Path) -> None:
                 )
 
 
+def prepare_published_binaries(binaries: Path, tag: str, sha: str) -> None:
+    """Recreate npm build inputs from the immutable release for an npm-only retry."""
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", tag) or not re.fullmatch(
+        r"[0-9a-f]{40}", sha
+    ):
+        raise ValueError("expected the release tag and its commit SHA")
+    result = subprocess.run(
+        ["gh", "release", "view", tag, "--repo", RELEASE_REPOSITORY, "--json", "isDraft,isImmutable"],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    if json.loads(result.stdout) != {"isDraft": False, "isImmutable": True}:
+        raise ValueError("npm-only publishing requires an immutable published GitHub release")
+
+    targets = validated_targets()
+    archives = {
+        target: f"cuke-dedup-{tag}-{target}{'.zip' if binary.endswith('.exe') else '.tar.gz'}"
+        for target, binary in targets
+    }
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        download = ["gh", "release", "download", tag, "--repo", RELEASE_REPOSITORY, "--dir", temporary]
+        for archive in archives.values():
+            download.extend(["--pattern", archive, "--pattern", f"{archive}.sha256"])
+        subprocess.run(download, check=True, timeout=180)
+        for target, binary in targets:
+            archive = directory / archives[target]
+            subprocess.run(
+                [
+                    "gh", "attestation", "verify", str(archive), "--repo", RELEASE_REPOSITORY,
+                    "--signer-workflow", f"{RELEASE_REPOSITORY}/.github/workflows/release.yml",
+                    "--source-ref", f"refs/tags/{tag}", "--source-digest", sha,
+                    "--deny-self-hosted-runners",
+                ],
+                check=True,
+                timeout=60,
+            )
+            extracted = verify_and_extract(archive, Path(f"{archive}.sha256"), binaries / f"binary-{target}")
+            if extracted.name != binary:
+                raise ValueError(f"unexpected release binary for {target}")
+
+
 def main() -> None:
     """Verify the npm binary artifacts against the release archives named on the command line."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--binaries", type=Path, required=True)
-    parser.add_argument("--archives", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--archives", type=Path)
+    source.add_argument("--published-release", nargs=2, metavar=("TAG", "SHA"))
     args = parser.parse_args()
+    if args.published_release:
+        prepare_published_binaries(args.binaries, *args.published_release)
+        print("prepared npm binaries from the published release")
+        return
     verify_npm_binaries(args.binaries, args.archives)
     print("verified npm binaries against release archives")
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import { findActionPins } from "../release/version-sites.mjs";
+import { checkActionPins } from "../release/version-sites.mjs";
 import { readCargoVersions } from "./lib/cargo-versions.mjs";
 
 const prebuilt = JSON.parse(await readFile("npm/prebuilt-targets.json", "utf8"));
@@ -71,15 +71,7 @@ for (const [path, version] of locked) {
   assert.equal(version, cargoVersion, `${path} version differs from Cargo.toml`);
 }
 
-// Discovered, not listed, so a pin added to a new guide is verified without registering it here.
-// `bump-version.mjs` rewrites whatever this same helper finds.
-const documentedPins = await findActionPins();
-assert(documentedPins.length > 0, "no documented Action version pins were found");
-for (const { path, versions } of documentedPins) {
-  for (const pinned of versions) {
-    assert.equal(pinned, cargoVersion, `${path} Action pin @v${pinned} differs from Cargo.toml`);
-  }
-}
+await checkActionPins(".", { requireTags: process.env.REQUIRE_ACTION_PIN_TAGS === "true" });
 
 const expectedVersion = process.env.EXPECTED_VERSION;
 if (expectedVersion) {

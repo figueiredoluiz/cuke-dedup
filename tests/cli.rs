@@ -29,8 +29,32 @@ fn fixture_git() -> ProcessCommand {
     command
 }
 
+/// Runs native Git with fixture-owned user configuration and no caller Git overrides.
+fn fixture_git_with_config(config: &Path) -> ProcessCommand {
+    let mut command = ProcessCommand::new("git");
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
+    }
+    command
+        .env("HOME", config)
+        .env("XDG_CONFIG_HOME", config)
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
 /// Initializes a Git repository at `root` with a stable identity and a single initial commit.
 fn init_repository(root: &Path) {
+    init_repository_with(root, fixture_git);
+}
+
+/// Initializes a fixture with the environment of its Git command.
+fn init_repository_with(root: &Path, git: impl Fn() -> ProcessCommand) {
     for args in [
         vec!["init", "-q"],
         vec!["config", "user.email", "test@example.com"],
@@ -38,7 +62,7 @@ fn init_repository(root: &Path) {
         vec!["add", "."],
         vec!["commit", "-qm", "initial"],
     ] {
-        assert!(fixture_git()
+        assert!(git()
             .args(args)
             .current_dir(root)
             .status()
@@ -61,9 +85,10 @@ fn reference_baselines_share_the_feature_expansion_budget() {
         write(root.path(), "input.feature", &feature);
         init_repository(root.path());
         let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        // The near-limit inputs can take longer on contended Windows workers.
         command
             .current_dir(root.path())
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(120))
             .args([".", "--baseline-from-ref", "HEAD", "--reporters", "json"]);
         command
             .assert()
@@ -631,7 +656,8 @@ fn baseline_from_ref_rejects_truncated_base_and_unmaterialized_submodules() {
 fn baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped() {
     use std::os::unix::fs::PermissionsExt;
     let sandbox = tempfile::tempdir().unwrap();
-    let root = sandbox.path();
+    let root = &sandbox.path().join("checkout");
+    fs::create_dir(root).unwrap();
     let real_git = ProcessCommand::new("sh")
         .args(["-c", "command -v git"])
         .output()
@@ -659,7 +685,7 @@ fn baseline_tree_output_is_bounded_before_git_exit_and_children_are_reaped() {
             .success());
     }
     write(
-        root,
+        sandbox.path(),
         "shim/git",
         r#"#!/bin/sh
 # Also exercise Windows-style case variants on case-sensitive Unix hosts.
@@ -675,8 +701,9 @@ done
 exec "$BASELINE_TEST_REAL_GIT" "$@"
 "#,
     );
-    fs::set_permissions(root.join("shim/git"), fs::Permissions::from_mode(0o755)).unwrap();
-    let mut paths = vec![root.join("shim")];
+    let shim = sandbox.path().join("shim");
+    fs::set_permissions(shim.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![shim];
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let path = std::env::join_paths(paths).unwrap();
     let limit = 28 * 100_000;
@@ -4181,6 +4208,625 @@ fn changed_since_compares_a_unicode_changed_source_against_the_full_corpus() {
         ));
 }
 
+/// Checks changed mode keeps the selected commit comparison stable across Git settings.
+#[test]
+fn changed_since_uses_the_selected_commit_and_worktree_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(root, "steps/a.ts", "Given('shared step', () => first());\n");
+    write(
+        root,
+        "steps/b.ts",
+        "Given('original step', () => second());\n",
+    );
+    write(root, ".gitattributes", "steps/b.ts filter=fixture\n");
+    init_repository(root);
+    write(
+        root,
+        "steps/b.ts",
+        "Given('shared step', () => second());\n",
+    );
+    for arguments in [
+        ["commit", "-qam", "add a second definition"].as_slice(),
+        ["replace", "HEAD^", "HEAD"].as_slice(),
+        ["config", "filter.fixture.clean", "false"].as_slice(),
+        ["config", "filter.fixture.required", "true"].as_slice(),
+    ] {
+        let output = fixture_git()
+            .args(arguments)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {:?}",
+            output.stderr
+        );
+    }
+    for (revision, code) in [("HEAD^", 1), ("HEAD", 0)] {
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        let result = command
+            .current_dir(root)
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "core.fsmonitor")
+            .env("GIT_CONFIG_VALUE_0", "false")
+            .args([".", "--changed-since", revision])
+            .assert()
+            .code(code);
+        if code == 1 {
+            result.stdout(predicate::str::contains("duplicate-matcher"));
+        } else {
+            result.stderr(predicate::str::contains(
+                "found no tracked or untracked files",
+            ));
+        }
+    }
+    write(root, "steps/b.ts", "Given('shared step', () => third());\n");
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([".", "--changed-since", "HEAD"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("duplicate-matcher"));
+}
+
+/// Checks a moved definition is analyzed while its previous blob is absent locally.
+#[test]
+fn changed_since_includes_renamed_files_in_an_offline_partial_clone() {
+    let fixture = tempfile::tempdir().unwrap();
+    let source = fixture.path().join("source");
+    let checkout = fixture.path().join("checkout");
+    let old = format!(
+        "{}Given('shared step', () => second());\n",
+        "// stable context for rename similarity\n".repeat(30)
+    );
+    write(&source, "steps/old.ts", &old);
+    write(
+        &source,
+        "steps/peer.ts",
+        "Given('shared step', () => first());\n",
+    );
+    // Use fixture-owned Git configuration for local transport and repository settings.
+    let native = || fixture_git_with_config(fixture.path());
+    init_repository_with(&source, native);
+    // Return stdout only after checking the fixture command succeeded.
+    let git = |directory: &Path, args: &[&str]| {
+        let output = native().current_dir(directory).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&source, &["config", "uploadpack.allowFilter", "true"]);
+    let old_blob = git(&source, &["rev-parse", "HEAD:steps/old.ts"]);
+    fs::remove_file(source.join("steps/old.ts")).unwrap();
+    write(
+        &source,
+        "steps/renamed.ts",
+        &(old + "// amended after moving\n"),
+    );
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-qm", "move definition"]);
+    let paths = git(&source, &["diff", "--name-status", "-M", "HEAD^", "HEAD"]);
+    assert!(
+        paths.starts_with('R') && paths.ends_with("\tsteps/old.ts\tsteps/renamed.ts\n"),
+        "{paths}"
+    );
+    let partial = native()
+        .args(["-c", "protocol.file.allow=always"])
+        .args(["clone", "--no-local", "--filter=blob:none", "--quiet", "--"])
+        .arg(&source)
+        .arg(&checkout)
+        .output()
+        .unwrap();
+    assert!(
+        partial.status.success(),
+        "{}",
+        String::from_utf8_lossy(&partial.stderr)
+    );
+    fs::rename(&source, fixture.path().join("offline-source")).unwrap();
+    let previous = native()
+        .current_dir(&checkout)
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .args(["cat-file", "-e", old_blob.trim()])
+        .output()
+        .unwrap();
+    assert!(!previous.status.success(), "old blob unexpectedly present");
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(&checkout)
+        .args([".", "--changed-since", "HEAD^"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("duplicate-matcher"))
+        .stdout(predicate::str::contains("steps/renamed.ts"));
+}
+
+/// Checks both Git comparison modes resolve Git outside the analyzed checkout.
+#[cfg(unix)]
+#[test]
+fn changed_since_resolves_git_from_the_operator_path() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let fixture = tempfile::tempdir().unwrap();
+    let root = &fixture.path().join("checkout");
+    let tools = fixture.path().join("operator-tools");
+    write(root, "tools/git", "#!/bin/sh\nexit 17\n");
+    write(&tools, "skip", "#!/bin/sh\nexit 18\n");
+    write(
+        &tools,
+        "dispatcher",
+        "#!/bin/sh\n[ \"${0##*/}\" = git ] || exit 19\nPATH=\"$FIXTURE_GIT_PATH\" exec git \"$@\"\n",
+    );
+    for executable in [
+        root.join("tools/git"),
+        tools.join("skip"),
+        tools.join("dispatcher"),
+    ] {
+        fs::set_permissions(executable, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for directory in [
+        root.join("shadow"),
+        tools.join("bin"),
+        tools.join("redirect"),
+    ] {
+        fs::create_dir(directory).unwrap();
+    }
+    symlink(tools.join("skip"), root.join("shadow/git")).unwrap();
+    symlink(root.join("shadow"), tools.join("alias")).unwrap();
+    symlink(root.join("tools/git"), tools.join("redirect/git")).unwrap();
+    symlink("../dispatcher", tools.join("bin/git")).unwrap();
+    write(root, "steps/a.ts", "Given('shared step', () => first());\n");
+    write(
+        root,
+        "steps/example.feature",
+        "Feature: Example\n  Scenario: Example\n    Given shared step\n",
+    );
+    init_repository(root);
+    write(
+        root,
+        "steps/b.ts",
+        "Given('shared step', () => second());\n",
+    );
+    let path = std::env::var_os("PATH").unwrap();
+    for candidates in [
+        vec![tools.join("bin")],
+        vec![
+            root.join("tools"),
+            tools.join("alias"),
+            tools.join("redirect"),
+            tools.join("bin"),
+        ],
+    ] {
+        let paths =
+            std::env::join_paths(candidates.into_iter().chain(std::env::split_paths(&path)))
+                .unwrap();
+        for mode in ["--changed-since", "--baseline-from-ref"] {
+            Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root.join("steps"))
+                .env("PATH", &paths)
+                .env("FIXTURE_GIT_PATH", &path)
+                .args([".", mode, "HEAD"])
+                .assert()
+                .code(1)
+                .stdout(predicate::str::contains("duplicate-matcher"));
+        }
+    }
+    for mode in ["--changed-since", "--baseline-from-ref"] {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root.join("steps"))
+            .env("PATH", root.join("tools"))
+            .args([".", mode, "HEAD"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("could not locate Git in PATH"));
+    }
+}
+
+/// Compares changed-file findings for a tracked path beyond the Windows path limit.
+#[cfg(windows)]
+#[test]
+fn changed_since_preserves_windows_long_paths() {
+    let repository = tempfile::tempdir().unwrap();
+    let config = tempfile::tempdir().unwrap();
+    let root = repository.path();
+    let long_file = [
+        "a".repeat(110),
+        "b".repeat(110),
+        "c".repeat(55),
+        "step.ts".to_owned(),
+    ]
+    .join("/");
+    write(root, "other.ts", "Given('shared step', () => first());\n");
+    write(
+        root,
+        &long_file,
+        "Given('original step', () => second());\n",
+    );
+    let git = || {
+        let mut command = fixture_git_with_config(config.path());
+        command.current_dir(root);
+        command
+    };
+    init_repository_with(root, || {
+        let mut command = git();
+        command.args(["-c", "core.longpaths=true"]);
+        command
+    });
+    assert!(git()
+        .args(["config", "core.longpaths", "true"])
+        .status()
+        .unwrap()
+        .success());
+
+    for (source, expected_path, code) in [
+        ("Given('original step', () => second());\n", "", 0),
+        (
+            "Given('shared step', () => second());\n",
+            long_file.as_str(),
+            1,
+        ),
+    ] {
+        write(root, &long_file, source);
+        let native = git()
+            .args(["diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--"])
+            .output()
+            .unwrap();
+        assert!(native.status.success(), "{:?}", native.stderr);
+        assert_eq!(
+            String::from_utf8(native.stdout).unwrap().trim(),
+            expected_path
+        );
+        let result = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .args([".", "--changed-since", "HEAD"])
+            .assert()
+            .code(code);
+        if code == 1 {
+            result.stdout(predicate::str::contains("duplicate-matcher"));
+        } else {
+            result.stdout(predicate::str::contains("duplicate-matcher").not());
+        }
+    }
+}
+
+/// Checks malformed Git metadata and failed queries stop changed-file analysis with a diagnostic.
+#[cfg(unix)]
+#[test]
+fn changed_since_reports_invalid_git_comparison_metadata() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    write(root, "steps/a.ts", "Given('shared step', () => first());\n");
+    write(
+        root,
+        "steps/example.feature",
+        "Feature: Shared\n  Scenario: Run\n    Given shared step\n",
+    );
+    init_repository(root);
+    write(
+        root,
+        "steps/b.ts",
+        "Given('shared step', () => second());\n",
+    );
+    let trusted_config = tools.path().join("trusted.gitconfig");
+    let empty_config = tools.path().join("empty.gitconfig");
+    fs::write(&empty_config, "").unwrap();
+    assert!(fixture_git()
+        .args(["config", "--file"])
+        .arg(&trusted_config)
+        .arg("safe.directory")
+        .arg(root.canonicalize().unwrap())
+        .status()
+        .unwrap()
+        .success());
+    let ownership_probe = fixture_git()
+        .current_dir(root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", &empty_config)
+        .env("GIT_CONFIG_COUNT", "0")
+        .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .unwrap();
+    let supports_ownership_check = !ownership_probe.status.success();
+    if supports_ownership_check {
+        assert!(String::from_utf8_lossy(&ownership_probe.stderr).contains("dubious ownership"));
+    }
+    write(
+        tools.path(),
+        "git",
+        r#"#!/bin/sh
+case "$FIXTURE_GIT_CASE:$*" in
+    format:*" hash-object --stdin"|format:*" --show-object-format") printf 'unknown\n'; exit 0 ;;
+    format-length:*" hash-object --stdin") printf 'abc\n'; exit 0 ;;
+    legacy:*" --path-format="*|legacy:*" --show-object-format") exit 129 ;;
+    settings:*" config --null --get-regexp "*) exit 2 ;;
+    scope:*" check-ignore --quiet -- "*) exit 2 ;;
+    paths:*" ls-files --others "*) printf '../outside.ts\000'; exit 0 ;;
+    trusted:*" rev-parse "*|trusted:*" config "*|trusted:*" ls-tree "*|trusted:*" clone "*|untrusted:*" rev-parse "*|untrusted:*" config "*)
+        if [ -z "${GIT_DIR+x}" ]; then
+            export GIT_TEST_ASSUME_DIFFERENT_OWNER=1 GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL-$FIXTURE_GIT_CONFIG}"
+        fi
+        ;;
+esac
+PATH="$FIXTURE_GIT_PATH" exec git "$@"
+"#,
+    );
+    fs::set_permissions(tools.path().join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::var_os("PATH").unwrap();
+    let fixture_path = std::env::join_paths(
+        std::iter::once(tools.path().to_path_buf()).chain(std::env::split_paths(&path)),
+    )
+    .unwrap();
+    for (case, code, diagnostic) in [
+        ("control", 1, ""),
+        ("legacy", 1, ""),
+        ("format", 2, "unsupported Git object format"),
+        ("format-length", 2, "unsupported Git object format"),
+        ("settings", 2, "failed to read Git worktree settings"),
+        ("scope", 2, "git check-ignore failed for target"),
+        ("paths", 2, "invalid relative path in Git listing"),
+        ("trusted", 1, ""),
+        ("untrusted", 2, "dubious ownership"),
+    ] {
+        if matches!(case, "trusted" | "untrusted") && !supports_ownership_check {
+            continue;
+        }
+        let config = if case == "trusted" {
+            &trusted_config
+        } else {
+            &empty_config
+        };
+        let modes = if matches!(case, "trusted" | "untrusted") {
+            ["--changed-since", "--baseline-from-ref"].as_slice()
+        } else {
+            ["--changed-since"].as_slice()
+        };
+        for mode in modes {
+            let result = Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root)
+                .env("PATH", &fixture_path)
+                .env("FIXTURE_GIT_PATH", &path)
+                .env("FIXTURE_GIT_CASE", case)
+                .env("FIXTURE_GIT_CONFIG", config)
+                .args(["steps", mode, "HEAD"])
+                .assert()
+                .code(code);
+            if code == 1 {
+                result.stdout(predicate::str::contains("duplicate-matcher"));
+            } else {
+                result.stderr(predicate::str::contains(diagnostic));
+            }
+        }
+    }
+}
+
+/// Compares sparse checkout findings with native Git while leaving the index intact.
+#[test]
+fn changed_since_preserves_sparse_checkout_edits() {
+    const ORIGINAL: &str = "Given('shared step', () => second());\n";
+    let config = tempfile::tempdir().unwrap();
+    let sparse_help = fixture_git_with_config(config.path())
+        .args(["sparse-checkout", "init", "-h"])
+        .output()
+        .unwrap();
+    let supports_compact_index = String::from_utf8_lossy(&sparse_help.stdout)
+        .contains("sparse-index")
+        || String::from_utf8_lossy(&sparse_help.stderr).contains("sparse-index");
+    for (mode, init, pattern) in [
+        ("non-cone", &["--no-cone"][..], "/inside/"),
+        ("cone", &["--cone"][..], "inside"),
+        ("sparse index", &["--cone", "--sparse-index"][..], "inside"),
+    ] {
+        if mode == "sparse index" && !supports_compact_index {
+            continue;
+        }
+        let repository = tempfile::tempdir().unwrap();
+        let root = repository.path();
+        let git = || {
+            let mut command = fixture_git_with_config(config.path());
+            command.current_dir(root).env("GIT_OPTIONAL_LOCKS", "0");
+            command
+        };
+        write(
+            root,
+            "inside/steps/a.ts",
+            "Given('shared step', () => first());\n",
+        );
+        write(root, "outside/steps/b.ts", ORIGINAL);
+        init_repository_with(root, git);
+        for args in [
+            [&["sparse-checkout", "init"][..], init].concat(),
+            vec!["sparse-checkout", "set", pattern],
+        ] {
+            let output = git().args(args).output().unwrap();
+            assert!(output.status.success(), "{mode}: {:?}", output.stderr);
+        }
+        assert!(!root.join("outside/steps/b.ts").exists(), "{mode}");
+        if mode == "sparse index" {
+            let output = git().args(["ls-files", "--sparse"]).output().unwrap();
+            assert!(output.status.success(), "{:?}", output.stderr);
+            assert!(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|path| path == "outside/"));
+        }
+        let index = root.join(".git/index");
+        let original_index = fs::read(&index).unwrap();
+        let oracle_index = config.path().join("oracle-index");
+        for (outside, inside_edit, expected_path) in [
+            (None, false, Some("")),
+            (Some(ORIGINAL), false, Some("")),
+            (Some("Given('shared step', () => third());\n"), false, None),
+            (Some(ORIGINAL), true, Some("inside/steps/a.ts")),
+        ] {
+            if let Some(contents) = outside {
+                write(root, "outside/steps/b.ts", contents);
+                fs::File::options()
+                    .write(true)
+                    .open(root.join("outside/steps/b.ts"))
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(
+                        std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_200_000_000),
+                    ))
+                    .unwrap();
+            }
+            if inside_edit {
+                write(
+                    root,
+                    "inside/steps/a.ts",
+                    "Given('shared step', () => fourth());\n",
+                );
+            }
+            fs::write(&oracle_index, &original_index).unwrap();
+            let native = git()
+                .env("GIT_INDEX_FILE", &oracle_index)
+                .args([
+                    "diff",
+                    "--name-only",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "HEAD",
+                    "--",
+                ])
+                .output()
+                .unwrap();
+            assert!(native.status.success(), "{mode}: {:?}", native.stderr);
+            let paths = String::from_utf8(native.stdout).unwrap();
+            let selected = paths.trim();
+            // Git versions differ on when present paths clear the skip-worktree flag.
+            if let Some(expected) = expected_path {
+                assert_eq!(selected, expected, "{mode}");
+            } else {
+                assert!(
+                    matches!(selected, "" | "outside/steps/b.ts"),
+                    "{mode}: {selected}"
+                );
+            }
+            let checked = Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root)
+                .env("HOME", config.path())
+                .env("XDG_CONFIG_HOME", config.path())
+                .args([".", "--changed-since", "HEAD"])
+                .assert()
+                .code(i32::from(!selected.is_empty()));
+            if selected.is_empty() {
+                checked.stderr(predicate::str::contains(
+                    "found no tracked or untracked files",
+                ));
+            } else {
+                checked.stdout(predicate::str::contains("duplicate-matcher"));
+            }
+            assert!(
+                fs::read(&index).unwrap() == original_index,
+                "{mode}: analysis rewrote the checkout index"
+            );
+        }
+    }
+}
+
+/// Checks inherited Git conversion settings distinguish normalization from an actual edit.
+#[test]
+fn changed_since_preserves_inherited_line_endings() {
+    use std::fs::FileTimes;
+    use std::time::{Duration, SystemTime};
+
+    for (filename, configuration) in [
+        ("git/config", "[core]\n  autocrlf = true\n"),
+        (".gitconfig", "[core]\n  autocrlf = true\n"),
+        ("git/attributes", "*.ts text eol=crlf\n"),
+        ("git/project-attributes", "*.ts text eol=crlf\n"),
+    ] {
+        let repository = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let root = repository.path();
+        write(config.path(), filename, configuration);
+        if filename == ".gitconfig" {
+            write(config.path(), "git/config", "[core]\n  autocrlf = false\n");
+        }
+        write(root, "steps/a.ts", "Given('shared step', () => first());\n");
+        write(
+            root,
+            "steps/b.ts",
+            "Given('shared step', () => second());\n",
+        );
+        let git = || fixture_git_with_config(config.path());
+        init_repository_with(root, git);
+        if filename == "git/project-attributes" {
+            write(config.path(), "git/attributes", "*.ts -text\n");
+            assert!(git()
+                .current_dir(root)
+                .args(["config", "core.attributesFile"])
+                .arg(config.path().join(filename))
+                .status()
+                .unwrap()
+                .success());
+        }
+
+        let changed = root.join("steps/b.ts");
+        for (contents, expected_code) in [
+            ("Given('shared step', () => second());\r\n", 0),
+            ("Given('shared step', () => third());\r\n", 1),
+        ] {
+            fs::write(&changed, contents).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&changed)
+                .unwrap()
+                .set_times(
+                    FileTimes::new()
+                        .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_200_000_000)),
+                )
+                .unwrap();
+            let native = git()
+                .current_dir(root)
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .args([
+                    "diff",
+                    "--quiet",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "HEAD",
+                    "--",
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(native.status.code(), Some(expected_code), "{filename}");
+            let result = Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root)
+                .env("HOME", config.path())
+                .env("XDG_CONFIG_HOME", config.path())
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "core.autocrlf")
+                .env("GIT_CONFIG_VALUE_0", "false")
+                .args([".", "--changed-since", "HEAD"])
+                .assert()
+                .code(expected_code);
+            if expected_code == 0 {
+                result.stderr(predicate::str::contains(
+                    "found no tracked or untracked files",
+                ));
+            } else {
+                result.stdout(predicate::str::contains("duplicate-matcher"));
+            }
+        }
+    }
+}
+
 /// Checks option-like changed revisions are rejected before they can alter Git filtering.
 #[test]
 fn changed_since_rejects_option_like_revisions_instead_of_weakening_the_gate() {
@@ -4283,38 +4929,44 @@ fn changed_since_handles_an_untracked_non_utf8_file() {
         .stdout(predicate::str::contains("duplicate-matcher"));
 }
 
-/// Checks changed analysis rejects a root ignored by Git.
+/// Checks changed analysis respects repository and default global ignore rules.
 #[test]
 fn changed_since_rejects_a_gitignored_analysis_root() {
     let directory = tempfile::tempdir().unwrap();
-    write(directory.path(), ".gitignore", "ignored/\n");
-    write(
-        directory.path(),
-        "ignored/steps.ts",
-        "Given('ignored step', () => work());\n",
-    );
-    for args in [
-        vec!["init", "-q"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test"],
-        vec!["add", ".gitignore"],
-        vec!["commit", "-qm", "initial"],
-    ] {
-        assert!(fixture_git()
-            .args(args)
-            .current_dir(directory.path())
-            .status()
-            .unwrap()
-            .success());
-    }
+    let config = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(root, ".gitignore", "repo-ignored/\n:(glob)ignored/\n");
+    write(config.path(), "git/ignore", "operator-ignored/\n");
+    init_repository_with(root, || fixture_git_with_config(config.path()));
 
-    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
-    command
-        .current_dir(directory.path())
-        .args(["ignored", "--changed-since", "HEAD"])
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("ignored by Git"));
+    for (scope, expected_code) in [
+        ("repo-ignored", 2),
+        ("operator-ignored", 2),
+        ("included", 1),
+        #[cfg(unix)]
+        (":(glob)included", 1),
+        #[cfg(unix)]
+        (":(glob)ignored", 2),
+    ] {
+        write(
+            root,
+            &format!("{scope}/steps.ts"),
+            "Given('shared step', () => first());\nGiven('shared step', () => second());\n",
+        );
+        let result = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .env("HOME", config.path())
+            .env("XDG_CONFIG_HOME", config.path())
+            .args([scope, "--changed-since", "HEAD"])
+            .assert()
+            .code(expected_code);
+        if expected_code == 2 {
+            result.stderr(predicate::str::contains("ignored by Git"));
+        } else {
+            result.stdout(predicate::str::contains("duplicate-matcher"));
+        }
+    }
 }
 
 /// Checks changed mode disables unused findings but still fails when no discovered feature parses.

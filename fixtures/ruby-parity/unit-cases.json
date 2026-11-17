@@ -2932,6 +2932,48 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "changed_files_use_the_linked_worktree_index",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Linked worktree index and ignore handling runs before source discovery and behaves the same for every adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_accept_sha256_and_implicit_git_settings",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git's object format and worktree settings are handled before the analyzer selects a source adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_comparison_metadata_copy_enforces_file_and_size_limits",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "The shared comparison caps Git metadata reads independently of the source adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_use_an_independent_index_snapshot",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git index snapshots are independent of the source adapter and preserve timestamps used in comparison.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_read_git_long_path_setting",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git path settings reach the comparison before language-specific analysis begins.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_keep_sparse_indexes_compact",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Compact Git indexes are shared by changed-file comparisons for every language adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "changed_files_preserve_newlines_in_unix_names",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -6222,6 +6264,55 @@
             "name": "ruby_changed_since_decodes_paths_and_keeps_findings_that_reach_changed_files"
           },
           "rationale": "A staged \"steps/café changed.rb\" duplicating an unchanged Ruby definition exits 1 naming duplicate-matcher and the Unicode path, and passes with \"Duplication: 2 of 2 definitions (100.00%), threshold 100.00% — PASS\" at --threshold 100.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_uses_the_selected_commit_and_worktree_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Revision selection and changed path enumeration run before adapter-specific analysis. The TypeScript fixture makes the selected paths observable in the findings.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_includes_renamed_files_in_an_offline_partial_clone",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Changed path enumeration selects the destination of a moved definition before adapter-specific analysis, even when the previous blob is unavailable.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_resolves_git_from_the_operator_path",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git executable selection runs before source discovery and uses the same lookup for every adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_reports_invalid_git_comparison_metadata",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Invalid Git metadata ends the comparison before adapter-specific analysis starts.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_preserves_sparse_checkout_edits",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git selects changed paths in sparse worktrees before analysis reaches either language adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_preserves_windows_long_paths",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git for Windows selects long paths for the shared analyzer before source-specific processing.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_since_preserves_inherited_line_endings",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Git line-ending normalization applies before the shared comparison selects paths for source analysis.",
           "behaviorClass": "shared-engine-invariant"
         },
         {

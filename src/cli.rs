@@ -404,7 +404,6 @@ fn resolve_changed_files(
     let Some(base) = changed_since else {
         return Ok(None);
     };
-    modes::ensure_changed_root_is_trackable(&config.root)?;
     Ok(Some(modes::git_changed_files(&config.root, base)?))
 }
 

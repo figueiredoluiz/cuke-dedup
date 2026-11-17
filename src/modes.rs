@@ -1,11 +1,13 @@
 //! Changed-files and existing-findings baseline modes for incremental CI adoption.
 
-use crate::config::{canonical_platform_path, normalize_platform_path};
+use crate::config::canonical_platform_path;
 use crate::model::{stable_fingerprint_parts, Finding, Suppression};
 use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{OsStr, OsString};
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,14 +17,21 @@ const MAX_BASELINE_CHECKOUT_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Returns tracked changes since `base` plus untracked files beneath `root`.
 pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
-    let base_oid = resolve_commit(root, base)?;
+    let git = ChangedGit::new(root)?;
+    git.ensure_trackable(root)?;
+    let base_oid = resolve_commit(git.metadata_command(root), base)?;
     let tracked = git_paths(
-        root,
+        git.worktree_command(root),
         &[
             "diff",
             "--relative",
             "--name-only",
             "-z",
+            "--no-ext-diff",
+            "--no-textconv",
+            // Select rename destinations without loading historical blobs for similarity scoring.
+            "--no-renames",
+            "--ignore-submodules=dirty",
             "--diff-filter=ACMR",
             &base_oid,
             "--",
@@ -30,7 +39,7 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
         &format!("git diff against `{base}` failed"),
     )?;
     let untracked = git_paths(
-        root,
+        git.worktree_command(root),
         &["ls-files", "--others", "--exclude-standard", "-z", "--"],
         "git untracked-file discovery failed",
     )?;
@@ -41,41 +50,333 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
         .collect())
 }
 
-/// Git environment variables that a `git` process exports to the hooks it runs. They outrank a
-/// child invocation's `-C`, so leaving them in place would point changed-files mode at whichever
-/// repository invoked the hook instead of the analyzed root.
-const INHERITED_GIT_VARIABLES: [&str; 8] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_PREFIX",
-    "GIT_CEILING_DIRECTORIES",
-];
-
-/// Builds a `git` invocation bound to `root` and nothing else, so results describe the analyzed
-/// tree whether CukeDedup runs from a shell, CI, or another repository's Git hook.
-fn git_at(root: &Path) -> Command {
-    let mut command = Command::new("git");
-    for variable in INHERITED_GIT_VARIABLES {
-        command.env_remove(variable);
+/// Removes caller Git settings, including the repository environment exported to hooks.
+fn clear_git_environment(command: &mut Command) {
+    for (name, _) in std::env::vars_os() {
+        // Windows preserves spelling but treats environment names case-insensitively.
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
     }
-    command.arg("-C").arg(root);
+}
+
+/// Builds an isolated Git command with an explicit checkout and no process-wide Git config.
+fn isolated_git(executable: &OsStr, root: &Path, scratch: &Path) -> Command {
+    let mut command = Command::new(executable);
+    clear_git_environment(&mut command);
     command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", scratch.join("no-config"))
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_GRAFT_FILE", scratch.join("no-grafts"))
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg(git_path_setting(
+            "core.hooksPath",
+            &scratch.join("no-hooks"),
+        ));
+    command
+}
+
+/// Reads checkout metadata with Git's protected configuration and with filesystem monitors disabled.
+fn checkout_metadata_git(executable: &OsStr, root: &Path, scratch: &Path) -> Command {
+    let mut command = isolated_git(executable, root, scratch);
+    command
+        .env_remove("GIT_CONFIG_NOSYSTEM")
+        .env_remove("GIT_CONFIG_GLOBAL")
+        .env("GIT_ALLOW_PROTOCOL", "")
+        .args(["-c", "core.fsmonitor="]);
+    command
+}
+
+/// Formats a Git path setting without changing the bytes of the path.
+fn git_path_setting(key: &str, value: &Path) -> OsString {
+    let mut setting = OsString::from(key);
+    setting.push("=");
+    setting.push(value.as_os_str());
+    setting
+}
+
+/// Resolves Git through absolute PATH entries outside the analyzed checkout.
+fn git_executable(root: &Path) -> Result<PathBuf> {
+    let root = canonical_platform_path(root)?;
+    let checkout = root.ancestors().find(|path| path.join(".git").exists());
+    let path = std::env::var_os("PATH").context("Git requires PATH")?;
+    std::env::split_paths(&path)
+        .filter(|directory| directory.is_absolute())
+        .filter(|directory| checkout.is_none_or(|root| !directory.starts_with(root)))
+        .find_map(|directory| {
+            let resolved_directory = canonical_platform_path(&directory).ok()?;
+            if checkout.is_some_and(|root| resolved_directory.starts_with(root)) {
+                return None;
+            }
+            let candidate = directory.join(if cfg!(windows) { "git.exe" } else { "git" });
+            let target = canonical_platform_path(&candidate).ok()?;
+            // Command dispatchers may use the invoked name to select Git.
+            (checkout.is_none_or(|root| !target.starts_with(root))
+                && git_file_is_executable(&target))
+            .then_some(candidate)
+        })
+        .context("could not locate Git in PATH")
+}
+
+/// Checks that a Git executable candidate is a regular executable file on Unix.
+#[cfg(unix)]
+fn git_file_is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+}
+
+/// Checks that a Git executable candidate is a regular file on Windows.
+#[cfg(not(unix))]
+fn git_file_is_executable(path: &Path) -> bool {
+    path.is_file()
+}
+
+/// Uses an index snapshot and the checkout's objects with an independent worktree config.
+struct ChangedGit {
+    scratch: tempfile::TempDir,
+    executable: PathBuf,
+    repository: PathBuf,
+    objects: PathBuf,
+    settings: Vec<OsString>,
+}
+
+impl ChangedGit {
+    /// Prepares a Git view with only the checkout settings needed to compare worktree paths.
+    fn new(root: &Path) -> Result<Self> {
+        let root = &canonical_platform_path(root)?;
+        let scratch = tempfile::tempdir().context("cannot prepare changed-file comparison")?;
+        let executable = git_executable(root)?;
+        let metadata = || checkout_metadata_git(executable.as_os_str(), root, scratch.path());
+        let query = |arguments: &[&str], failure: &str| {
+            checked_git_output(metadata().args(arguments), failure)
+        };
+        let repository = canonical_platform_path(&git_output_path(&query(
+            &["rev-parse", "--show-toplevel"],
+            "changed-files mode requires a Git repository",
+        )?)?)?;
+        // Relative paths from rev-parse are relative to the directory passed to Git.
+        let path = |name| -> Result<PathBuf> {
+            Ok(root.join(git_output_path(&query(
+                &["rev-parse", "--git-path", name],
+                "failed to locate changed-file comparison metadata",
+            )?)?))
+        };
+        let index = path("index")?;
+        let objects = path("objects")?;
+        // Command::output closes stdin. Hashing the empty blob does not store it.
+        let hash = query(
+            &["hash-object", "--stdin"],
+            "failed to identify Git object format",
+        )?;
+        let oid = hash
+            .strip_suffix(b"\n")
+            .filter(|oid| oid.iter().all(u8::is_ascii_hexdigit))
+            .context("unsupported Git object format for changed-file comparison")?;
+        let mut init = isolated_git(executable.as_os_str(), scratch.path(), scratch.path());
+        init.args(["init", "--quiet", "--bare", "--template="]);
+        match oid.len() {
+            40 => {}
+            64 => {
+                init.arg("--object-format=sha256");
+            }
+            _ => bail!("unsupported Git object format for changed-file comparison"),
+        }
+        let git_directory = scratch.path().join("git");
+        init.arg(&git_directory);
+        checked_git_output(&mut init, "failed to prepare changed-file comparison")?;
+        // Git may refresh stat entries during diff. Let it do that in the private index.
+        let snapshot = git_directory.join("index");
+        match copy_git_index(&index, &snapshot) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("failed to snapshot the Git index"),
+        }
+        // A non-boolean splitIndex value makes Git keep the saved index layout, as when unset.
+        let shared_index = checked_git_output(
+            metadata().env("GIT_INDEX_FILE", &snapshot).args([
+                "-c",
+                "core.splitIndex=keep",
+                "rev-parse",
+                "--shared-index-path",
+            ]),
+            "failed to locate the Git shared index",
+        )?;
+        if !shared_index.is_empty() {
+            // Older Git versions look for the linked index only under GIT_DIR.
+            let source = root.join(git_output_path(&shared_index)?);
+            let name = source
+                .file_name()
+                .context("invalid Git shared index path")?;
+            copy_git_index(&source, &git_directory.join(name))
+                .context("failed to preserve the Git shared index")?;
+        }
+        for name in ["info/exclude", "info/attributes", "info/sparse-checkout"] {
+            copy_git_info(&path(name)?, &git_directory.join(name))?;
+        }
+        let settings = worktree_settings(executable.as_os_str(), root, scratch.path())?;
+        Ok(Self {
+            scratch,
+            executable,
+            repository,
+            objects,
+            settings,
+        })
+    }
+
+    /// Runs metadata queries where the operator's revision names are defined.
+    fn metadata_command(&self, root: &Path) -> Command {
+        checkout_metadata_git(self.executable.as_os_str(), root, self.scratch.path())
+    }
+
+    /// Reads the worktree with the private config and index and the checkout's objects.
+    fn worktree_command(&self, root: &Path) -> Command {
+        let scratch = self.scratch.path();
+        let mut command = isolated_git(self.executable.as_os_str(), root, scratch);
+        command
+            .env("GIT_ALLOW_PROTOCOL", "")
+            .env("GIT_DIR", scratch.join("git"))
+            .env("GIT_WORK_TREE", &self.repository)
+            .env("GIT_OBJECT_DIRECTORY", &self.objects)
+            .args(["-c", "core.bare=false"]);
+        for setting in &self.settings {
+            command.arg("-c").arg(setting);
+        }
+        command
+    }
+
+    /// Requires the requested scope to be in the worktree and addressable by Git.
+    fn ensure_trackable(&self, root: &Path) -> Result<()> {
+        let root = canonical_platform_path(root)?;
+        let relative = root
+            .strip_prefix(&self.repository)
+            .context("analysis directory is outside the Git repository")?;
+        if relative.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let status = self
+            .worktree_command(&self.repository)
+            .args(["check-ignore", "--quiet", "--"])
+            // Prevent a leading colon in the pathname from introducing Git pathspec magic.
+            .arg(Path::new(".").join(relative))
+            .status()
+            .context("failed to check whether the changed-files target is ignored")?;
+        match status.code() {
+            Some(0) => bail!(
+                "changed-files target {} is ignored by Git and cannot be analyzed incrementally",
+                root.display()
+            ),
+            Some(1) => Ok(()),
+            _ => bail!("git check-ignore failed for target {}", root.display()),
+        }
+    }
+}
+
+/// Reads allowlisted worktree settings using Git's normal configuration precedence.
+fn worktree_settings(executable: &OsStr, root: &Path, scratch: &Path) -> Result<Vec<OsString>> {
+    let output = checkout_metadata_git(executable, root, scratch)
+        .args(["config", "--null", "--get-regexp", r"^(core\.(filemode|symlinks|ignorecase|precomposeunicode|autocrlf|eol|safecrlf|excludesfile|attributesfile|checkstat|trustctime|sparsecheckout|sparsecheckoutcone|longpaths)|index\.sparse)$"])
+        .output().context("failed to read Git worktree settings")?;
+    // Git returns 1 without output when no selected settings exist.
+    if output.status.code() == Some(1) && output.stderr.is_empty() && output.stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !output.status.success() {
+        bail!("failed to read Git worktree settings");
+    }
+    output
+        .stdout
+        .strip_suffix(b"\0")
+        .context("invalid Git worktree settings")?
+        .split(|byte| *byte == b'\0')
+        .map(|record| {
+            let mut setting = record.to_vec();
+            if let Some(separator) = setting.iter_mut().find(|byte| **byte == b'\n') {
+                *separator = b'=';
+            }
+            Ok(path_from_git_bytes(&setting)?.into_os_string())
+        })
+        .collect()
+}
+
+/// Copies a Git index and preserves its modification time for Git's stat comparisons.
+fn copy_git_index(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let mut input = File::open(source)?;
+    let metadata = input.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Git index is not a regular file",
+        ));
+    }
+    let mut output = File::create(destination)?;
+    std::io::copy(&mut input, &mut output)?;
+    output.set_times(fs::FileTimes::new().set_modified(metadata.modified()?))
+}
+
+/// Copies a bounded Git metadata file into the private comparison directory.
+fn copy_git_info(source: &Path, destination: &Path) -> Result<()> {
+    const LIMIT: u64 = 1024 * 1024;
+    let metadata = match source.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_file() {
+        bail!("Git comparison metadata must be a regular file of at most 1 MiB");
+    }
+    let mut bytes = Vec::new();
+    File::open(source)?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > LIMIT {
+        bail!("Git comparison metadata must be a regular file of at most 1 MiB");
+    }
+    let directory = destination
+        .parent()
+        .context("missing Git metadata directory")?;
+    fs::create_dir_all(directory)?;
+    fs::write(destination, bytes)?;
+    Ok(())
+}
+
+/// Runs a Git command and reports failure before consuming its output.
+fn checked_git_output(command: &mut Command, failure: &str) -> Result<Vec<u8>> {
+    let output = command.output().with_context(|| failure.to_owned())?;
+    if !output.status.success() {
+        bail!(
+            "{failure}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(output.stdout)
+}
+
+/// Decodes Git's single path output, preserving whitespace that belongs to the name.
+fn git_output_path(bytes: &[u8]) -> Result<PathBuf> {
+    path_from_git_bytes(bytes.strip_suffix(b"\n").context("missing path from Git")?)
 }
 
 /// Peels `base` to a commit and returns its object id.
 ///
 /// Rejects a blank or `-`-prefixed `base` before running Git; errors when `rev-parse` fails or
 /// prints anything other than a hex object id.
-fn resolve_commit(root: &Path, base: &str) -> Result<String> {
+fn resolve_commit(mut git: Command, base: &str) -> Result<String> {
     if base.trim().is_empty() || base.starts_with('-') {
         bail!("invalid --changed-since revision `{base}`");
     }
     let revision = format!("{base}^{{commit}}");
-    let output = git_at(root)
+    let output = git
         .args(["rev-parse", "--verify", "--end-of-options"])
         .arg(&revision)
         .output()
@@ -88,7 +389,7 @@ fn resolve_commit(root: &Path, base: &str) -> Result<String> {
         .context("git returned a non-UTF-8 commit object id")?
         .trim()
         .to_owned();
-    if oid.is_empty() || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("git returned an invalid commit object id for `{base}`");
     }
     Ok(oid)
@@ -103,34 +404,13 @@ pub(crate) fn baseline_snapshot(
     if revision.trim().is_empty() || revision.starts_with('-') {
         bail!("invalid baseline revision `{revision}`");
     }
+    let executable = git_executable(root)?;
     let temporary = tempfile::tempdir().context("cannot create temporary baseline checkout")?;
-    let git = |directory: &Path, args: &[&std::ffi::OsStr]| -> Result<Vec<u8>> {
-        let mut command = git_at(directory);
-        // Neither caller-supplied Git config nor global templates/filters may execute code.
-        // Clone does not copy the source repository's local config or hooks.
-        for (name, _) in std::env::vars_os() {
-            // Windows preserves spelling but treats environment names case-insensitively.
-            if name
-                .to_string_lossy()
-                .to_ascii_uppercase()
-                .starts_with("GIT_")
-            {
-                command.env_remove(name);
-            }
-        }
-        command
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_NO_REPLACE_OBJECTS", "1")
-            .env("GIT_NO_LAZY_FETCH", "1")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_CONFIG_GLOBAL", temporary.path().join("no-config"))
-            .arg("-c")
-            .arg(format!(
-                "core.hooksPath={}",
-                temporary.path().join("no-hooks").display()
-            ))
-            .args(["-c", "core.fsmonitor=false"])
-            .args(args);
+    let source_git = |directory: &Path| {
+        checkout_metadata_git(executable.as_os_str(), directory, temporary.path())
+    };
+    let git = |mut command: Command, args: &[&OsStr]| -> Result<Vec<u8>> {
+        command.args(["-c", "core.fsmonitor=false"]).args(args);
         if args.first().is_some_and(|arg| *arg == "ls-tree") {
             // Fixed format: six mode digits, space, at most 20 size digits, newline.
             let limit = 28 * crate::resource_limits::MAX_WORKSPACE_SCAN_ENTRIES as u64;
@@ -165,7 +445,7 @@ pub(crate) fn baseline_snapshot(
         Ok(output.stdout)
     };
     let oid = git(
-        root,
+        source_git(root),
         &[
             "rev-parse".as_ref(),
             "--verify".as_ref(),
@@ -175,7 +455,7 @@ pub(crate) fn baseline_snapshot(
     )?;
     let oid = String::from_utf8(oid).context("invalid baseline commit id")?;
     let tree = git(
-        root,
+        source_git(root),
         &[
             "ls-tree".as_ref(),
             "--full-tree".as_ref(),
@@ -199,7 +479,10 @@ pub(crate) fn baseline_snapshot(
             bail!("baseline checkout exceeds the 512 MiB / 100000-file snapshot limit");
         }
     }
-    let repository = git(root, &["rev-parse".as_ref(), "--show-toplevel".as_ref()])?;
+    let repository = git(
+        source_git(root),
+        &["rev-parse".as_ref(), "--show-toplevel".as_ref()],
+    )?;
     // Remove Git's one line terminator, not whitespace belonging to the path.
     let repository = crate::config::normalize_platform_path(path_from_git_bytes(
         repository.strip_suffix(b"\n").unwrap_or(&repository),
@@ -208,8 +491,11 @@ pub(crate) fn baseline_snapshot(
         .strip_prefix(&repository)
         .context("baseline root is outside repository")?;
     let checkout = temporary.path().join("checkout");
+    // The source uses the operator's trust settings. Only a local transport is needed.
+    let mut clone = source_git(&repository);
+    clone.env("GIT_ALLOW_PROTOCOL", "file");
     git(
-        &repository,
+        clone,
         &[
             "clone".as_ref(),
             "--shared".as_ref(),
@@ -220,8 +506,9 @@ pub(crate) fn baseline_snapshot(
             checkout.as_os_str(),
         ],
     )?;
+    // Materialize the clone with its independent config and no checkout hooks.
     git(
-        &checkout,
+        isolated_git(executable.as_os_str(), &checkout, temporary.path()),
         &[
             "checkout".as_ref(),
             "--detach".as_ref(),
@@ -241,66 +528,30 @@ pub(crate) fn baseline_snapshot(
 
 /// Rejects changed-file mode when the analyzed root itself is excluded by Git.
 pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
-    let root = normalize_platform_path(root.to_path_buf());
-    let repository = git_at(&root)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .with_context(|| "failed to locate the Git repository for changed-files mode")?;
-    if !repository.status.success() {
-        bail!(
-            "changed-files mode requires a Git repository: {}",
-            String::from_utf8_lossy(&repository.stderr).trim()
-        );
-    }
-    let repository = canonical_platform_path(Path::new(
-        String::from_utf8(repository.stdout)
-            .context("git returned a non-UTF-8 repository path")?
-            .trim(),
-    ))
-    .with_context(|| "failed to canonicalize the Git repository root")?;
-    if root == repository {
-        return Ok(());
-    }
-    let relative = root.strip_prefix(&repository).with_context(|| {
-        format!(
-            "target {} is outside Git repository {}",
-            root.display(),
-            repository.display()
-        )
-    })?;
-    let ignored = git_at(&repository)
-        .args(["check-ignore", "--quiet", "--"])
-        .arg(relative)
-        .status()
-        .with_context(|| "failed to check whether the changed-files target is ignored")?;
-    match ignored.code() {
-        Some(0) => bail!(
-            "changed-files target {} is ignored by Git and cannot be analyzed incrementally",
-            root.display()
-        ),
-        Some(1) => Ok(()),
-        _ => bail!("git check-ignore failed for target {}", root.display()),
-    }
+    ChangedGit::new(root)?.ensure_trackable(root)
 }
 
-/// Runs `git <arguments>` in `root` with `core.quotePath=false` and splits stdout on NUL into
-/// paths as Git printed them, skipping empty entries. A non-zero exit errors as
-/// `{failure}: {stderr}`.
-fn git_paths(root: &Path, arguments: &[&str], failure: &str) -> Result<Vec<PathBuf>> {
-    let output = git_at(root)
-        .args(["-c", "core.quotePath=false"])
-        .args(arguments)
-        .output()
-        .with_context(|| "failed to run git for changed-files mode")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        bail!("{failure}: {stderr}");
+/// Runs a Git path query and decodes its NUL-delimited output.
+fn git_paths(mut git: Command, arguments: &[&str], failure: &str) -> Result<Vec<PathBuf>> {
+    let bytes = checked_git_output(git.args(arguments), failure)?;
+    if bytes.is_empty() {
+        return Ok(Vec::new());
     }
-    output
-        .stdout
+    bytes
+        .strip_suffix(b"\0")
+        .context("invalid Git path listing")?
         .split(|byte| *byte == b'\0')
-        .filter(|path| !path.is_empty())
-        .map(path_from_git_bytes)
+        .map(|bytes| {
+            let path = path_from_git_bytes(bytes)?;
+            if path.as_os_str().is_empty()
+                || !path
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+            {
+                bail!("invalid relative path in Git listing");
+            }
+            Ok(path)
+        })
         .collect()
 }
 
