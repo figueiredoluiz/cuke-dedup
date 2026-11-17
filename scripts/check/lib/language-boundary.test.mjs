@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { classify, diffRows, inventorySources, render, rows, totals, validateManifest } from "../check-language-boundary.mjs";
+import { childEnv, spawnExited } from "./spawn-exited.mjs";
 
 // Matrix: edge kind (module, marker, name, key, text, grammar; neutral framework and language id types
 // as controls) x location
@@ -326,6 +326,10 @@ test("baseline validation rejects malformed manifests, with a valid one as contr
   for (const [label, manifest] of Object.entries(bad)) assert.throws(() => validateManifest(manifest), /invalid|sorted/, label);
 });
 
+// The checker exits in 1-2 s; one ARM64 Windows VM run took over 10 s. A hang still ends the test.
+const RUN_TIMEOUT_MS = 60_000;
+const RUN_ENV = childEnv();
+
 /** Builds a temporary repository with source files and a baseline, runs the body with a CLI runner, and removes the repository afterwards. */
 async function withRepo(files, manifest, body) {
   const workspace = await mkdtemp(join(tmpdir(), "language-boundary-test-"));
@@ -334,8 +338,8 @@ async function withRepo(files, manifest, body) {
   const manifestPath = join(root, "scripts/check/language-boundary.json");
   /** Writes one file under the temporary repository, creating parent directories. */
   const put = async (name, text) => { await mkdir(dirname(join(root, name)), { recursive: true }); await writeFile(join(root, name), text); };
-  /** Runs the checker from another working directory with bounded runtime and output. */
-  const run = (...args) => spawnSync(process.execPath, [checker, "--root", root, ...args], { cwd: workspace, encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024 });
+  /** Runs the checker from another working directory with bounded runtime and output; a run that did not exit throws its cause. */
+  const run = (...args) => spawnExited(process.execPath, [checker, "--root", root, ...args], { cwd: workspace, encoding: "utf8", env: RUN_ENV, timeout: RUN_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
   try {
     for (const [name, text] of Object.entries(files)) await put(name, text);
     await put("scripts/check/language-boundary.json", typeof manifest === "string" ? manifest : render({ core: [], registry: [], ...manifest }));
