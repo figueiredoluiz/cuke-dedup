@@ -7,51 +7,185 @@ import { join } from "node:path";
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "target", "dist", ".git", "corpus"]);
 const SEARCHED_EXTENSIONS = [".md", ".markdown", ".yml", ".yaml"];
 
+const ACTION_COORDINATE = "figueiredoluiz/cuke-dedup@";
 const ACTION_REFERENCE = /(?<![\w./-])figueiredoluiz\/cuke-dedup@([^\s#'"`,}\]]*)/gi;
-const INLINE_TOKEN = /(?:^|[ \t:\[{,])(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')|([ \t]+#.*$)/g;
+// After an escaped newline, the repeated character arm consumes indentation.
+const INLINE_TOKEN = /(?:^|[ \t:\[{,])("(?:[^"\\\r\n]|\\(?:\r?\n|[^\r\n]))*"|'(?:[^'\r\n]|'')*')|((?:^|[ \t]+)#.*$)/gm;
+const YAML_ESCAPE = /\\(?:\r?\n[ \t]*|x[\da-fA-F]{2}|u[\da-fA-F]{4}|U[\da-fA-F]{8}|[^\r\n])/g;
 const MARKDOWN_CODE_SPAN = /(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)/g;
+const MARKDOWN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const MARKDOWN_INDENTED_CODE = /^(?: {4}| {0,3}\t)/;
+const MARKDOWN_YAML_LINE = /^[ \t]*(?:[-?:>][ \t]+)*(?:[\[{]|(?:[\w.-]+|"[^"]+"|'[^']+')[ \t]*:)/;
 const RELEASE_COMMENT = /^[ \t]+#[ \t]*(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/i;
-const BLOCK_HEADER = /:[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][+-]?|[+-][1-9]?)?([ \t]*(?:#.*)?)$/;
+const USES_PREFIX = /(?:^([ ]*(?:-[ \t]+)*)|[,{][ \t]*)(?:uses|"uses"|'uses')[ \t]*:[ \t]*(?:[&!]\S+[ \t]+)*$/;
+const BLOCK_HEADER = /:[ \t]*(?:[&!]\S+[ \t]+)*[|>]([1-9][+-]?|[+-][1-9]?)?([ \t]*(?:#.*)?)$/;
+const FLOW_START = /^[ ]*(?:-[ \t]+)*(?:[^\[\]{},]+:[ \t]+)?[\[{]/;
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 
 /** Reads the first real inline comment only when it follows the Action reference. */
 function inlineComment(line, referenceEnd) {
   for (const match of line.matchAll(INLINE_TOKEN)) {
-    if (match[1]) {
-      const hash = match.index + match[1].indexOf("#");
-      return hash >= referenceEnd ? match[1] : undefined;
+    const comment = match[2];
+    if (comment) {
+      const hash = match.index + comment.indexOf("#");
+      return hash >= referenceEnd ? comment : undefined;
     }
   }
 }
 
-/** Looks for an Action annotation within its Markdown snippet and on the surrounding line. */
-function actionInlineComment(line, referenceStart, referenceEnd, markdown) {
-  if (markdown) {
-    for (const span of line.matchAll(MARKDOWN_CODE_SPAN)) {
-      const start = span.index + span[1].length;
-      const code = span[2];
-      if (referenceStart >= start && referenceEnd <= start + code.length) {
-        const comment = inlineComment(code, referenceEnd - start);
-        if (comment && RELEASE_COMMENT.test(comment)) return comment;
-        break;
-      }
-    }
+/** Reads a version comment, allowing terminal punctuation when written in prose. */
+function releaseTag(comment, prose) {
+  const annotation = prose ? comment?.replace(/(?<=[^\s).;])[).;]+(?=\s|$)/, "") : comment;
+  return annotation?.match(RELEASE_COMMENT)?.[1];
+}
+
+/** Reads an annotation from its own code span or from the text surrounding the spans. */
+function actionInlineTag(line, referenceEnd, span, prose) {
+  if (span) {
+    const start = span.index + span[1].length;
+    const tag = releaseTag(inlineComment(span[2], referenceEnd - start), false);
+    if (tag) return tag;
+  }
+  if (prose) {
     line = line.replace(MARKDOWN_CODE_SPAN, (span) => " ".repeat(span.length));
   }
-  return inlineComment(line, referenceEnd);
+  return releaseTag(inlineComment(line, referenceEnd), prose);
+}
+
+/** Projects a YAML escape onto the ASCII characters that can form an Action coordinate. */
+function coordinateEscape(escape) {
+  const kind = escape[1];
+  if (kind === "\r" || kind === "\n") return "";
+  if (kind === "/" || kind === "\\") return kind;
+  if (escape.length === 2) return "\0";
+  const codepoint = Number.parseInt(escape.slice(2), 16);
+  return codepoint < 128 ? String.fromCharCode(codepoint) : "\0";
+}
+
+/** Gives the literal scanner the result of validating the complete quoted Action value. */
+function normalizeQuotedPins(text) {
+  return text.replace(INLINE_TOKEN, (token, quoted) => {
+    if (!quoted) return token;
+    const contents = quoted.slice(1, -1);
+    const decoded = quoted[0] === '"' ? contents.replace(YAML_ESCAPE, coordinateEscape) : contents;
+    if (!decoded.trimStart().toLowerCase().startsWith(ACTION_COORDINATE)) return token;
+    const pin = actionValueSha(decoded);
+    return `${token.slice(0, -quoted.length)}"${ACTION_COORDINATE}${pin}"`;
+  });
+}
+
+/** Returns the pin from a complete Action value, or an empty pin when the value is malformed. */
+function actionValueSha(value) {
+  if (!value.toLowerCase().startsWith(ACTION_COORDINATE)) return "";
+  const sha = value.slice(ACTION_COORDINATE.length);
+  return COMMIT_SHA.test(sha) ? sha : "";
+}
+
+/** Reads an Action value that starts beneath its key, bounded by the next dedent. */
+function actionBody(lines, index) {
+  const line = lines[index];
+  const header = line.match(BLOCK_HEADER);
+  const comment = inlineComment(line, 0);
+  const key = header ? line.slice(0, header.index + 1) : line.slice(0, line.length - (comment?.length ?? 0));
+  const prefix = key.match(USES_PREFIX)?.[1];
+  if (prefix === undefined) return;
+
+  const explicitIndent = Number(header?.[1]?.match(/[1-9]/)?.[0] ?? "0");
+  let content;
+  let contentIndent;
+  let first;
+  let multiple = false;
+  let end = index + 1;
+  for (; end < lines.length; end += 1) {
+    const candidate = lines[end];
+    const value = candidate.replace(/^ +/, "");
+    const indent = candidate.length - value.length;
+    const empty = header
+      ? value.length === 0 && (contentIndent === undefined || indent <= contentIndent)
+      : /^[ \t]*$/.test(value) || value.startsWith("#");
+    if (empty) continue;
+    if (indent <= prefix.length) break;
+    if (first !== undefined) {
+      multiple = true;
+      continue;
+    }
+    first = end;
+    contentIndent = explicitIndent ? prefix.length + explicitIndent : indent;
+    content = indent < contentIndent ? "" : candidate.slice(contentIndent);
+  }
+  // Clip and keep retain a final line break when the content line has one.
+  const keepsFinalBreak = header && !header[1]?.includes("-") && first < lines.length - 1;
+  const sha = !multiple && !keepsFinalBreak && first === index + 1 ? actionValueSha(content) : "";
+  return { end, multiple, literal: Boolean(header), sha, tag: releaseTag(header?.[2], false) };
+}
+
+/** Carries a flow collection across lines using delimiters outside quotes and comments. */
+function continuedFlowDepth(line, depth) {
+  const code = line.replace(INLINE_TOKEN, (token, quoted) => quoted ? `${token.slice(0, -quoted.length)}x` : "");
+  if (depth === 0 && !FLOW_START.test(code)) return 0;
+  for (const delimiter of code.matchAll(/[\[\]{}]/g)) {
+    const opening = delimiter[0] === "[" || delimiter[0] === "{";
+    depth = Math.max(0, depth + (opening ? 1 : -1));
+  }
+  return depth;
+}
+
+/** Reads a plain Action value up to the comment or enclosing flow delimiter. */
+function plainActionSha(line, start, continuation, inFlow) {
+  const prefix = line.slice(0, start);
+  const key = prefix.match(USES_PREFIX);
+  if (!key && !((continuation || inFlow) && /^[ \t]*$/.test(prefix))) return;
+  const comment = inlineComment(line, start);
+  const tail = line.slice(start, line.length - (comment?.length ?? 0));
+  const flow = inFlow || (key && key[1] === undefined);
+  const value = flow ? tail.split(/[,\]}]/, 1)[0] : tail;
+  return actionValueSha(value.replace(/[ \t]+$/, ""));
 }
 
 /** Reads a literal Action reference and its version comment from Markdown or YAML. */
 function* actionPins(text, markdown) {
+  if (markdown) {
+    text = text.replace(MARKDOWN_CODE_SPAN, (_, delimiter, code) =>
+      `${delimiter}${normalizeQuotedPins(code)}${delimiter}`);
+  }
+  text = normalizeQuotedPins(text);
   const lines = text.split(/\r?\n/);
+  let fence;
+  let body;
+  let flowDepth = 0;
   for (const [index, line] of lines.entries()) {
-    for (const match of line.matchAll(ACTION_REFERENCE)) {
-      const [reference, sha] = match;
-      const prefix = line.slice(0, match.index);
-      const block = /^ +$/.test(prefix) ? lines[index - 1]?.match(BLOCK_HEADER) : null;
-      const comment = block?.[1] ?? actionInlineComment(line, match.index, match.index + reference.length, markdown);
-      yield [sha, comment?.match(RELEASE_COMMENT)?.[1]];
+    if (body && index >= body.end) body = undefined;
+    const marker = markdown && line.match(MARKDOWN_FENCE);
+    if (marker) {
+      flowDepth = 0;
+      const [, run, tail] = marker;
+      if (fence) {
+        if (run[0] === fence[0] && run.length >= fence.length && !tail.trim()) fence = undefined;
+      } else if (run[0] === "~" || !tail.includes("`")) {
+        fence = run;
+      }
     }
+    const markdownText = markdown && !fence && !MARKDOWN_INDENTED_CODE.test(line);
+    const prose = markdownText && flowDepth === 0 && !MARKDOWN_YAML_LINE.test(line);
+    const spans = markdownText && flowDepth === 0 && !body ? [...line.matchAll(MARKDOWN_CODE_SPAN)] : [];
+    for (const match of line.matchAll(ACTION_REFERENCE)) {
+      const [reference, rawSha] = match;
+      const end = match.index + reference.length;
+      const span = spans.find(({ index: start, 0: source }) => match.index >= start && end <= start + source.length);
+      if (body?.literal) {
+        yield [body.sha, body.tag];
+        continue;
+      }
+      const start = span ? match.index - span.index - span[1].length : match.index;
+      const plainSha = !prose || span || body
+        ? plainActionSha(span?.[2] ?? line, start, Boolean(body), !span && flowDepth > 0) : undefined;
+      const tokenSha = prose && !span && !body ? rawSha.replace(/(?<![).;])[).;]+$/, "") : rawSha;
+      const sha = body?.multiple ? "" : plainSha ?? tokenSha;
+      const tag = actionInlineTag(line, end, span, prose || Boolean(span));
+      yield [sha, tag];
+    }
+    if (!body && !prose) body = actionBody(lines, index);
+    if (!prose && !body?.literal) flowDepth = continuedFlowDepth(line, flowDepth);
   }
 }
 
@@ -97,7 +231,7 @@ function runGit(root, args) {
 }
 
 /** Requires full commit pins and consistent release annotations for copyable Action examples. */
-export async function checkActionPins(root = ".") {
+export async function checkActionPins(root = ".", { requireTags = false } = {}) {
   const commitsByTag = new Map();
   for await (const path of projectFiles(root)) {
     const markdown = /\.(?:md|markdown)$/.test(path);
@@ -118,6 +252,8 @@ export async function checkActionPins(root = ".") {
       if (result.stdout.trim() !== sha) throw new Error(`Action commit pin does not match ${tag}`);
     } else if (result.status !== 1 && !result.stderr?.includes("not a git repository")) {
       throw result.error ?? new Error(`could not resolve Action pin tag ${tag}: ${result.stderr}`);
+    } else if (requireTags) {
+      throw new Error(`Action pin tag ${tag} is required for version validation`);
     }
   }
 }

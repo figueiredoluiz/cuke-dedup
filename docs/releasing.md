@@ -2,6 +2,8 @@
 
 ## Version sites
 
+### Before publication
+
 Use the version bump script to update the Cargo and npm manifests and lockfiles, and the version inputs in `action.yml` and `release.yml`.
 
 ```bash
@@ -10,14 +12,14 @@ npm run bump:version -- 0.3.0
 
 The script requires Git and Python 3.11 or later. It validates the Action examples and planned Cargo manifest edits before writing, restores changes if a lockfile refresh fails, and preserves line endings and a Cargo manifest's leading BOM.
 
-After the release is published, resolve its tag to the full commit SHA with `git rev-parse 'vX.Y.Z^{commit}'`. Update the literal Action references in `README.md` and `docs/ci-and-baselines.md` to that SHA and put `# vX.Y.Z` on the same line. For a YAML block scalar, put the version comment on its header line. The examples refer to a published release throughout version preparation.
-
-Then confirm and commit:
+Check the versions and inspect the diff.
 
 ```bash
 npm run check:versions
 git diff
 ```
+
+Commit the version changes, tag that commit, and dispatch the release workflow from the tag.
 
 `check:versions` also runs in the development gate and in `ci.yml`. It also checks that the Rust
 pin matches the MSRV and that the docs state both. The release workflow runs
@@ -25,6 +27,12 @@ pin matches the MSRV and that the docs state both. The release workflow runs
 to the dispatched release and its tag, and `check-rust-toolchain.mjs --print pin`, which checks the
 pin against the MSRV but not the docs. Both read the Cargo files as TOML with Python 3.11 or later;
 TOML 1.1 syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
+
+### After publication
+
+After the release is published, resolve its tag to the full commit SHA with `git rev-parse 'vX.Y.Z^{commit}'`. Update the literal Action references in `README.md` and `docs/ci-and-baselines.md` to that SHA and put `# vX.Y.Z` on the same line. For a YAML block scalar, use `|-` or `>-` to strip the final line break and put the version comment on its header line. The examples refer to a published release throughout version preparation.
+
+Run `REQUIRE_ACTION_PIN_TAGS=true npm run check:versions` with the referenced release tags available locally. This checks that each annotation resolves to its recorded commit, as required by CI and the release metadata job. Commit the pin update separately from the version bump.
 
 Release notes live in [GitHub Releases](https://github.com/figueiredoluiz/cuke-dedup/releases).
 
@@ -105,7 +113,7 @@ The site documents the latest released version, so it rebuilds from that tag.
   `.github/workflows/release.yml` and the `npm` environment on npmjs.com, with direct
   `npm publish` allowed. The workflow rejects npm clients older than the trusted-publishing minimum.
 
-For an npm-only retry, dispatch the workflow from the release tag with `publish_npm_only` enabled. The job prepares native packages from the published GitHub archives and verifies existing npm tarballs against the prepared packages and the release workflow's provenance. It publishes missing platform packages before the launcher.
+For an npm-only retry, start with a published, immutable GitHub release and dispatch the workflow from its tag with `publish_npm_only` enabled. The job repacks the published GitHub archives with the Node distribution and bundled npm pinned by that tag. It verifies npm tarballs against the prepared packages and the release workflow's provenance, allowing a bounded wait for registry data to appear. It publishes and verifies missing platform packages before publishing and verifying the launcher.
 
 ## Experimental Ruby releases
 

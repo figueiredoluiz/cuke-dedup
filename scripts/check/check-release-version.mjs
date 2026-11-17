@@ -71,7 +71,7 @@ for (const [path, version] of locked) {
   assert.equal(version, cargoVersion, `${path} version differs from Cargo.toml`);
 }
 
-await checkActionPins();
+await checkActionPins(".", { requireTags: process.env.REQUIRE_ACTION_PIN_TAGS === "true" });
 
 const expectedVersion = process.env.EXPECTED_VERSION;
 if (expectedVersion) {

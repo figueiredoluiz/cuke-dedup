@@ -54,6 +54,8 @@ jobs:
           python-version: "3.15"
       - name: Validate inputs and load checked-in metadata
         id: metadata
+        env:
+          REQUIRE_ACTION_PIN_TAGS: "true"
         shell: bash
         run: |
           release_sha=$(git rev-parse HEAD)
@@ -320,7 +322,8 @@ jobs:
           path: release-assets
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "24"
+          # Recovery packs the same release with this Node distribution and its bundled npm.
+          node-version: "24.22.3"
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7

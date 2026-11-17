@@ -78,6 +78,11 @@ Paths remain correct from a repository subdirectory, and untracked files are inc
 definition counts and the duplication-threshold denominator describe the complete corpus.
 
 Worktree comparison follows Git's built-in conversions, ignore rules, and sparse-checkout behavior.
+For files with custom clean or smudge filters, comparison may include paths whose worktree bytes differ from the stored content.
+
+Changed-file comparison selects the current path of a renamed file. Partial clones can compare paths with the base commit and its trees available locally.
+
+Changed-file comparison requires repository metadata under `info/` to be regular files of at most 1 MiB. Put `safe.directory` entries in Git's user or system configuration.
 
 An empty changed-file set warns. Changed-file filtering does not relax corpus validation: operational read, extraction and feature-parse errors remain fatal even in unchanged files. JS/TS and Ruby definition parse failures and unresolved static registrations remain incomplete warnings by default. Use `--fail-on-unparseable` for definition parse failures or `--fail-on-incomplete` for all incompleteness.
 
@@ -126,6 +131,8 @@ with:
 ```
 
 Use checkout with `fetch-depth: 0`, or fetch the revision before analysis. CukeDedup does not fetch revisions, initialize submodules, install dependencies, or run project code.
+
+Both Git comparison modes look for Git in absolute `PATH` entries outside the checkout and ignore caller-supplied `GIT_*` environment variables.
 
 The base is scanned in a temporary independent Git checkout using the **current effective
 CukeDedup configuration**, including rule overrides, patterns and suppressions. Historical

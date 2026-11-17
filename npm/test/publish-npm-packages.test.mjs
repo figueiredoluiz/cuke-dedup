@@ -18,7 +18,7 @@ const releaseTag = `v${version}`;
 const releaseSha = "0123456789abcdef0123456789abcdef01234567";
 
 /** Simulates npm packing, registry propagation and provenance verification without publishing. */
-function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenance, visibility = new Map() } = {}) {
+function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenance, visibility = new Map(), verificationVisibility = new Map() } = {}) {
   const available = new Set(existing);
   const published = [];
   const verified = [];
@@ -46,6 +46,12 @@ function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenan
       async fetchResource(url) {
         const [, kind, name] = new URL(url).pathname.match(/^\/(?:(tarball|attestation)\/)?([^/]+)\//) ?? [];
         assert.ok(name, url);
+        const resource = `${kind}/${name}`;
+        const unavailable = verificationVisibility.get(resource) ?? 0;
+        if (unavailable > 0) {
+          verificationVisibility.set(resource, unavailable - 1);
+          return new Response(null, { status: 404 });
+        }
         const content = Buffer.from(name === mismatch ? "different package" : name);
         const sha512 = createHash("sha512").update(content).digest();
         if (kind === "tarball") return new Response(name === wrongBytes ? content.map(byte => byte ^ 1) : content);
@@ -82,7 +88,17 @@ test("publishes the launcher after every platform is verified", async () => {
   const fixture = registryFixture({ existing: platformPackages.slice(0, -1), visibility: new Map([[platformPackages.at(-1), 2]]) });
   await publishNpmPackages(fixture.options);
   assert.deepEqual(fixture.published, [platformPackages.at(-1), "cuke-dedup"]);
-  assert.deepEqual(fixture.verified, platformPackages);
+  assert.deepEqual(fixture.verified, [...platformPackages, "cuke-dedup"]);
+});
+
+/** Verify launcher completion requires its published bytes and provenance. */
+test("checks the newly published launcher before reporting success", async () => {
+  for (const failure of [{ wrongBytes: "cuke-dedup" }, { rejectedProvenance: "cuke-dedup" }]) {
+    const fixture = registryFixture({ existing: platformPackages, ...failure });
+    await assert.rejects(publishNpmPackages(fixture.options), /tarball does not match|provenance verification.*failed/i);
+    assert.deepEqual(fixture.published, ["cuke-dedup"]);
+    assert.deepEqual(fixture.verified, platformPackages);
+  }
 });
 
 /** Verify package equality and provenance checks run before any missing package can be published. */
@@ -106,6 +122,24 @@ test("stops after bounded registry visibility checks", async () => {
   await assert.rejects(publishNpmPackages(fixture.options), /could not be verified after publication/);
   assert.deepEqual(fixture.published, [missing]);
   assert.deepEqual(fixture.verified, platformPackages.slice(0, -1));
+});
+
+/** Verify visible versions wait for verification data before publishing any missing packages. */
+test("rechecks delayed verification data for an existing release", async () => {
+  const existing = platformPackages.slice(0, -1);
+  const name = existing[0];
+  const fixture = registryFixture({ existing, verificationVisibility: new Map([[`tarball/${name}`, 1], [`attestation/${name}`, 1]]) });
+  const backoff = [];
+  fixture.options.delay = async (ms) => backoff.push(ms);
+  await publishNpmPackages(fixture.options);
+  assert.deepEqual(backoff, [1_000, 2_000]);
+  assert.deepEqual(fixture.verified, [...platformPackages, "cuke-dedup"]);
+  assert.deepEqual(fixture.published, [platformPackages.at(-1), "cuke-dedup"]);
+
+  const stalled = registryFixture({ existing, verificationVisibility: new Map([[`attestation/${name}`, 100]]) });
+  await assert.rejects(publishNpmPackages(stalled.options), /missing release verification data/);
+  assert.deepEqual(stalled.published, []);
+  assert.deepEqual(stalled.verified, []);
 });
 
 /** Verify the default npm runner executes successfully and captures a version beginning with three numeric components. */

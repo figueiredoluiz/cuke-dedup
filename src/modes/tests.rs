@@ -206,14 +206,6 @@ fn assert_linked_worktree_changes(split_index: bool) {
         .output()
         .unwrap();
     assert!(output.status.success(), "{:?}", output.stderr);
-    if split_index {
-        let output = fixture_git()
-            .current_dir(&linked)
-            .args(["update-index", "--split-index"])
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{:?}", output.stderr);
-    }
     assert_eq!(git_changed_files(&linked, "HEAD").unwrap(), BTreeSet::new());
     fs::create_dir_all(root.join(".git/info")).unwrap();
     fs::write(root.join(".git/info/exclude"), "ignored.ts\n").unwrap();
@@ -227,15 +219,38 @@ fn assert_linked_worktree_changes(split_index: bool) {
         .unwrap();
     assert!(output.status.success(), "{:?}", output.stderr);
 
-    let changed = git_changed_files(&linked, "HEAD").unwrap();
-    assert_eq!(
-        changed,
-        BTreeSet::from([
-            linked.join("staged.ts"),
-            linked.join("unstaged.ts"),
-            linked.join("untracked.ts")
-        ])
-    );
+    let layout = if split_index {
+        "--split-index"
+    } else {
+        "--no-split-index"
+    };
+    let output = fixture_git()
+        .current_dir(&linked)
+        .args(["update-index", layout])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+
+    let expected = BTreeSet::from([
+        linked.join("staged.ts"),
+        linked.join("unstaged.ts"),
+        linked.join("untracked.ts"),
+    ]);
+    for configured_split in ["false", "true"] {
+        let output = fixture_git()
+            .current_dir(&linked)
+            .args(["config", "core.splitIndex", configured_split])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let changed = git_changed_files(&linked, "HEAD").unwrap_or_else(|error| {
+            panic!("index layout {layout}, core.splitIndex={configured_split}: {error:#}")
+        });
+        assert_eq!(
+            changed, expected,
+            "{layout}, core.splitIndex={configured_split}"
+        );
+    }
 }
 
 /// Checks changed-file discovery preserves newline bytes in Unix filenames.
@@ -390,6 +405,16 @@ fn git_comparison_metadata_copy_enforces_file_and_size_limits() {
     assert!(!output.exists());
     fs::write(&input, "*.tmp\n").unwrap();
     copy_git_info(&input, &output).unwrap();
+    #[cfg(unix)]
+    {
+        let symlink = root.join("symlink");
+        std::os::unix::fs::symlink(&input, &symlink).unwrap();
+        let error = copy_git_info(&symlink, &output).unwrap_err();
+        assert!(
+            error.to_string().contains("regular file of at most 1 MiB"),
+            "{error}"
+        );
+    }
     fs::write(&input, vec![b'a'; (1024 * 1024) + 1]).unwrap();
     for invalid in [input.as_path(), root] {
         let error = copy_git_info(invalid, &output).unwrap_err();

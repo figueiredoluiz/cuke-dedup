@@ -111,6 +111,16 @@ async function verifyRegistryPackage(pkg, dist, { fetchResource, runGh, scratch,
   return true;
 }
 
+/** Allows time for a visible version's tarball and provenance to reach the registry. */
+async function waitForRegistryVerification(pkg, options, initialDist) {
+  for (const backoff of visibilityDelays) {
+    if (backoff > 0) await options.delay(backoff);
+    const dist = backoff === 0 && initialDist ? initialDist : await lookupPackage(pkg, options.fetchResource);
+    if (dist !== null && await verifyRegistryPackage(pkg, dist, options)) return true;
+  }
+  return false;
+}
+
 /** Publishes prepared packages after checking the complete existing set against the tagged release. */
 export async function publishNpmPackages({
   root = defaultRoot,
@@ -126,7 +136,7 @@ export async function publishNpmPackages({
   }
   const scratch = await mkdtemp(join(tmpdir(), "cuke-dedup-npm-"));
   try {
-    const options = { root, runNpm, fetchResource, runGh, scratch, releaseTag, releaseSha };
+    const options = { root, runNpm, fetchResource, runGh, scratch, releaseTag, releaseSha, delay };
     const directories = Object.values(TARGETS).map(({ packageDirectory }) => `npm/platforms/${packageDirectory}`);
     directories.push(".");
     const missing = [];
@@ -137,7 +147,7 @@ export async function publishNpmPackages({
         missing.push(pkg);
         continue;
       }
-      if (!await verifyRegistryPackage(pkg, dist, options)) {
+      if (!await waitForRegistryVerification(pkg, options, dist)) {
         throw new Error(`registry package is missing release verification data for ${pkg.spec}`);
       }
       console.log(`Verified ${pkg.spec}`);
@@ -145,17 +155,9 @@ export async function publishNpmPackages({
     for (const pkg of missing) {
       console.log(`Publishing ${pkg.spec}`);
       checkResult(runNpm(npmPublishArguments(pkg.path), { capture: false, root }), `npm publish for ${pkg.spec}`);
-      if (pkg.name === "cuke-dedup") break; // The launcher is last and has no dependents in this release.
-      let verified = false;
-      for (const backoff of visibilityDelays) {
-        if (backoff > 0) await delay(backoff);
-        const dist = await lookupPackage(pkg, fetchResource);
-        if (dist !== null && await verifyRegistryPackage(pkg, dist, options)) {
-          verified = true;
-          break;
-        }
+      if (!await waitForRegistryVerification(pkg, options)) {
+        throw new Error(`registry package could not be verified after publication: ${pkg.spec}`);
       }
-      if (!verified) throw new Error(`registry package could not be verified after publication: ${pkg.spec}`);
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });

@@ -6274,6 +6274,13 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "changed_since_includes_renamed_files_in_an_offline_partial_clone",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Changed path enumeration selects the destination of a moved definition before adapter-specific analysis, even when the previous blob is unavailable.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "changed_since_resolves_git_from_the_operator_path",
           "requiredStatus": "engine-invariant",
           "stage": "session-plumbing",

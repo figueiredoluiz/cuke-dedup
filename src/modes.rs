@@ -29,6 +29,8 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
             "-z",
             "--no-ext-diff",
             "--no-textconv",
+            // Select rename destinations without loading historical blobs for similarity scoring.
+            "--no-renames",
             "--ignore-submodules=dirty",
             "--diff-filter=ACMR",
             &base_oid,
@@ -152,6 +154,7 @@ struct ChangedGit {
 impl ChangedGit {
     /// Prepares a Git view with only the checkout settings needed to compare worktree paths.
     fn new(root: &Path) -> Result<Self> {
+        let root = &canonical_platform_path(root)?;
         let scratch = tempfile::tempdir().context("cannot prepare changed-file comparison")?;
         let executable = git_executable(root)?;
         let metadata = || checkout_metadata_git(executable.as_os_str(), root, scratch.path());
@@ -162,23 +165,29 @@ impl ChangedGit {
             &["rev-parse", "--show-toplevel"],
             "changed-files mode requires a Git repository",
         )?)?)?;
+        // Relative paths from rev-parse are relative to the directory passed to Git.
         let path = |name| -> Result<PathBuf> {
-            git_output_path(&query(
-                &["rev-parse", "--path-format=absolute", "--git-path", name],
+            Ok(root.join(git_output_path(&query(
+                &["rev-parse", "--git-path", name],
                 "failed to locate changed-file comparison metadata",
-            )?)
+            )?)?))
         };
         let index = path("index")?;
         let objects = path("objects")?;
+        // Command::output closes stdin. Hashing the empty blob does not store it.
         let hash = query(
-            &["rev-parse", "--show-object-format"],
+            &["hash-object", "--stdin"],
             "failed to identify Git object format",
         )?;
+        let oid = hash
+            .strip_suffix(b"\n")
+            .filter(|oid| oid.iter().all(u8::is_ascii_hexdigit))
+            .context("unsupported Git object format for changed-file comparison")?;
         let mut init = isolated_git(executable.as_os_str(), scratch.path(), scratch.path());
         init.args(["init", "--quiet", "--bare", "--template="]);
-        match hash.as_slice() {
-            b"sha1\n" => {}
-            b"sha256\n" => {
+        match oid.len() {
+            40 => {}
+            64 => {
                 init.arg("--object-format=sha256");
             }
             _ => bail!("unsupported Git object format for changed-file comparison"),
@@ -193,17 +202,19 @@ impl ChangedGit {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error).context("failed to snapshot the Git index"),
         }
+        // A non-boolean splitIndex value makes Git keep the saved index layout, as when unset.
         let shared_index = checked_git_output(
             metadata().env("GIT_INDEX_FILE", &snapshot).args([
+                "-c",
+                "core.splitIndex=keep",
                 "rev-parse",
-                "--path-format=absolute",
                 "--shared-index-path",
             ]),
             "failed to locate the Git shared index",
         )?;
         if !shared_index.is_empty() {
             // Older Git versions look for the linked index only under GIT_DIR.
-            let source = git_output_path(&shared_index)?;
+            let source = root.join(git_output_path(&shared_index)?);
             let name = source
                 .file_name()
                 .context("invalid Git shared index path")?;
@@ -256,7 +267,8 @@ impl ChangedGit {
         let status = self
             .worktree_command(&self.repository)
             .args(["check-ignore", "--quiet", "--"])
-            .arg(relative)
+            // Prevent a leading colon in the pathname from introducing Git pathspec magic.
+            .arg(Path::new(".").join(relative))
             .status()
             .context("failed to check whether the changed-files target is ignored")?;
         match status.code() {
@@ -392,10 +404,12 @@ pub(crate) fn baseline_snapshot(
     if revision.trim().is_empty() || revision.starts_with('-') {
         bail!("invalid baseline revision `{revision}`");
     }
+    let executable = git_executable(root)?;
     let temporary = tempfile::tempdir().context("cannot create temporary baseline checkout")?;
-    let git = |directory: &Path, args: &[&std::ffi::OsStr]| -> Result<Vec<u8>> {
-        let mut command = isolated_git(OsStr::new("git"), directory, temporary.path());
-        // Clone does not copy the source repository's local config or hooks.
+    let source_git = |directory: &Path| {
+        checkout_metadata_git(executable.as_os_str(), directory, temporary.path())
+    };
+    let git = |mut command: Command, args: &[&OsStr]| -> Result<Vec<u8>> {
         command.args(["-c", "core.fsmonitor=false"]).args(args);
         if args.first().is_some_and(|arg| *arg == "ls-tree") {
             // Fixed format: six mode digits, space, at most 20 size digits, newline.
@@ -431,7 +445,7 @@ pub(crate) fn baseline_snapshot(
         Ok(output.stdout)
     };
     let oid = git(
-        root,
+        source_git(root),
         &[
             "rev-parse".as_ref(),
             "--verify".as_ref(),
@@ -441,7 +455,7 @@ pub(crate) fn baseline_snapshot(
     )?;
     let oid = String::from_utf8(oid).context("invalid baseline commit id")?;
     let tree = git(
-        root,
+        source_git(root),
         &[
             "ls-tree".as_ref(),
             "--full-tree".as_ref(),
@@ -465,7 +479,10 @@ pub(crate) fn baseline_snapshot(
             bail!("baseline checkout exceeds the 512 MiB / 100000-file snapshot limit");
         }
     }
-    let repository = git(root, &["rev-parse".as_ref(), "--show-toplevel".as_ref()])?;
+    let repository = git(
+        source_git(root),
+        &["rev-parse".as_ref(), "--show-toplevel".as_ref()],
+    )?;
     // Remove Git's one line terminator, not whitespace belonging to the path.
     let repository = crate::config::normalize_platform_path(path_from_git_bytes(
         repository.strip_suffix(b"\n").unwrap_or(&repository),
@@ -474,8 +491,11 @@ pub(crate) fn baseline_snapshot(
         .strip_prefix(&repository)
         .context("baseline root is outside repository")?;
     let checkout = temporary.path().join("checkout");
+    // The source uses the operator's trust settings. Only a local transport is needed.
+    let mut clone = source_git(&repository);
+    clone.env("GIT_ALLOW_PROTOCOL", "file");
     git(
-        &repository,
+        clone,
         &[
             "clone".as_ref(),
             "--shared".as_ref(),
@@ -486,8 +506,9 @@ pub(crate) fn baseline_snapshot(
             checkout.as_os_str(),
         ],
     )?;
+    // Materialize the clone with its independent config and no checkout hooks.
     git(
-        &checkout,
+        isolated_git(executable.as_os_str(), &checkout, temporary.path()),
         &[
             "checkout".as_ref(),
             "--detach".as_ref(),
