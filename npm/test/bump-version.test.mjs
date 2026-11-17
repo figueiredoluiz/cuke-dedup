@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { after, describe, test } from "node:test";
 
 const script = resolve("scripts/release/bump-version.mjs");
@@ -251,10 +251,9 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
     assert.equal(bump(root, "0.3.0").status, 0);
   });
 
-  /** Verify Action reference validation follows the literal value across YAML scalar forms. */
+  /** Apply the same pin cases to version checking and bumping in both file types. */
   test("validates Action pins in block, flow, and anchored YAML values", async () => {
     const root = await fixture();
-    const example = join(root, "docs/example.md");
     const [pin, version] = actionPin.split(" # ");
     const layouts = [
       (ref, tag) => `- uses: >-${tag}\r\n    ${ref}\r\n`,
@@ -266,22 +265,69 @@ describe("bump-version", { skip: cargoAvailable ? false : "cargo is unavailable"
       (ref, tag) => `- { uses: '${ref}', name: 'A ''scan'' # v9.9.9 example', id: scan }${tag}\n`,
       (ref, tag) => `- uses: &pin '${ref}'${tag}\n`,
     ];
-    for (const exampleFor of layouts) {
-      for (const [ref, tag] of [["cuke-dedup@main", ` # ${version}`], [pin, ""]]) {
-        const invalid = exampleFor(`figueiredoluiz/${ref}`, tag);
-        await writeFile(example, invalid);
-        for (const result of [bump(root, "0.3.0"), checkVersions(root)]) {
-          assert.equal(result.status, 1, invalid);
-          assert.match(result.stderr, /example\.md.*full commit SHA.*version comment/);
+    const releaseFiles = [
+      "Cargo.toml", "Cargo.lock", "fuzz/Cargo.toml", "fuzz/Cargo.lock",
+      "package.json", "package-lock.json", "npm/platforms/darwin-arm64/package.json",
+      "action.yml", ".github/workflows/release.yml",
+    ];
+    /** Read the exact bytes of all files the bumper may write. */
+    const releaseState = () => Promise.all(releaseFiles.map((path) => readFile(join(root, path))));
+    const annotation = ` # ${version}`;
+    const cases = [
+      ["valid pin", pin, annotation, true],
+      ["mutable ref", "cuke-dedup@main", annotation, false],
+      ["missing annotation", pin, "", false],
+      ["extra scalar content", `${pin} extra`, annotation, false],
+    ];
+    const carriers = [
+      ["docs/example.md", (steps) => [
+        "```yaml", steps + "```", "",
+        "See https://example.test/figueiredoluiz/cuke-dedup@main.",
+        "- uses: another-owner/cuke-dedup@main",
+        "- uses: otherfigueiredoluiz/cuke-dedup@main",
+        "",
+      ].join("\n")],
+      [".github/workflows/example.yml", (steps) =>
+        "name: Pin matrix\non: workflow_dispatch\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    steps:\n"
+        + steps.replace(/^(?=.)/gm, "      ")],
+    ];
+
+    let current = "0.2.0";
+    let state = await releaseState();
+    for (const [relative, render] of carriers) {
+      const example = join(root, relative);
+      for (const exampleFor of layouts) {
+        for (const [label, ref, tag, valid] of cases) {
+          const source = render(exampleFor(`figueiredoluiz/${ref}`, tag));
+          const detail = `${label} in ${relative}:\n${source}`;
+          await writeFile(example, source);
+          const next = current === "0.2.0" ? "0.3.0" : "0.2.0";
+          const checked = checkVersions(root);
+          const bumped = bump(root, next);
+
+          if (valid) {
+            assert.equal(checked.status, 0, `${detail}\n${checked.stderr}`);
+            assert.ok(checked.stdout.includes(`release versions agree at ${current}\n`), detail);
+            assert.equal(bumped.status, 0, `${detail}\n${bumped.stderr}`);
+            assert.ok((await text(root, "Cargo.toml")).includes(`version = "${next}"`), detail);
+            assert.equal(await readFile(example, "utf8"), source, detail);
+            current = next;
+            state = await releaseState();
+          } else {
+            const filename = basename(relative);
+            for (const [command, result] of [["check", checked], ["bump", bumped]]) {
+              assert.equal(result.status, 1, `${command}: ${detail}\n${result.stderr}`);
+              assert.ok(result.stderr.includes(`${filename}: use a full commit SHA and a release version comment for the Action`), result.stderr);
+            }
+            assert.deepEqual(await releaseState(), state, detail);
+          }
         }
       }
-      const valid = exampleFor(`figueiredoluiz/${pin}`, ` # ${version}`);
-      await writeFile(example, valid);
-      const checked = checkVersions(root);
-      assert.equal(checked.status, 0, checked.stderr);
+      await rm(example);
     }
-    await writeFile(example, `- uses: another-owner/cuke-dedup@main\n- uses: otherfigueiredoluiz/cuke-dedup@main\nSee https://example.test/figueiredoluiz/cuke-dedup@main.\n${layouts[0](`figueiredoluiz/${pin}`, ` # ${version}`)}`);
-    assert.equal(bump(root, "0.3.0").status, 0);
+    const checked = checkVersions(root);
+    assert.equal(checked.status, 0, checked.stderr);
+    assert.ok(checked.stdout.includes(`release versions agree at ${current}\n`), checked.stdout);
   });
 
   /** Verify a Markdown inline snippet carries its own Action reference and annotation. */
