@@ -7908,6 +7908,13 @@
           "stage": "bounded-analysis",
           "rationale": "Complete length-zero-to-two operation traces for small allowances validate the shared accounting primitives without adapter inputs; generated longer traces complement these deterministic boundaries.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "generated_omission_cuts_match_the_character_oracle",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent omission cuts over mixed valid and invalid UTF-8 bytes match a brute-force character oracle and count every omitted byte.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -8033,6 +8040,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent SARIF file URIs for Unix and Windows paths outside the analysis root.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "oversized_paths_cut_before_a_split_character",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF URI bound: the cut drops a split UTF-8 character whole and counts every omitted source byte.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "oversized_non_utf8_names_sample_native_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF URI bound for oversized non-UTF-8 Unix names: raw bytes kept, marker counts native bytes.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

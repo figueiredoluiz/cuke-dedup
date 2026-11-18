@@ -1,10 +1,9 @@
 use super::shared::{
-    bounded_findings, bounded_json, convert_location, pretty_json_cost, report_safe,
-    MAX_REPORTED_CLUSTER_MEMBERS,
+    bounded_findings, bounded_json, pretty_json_cost, report_safe, MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::{CliReportMetadata, ReportContext};
 use crate::model::{Finding, Severity, SourceLocation};
-use crate::resource_limits::{sample_prefix, MAX_REPORT_FIELD_BYTES};
+use crate::resource_limits::{omission_cut, MAX_REPORT_FIELD_BYTES};
 use anyhow::{Context, Result};
 use std::ffi::OsStr;
 #[cfg(windows)]
@@ -136,15 +135,14 @@ fn sarif_finding(finding: &Finding, root: &Path) -> serde_json::Value {
 
 /// Builds a SARIF location with a root-relative URI and region; sets `id` only when one is given.
 fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> serde_json::Value {
-    let converted = convert_location(location, root);
     let mut value = serde_json::json!({
         "physicalLocation": {
             "artifactLocation": { "uri": artifact_uri(&location.path, root) },
             "region": {
-                "startLine": converted.line,
-                "startColumn": converted.column,
-                "endLine": converted.end_line,
-                "endColumn": converted.end_column,
+                "startLine": location.line,
+                "startColumn": location.column,
+                "endLine": location.end_line,
+                "endColumn": location.end_column,
             }
         }
     });
@@ -182,19 +180,21 @@ fn artifact_uri(path: &Path, root: &Path) -> String {
             segments.push(bytes);
         }
     }
-    if total > MAX_REPORT_FIELD_BYTES {
-        // Oversized paths keep the shared omission marker; segments never contain `/`.
-        let text = String::from_utf8_lossy(&segments.join(&b'/')).into_owned();
-        segments = sample_prefix(&text, total, MAX_REPORT_FIELD_BYTES)
-            .split('/')
-            .map(|segment| segment.as_bytes().to_vec())
-            .collect();
-    }
-    let encoded = segments
-        .iter()
-        .map(|segment| percent_encode(segment))
+    // Oversized paths are cut on native bytes so the marker counts source bytes and raw bytes
+    // survive; segments never contain `/`.
+    let mut joined = segments.join(&b'/');
+    let marker = omission_cut(&joined, total, MAX_REPORT_FIELD_BYTES).map(|(end, marker)| {
+        joined.truncate(end);
+        marker
+    });
+    let mut encoded = joined
+        .split(|&byte| byte == b'/')
+        .map(percent_encode)
         .collect::<Vec<_>>()
         .join("/");
+    if let Some(marker) = marker {
+        encoded.push_str(&percent_encode(marker.as_bytes()));
+    }
     // A prefix makes the path non-relative even when `is_absolute` is false (`C:foo`).
     if absolute || !lead.is_empty() {
         format!("file://{}/{lead}{encoded}", percent_encode(&authority))

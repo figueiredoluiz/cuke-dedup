@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
+import { decodeSarifUri } from "./lib/sarif-uri.mjs";
 import { latestClassifiedAt, validateVariantReferences } from "./lib/manifest-schema.mjs";
 import { judgeBehaviorCase, observeBehaviorCase } from "./lib/behavior-runner.mjs";
 import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./lib/recall-runner.mjs";
@@ -142,8 +143,7 @@ function parityFinding(finding) {
 function sarifLocation(location) {
   const physical = location.physicalLocation;
   return {
-    // pattern-ok: SARIF URI segments are /-separated and percent-encoded per RFC 3986.
-    path: physical.artifactLocation.uri.split("/").map(decodeURIComponent).join("/"),
+    path: decodeSarifUri(physical.artifactLocation.uri),
     line: physical.region.startLine,
     column: physical.region.startColumn,
     endLine: physical.region.endLine,

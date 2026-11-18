@@ -210,6 +210,42 @@ fn oversized_paths_stay_bounded_and_valid() {
     );
 }
 
+/// The cut lands on native bytes: a split UTF-8 character is dropped whole and the marker counts
+/// every source byte past the cut.
+#[test]
+fn oversized_paths_cut_before_a_split_character() {
+    let root = root();
+    // `a` shifts every `é` by one byte, so the `limit - 64` cut falls inside a character.
+    let relative = format!("a{}", "é".repeat(MAX_REPORT_FIELD_BYTES));
+    let emitted = uri(&root.join(&relative), &root);
+    let kept = MAX_REPORT_FIELD_BYTES - 65;
+    let expected = format!(
+        "a{}%E2%80%A6%20%5B{}%20bytes%20omitted%5D",
+        "%C3%A9".repeat(kept / 2),
+        relative.len() - kept
+    );
+    assert_eq!(emitted, expected);
+}
+
+/// Oversized non-UTF-8 names keep their raw bytes; lone continuation bytes never move the cut.
+#[cfg(unix)]
+#[test]
+fn oversized_non_utf8_names_sample_native_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let root = root();
+    let kept = MAX_REPORT_FIELD_BYTES - 64;
+    for byte in [0xFF_u8, 0x80] {
+        let name = vec![byte; 9000];
+        let emitted = uri(&root.join(std::ffi::OsStr::from_bytes(&name)), &root);
+        let expected = format!(
+            "{}%E2%80%A6%20%5B{}%20bytes%20omitted%5D",
+            format!("%{byte:02X}").repeat(kept),
+            9000 - kept
+        );
+        assert_eq!(emitted, expected, "byte {byte:#04x}");
+    }
+}
+
 /// Paths outside the root become RFC 8089 `file:` URIs rather than scheme-ambiguous text.
 #[test]
 fn paths_outside_the_root_become_file_uris() {
