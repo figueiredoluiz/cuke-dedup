@@ -142,7 +142,8 @@ function parityFinding(finding) {
 function sarifLocation(location) {
   const physical = location.physicalLocation;
   return {
-    path: physical.artifactLocation.uri,
+    // pattern-ok: SARIF URI segments are /-separated and percent-encoded per RFC 3986.
+    path: physical.artifactLocation.uri.split("/").map(decodeURIComponent).join("/"),
     line: physical.region.startLine,
     column: physical.region.startColumn,
     endLine: physical.region.endLine,

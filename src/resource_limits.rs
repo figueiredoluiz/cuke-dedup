@@ -52,21 +52,31 @@ pub(crate) const MAX_BUFFERED_REPORT_BYTES: usize = 16 * 1024 * 1024;
 /// The marker counts omitted source bytes, including bytes removed to make room for the marker.
 /// The fixed internal limit must leave at least 64 bytes for that marker.
 pub(crate) fn sample_text(value: &str, limit: usize) -> std::borrow::Cow<'_, str> {
+    sample_prefix(value, value.len(), limit)
+}
+
+/// Samples like `sample_text` from `prefix`, the copied start of a value `original_len` bytes
+/// long, so callers can bound the copy of oversized input and still count every omitted byte.
+pub(crate) fn sample_prefix(
+    prefix: &str,
+    original_len: usize,
+    limit: usize,
+) -> std::borrow::Cow<'_, str> {
     assert!(
         limit >= 64,
         "text limit must accommodate the omission marker"
     );
-    if value.len() <= limit {
-        return std::borrow::Cow::Borrowed(value);
+    if original_len <= limit {
+        return std::borrow::Cow::Borrowed(prefix);
     }
-    let mut end = limit.saturating_sub(64);
-    while !value.is_char_boundary(end) {
+    let mut end = limit.saturating_sub(64).min(prefix.len());
+    while !prefix.is_char_boundary(end) {
         end -= 1;
     }
     std::borrow::Cow::Owned(format!(
         "{}… [{} bytes omitted]",
-        &value[..end],
-        value.len() - end
+        &prefix[..end],
+        original_len - end
     ))
 }
 

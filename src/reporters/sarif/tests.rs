@@ -21,3 +21,5 @@ fn sarif_result_levels_preserve_active_filtering() {
         );
     }
 }
+
+mod uri;

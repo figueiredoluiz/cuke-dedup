@@ -7116,6 +7116,13 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent stage `bounded-io`: both emit destinations create a missing parent and stage their records before the baseline step, so a failing baseline leaves no staged file, no empty reservation and an existing destination unchanged; output publication runs after every adapter.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "sarif_uris_percent_encode_reserved_file_names",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent CLI SARIF URIs for reserved-character file names in primary and related locations.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7988,6 +7995,56 @@
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: ESM registration resolver work/cache lifetime in real rooted SourceExtractionSession objects and their public adapter calls. Semantic residue: shared_snapshot_retains_proofs_without_reloading_and_checks_current_source_bytes.",
           "behaviorClass": "language-specific-api"
+        }
+      ]
+    },
+    "src/reporters/sarif/tests/uri.rs": {
+      "tests": [
+        {
+          "name": "generated_relative_uris_decode_to_the_exact_path",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF URI encoding: generated root-relative paths decode to exact component bytes.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "reserved_characters_are_encoded_in_named_cases",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF URI encoding of reserved, percent, non-ASCII and bidi file names.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "non_utf8_unix_names_encode_raw_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF URI encoding of raw non-UTF-8 Unix file-name bytes.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "oversized_paths_stay_bounded_and_valid",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF URI bound: oversized paths keep the omission marker and stay valid.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "paths_outside_the_root_become_file_uris",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF file URIs for Unix and Windows paths outside the analysis root.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "tests/sarif_allocations.rs": {
+      "tests": [
+        {
+          "name": "oversized_paths_render_sarif_with_bounded_temporary_memory",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent SARIF rendering keeps temporary memory bounded for an oversized caller-supplied path.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     }

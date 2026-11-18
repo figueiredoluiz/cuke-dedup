@@ -4,8 +4,12 @@ use super::shared::{
 };
 use super::{CliReportMetadata, ReportContext};
 use crate::model::{Finding, Severity, SourceLocation};
+use crate::resource_limits::{sample_prefix, MAX_REPORT_FIELD_BYTES};
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::path::Prefix;
+use std::path::{Component, Path};
 
 /// Renders active findings as a SARIF 2.1.0 log without writing it to disk.
 pub fn render_sarif(context: &ReportContext<'_>) -> Result<String> {
@@ -135,7 +139,7 @@ fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> 
     let converted = convert_location(location, root);
     let mut value = serde_json::json!({
         "physicalLocation": {
-            "artifactLocation": { "uri": converted.path },
+            "artifactLocation": { "uri": artifact_uri(&location.path, root) },
             "region": {
                 "startLine": converted.line,
                 "startColumn": converted.column,
@@ -148,6 +152,120 @@ fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> 
         value["id"] = serde_json::json!(id);
     }
     value
+}
+
+/// Encodes `path` as an RFC 3986 reference: root-relative when under `root`, else an RFC 8089
+/// `file:` URI. Segments keep exact bytes so consumers resolve the same file; separators come
+/// from path components, so a Unix file name containing `\` stays one segment.
+fn artifact_uri(path: &Path, root: &Path) -> String {
+    let (relative, absolute) = match path.strip_prefix(root) {
+        Ok(relative) => (relative, false),
+        Err(_) => (path, path.is_absolute()),
+    };
+    let (authority, lead) = windows_prefix(relative);
+    // Copy at most one byte past the field limit; `total` keeps the native length for the marker.
+    let mut segments = Vec::new();
+    let (mut kept, mut total) = (0usize, 0usize);
+    for component in relative.components() {
+        let name = match component {
+            // `windows_prefix` already consumed a prefix; root and `.` add no segment.
+            Component::Prefix(_) | Component::RootDir | Component::CurDir => continue,
+            Component::ParentDir => OsStr::new(".."),
+            Component::Normal(name) => name,
+        };
+        let separator = usize::from(total > 0);
+        total += separator + name.len();
+        let budget = (MAX_REPORT_FIELD_BYTES + 1).saturating_sub(kept + separator);
+        if budget > 0 {
+            let bytes = component_bytes(name, budget);
+            kept += separator + bytes.len();
+            segments.push(bytes);
+        }
+    }
+    if total > MAX_REPORT_FIELD_BYTES {
+        // Oversized paths keep the shared omission marker; segments never contain `/`.
+        let text = String::from_utf8_lossy(&segments.join(&b'/')).into_owned();
+        segments = sample_prefix(&text, total, MAX_REPORT_FIELD_BYTES)
+            .split('/')
+            .map(|segment| segment.as_bytes().to_vec())
+            .collect();
+    }
+    let encoded = segments
+        .iter()
+        .map(|segment| percent_encode(segment))
+        .collect::<Vec<_>>()
+        .join("/");
+    // A prefix makes the path non-relative even when `is_absolute` is false (`C:foo`).
+    if absolute || !lead.is_empty() {
+        format!("file://{}/{lead}{encoded}", percent_encode(&authority))
+    } else {
+        encoded
+    }
+}
+
+/// RFC 8089 authority and leading path text for a Windows prefix: `C:/` for a drive (the colon
+/// stays raw), the server and `share/` for UNC, an encoded `name/` for other verbatim forms.
+#[cfg(windows)]
+fn windows_prefix(path: &Path) -> (Vec<u8>, String) {
+    // fail-closed: a path without a prefix has no authority and no drive text.
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return (Vec::new(), String::new());
+    };
+    match prefix.kind() {
+        Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+            (Vec::new(), format!("{}:/", char::from(drive)))
+        }
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => (
+            component_bytes(server, MAX_REPORT_FIELD_BYTES),
+            format!(
+                "{}/",
+                percent_encode(&component_bytes(share, MAX_REPORT_FIELD_BYTES))
+            ),
+        ),
+        Prefix::Verbatim(name) | Prefix::DeviceNS(name) => (
+            Vec::new(),
+            format!(
+                "{}/",
+                percent_encode(&component_bytes(name, MAX_REPORT_FIELD_BYTES))
+            ),
+        ),
+    }
+}
+
+/// Paths outside Windows have no prefix component.
+#[cfg(not(windows))]
+fn windows_prefix(_path: &Path) -> (Vec<u8>, String) {
+    (Vec::new(), String::new())
+}
+
+/// Up to `limit` native bytes of a path component, copied without converting the whole name:
+/// raw bytes on Unix, UTF-8 elsewhere (lone surrogates and a split final character are lossy).
+fn component_bytes(component: &OsStr, limit: usize) -> Vec<u8> {
+    let bytes = component.as_encoded_bytes();
+    let bytes = bytes.get(..limit).unwrap_or(bytes);
+    #[cfg(unix)]
+    {
+        bytes.to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        String::from_utf8_lossy(bytes).into_owned().into_bytes()
+    }
+}
+
+/// Percent-encodes every byte outside RFC 3986 `unreserved`, so no consumer reads a byte as a
+/// delimiter, scheme separator, escape or form-encoded space.
+fn percent_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut encoded = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
 #[cfg(test)]
