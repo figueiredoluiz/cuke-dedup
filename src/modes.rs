@@ -264,20 +264,25 @@ impl ChangedGit {
         if relative.as_os_str().is_empty() {
             return Ok(());
         }
-        let status = self
+        // Capture stderr: inherited, Git's text would reach the terminal unescaped.
+        let output = self
             .worktree_command(&self.repository)
             .args(["check-ignore", "--quiet", "--"])
             // Prevent a leading colon in the pathname from introducing Git pathspec magic.
             .arg(Path::new(".").join(relative))
-            .status()
+            .output()
             .context("failed to check whether the changed-files target is ignored")?;
-        match status.code() {
+        match output.status.code() {
             Some(0) => bail!(
                 "changed-files target {} is ignored by Git and cannot be analyzed incrementally",
                 root.display()
             ),
             Some(1) => Ok(()),
-            _ => bail!("git check-ignore failed for target {}", root.display()),
+            _ => bail!(
+                "git check-ignore failed for target {}: {}",
+                root.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
         }
     }
 }

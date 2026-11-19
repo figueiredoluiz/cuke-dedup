@@ -14,7 +14,7 @@ fn main() {
             std::process::exit(0);
         }
         Err(error) => {
-            eprintln!("error: {error:#}");
+            eprintln!("{}", cuke_dedup::cli::fatal_error_line(&error));
             std::process::exit(2);
         }
     }

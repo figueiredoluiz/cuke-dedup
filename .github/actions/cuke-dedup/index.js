@@ -14,6 +14,7 @@ import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { diagnosticSafe } from "../../../npm/lib/display-text.mjs";
 import { TARGETS, targetFor } from "../../../npm/lib/targets.mjs";
 
 /** Returns gnu when the process report identifies glibc, otherwise musl, including when report access throws. */
@@ -157,10 +158,10 @@ export async function runAction({ env = process.env, cwd = process.cwd() } = {})
   const result = spawnSync(binary, args, { cwd, stdio: "inherit" });
   let exitCode = result.status ?? 2;
   if (result.error) {
-    console.error(`cuke-dedup: failed to start ${binary}: ${result.error.message}`);
+    console.error(diagnosticSafe(`cuke-dedup: failed to start ${binary}: ${result.error.message}`));
     exitCode = 2;
   } else if (result.signal) {
-    console.error(`cuke-dedup: native process terminated by ${result.signal}`);
+    console.error(diagnosticSafe(`cuke-dedup: native process terminated by ${result.signal}`));
     exitCode = 2;
   }
 
@@ -409,7 +410,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exitCode = await runAction();
   } catch (error) {
-    console.error(`cuke-dedup action: ${error.message}`);
+    console.error(diagnosticSafe(`cuke-dedup action: ${error.message}`));
     process.exitCode = 2;
   }
 }

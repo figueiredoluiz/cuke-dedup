@@ -1,16 +1,6 @@
-/**
- * Inclusive code-point ranges the JSON reporter drops from report text (`sanitize` in
- * src/reporters/shared.rs); a test pins this list to that source.
- */
-export const REPORT_UNSAFE_RANGES = [
-  [0xad, 0xad],
-  [0x61c, 0x61c],
-  [0x200b, 0x200f],
-  [0x202a, 0x202e],
-  [0x2060, 0x2069],
-  [0xfeff, 0xfeff],
-  [0xe0000, 0xe007f],
-];
+import { REPORT_UNSAFE_RANGES } from "../../../npm/lib/display-text.mjs";
+
+export { REPORT_UNSAFE_RANGES };
 
 /**
  * Decodes a percent-encoded SARIF `artifactLocation.uri` to the exact file-name text.

@@ -149,6 +149,7 @@ pub mod analysis;
 pub mod cli;
 pub mod config;
 pub mod discovery;
+mod display_text;
 mod framework_descriptor;
 mod framework_registry;
 pub mod gherkin;

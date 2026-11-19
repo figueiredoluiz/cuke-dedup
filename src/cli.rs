@@ -3,6 +3,7 @@
 use crate::analysis;
 use crate::config::{CliConfigOverrides, Config, ConfigOverrides, ReporterKind};
 use crate::discovery;
+use crate::display_text::diagnostic_safe;
 use crate::model::{DuplicationThreshold, Rule, Severity};
 use crate::output_file::{OutputFile, Staged};
 use crate::source_adapter::ExtractionDiagnosticLevel;
@@ -225,6 +226,12 @@ struct PhaseTimings {
     discovery_ms: f64,
     parsing_ms: f64,
     analysis_ms: f64,
+}
+
+/// Formats a fatal error chain as one `error:` line, escaping characters that could rewrite the
+/// terminal or start a CI workflow command.
+pub fn fatal_error_line(error: &anyhow::Error) -> String {
+    format!("error: {}", diagnostic_safe(&format!("{error:#}")))
 }
 
 /// Parses the process arguments, runs the configured analysis, and returns its exit code.
@@ -1248,34 +1255,46 @@ fn write_diagnostics(
     }
     let mut stderr = io::stderr().lock();
     if options.explain_discovery {
-        writeln!(
-            stderr,
-            "cuke-dedup: feature patterns: {} ({})",
-            config.features.join(", "),
-            config.feature_pattern_origin
+        write_diagnostic_line(
+            &mut stderr,
+            format_args!(
+                "cuke-dedup: feature patterns: {} ({})",
+                config.features.join(", "),
+                config.feature_pattern_origin
+            ),
         )?;
         for file in &files.features {
             let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
-            writeln!(
-                stderr,
-                "cuke-dedup: feature {} [{}] via {}",
-                relative.display(),
-                file.format.as_str(),
-                file.pattern
+            write_diagnostic_line(
+                &mut stderr,
+                format_args!(
+                    "cuke-dedup: feature {} [{}] via {}",
+                    relative.display(),
+                    file.format.as_str(),
+                    file.pattern
+                ),
             )?;
         }
         for file in &files.definitions {
             let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
-            writeln!(stderr, "cuke-dedup: definition {}", relative.display())?;
+            write_diagnostic_line(
+                &mut stderr,
+                format_args!("cuke-dedup: definition {}", relative.display()),
+            )?;
         }
     }
     for warning in &diagnostics.warnings {
-        writeln!(stderr, "cuke-dedup: warning: {warning}")?;
+        write_diagnostic_line(&mut stderr, format_args!("cuke-dedup: warning: {warning}"))?;
     }
     for error in &diagnostics.errors {
-        writeln!(stderr, "cuke-dedup: {error}")?;
+        write_diagnostic_line(&mut stderr, format_args!("cuke-dedup: {error}"))?;
     }
     Ok(())
+}
+
+/// Writes one stderr line with repository-derived text escaped, so it stays on that line.
+fn write_diagnostic_line(stderr: &mut impl Write, line: std::fmt::Arguments<'_>) -> io::Result<()> {
+    writeln!(stderr, "{}", diagnostic_safe(&line.to_string()))
 }
 
 /// 2 when any diagnostic error exists; 1 when an active error finding outside the duplication

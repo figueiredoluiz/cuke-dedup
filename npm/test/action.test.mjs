@@ -657,6 +657,7 @@ test("action retains report preparation diagnostics", { skip: process.platform =
   await mkdir(targets, { recursive: true });
   await copyFile(new URL("../../.github/actions/cuke-dedup/index.js", import.meta.url), join(action, "index.mjs"));
   await copyFile(new URL("../lib/targets.mjs", import.meta.url), join(targets, "targets.mjs"));
+  await copyFile(new URL("../lib/display-text.mjs", import.meta.url), join(targets, "display-text.mjs"));
   await copyFile(new URL("../prebuilt-targets.json", import.meta.url), join(directory, "npm/prebuilt-targets.json"));
   const binary = join(directory, "analyzer.cjs");
   await writeFile(binary, `#!/usr/bin/env node
@@ -676,4 +677,44 @@ else process.exitCode = 2;
     await assert.rejects(isolated.runAction({ cwd: directory, env: { CUKE_DEDUP_BINARY: binary } }),
       (error) => error.message === message && error.code === code);
   }
+});
+
+/** Asserts each stderr line has a CukeDedup prefix and no control, bidi or separator character. */
+function assertDiagnosticLines(stderr) {
+  assert.ok(stderr.endsWith("\n"), JSON.stringify(stderr));
+  for (const line of stderr.slice(0, -1).split("\n")) {
+    assert.match(line, /^cuke-dedup(?: action)?: /, JSON.stringify(line));
+    assert.doesNotMatch(line, /[\p{Cc}\p{Cs}\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/u,
+      JSON.stringify(line));
+  }
+}
+
+/** Repository-derived text in Action failures reaches the runner log escaped on one line. */
+test("action escapes controls in its own diagnostics", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cuke-action-diagnostics-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const action = fileURLToPath(new URL("../../.github/actions/cuke-dedup/index.js", import.meta.url));
+  const unsafeText = "bad\n::warning title=t::m\u001b[31m\u202e\u2028end";
+  const escaped = String.raw`bad\n::warning title=t::m\u{1b}[31m\u{202e}\u{2028}end`;
+  const binary = join(directory, "analyzer.cjs");
+  /** Runs the Action entry point against `binaryPath` and returns its exit status and stderr. */
+  const run = (binaryPath) => spawnSync(process.execPath, [action], {
+    cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH, CUKE_DEDUP_BINARY: binaryPath },
+  });
+  for (const [script, expected] of [
+    [`process.stderr.write(${JSON.stringify(unsafeText)}); process.exitCode = 2;`, escaped],
+    [`if (process.argv.includes("--print-config")) console.log(JSON.stringify({ root: process.cwd() }));
+else process.kill(process.pid, "SIGTERM");`, "cuke-dedup: native process terminated by SIGTERM"],
+  ]) {
+    await writeFile(binary, `#!/usr/bin/env node\n${script}\n`);
+    await chmod(binary, 0o755);
+    const result = run(binary);
+    assert.equal(result.status, 2, result.stderr);
+    assertDiagnosticLines(result.stderr);
+    assert.ok(result.stderr.includes(expected), result.stderr);
+  }
+  const missing = run(join(directory, unsafeText, "cuke-dedup"));
+  assert.equal(missing.status, 2, missing.stderr);
+  assertDiagnosticLines(missing.stderr);
+  assert.ok(missing.stderr.includes(escaped), missing.stderr);
 });

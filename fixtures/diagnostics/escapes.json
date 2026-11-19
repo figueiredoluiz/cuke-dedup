@@ -1,0 +1,102 @@
+[
+  {
+    "name": "plain text",
+    "input": "feature/a b.feature",
+    "expected": "feature/a b.feature"
+  },
+  {
+    "name": "empty",
+    "input": "",
+    "expected": ""
+  },
+  {
+    "name": "line feed",
+    "input": "a\nb",
+    "expected": "a\\nb"
+  },
+  {
+    "name": "carriage return and tab",
+    "input": "\r\t",
+    "expected": "\\r\\t"
+  },
+  {
+    "name": "escape sequence",
+    "input": "\u001b[31m",
+    "expected": "\\u{1b}[31m"
+  },
+  {
+    "name": "nul",
+    "input": "\u0000",
+    "expected": "\\u{0}"
+  },
+  {
+    "name": "delete and C1 controls",
+    "input": "\u007f\u0080\u0085\u009f",
+    "expected": "\\u{7f}\\u{80}\\u{85}\\u{9f}"
+  },
+  {
+    "name": "no-break space is kept",
+    "input": "\u00a0\u00ac\u00ae",
+    "expected": "\u00a0\u00ac\u00ae"
+  },
+  {
+    "name": "soft hyphen",
+    "input": "\u00ad",
+    "expected": "\\u{ad}"
+  },
+  {
+    "name": "arabic letter mark",
+    "input": "\u061b\u061c\u061d",
+    "expected": "\u061b\\u{61c}\u061d"
+  },
+  {
+    "name": "zero-width and marks",
+    "input": "\u200a\u200b\u200f\u2010",
+    "expected": "\u200a\\u{200b}\\u{200f}\u2010"
+  },
+  {
+    "name": "line and paragraph separators",
+    "input": "\u2027\u2028\u2029",
+    "expected": "\u2027\\u{2028}\\u{2029}"
+  },
+  {
+    "name": "bidi embeddings and overrides",
+    "input": "\u202a\u202e\u202f",
+    "expected": "\\u{202a}\\u{202e}\u202f"
+  },
+  {
+    "name": "bidi isolates",
+    "input": "\u205f\u2060\u2069\u206a",
+    "expected": "\u205f\\u{2060}\\u{2069}\u206a"
+  },
+  {
+    "name": "byte order mark",
+    "input": "\ufeff\ufffd",
+    "expected": "\\u{feff}\ufffd"
+  },
+  {
+    "name": "tag characters",
+    "input": "\udb3f\udfff\udb40\udc00\udb40\udc7f\udb40\udc80",
+    "expected": "\udb3f\udfff\\u{e0000}\\u{e007f}\udb40\udc80"
+  },
+  {
+    "name": "backslash is kept",
+    "input": "back\\slash \\u{1b}",
+    "expected": "back\\slash \\u{1b}"
+  },
+  {
+    "name": "workflow command text without a line break is kept",
+    "input": "::warning::x ##[error]y",
+    "expected": "::warning::x ##[error]y"
+  },
+  {
+    "name": "workflow command after a line break",
+    "input": "bad\n::warning title=t::m",
+    "expected": "bad\\n::warning title=t::m"
+  },
+  {
+    "name": "multibyte text is kept",
+    "input": "\u00e9\u4e2d\ud83d\ude00",
+    "expected": "\u00e9\u4e2d\ud83d\ude00"
+  }
+]

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { REPORT_UNSAFE_RANGES as SHARED_RANGES } from "../../../npm/lib/display-text.mjs";
 import { decodeSarifUri, REPORT_UNSAFE_RANGES, sarifDisplayPath } from "./sarif-uri.mjs";
 
 /** Percent-encodes every byte outside RFC 3986 unreserved, as the SARIF reporter does. */
@@ -51,14 +52,12 @@ test("sarifDisplayPath matches the shared reporter display cases", () => {
   for (const { uri, display } of cases) assert.equal(sarifDisplayPath(uri), display, uri);
 });
 
-/** Pins the dropped ranges to the Rust `sanitize` filter so the two cannot drift apart. */
+/** The dropped ranges are the shared invisible-format list, which the Rust sanitizer also uses. */
 test("REPORT_UNSAFE_RANGES matches the Rust report sanitizer", () => {
   const source = readFileSync(new URL("../../../src/reporters/shared.rs", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("fn sanitize("), source.indexOf("pub(super) fn terminal_safe"));
-  const ranges = [...body.matchAll(/'\\u\{([0-9a-f]+)\}'(?:\.\.='\\u\{([0-9a-f]+)\}')?/g)]
-    .map(([, start, end]) => [Number.parseInt(start, 16), Number.parseInt(end ?? start, 16)]);
-  assert.ok(ranges.length > 0, "no ranges parsed from sanitize");
-  assert.deepEqual(REPORT_UNSAFE_RANGES, ranges);
+  assert.equal(REPORT_UNSAFE_RANGES, SHARED_RANGES);
   assert.match(body, /character\.is_control\(\)/);
   assert.match(body, /'\\n' \| '\\r' \| '\\t'/);
+  assert.match(body, /!is_invisible_format\(\*character\)/);
 });
