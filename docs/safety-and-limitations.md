@@ -54,6 +54,10 @@ when CI must reject degraded analysis.
 | Package, CukeDedup, framework, or static project configuration | 1 MiB each |
 | Project-resolution metadata files | 1,024 files / 16 MiB total |
 | Project-resolution mappings | 16,384 |
+| Primary discovery walk entries, excluded entries included | 1,000,000 per run |
+| Selected feature and definition files | 100,000 per run |
+| Selected feature and definition source | 512 MiB per run |
+| Primary discovery glob evaluations | 64,000,000 per run |
 | Workspace discovery entries | 100,000 |
 | Content-classification prefix per discovered source | 64 KiB |
 | Imported registration modules | 1,024 modules / 64 MiB total |
@@ -63,6 +67,13 @@ when CI must reject degraded analysis.
 | Ruby assertion proof work | 1,000,000 units |
 | Memoized module path/depth states | 16,384 |
 | Memoized module resolutions | 16 MiB |
+
+Primary discovery limits cover the current tree and a `--baseline-from-ref` tree together.
+An excluded directory costs one entry and is not entered; entries removed by ignore files or the
+hidden filter are not counted. Source bytes are each file's size up to the 8 MiB read limit, taken
+from metadata before any file is read. Exceeding any primary discovery limit stops the run with
+exit code 2 and writes no report; exclude generated or vendored directories or narrow the
+`features` and `definitions` globs.
 
 Resolution confines imports and package targets to canonical analysis or package roots and shares
 cached work between importing files. A registration module, package manifest, importer's nearest

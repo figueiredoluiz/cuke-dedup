@@ -964,6 +964,30 @@ fn invalid_exclusion_patterns_are_operational_errors() {
         .stderr(predicate::str::contains("invalid exclude glob pattern `[`"));
 }
 
+/// More selected source than the run-wide byte cap fails before any file is read or reported.
+#[test]
+fn discovery_rejects_runs_over_the_selected_source_byte_cap() {
+    let directory = tempfile::tempdir().unwrap();
+    // 65 files at the 8 MiB per-file cap exceed 512 MiB; sparse, so only metadata is touched.
+    for index in 0..65 {
+        let file = fs::File::create(directory.path().join(format!("f{index}.feature"))).unwrap();
+        file.set_len(8 * 1024 * 1024).unwrap();
+    }
+    let output = directory.path().join("reports");
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command
+        .current_dir(directory.path())
+        .args([".", "--reporters", "json", "--output"])
+        .arg(&output)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "discovery exceeds 536870912 selected source bytes; exclude generated or vendored \
+             directories or narrow the feature and definition globs",
+        ));
+    assert!(!output.exists() || fs::read_dir(&output).unwrap().next().is_none());
+}
+
 /// Checks valid inline suppression permits success and a missing reason produces an operational error.
 #[test]
 fn inline_suppressions_require_a_rule_and_reason_and_affect_exit_status() {

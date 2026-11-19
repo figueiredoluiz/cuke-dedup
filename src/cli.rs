@@ -274,7 +274,8 @@ fn execute(cli: Cli) -> Result<i32> {
     }
     let changed_files = resolve_changed_files(config, options.changed_since.as_deref())?;
     let discovery_started = Instant::now();
-    let files = discovery::discover(config)?;
+    let discovery_budget = discovery::DiscoveryBudget::default();
+    let files = discovery::discover_within(config, &discovery_budget)?;
     let discovery_ms = elapsed_ms(discovery_started);
 
     let parsing_started = Instant::now();
@@ -335,6 +336,7 @@ fn execute(cli: Cli) -> Result<i32> {
         analyzed.run_incomplete,
         &mut diagnostics,
         &mut feature_budget,
+        &discovery_budget,
     )?;
     if let Some(sink) = fingerprints {
         sink.publish()?;
@@ -962,6 +964,7 @@ fn apply_baseline_mode(
     run_incomplete: bool,
     diagnostics: &mut Diagnostics,
     feature_budget: &mut gherkin::FeatureStepBudget,
+    discovery_budget: &discovery::DiscoveryBudget,
 ) -> Result<Option<modes::BaselineOutcome>> {
     if let Some(revision) = &options.baseline_from_ref {
         let (_snapshot, root) = modes::baseline_snapshot(&config.root, revision)?;
@@ -973,7 +976,7 @@ fn apply_baseline_mode(
         // incompleteness as an error and reject the baseline.
         let mut base_config = config.clone();
         base_config.root = root;
-        let files = discovery::discover(&base_config)?;
+        let files = discovery::discover_within(&base_config, discovery_budget)?;
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
         let extracted = extract_corpus(
             &base_config,

@@ -116,7 +116,7 @@ const SCOPES = [
     // `mod tests;` may load `tests/mod.rs`, and a `tests.rs` loads its children from `tests/`. The
     // partition assertion below is the backstop for a file neither scope selects.
     files: () => ALL_RUST_SOURCES.filter((path) => path.startsWith("src/") && !isTestPath(path)),
-    maximumPercentage: 0.27,
+    maximumPercentage: 0.22,
     maximumDuplicatedLines: 95,
     minimumFiles: 30,
     minimumLines: 15_000,
