@@ -2,6 +2,7 @@
 
 use super::super::sarif_location;
 use crate::model::SourceLocation;
+use crate::reporters::shared::convert_location;
 use crate::resource_limits::MAX_REPORT_FIELD_BYTES;
 use crate::tests::property_runner;
 use proptest::prelude::*;
@@ -243,6 +244,40 @@ fn oversized_non_utf8_names_sample_native_bytes() {
             9000 - kept
         );
         assert_eq!(emitted, expected, "byte {byte:#04x}");
+    }
+}
+
+/// Shared cases: the SARIF URI is exact and the JSON reporter's display path of the same file is
+/// the projection the corpus checker compares against.
+#[test]
+fn shared_display_cases_match_both_reporters() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/reporters/sarif-display-paths.json"
+    ))
+    .unwrap();
+    let root = root();
+    for case in cases["cases"].as_array().unwrap() {
+        let (expected_uri, display) = (
+            case["uri"].as_str().unwrap(),
+            case["display"].as_str().unwrap(),
+        );
+        if case["unixOnly"].as_bool().unwrap() && !cfg!(unix) {
+            continue;
+        }
+        let mut path = root.clone();
+        for segment in decode_relative(expected_uri).unwrap() {
+            #[cfg(unix)]
+            path.push(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&segment));
+            #[cfg(not(unix))]
+            path.push(String::from_utf8(segment).unwrap());
+        }
+        assert_eq!(uri(&path, &root), expected_uri, "{display:?}");
+        let location = SourceLocation::new(&path, 1, 1, 1, 2);
+        assert_eq!(
+            convert_location(&location, &root).path,
+            display,
+            "{expected_uri:?}"
+        );
     }
 }
 

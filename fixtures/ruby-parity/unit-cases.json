@@ -8055,6 +8055,13 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent SARIF URI bound for oversized non-UTF-8 Unix names: raw bytes kept, marker counts native bytes.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "shared_display_cases_match_both_reporters",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent shared SARIF URI and JSON display-path cases for bidi, format, control, backslash and non-UTF-8 names, also read by the corpus checker test.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },

@@ -1,0 +1,13 @@
+{
+  "description": "SARIF artifact URIs and the JSON display path of the same file. Read by src/reporters/sarif/tests/uri.rs (both reporters) and scripts/check/lib/sarif-uri.test.mjs (corpus checker projection).",
+  "cases": [
+    { "uri": "plain/steps.ts", "display": "plain/steps.ts", "unixOnly": false },
+    { "uri": "a%E2%80%AEb.ts", "display": "ab.ts", "unixOnly": false },
+    { "uri": "%EF%BB%BFsteps.ts", "display": "steps.ts", "unixOnly": false },
+    { "uri": "%F3%A0%80%81tag%C2%ADsoft%E2%81%A0.ts", "display": "tagsoft.ts", "unixOnly": false },
+    { "uri": "dir%20%231/a%3Fb.ts", "display": "dir #1/a?b.ts", "unixOnly": false },
+    { "uri": "x%5Cz.ts", "display": "x/z.ts", "unixOnly": true },
+    { "uri": "a%07%09%0A%0Db.ts", "display": "a\t\n\rb.ts", "unixOnly": true },
+    { "uri": "a%FFb.ts", "display": "a�b.ts", "unixOnly": true }
+  ]
+}
