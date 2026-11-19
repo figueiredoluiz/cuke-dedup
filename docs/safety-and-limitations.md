@@ -140,5 +140,11 @@ characters, and remove bidirectional, invisible-format, and Unicode Tag characte
 still originates in the analyzed repository and must be treated as untrusted data rather than
 agent instructions.
 
+Diagnostics on stderr (warnings, errors, `--explain-discovery` lines, the fatal `error:` line, Git
+messages) and the Action's own messages escape the same characters instead of removing them, plus
+control characters and U+2028/U+2029: `\n`, `\r` and `\t` by name, others as `\u{hex}`
+(`\u{1b}`, `\u{202e}`). Each diagnostic stays on one line that starts with `cuke-dedup` or
+`error:`, so a file name cannot start a CI workflow command. Backslashes are not escaped.
+
 See [Reports](reports.md) for presentation limits and [Discovery and frameworks](discovery-and-frameworks.md)
 for corpus-completeness rules.

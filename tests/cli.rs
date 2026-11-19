@@ -5,6 +5,8 @@ use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
+#[path = "common/diagnostic_oracle.rs"]
+mod diagnostic_oracle;
 #[path = "common/feature_expansion.rs"]
 mod feature_fixtures;
 
@@ -4552,6 +4554,7 @@ case "$FIXTURE_GIT_CASE:$*" in
     legacy:*" --path-format="*|legacy:*" --show-object-format") exit 129 ;;
     settings:*" config --null --get-regexp "*) exit 2 ;;
     scope:*" check-ignore --quiet -- "*) exit 2 ;;
+    scope-stderr:*" check-ignore --quiet -- "*) printf 'fatal: bad\n::warning::owned\033[31m\n' >&2; exit 128 ;;
     paths:*" ls-files --others "*) printf '../outside.ts\000'; exit 0 ;;
     trusted:*" rev-parse "*|trusted:*" config "*|trusted:*" ls-tree "*|trusted:*" clone "*|untrusted:*" rev-parse "*|untrusted:*" config "*)
         if [ -z "${GIT_DIR+x}" ]; then
@@ -4576,6 +4579,7 @@ PATH="$FIXTURE_GIT_PATH" exec git "$@"
         ("format-length", 2, "unsupported Git object format"),
         ("settings", 2, "failed to read Git worktree settings"),
         ("scope", 2, "git check-ignore failed for target"),
+        ("scope-stderr", 2, r"fatal: bad\n::warning::owned\u{1b}[31m"),
         ("paths", 2, "invalid relative path in Git listing"),
         ("trusted", 1, ""),
         ("untrusted", 2, "dubious ownership"),
@@ -4607,6 +4611,7 @@ PATH="$FIXTURE_GIT_PATH" exec git "$@"
             if code == 1 {
                 result.stdout(predicate::str::contains("duplicate-matcher"));
             } else {
+                assert_diagnostic_lines(&result.get_output().stderr);
                 result.stderr(predicate::str::contains(diagnostic));
             }
         }
@@ -9887,4 +9892,65 @@ fn sarif_uris_percent_encode_reserved_file_names() {
             "dir%20%231/x%3Ay%5Cz.ts"
         ]
     );
+}
+
+/// Asserts stderr is newline-terminated UTF-8 lines that each start with a CukeDedup prefix and
+/// carry no unsafe character, so no repository text can start a workflow command or rewrite output.
+fn assert_diagnostic_lines(stderr: &[u8]) {
+    let text = std::str::from_utf8(stderr).unwrap();
+    assert!(text.ends_with('\n'), "{text:?}");
+    for line in text.strip_suffix('\n').unwrap().split('\n') {
+        assert!(
+            line.starts_with("cuke-dedup: ") || line.starts_with("error: "),
+            "{line:?}"
+        );
+        assert!(
+            !line.chars().any(diagnostic_oracle::diagnostic_unsafe),
+            "{line:?}"
+        );
+    }
+}
+
+/// Runs the CLI expecting exit 2, checks every stderr line, and returns stderr.
+fn failing_diagnostics(root: &Path, args: &[&str]) -> String {
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args(args)
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    assert_diagnostic_lines(&output.stderr);
+    String::from_utf8(output.stderr).unwrap()
+}
+
+/// Repository file names and config keys with controls, bidi overrides and workflow command text
+/// reach stderr escaped on one line, in discovery output, warnings, errors and the fatal chain.
+#[cfg(unix)]
+#[test]
+fn diagnostics_escape_repository_controls() {
+    let directory = tempfile::tempdir().unwrap();
+    let name = "bad\n::warning title=t::m\u{1b}[31m\u{202e}\u{2028}.feature";
+    let escaped = r"bad\n::warning title=t::m\u{1b}[31m\u{202e}\u{2028}.feature";
+    write(directory.path(), name, "not gherkin\n");
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        "{\"noMetrics\":true,\"x\\u001b[31m\\n::error::y\":1}",
+    );
+    let stderr = failing_diagnostics(directory.path(), &["--explain-discovery", "."]);
+    assert!(
+        stderr.contains(&format!("cuke-dedup: feature {escaped} [gherkin] via ")),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("{escaped}: Error at ")),
+        "{stderr}"
+    );
+    assert!(stderr.contains(r"x\u{1b}[31m\n::error::y"), "{stderr}");
+
+    let stderr = failing_diagnostics(directory.path(), &["--config", ".cuke-dedup.json", "."]);
+    assert!(stderr.starts_with("error: "), "{stderr}");
+    assert!(stderr.contains(r"x\u{1b}[31m\n::error::y"), "{stderr}");
 }

@@ -55,12 +55,13 @@ test("the pair sources are the analyzer's candidate sources", async () => {
 
 /** Checks `reportPath` strips exactly the characters the report sanitizer strips, read from the Rust source. */
 test("report paths drop the characters the report sanitizer drops", async () => {
-  const rust = await readFile(new URL("../../../src/reporters/shared.rs", import.meta.url), "utf8");
-  const start = rust.indexOf("fn sanitize(");
+  // `sanitize` drops controls and the shared invisible-format ranges defined in display_text.rs.
+  const rust = await readFile(new URL("../../../src/display_text.rs", import.meta.url), "utf8");
+  const start = rust.indexOf("fn is_invisible_format(");
   const body = rust.slice(start, rust.indexOf("\n}\n", start));
   const ranges = [...body.matchAll(/'\\u\{([0-9a-f]+)\}'(?:\.\.='\\u\{([0-9a-f]+)\}')?/g)]
     .map((match) => [Number.parseInt(match[1], 16), Number.parseInt(match[2] ?? match[1], 16)]);
-  assert.ok(ranges.length >= 7, "no stripped ranges found in src/reporters/shared.rs");
+  assert.ok(ranges.length >= 7, "no stripped ranges found in src/display_text.rs");
   /** The path `a<character>b` in the report's form. */
   const around = (codePoint) => reportPath(`a${String.fromCodePoint(codePoint)}b`);
   for (const [low, high] of ranges) {

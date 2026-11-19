@@ -1,5 +1,6 @@
 use super::{CliReportMetadata, CorpusCensus, ReportContext, Summary, JSON_SCHEMA_VERSION};
 use crate::analysis::AnalysisCensus;
+use crate::display_text::is_invisible_format;
 use crate::model::{
     AnalysisResult, DefinitionCluster, DefinitionComparison, Finding, FindingEvidence, MatcherDiff,
     Rule, Severity, SourceLocation, Suppression,
@@ -306,17 +307,7 @@ fn sanitize(value: &str, keep_whitespace: bool) -> String {
         .chars()
         .filter(|character| {
             let allowed_control = keep_whitespace && matches!(*character, '\n' | '\r' | '\t');
-            (!character.is_control() || allowed_control)
-                && !matches!(
-                    *character,
-                    '\u{00ad}'
-                        | '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2060}'..='\u{2069}'
-                        | '\u{feff}'
-                        | '\u{e0000}'..='\u{e007f}'
-                )
+            (!character.is_control() || allowed_control) && !is_invisible_format(*character)
         })
         .collect()
 }

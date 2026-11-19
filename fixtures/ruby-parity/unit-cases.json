@@ -7123,6 +7123,13 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent CLI SARIF URIs for reserved-character file names in primary and related locations.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "diagnostics_escape_repository_controls",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent CLI stderr: repository file names and config keys with controls, bidi and workflow command text are escaped on one prefixed line in discovery output, warnings, errors and the fatal chain.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -8072,6 +8079,31 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent SARIF rendering keeps temporary memory bounded for an oversized caller-supplied path.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/display_text/tests.rs": {
+      "tests": [
+        {
+          "name": "generated_diagnostics_match_the_escape_oracle",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent diagnostic escaping: generated boundary code points match a hand-built escape oracle, safe text stays borrowed and no unsafe character remains.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "invisible_format_matches_the_report_ranges",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent invisible-format predicate shared with report sanitizing covers exactly the report ranges over every code point.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "shared_escape_cases_match",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent diagnostic escaping matches the shared case file also read by the Action helper tests.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
