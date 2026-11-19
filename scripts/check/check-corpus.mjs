@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { attempt, reportFailures } from "./lib/keep-going.mjs";
+import { sarifDisplayPath } from "./lib/sarif-uri.mjs";
 import { latestClassifiedAt, validateVariantReferences } from "./lib/manifest-schema.mjs";
 import { judgeBehaviorCase, observeBehaviorCase } from "./lib/behavior-runner.mjs";
 import { assertCaseWellFormed, judgeRecallCase, observeRecallCase } from "./lib/recall-runner.mjs";
@@ -142,7 +143,7 @@ function parityFinding(finding) {
 function sarifLocation(location) {
   const physical = location.physicalLocation;
   return {
-    path: physical.artifactLocation.uri,
+    path: sarifDisplayPath(physical.artifactLocation.uri),
     line: physical.region.startLine,
     column: physical.region.startColumn,
     endLine: physical.region.endLine,

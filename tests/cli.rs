@@ -9828,3 +9828,63 @@ fn regression_emit_records_are_staged_before_the_baseline_and_create_parents() {
         assert_eq!(entries(&root.join("new/dir")), ["records.jsonl"], "{flag}");
     }
 }
+
+/// SARIF primary and related URIs percent-encode reserved characters in real file names.
+#[cfg(unix)]
+#[test]
+fn sarif_uris_percent_encode_reserved_file_names() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        ".cuke-dedup.json",
+        r#"{"definitions":["**/*.ts"],"reporters":["json","sarif"],"output":"reports","noMetrics":true}"#,
+    );
+    let steps =
+        "import { Given } from '@cucumber/cucumber';\nGiven('I log in', () => { login(); });\n";
+    write(directory.path(), "dir #1/sub%41/a?b c.ts", steps);
+    write(directory.path(), r"dir #1/x:y\z.ts", steps);
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .arg(".")
+        .assert()
+        .code(1);
+
+    let sarif: Value = serde_json::from_str(
+        &fs::read_to_string(directory.path().join("reports/cuke-dedup.sarif")).unwrap(),
+    )
+    .unwrap();
+    let mut uris = sarif["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|result| {
+            let related = result["relatedLocations"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            result["locations"]
+                .as_array()
+                .unwrap()
+                .clone()
+                .into_iter()
+                .chain(related)
+        })
+        .map(|location| {
+            location["physicalLocation"]["artifactLocation"]["uri"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    uris.sort();
+    uris.dedup();
+    assert_eq!(
+        uris,
+        [
+            "dir%20%231/sub%2541/a%3Fb%20c.ts",
+            "dir%20%231/x%3Ay%5Cz.ts"
+        ]
+    );
+}

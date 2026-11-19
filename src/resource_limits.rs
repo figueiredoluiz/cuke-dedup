@@ -52,22 +52,45 @@ pub(crate) const MAX_BUFFERED_REPORT_BYTES: usize = 16 * 1024 * 1024;
 /// The marker counts omitted source bytes, including bytes removed to make room for the marker.
 /// The fixed internal limit must leave at least 64 bytes for that marker.
 pub(crate) fn sample_text(value: &str, limit: usize) -> std::borrow::Cow<'_, str> {
+    match omission_cut(value.as_bytes(), value.len(), limit) {
+        None => std::borrow::Cow::Borrowed(value),
+        Some((end, marker)) => std::borrow::Cow::Owned(format!("{}{marker}", &value[..end])),
+    }
+}
+
+/// Cut point and omission marker for a value `original_len` bytes long whose first bytes are
+/// `prefix`; `None` when it fits. Works on bytes so callers can bound the copy of oversized or
+/// non-UTF-8 input. The cut never splits a UTF-8 sequence that starts before it.
+pub(crate) fn omission_cut(
+    prefix: &[u8],
+    original_len: usize,
+    limit: usize,
+) -> Option<(usize, String)> {
     assert!(
         limit >= 64,
         "text limit must accommodate the omission marker"
     );
-    if value.len() <= limit {
-        return std::borrow::Cow::Borrowed(value);
+    if original_len <= limit {
+        return None;
     }
-    let mut end = limit.saturating_sub(64);
-    while !value.is_char_boundary(end) {
-        end -= 1;
+    let mut end = (limit - 64).min(prefix.len());
+    // The nearest non-continuation byte within three bytes: when it starts a valid character that
+    // crosses the cut, the cut moves to it. ASCII and invalid bytes never move it.
+    let start = (end.saturating_sub(3)..end)
+        .rev()
+        .find(|&index| prefix[index] & 0xC0 != 0x80);
+    if let Some(lead) = start {
+        let window = &prefix[lead..prefix.len().min(lead + 4)];
+        let width = window
+            .utf8_chunks()
+            .next()
+            .and_then(|chunk| chunk.valid().chars().next())
+            .map_or(1, char::len_utf8);
+        if lead + width > end {
+            end = lead;
+        }
     }
-    std::borrow::Cow::Owned(format!(
-        "{}… [{} bytes omitted]",
-        &value[..end],
-        value.len() - end
-    ))
+    Some((end, format!("… [{} bytes omitted]", original_len - end)))
 }
 
 /// Rejects a write before it would exceed the byte ceiling, including serialization escapes.

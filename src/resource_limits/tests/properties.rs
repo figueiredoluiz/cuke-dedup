@@ -1,4 +1,4 @@
-use super::{PassBudget, WorkBudget};
+use super::{omission_cut, PassBudget, WorkBudget};
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseResult;
 
@@ -159,4 +159,49 @@ fn small_budget_sequences_match_models_exhaustively() {
         .collect();
     assert_eq!(enumerate(&work, check_work), 273);
     assert_eq!(enumerate(&pass, check_pass), 333);
+}
+
+/// Independent oracle: the largest cut at or below `end` that no single valid character crosses.
+fn oracle_cut(bytes: &[u8], end: usize) -> usize {
+    let crosses = |cut: usize| {
+        (cut.saturating_sub(3)..cut).any(|first| {
+            (cut + 1..=bytes.len().min(first + 4)).any(|last| {
+                std::str::from_utf8(&bytes[first..last]).is_ok_and(|text| text.chars().count() == 1)
+            })
+        })
+    };
+    (0..=end).rev().find(|&cut| !crosses(cut)).unwrap()
+}
+
+/// Cuts mixed valid and invalid UTF-8 bytes like the brute-force oracle and counts every byte past
+/// the cut; inputs within the limit are never cut. Asserts each stratum was generated.
+#[test]
+fn generated_omission_cuts_match_the_character_oracle() {
+    let piece = prop_oneof![
+        any::<char>().prop_map(|value| value.to_string().into_bytes()),
+        any::<u8>().prop_map(|byte| vec![byte]),
+        (0x80u8..=0xBF).prop_map(|byte| vec![byte]),
+    ];
+    // Strata: within the limit, cut in place, cut moved back before a split character.
+    let seen = std::cell::Cell::new([false; 3]);
+    generated(
+        (64usize..=72, proptest::collection::vec(piece, 16..=96)),
+        |(limit, pieces)| {
+            let bytes = pieces.concat();
+            let cut = omission_cut(&bytes, bytes.len(), *limit);
+            let mut strata = seen.get();
+            if bytes.len() <= *limit {
+                strata[0] = true;
+                prop_assert_eq!(cut, None);
+            } else {
+                let end = oracle_cut(&bytes, limit - 64);
+                strata[if end == limit - 64 { 1 } else { 2 }] = true;
+                let marker = format!("… [{} bytes omitted]", bytes.len() - end);
+                prop_assert_eq!(cut, Some((end, marker)));
+            }
+            seen.set(strata);
+            Ok(())
+        },
+    );
+    assert_eq!(seen.get(), [true; 3], "unreached stratum");
 }

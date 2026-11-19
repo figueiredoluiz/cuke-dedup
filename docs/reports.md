@@ -67,6 +67,12 @@ SARIF 2.1.0 includes active findings, portable locations, stable partial fingerp
 similarity properties, suggested actions, and threshold outcome. Each rule links to its dedicated
 documentation section.
 
+`artifactLocation.uri` is a `/`-separated reference relative to the analysis root. Every byte
+outside RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`) is percent-encoded, so `#`, `?`,
+`%`, `:`, spaces and non-ASCII names decode to the exact file name. A location outside the root
+is an RFC 8089 `file:` URI (`file:///C:/…`, `file://server/share/…`). A path over 8 KiB is cut on
+raw bytes, never inside a UTF-8 character, and ends with an encoded omitted-byte marker.
+
 The GitHub Action can generate SARIF alongside terminal or HTML output. Uploading SARIF to a
 code-scanning platform is controlled by the consuming workflow and may require additional
 permissions.
