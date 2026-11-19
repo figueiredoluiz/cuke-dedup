@@ -7130,6 +7130,13 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent CLI stderr: repository file names and config keys with controls, bidi and workflow command text are escaped on one prefixed line in discovery output, warnings, errors and the fatal chain.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "discovery_rejects_runs_over_the_selected_source_byte_cap",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: the CLI exits 2 with the byte-cap diagnostic before reading sources or writing reports.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -8104,6 +8111,59 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent diagnostic escaping matches the shared case file also read by the Action helper tests.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/discovery/tests/budget.rs": {
+      "tests": [
+        {
+          "name": "a_shared_budget_accumulates_across_discoveries",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: one budget sums every discovery of a run and rejects the second identical tree.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "definition_pattern_work_is_charged",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: definition globs, opt-in suffix probes and the unmatched-pattern pass are charged exactly.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "entry_exhaustion_stops_before_selecting_more_files",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: the walk stops at the first entry past the limit with a fatal error.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "generated_discovery_admits_exact_totals_and_rejects_one_less",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: generated trees within every cap equal the unbounded result; one below any cap is a fatal error naming it.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "overlapping_definition_globs_stop_at_the_first_match",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: repeated definition globs stop at the first match and cost only the unmatched pass.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "oversized_files_charge_the_bounded_read",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: a file above the per-file read cap charges only the bounded read.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "pruned_subtrees_are_not_charged_for_their_contents",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent primary discovery budget: excluded directories cost one entry and gitignored ones none, whatever they contain.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

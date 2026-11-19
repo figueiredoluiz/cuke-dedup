@@ -302,3 +302,5 @@ fn excluded_directories_are_pruned_before_traversal() {
     assert!(files.definitions.is_empty());
     assert!(files.errors.is_empty());
 }
+
+mod budget;
