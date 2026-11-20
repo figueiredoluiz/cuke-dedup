@@ -1,6 +1,7 @@
 //! Automatically found configuration is read only when it resolves inside the analysis root.
 
 use super::*;
+use crate::tests::automatic_file::NonRegular;
 use std::fs;
 
 /// One automatic source: its path under the root, a payload and the setting the payload changes.
@@ -185,4 +186,72 @@ fn a_refused_candidate_does_not_fall_through() {
         format!("{error:#}").contains(".cuke-dedup.json"),
         "{error:#}"
     );
+}
+
+/// Present non-regular sources fail rather than applying a lower-priority source or defaults;
+/// replacing the entry with its regular payload applies the observable setting.
+#[test]
+fn automatic_non_regular_sources_are_refused() {
+    let mut cases = sites().into_iter().collect::<Vec<_>>();
+    cases.extend([
+        Site {
+            name: "cucumber.yaml",
+            payload: "default:\n  paths: [marker.feature]\n",
+            applied: |config| config.features == ["marker.feature"],
+        },
+        Site {
+            name: "cucumber.js",
+            payload: "module.exports = {default: {paths: ['marker.feature']}};",
+            applied: |config| config.features == ["marker.feature"],
+        },
+        Site {
+            name: "playwright.config.ts",
+            payload: "export default defineBddConfig({features: ['marker.feature']});",
+            applied: |config| config.features == ["marker.feature"],
+        },
+        Site {
+            name: "cypress.config.ts",
+            payload: "export default defineConfig({e2e: {specPattern: ['marker.feature']}});",
+            applied: |config| config.features == ["marker.feature"],
+        },
+    ]);
+    for site in cases {
+        for &form in NonRegular::FORMS {
+            let root = tempfile::tempdir().unwrap();
+            if site.name == "cypress.config.ts" {
+                fs::write(
+                    root.path().join("package.json"),
+                    r#"{"devDependencies":{"@badeball/cypress-cucumber-preprocessor":"1"}}"#,
+                )
+                .unwrap();
+            }
+            // This source must remain unapplied while an earlier candidate is refused.
+            if site.name != "cuke-dedup.config.json" {
+                fs::write(
+                    root.path().join("cuke-dedup.config.json"),
+                    r#"{"threshold":7}"#,
+                )
+                .unwrap();
+            }
+            let path = root.path().join(site.name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            form.create(root.path(), &path);
+            let error = Config::load(root.path(), ConfigOverrides::default())
+                .expect_err(&format!("{} {form:?} must be refused", site.name));
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(site.name) && message.contains("not a regular file"),
+                "{message}"
+            );
+            assert!(is_fatal_input_error(&error), "{message}");
+            // Standalone configuration overrides package.json, so remove that conflicting
+            // control before asserting the package's own value.
+            if site.name == "package.json" {
+                fs::remove_file(root.path().join("cuke-dedup.config.json")).unwrap();
+            }
+            form.replace(&path, site.payload);
+            let loaded = Config::load(root.path(), ConfigOverrides::default()).unwrap();
+            assert!((site.applied)(&loaded), "{} {form:?}", site.name);
+        }
+    }
 }

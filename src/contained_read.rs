@@ -1,9 +1,8 @@
 //! Reads of files found automatically under the analysis root, refused when they resolve outside.
 //!
 //! The file is opened first and checked through its handle: a regular file, at a canonical path
-//! under the canonical root, and the same file as that path. A path replaced before the open
-//! names an outside file or a different one; replaced after it, the identities differ. No byte is
-//! read before the check passes.
+//! under the canonical root, and the same file as that path. No byte is read before the check
+//! passes. The pathname checks assume no concurrent link changes under the root.
 
 use crate::config::canonical_platform_path;
 use crate::resource_limits::read_file_bytes;
@@ -18,6 +17,14 @@ use std::path::{Path, PathBuf};
 pub(crate) const CONFIG_REMEDY: &str = "pass it with --config to use it explicitly";
 /// Remedy for any other automatic file: `package.json`, framework configuration, ignore files.
 pub(crate) const LINK_REMEDY: &str = "replace the link with a file inside the root";
+
+/// Only a missing entry is not a candidate. File type and read errors belong to the reader;
+/// this check must not silently skip present non-regular files or dangling links.
+pub(crate) fn candidate_exists(path: &Path) -> bool {
+    !path
+        .symlink_metadata()
+        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+}
 
 /// Why a contained read was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +141,9 @@ fn open_nonblocking(path: &Path) -> io::Result<File> {
     options.read(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    // Open directory handles too, so regular-file verification refuses them on Windows.
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::custom_flags(&mut options, 0x0200_0000);
     options.open(path)
 }
 

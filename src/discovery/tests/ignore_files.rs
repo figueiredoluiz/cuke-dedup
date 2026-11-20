@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::config::ConfigOverrides;
+use crate::tests::automatic_file::NonRegular;
 use crate::tests::property_runner::generated;
 use proptest::prelude::*;
 use std::collections::BTreeSet;
@@ -42,6 +43,9 @@ const LINES: [&[u8]; 18] = [
 type FileCase = (u8, u8);
 /// An ignore file: directory index (or `PARENT`), kind index, line indexes and CRLF endings.
 type IgnoreCase = (u8, u8, Vec<u8>, bool);
+
+/// Pointer bytes, optional commondir bytes, and an optional unreadable metadata filename.
+type GitMetadataForm<'a> = (&'a [u8], Option<&'a [u8]>, Option<&'a str>);
 
 /// Writes the tree under `outer/root` and returns the canonical root.
 fn materialize(outer: &Path, files: &[FileCase], ignores: &[IgnoreCase]) -> PathBuf {
@@ -184,35 +188,64 @@ fn ignore_precedence_controls_match_the_crate_walker() {
 /// `gitdir:` line, without `commondir`, with an absolute or relative `commondir`, no final newline.
 #[test]
 fn git_file_forms_match_the_crate_walker() {
-    let outer = tempfile::tempdir().unwrap();
-    let admin = crate::config::canonical_platform_path(outer.path())
-        .unwrap()
-        .join("admin");
-    let pointer = format!("gitdir: {}", admin.display());
-    let absolute = format!("{}\n", admin.display());
-    let forms: [(&[u8], Option<&[u8]>); 6] = [
-        (b"\xFF\n", Some(b".\n")),
-        (b"not a pointer\n", Some(b".\n")),
-        (pointer.as_bytes(), None),
-        (pointer.as_bytes(), Some(absolute.as_bytes())),
-        (pointer.as_bytes(), Some(b".")),
-        (pointer.as_bytes(), Some(b"\xFF")),
-    ];
-    for (dot_git, commondir) in forms {
-        let _ = fs::remove_dir_all(outer.path().join("root"));
-        let _ = fs::remove_dir_all(&admin);
-        let root = materialize(outer.path(), &[(1, 0), (1, 2)], &[]);
-        fs::create_dir_all(admin.join("info")).unwrap();
-        fs::write(admin.join("info/exclude"), "x.feature\n").unwrap();
-        if let Some(commondir) = commondir {
-            fs::write(admin.join("commondir"), commondir).unwrap();
+    for ancestor in [false, true] {
+        let outer = tempfile::tempdir().unwrap();
+        let admin = crate::config::canonical_platform_path(outer.path())
+            .unwrap()
+            .join("admin");
+        let pointer = format!("gitdir: {}", admin.display());
+        let absolute = format!("{}\n", admin.display());
+        let forms: [GitMetadataForm<'_>; 12] = [
+            (b"\xFF\n", Some(b".\n"), None),
+            (b"not a pointer\n", Some(b".\n"), None),
+            (pointer.as_bytes(), None, None),
+            (pointer.as_bytes(), Some(absolute.as_bytes()), None),
+            (pointer.as_bytes(), Some(b"."), None),
+            (pointer.as_bytes(), Some(b"\xFF"), None),
+            (b"", Some(b".\n"), None),
+            (b"\n", Some(b".\n"), None),
+            (pointer.as_bytes(), Some(b""), None),
+            (pointer.as_bytes(), Some(b"\r\n"), None),
+            (pointer.as_bytes(), Some(b".\n"), Some(".git")),
+            (pointer.as_bytes(), Some(b".\n"), Some("commondir")),
+        ];
+        for (dot_git, commondir, unreadable) in forms {
+            if unreadable.is_some() && !cfg!(unix) {
+                continue;
+            }
+            let _ = fs::remove_dir_all(outer.path().join("root"));
+            let _ = fs::remove_dir_all(&admin);
+            let root = materialize(outer.path(), &[(1, 0), (1, 2)], &[]);
+            fs::create_dir_all(admin.join("info")).unwrap();
+            fs::write(admin.join("info/exclude"), "x.feature\n").unwrap();
+            if let Some(commondir) = commondir {
+                fs::write(admin.join("commondir"), commondir).unwrap();
+            }
+            let pointer_path = if ancestor {
+                outer.path().join(".git")
+            } else {
+                root.join("a/.git")
+            };
+            if pointer_path.exists() {
+                fs::remove_file(&pointer_path).unwrap();
+            }
+            fs::write(&pointer_path, dot_git).unwrap();
+            #[cfg(unix)]
+            if let Some(name) = unreadable {
+                use std::os::unix::fs::PermissionsExt;
+                let path = if name == ".git" {
+                    pointer_path
+                } else {
+                    admin.join(name)
+                };
+                fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            assert_eq!(
+                discovered(&root, false).unwrap(),
+                reference(&root, false),
+                "ancestor={ancestor} {dot_git:?} {commondir:?} unreadable={unreadable:?}"
+            );
         }
-        fs::write(root.join("a/.git"), dot_git).unwrap();
-        assert_eq!(
-            discovered(&root, false).unwrap(),
-            reference(&root, false),
-            "{dot_git:?} {commondir:?}"
-        );
     }
 }
 
@@ -255,6 +288,48 @@ fn retained_ignore_levels_follow_the_walk_path() {
         }
     }
     assert_eq!(peak, 3, "root, d<n> and d<n>/e");
+}
+
+/// Missing files keep the feature; regular rules hide it; present non-regular rules are fatal.
+#[test]
+fn non_regular_ignore_files_are_refused() {
+    for kind in KINDS {
+        for dir in ["", "a"] {
+            for &form in NonRegular::FORMS {
+                let outer = tempfile::tempdir().unwrap();
+                let root = materialize(outer.path(), &[(0, 0), (1, 0)], &[]);
+                let path = root.join(dir).join(kind);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let before = discovered(&root, false).unwrap();
+                assert_eq!(
+                    before.0,
+                    BTreeSet::from(["x.feature".into(), "a/x.feature".into()])
+                );
+                assert_eq!(before.1, 0);
+                form.create(&root, &path);
+                let error = discovered(&root, false).expect_err(&format!("{kind} {dir} {form:?}"));
+                let message = format!("{error:#}");
+                assert!(
+                    message.replace('\\', "/").contains(kind)
+                        && message.contains("not a regular file"),
+                    "{message}"
+                );
+                assert!(
+                    crate::resource_limits::is_fatal_input_error(&error),
+                    "{message}"
+                );
+                form.replace(&path, "x.feature\n");
+                let after = discovered(&root, false).unwrap();
+                let expected = if dir.is_empty() {
+                    BTreeSet::new()
+                } else {
+                    BTreeSet::from(["x.feature".into()])
+                };
+                assert_eq!(after.0, expected, "{kind} {dir}");
+                assert_eq!(after.1, 0);
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -353,7 +428,10 @@ mod links {
     #[test]
     fn git_metadata_inside_the_root_is_contained() {
         let cases = [None, Some("info/exclude"), Some("commondir")];
-        for (linked, relative) in cases.into_iter().flat_map(|l| [(l, false), (l, true)]) {
+        for (linked, relative, ancestor) in cases
+            .into_iter()
+            .flat_map(|l| [(l, false, false), (l, true, false), (l, false, true)])
+        {
             let outer = tempfile::tempdir().unwrap();
             let outside = tempfile::tempdir().unwrap();
             fs::create_dir_all(outer.path().join("root/a")).unwrap();
@@ -371,7 +449,11 @@ mod links {
                 admin.clone()
             };
             fs::write(
-                root.join("a/.git"),
+                if ancestor {
+                    outer.path().join(".git")
+                } else {
+                    root.join("a/.git")
+                },
                 format!("gitdir: {}\n", pointer.display()),
             )
             .unwrap();
@@ -390,7 +472,8 @@ mod links {
                     let (selected, _) = discovered(&root, false).unwrap();
                     assert_eq!(
                         selected.iter().map(String::as_str).collect::<Vec<_>>(),
-                        ["a/z.feature"]
+                        ["a/z.feature"],
+                        "ancestor={ancestor} relative={relative}"
                     );
                 }
                 Some(name) => {

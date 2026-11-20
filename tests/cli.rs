@@ -1007,12 +1007,7 @@ fn automatic_files_resolving_outside_the_root_are_refused() {
         fs::write(directory.path().join("a.feature"), "Feature: a\n").unwrap();
         symlink(&config, directory.path().join(name)).unwrap();
         let output = directory.path().join("reports");
-        Command::cargo_bin("cuke-dedup")
-            .unwrap()
-            .current_dir(directory.path())
-            .args([".", "--reporters", "json", "--output"])
-            .arg(&output)
-            .assert()
+        scan_automatic_file_fixture(directory.path())
             .code(2)
             .stderr(predicate::str::contains(format!("error: {message}")))
             .stderr(predicate::str::contains(
@@ -1029,6 +1024,96 @@ fn automatic_files_resolving_outside_the_root_are_refused() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""threshold": 42.0"#));
+}
+
+/// Runs the real CLI over an automatic-file fixture, retaining assertions at each call site.
+fn scan_automatic_file_fixture(root: &std::path::Path) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([".", "--reporters", "json", "--output", "reports"])
+        .assert()
+}
+
+/// Reads the scanned feature count from a real CLI JSON report.
+fn reported_feature_files(output: &std::path::Path) -> u64 {
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("cuke-dedup.json")).unwrap()).unwrap();
+    report["corpus"]["featureFiles"].as_u64().unwrap()
+}
+
+/// Non-regular automatic candidates fail with no report; regular replacements scan the feature.
+#[test]
+fn automatic_non_regular_files_stop_before_reporting() {
+    for name in [
+        "package.json",
+        ".cuke-dedup.json",
+        "cucumber.json",
+        ".gitignore",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("a.feature"), "Feature: a\n").unwrap();
+        let path = directory.path().join(name);
+        fs::create_dir(&path).unwrap();
+        let output = directory.path().join("reports");
+        scan_automatic_file_fixture(directory.path())
+            .code(2)
+            .stderr(predicate::str::contains(name))
+            .stderr(predicate::str::contains("not a regular file"));
+        assert!(!output.exists() || fs::read_dir(&output).unwrap().next().is_none());
+        fs::remove_dir(&path).unwrap();
+        let payload = if name == "cucumber.json" {
+            r#"{"default":{"paths":["a.feature"]}}"#
+        } else {
+            "{}"
+        };
+        fs::write(path, payload).unwrap();
+        scan_automatic_file_fixture(directory.path()).success();
+        assert_eq!(reported_feature_files(&output), 1, "{name}");
+    }
+}
+
+/// Empty Git metadata has no first line; a real blank commondir retains native cwd exclusions.
+#[test]
+fn git_metadata_empty_files_do_not_apply_working_directory_excludes() {
+    for ancestor in [false, true] {
+        for (bytes, expected) in [
+            (&b""[..], 1),
+            (&b"\n"[..], 0),
+            (&b"\r\n"[..], 0),
+            (&b"\r"[..], 1),
+            (&b".\n"[..], 1),
+        ] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("root");
+            let admin = fixture.path().join("admin");
+            fs::create_dir_all(&root).unwrap();
+            fs::create_dir_all(&admin).unwrap();
+            fs::create_dir(fixture.path().join("info")).unwrap();
+            fs::write(root.join("a.feature"), "Feature: a\n").unwrap();
+            fs::write(fixture.path().join("info/exclude"), "*.feature\n").unwrap();
+            fs::write(admin.join("commondir"), bytes).unwrap();
+            fs::write(
+                if ancestor { fixture.path() } else { &root }.join(".git"),
+                format!("gitdir: {}\n", admin.display()),
+            )
+            .unwrap();
+            let output = fixture.path().join("reports");
+            Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(fixture.path())
+                .arg(&root)
+                .args(["--reporters", "json", "--output"])
+                .arg(&output)
+                .assert()
+                .success();
+            assert_eq!(
+                reported_feature_files(&output),
+                expected,
+                "ancestor={ancestor} {bytes:?}"
+            );
+        }
+    }
 }
 
 /// Checks valid inline suppression permits success and a missing reason produces an operational error.
@@ -4598,12 +4683,27 @@ fn changed_since_reports_invalid_git_comparison_metadata() {
         .status()
         .unwrap()
         .success());
-    let ownership_probe = fixture_git()
-        .current_dir(root)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", &empty_config)
-        .env("GIT_CONFIG_COUNT", "0")
-        .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    let clone_trusted_config = tools.path().join("clone-trusted.gitconfig");
+    fs::copy(&trusted_config, &clone_trusted_config).unwrap();
+    assert!(fixture_git()
+        .args(["config", "--file"])
+        .arg(&clone_trusted_config)
+        .args(["--add", "safe.directory"])
+        .arg(root.join(".git").canonicalize().unwrap())
+        .status()
+        .unwrap()
+        .success());
+    let ownership_git = |config: &Path| {
+        let mut command = fixture_git();
+        command
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", config)
+            .env("GIT_CONFIG_COUNT", "0")
+            .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+        command
+    };
+    let ownership_probe = ownership_git(&empty_config)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .unwrap();
@@ -4611,6 +4711,24 @@ fn changed_since_reports_invalid_git_comparison_metadata() {
     if supports_ownership_check {
         assert!(String::from_utf8_lossy(&ownership_probe.stderr).contains("dubious ownership"));
     }
+    // Native Git versions differ on whether a local clone also needs trust for .git.
+    let accepts_clone = |config: &Path, name: &str| {
+        let result = ownership_git(config)
+            .args(["clone", "--shared", "--no-checkout", "--template=", "--"])
+            .arg(root)
+            .arg(tools.path().join(name))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success()
+                || String::from_utf8_lossy(&result.stderr).contains("dubious ownership"),
+            "{:?}",
+            result.stderr
+        );
+        result.status.success()
+    };
+    let trusted_clone = accepts_clone(&trusted_config, "native-root-trust");
+    assert!(accepts_clone(&clone_trusted_config, "native-clone-trust"));
     write(
         tools.path(),
         "git",
@@ -4623,7 +4741,7 @@ case "$FIXTURE_GIT_CASE:$*" in
     scope:*" check-ignore --quiet -- "*) exit 2 ;;
     scope-stderr:*" check-ignore --quiet -- "*) printf 'fatal: bad\n::warning::owned\033[31m\n' >&2; exit 128 ;;
     paths:*" ls-files --others "*) printf '../outside.ts\000'; exit 0 ;;
-    trusted:*" rev-parse "*|trusted:*" config "*|trusted:*" ls-tree "*|trusted:*" clone "*|untrusted:*" rev-parse "*|untrusted:*" config "*)
+    trusted:*" rev-parse "*|trusted:*" config "*|trusted:*" ls-tree "*|trusted:*" clone "*|clone-trusted:*" rev-parse "*|clone-trusted:*" config "*|clone-trusted:*" ls-tree "*|clone-trusted:*" clone "*|untrusted:*" rev-parse "*|untrusted:*" config "*)
         if [ -z "${GIT_DIR+x}" ]; then
             export GIT_TEST_ASSUME_DIFFERENT_OWNER=1 GIT_CONFIG_NOSYSTEM=1
             export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL-$FIXTURE_GIT_CONFIG}"
@@ -4649,22 +4767,29 @@ PATH="$FIXTURE_GIT_PATH" exec git "$@"
         ("scope-stderr", 2, r"fatal: bad\n::warning::owned\u{1b}[31m"),
         ("paths", 2, "invalid relative path in Git listing"),
         ("trusted", 1, ""),
+        ("clone-trusted", 1, ""),
         ("untrusted", 2, "dubious ownership"),
     ] {
-        if matches!(case, "trusted" | "untrusted") && !supports_ownership_check {
+        if matches!(case, "trusted" | "clone-trusted" | "untrusted") && !supports_ownership_check {
             continue;
         }
-        let config = if case == "trusted" {
-            &trusted_config
-        } else {
-            &empty_config
+        let config = match case {
+            "trusted" => &trusted_config,
+            "clone-trusted" => &clone_trusted_config,
+            _ => &empty_config,
         };
-        let modes = if matches!(case, "trusted" | "untrusted") {
+        let modes = if matches!(case, "trusted" | "clone-trusted" | "untrusted") {
             ["--changed-since", "--baseline-from-ref"].as_slice()
         } else {
             ["--changed-since"].as_slice()
         };
         for mode in modes {
+            let (code, diagnostic) =
+                if case == "trusted" && *mode == "--baseline-from-ref" && !trusted_clone {
+                    (2, "dubious ownership")
+                } else {
+                    (code, diagnostic)
+                };
             let result = Command::cargo_bin("cuke-dedup")
                 .unwrap()
                 .current_dir(root)

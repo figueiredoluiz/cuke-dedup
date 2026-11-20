@@ -2046,6 +2046,13 @@
           "stage": "config-decoding",
           "rationale": "Adapter-independent stage `config-decoding`: automatic configuration containment (a refused standalone candidate is fatal instead of falling through to the next); no adapter runs.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "automatic_non_regular_sources_are_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent automatic-file validation: Present non-regular package, standalone and framework candidates are fatal; regular replacements apply their observable configuration values.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -2276,6 +2283,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent automatic-file containment: an ignore file above the root past the input limit fails discovery.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "non_regular_ignore_files_are_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Missing and regular ignore files select the exact feature set; directories and FIFOs at root and nested locations are fatal.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -7281,6 +7295,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent automatic-file containment: the CLI exits 2 with no report for automatic configuration or ignore files linked outside the root, and uses the same file passed with --config.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "automatic_non_regular_files_stop_before_reporting",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Non-regular automatic candidates exit 2 without reports; regular replacements scan and report the feature file.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_metadata_empty_files_do_not_apply_working_directory_excludes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent Git metadata decoding: Empty files retain the feature; actual blank commondir lines apply the native working-directory exclude behavior.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

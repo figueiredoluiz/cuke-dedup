@@ -4,18 +4,19 @@
 //!
 //! - per directory level, `.cuke-dedupignore` > `.ignore` > `.gitignore` > git exclude, each class
 //!   decided by the deepest level with a match, then the global excludes file;
-//! - the root's ancestors are levels too; their files and the global file lie outside the root by
-//!   definition and are read as before;
+//! - the root's ancestors are levels too; their ignore files and the global file are read as
+//!   before, while git metadata is classified by its own location;
 //! - an ignore match prunes the entry, a whitelist keeps it even when hidden, no match leaves it to
 //!   the hidden filter;
 //! - load errors under the root are dropped (the crate attaches them to an entry nobody reads); an
 //!   ancestor error is one walk error, unless it is a file's single I/O error.
 
-use crate::contained_read::{Contained, LINK_REMEDY};
+use crate::contained_read::{candidate_exists, Contained, LINK_REMEDY};
 use crate::resource_limits::{is_fatal_input_error, read_bytes, MAX_CONFIG_INPUT_BYTES};
 use anyhow::Result;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::{DirEntry, Match};
+use std::io::BufRead;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -34,35 +35,57 @@ struct Surfaced(bool);
 #[derive(Clone, Copy)]
 enum Located<'a> {
     Inside(&'a Contained<'a>),
-    Outside,
+    Outside(&'a Contained<'a>),
 }
 
 impl Located<'_> {
     /// Where `path` lies: contained only if it is under the contained root. Git metadata a `.git`
     /// file names elsewhere is chosen by the git setup and read as the global file is.
     fn of(self, path: &Path) -> Self {
-        match self {
-            Located::Inside(contained) if contained.holds(&lexical_absolute(path)) => self,
-            _ => Located::Outside,
+        let (Located::Inside(contained) | Located::Outside(contained)) = self;
+        if contained.holds(&lexical_absolute(path)) {
+            Located::Inside(contained)
+        } else {
+            Located::Outside(contained)
         }
     }
 
-    /// Bounded bytes of an existing regular file; `None` when absent or unreadable. A refusal or an
-    /// exceeded input limit is returned.
+    /// Bounded bytes of an optional file; inside-root candidates must pass regular-file checks.
+    /// Missing or unreadable files return `None`; a refusal or input-limit error is returned.
     fn read(self, path: &Path) -> Result<Option<Vec<u8>>> {
-        if !path.is_file() {
-            return Ok(None);
-        }
+        self.read_recording(path, None)
+    }
+
+    /// Reads optional bytes, recording ordinary I/O errors only for Git pointer metadata.
+    fn read_recording(
+        self,
+        path: &Path,
+        surfaced: Option<&mut Surfaced>,
+    ) -> Result<Option<Vec<u8>>> {
         let read = match self {
             Located::Inside(contained) => {
+                if !candidate_exists(path) {
+                    return Ok(None);
+                }
                 contained.read_bytes(path, "ignore file", MAX_CONFIG_INPUT_BYTES)
             }
-            Located::Outside => read_bytes(path, "ignore file", MAX_CONFIG_INPUT_BYTES),
+            Located::Outside(_) => {
+                // pattern-ok: outside-root sources preserve the existing optional-file behavior.
+                if !path.is_file() {
+                    return Ok(None);
+                }
+                read_bytes(path, "ignore file", MAX_CONFIG_INPUT_BYTES)
+            }
         };
         match read {
             Ok(bytes) => Ok(Some(bytes)),
             // The crate drops I/O errors on ignore files; a refusal or the input limit is fatal.
-            Err(error) if !is_fatal_input_error(&error) => Ok(None),
+            Err(error) if !is_fatal_input_error(&error) => {
+                if let Some(surfaced) = surfaced {
+                    surfaced.0 = true;
+                }
+                Ok(None)
+            }
             Err(error) => Err(error),
         }
     }
@@ -133,7 +156,7 @@ fn load_level(dir: &Path, located: Located<'_>, surfaced: &mut Surfaced) -> Resu
             level.0[slot] = Some(matcher(dir, &path, &bytes, surfaced));
         }
     }
-    if let Some(exclude) = exclude_path(dir, located)? {
+    if let Some(exclude) = exclude_path(dir, located, surfaced)? {
         if let Some(bytes) = located.of(&exclude).read(&exclude)? {
             level.0[3] = Some(matcher(dir, &exclude, &bytes, surfaced));
         }
@@ -143,23 +166,32 @@ fn load_level(dir: &Path, located: Located<'_>, surfaced: &mut Surfaced) -> Resu
 
 /// `info/exclude` of the git directory at `dir`, following a `.git` file and its `commondir` as
 /// `ignore` does; `None` without a `.git` entry or when the file does not name a git directory.
-fn exclude_path(dir: &Path, located: Located<'_>) -> Result<Option<PathBuf>> {
+fn exclude_path(
+    dir: &Path,
+    located: Located<'_>,
+    surfaced: &mut Surfaced,
+) -> Result<Option<PathBuf>> {
     let dot_git = dir.join(".git");
     let Ok(metadata) = dot_git.metadata() else {
         return Ok(None);
     };
-    if !metadata.is_file() {
+    if metadata.is_dir() {
         return Ok(Some(dot_git.join("info/exclude")));
     }
-    // `BufRead::lines`: CRLF is stripped only before a newline.
-    let first_line = |bytes: Vec<u8>| {
-        let line = match bytes.iter().position(|&byte| byte == b'\n') {
-            Some(end) => bytes[..end].strip_suffix(b"\r").unwrap_or(&bytes[..end]),
-            None => &bytes[..],
-        };
-        String::from_utf8(line.to_vec()).ok()
+    // Use the same line reader as `ignore`: absent, empty and invalid lines are distinct.
+    let first_line = |bytes: Vec<u8>, surfaced: &mut Surfaced| match bytes.as_slice().lines().next()
+    {
+        Some(Ok(line)) => Some(line),
+        Some(Err(_)) => {
+            surfaced.0 = true;
+            None
+        }
+        None => None,
     };
-    let Some(pointer) = located.read(&dot_git)?.and_then(first_line) else {
+    let Some(pointer) = located
+        .read_recording(&dot_git, Some(&mut *surfaced))?
+        .and_then(|bytes| first_line(bytes, surfaced))
+    else {
         return Ok(None);
     };
     let Some(git_dir) = pointer.strip_prefix("gitdir: ").map(PathBuf::from) else {
@@ -169,7 +201,7 @@ fn exclude_path(dir: &Path, located: Located<'_>) -> Result<Option<PathBuf>> {
     let Some(common) = located
         .of(&commondir)
         .read(&commondir)?
-        .and_then(first_line)
+        .and_then(|bytes| first_line(bytes, surfaced))
     else {
         return Ok(None);
     };
@@ -198,10 +230,11 @@ impl IgnoreRules {
     /// filter. The flag reports an ancestor error the crate's walker would yield.
     pub(super) fn new(root: &Path, hidden: bool) -> Result<(Self, bool)> {
         let mut surfaced = Surfaced::default();
+        let contained = Contained::new(root, LINK_REMEDY);
         let ancestors = root
             .ancestors()
             .skip(1)
-            .map(|dir| load_level(dir, Located::Outside, &mut surfaced))
+            .map(|dir| load_level(dir, Located::Outside(&contained), &mut surfaced))
             .collect::<Result<_>>()?;
         let ancestor_error = surfaced.0;
         let rules = Self {

@@ -1,6 +1,6 @@
 //! Configuration loading and precedence.
 
-use crate::contained_read::{Contained, CONFIG_REMEDY, LINK_REMEDY};
+use crate::contained_read::{candidate_exists, Contained, CONFIG_REMEDY, LINK_REMEDY};
 use crate::framework_registry;
 use crate::model::{Rule, Severity};
 use crate::resource_limits::{
@@ -336,7 +336,7 @@ impl Config {
         }
 
         let package_path = root.join("package.json");
-        let (package_config, package_json) = if package_path.is_file() {
+        let (package_config, package_json) = if candidate_exists(&package_path) {
             let text = Contained::new(&root, LINK_REMEDY).read_utf8(
                 &package_path,
                 "package configuration",
@@ -960,8 +960,8 @@ fn parse_raw_config(text: &str, path: &Path, adapters: &AdapterRegistry) -> Resu
 }
 
 /// Returns the first candidate config file under `root` that parses. A parse or read failure is
-/// pushed to `warnings` and the next candidate is tried, except input-limit errors and candidates
-/// resolving outside `root`, which return before their content is read.
+/// pushed to `warnings` and the next candidate is tried, except fatal input errors, which stop
+/// discovery without trying later candidates.
 fn discover_config_file(
     root: &Path,
     adapters: &AdapterRegistry,
@@ -975,7 +975,7 @@ fn discover_config_file(
     ];
     for candidate in CANDIDATES {
         let path = root.join(candidate);
-        if !path.is_file() {
+        if !candidate_exists(&path) {
             continue;
         }
         let read = Contained::new(root, CONFIG_REMEDY)

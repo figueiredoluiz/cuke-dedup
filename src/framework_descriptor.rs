@@ -5,7 +5,7 @@
 //! lives here because its JSON and YAML forms are language-neutral; the adapter whose contract
 //! uses it passes the [`ScriptConfigReader`]s for its scripted forms.
 
-use crate::contained_read::{Contained, LINK_REMEDY};
+use crate::contained_read::{candidate_exists, Contained, LINK_REMEDY};
 use crate::resource_limits::MAX_CONFIG_INPUT_BYTES;
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
@@ -209,7 +209,7 @@ pub(crate) fn cucumber_discovery(
 ) -> Result<Option<DiscoveredFeatures>> {
     for (name, parse) in CUCUMBER_STRUCTURED_CONFIGS {
         let path = input.root.join(name);
-        if path.is_file() {
+        if candidate_exists(&path) {
             let context = || format!("failed to parse framework config {}", path.display());
             let read = |text: &str, _: &str| parse(text).with_context(context);
             return cucumber_config(input.root, &path, read).map(Some);
@@ -218,7 +218,7 @@ pub(crate) fn cucumber_discovery(
     for reader in script_readers {
         for extension in reader.extensions {
             let path = input.root.join(format!("{CUCUMBER_STEM}.{extension}"));
-            if path.is_file() {
+            if candidate_exists(&path) {
                 let read =
                     |text: &str, extension: &str| (reader.read_property)(text, extension, "paths");
                 return cucumber_config(input.root, &path, read).map(Some);
@@ -238,7 +238,7 @@ pub(crate) fn first_matching_config(
 ) -> Result<Option<DiscoveredFeatures>> {
     for name in configs {
         let path = root.join(name);
-        if !path.is_file() {
+        if !candidate_exists(&path) {
             continue;
         }
         if let Some(features) = probe(&path)? {
