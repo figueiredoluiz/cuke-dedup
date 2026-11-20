@@ -11,6 +11,7 @@
 //! - load errors under the root are dropped (the crate attaches them to an entry nobody reads); an
 //!   ancestor error is one walk error, unless it is a file's single I/O error.
 
+use crate::config::canonical_platform_path;
 use crate::contained_read::{candidate_exists, Contained, LINK_REMEDY};
 use crate::resource_limits::{is_fatal_input_error, read_bytes, MAX_CONFIG_INPUT_BYTES};
 use anyhow::Result;
@@ -39,11 +40,23 @@ enum Located<'a> {
 }
 
 impl Located<'_> {
-    /// Where `path` lies: contained only if it is under the contained root. Git metadata a `.git`
-    /// file names elsewhere is chosen by the git setup and read as the global file is.
+    /// Keeps a metadata entry contained when either its lexical or resolved parent is in-root.
+    /// An unresolved parent cannot establish an external location.
     fn of(self, path: &Path) -> Self {
         let (Located::Inside(contained) | Located::Outside(contained)) = self;
-        if contained.holds(&lexical_absolute(path)) {
+        let parent = path.parent().and_then(|parent| {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            canonical_platform_path(parent).ok()
+        });
+        if contained.holds(&lexical_absolute(path))
+            || parent
+                .as_deref()
+                .is_none_or(|parent| contained.holds(parent))
+        {
             Located::Inside(contained)
         } else {
             Located::Outside(contained)
@@ -147,6 +160,23 @@ fn matcher(dir: &Path, path: &Path, bytes: &[u8], surfaced: &mut Surfaced) -> Gi
     matcher
 }
 
+/// Uses the pinned global-file resolver and cwd-relative matching, with the same byte bound as
+/// other ignore files. Missing files and ordinary matching errors remain optional.
+fn global_matcher(contained: &Contained<'_>) -> Result<Gitignore> {
+    std::env::current_dir()
+        .ok()
+        .zip(ignore::gitignore::gitconfig_excludes_path())
+        .map(|(cwd, path)| {
+            Located::Outside(contained).read(&path).map(|bytes| {
+                bytes.map_or_else(Gitignore::empty, |bytes| {
+                    matcher(&cwd, &path, &bytes, &mut Surfaced::default())
+                })
+            })
+        })
+        .transpose()
+        .map(|matcher| matcher.unwrap_or_else(Gitignore::empty))
+}
+
 /// Loads the matchers `dir` contributes.
 fn load_level(dir: &Path, located: Located<'_>, surfaced: &mut Surfaced) -> Result<Level> {
     let mut level = Level::default();
@@ -172,10 +202,7 @@ fn exclude_path(
     surfaced: &mut Surfaced,
 ) -> Result<Option<PathBuf>> {
     let dot_git = dir.join(".git");
-    let Ok(metadata) = dot_git.metadata() else {
-        return Ok(None);
-    };
-    if metadata.is_dir() {
+    if dot_git.metadata().is_ok_and(|metadata| metadata.is_dir()) {
         return Ok(Some(dot_git.join("info/exclude")));
     }
     // Use the same line reader as `ignore`: absent, empty and invalid lines are distinct.
@@ -241,7 +268,7 @@ impl IgnoreRules {
             root: root.to_owned(),
             hidden,
             ancestors,
-            global: Gitignore::global().0,
+            global: global_matcher(&contained)?,
             stack: Mutex::default(),
             refusal: Mutex::default(),
         };

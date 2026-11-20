@@ -2106,6 +2106,20 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent automatic-file containment: invalid UTF-8 in a contained file is an ordinary error naming the file, not a fatal refusal.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "an_unreadable_regular_file_is_not_a_refusal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Ordinary permission failures on regular files remain I/O errors while non-regular automatic inputs are refused.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "location_checks_keep_unknown_aliases_contained",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Known external directories and filesystem roots stay external, while unknown directory aliases require contained reads; final discovery outcomes are covered by the metadata matrices.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -2290,6 +2304,20 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent automatic-file validation: Missing and regular ignore files select the exact feature set; directories and FIFOs at root and nested locations are fatal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_metadata_link_parent_components_preserve_containment",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Lexical and resolved-parent metadata locations retain containment, while genuinely external metadata preserves pinned-walker file selection.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "windows_metadata_spellings_preserve_containment",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Plain, verbatim and case-varied Windows metadata paths preserve in-root junction refusals, regular replacements and genuinely external exclusions.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -7309,6 +7337,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
           "rationale": "Adapter-independent Git metadata decoding: Empty files retain the feature; actual blank commondir lines apply the native working-directory exclude behavior.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "global_excludes_keep_matching_and_enforce_the_byte_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Global excludes preserve cwd-relative matching and missing-file behavior, accept the exact byte limit and refuse the next byte without a report.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

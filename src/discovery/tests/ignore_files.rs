@@ -47,6 +47,13 @@ type IgnoreCase = (u8, u8, Vec<u8>, bool);
 /// Pointer bytes, optional commondir bytes, and an optional unreadable metadata filename.
 type GitMetadataForm<'a> = (&'a [u8], Option<&'a [u8]>, Option<&'a str>);
 
+/// Writes a regular Git admin directory excluding one of the two owned feature files.
+fn write_git_admin(dir: &Path) {
+    fs::create_dir_all(dir.join("info")).unwrap();
+    fs::write(dir.join("commondir"), ".\n").unwrap();
+    fs::write(dir.join("info/exclude"), "x.feature\n").unwrap();
+}
+
 /// Writes the tree under `outer/root` and returns the canonical root.
 fn materialize(outer: &Path, files: &[FileCase], ignores: &[IgnoreCase]) -> PathBuf {
     let root = outer.join("root");
@@ -293,7 +300,7 @@ fn retained_ignore_levels_follow_the_walk_path() {
 /// Missing files keep the feature; regular rules hide it; present non-regular rules are fatal.
 #[test]
 fn non_regular_ignore_files_are_refused() {
-    for kind in KINDS {
+    for kind in KINDS.into_iter().chain([".git"]) {
         for dir in ["", "a"] {
             for &form in NonRegular::FORMS {
                 let outer = tempfile::tempdir().unwrap();
@@ -306,19 +313,31 @@ fn non_regular_ignore_files_are_refused() {
                     BTreeSet::from(["x.feature".into(), "a/x.feature".into()])
                 );
                 assert_eq!(before.1, 0);
-                form.create(&root, &path);
-                let error = discovered(&root, false).expect_err(&format!("{kind} {dir} {form:?}"));
-                let message = format!("{error:#}");
-                assert!(
-                    message.replace('\\', "/").contains(kind)
-                        && message.contains("not a regular file"),
-                    "{message}"
-                );
-                assert!(
-                    crate::resource_limits::is_fatal_input_error(&error),
-                    "{message}"
-                );
-                form.replace(&path, "x.feature\n");
+                if kind == ".git" && matches!(form, NonRegular::Directory) {
+                    write_git_admin(&path);
+                } else {
+                    form.create(&root, &path);
+                    let error =
+                        discovered(&root, false).expect_err(&format!("{kind} {dir} {form:?}"));
+                    let message = format!("{error:#}");
+                    assert!(
+                        message.replace('\\', "/").contains(kind)
+                            && message.contains("not a regular file"),
+                        "{message}"
+                    );
+                    assert!(
+                        crate::resource_limits::is_fatal_input_error(&error),
+                        "{message}"
+                    );
+                    let payload = if kind == ".git" {
+                        let admin = root.join("metadata");
+                        write_git_admin(&admin);
+                        format!("gitdir: {}\n", admin.display())
+                    } else {
+                        "x.feature\n".to_owned()
+                    };
+                    form.replace(&path, &payload);
+                }
                 let after = discovered(&root, false).unwrap();
                 let expected = if dir.is_empty() {
                     BTreeSet::new()
@@ -329,6 +348,23 @@ fn non_regular_ignore_files_are_refused() {
                 assert_eq!(after.1, 0);
             }
         }
+    }
+    #[cfg(unix)]
+    for form in [
+        NonRegular::DanglingLink,
+        NonRegular::CycleLink,
+        NonRegular::LinkedCycle,
+    ] {
+        let outer = tempfile::tempdir().unwrap();
+        let root = materialize(outer.path(), &[(0, 0), (1, 0)], &[]);
+        form.create(outer.path(), &outer.path().join(".git"));
+        let actual = discovered(&root, false).unwrap();
+        assert_eq!(actual, reference(&root, false), "{form:?}");
+        assert_eq!(
+            actual.0,
+            BTreeSet::from(["x.feature".into(), "a/x.feature".into()])
+        );
+        assert_eq!(actual.1, 0);
     }
 }
 
@@ -483,6 +519,207 @@ mod links {
                         "{name} {relative}: {error:#}"
                     );
                 }
+            }
+        }
+    }
+
+    /// Lexical and resolved-parent locations both preserve containment; genuinely external
+    /// metadata keeps the pinned walker's matching behavior.
+    #[test]
+    fn git_metadata_link_parent_components_preserve_containment() {
+        for location in [
+            "direct",
+            "linked-parent",
+            "linked-parent-existing",
+            "linked-outside",
+            "root-alias",
+            "external-via-root",
+            "external",
+        ] {
+            for ancestor in [false, true] {
+                for linked in [None, Some("commondir"), Some("info/exclude")] {
+                    let outer = tempfile::tempdir().unwrap();
+                    let outside = tempfile::tempdir().unwrap();
+                    let root = materialize(outer.path(), &[(1, 0), (1, 2)], &[]);
+                    fs::create_dir_all(root.join("deep/nested")).unwrap();
+                    symlink(root.join("deep/nested"), root.join("jump")).unwrap();
+                    fs::create_dir_all(outside.path().join("deep/nested")).unwrap();
+                    symlink(
+                        outside.path().join("deep/nested"),
+                        root.join("external-jump"),
+                    )
+                    .unwrap();
+                    if location == "linked-parent-existing" {
+                        fs::create_dir_all(outer.path().join("admin/info")).unwrap();
+                    }
+                    let admin = if matches!(location, "linked-outside" | "root-alias") {
+                        outside.path().join("deep/admin")
+                    } else if location == "external-via-root" {
+                        outer.path().join("admin")
+                    } else if location == "external" {
+                        outside.path().join("admin")
+                    } else {
+                        root.join("admin")
+                    };
+                    fs::create_dir_all(admin.join("info")).unwrap();
+                    let pointer = if location == "root-alias" {
+                        let alias = outer.path().join("aliases/nested/root");
+                        fs::create_dir_all(alias.parent().unwrap()).unwrap();
+                        symlink(&root, &alias).unwrap();
+                        symlink(&admin, root.join("admin")).unwrap();
+                        alias.join("admin")
+                    } else if location == "external-via-root" {
+                        root.join("../admin")
+                    } else if matches!(location, "linked-parent" | "linked-parent-existing") {
+                        root.join("jump/../../admin")
+                    } else if location == "linked-outside" {
+                        root.join("external-jump/../admin")
+                    } else {
+                        admin.clone()
+                    };
+                    fs::write(
+                        if ancestor { outer.path() } else { &root }.join(".git"),
+                        format!("gitdir: {}\n", pointer.display()),
+                    )
+                    .unwrap();
+                    for (name, content) in [("commondir", ".\n"), ("info/exclude", "x.feature\n")] {
+                        let path = admin.join(name);
+                        if linked == Some(name) {
+                            let target = outside.path().join("rules");
+                            fs::write(&target, content).unwrap();
+                            symlink(target, path).unwrap();
+                        } else {
+                            fs::write(path, content).unwrap();
+                        }
+                    }
+                    let label = format!("{location} ancestor={ancestor} {linked:?}");
+                    if matches!(location, "linked-outside" | "root-alias")
+                        || (!matches!(location, "external" | "external-via-root")
+                            && linked.is_some())
+                    {
+                        let error = discovered(&root, false).expect_err(&label);
+                        assert!(
+                            crate::resource_limits::is_fatal_input_error(&error)
+                                && format!("{error:#}")
+                                    .contains("resolves outside the analysis root"),
+                            "{label}: {error:#}"
+                        );
+                        if location != "root-alias" {
+                            continue;
+                        }
+                        fs::remove_file(root.join("admin")).unwrap();
+                        write_git_admin(&root.join("admin"));
+                    }
+                    let actual = discovered(&root, false).unwrap();
+                    assert_eq!(actual, reference(&root, false), "{label}");
+                    assert_eq!(actual.0, BTreeSet::from(["a/z.feature".into()]), "{label}");
+                    assert_eq!(actual.1, 0, "{label}");
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::*;
+
+    /// Creates a directory alias without requiring symbolic-link privilege.
+    fn junction(link: &Path, target: &Path) {
+        let result = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            // cmd parses forward slashes as switches; use native component separators.
+            .arg(link.components().collect::<PathBuf>())
+            .arg(target.components().collect::<PathBuf>())
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    /// Windows metadata spellings cannot turn an in-root junction into external policy.
+    #[test]
+    fn windows_metadata_spellings_preserve_containment() {
+        for alias in ["direct", "longer", "shorter"] {
+            for form in ["plain", "verbatim", "case"] {
+                let outer = tempfile::tempdir().unwrap();
+                let outside = tempfile::tempdir().unwrap();
+                let root_parent = if alias == "shorter" {
+                    outer.path().join("deep/nested")
+                } else {
+                    outer.path().to_owned()
+                };
+                let root = materialize(&root_parent, &[(1, 0), (1, 2)], &[]);
+                write_git_admin(outside.path());
+                let admin = root.join("admin");
+                junction(&admin, outside.path());
+                let spelling = if alias != "direct" {
+                    let link = if alias == "shorter" {
+                        outer.path().join("alias")
+                    } else {
+                        outer.path().join("aliases/nested/root")
+                    };
+                    fs::create_dir_all(link.parent().unwrap()).unwrap();
+                    junction(&link, &root);
+                    link
+                } else {
+                    root.clone()
+                };
+                let spell = |path: &Path| match form {
+                    // Preserve junction aliases: canonicalizing here would remove the case under test.
+                    "verbatim" => {
+                        let native: PathBuf = path.components().collect();
+                        PathBuf::from(format!(r"\\?\{}", native.display()))
+                    }
+                    // pattern-ok: deliberately vary native Windows path case in an owned fixture.
+                    "case" => PathBuf::from(path.to_str().unwrap().to_uppercase()),
+                    _ => path.to_owned(),
+                };
+                assert!(
+                    same_file::is_same_file(spell(&spelling), &root).unwrap(),
+                    "{form} alias={alias} must name the root"
+                );
+                fs::write(
+                    root.join(".git"),
+                    format!("gitdir: {}\n", spell(&spelling).join("admin").display()),
+                )
+                .unwrap();
+                let read = discovered(&root, false);
+                fs::remove_dir(&admin).unwrap();
+                if alias != "direct" {
+                    fs::remove_dir(&spelling).unwrap();
+                }
+                let error = read.expect_err(&format!("{form} alias={alias}"));
+                assert!(
+                    crate::resource_limits::is_fatal_input_error(&error)
+                        && format!("{error:#}").contains("resolves outside the analysis root"),
+                    "{error:#}"
+                );
+                write_git_admin(&admin);
+                if alias != "direct" {
+                    junction(&spelling, &root);
+                }
+                let actual = discovered(&root, false);
+                let expected = reference(&root, false);
+                if alias != "direct" {
+                    fs::remove_dir(&spelling).unwrap();
+                }
+                let actual = actual.unwrap();
+                assert_eq!(actual, expected);
+                assert_eq!(actual.0, BTreeSet::from(["a/z.feature".into()]));
+                assert_eq!(actual.1, 0);
+                fs::write(
+                    root.join(".git"),
+                    format!("gitdir: {}\n", spell(outside.path()).display()),
+                )
+                .unwrap();
+                let external = discovered(&root, false).unwrap();
+                assert_eq!(external, reference(&root, false), "{form}");
+                assert_eq!(external.0, BTreeSet::from(["a/z.feature".into()]), "{form}");
+                assert_eq!(external.1, 0, "{form}");
             }
         }
     }

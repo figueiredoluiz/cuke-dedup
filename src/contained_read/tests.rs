@@ -28,6 +28,26 @@ fn a_regular_file_inside_the_root_reads() {
     assert_eq!(text, "{}\n");
 }
 
+/// Known external paths stay external; uninspectable aliases require contained reads.
+#[test]
+fn location_checks_keep_unknown_aliases_contained() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = canonical(&directory);
+    let external = canonical(&outside);
+    let filesystem_root = root.ancestors().last().unwrap();
+    let unknown = external.join("missing/child");
+    let contained = Contained::new(&root, CONFIG_REMEDY);
+    for (path, expected) in [
+        (root.as_path(), true),
+        (external.as_path(), false),
+        (filesystem_root, false),
+        (unknown.as_path(), true),
+    ] {
+        assert_eq!(contained.holds(path), expected, "{}", path.display());
+    }
+}
+
 /// A missing file is an ordinary I/O error, not a refusal.
 #[test]
 fn a_missing_file_is_not_a_refusal() {
@@ -73,6 +93,40 @@ fn the_input_limit_applies() {
 mod unix {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    /// An unreadable regular file retains its ordinary I/O classification.
+    #[test]
+    fn an_unreadable_regular_file_is_not_a_refusal() {
+        use std::os::unix::fs::PermissionsExt;
+        for linked in [false, true] {
+            for deny_parent in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let root = canonical(&directory);
+                let parent = root.join("private");
+                fs::create_dir(&parent).unwrap();
+                let target = parent.join("regular.json");
+                fs::write(&target, "{}").unwrap();
+                let path = if linked {
+                    let path = root.join("linked.json");
+                    symlink(&target, &path).unwrap();
+                    path
+                } else {
+                    target.clone()
+                };
+                let denied = if deny_parent { &parent } else { &target };
+                fs::set_permissions(denied, fs::Permissions::from_mode(0o0)).unwrap();
+                let read = Contained::new(&root, CONFIG_REMEDY).read_utf8(&path, "test file", 64);
+                fs::set_permissions(denied, fs::Permissions::from_mode(0o700)).unwrap();
+                let error = read.unwrap_err();
+                assert!(refusal(&error).is_none(), "{error:#}");
+                assert!(!is_fatal_input_error(&error), "{error:#}");
+                assert_eq!(
+                    error.downcast_ref::<io::Error>().unwrap().kind(),
+                    io::ErrorKind::PermissionDenied
+                );
+            }
+        }
+    }
 
     /// Links resolving inside the root read; links or parents resolving outside are refused.
     #[test]

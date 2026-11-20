@@ -55,13 +55,15 @@ check assumes no other process changes links under the root while the run reads 
 stay inside the root are followed. An explicit `--config` file may be outside the root. Ignore files in the root's
 parent directories and the global git excludes file apply as git applies them.
 
+Global git excludes remain exempt from containment regardless of their configured location; the ignore-file byte limit still applies.
+
 ## Input limits
 
 | Input | Limit |
 | --- | ---: |
 | Definition source, feature file, imported registration module, or baseline | 8 MiB each |
 | Package, CukeDedup, framework, or static project configuration | 1 MiB each |
-| Ignore file (`.gitignore`, `.ignore`, `.cuke-dedupignore`, git `info/exclude`) | 1 MiB each |
+| Ignore file (`.gitignore`, `.ignore`, `.cuke-dedupignore`, git `info/exclude`, global git excludes) | 1 MiB each |
 | Project-resolution metadata files | 1,024 files / 16 MiB total |
 | Project-resolution mappings | 16,384 |
 | Primary discovery walk entries, excluded entries included | 1,000,000 per run |

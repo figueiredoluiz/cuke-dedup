@@ -31,7 +31,7 @@ pub(crate) fn candidate_exists(path: &Path) -> bool {
 pub(crate) enum Reason {
     /// The path's canonical form is not under the root.
     Outside,
-    /// The opened file is not a regular file.
+    /// The candidate or its opened handle is not a regular file.
     NotRegular,
     /// The opened file is not the file the canonical path names.
     Replaced,
@@ -78,9 +78,15 @@ impl<'a> Contained<'a> {
         Self { root, remedy }
     }
 
-    /// Whether `path` names a location under the root, compared lexically; reads still verify it.
+    /// Whether `path` requires a contained read, including uninspectable root aliases.
     pub(crate) fn holds(&self, path: &Path) -> bool {
         path.starts_with(self.root)
+            || path.parent().is_some_and(|parent| {
+                parent.ancestors().any(|prefix| {
+                    // fail-closed: an uninspectable prefix cannot establish an external location.
+                    same_directory(prefix, self.root).unwrap_or(true)
+                })
+            })
     }
 
     /// Bounded bytes of `path` once it is verified contained.
@@ -103,20 +109,43 @@ impl<'a> Contained<'a> {
     /// Opens `path` without blocking and verifies the handle.
     fn open(&self, path: &Path, kind: &'static str) -> Result<File> {
         let file = open_nonblocking(path)
+            .map_err(|error| -> anyhow::Error {
+                // An unopenable socket or dangling link still has a non-regular entry.
+                if path
+                    .metadata()
+                    .or_else(|error| {
+                        if error.kind() == io::ErrorKind::PermissionDenied {
+                            Err(error)
+                        } else {
+                            path.symlink_metadata()
+                        }
+                    })
+                    .is_ok_and(|metadata| !metadata.is_file())
+                {
+                    self.refusal(path, kind, Reason::NotRegular).into()
+                } else {
+                    error.into()
+                }
+            })
             .with_context(|| format!("failed to read {kind} {}", path.display()))?;
         self.verify(path, kind, &file)?;
         Ok(file)
     }
 
-    /// Checks that `file` is a regular file and is the file `path` names under the root.
-    pub(crate) fn verify(&self, path: &Path, kind: &'static str, file: &File) -> Result<()> {
-        let refuse = |reason| ContainmentRefused {
+    /// Classifies a refusal consistently before and after an opened handle is available.
+    fn refusal(&self, path: &Path, kind: &'static str, reason: Reason) -> ContainmentRefused {
+        ContainmentRefused {
             reason,
             kind,
             path: path.to_owned(),
             root: self.root.to_owned(),
             remedy: self.remedy,
-        };
+        }
+    }
+
+    /// Checks that `file` is a regular file and is the file `path` names under the root.
+    pub(crate) fn verify(&self, path: &Path, kind: &'static str, file: &File) -> Result<()> {
+        let refuse = |reason| self.refusal(path, kind, reason);
         // Built eagerly: these failures need the file to vanish mid-check, which no test stages.
         let context = format!("failed to inspect {kind} {}", path.display());
         if !file.metadata().context(context.clone())?.is_file() {
@@ -133,6 +162,20 @@ impl<'a> Contained<'a> {
         }
         Ok(())
     }
+}
+
+/// Compares directory identities without opening possible non-regular Unix prefixes.
+#[cfg(unix)]
+fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let (left, right) = (left.metadata()?, right.metadata()?);
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+}
+
+/// Compares directory identities through the existing same-file platform support.
+#[cfg(not(unix))]
+fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
+    same_file::is_same_file(left, right)
 }
 
 /// Opens for reading; on Unix with `O_NONBLOCK`, so a FIFO put in place never blocks the open.
@@ -156,8 +199,7 @@ pub(crate) fn same_file_as(file: &File, target: &Path) -> io::Result<bool> {
     Ok(open.dev() == other.dev() && open.ino() == other.ino())
 }
 
-/// Whether `target` is the file already open as `file`: volume and file index, through a handle
-/// opened with no access rights.
+/// Whether `target` is the file already open as `file`: volume and file index through same-file.
 #[cfg(not(unix))]
 pub(crate) fn same_file_as(file: &File, target: &Path) -> io::Result<bool> {
     Ok(same_file::Handle::from_file(file.try_clone()?)? == same_file::Handle::from_path(target)?)
