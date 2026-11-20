@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+mod ignore_rules;
+use ignore_rules::IgnoreRules;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A discovered feature file together with its parser and matching config pattern.
 #[non_exhaustive]
@@ -169,16 +172,29 @@ pub(crate) fn discover_within(
     let root = config.root.clone();
     let walk_excludes = excludes.clone();
     let walk_budget = DiscoveryBudget(Arc::clone(&budget.0));
+    let (rules, ancestor_error) = IgnoreRules::new(&config.root, !config.include_hidden)?;
+    let rules = Arc::new(rules);
+    let walk_rules = Arc::clone(&rules);
+    if ancestor_error {
+        budget.spend(ENTRIES, 1)?;
+        files.errors.push(format!(
+            "failed while walking target directory {}: an ignore file above it has invalid entries",
+            config.root.display()
+        ));
+    }
     let mut builder = WalkBuilder::new(&config.root);
+    // Ignore files and the hidden filter are applied by `IgnoreRules`, which reads ignore files
+    // under the root only when they resolve inside it; the walker only traverses.
     builder
-        .standard_filters(true)
-        .add_custom_ignore_filename(".cuke-dedupignore")
-        .require_git(false)
-        .hidden(!config.include_hidden)
+        .standard_filters(false)
         .follow_links(false)
         .filter_entry(move |entry| {
             if entry.depth() == 0 {
                 return true;
+            }
+            // Ignored and hidden entries are dropped before any charge, as the walker dropped them.
+            if !walk_rules.admits(entry) {
+                return false;
             }
             // Past a limit, admit the entry unexamined so the loop below stops at it instead of
             // the walker filtering the rest of the tree.
@@ -193,6 +209,7 @@ pub(crate) fn discover_within(
 
     for entry in walker {
         budget.check()?;
+        rules.check()?;
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -277,6 +294,8 @@ pub(crate) fn discover_within(
         }
     }
     budget.check()?;
+    // A refusal recorded at an entry the excludes then dropped surfaces here.
+    rules.check()?;
 
     files
         .features

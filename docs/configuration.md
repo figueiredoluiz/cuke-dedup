@@ -34,6 +34,11 @@ package.json#cukeDedup
 ```
 
 An invalid auto-discovered file produces a warning, then discovery continues to the next source.
+An auto-discovered file, `package.json` or detected framework configuration that resolves outside
+the analysis root, through a link or a linked parent directory, is fatal instead: exit 2 before
+its content is read. For a standalone file, the error suggests passing it with `--config`; for
+`package.json` and framework configuration, replace the link with a file inside the root. Links
+inside the root are followed.
 JavaScript projects may use the `cukeDedup` key in `package.json`; other projects should prefer
 `.cuke-dedup.json`.
 
@@ -130,7 +135,8 @@ features/generated/*
 ```
 
 `.cuke-dedupignore` applies in addition to `.gitignore`, built-in exclusions, and configured
-`exclude` patterns. `--no-default-excludes` disables only the built-in list. A configured exclude
+`exclude` patterns. An ignore file under the analysis root that resolves outside it is fatal (exit
+2); ignore files above the root and the global git excludes file still apply. `--no-default-excludes` disables only the built-in list. A configured exclude
 is a hard exclusion and cannot be negated from an ignore file.
 
 ## Custom registration wrappers

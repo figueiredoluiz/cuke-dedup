@@ -265,6 +265,13 @@ pub(crate) fn read_utf8(path: &Path, kind: &'static str, limit: u64) -> Result<S
     read_file_utf8(file, path, kind, limit)
 }
 
+/// Reads at most `limit` bytes of `path`, failing with `InputLimitExceeded` past it.
+pub(crate) fn read_bytes(path: &Path, kind: &'static str, limit: u64) -> Result<Vec<u8>> {
+    let file =
+        File::open(path).with_context(|| format!("failed to read {kind} {}", path.display()))?;
+    read_file_bytes(file, path, kind, limit)
+}
+
 /// Reads bounded UTF-8 from an already opened file, including files bound to a verified directory.
 pub(crate) fn read_file_utf8(
     file: File,
@@ -272,6 +279,17 @@ pub(crate) fn read_file_utf8(
     kind: &'static str,
     limit: u64,
 ) -> Result<String> {
+    String::from_utf8(read_file_bytes(file, path, kind, limit)?)
+        .with_context(|| format!("{kind} {} is not valid UTF-8", path.display()))
+}
+
+/// Reads at most `limit` bytes from an already opened file, failing with `InputLimitExceeded` past it.
+pub(crate) fn read_file_bytes(
+    file: File,
+    path: &Path,
+    kind: &'static str,
+    limit: u64,
+) -> Result<Vec<u8>> {
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect {kind} {}", path.display()))?;
@@ -299,15 +317,18 @@ pub(crate) fn read_file_utf8(
         }
         .into());
     }
-    String::from_utf8(bytes)
-        .with_context(|| format!("{kind} {} is not valid UTF-8", path.display()))
+    Ok(bytes)
 }
 
-/// Reports whether any cause in `error`'s chain is an `InputLimitExceeded`.
-pub(crate) fn is_input_limit_error(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.downcast_ref::<InputLimitExceeded>().is_some())
+/// Reports whether any cause in `error`'s chain is an `InputLimitExceeded` or a containment
+/// refusal: both fail loading instead of becoming a warning or a fallback.
+pub(crate) fn is_fatal_input_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<InputLimitExceeded>().is_some()
+            || cause
+                .downcast_ref::<crate::contained_read::ContainmentRefused>()
+                .is_some()
+    })
 }
 
 /// Returns the standard input-limit diagnostic when metadata already proves a file is too large.

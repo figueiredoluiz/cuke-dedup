@@ -988,6 +988,49 @@ fn discovery_rejects_runs_over_the_selected_source_byte_cap() {
     assert!(!output.exists() || fs::read_dir(&output).unwrap().next().is_none());
 }
 
+/// Automatic configuration and ignore files linked outside the root fail with exit 2 and no
+/// report; the same configuration passed with `--config` is used.
+#[cfg(unix)]
+#[test]
+fn automatic_files_resolving_outside_the_root_are_refused() {
+    use std::os::unix::fs::symlink;
+    let outside = tempfile::tempdir().unwrap();
+    let config = outside.path().join("external.json");
+    fs::write(&config, r#"{"threshold":42}"#).unwrap();
+    for (name, message) in [
+        ("package.json", "package configuration"),
+        (".cuke-dedup.json", "CukeDedup configuration"),
+        ("cucumber.json", "framework configuration"),
+        (".gitignore", "ignore file"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("a.feature"), "Feature: a\n").unwrap();
+        symlink(&config, directory.path().join(name)).unwrap();
+        let output = directory.path().join("reports");
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(directory.path())
+            .args([".", "--reporters", "json", "--output"])
+            .arg(&output)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!("error: {message}")))
+            .stderr(predicate::str::contains(
+                "resolves outside the analysis root",
+            ));
+        assert!(!output.exists() || fs::read_dir(&output).unwrap().next().is_none());
+    }
+    let directory = tempfile::tempdir().unwrap();
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(directory.path())
+        .args([".", "--print-config", "--config"])
+        .arg(&config)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""threshold": 42.0"#));
+}
+
 /// Checks valid inline suppression permits success and a missing reason produces an operational error.
 #[test]
 fn inline_suppressions_require_a_rule_and_reason_and_affect_exit_status() {

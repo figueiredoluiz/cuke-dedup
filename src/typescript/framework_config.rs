@@ -76,12 +76,14 @@ fn cypress_discovery(input: &DiscoveryInput<'_>) -> Result<Option<DiscoveredFeat
     if !package_has_any_dependency(input.package, &CYPRESS_PREPROCESSORS) {
         return Ok(None);
     }
-    first_matching_config(input.root, &CYPRESS_CONFIGS, cypress_config)
+    first_matching_config(input.root, &CYPRESS_CONFIGS, |path| {
+        cypress_config(input.root, path)
+    })
 }
 
 /// Reads static e2e.specPattern values, using broad feature discovery with a warning for dynamic values and returning no match when absent.
-fn cypress_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
-    let (text, extension) = read_config(path)?;
+fn cypress_config(root: &Path, path: &Path) -> Result<Option<DiscoveredFeatures>> {
+    let (text, extension) = read_config(root, path)?;
     let property = ["e2e", "specPattern"];
     let spec_pattern =
         static_object_property_path(&text, extension, Some("defineConfig"), &property)?;
@@ -104,7 +106,7 @@ fn cypress_config(path: &Path) -> Result<Option<DiscoveredFeatures>> {
 
 /// Reads defineBddConfig feature paths or roots statically, supplying defaults for missing values and warnings for dynamic values.
 fn playwright_config(root: &Path, path: &Path) -> Result<Option<DiscoveredFeatures>> {
-    let (text, extension) = read_config(path)?;
+    let (text, extension) = read_config(root, path)?;
     if !text.contains("defineBddConfig") {
         return Ok(None);
     }
