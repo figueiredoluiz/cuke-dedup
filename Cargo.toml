@@ -29,6 +29,11 @@ path = "src/lib.rs"
 name = "cuke-dedup"
 path = "src/main.rs"
 
+[features]
+# Test tooling: records every Ruby source the adapter reads into the directory named by
+# `CUKE_DEDUP_RUBY_SOURCE_CAPTURE`, for compilation under real Ruby. Not for release builds.
+ruby-source-capture = []
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }

@@ -117,6 +117,7 @@ pub(super) fn load_proof_sources(
         if !bytes.admit(source.len()) {
             return Ok(ProofSources::OverBudget);
         }
+        super::source_capture::record(&source);
         let source = super::prepare_nuls(&source).into_owned();
         let tree = parser
             .parse(&source, None)
@@ -904,10 +905,6 @@ fn transparent_body(call: Node<'_>, source: &str) -> bool {
 /// Parse a Ruby source fixture into a provider unit using the standard step-file path.
 #[cfg(test)]
 fn test_unit(source: &str) -> Unit {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_ruby::LANGUAGE.into())
-        .unwrap();
     Unit {
         file: SourceFile {
             path: PathBuf::from("steps.rb"),
@@ -916,7 +913,7 @@ fn test_unit(source: &str) -> Unit {
         canonical_path: PathBuf::from("steps.rb"),
         source: source.to_owned(),
         columns: ColumnIndex::new(source),
-        tree: parser.parse(source, None).unwrap(),
+        tree: super::load_phase::tests::parse(source),
     }
 }
 

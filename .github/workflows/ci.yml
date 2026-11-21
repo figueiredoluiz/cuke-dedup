@@ -57,7 +57,18 @@ jobs:
       - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2
         with:
           tool: nextest
+      # `--all-features` builds the Ruby source capture; on Linux it records every Ruby source the
+      # tests feed the analyzer, including ones written inline, for the compile check below.
       - run: cargo +${{ needs.metadata.outputs.msrv }} nextest run --all-features --locked --profile ci
+        env:
+          CUKE_DEDUP_RUBY_SOURCE_CAPTURE: ${{ matrix.os == 'ubuntu-latest' && format('{0}/ruby-sources', runner.temp) || '' }}
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        with:
+          ruby-version: "4.0"
+      - name: Check that every Ruby source the tests use compiles
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: node scripts/check/check-ruby-syntax.mjs --captured "$RUNNER_TEMP/ruby-sources"
       - name: Upload JUnit results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
