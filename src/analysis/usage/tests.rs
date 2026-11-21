@@ -37,6 +37,7 @@ fn limited_usage(
         limits.matching,
         limits.cache,
         limits.row,
+        MAX_USAGE_SUPPRESSION_WORK,
     );
     (findings, outcome)
 }
@@ -234,13 +235,15 @@ fn ambiguity_admission_preserves_disabled_overlap_and_uncertain_usage_controls()
     assert!(!outcome.incomplete.is_empty());
     assert_eq!(outcome.used, [0, 1, 2].into_iter().collect());
     let suppressions = SuppressionIndex::new(&config, &definitions);
-    analyze_unused(
+    assert!(analyze_unused(
         &definitions,
         &outcome.used,
         &config,
         &suppressions,
         &mut findings,
-    );
+        MAX_USAGE_SUPPRESSION_WORK,
+    )
+    .is_none());
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].primary, definitions[3].location);
     config.rules.insert(Rule::AmbiguousStep, Severity::Off);
@@ -1030,13 +1033,15 @@ fn overlap_and_unused_rules_honor_disabled_severity_and_usage() {
         &mut findings,
         100,
     );
-    analyze_unused(
+    assert!(analyze_unused(
         &definitions,
         &BTreeSet::new(),
         &config,
         &suppressions,
         &mut findings,
-    );
+        MAX_USAGE_SUPPRESSION_WORK,
+    )
+    .is_none());
     assert_eq!(outcome.overlap_census, CandidateSourceCensus::default());
     assert!(findings.is_empty());
 
@@ -1044,13 +1049,15 @@ fn overlap_and_unused_rules_honor_disabled_severity_and_usage() {
         .rules
         .insert(Rule::UnusedDefinition, Severity::Warning);
     let suppressions = SuppressionIndex::new(&config, &definitions);
-    analyze_unused(
+    assert!(analyze_unused(
         &definitions,
         &[0].into_iter().collect(),
         &config,
         &suppressions,
         &mut findings,
-    );
+        MAX_USAGE_SUPPRESSION_WORK,
+    )
+    .is_none());
     assert!(findings.is_empty());
 }
 
@@ -1068,13 +1075,15 @@ fn non_authoritative_matchers_cannot_prove_a_definition_unused() {
 
     let outcome =
         analyze_feature_usage(&extracted, &[], &config, &suppressions, &mut findings, 100);
-    analyze_unused(
+    assert!(analyze_unused(
         &extracted,
         &outcome.used,
         &config,
         &suppressions,
         &mut findings,
-    );
+        MAX_USAGE_SUPPRESSION_WORK,
+    )
+    .is_none());
 
     assert_eq!(outcome.used, [0, 1].into_iter().collect());
     assert!(findings.is_empty());
@@ -1481,13 +1490,15 @@ fn sampled_fallback_rules_preserve_legacy_baselines() {
         config.rules.insert(Rule::UnusedDefinition, Severity::Error);
         let suppressions = SuppressionIndex::new(&config, &definitions);
         let mut unused = Vec::new();
-        analyze_unused(
+        assert!(analyze_unused(
             &definitions,
             &BTreeSet::new(),
             &config,
             &suppressions,
             &mut unused,
-        );
+            MAX_USAGE_SUPPRESSION_WORK,
+        )
+        .is_none());
         assert_eq!(unused.len(), 2);
         for (finding, matcher) in unused.iter().zip([&left, &right]) {
             assert_original_identity(
@@ -1638,13 +1649,15 @@ fn late_feature_match_preserves_each_enabled_consumer() {
         for window in [1, 64, 250] {
             let (mut findings, outcome) =
                 limited_ambiguities(&definitions, &steps, &config, [usize::MAX; 3], window);
-            analyze_unused(
+            assert!(analyze_unused(
                 &definitions,
                 &outcome.used,
                 &config,
                 &SuppressionIndex::new(&config, &definitions),
                 &mut findings,
-            );
+                MAX_USAGE_SUPPRESSION_WORK,
+            )
+            .is_none());
             assert!(outcome.incomplete.is_empty());
             let unused: Vec<_> = findings
                 .iter()
@@ -2293,4 +2306,198 @@ fn scattered_match_rows_preserve_indices_without_doubling_storage() {
     assert_eq!(row.indices().collect::<Vec<_>>(), ids);
     assert!(row.backing_bytes() >= 130 * std::mem::size_of::<usize>());
     assert!(row.backing_bytes() < 260 * std::mem::size_of::<usize>());
+}
+
+/// Matches ordinary Ruby indirect steps under exact, scan-limited and emission-limited budgets.
+#[test]
+fn usage_work_budget_bounds_indirect_matching_across_windows() {
+    let file = SourceFile {
+        path: PathBuf::from("steps.rb"),
+        language: crate::ruby::RUBY,
+    };
+    let extracted = crate::source_adapter::adapter_for_language(file.language)
+        .unwrap()
+        .extract(
+            "Given('caller') { step 'target'; step 'missing' }
+             Given(/^caller$/) { alternate_caller }
+             Then('target') { handle }
+             Then(/^target$/) { alternate_handler }
+             Then('unrelated') { other }
+             Then('unmodeled') { unknown }",
+            &file,
+        )
+        .unwrap();
+    let mut definitions = extracted.definitions;
+    definitions[5].matcher_kind = MatcherKind::Literal;
+    let indirect = extracted.indirect_usage.unwrap();
+    assert_eq!(indirect.texts, ["missing".into(), "target".into()].into());
+    assert!(!indirect.unknown);
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given caller\n",
+        Path::new("input.feature"),
+    )
+    .unwrap();
+    let (_root, mut config) = ambiguity_only_config();
+    config
+        .rules
+        .insert(Rule::UnusedDefinition, Severity::Warning);
+    let suppressions = SuppressionIndex::new(&config, &definitions);
+    assert_eq!(definitions.len(), 6);
+
+    for window in [1, 2, 6] {
+        // Five definitions compile. Each nonempty set scans both texts, including the miss.
+        let scans = 2 * 5_usize.div_ceil(window);
+        for (scans, matches, complete) in
+            [(scans, 2, true), (scans - 1, 2, false), (scans, 1, false)]
+        {
+            let (mut findings, mut outcome) =
+                limited_matching(&definitions, &steps, &config, [usize::MAX; 4], window);
+            apply_indirect_usage_with_budget(
+                &definitions,
+                Some(&indirect),
+                &config,
+                &mut outcome,
+                window,
+                MatchingBudget::new(scans, matches),
+            );
+            outcome.incomplete.extend(super::analyze_unused(
+                &definitions,
+                &outcome.used,
+                &config,
+                &suppressions,
+                &mut findings,
+                outcome.suppression_remaining,
+            ));
+            assert_eq!(findings.len(), if complete { 2 } else { 1 });
+            assert_eq!(findings[0].rule, Rule::AmbiguousStep);
+            assert_eq!(findings[0].primary.line, 3);
+            if complete {
+                assert!(outcome.incomplete.is_empty());
+                assert_eq!(findings[1].rule, Rule::UnusedDefinition);
+                assert_eq!(findings[1].primary, definitions[4].location);
+            } else {
+                assert_eq!(
+                    outcome.incomplete,
+                    ["indirect step matching exceeded its safety limits. Unused-definition findings were disabled."],
+                );
+            }
+        }
+    }
+}
+
+/// Preserves precedence for admitted results and stops emission on a shared suppression cutoff.
+#[test]
+fn usage_work_budget_shares_suppression_admission_across_rules() {
+    let mut definitions = definitions(
+        "Given(/^color (red|blue)$/,()=>handle());
+         Given('color red',()=>red());
+         Given('color blue',()=>blue());
+         Given('quiet',()=>quiet());",
+    );
+    for (index, rule, reason) in [
+        (1, Rule::AmbiguousStep, "inline red"),
+        (2, Rule::AmbiguousStep, "inline blue"),
+        (3, Rule::UnusedDefinition, "inline quiet"),
+    ] {
+        definitions[index]
+            .inline_suppressions
+            .push(crate::model::InlineSuppression {
+                rule,
+                reason: reason.into(),
+            });
+    }
+    let steps = crate::gherkin::extract(
+        "Feature: F\n Scenario: S\n  Given color red\n  And color blue\n",
+        Path::new("colors.feature"),
+    )
+    .unwrap();
+    let (_root, mut config) = ambiguity_only_config();
+    config
+        .rules
+        .insert(Rule::UnusedDefinition, Severity::Warning);
+    config
+        .rules
+        .insert(Rule::OverlappingMatcher, Severity::Warning);
+    config.suppressions.push(SuppressionConfig {
+        rule: Rule::AmbiguousStep,
+        reason: "config red".into(),
+        path: Some("steps.ts".into()),
+        matcher: Some("color red".into()),
+    });
+    config.suppressions.push(SuppressionConfig {
+        rule: Rule::UnusedDefinition,
+        reason: "outside selected path".into(),
+        path: Some("elsewhere.ts".into()),
+        matcher: Some("quiet".into()),
+    });
+    let suppressions = SuppressionIndex::new(&config, &definitions);
+    // Each rule has one config selector. Independently budget its two selector passes
+    // and the group-member visits for estimating work and checking inline reasons.
+    let work = |members: &[usize]| {
+        let selection: u64 = members
+            .iter()
+            .map(|&index| {
+                let definition = &definitions[index];
+                (1 + "steps.ts".len() + definition.matcher.len()) as u64
+            })
+            .sum();
+        members.len() as u64 + 2 * (1 + selection)
+    };
+    let ambiguity = work(&[0, 1]) + work(&[0, 2]);
+    let total = ambiguity + work(&[3]);
+    let admitted = [
+        (Rule::AmbiguousStep, 3, "config red"),
+        (Rule::AmbiguousStep, 4, "inline blue"),
+        (
+            Rule::UnusedDefinition,
+            definitions[3].location.line,
+            "inline quiet",
+        ),
+    ];
+    for (limit, count, cutoff) in [
+        (total, 3, None),
+        (total - 1, 2, Some("unused-definition suppression")),
+        (ambiguity - 1, 1, Some("ambiguous-step suppression")),
+        (0, 0, Some("ambiguous-step suppression")),
+    ] {
+        let mut findings = Vec::new();
+        let mut outcome = analyze_feature_usage_with_budget(
+            &definitions,
+            &steps,
+            &config,
+            &suppressions,
+            &mut findings,
+            100,
+            2,
+            AmbiguityBudget::default(),
+            MatchingBudget::default(),
+            MAX_DIRECT_MATCH_CACHE_BYTES,
+            MAX_ROW_MATCHES,
+            limit,
+        );
+        outcome.incomplete.extend(super::analyze_unused(
+            &definitions,
+            &outcome.used,
+            &config,
+            &suppressions,
+            &mut findings,
+            outcome.suppression_remaining,
+        ));
+        assert_eq!(findings.len(), count);
+        for (finding, (rule, line, reason)) in findings.iter().zip(admitted) {
+            assert_eq!(finding.rule, rule);
+            assert_eq!(finding.primary.line, line);
+            assert_eq!(finding.suppression.as_ref().unwrap().reason, reason);
+        }
+        if let Some(cutoff) = cutoff {
+            assert_eq!(outcome.incomplete.len(), 1);
+            assert!(outcome.incomplete[0].contains(cutoff));
+        } else {
+            assert!(outcome.incomplete.is_empty());
+        }
+        assert_eq!(outcome.ambiguity_truncated, count < 2);
+        if count < 2 {
+            assert_eq!(outcome.overlap_census, CandidateSourceCensus::default());
+        }
+    }
 }

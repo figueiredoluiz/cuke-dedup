@@ -21,13 +21,14 @@ use std::sync::{Arc, LazyLock};
 mod ambiguity_budget;
 use ambiguity_budget::AmbiguityBudget;
 mod feature_matches;
-use feature_matches::{AmbiguityRows, FeatureMatches, ScanStatus, MAX_ROW_MATCHES};
+use feature_matches::{match_text, AmbiguityRows, FeatureMatches, ScanStatus, MAX_ROW_MATCHES};
 mod matching_budget;
 use matching_budget::MatchingBudget;
 
 static FALLBACK_PLACEHOLDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{([^{}]+)\}").expect("static placeholder regex"));
 const MAX_OVERLAP_SUPPRESSION_WORK: u64 = 100_000_000;
+const MAX_USAGE_SUPPRESSION_WORK: u64 = 100_000_000;
 const OVERLAP_PROPOSAL_WORK_MULTIPLIER: usize = 4;
 
 /// A definition's matcher before compilation; `expression` is the regex source to index.
@@ -278,6 +279,7 @@ pub(super) struct FeatureUsageOutcome {
     pub(super) incomplete: Vec<String>,
     pub(super) ambiguity_truncated: bool,
     pub(super) overlap_census: CandidateSourceCensus,
+    pub(super) suppression_remaining: u64,
 }
 
 /// Compactly records which ambiguity groups contain each definition.
@@ -635,10 +637,11 @@ fn analyze_feature_usage_in_windows(
         MatchingBudget::default(),
         MAX_DIRECT_MATCH_CACHE_BYTES,
         MAX_ROW_MATCHES,
+        MAX_USAGE_SUPPRESSION_WORK,
     )
 }
 
-/// Runs complete usage matching, then admits ambiguity retention independently of overlap/report limits.
+/// Runs direct matching and admits ambiguity and suppression work independently of overlap limits.
 #[allow(clippy::too_many_arguments)]
 fn analyze_feature_usage_with_budget(
     definitions: &[StepDefinition],
@@ -652,6 +655,7 @@ fn analyze_feature_usage_with_budget(
     mut matching_budget: MatchingBudget,
     cache_limit: usize,
     row_limit: usize,
+    mut suppression_remaining: u64,
 ) -> FeatureUsageOutcome {
     let mut summaries: Vec<MatcherSummary> = Vec::with_capacity(definitions.len());
     let mut incomplete: Vec<String> = Vec::new();
@@ -660,6 +664,7 @@ fn analyze_feature_usage_with_budget(
     let mut proven = ProvenAmbiguities::new(definitions.len());
     let ambiguity_is_reported = config.severity(Rule::AmbiguousStep) != Severity::Off;
     let mut ambiguity_cut = false;
+    let mut suppression_cut = false;
     let mut direct_incomplete = None;
     let mut retained_matches = None;
     let mut scan_work = 0_usize;
@@ -780,6 +785,14 @@ fn analyze_feature_usage_with_budget(
         'locations: for (location, groups) in groups {
             let count_is_lower_bound = incomplete_locations.contains(&location);
             for (matched_indices, (step, expansion_count)) in groups {
+                let Ok(reason) = suppressions.find_reason_with_budget(
+                    Rule::AmbiguousStep,
+                    &matched_indices,
+                    &mut suppression_remaining,
+                ) else {
+                    suppression_cut = true;
+                    break 'locations;
+                };
                 let matched_definitions: Vec<_> = matched_indices
                     .iter()
                     .map(|index| &definitions[*index])
@@ -837,7 +850,6 @@ fn analyze_feature_usage_with_budget(
                     matched_indices.len(),
                     count_is_lower_bound,
                 );
-                let reason = suppressions.find_reason(Rule::AmbiguousStep, &matched_indices);
                 let handler_evidence =
                     "More than one definition accepts at least one concrete feature step";
                 let suggested_action = "Make the matchers mutually exclusive";
@@ -890,7 +902,13 @@ fn analyze_feature_usage_with_budget(
     if ambiguity_cut {
         incomplete.push(budget.diagnostic());
     }
-    let analysis_cut = ambiguity_cut || direct_incomplete.is_some();
+    if suppression_cut {
+        used.extend(0..definitions.len());
+        incomplete.push(
+            "ambiguous-step suppression lookup exceeded its safety limit. Ambiguity findings are partial. Unused-definition findings were disabled and static matcher overlap was skipped.".to_owned(),
+        );
+    }
+    let analysis_cut = ambiguity_cut || suppression_cut || direct_incomplete.is_some();
     let overlap = if analysis_cut {
         OverlapOutcome {
             census: CandidateSourceCensus::default(),
@@ -918,6 +936,7 @@ fn analyze_feature_usage_with_budget(
         incomplete,
         ambiguity_truncated: analysis_cut,
         overlap_census: overlap.census,
+        suppression_remaining,
     }
 }
 
@@ -1350,6 +1369,26 @@ pub(super) fn apply_indirect_usage(
     config: &Config,
     outcome: &mut FeatureUsageOutcome,
 ) {
+    apply_indirect_usage_with_budget(
+        definitions,
+        usage,
+        config,
+        outcome,
+        matcher_window_size(),
+        MatchingBudget::default(),
+    );
+}
+
+/// Charges known indirect usage across all windows and disables unused reporting if a scan or
+/// emitted match exceeds the allowance. Missing or unresolved usage retains the same fallback.
+fn apply_indirect_usage_with_budget(
+    definitions: &[StepDefinition],
+    usage: Option<&crate::source_adapter::IndirectStepUsage>,
+    config: &Config,
+    outcome: &mut FeatureUsageOutcome,
+    window: usize,
+    mut budget: MatchingBudget,
+) {
     let Some(invoking) = definitions
         .iter()
         .map(StepDefinition::analysis_profile)
@@ -1365,17 +1404,27 @@ pub(super) fn apply_indirect_usage(
         ));
         return;
     };
-    if usage.texts.is_empty() || config.severity(Rule::UnusedDefinition) == Severity::Off {
+    if usage.texts.is_empty()
+        || config.severity(Rule::UnusedDefinition) == Severity::Off
+        || outcome.used.len() == definitions.len()
+    {
         return;
     }
     let mut matched = Vec::new();
+    let mut truncated = false;
     scan_windows(
         definitions,
         &config.parameter_types,
-        matcher_window_size(),
+        window,
         |start, _, index, _| {
+            if index.scan_work() == 0 {
+                return ControlFlow::Continue(());
+            }
             for text in &usage.texts {
-                index.matches(text, &mut matched);
+                if !match_text(index, text, &mut matched, &mut budget) {
+                    truncated = true;
+                    return ControlFlow::Break(());
+                }
                 outcome
                     .used
                     .extend(matched.iter().map(|index| index + start));
@@ -1383,25 +1432,44 @@ pub(super) fn apply_indirect_usage(
             ControlFlow::Continue(())
         },
     );
+    if truncated {
+        outcome.used.extend(0..definitions.len());
+        outcome.incomplete.push(
+            "indirect step matching exceeded its safety limits. Unused-definition findings were disabled."
+                .to_owned(),
+        );
+    }
 }
 
 /// Reports `unused-definition` for each definition not in `used`; does nothing when the rule is
-/// off, and skips definitions whose matchers are not global (Jest-Cucumber).
+/// off, and skips definitions whose matchers are not global (Jest-Cucumber). A suppression
+/// refusal stops the sweep, returning an incomplete diagnostic and preserving admitted findings.
 pub(super) fn analyze_unused(
     definitions: &[StepDefinition],
     used: &BTreeSet<usize>,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
-) {
+    mut suppression_remaining: u64,
+) -> Option<String> {
     let severity = config.severity(Rule::UnusedDefinition);
     if severity == Severity::Off {
-        return;
+        return None;
     }
     for (index, definition) in definitions.iter().enumerate() {
         if used.contains(&index) || !definition.analysis_profile().matches_by_text() {
             continue;
         }
+        let Ok(reason) = suppressions.find_reason_with_budget(
+            Rule::UnusedDefinition,
+            &[index],
+            &mut suppression_remaining,
+        ) else {
+            return Some(
+                "unused-definition suppression lookup exceeded its safety limit. Unused-definition findings are partial."
+                    .to_owned(),
+            );
+        };
         findings.push(Finding {
             original_fingerprint: (definition.matcher.len() > MAX_EVIDENCE_TEXT_BYTES).then(|| {
                 original_fallback_fingerprint(
@@ -1432,13 +1500,12 @@ pub(super) fn analyze_unused(
                 cluster: None,
             },
             suggested_action: "Remove the definition or add the missing feature usage".to_owned(),
-            suppression: suppressions
-                .find_reason(Rule::UnusedDefinition, &[index])
-                .map(|reason| crate::model::Suppression {
-                    reason: reason.to_owned(),
-                }),
+            suppression: reason.map(|reason| crate::model::Suppression {
+                reason: reason.to_owned(),
+            }),
         });
     }
+    None
 }
 
 /// Prepares a definition's matcher for its window's index, returning a diagnostic only for

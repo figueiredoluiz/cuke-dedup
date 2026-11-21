@@ -1,6 +1,6 @@
 use crate::resource_limits::{MAX_DIRECT_MATCHES, MAX_DIRECT_MATCH_SCANS};
 
-/// Independent per-analysis allowances for automaton scans and emitted matcher identifiers.
+/// Allowances for automaton scans and emitted matcher identifiers in one matching pass.
 #[derive(Clone, Copy)]
 pub(super) struct MatchingBudget {
     limits: [usize; 2],
@@ -8,7 +8,7 @@ pub(super) struct MatchingBudget {
 }
 
 impl Default for MatchingBudget {
-    /// Creates the measured production allowances for one direct feature-matching analysis.
+    /// Creates the production allowances for either direct or indirect matching.
     fn default() -> Self {
         Self::new(MAX_DIRECT_MATCH_SCANS, MAX_DIRECT_MATCHES)
     }

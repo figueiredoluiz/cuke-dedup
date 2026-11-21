@@ -111,6 +111,23 @@ impl<'a> SuppressionIndex<'a> {
             .saturating_mul(2)
     }
 
+    /// Admits the group-member visits for estimating work and checking inline reasons, then
+    /// reserves the selector estimate before looking up a reason. Refusal leaves the allowance
+    /// unchanged and never returns a suppression result.
+    pub(super) fn find_reason_with_budget(
+        &self,
+        rule: Rule,
+        definition_indices: &[usize],
+        remaining: &mut u64,
+    ) -> Result<Option<&'a str>, ()> {
+        let members = u64::try_from(definition_indices.len()).unwrap_or(u64::MAX);
+        let after_members = remaining.checked_sub(members).ok_or(())?;
+        *remaining = after_members
+            .checked_sub(self.lookup_work(rule, definition_indices))
+            .ok_or(())?;
+        Ok(self.find_reason(rule, definition_indices))
+    }
+
     /// Indices of config suppressions that select no single definition. Work is charged per
     /// definition checked; past `MAX_UNMATCHED_SUPPRESSION_WORK` it returns the indices found so
     /// far with `truncated` set. A suppression with an invalid path glob is always unmatched.
