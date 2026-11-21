@@ -1104,7 +1104,11 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
                 .prefix("global excludes ~")
                 .tempdir()
                 .unwrap();
-            let root = fixture.path().join("root");
+            // Anchor the rule at the same path spelling the CLI uses for the scan root.
+            let cwd = cuke_dedup::config::Config::load(fixture.path(), Default::default())
+                .unwrap()
+                .root;
+            let root = cwd.join("root");
             fs::create_dir(&root).unwrap();
             fs::write(root.join("a.feature"), "Feature: a\n").unwrap();
             fs::write(root.join("z.feature"), "Feature: z\n").unwrap();
@@ -1114,8 +1118,8 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
             } else {
                 "global-ignore"
             };
-            let excludes = fixture.path().join(excludes_name);
-            let config = fixture.path().join("gitconfig");
+            let excludes = cwd.join(excludes_name);
+            let config = cwd.join("gitconfig");
             fs::write(&config, format!("[core]\nexcludesFile = {excludes_name}\n")).unwrap();
             if let Some(size) = size {
                 let mut bytes = pattern.to_vec();
@@ -1124,7 +1128,7 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
                     bytes.resize(size, b'x');
                 }
                 let target = if linked {
-                    fixture.path().join("global-target")
+                    cwd.join("global-target")
                 } else {
                     excludes.clone()
                 };
@@ -1134,17 +1138,14 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
                     std::os::unix::fs::symlink(target, &excludes).unwrap();
                 }
             }
-            let output = fixture.path().join("reports");
+            let output = cwd.join("reports");
             let assertion = Command::cargo_bin("cuke-dedup")
                 .unwrap()
-                .current_dir(fixture.path())
-                .env("HOME", fixture.path())
-                .env("XDG_CONFIG_HOME", fixture.path())
+                .current_dir(&cwd)
+                .env("HOME", &cwd)
+                .env("XDG_CONFIG_HOME", &cwd)
                 .env("GIT_CONFIG_GLOBAL", &config)
-                .env(
-                    "GIT_CONFIG_SYSTEM",
-                    fixture.path().join("absent-system-config"),
-                )
+                .env("GIT_CONFIG_SYSTEM", cwd.join("absent-system-config"))
                 .arg(&root)
                 .args(["--reporters", "json", "--output"])
                 .arg(&output)
@@ -1157,7 +1158,7 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
                 assert!(!output.exists() || fs::read_dir(&output).unwrap().next().is_none());
             } else {
                 assertion.success();
-                let mut builder = ignore::gitignore::GitignoreBuilder::new(fixture.path());
+                let mut builder = ignore::gitignore::GitignoreBuilder::new(&cwd);
                 if size.is_some() {
                     assert!(builder.add(&excludes).is_none());
                 }
