@@ -52,6 +52,9 @@ cargo +stable clippy --all-targets --all-features --locked -- -D warnings
 # The capture records every Ruby source the tests feed the analyzer, including inline ones, so
 # real Ruby can compile them.
 ruby_sources="$(mktemp -d)"
+parity_report=""
+# One EXIT trap for every temporary path, so a failing step still removes them.
+trap 'rm -rf "$ruby_sources" ${parity_report:+"$parity_report"}' EXIT
 CUKE_DEDUP_RUBY_SOURCE_CAPTURE="$ruby_sources" cargo +stable test --all-targets --all-features --locked
 node scripts/check/check-ruby-syntax.mjs --captured "$ruby_sources"
 rm -rf "$ruby_sources"
@@ -70,7 +73,6 @@ if [[ "$mode" == "full" ]]; then
   node scripts/check/check-ruby-parity.mjs --regression target/release/cuke-dedup
   node scripts/check/check-ruby-execution.mjs target/release/cuke-dedup
   parity_report="$(mktemp)"
-  trap 'rm -f "$parity_report"' EXIT
   node scripts/check/check-language-parity.mjs --regression target/release/cuke-dedup "$parity_report"
   node scripts/check/check-memory.mjs target/release/cuke-dedup
   node scripts/check/check-duplication.mjs
