@@ -223,7 +223,7 @@ pub(super) enum ScanStatus {
 }
 
 /// Charges and performs one text scan, then admits every emitted matcher identifier atomically.
-fn match_text(
+pub(super) fn match_text(
     index: &MatcherIndex,
     text: &str,
     local: &mut Vec<usize>,

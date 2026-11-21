@@ -138,6 +138,7 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 | Matcher-blocking posting proposals | 2,000,000 |
 | Combined handler events | 10,000,000 |
 | Pairwise or overlap suppression work | 100,000,000 units each |
+| Ambiguous-step and unused-definition suppression work | 100,000,000 units shared per run |
 | Unmatched-suppression advisory work | 10,000,000 units |
 | One matcher-edit or handler-LCS matrix | 100,000,000 estimated units |
 | Aggregate verification and evidence work | 1,000,000,000 units |
@@ -146,6 +147,10 @@ Project configuration and CLI flags may lower candidate and structural limits bu
 hard ceilings. Matcher similarity is evaluated before reserving expensive handler-LCS work.
 
 Direct feature matching charges each regex-set or fallback-regex scan separately from each emitted definition match. The cache-fitting path scans all distinct texts once. If retained authoritative match rows would exceed 64 MiB, CukeDedup recomputes complete text batches and releases each batch before continuing; discarded overflow attempts and their smaller retries each consume work from the same allowances. If either CPU allowance is exhausted, findings from completed batches remain available, the run is marked incomplete, unused-definition findings and static overlap are disabled, and no partial row becomes a finding or proof. A retained outline location with unresolved values reports its known expansion count as a lower bound with an identity distinct from a complete count.
+
+Ruby indirect usage has independent limits of 64,000,000 automaton scans and 64,000,000 emitted matches per analysis. Exhaustion disables unused-definition reporting and marks the run incomplete. Complete direct findings remain available.
+
+Ambiguous-step and unused-definition share one suppression work allowance. A refused lookup omits the affected finding and ends that rule’s sweep. An ambiguity lookup refusal also disables unused-definition reporting and skips static overlap. Complete admitted findings remain available and the run is marked incomplete.
 
 Fuzzy matcher discovery uses collision-free, fixed-width, case-folded character trigrams with
 digit runs normalized. Unsaturated posting lists are fully considered. Lists above 256 definitions

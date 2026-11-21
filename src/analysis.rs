@@ -180,13 +180,15 @@ fn analyze_internal(
         overlap_budget,
     );
     usage::apply_indirect_usage(&definitions, indirect_usage, config, &mut usage);
-    usage::analyze_unused(
+    let unused_incomplete = usage::analyze_unused(
         &definitions,
         &usage.used,
         config,
         &suppressions,
         &mut findings,
+        usage.suppression_remaining,
     );
+    usage.incomplete.extend(unused_incomplete);
     let unmatched_suppressions = if include_unmatched_suppressions {
         suppressions.unmatched()
     } else {

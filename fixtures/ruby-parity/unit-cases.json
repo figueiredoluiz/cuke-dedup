@@ -1500,6 +1500,23 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "usage_work_budget_bounds_indirect_matching_across_windows",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/usage/tests.rs",
+            "name": "usage_work_budget_bounds_indirect_matching_across_windows"
+          },
+          "rationale": "Extracts Ruby definitions and indirect step texts, verifying complete findings at the scan and emission limits and conservative unused reporting with a smaller allowance.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "usage_work_budget_shares_suppression_admission_across_rules",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Adapter-independent stage `bounded-analysis`. Usage-rule suppression lookups preserve reason precedence and complete findings admitted under their shared work allowance.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "direct_matching_budget_boundaries_preserve_only_complete_outcomes",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-analysis",
