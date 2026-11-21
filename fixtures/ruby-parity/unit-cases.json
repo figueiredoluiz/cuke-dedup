@@ -4195,6 +4195,12 @@
     "src/typescript/matcher/tests.rs": {
       "tests": [
         {
+          "name": "registration_extraction_limits_regex_literal_parts",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JavaScript regular expression literal delimiters and flags. Semantic residue: regex-*.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "unicode_sets_flag_belongs_to_matcher_identity",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JavaScript regex/string literal semantics (`unicode sets flag belongs to matcher identity`). Semantic residue: Ruby regex and string literal matcher semantics are covered by the regex-* and matcher groups.",
@@ -5156,6 +5162,18 @@
           "name": "resolves_bound_named_handlers_without_dropping_the_definition",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: JS/TS registration and handler binding forms (loaders, aliases, shadowing, generators, stubs) (`resolves bound named handlers without dropping the definition`). Semantic residue: Ruby registration aliasing, shadowing and uncertain forms are pinned by the `registration-shadowing`, `registration-uncertain-dynamic` and `registration-uncertain-nested` groups.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "registration_extraction_limits_bound_handler_resolution",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: JavaScript bind calls and competing callback positions. Semantic residue: none for this argument shape.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "registration_extraction_limits_regex_diagnostic",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Shared regular expression extraction for TypeScript callbacks and decorators. Semantic residue: ruby_regex_resource_limit_is_reported_and_keeps_the_definition covers Ruby limit diagnostics.",
           "behaviorClass": "language-specific-api"
         },
         {

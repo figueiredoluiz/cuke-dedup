@@ -19,7 +19,7 @@ use self::assertions::{AssertionBindings, FileScopes};
 use self::handler::MAX_HANDLER_SNIPPET_CHARS;
 use self::handler::{
     bind_arguments, collect_handler_bindings, fingerprint_handler, fingerprint_method_handler,
-    resolve_handler, HandlerBinding, ModuleScope,
+    resolve_handler, HandlerBinding, ModuleScope, MAX_BOUND_HANDLER_DEPTH,
 };
 use self::matcher::matcher_value;
 use self::matcher::{rust_regex_support, RegexSupport};
@@ -31,6 +31,7 @@ use self::registrations::{
 #[cfg(test)]
 use crate::model::bounded_source_snippet;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
+use crate::resource_limits::MAX_REGEX_PATTERN_BYTES;
 use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::suppression::InlineSuppressions;
 use crate::source_adapter::{
@@ -229,6 +230,7 @@ struct AdapterContext<'source, 'tree> {
     root: Node<'tree>,
     file_scopes: &'source FileScopes,
     configured_assertion_modules: &'source BTreeSet<String>,
+    max_regex_part_bytes: usize,
     handler_evidence: OnceCell<HandlerEvidence<'tree>>,
 }
 
@@ -324,6 +326,16 @@ fn extract_detailed_impl(
     file: &SourceFile,
     session: &mut TypeScriptExtractionSession,
 ) -> Result<Extraction> {
+    extract_detailed_with_regex_limit(source, file, session, MAX_REGEX_PATTERN_BYTES)
+}
+
+/// Extracts one file with the supplied raw regex limit for each literal part.
+fn extract_detailed_with_regex_limit(
+    source: &str,
+    file: &SourceFile,
+    session: &mut TypeScriptExtractionSession,
+    max_regex_part_bytes: usize,
+) -> Result<Extraction> {
     let grammar = grammar(file.language)
         .expect("the adapter accepts only its own JavaScript/TypeScript language");
     let mut parser = Parser::new();
@@ -370,6 +382,7 @@ fn extract_detailed_impl(
         root,
         file_scopes: &file_scopes,
         configured_assertion_modules: &session.configured_assertion_modules,
+        max_regex_part_bytes,
         handler_evidence: OnceCell::new(),
     };
     let mut definitions = Vec::new();
@@ -763,22 +776,35 @@ fn extract_call<'tree>(
         return None;
     };
     let evidence = context.handler_evidence();
+    let mut resolve = |candidate| {
+        resolve_handler(candidate, source, &evidence.bindings).inspect_err(|_| {
+            diagnostics.push(ExtractionDiagnostic::with_kind(
+                ExtractionDiagnosticKind::Incomplete,
+                ExtractionDiagnosticLevel::Warning,
+                context.location(candidate),
+                format!("step registration exceeds the {MAX_BOUND_HANDLER_DEPTH}-call bound handler depth limit"),
+            ));
+        })
+    };
     // Frameworks disagree when a function precedes another candidate: Cucumber runs the function,
-    // Playwright-BDD the last argument. Neither reading can be assumed.
-    let contested = arguments
+    // Playwright-BDD the last argument. A depth refusal leaves the dispute unresolved.
+    // pattern-ok: this earlier argument can only veto the handler already selected by registration_handler.
+    let earlier_candidate = arguments
         .get(1)
         .copied()
         .and_then(registrations::unwrap_registration_callee)
-        .is_some_and(|second| {
-            second.id() != handler.id()
-                && resolve_handler(second, source, &evidence.bindings).is_some()
-        });
-    if contested {
+        .filter(|second| second.id() != handler.id());
+    let earlier_handler = earlier_candidate
+        .map(&mut resolve)
+        .transpose()
+        .ok()?
+        .flatten();
+    if earlier_handler.is_some() {
         diagnostics.push(dropped_registration_diagnostic(context, call));
         return None;
     }
+    let resolved_handler = resolve(handler).ok()?;
     let bound_arguments = bind_arguments(handler, source);
-    let resolved_handler = resolve_handler(handler, source, &evidence.bindings);
     if resolved_handler.is_none() && handler.kind() == "call_expression" {
         diagnostics.push(unsupported_handler_diagnostic(context, handler));
     }
@@ -921,7 +947,7 @@ fn warn_unsupported_matcher(
     ));
 }
 
-/// Extracts a static matcher and reports invalid literals or unsupported regex syntax.
+/// Extracts a static matcher and reports invalid, unsupported, or oversized literals.
 fn extract_matcher(
     matcher_node: Node<'_>,
     context: &AdapterContext<'_, '_>,
@@ -930,9 +956,23 @@ fn extract_matcher(
     let source = context.source;
     let matcher_node =
         registrations::unwrap_registration_callee(matcher_node).unwrap_or(matcher_node);
-    let (matcher, matcher_kind, matcher_flags) = match matcher_value(matcher_node, source) {
-        Some(value) => value,
-        None if matcher_node.kind() == "string" => {
+    let max_regex_part_bytes = context.max_regex_part_bytes;
+    let (matcher, matcher_kind, matcher_flags) = match matcher_value(
+        matcher_node,
+        source,
+        max_regex_part_bytes,
+    ) {
+        Ok(Some(value)) => value,
+        Err(_) => {
+            diagnostics.push(ExtractionDiagnostic::with_kind(
+                ExtractionDiagnosticKind::Incomplete,
+                ExtractionDiagnosticLevel::Warning,
+                context.location(matcher_node),
+                format!("step matcher exceeds the {max_regex_part_bytes}-byte regex resource limit for its pattern or flags; simplify the matcher"),
+            ));
+            return None;
+        }
+        Ok(None) if matcher_node.kind() == "string" => {
             diagnostics.push(ExtractionDiagnostic {
                 kind: ExtractionDiagnosticKind::Incomplete,
                 level: ExtractionDiagnosticLevel::Error,
@@ -941,7 +981,7 @@ fn extract_matcher(
             });
             return None;
         }
-        None => {
+        Ok(None) => {
             warn_unsupported_matcher(matcher_node, context, diagnostics);
             return None;
         }
