@@ -7918,7 +7918,6 @@ fn action_streams_compare_ordinary_handlers_like_the_typescript_frontend() {
         ),
         ("operator", "store(a + b)", "store(a + b); audit()", NONE),
         ("super", "super; store()", "super; store(); audit()", NONE),
-        ("yield", "yield; store()", "yield; store(); audit()", NONE),
         (
             "interpolation",
             "store(\"#{x}\")",
@@ -7942,6 +7941,16 @@ fn action_streams_compare_ordinary_handlers_like_the_typescript_frontend() {
 fn action_streams_cover_method_handlers_and_declared_callables() {
     let methods = "def first\n  first_page = page\n  first_page.goto('/dashboard')\nend\ndef second\n  second_page = page\n  second_page.goto('/dashboard')\nend\nGiven('the parcel status is verified', &method(:first))\nGiven('the parcel status is now verified', &method(:second))\n";
     assert_eq!(action_rows(methods, &[]).0, DUP);
+    // Ruby rejects `yield` in a top-level block, so its pair uses `def` handlers. The control
+    // without `yield` stays near.
+    for (label, prefix, expected) in [("yield", "  yield\n", NONE), ("no yield", "", NEAR)] {
+        let source = format!(
+            "def first\n{prefix}  store()\nend\ndef second\n{prefix}  store()\n  audit()\nend\nGiven('the parcel status is verified', &method(:first))\nGiven('the parcel status is now verified', &method(:second))\n"
+        );
+        let (rules, incomplete, _) = action_rows(&source, &[]);
+        assert_eq!(rules, expected, "{label}");
+        assert!(!incomplete, "{label}");
+    }
     for (label, first, second, expected) in [
         (
             "expanded declaration",

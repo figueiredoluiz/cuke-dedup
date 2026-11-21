@@ -685,7 +685,9 @@ fn argument_value(node: Node<'_>, source: &str) -> ArgumentValue {
         "simple_symbol" | "delimited_symbol" | "lambda" | "method" | "singleton_method" => {
             ArgumentValue::Handler
         }
-        "nil" | "false" | "test_pattern" => ArgumentValue::Falsy,
+        // `x in pattern` (`test_pattern`) is `true` or `false` by a match runtime decides, so it
+        // falls to `Unknown`.
+        "nil" | "false" => ArgumentValue::Falsy,
         "true" | "integer" | "float" | "rational" | "complex" | "array" | "string_array"
         | "symbol_array" | "hash" | "range" => ArgumentValue::Other,
         // A sign written directly before a number is part of the literal; `- 1` is a call.

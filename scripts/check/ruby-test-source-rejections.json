@@ -7,10 +7,6 @@
     "message": "unexpected 'in'; expected a `)` to close the arguments",
     "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
   },
-  "0778862fc995f61a75e4c71895621111b44ba23c3e7f45fff03f11c85dec558e": {
-    "message": "Invalid yield",
-    "test": "tests/ruby.rs::action_streams_compare_ordinary_handlers_like_the_typescript_frontend"
-  },
   "0dde9dc695e73224a14084d02fb324dbe1df11476f4d5777f75c9f08c5670a97": {
     "message": "invalid Unicode escape sequence",
     "test": "tests/ruby.rs::ruby_unicode_escape_matcher_outcomes"
