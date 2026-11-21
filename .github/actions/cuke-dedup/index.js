@@ -285,8 +285,8 @@ async function installRelease(rawVersion, env) {
   await download(`${base}/${assetName}`, archive);
   await download(`${base}/${assetName}.sha256`, checksum);
   await download(`${base}/cuke-dedup.intoto.jsonl`, provenance);
-  verifyChecksum(archive, checksum);
-  verifyProvenance(archive, provenance, version);
+  const digest = verifyChecksum(archive, checksum);
+  verifyProvenance(archive, provenance, version, digest);
   validateArchiveMembers(archive, target.binaryName);
   const extracted = spawnSync("tar", ["-xf", archive, "-C", installDirectory], {
     stdio: "inherit",
@@ -324,8 +324,10 @@ function validateArchiveMembers(archive, binaryName) {
   validateArchiveMemberNames(listed.stdout, binaryName);
 }
 
-/** Requires gh attestation verification for the repository release workflow and version tag, rejecting self-hosted runners or verification failure. */
-export function verifyProvenance(archive, provenance, version, spawn = spawnSync) {
+/** Requires hosted release provenance for the tagged workflow with the exact archive name and verified digest on the same subject. */
+export function verifyProvenance(archive, provenance, version, digest, spawn = spawnSync) {
+  const assetName = basename(archive);
+  // pattern-ok: GitHub CLI uses the runner's existing authentication, proxy and trust configuration.
   const verified = spawn(
     "gh",
     [
@@ -341,11 +343,29 @@ export function verifyProvenance(archive, provenance, version, spawn = spawnSync
       "--source-ref",
       `refs/tags/v${version}`,
       "--deny-self-hosted-runners",
+      "--format",
+      "json",
     ],
-    { stdio: "inherit" },
+    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   );
   if (verified.status !== 0 || verified.error) {
-    throw new Error(`failed to verify provenance for ${basename(archive)}`);
+    throw new Error(`failed to verify provenance for ${assetName}`);
+  }
+  let results;
+  try {
+    results = JSON.parse(verified.stdout);
+  } catch {
+    throw new Error(`invalid provenance verification output for ${assetName}`);
+  }
+  if (!Array.isArray(results) || !results.some((result) => {
+    const subjects = result?.verificationResult?.statement?.subject;
+    return Array.isArray(subjects) && subjects.some((subject) => {
+      const subjectDigest = subject?.digest?.sha256;
+      return subject?.name === assetName &&
+        typeof subjectDigest === "string" && subjectDigest.toLowerCase() === digest;
+    });
+  })) {
+    throw new Error(`provenance does not attest the expected release archive ${assetName}`);
   }
 }
 
@@ -369,16 +389,18 @@ export async function download(url, destination, wait = delay) {
   }
 }
 
-/** Validates the checksum token and compares it with the archive SHA-256 digest, throwing on malformed input or mismatch. */
+/** Returns the verified archive SHA-256 after checking the checksum file's single record and exact archive name. */
 export function verifyChecksum(archive, checksumFile) {
-  const expected = readFileSync(checksumFile, "utf8").trim().split(/\s+/)[0];
-  if (!/^[0-9a-f]{64}$/i.test(expected)) {
-    throw new Error(`invalid checksum file for ${basename(archive)}`);
+  const assetName = basename(archive);
+  const record = readFileSync(checksumFile, "utf8").trim().match(/^([0-9a-f]{64})[ \t]+(\S+)$/i);
+  if (record?.[2] !== assetName) {
+    throw new Error(`invalid checksum file for ${assetName}`);
   }
   const actual = createHash("sha256").update(readFileSync(archive)).digest("hex");
-  if (actual.toLowerCase() !== expected.toLowerCase()) {
-    throw new Error(`checksum mismatch for ${basename(archive)}`);
+  if (actual !== record[1].toLowerCase()) {
+    throw new Error(`checksum mismatch for ${assetName}`);
   }
+  return actual;
 }
 
 /** Splits comma- or newline-separated values, trims entries, and drops empty entries. */
