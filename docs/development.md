@@ -317,7 +317,8 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   `scripts/check/ruby-test-source-rejections.json` by SHA-256, with the parser message and the
   owning test; an edited source fails until its entry is updated. A captured copy of a listed
   fixture keeps the fixture's expectation. `check.sh` and the Linux test job
-  in CI run the capture.
+  in CI run the capture. Each failure line names the source's SHA-256; when the check fails,
+  `check.sh` keeps the captured directory and prints its path.
 - `check-ruby-execution.mjs` loads every Ruby fixture suite (Ruby parity groups and the Ruby lane of
   each paired case) under Ruby with a recording Cucumber DSL: `Cucumber::Glue::Dsl` with the
   dialect keywords as aliases of `register_rb_step_definition`, extended into the top-level

@@ -56,7 +56,12 @@ function captured(directory) {
   );
   const { entries, stale } = capturedEntries(files, rejections, fixtures);
   return {
-    entries: entries.map((entry) => ({ ...entry, file: path.join(directory, entry.path) })),
+    // File names carry a short hash; the label adds the SHA-256 the rejection list is keyed by.
+    entries: entries.map((entry) => ({
+      ...entry,
+      path: `${entry.path} (sha256 ${entry.hash})`,
+      file: path.join(directory, entry.path),
+    })),
     stale: stale.map((hash) => `listed rejection ${hash} was not captured; update ${path.basename(capturedRejections)}`),
   };
 }
@@ -119,10 +124,13 @@ if (summary?.summary === undefined) {
 const byFile = new Map(selection.entries.map((entry) => [entry.file, entry.path]));
 const results = lines.map(({ file, ...result }) => ({ path: byFile.get(file) ?? file, ...result }));
 const { failures, rejected } = judge(selection.entries, results);
+// Stale list entries are not sources, so they count apart from the per-source failures.
+const sourceFailures = failures.length;
 failures.push(...selection.stale);
 for (const failure of failures) console.error(failure);
 const total = selection.entries.length;
+const stale = selection.stale.length;
 console.log(
-  `check-ruby-syntax: ${total - failures.length}/${total} Ruby sources behave as expected under Ruby ${summary.summary} (${rejected} expected rejection${rejected === 1 ? "" : "s"})`,
+  `check-ruby-syntax: ${Math.max(0, total - sourceFailures)}/${total} Ruby sources behave as expected under Ruby ${summary.summary} (${rejected} expected rejection${rejected === 1 ? "" : "s"})${stale === 0 ? "" : `; ${stale} stale list entr${stale === 1 ? "y" : "ies"}`}`,
 );
 process.exit(failures.length === 0 ? 0 : 1);
