@@ -481,26 +481,43 @@ if (process.argv.includes("--print-config")) {
 });
 
 /** Verify valid archive checksums pass while malformed digests and mismatched bytes fail. */
-test("action validates release checksums and fails closed", async () => {
+test("action validates release checksums and fails closed", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "cuke-dedup-checksum-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   const archive = join(directory, "release.tar.gz");
   const checksum = `${archive}.sha256`;
   await writeFile(archive, "release bytes");
   const digest = "ff7a5e6429d2c8511521e4abf41cd54a3e525ef4a1f24f8d1c67ede9d17874dd";
   await writeFile(checksum, `${digest}  release.tar.gz\n`);
-  verifyChecksum(archive, checksum);
+  assert.equal(verifyChecksum(archive, checksum), digest);
+  await writeFile(checksum, `${digest.toUpperCase()}  release.tar.gz\r\n`);
+  assert.equal(verifyChecksum(archive, checksum), digest);
   await writeFile(checksum, "not-a-digest  release.tar.gz\n");
   assert.throws(() => verifyChecksum(archive, checksum), /invalid checksum file/);
   await writeFile(checksum, `${"0".repeat(64)}  release.tar.gz\n`);
   assert.throws(() => verifyChecksum(archive, checksum), /checksum mismatch/);
+  for (const record of [
+    `${digest}\n`,
+    `${digest}  other-release.tar.gz\n`,
+    `${digest}  ./release.tar.gz\n`,
+    `${digest}  RELEASE.tar.gz\n`,
+    `${digest}  release.tar.gz\n${digest}  release.tar.gz\n`,
+  ]) {
+    await writeFile(checksum, record);
+    assert.throws(() => verifyChecksum(archive, checksum), /invalid checksum file for release\.tar\.gz/, record);
+  }
 });
 
 /** Verify provenance verification specifies the repository, tagged source, signer workflow, and hosted-runner requirement. */
 test("action pins provenance verification to the tagged hosted build", () => {
   let invocation;
-  verifyProvenance("release.tar.gz", "release.intoto.jsonl", "1.2.3", (...args) => {
+  const sha256 = "1a".repeat(32);
+  const stdout = JSON.stringify([{
+    verificationResult: { statement: { subject: [{ name: "release.tar.gz", digest: { sha256 } }] } },
+  }]);
+  verifyProvenance("release.tar.gz", "release.intoto.jsonl", "1.2.3", sha256, (...args) => {
     invocation = args;
-    return { status: 0 };
+    return { status: 0, stdout };
   });
   assert.deepEqual(invocation, [
     "gh",
@@ -517,9 +534,60 @@ test("action pins provenance verification to the tagged hosted build", () => {
       "--source-ref",
       "refs/tags/v1.2.3",
       "--deny-self-hosted-runners",
+      "--format",
+      "json",
     ],
-    { stdio: "inherit" },
+    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   ]);
+  for (const failure of [{ status: 1 }, { status: null, error: new Error("gh unavailable") }]) {
+    assert.throws(
+      () => verifyProvenance("release.tar.gz", "release.intoto.jsonl", "1.2.3", sha256, () => ({
+        ...failure, stdout,
+      })),
+      /failed to verify provenance for release\.tar\.gz/,
+    );
+  }
+});
+
+/** Accepts the expected name and digest on one verified subject, including multi-asset statements. */
+test("action requires one verified subject with the exact release identity", async (t) => {
+  const archive = "cuke-dedup-v1.2.3-x86_64-unknown-linux-gnu.tar.gz";
+  const sha256 = "1a".repeat(32);
+  const expected = { name: archive, digest: { sha256 } };
+  const otherName = { ...expected, name: "cuke-dedup-v1.2.3-aarch64-unknown-linux-gnu.tar.gz" };
+  const otherDigest = { ...expected, digest: { sha256: "2b".repeat(32) } };
+  /** Wraps subjects in a result returned by GitHub CLI after successful verification. */
+  const result = (...subject) => ({ verificationResult: { statement: { subject } } });
+  /** Runs the archive check with the supplied GitHub CLI output. */
+  const verify = (stdout) => verifyProvenance(archive, "release.intoto.jsonl", "1.2.3", sha256, () => ({
+    status: 0, stdout,
+  }));
+  for (const [name, results] of [
+    ["single subject", [result(expected)]],
+    ["matching subject after another subject and result", [result(otherName), result(otherDigest, expected)]],
+    ["uppercase digest", [result({ name: archive, digest: { sha256: sha256.toUpperCase() } })]],
+  ]) {
+    await t.test(name, () => assert.doesNotThrow(() => verify(JSON.stringify(results))));
+  }
+  for (const [name, results] of [
+    ["wrong target", [result(otherName)]],
+    ["wrong digest", [result(otherDigest)]],
+    ["split name and digest", [result(otherName, otherDigest)]],
+    ["qualified name", [result({ ...expected, name: `dist/${archive}` })]],
+    ["case-changed name", [result({ ...expected, name: archive.toUpperCase() })]],
+    ["missing digest", [result({ name: archive, digest: {} })]],
+    ["unverified subject", [{ attestation: { statement: { subject: [expected] } } }]],
+    ["empty result", []],
+    ["unexpected output shape", result(expected)],
+  ]) {
+    await t.test(name, () => assert.throws(
+      () => verify(JSON.stringify(results)),
+      { message: `provenance does not attest the expected release archive ${archive}` },
+    ));
+  }
+  for (const stdout of ["not JSON", ""]) {
+    assert.throws(() => verify(stdout), { message: `invalid provenance verification output for ${archive}` });
+  }
 });
 
 /** Verify archive listings contain exactly the expected binary and license in the required order. */
