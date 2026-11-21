@@ -83,11 +83,7 @@ fn proof_budget_checkpoints_and_invalid_edges_never_grant_trust() {
     std::fs::write(&files[0].path, source).unwrap();
     let provider = "module Assertions; def self.expect(actual); actual; end; end";
     std::fs::write(&files[1].path, provider).unwrap();
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_ruby::LANGUAGE.into())
-        .unwrap();
-    let tree = parser.parse(source, None).unwrap();
+    let tree = crate::ruby::load_phase::tests::parse(source);
     let mut loads: Vec<_> = descendants(tree.root_node())
         .into_iter()
         .filter(|n| {

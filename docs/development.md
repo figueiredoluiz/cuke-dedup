@@ -306,10 +306,19 @@ The synthetic corpora select for the shapes their authors thought of, so recall 
   they remove no definitions and change no completeness. Incomplete evidence stays in
   `uncertainties`.
 - `check-ruby-syntax.mjs` compiles every tracked or untracked, non-ignored `.rb` file with Ruby 4.0
-  or later and the Prism parser, without running it. tree-sitter-ruby accepts some sources Ruby
-  rejects, such as `/[]a]/`. A fixture that pins the analyzer on rejected source is listed in the
-  script with the parser message its error must contain. Ruby written inline in Rust tests is not
-  checked.
+  or later and the Prism parser, without running it. Compiling also compiles regex literals with
+  Onigmo, which `ruby -c` does not (`/[b-a]/`, `/a{2,1}/`). tree-sitter-ruby accepts some sources
+  Ruby rejects, such as `/[]a]/`. A fixture that pins the analyzer on rejected source is listed in
+  the script with the parser message its error must contain.
+- Ruby written inline in Rust tests is checked the same way. Built with the `ruby-source-capture`
+  feature (`--all-features`), the adapter records every Ruby source it reads into the directory
+  named by `CUKE_DEDUP_RUBY_SOURCE_CAPTURE`; `check-ruby-syntax.mjs --captured <dir>` compiles
+  the distinct sources. A test source Ruby must reject is listed in
+  `scripts/check/ruby-test-source-rejections.json` by SHA-256, with the parser message and the
+  owning test; an edited source fails until its entry is updated. A captured copy of a listed
+  fixture keeps the fixture's expectation. `check.sh` and the Linux test job
+  in CI run the capture. Each failure line names the source's SHA-256; when the check fails,
+  `check.sh` keeps the captured directory and prints its path.
 - `check-ruby-execution.mjs` loads every Ruby fixture suite (Ruby parity groups and the Ruby lane of
   each paired case) under Ruby with a recording Cucumber DSL: `Cucumber::Glue::Dsl` with the
   dialect keywords as aliases of `register_rb_step_definition`, extended into the top-level

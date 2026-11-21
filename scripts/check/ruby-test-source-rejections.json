@@ -1,0 +1,330 @@
+{
+  "02b6855b3679d552c9e5389a75bc880e300933d81175de7e3b89d86f034e193c": {
+    "message": "empty char-class",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "03ede08574ceecb60ed20399ecb263b8bfc4b65eedf8cc11619eb397663c964b": {
+    "message": "unexpected 'in'; expected a `)` to close the arguments",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "0778862fc995f61a75e4c71895621111b44ba23c3e7f45fff03f11c85dec558e": {
+    "message": "Invalid yield",
+    "test": "tests/ruby.rs::action_streams_compare_ordinary_handlers_like_the_typescript_frontend"
+  },
+  "0dde9dc695e73224a14084d02fb324dbe1df11476f4d5777f75c9f08c5670a97": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_unicode_escape_matcher_outcomes"
+  },
+  "0eb6163cbd7a02c1925456e94c29fd3e5b2f8f8c2277a876d9430a1490b004ee": {
+    "message": "unknown regexp option - z",
+    "test": "src/ruby/tests.rs::percent_r_flags_and_unmodeled_literals_fail_closed"
+  },
+  "0f46937ad45b083e285ab73990e41af531455107f15a00f889f05881020dad5f": {
+    "message": "expected a block beginning with `do` to end with `end`",
+    "test": "tests/ruby.rs::ruby_baseline_from_ref_rejects_or_reports_incomplete_history"
+  },
+  "0fe7d9753adcd3171aee4873b1df2096055040cc75a7dd3eaf8019a015e54d4e": {
+    "message": "unterminated Unicode escape",
+    "test": "tests/ruby.rs::ruby_unicode_escape_matcher_outcomes"
+  },
+  "120f673733f92d11c0d704b4e4444765e0ca73c596791ed9772cd8ce34e53b54": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "17e58fc263f9f4001d3b2e840c2e482fc0804d382401ab349f9a4a5d958138f9": {
+    "message": "Invalid next",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "1ec87455fdda33326305c73e1ea14177f7ee2e2c6c253117a8b52947eda6d126": {
+    "message": "Invalid break",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "1fb949a067bc70ac7671ff14f0cd8dab5a3f182562fb725fca97018f217755d9": {
+    "message": "expected a block beginning with `do` to end with `end`",
+    "test": "tests/ruby.rs::ruby_baseline_from_ref_compares_history_without_mutating_the_checkout"
+  },
+  "1fc04f2d682cdea68a2bd77a754c419b35186f23597dd300eb4b5ad79f9af670": {
+    "message": "unterminated string; expected a closing delimiter for the interpolated string",
+    "test": "tests/ruby.rs::ruby_nul_loaded_provider_respects_execution_boundary"
+  },
+  "223f4cacc4695653ec8a4f254d666c8b733e976bf8702f5dc5e5c4021dc88304": {
+    "message": "expected a block beginning with `do` to end with `end`",
+    "test": "tests/ruby.rs::ruby_parse_failure_preserves_valid_neighbor_findings_and_strict_exit"
+  },
+  "263f1547396fe7a08c19f73890da76013caa04e47ca1417929b1fe3a0775e67e": {
+    "message": "unterminated list; expected a closing delimiter for the `%W`",
+    "test": "tests/ruby.rs::ruby_nul_lexical_context_preserves_only_executed_registrations"
+  },
+  "2988d02ea9ff0fab3045f247babf066f33848af0ab1e98f838d4a2c07121425a": {
+    "message": "unterminated symbol; expected a closing delimiter for the interpolated symbol",
+    "test": "tests/ruby.rs::ruby_nul_loaded_provider_respects_execution_boundary"
+  },
+  "2d9f5b2e338ddef9fc4b8bf5efd8868b38a03ccdca242521e2acc78454cd280a": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "369453f9f6316da022d4b7f126451a164ad4351f48c751156ec8695fa4792749": {
+    "message": "unterminated symbol; expected a closing delimiter for the interpolated symbol",
+    "test": "tests/ruby.rs::ruby_nul_lexical_context_preserves_only_executed_registrations"
+  },
+  "36b9a83949e6f65eab6f426f4e2b801b88c224b32ca3dcd963d3179c63314f62": {
+    "message": "expected an expression after `=`",
+    "test": "tests/ruby.rs::ruby_instance_proofs_require_parseable_consumers"
+  },
+  "3933aba47595cb670ef81b16c09cb0a1970e8a6c9a84e0c45380f68ac6d23020": {
+    "message": "unexpected 'end', ignoring it",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "3f7f2e150e27f5a1542f50baecea424496b4787875c0760b5cc14a557e1063ca": {
+    "message": "Invalid break",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "4077b69c1b7e2a92757dca536b706329afcef7f21ae6ed320253a594562286d2": {
+    "message": "unexpected 'in'; expected a `)` to close the arguments",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "42ef95133d99c4dd0c6746278ef806b0a27706b9cdc581aa525890ae65af7f76": {
+    "message": "unexpected '{'; expected a `)` to close the arguments",
+    "test": "src/ruby/load_phase/tests.rs::load_phase_statements_follow_the_allowlist"
+  },
+  "48332fe667bc51ac4a51ba0efe734441c90def55c60a26d7db275ecbbcf42f15": {
+    "message": "unexpected 'end', ignoring it",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "4838b68aa384a64710392bf6064fc9213d61164cccc91105b91fde42a0537a92": {
+    "message": "invalid hex escape sequence",
+    "test": "src/ruby/tests.rs::ruby_unmodeled_escape_matchers_are_diagnosed_where_they_start"
+  },
+  "4b7360feeb00c34332d76375445d3c368be67732dd423cb3434c095aea92ed12": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "4d02baad438a9f62b015bd618170f777426f9eb44b6d938714244e0748a2bcb1": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_unicode_escape_matcher_outcomes"
+  },
+  "507565006e765bc601d1b55c5c174691decb4a9ce5a4d8e36834f51cdedd5839": {
+    "message": "Invalid next",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "51827005152c8f34a92f13d92f71af0e8396f7f345be28dce78972ed1506a839": {
+    "message": "expected a block beginning with `do` to end with `end`",
+    "test": "tests/ruby.rs::ruby_dependency_boundaries_and_parse_failures_keep_independent_findings, tests/ruby.rs::ruby_unparseable_sources_are_tolerated_reported_and_gated_by_flags"
+  },
+  "5270b9880a90b1256099d7db3d02bf1a09a4c79929415097ca71c9577de87755": {
+    "message": "unterminated string meets end of file",
+    "test": "tests/ruby.rs::malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls"
+  },
+  "5693c315398a85b1f76e66612722a757cb15cbfd3df32a8d05c6d8c4cb2af21c": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "5cd178b881d3567376497aa550ae931199aff19426a2fac231cd4f26e893b9d7": {
+    "message": "unexpected end-of-input; expected a `)` to close the arguments",
+    "test": "tests/ruby.rs::malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls"
+  },
+  "5ceebcce31061858ed7a81fcf90625ca77b1fa2f177d0fd0f5248e2b163140ec": {
+    "message": "unexpected '{'; expected a `)` to close the arguments",
+    "test": "src/ruby/tests.rs::percent_r_flags_and_unmodeled_literals_fail_closed"
+  },
+  "5f5f7812e857179698c42b613fdda0e7ea24da9c265827739ee03b75bdb07b17": {
+    "message": "expected an expression after `=`",
+    "test": "tests/ruby.rs::ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust"
+  },
+  "600272ac3fe236ce114caf7c5d82b373d6898a1071403d1e2fd6d8dbf9c97249": {
+    "message": "invalid hex escape sequence",
+    "test": "src/ruby/tests.rs::ruby_unmodeled_escape_matchers_are_diagnosed_where_they_start"
+  },
+  "60913cdb6e69b9afbe7a0b831f9a4aac7b662bdc59bcc522e6d7e91bff4883ea": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "625a0dfd0f18fa067d1005140cf88f2fcc7b2c9dcb22144ebcc5e2afb4bd7b5e": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "6476380e3bee794c75cef30ddc28a4243a8d658a5e6471f308a8c6a4c9a13514": {
+    "message": "expected an expression after `=`",
+    "test": "tests/ruby.rs::ruby_provider_alias_order_scope_and_parse_errors_do_not_grant_trust"
+  },
+  "6c81e41856cd941f540ed1081c9c335a1a917f6510407b8f23681dde103a549c": {
+    "message": "unexpected end-of-input; expected a `)` to close the arguments",
+    "test": "tests/ruby.rs::malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls"
+  },
+  "6d1124b9e14134010e0df475eab6759c4de1aa86163a4ab180d8c32505b6b824": {
+    "message": "unexpected 'end', ignoring it",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "706b2c9d3570e800944b979c0790e7e1a12bb7760d3c23ee280ba1516dfe0646": {
+    "message": "unterminated Unicode escape",
+    "test": "tests/ruby.rs::ruby_unicode_escape_matcher_outcomes"
+  },
+  "71775c357f54dcb3e3d4f9ed0d1af2fdc39d72f1d750099514e400074c634aad": {
+    "message": "Invalid redo",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "71fc0e3fc961807a00043be1502858f1e7083903d1d5f725f2e3592144032dcd": {
+    "message": "Invalid next",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "7488de763206ea830c1b2244af655cb5724f4cadb94c7595d7dfa436dbd53824": {
+    "message": "expected a block beginning with `do` to end with `end`",
+    "test": "tests/ruby.rs::ruby_changed_since_keeps_completeness_failures_of_unchanged_inputs"
+  },
+  "79e7f27832186046f343b47a2616e936d4aa4022838d660abf4ecf984ac6e52d": {
+    "message": "Invalid break",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "7c7713ac58937c34d092889445d9993805c39162be5dd8817892caf612a2b90b": {
+    "message": "expected a matching `)`",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "802ab9dd34c602c40ec62083eb40fe3741ab10440688138dc05432f9f4ee78b0": {
+    "message": "unexpected 'in'; expected a `)` to close the arguments",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "80773c19d73fc7f348bc10dd9e1d91c19b789f5ecf1788a1a2694856a5928e22": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_unicode_escape_matcher_outcomes"
+  },
+  "8201b8f4baeec22e95b05dcf1db19c1df78dbfd690f6e203a5c33cbf0a280631": {
+    "message": "expected an `end` to close the `def` statement",
+    "test": "tests/ruby.rs::ruby_dependency_usage_requires_a_complete_source_graph, tests/ruby.rs::ruby_unavailable_assertion_proof_preserves_independent_handlers"
+  },
+  "852c925ad1526a12b9e87846a565ff8c8c8691a65529907d8be767572e570ad5": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "85f14730a679a321cf391d4612bca1ce65460b8ed5220095a6c8dc1f819387b7": {
+    "message": "unknown regexp option - b",
+    "test": "src/ruby/tests.rs::percent_r_flags_and_unmodeled_literals_fail_closed"
+  },
+  "8628517279c4f471311c5f0c3979d73b5e7d1660be0686980daece8bd09357c9": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "8d2cbe184ab7bbf09364bfc3c6da9c6fd489a6be08bdfcd45461a3d5b101013e": {
+    "message": "empty char-class",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "91027c82bc1c0a4cdccc1bb9f505e08c1bbfe2ccdaf4e0b4f50af3feb75d9424": {
+    "message": "unterminated string; expected a closing delimiter for the interpolated string",
+    "test": "tests/ruby.rs::ruby_nul_lexical_context_preserves_only_executed_registrations"
+  },
+  "916f3a1bce1ec7a40e72a3bc89984a285b8930a4531f09dce99bc871c8c7c457": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "943aa634ec73395cf8b09cbac6881c31a8a9694b7a023eb2630841a0bcc07ab3": {
+    "message": "unterminated string meets end of file",
+    "test": "tests/ruby.rs::malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls"
+  },
+  "98cbc37a867d499c109b1d264721bd314c8d00da03d4fb61e4736eea6560d0b0": {
+    "message": "invalid hex escape sequence",
+    "test": "tests/ruby.rs::ruby_definition_requirements_and_source_diagnostics_are_visible"
+  },
+  "abd66f2c550f10a74302c03578565ca954060cc6eb1e2e7ad74222e052651459": {
+    "message": "unexpected end-of-input; expected a `)` to close the arguments",
+    "test": "src/ruby/tests.rs::parameter_type_regexps_accept_percent_r_delimiters"
+  },
+  "b511135549a1b5f1b6e4972ffdf525e2da5f92f2f45434f487e7510c68f45e86": {
+    "message": "/.../n has a non escaped non ASCII character in non ASCII-8BIT script",
+    "test": "tests/ruby.rs::ruby_native_regex_usage_and_encoding_outcomes"
+  },
+  "b51f63ff23d4d6807a470ec20ee23c9c09a669ed8de67522d74b92229beb37ac": {
+    "message": "unterminated list; expected a closing delimiter for the `%I`",
+    "test": "tests/ruby.rs::ruby_nul_lexical_context_preserves_only_executed_registrations"
+  },
+  "b7a2e5fa273c2ebf9c59e641d463ccf9ebcf49d088dfb83bb4b77876a36f35a3": {
+    "message": "unexpected backslash, ignoring it",
+    "test": "src/ruby/tests.rs::percent_r_delimiters_register_with_nesting_and_escapes"
+  },
+  "bb4eb7c6104a40818eacb936fd5457ddcfd72155ee3026a16578d99478b5c140": {
+    "message": "unterminated regexp meets end of file; expected a closing delimiter",
+    "test": "tests/ruby.rs::ruby_nul_lexical_context_preserves_only_executed_registrations"
+  },
+  "bbc29a3259b90c7f9026ff79bf51f708fef4c76d4c46ff69af325a36b85c4e5b": {
+    "message": "duplicated argument name",
+    "test": "tests/ruby.rs::ruby_transparent_wrapper_outcomes_preserve_forwarding_and_reject_uncertainty"
+  },
+  "bbe4f5f34525f7debca9c8ccdf070704813bbb973355ccd10e185a17c87446c9": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "c01a3a00e2b461433f2a8a24e890173c3db9491bcae50885590b11d21fd9280d": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "c1639c3bfaa789acb73809b85f24be31d1c3fd1c0b36daab02f0be47ff088c90": {
+    "message": "Invalid yield",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "c4043066ae7fe4662c79ad172adee9a3131987678ceba8577971f94411de1782": {
+    "message": "unexpected 'end', ignoring it",
+    "test": "tests/cli.rs::emit_fingerprints_records_each_ruby_definition_outcome"
+  },
+  "c498fcf45ac55d9fdf60cc289fde6ffeffdfe70bb86a0bd771aaf635b11e3a9d": {
+    "message": "Invalid yield",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "c6c766b5319919bc714b35dff05a1257ec19afaededcbc79764a85bf0b1e4427": {
+    "message": "Invalid redo",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "cf4ed8ad9d07d11d37924fe14e878b0125eb75b8b4035d6d2858ac1d95e66e7b": {
+    "message": "Invalid yield",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "cf6e01046c01138c791f1b2962c18271c7643bb85476a08360862308b183a9da": {
+    "message": "Invalid redo",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "d179f9ae8de1cd85d6668f08074b4563199e3f9355e77e90cb9cd273f33fc312": {
+    "message": "unterminated Unicode escape",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "d3287fc94fa9f8f31b7f5fbbdd5e446f2c4ee45eb9f47f6f93aab13a3ffdbe29": {
+    "message": "empty char-class",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "d887bff4b3c4cef0affafbc48630e1eb2e85ffa8b1b4f18d25315a9b50900872": {
+    "message": "unknown regexp option - b",
+    "test": "tests/cli.rs::regression_191_ruby_percent_r_delimiters_are_recognized"
+  },
+  "dbd8d81f96ab350fef6dc0ab04fc3ec8b2c1675f8e8ab66e2e5af45131011185": {
+    "message": "unterminated string meets end of file",
+    "test": "tests/ruby.rs::malformed_ruby_literal_inputs_report_incompleteness_without_losing_controls"
+  },
+  "dce81c111cb6b28cde7a4fe606e4c6a121b64f1179ee358eb3110d07cbbdae3c": {
+    "message": "expected a matching `)`",
+    "test": "tests/ruby.rs::ruby_typed_diagnostics_route_by_kind_not_wording"
+  },
+  "e187d08958ab1a61aca15c3d6fecffc1622bd8f1848804be31d8dd38d712bff5": {
+    "message": "unexpected 'end', ignoring it",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "eb5681aa94dcaa68506e809ff97eb5dd57039e8567a1b83be4ac39f0214e6cab": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "ec4e8aa5b0d713d35f03317e3cc32f448448c304855e92363f98a045e26e85d2": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_unsupported_matchers_mark_partial_extraction_incomplete"
+  },
+  "ed59196aae7185c7a0e23faded3ec617cf2f32f9127e2c4fedbb0dc5d69c0628": {
+    "message": "unexpected void value expression",
+    "test": "src/ruby/tests.rs::receiver_registration_follows_the_value_of_every_argument_kind"
+  },
+  "f8e1cb88fd5898646c4c319c5aad1c762297f3ab3e3735a49167341af46e3197": {
+    "message": "unterminated heredoc; can't find string \"DOC\" anywhere before EOF",
+    "test": "tests/ruby.rs::ruby_nul_lexical_context_preserves_only_executed_registrations"
+  },
+  "f936bce4f00fe9ccc228744c7400d8e306370ccf79bc12811bd08ce422f883ab": {
+    "message": "invalid Unicode escape sequence",
+    "test": "tests/ruby.rs::ruby_syntax_boundaries_report_invalid_tokens_without_hiding_valid_outcomes"
+  },
+  "ff1dfc19868da8e52561255474e998d36d9eaacea6409c517439f62bf9f3246f": {
+    "message": "too big number for repeat range",
+    "test": "tests/ruby.rs::ruby_matcher_compilation_reports_limits_but_not_unsupported_syntax"
+  }
+}
