@@ -35,6 +35,7 @@ mod parameters;
 mod providers;
 mod registration_aliases;
 mod registration_wrappers;
+mod source_capture;
 mod step_keywords;
 
 pub(crate) struct RubyAdapter;
@@ -247,6 +248,7 @@ impl SourceAdapter for RubyAdapter {
         file: &SourceFile,
         session: &mut SourceExtractionSession,
     ) -> Result<Extraction> {
+        source_capture::record(source);
         let prepared = prepare_nuls(source);
         let source = prepared.as_ref();
         let assertions = session
@@ -316,6 +318,7 @@ fn extract(
     source: &str,
     file: &SourceFile,
 ) -> Result<(Extraction, ownership::RegistrationEffects)> {
+    source_capture::record(source);
     // Without a session nothing finalizes the suite, so no call can be contained.
     let prepared = prepare_nuls(source);
     extract_with_proof(prepared.as_ref(), file, None, None, false)

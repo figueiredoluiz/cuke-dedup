@@ -2,6 +2,7 @@ use super::{closed, contained_scope};
 
 /// Parses `source` as Ruby.
 pub(in crate::ruby) fn parse(source: &str) -> tree_sitter::Tree {
+    crate::ruby::source_capture::record(source);
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_ruby::LANGUAGE.into())

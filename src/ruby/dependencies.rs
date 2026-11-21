@@ -149,6 +149,7 @@ fn resolve_graph(
         ) else {
             continue;
         };
+        super::source_capture::record(&source);
         let source = super::prepare_nuls(&source).into_owned();
         let columns = ColumnIndex::new(&source);
         let tree = parser

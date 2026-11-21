@@ -49,7 +49,12 @@ if [[ "$check_dependencies" != "0" && "$check_dependencies" != "1" ]]; then
 fi
 
 cargo +stable clippy --all-targets --all-features --locked -- -D warnings
-cargo +stable test --all-targets --all-features --locked
+# The capture records every Ruby source the tests feed the analyzer, including inline ones, so
+# real Ruby can compile them.
+ruby_sources="$(mktemp -d)"
+CUKE_DEDUP_RUBY_SOURCE_CAPTURE="$ruby_sources" cargo +stable test --all-targets --all-features --locked
+node scripts/check/check-ruby-syntax.mjs --captured "$ruby_sources"
+rm -rf "$ruby_sources"
 
 if [[ "$mode" == "full" ]]; then
   RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features --locked

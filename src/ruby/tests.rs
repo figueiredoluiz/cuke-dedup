@@ -664,11 +664,7 @@ fn ruby_review_extraction_is_in_source_order() {
 fn receiver_call(arguments: &str, block: bool, tail: &str) -> (bool, String) {
     let block = if block { " { }" } else { "" };
     let source = format!("router.Given({arguments}){block}\n{tail}");
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_ruby::LANGUAGE.into())
-        .unwrap();
-    let tree = parser.parse(&source, None).unwrap();
+    let tree = super::load_phase::tests::parse(&source);
     let call = super::descendants(tree.root_node())
         .into_iter()
         .find(|node| {
@@ -1026,11 +1022,7 @@ fn ruby_non_quote_string_forms_stay_undecoded() {
 
 /// Parse `source` and return its first string node's text through `read`.
 fn first_string<T>(source: &str, read: impl Fn(tree_sitter::Node<'_>, &str) -> T) -> T {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_ruby::LANGUAGE.into())
-        .unwrap();
-    let tree = parser.parse(source, None).unwrap();
+    let tree = super::load_phase::tests::parse(source);
     let node = super::descendants(tree.root_node())
         .into_iter()
         .find(|node| node.kind() == "string")
