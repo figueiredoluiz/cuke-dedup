@@ -46,12 +46,24 @@ When analysis is incomplete, existing findings remain valid but the absence of a
 nothing. Machine reports expose the incomplete or truncated status. Pass `--fail-on-incomplete`
 when CI must reject degraded analysis.
 
+## Automatic file containment
+
+Configuration and ignore files that CukeDedup finds on its own are read only when they resolve to
+a regular file inside the analysis root. A file that is a link, or sits under a linked directory,
+whose target is outside the root fails the run with exit 2 before any of its content is read. The
+check assumes no other process changes links under the root while the run reads them. Links that
+stay inside the root are followed. An explicit `--config` file may be outside the root. Ignore files in the root's
+parent directories and the global git excludes file apply as git applies them.
+
+Global git excludes remain exempt from containment regardless of their configured location; the ignore-file byte limit still applies.
+
 ## Input limits
 
 | Input | Limit |
 | --- | ---: |
 | Definition source, feature file, imported registration module, or baseline | 8 MiB each |
 | Package, CukeDedup, framework, or static project configuration | 1 MiB each |
+| Ignore file (`.gitignore`, `.ignore`, `.cuke-dedupignore`, git `info/exclude`, global git excludes) | 1 MiB each |
 | Project-resolution metadata files | 1,024 files / 16 MiB total |
 | Project-resolution mappings | 16,384 |
 | Primary discovery walk entries, excluded entries included | 1,000,000 per run |

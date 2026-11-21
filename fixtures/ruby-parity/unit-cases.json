@@ -2024,6 +2024,105 @@
         }
       ]
     },
+    "src/config/tests/containment.rs": {
+      "tests": [
+        {
+          "name": "automatic_sources_load_only_inside_the_root",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: automatic configuration containment (package, standalone and framework sources load as copies or inside links and fail closed through outside links or outside parents); no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "explicit_config_outside_the_root_loads",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: automatic configuration containment (an explicit --config outside the root stays allowed); no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "a_refused_candidate_does_not_fall_through",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent stage `config-decoding`: automatic configuration containment (a refused standalone candidate is fatal instead of falling through to the next); no adapter runs.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "automatic_non_regular_sources_are_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "config-decoding",
+          "rationale": "Adapter-independent automatic-file validation: Present non-regular package, standalone and framework candidates are fatal; regular replacements apply their observable configuration values.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/contained_read/tests.rs": {
+      "tests": [
+        {
+          "name": "a_regular_file_inside_the_root_reads",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: a regular file under the root reads exactly.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "a_missing_file_is_not_a_refusal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: a missing file is an ordinary I/O error, not a fatal refusal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "the_input_limit_applies",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: the byte limit still applies and stays fatal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "links_are_contained_by_their_target",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: inside links read; outside links and linked parents are refused before reading.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "a_replaced_path_is_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: an opened handle that is not the file the path names is refused.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "a_fifo_is_refused_without_blocking",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: a FIFO is refused without blocking the open or read.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "invalid_utf8_is_not_a_refusal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: invalid UTF-8 in a contained file is an ordinary error naming the file, not a fatal refusal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "an_unreadable_regular_file_is_not_a_refusal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Ordinary permission failures on regular files remain I/O errors while non-regular automatic inputs are refused.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "location_checks_keep_unknown_aliases_contained",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Known external directories and filesystem roots stay external, while unknown directory aliases require contained reads; final discovery outcomes are covered by the metadata matrices.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
     "src/discovery/tests.rs": {
       "tests": [
         {
@@ -2138,6 +2237,87 @@
           "fixtureGroup": "nested-root-directory-exclusion",
           "oracleClause": "requiredAbsent[1]",
           "rationale": "Covered by `nested-root-directory-exclusion` requiredAbsent[1]: An excluded directory under a nested root contributes no Ruby definitions.",
+          "behaviorClass": "shared-engine-invariant"
+        }
+      ]
+    },
+    "src/discovery/tests/ignore_files.rs": {
+      "tests": [
+        {
+          "name": "ignore_files_match_the_crate_walker",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: discovery-owned ignore loading selects exactly the files the ignore crate walker selects on generated trees.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ignore_precedence_controls_match_the_crate_walker",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: fixed precedence controls (nested whitelist, custom over gitignore, ancestor file) match the ignore crate walker.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "ignore_files_resolving_outside_are_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: each ignore kind at the root and nested applies as a copy or inside link and fails discovery through an outside link.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "retained_ignore_levels_follow_the_walk_path",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: ignore levels are retained only along the walk's current path.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "a_refusal_before_excluded_entries_is_fatal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: a refused ignore file stays fatal when exclusions drop every later entry.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_metadata_inside_the_root_is_contained",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: git exclude and commondir files a .git file names inside the root apply as files and are refused when linked outside.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_file_forms_match_the_crate_walker",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: `.git` file forms resolve git exclude as the ignore crate walker does.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "an_oversized_ancestor_ignore_file_is_fatal",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: an ignore file above the root past the input limit fails discovery.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "non_regular_ignore_files_are_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Missing and regular ignore files select the exact feature set; directories and FIFOs at root and nested locations are fatal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_metadata_link_parent_components_preserve_containment",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Lexical and resolved-parent metadata locations retain containment, while genuinely external metadata preserves pinned-walker file selection.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "windows_metadata_spellings_preserve_containment",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Plain, verbatim and case-varied Windows metadata paths preserve in-root junction refusals, regular replacements and genuinely external exclusions.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]
@@ -7137,6 +7317,34 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent primary discovery budget: the CLI exits 2 with the byte-cap diagnostic before reading sources or writing reports.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "automatic_files_resolving_outside_the_root_are_refused",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: the CLI exits 2 with no report for automatic configuration or ignore files linked outside the root, and uses the same file passed with --config.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "automatic_non_regular_files_stop_before_reporting",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Non-regular automatic candidates exit 2 without reports; regular replacements scan and report the feature file.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "git_metadata_empty_files_do_not_apply_working_directory_excludes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent Git metadata decoding: Empty files retain the feature; actual blank commondir lines apply the native working-directory exclude behavior.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "global_excludes_keep_matching_and_enforce_the_byte_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file validation: Global excludes preserve cwd-relative matching and missing-file behavior, accept the exact byte limit and refuse the next byte without a report.",
+          "behaviorClass": "shared-engine-invariant"
         }
       ]
     },
@@ -7489,6 +7697,13 @@
           "requiredStatus": "engine-invariant",
           "stage": "model-codec",
           "rationale": "Adapter-independent stage `model-codec`: read-back policy precedence across adapters sharing a contract slice; both adapters are caller-built test doubles of neither language.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "discovery_input_reads_only_inside_the_root",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent automatic-file containment: the public DiscoveryInput::read follows inside links and refuses files resolving outside the root.",
           "behaviorClass": "shared-engine-invariant"
         }
       ]

@@ -1,9 +1,10 @@
 //! Configuration loading and precedence.
 
+use crate::contained_read::{candidate_exists, Contained, CONFIG_REMEDY, LINK_REMEDY};
 use crate::framework_registry;
 use crate::model::{Rule, Severity};
 use crate::resource_limits::{
-    is_input_limit_error, read_utf8, MAX_CANDIDATE_COMPARISONS, MAX_CONFIG_INPUT_BYTES,
+    is_fatal_input_error, read_utf8, MAX_CANDIDATE_COMPARISONS, MAX_CONFIG_INPUT_BYTES,
     MAX_STRUCTURAL_CLASS_COMPARISONS, MAX_SUPPRESSION_REASON_CHARS,
 };
 use crate::source_adapter::{AdapterKeys, AdapterRegistry};
@@ -335,8 +336,8 @@ impl Config {
         }
 
         let package_path = root.join("package.json");
-        let (package_config, package_json) = if package_path.is_file() {
-            let text = read_utf8(
+        let (package_config, package_json) = if candidate_exists(&package_path) {
+            let text = Contained::new(&root, LINK_REMEDY).read_utf8(
                 &package_path,
                 "package configuration",
                 MAX_CONFIG_INPUT_BYTES,
@@ -362,7 +363,8 @@ impl Config {
         });
         let mut config_warnings = Vec::new();
         let (standalone_config, standalone_path) = if let Some(path) = explicit_config {
-            (Some(read_raw_config(&path, &adapters)?), Some(path))
+            let text = read_utf8(&path, CONFIG_KIND, MAX_CONFIG_INPUT_BYTES)?;
+            (Some(parse_raw_config(&text, &path, &adapters)?), Some(path))
         } else {
             discover_config_file(&root, &adapters, &mut config_warnings)?
         };
@@ -400,7 +402,7 @@ impl Config {
                     config.config_warnings.extend(framework.warnings);
                 }
                 Ok(None) => {}
-                Err(error) if is_input_limit_error(&error) => return Err(error),
+                Err(error) if is_fatal_input_error(&error) => return Err(error),
                 Err(error) => config.config_warnings.push(format!(
                     "could not inspect framework configuration ({error:#}); using built-in feature patterns"
                 )),
@@ -946,17 +948,20 @@ pub(crate) fn canonical_platform_path(path: &Path) -> std::io::Result<PathBuf> {
     path.canonicalize().map(normalize_platform_path)
 }
 
-/// Reads and parses a standalone config file within the config byte limit, with `adapters`
-/// claiming their keys; unknown keys fail.
-fn read_raw_config(path: &Path, adapters: &AdapterRegistry) -> Result<RawConfig> {
-    let text = read_utf8(path, "CukeDedup configuration", MAX_CONFIG_INPUT_BYTES)?;
+/// The diagnostic name of a standalone configuration file.
+const CONFIG_KIND: &str = "CukeDedup configuration";
+
+/// Parses standalone config text read from `path`, with `adapters` claiming their keys; unknown
+/// keys fail.
+fn parse_raw_config(text: &str, path: &Path, adapters: &AdapterRegistry) -> Result<RawConfig> {
     // serde_json's default recursion limit remains enabled for untrusted config input.
-    crate::source_adapter::reading_with(adapters, || serde_json::from_str::<RawConfig>(&text))
+    crate::source_adapter::reading_with(adapters, || serde_json::from_str::<RawConfig>(text))
         .with_context(|| format!("failed to parse {}", path.display()))
 }
 
 /// Returns the first candidate config file under `root` that parses. A parse or read failure is
-/// pushed to `warnings` and the next candidate is tried, except input-limit errors, which return.
+/// pushed to `warnings` and the next candidate is tried, except fatal input errors, which stop
+/// discovery without trying later candidates.
 fn discover_config_file(
     root: &Path,
     adapters: &AdapterRegistry,
@@ -970,12 +975,15 @@ fn discover_config_file(
     ];
     for candidate in CANDIDATES {
         let path = root.join(candidate);
-        if !path.is_file() {
+        if !candidate_exists(&path) {
             continue;
         }
-        match read_raw_config(&path, adapters) {
+        let read = Contained::new(root, CONFIG_REMEDY)
+            .read_utf8(&path, CONFIG_KIND, MAX_CONFIG_INPUT_BYTES)
+            .and_then(|text| parse_raw_config(&text, &path, adapters));
+        match read {
             Ok(config) => return Ok((Some(config), Some(path))),
-            Err(error) if is_input_limit_error(&error) => return Err(error),
+            Err(error) if is_fatal_input_error(&error) => return Err(error),
             Err(error) => warnings.push(format!(
                 "could not load auto-discovered config {} ({error:#}); trying the next configuration source",
                 path.display()

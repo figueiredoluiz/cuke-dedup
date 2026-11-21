@@ -304,3 +304,4 @@ fn excluded_directories_are_pruned_before_traversal() {
 }
 
 mod budget;
+mod ignore_files;

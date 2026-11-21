@@ -13,7 +13,7 @@ fn bounded_reader_accepts_exact_limit_and_rejects_next_byte() {
 
     fs::write(&path, "12345").unwrap();
     let error = read_utf8(&path, "source", 4).unwrap_err();
-    assert!(is_input_limit_error(&error));
+    assert!(is_fatal_input_error(&error));
     assert!(error.to_string().contains("4-byte input limit"));
 }
 
@@ -25,7 +25,7 @@ fn bounded_reader_rejects_invalid_utf8_without_misclassifying_it_as_a_limit() {
     fs::write(&path, [0xff]).unwrap();
 
     let error = read_utf8(&path, "source", 4).unwrap_err();
-    assert!(!is_input_limit_error(&error));
+    assert!(!is_fatal_input_error(&error));
     assert!(error.to_string().contains("not valid UTF-8"));
 }
 
@@ -48,7 +48,7 @@ fn known_input_limit_only_rejects_metadata_above_the_boundary() {
 #[test]
 fn bounded_reader_limits_special_files_without_reliable_metadata_lengths() {
     let error = read_utf8(Path::new("/dev/zero"), "special input", 4).unwrap_err();
-    assert!(is_input_limit_error(&error));
+    assert!(is_fatal_input_error(&error));
     assert!(error.to_string().contains("4-byte input limit"));
 }
 

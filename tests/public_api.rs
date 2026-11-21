@@ -1717,6 +1717,43 @@ fn caller_framework_contracts_discover_feature_patterns() {
     );
 }
 
+/// `DiscoveryInput::read` reads a file under the project root, including through a link that
+/// stays inside it, and refuses one that resolves outside before reading it.
+#[cfg(unix)]
+#[test]
+fn discovery_input_reads_only_inside_the_root() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("caller.bdd"), "inside\n").unwrap();
+    fs::write(outside.path().join("caller.bdd"), "outside\n").unwrap();
+    symlink(
+        root.path().join("caller.bdd"),
+        root.path().join("inside.bdd"),
+    )
+    .unwrap();
+    symlink(
+        outside.path().join("caller.bdd"),
+        root.path().join("outside.bdd"),
+    )
+    .unwrap();
+    let input = DiscoveryInput::new(root.path(), None);
+    assert_eq!(
+        input.read(&root.path().join("inside.bdd")).unwrap(),
+        "inside\n"
+    );
+    for path in [
+        root.path().join("outside.bdd"),
+        outside.path().join("caller.bdd"),
+    ] {
+        let error = input.read(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("resolves outside the analysis root"),
+            "{error}"
+        );
+    }
+}
+
 /// A pair whose first framework reads through a nested built-in seed and whose second reads in
 /// the enclosing scope.
 struct NestedFrameworks(Framework, Framework);

@@ -105,8 +105,8 @@
 //! patterns, discovery runs each registered contract's descriptor in registry order and keeps the
 //! first [`source_adapter::DiscoveredFeatures`]; a registry that lists the built-in registrations
 //! first reaches a caller contract only when no built-in one matches. A descriptor error becomes a
-//! configuration warning, except an input-limit error from
-//! [`source_adapter::DiscoveryInput::read`], which fails loading.
+//! configuration warning, except an input-limit error or a refusal of a file resolving outside the
+//! project root from [`source_adapter::DiscoveryInput::read`], which fails loading.
 //! [`source_adapter::DiscoveryInput::package`] returns a `serde_json::Value`, so `serde_json` 1.x
 //! is part of the public API. [`source_adapter::SourceAdapter::read_config_key`] takes an
 //! `erased_serde` 0.4 deserializer, re-exported as [`source_adapter::erased_serde`], so that
@@ -148,6 +148,7 @@
 pub mod analysis;
 pub mod cli;
 pub mod config;
+mod contained_read;
 pub mod discovery;
 mod display_text;
 mod framework_descriptor;

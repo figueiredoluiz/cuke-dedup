@@ -96,13 +96,15 @@ fn framework_files_cover_missing_dynamic_and_default_paths() {
 
     let cypress = directory.path().join("cypress.config.ts");
     fs::write(&cypress, "defineConfig({ component: {} });").unwrap();
-    assert!(cypress_config(&cypress).unwrap().is_none());
+    assert!(cypress_config(directory.path(), &cypress)
+        .unwrap()
+        .is_none());
     fs::write(
         &cypress,
         "const pattern = dynamic(); defineConfig({ e2e: { specPattern: pattern } });",
     )
     .unwrap();
-    let dynamic = cypress_config(&cypress).unwrap().unwrap();
+    let dynamic = cypress_config(directory.path(), &cypress).unwrap().unwrap();
     assert_eq!(dynamic.patterns, ["**/*.{feature,feature.md}"]);
     assert_eq!(dynamic.warnings.len(), 1);
 }

@@ -11,7 +11,6 @@ use crate::{gherkin, modes, reporters, source_adapter};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -1164,7 +1163,7 @@ impl EmitSink {
         // The destination exists now, so `..`, case-insensitive, normalized and hard-link spellings of
         // a report or baseline not yet written resolve to it by identity.
         for target in written {
-            let same = match same_file_as(file, &target) {
+            let same = match crate::contained_read::same_file_as(file, &target) {
                 Ok(same) => same,
                 // An absent target, or one under a file (ENOTDIR), has nothing to overwrite.
                 Err(error)
@@ -1219,22 +1218,6 @@ impl EmitSink {
             .commit()
             .with_context(|| format!("failed to write {} {}", self.label, self.path.display()))
     }
-}
-
-/// Whether `target` is the file already open as `file`, read from metadata: device and inode on Unix,
-/// so no file is opened (a write-only target or a FIFO neither fails nor blocks).
-#[cfg(unix)]
-fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
-    use std::os::unix::fs::MetadataExt;
-    let (open, other) = (file.metadata()?, fs::metadata(target)?);
-    Ok(open.dev() == other.dev() && open.ino() == other.ino())
-}
-
-/// Whether `target` is the file already open as `file`: volume and file index, through a handle
-/// opened with no access rights.
-#[cfg(not(unix))]
-fn same_file_as(file: &fs::File, target: &Path) -> io::Result<bool> {
-    Ok(same_file::Handle::from_file(file.try_clone()?)? == same_file::Handle::from_path(target)?)
 }
 
 /// Whether terminal output uses color: stdout is a TTY and `NO_COLOR` is unset or empty.

@@ -840,3 +840,5 @@ fn long_canonical_windows_paths_stay_plain_under_the_root() {
     assert!(canonical.starts_with(&root), "{}", canonical.display());
     assert_eq!(fs::read_to_string(&canonical).unwrap(), "ok");
 }
+
+mod containment;

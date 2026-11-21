@@ -5,7 +5,8 @@
 //! lives here because its JSON and YAML forms are language-neutral; the adapter whose contract
 //! uses it passes the [`ScriptConfigReader`]s for its scripted forms.
 
-use crate::resource_limits::{read_utf8, MAX_CONFIG_INPUT_BYTES};
+use crate::contained_read::{candidate_exists, Contained, LINK_REMEDY};
+use crate::resource_limits::MAX_CONFIG_INPUT_BYTES;
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
@@ -105,10 +106,11 @@ impl<'a> DiscoveryInput<'a> {
         package_has_dependency(self.package, name)
     }
 
-    /// Reads a configuration file under the shared configuration input limit. An oversized file
-    /// fails configuration loading instead of becoming a warning.
+    /// Reads a configuration file under the shared configuration input limit. An oversized file,
+    /// or one that does not resolve to a regular file under the project root, fails configuration
+    /// loading instead of becoming a warning; nothing is read from a refused file.
     pub fn read(&self, path: &Path) -> Result<String> {
-        read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)
+        read_framework_file(self.root, path)
     }
 }
 
@@ -207,19 +209,19 @@ pub(crate) fn cucumber_discovery(
 ) -> Result<Option<DiscoveredFeatures>> {
     for (name, parse) in CUCUMBER_STRUCTURED_CONFIGS {
         let path = input.root.join(name);
-        if path.is_file() {
+        if candidate_exists(&path) {
             let context = || format!("failed to parse framework config {}", path.display());
             let read = |text: &str, _: &str| parse(text).with_context(context);
-            return cucumber_config(&path, read).map(Some);
+            return cucumber_config(input.root, &path, read).map(Some);
         }
     }
     for reader in script_readers {
         for extension in reader.extensions {
             let path = input.root.join(format!("{CUCUMBER_STEM}.{extension}"));
-            if path.is_file() {
+            if candidate_exists(&path) {
                 let read =
                     |text: &str, extension: &str| (reader.read_property)(text, extension, "paths");
-                return cucumber_config(&path, read).map(Some);
+                return cucumber_config(input.root, &path, read).map(Some);
             }
         }
     }
@@ -236,7 +238,7 @@ pub(crate) fn first_matching_config(
 ) -> Result<Option<DiscoveredFeatures>> {
     for name in configs {
         let path = root.join(name);
-        if !path.is_file() {
+        if !candidate_exists(&path) {
             continue;
         }
         if let Some(features) = probe(&path)? {
@@ -246,9 +248,19 @@ pub(crate) fn first_matching_config(
     Ok(None)
 }
 
-/// Reads a configuration file under the shared input limit, returning its text and extension.
-pub(crate) fn read_config(path: &Path) -> Result<(String, &str)> {
-    let text = read_utf8(path, "framework configuration", MAX_CONFIG_INPUT_BYTES)?;
+/// Reads a framework configuration file contained in `root` under the shared input limit.
+fn read_framework_file(root: &Path, path: &Path) -> Result<String> {
+    Contained::new(root, LINK_REMEDY).read_utf8(
+        path,
+        "framework configuration",
+        MAX_CONFIG_INPUT_BYTES,
+    )
+}
+
+/// Reads a configuration file contained in `root` under the shared input limit, returning its
+/// text and extension.
+pub(crate) fn read_config<'a>(root: &Path, path: &'a Path) -> Result<(String, &'a str)> {
+    let text = read_framework_file(root, path)?;
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -266,10 +278,11 @@ pub(crate) fn package_has_any_dependency(package: Option<&JsonValue>, names: &[&
 /// Reads Cucumber paths with the file's format reader, warning before using defaults for dynamic
 /// values. Literal paths are returned as written; `detect` normalizes them.
 fn cucumber_config(
+    root: &Path,
     path: &Path,
     read_paths: impl FnOnce(&str, &str) -> Result<LiteralProperty>,
 ) -> Result<DiscoveredFeatures> {
-    let (text, extension) = read_config(path)?;
+    let (text, extension) = read_config(root, path)?;
     let paths = read_paths(&text, extension)?;
     let mut warnings = Vec::new();
     let patterns = match paths {
