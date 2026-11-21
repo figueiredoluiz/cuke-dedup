@@ -1100,21 +1100,23 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
             (Some(limit), 1),
             (Some(limit + 1), 0),
         ] {
-            let fixture = tempfile::tempdir().unwrap();
+            let fixture = tempfile::Builder::new()
+                .prefix("global excludes ~")
+                .tempdir()
+                .unwrap();
             let root = fixture.path().join("root");
             fs::create_dir(&root).unwrap();
             fs::write(root.join("a.feature"), "Feature: a\n").unwrap();
             fs::write(root.join("z.feature"), "Feature: z\n").unwrap();
-            let excludes = if inside { &root } else { fixture.path() }.join("global-ignore");
+            // The pinned Git config parser expects a single path token and expands tildes.
+            let excludes_name = if inside {
+                "root/global-ignore"
+            } else {
+                "global-ignore"
+            };
+            let excludes = fixture.path().join(excludes_name);
             let config = fixture.path().join("gitconfig");
-            fs::write(
-                &config,
-                format!(
-                    "[core]\nexcludesFile = {}\n",
-                    excludes.display().to_string().replace('\\', "/")
-                ),
-            )
-            .unwrap();
+            fs::write(&config, format!("[core]\nexcludesFile = {excludes_name}\n")).unwrap();
             if let Some(size) = size {
                 let mut bytes = pattern.to_vec();
                 if size > bytes.len() {
@@ -1168,8 +1170,9 @@ fn global_excludes_keep_matching_and_enforce_the_byte_limit() {
                             .is_ignore()
                     })
                     .count() as u64;
-                assert_eq!(oracle, expected, "{size:?}");
-                assert_eq!(reported_feature_files(&output), expected, "{size:?}");
+                let row = format!("inside={inside} linked={linked} size={size:?}");
+                assert_eq!(oracle, expected, "{row}");
+                assert_eq!(reported_feature_files(&output), expected, "{row}");
             }
         }
     }
