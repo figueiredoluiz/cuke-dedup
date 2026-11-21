@@ -2337,6 +2337,121 @@ fn resolves_bound_named_handlers_without_dropping_the_definition() {
     assert!(definition.handler.source_snippet.contains("doWork"));
 }
 
+/// A bounded registration keeps its handler, while a limit in either argument position is incomplete.
+#[test]
+fn registration_extraction_limits_bound_handler_resolution() {
+    use ExtractionDiagnosticKind::Incomplete;
+
+    let cases = [
+        (63, false, None),
+        (64, false, None),
+        (65, false, Some(("64-call bound handler depth limit", 16))),
+        (
+            64,
+            true,
+            Some(("step registration has no static handler", 1)),
+        ),
+        (65, true, Some(("64-call bound handler depth limit", 16))),
+    ];
+    for (depth, competing, expected_diagnostic) in cases {
+        let handler = format!("handler{}", ".bind(null)".repeat(depth));
+        let later = if competing { ", () => otherWork()" } else { "" };
+        let source = format!(
+            "function handler() {{ doWork(); }}\n\
+             Given('before', () => control());\n\
+             Given('bound', {handler}{later});\n\
+             Given('after', () => control());"
+        );
+        let extracted = extract_detailed(&source, &file(TYPESCRIPT)).unwrap();
+        let labels: Vec<_> = extracted
+            .definitions
+            .iter()
+            .map(|d| d.matcher.as_str())
+            .collect();
+        let label = format!("depth {depth}, competing {competing}");
+        if let Some((message, column)) = expected_diagnostic {
+            assert_eq!(labels, ["before", "after"], "{label}");
+            let [diagnostic] = extracted.diagnostics.as_slice() else {
+                panic!(
+                    "expected one diagnostic at {label}: {:?}",
+                    extracted.diagnostics
+                );
+            };
+            assert_eq!(diagnostic.kind, Incomplete, "{label}");
+            assert_eq!(
+                diagnostic.level,
+                ExtractionDiagnosticLevel::Warning,
+                "{label}"
+            );
+            assert_eq!(
+                (diagnostic.location.line, diagnostic.location.column),
+                (3, column),
+                "{label}"
+            );
+            assert!(
+                diagnostic.message.contains(message),
+                "{label}: {diagnostic:?}"
+            );
+        } else {
+            assert_eq!(labels, ["before", "bound", "after"], "{label}");
+            assert!(extracted.diagnostics.is_empty(), "{label}");
+            let bound = &extracted.definitions[1].handler;
+            assert!(bound.comparable, "{label}");
+            assert!(bound.source_snippet.contains("doWork"), "{label}");
+        }
+        let first = &extracted.definitions[0].handler;
+        let last = &extracted.definitions.last().unwrap().handler;
+        assert!(first.comparable && last.comparable, "{label}");
+        assert_eq!(first.alpha_normalized, last.alpha_normalized, "{label}");
+    }
+}
+
+/// Verify a small regex limit is applied to callback and decorator matchers through extraction.
+#[test]
+fn registration_extraction_limits_regex_diagnostic() {
+    let source = "
+import { Given as Decorate } from 'playwright-bdd/decorators';
+Given(/call/u, () => callWork());
+Given((/longer/u as RegExp), () => callWork());
+class Steps {
+  @Decorate(/step/i) supported() { methodWork(); }
+  @Decorate(/longer/i) omitted() { methodWork(); }
+}";
+    let typescript = file(TYPESCRIPT);
+    let normal = extract_detailed(source, &typescript).unwrap();
+    assert_eq!(normal.definitions.len(), 4);
+    assert!(normal.diagnostics.is_empty());
+
+    let extracted = extract_detailed_with_regex_limit(
+        source,
+        &typescript,
+        &mut TypeScriptExtractionSession::default(),
+        4,
+    )
+    .unwrap();
+    let matchers: Vec<_> = extracted
+        .definitions
+        .iter()
+        .map(|definition| {
+            (
+                definition.matcher.as_str(),
+                definition.matcher_flags.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(matchers, [("call", "u"), ("step", "i")]);
+    assert_eq!(extracted.diagnostics.len(), 2);
+    for (diagnostic, location) in extracted.diagnostics.iter().zip([(4, 8), (7, 13)]) {
+        assert_eq!(diagnostic.kind, ExtractionDiagnosticKind::Incomplete);
+        assert_eq!(diagnostic.level, ExtractionDiagnosticLevel::Warning);
+        assert_eq!(
+            (diagnostic.location.line, diagnostic.location.column),
+            location
+        );
+        assert!(diagnostic.message.contains("4-byte regex resource limit"));
+    }
+}
+
 /// Verify bound arguments affect handler identity while equal bindings preserve it and appear in snippets.
 #[test]
 fn bound_arguments_are_part_of_handler_identity() {

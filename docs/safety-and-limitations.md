@@ -108,6 +108,7 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 
 ## Matcher and Gherkin limits
 
+- JavaScript and TypeScript extraction skips a registration and marks analysis incomplete if its regex pattern or flags exceed 1 MiB, or if resolving a handler argument requires following more than 64 bound calls.
 - A matcher pattern or compiled program is limited to 1 MiB. Matching compiles a matcher inside
   its matcher set, without capture groups; a matcher that fits in no set is compiled alone, with
   them. Ruby regex conversion also checks the program alone.

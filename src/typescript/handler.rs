@@ -13,6 +13,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
 const MAX_ASSERTION_CHAIN_DEPTH: usize = 16;
+pub(super) const MAX_BOUND_HANDLER_DEPTH: usize = 64;
+
+#[derive(Debug)]
+pub(super) struct BoundHandlerDepthExceeded;
 
 #[cfg(test)]
 mod tests;
@@ -97,29 +101,37 @@ fn nearest_scope(mut node: Option<Node<'_>>) -> Option<Node<'_>> {
     None
 }
 
-/// Resolves inline, bound or named handlers using visible binding scope and declaration order, returning `None` for unsupported forms.
+/// Resolves inline, bound or named handlers, distinguishing a depth refusal from an unsupported form.
 pub(super) fn resolve_handler<'tree>(
     mut handler: Node<'tree>,
     source: &[u8],
     bindings: &BTreeMap<String, Vec<HandlerBinding<'tree>>>,
+) -> Result<Option<Node<'tree>>, BoundHandlerDepthExceeded> {
+    let mut remaining = MAX_BOUND_HANDLER_DEPTH;
+    loop {
+        let unwrapped = super::registrations::unwrap_registration_callee(handler);
+        let receiver = unwrapped
+            .and_then(|node| bind_member(node, source))
+            .and_then(|member| member.child_by_field_name("object"));
+        let Some(receiver) = receiver else {
+            return Ok(unwrapped.and_then(|node| resolve_unbound_handler(node, source, bindings)));
+        };
+        remaining = remaining.checked_sub(1).ok_or(BoundHandlerDepthExceeded)?;
+        handler = receiver;
+    }
+}
+
+/// Resolves an inline or named handler using its visible binding scope and declaration order.
+fn resolve_unbound_handler<'tree>(
+    handler: Node<'tree>,
+    source: &[u8],
+    bindings: &BTreeMap<String, Vec<HandlerBinding<'tree>>>,
 ) -> Option<Node<'tree>> {
-    handler = super::registrations::unwrap_registration_callee(handler)?;
     if matches!(
         handler.kind(),
         "arrow_function" | "function_expression" | "generator_function"
     ) {
         return Some(handler);
-    }
-    if handler.kind() == "call_expression" {
-        let function = handler.child_by_field_name("function")?;
-        if function.kind() == "member_expression"
-            && function
-                .child_by_field_name("property")
-                .is_some_and(|property| node_text(property, source) == "bind")
-        {
-            return resolve_handler(function.child_by_field_name("object")?, source, bindings);
-        }
-        return None;
     }
     if handler.kind() != "identifier" {
         return None;
@@ -153,19 +165,22 @@ pub(super) fn resolve_handler<'tree>(
         .map(|(_, binding)| binding.declaration)
 }
 
-/// Returns arguments attached to a `.bind(...)` handler call, or `None` for other expressions.
-pub(super) fn bind_arguments<'tree>(handler: Node<'tree>, source: &[u8]) -> Option<Node<'tree>> {
+/// Returns the direct `.bind` member of a call, preserving the supported property form.
+fn bind_member<'tree>(handler: Node<'tree>, source: &[u8]) -> Option<Node<'tree>> {
     if handler.kind() != "call_expression" {
         return None;
     }
     let function = handler.child_by_field_name("function")?;
-    if function.kind() != "member_expression"
-        || function
+    (function.kind() == "member_expression"
+        && function
             .child_by_field_name("property")
-            .is_none_or(|property| node_text(property, source) != "bind")
-    {
-        return None;
-    }
+            .is_some_and(|property| node_text(property, source) == "bind"))
+    .then_some(function)
+}
+
+/// Returns arguments attached to a `.bind(...)` handler call, or `None` for other expressions.
+pub(super) fn bind_arguments<'tree>(handler: Node<'tree>, source: &[u8]) -> Option<Node<'tree>> {
+    bind_member(handler, source)?;
     handler.child_by_field_name("arguments")
 }
 

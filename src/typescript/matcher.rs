@@ -4,31 +4,49 @@ use crate::model::MatcherKind;
 use crate::resource_limits::compile_regex;
 use tree_sitter::Node;
 
-/// Extracts matcher text, kind and flags from strings, static templates or regex literals.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct RegexLiteralTooLarge;
+
+type MatcherValue = (String, MatcherKind, String);
+
+/// Extracts matcher text, kind and flags, checking raw regex bytes before copying them.
 pub(super) fn matcher_value(
     node: Node<'_>,
     source: &[u8],
-) -> Option<(String, MatcherKind, String)> {
+    max_regex_part_bytes: usize,
+) -> Result<Option<MatcherValue>, RegexLiteralTooLarge> {
     let text = node_text(node, source);
-    match node.kind() {
+    Ok(match node.kind() {
         "string" => decode_js_string(text)
             .map(|value| (value, MatcherKind::CucumberExpression, String::new())),
-        "template_string" if !text.contains("${") => Some((
-            text.strip_prefix('`')?.strip_suffix('`')?.to_owned(),
-            MatcherKind::CucumberExpression,
-            String::new(),
-        )),
+        "template_string" if !text.contains("${") => text
+            .strip_prefix('`')
+            .and_then(|body| body.strip_suffix('`'))
+            .map(|body| {
+                (
+                    body.to_owned(),
+                    MatcherKind::CucumberExpression,
+                    String::new(),
+                )
+            }),
         "regex" => {
-            let body = text.strip_prefix('/')?;
-            let final_slash = body.rfind('/')?;
-            Some((
-                body[..final_slash].to_owned(),
-                MatcherKind::RegularExpression,
-                body[final_slash + 1..].to_owned(),
-            ))
+            return text
+                .strip_prefix('/')
+                .and_then(|body| body.rsplit_once('/'))
+                .map(|(pattern, flags)| {
+                    if pattern.len() > max_regex_part_bytes || flags.len() > max_regex_part_bytes {
+                        return Err(RegexLiteralTooLarge);
+                    }
+                    Ok((
+                        pattern.to_owned(),
+                        MatcherKind::RegularExpression,
+                        flags.to_owned(),
+                    ))
+                })
+                .transpose();
         }
         _ => None,
-    }
+    })
 }
 
 /// Decodes a property key that is written as a static string literal.

@@ -1,5 +1,41 @@
 use super::*;
 
+/// Parses benign literals and checks the byte boundaries with a small extraction limit.
+#[test]
+fn registration_extraction_limits_regex_literal_parts() {
+    let mut parser = tree_sitter::Parser::new();
+    let grammar = crate::typescript::grammar(crate::typescript::TYPESCRIPT).unwrap();
+    parser.set_language(&grammar).unwrap();
+    let regex = MatcherKind::RegularExpression;
+    let cases = [
+        ("/abc/i", Some(("abc", regex, "i"))),
+        ("/abcd/dims", Some(("abcd", regex, "dims"))),
+        ("/abcde/", None),
+        ("/éé/u", Some(("éé", regex, "u"))),
+        ("/ééx/u", None),
+        ("/abc/dgims", None),
+        (r"/a\/b/i", Some((r"a\/b", regex, "i"))),
+        (
+            "'ordinary'",
+            Some(("ordinary", MatcherKind::CucumberExpression, "")),
+        ),
+    ];
+    for (source, expected) in cases {
+        let tree = parser.parse(source, None).unwrap();
+        let root = tree.root_node();
+        assert!(!root.has_error(), "{source}");
+        let literal = root.named_child(0).unwrap().named_child(0).unwrap();
+        let expected = expected
+            .map(|(pattern, kind, flags)| Some((pattern.to_owned(), kind, flags.to_owned())))
+            .ok_or(RegexLiteralTooLarge);
+        assert_eq!(
+            matcher_value(literal, source.as_bytes(), 4),
+            expected,
+            "{source}"
+        );
+    }
+}
+
 /// `v` enables Unicode set notation and changes character-class semantics, so it belongs to a
 /// matcher's identity exactly as `u` does — more so, since `v` implies `u`. Dropping it made
 /// `/x/v` normalize to the text of `/x/` and reported the two as equivalent.
