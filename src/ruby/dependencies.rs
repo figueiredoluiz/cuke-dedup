@@ -5,8 +5,9 @@ use crate::config::{canonical_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::discovery::ExcludeSet;
 use crate::resource_limits::{
-    known_input_limit_exceeded, read_utf8, WorkBudget, MAX_PROJECT_INPUT_BYTES,
-    MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES,
+    dependency_file_exists, known_input_limit_exceeded, read_utf8, WorkBudget,
+    MAX_DEPENDENCY_CANDIDATE_PROBES, MAX_PROJECT_INPUT_BYTES, MAX_REGISTRATION_MODULES,
+    MAX_REGISTRATION_MODULE_BYTES,
 };
 use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile};
@@ -23,7 +24,13 @@ pub(crate) fn resolve(config: &Config, excludes: &ExcludeSet, files: &mut Discov
         return;
     }
     let budget = (MAX_REGISTRATION_MODULES, MAX_REGISTRATION_MODULE_BYTES);
-    if let Err(error) = resolve_graph(config, excludes, files, budget) {
+    if let Err(error) = resolve_graph(
+        config,
+        excludes,
+        files,
+        budget,
+        MAX_DEPENDENCY_CANDIDATE_PROBES,
+    ) {
         files.errors.push(format!(
             "Ruby dependency discovery is incomplete: {error:#}"
         ));
@@ -106,6 +113,7 @@ fn resolve_graph(
     excludes: &ExcludeSet,
     files: &mut DiscoveredFiles,
     budget: (usize, usize),
+    candidate_limit: usize,
 ) -> anyhow::Result<()> {
     let root = config.root.clone();
     let load_paths = super::config::load_paths(config)
@@ -138,9 +146,10 @@ fn resolve_graph(
         .collect();
     let mut promoted = BTreeSet::new();
     let mut expansion = Expansion::new(budget);
+    let mut probes = WorkBudget::new(candidate_limit);
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
-    while let Some(file) = queue.pop_front() {
+    'walk: while let Some(file) = queue.pop_front() {
         // Extraction reports an unreadable source itself; only this file's loads stay unresolved.
         let Ok(source) = read_utf8(
             &file.path,
@@ -191,18 +200,28 @@ fn resolve_graph(
             let Some(request) = literal_string(text(argument, &source)) else {
                 continue;
             };
+            let parent;
             let bases = if method == "require_relative" {
-                vec![file.path.parent().unwrap_or(&root).to_owned()]
+                parent = file.path.parent().unwrap_or(&root).to_owned();
+                std::slice::from_ref(&parent)
             } else if request.starts_with("./")
                 || request.starts_with("../")
                 || Path::new(&request).is_absolute()
             {
-                vec![root.clone()]
+                std::slice::from_ref(&root)
             } else {
-                load_paths.clone()
+                &load_paths
             };
-            let Some(target) = request_target(&bases, &request) else {
-                continue;
+            let target = match request_target(bases, &request, &mut probes) {
+                Ok(Some(target)) => target,
+                Ok(None) => continue,
+                Err(error) => {
+                    files.dependency_gaps.push(DependencyGap::new(
+                        columns.location(&file, node, &source),
+                        error.to_string(),
+                    ));
+                    break 'walk;
+                }
             };
             if !target.starts_with(&root) && !load_paths.iter().any(|path| target.starts_with(path))
             {
@@ -268,7 +287,11 @@ const NATIVE_SUFFIXES: [&str; 4] = ["so", "o", "dll", "bundle"];
 /// `.rb` appended, dotted names included (`checkout.v2` loads `checkout.v2.rb`, `trailing.`
 /// loads `trailing..rb`); the extension test is case-sensitive. A native-suffix request falls back
 /// to `<request>.rb` only when no base holds a native library for it.
-pub(super) fn request_target(bases: &[PathBuf], request: &str) -> Option<PathBuf> {
+pub(super) fn request_target(
+    bases: &[PathBuf],
+    request: &str,
+    probes: &mut WorkBudget,
+) -> anyhow::Result<Option<PathBuf>> {
     let native = Path::new(request)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -276,21 +299,27 @@ pub(super) fn request_target(bases: &[PathBuf], request: &str) -> Option<PathBuf
     // fail-closed: Ruby searches every base for a native library before any `.rb` fallback, and
     // which suffix it accepts depends on the platform, so any native candidate leaves the load
     // unresolved rather than guessing.
-    if native
-        && bases.iter().any(|base| {
-            NATIVE_SUFFIXES
-                .iter()
-                .any(|suffix| base.join(request).with_extension(suffix).is_file())
-        })
-    {
-        return None;
+    if native {
+        for base in bases {
+            let path = base.join(request);
+            for suffix in NATIVE_SUFFIXES {
+                if dependency_file_exists(&path.with_extension(suffix), probes)? {
+                    return Ok(None);
+                }
+            }
+        }
     }
-    bases.iter().find_map(|base| ruby_file(&base.join(request)))
+    for base in bases {
+        if let Some(path) = ruby_file(&base.join(request), probes)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 /// `path` as a Ruby source: kept when it ends in `.rb`, otherwise with `.rb` appended; canonical
 /// when that file exists.
-fn ruby_file(path: &Path) -> Option<PathBuf> {
+fn ruby_file(path: &Path, probes: &mut WorkBudget) -> anyhow::Result<Option<PathBuf>> {
     let path = if path.extension().is_some_and(|extension| extension == "rb") {
         path.to_owned()
     } else {
@@ -298,9 +327,9 @@ fn ruby_file(path: &Path) -> Option<PathBuf> {
         candidate.push(".rb");
         PathBuf::from(candidate)
     };
-    path.is_file()
+    Ok(dependency_file_exists(&path, probes)?
         .then(|| canonical_platform_path(&path).ok())
-        .flatten()
+        .flatten())
 }
 
 #[cfg(test)]

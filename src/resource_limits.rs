@@ -34,6 +34,9 @@ pub(crate) const MAX_PROJECT_METADATA_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_PROJECT_MODULE_MAPPINGS: usize = 16_384;
 pub(crate) const MAX_MEMOIZED_RESOLUTION_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_WORKSPACE_SCAN_ENTRIES: usize = 100_000;
+pub(crate) const MAX_DEPENDENCY_CANDIDATE_PROBES: usize = 1_000_000;
+pub(crate) const MAX_CHANGED_PATH_RECORDS: usize = 100_000;
+pub(crate) const MAX_CHANGED_PATH_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_DISCOVERY_WALK_ENTRIES: usize = 1_000_000;
 pub(crate) const MAX_DISCOVERY_SELECTED_FILES: usize = 100_000;
 pub(crate) const MAX_DISCOVERY_SOURCE_BYTES: usize = 512 * 1024 * 1024;
@@ -168,6 +171,22 @@ impl WorkBudget {
     pub(crate) const fn spent(&self) -> usize {
         self.spent
     }
+}
+
+/// Charges an attempted filesystem lookup, including a miss, before touching the filesystem.
+pub(crate) fn charge_dependency_probe(budget: &mut WorkBudget) -> Result<()> {
+    anyhow::ensure!(
+        budget.admit(1),
+        "dependency resolution exceeds the {}-candidate probe limit",
+        budget.limit()
+    );
+    Ok(())
+}
+
+/// Tests a dependency path for a regular file only when there is enough work allowance.
+pub(crate) fn dependency_file_exists(path: &Path, budget: &mut WorkBudget) -> Result<bool> {
+    charge_dependency_probe(budget)?;
+    Ok(path.is_file())
 }
 
 /// Work counted against one limit across a whole run and within the current pass. Exhaustion

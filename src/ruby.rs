@@ -3,6 +3,7 @@
 pub(crate) mod semantics;
 
 use crate::model::{Framework, MatcherKind, SourceLocation, StepDefinition};
+use crate::resource_limits::{WorkBudget, MAX_DEPENDENCY_CANDIDATE_PROBES};
 use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::suppression::InlineSuppressions;
 use crate::source_adapter::{
@@ -45,6 +46,7 @@ pub(crate) struct RubySession {
     providers: providers::Providers,
     assertions: assertions::AssertionProviders,
     assertion_modules: Vec<String>,
+    assertion_module_probe_failure: Option<String>,
     /// Set when provider proofs are unavailable because the selection exceeds the proof budget.
     proof_sources_exceeded: bool,
     /// Ruby files prepared for the session and those actually extracted; a prepared file that was
@@ -55,26 +57,53 @@ pub(crate) struct RubySession {
 impl AdapterSessionState for RubySession {
     /// Resolves configured Ruby provider paths with the same rule discovery applies to loads.
     fn initialize(root: Option<&Path>, _: &[String], assertion_modules: &[String]) -> Self {
-        let mut configured = assertion_modules.to_vec();
-        if let Some(root) = root {
-            // A configured module names a load request, resolved exactly as discovery resolves one.
-            for module in assertion_modules {
-                if let Some(path) = dependencies::request_target(&[root.to_owned()], module) {
-                    configured.push(path.to_string_lossy().into_owned());
-                }
-            }
-        }
+        Self::with_assertion_probe_limit(root, assertion_modules, MAX_DEPENDENCY_CANDIDATE_PROBES)
+    }
+}
+
+impl RubySession {
+    /// Initializes the session with an independent allowance for configured assertion aliases.
+    fn with_assertion_probe_limit(
+        root: Option<&Path>,
+        assertion_modules: &[String],
+        candidate_limit: usize,
+    ) -> Self {
+        let (configured, assertion_module_probe_failure) =
+            match configured_assertion_modules(root, assertion_modules, candidate_limit) {
+                Ok(configured) => (configured, None),
+                Err(error) => (Vec::new(), Some(error.to_string())),
+            };
         Self {
             effects: Default::default(),
             providers: Default::default(),
             assertions: Default::default(),
             assertion_modules: configured,
+            assertion_module_probe_failure,
             proof_sources_exceeded: false,
             prepared: Default::default(),
             extracted: Default::default(),
         }
     }
 }
+/// Resolves all configured aliases or refuses the assertion-provider configuration as a whole.
+fn configured_assertion_modules(
+    root: Option<&Path>,
+    names: &[String],
+    candidate_limit: usize,
+) -> Result<Vec<String>> {
+    let mut configured = names.to_vec();
+    if let Some(root) = root {
+        let bases = [root.to_owned()];
+        let mut probes = WorkBudget::new(candidate_limit);
+        for module in names {
+            if let Some(path) = dependencies::request_target(&bases, module, &mut probes)? {
+                configured.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    Ok(configured)
+}
+
 impl StatefulSourceAdapter for RubyAdapter {
     type State = RubySession;
     /// Expand selected Ruby files through the bounded local dependency resolver.
@@ -193,7 +222,13 @@ impl SourceAdapter for RubyAdapter {
             .proof_sources_exceeded
             .then(proof_limit_reason)
             .unwrap_or_default();
-        if state.assertions.incomplete() {
+        if let Some(reason) = &state.assertion_module_probe_failure {
+            result.uncertainties.push(SourceUncertainty::new(
+                UncertaintyScope::Registry(RUBY),
+                UncertaintyCause::Source,
+                format!("Ruby assertion-provider provenance is incomplete: {reason}"),
+            ));
+        } else if state.assertions.incomplete() {
             result.uncertainties.push(SourceUncertainty::new(
                 UncertaintyScope::Registry(RUBY),
                 UncertaintyCause::Source,

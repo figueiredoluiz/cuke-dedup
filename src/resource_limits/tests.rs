@@ -192,6 +192,9 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_PROJECT_MODULE_MAPPINGS, 16_384);
     assert_eq!(MAX_MEMOIZED_RESOLUTION_BYTES, 16 * 1024 * 1024);
     assert_eq!(MAX_WORKSPACE_SCAN_ENTRIES, 100_000);
+    assert_eq!(MAX_DEPENDENCY_CANDIDATE_PROBES, 1_000_000);
+    assert_eq!(MAX_CHANGED_PATH_RECORDS, 100_000);
+    assert_eq!(MAX_CHANGED_PATH_BYTES, 16 * 1024 * 1024);
     assert_eq!(MAX_DISCOVERY_WALK_ENTRIES, 1_000_000);
     assert_eq!(MAX_DISCOVERY_SELECTED_FILES, 100_000);
     assert_eq!(MAX_DISCOVERY_SOURCE_BYTES, 512 * 1024 * 1024);

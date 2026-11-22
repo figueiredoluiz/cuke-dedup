@@ -3088,6 +3088,20 @@
     "src/modes/tests.rs": {
       "tests": [
         {
+          "name": "source_enumeration_git_shares_records_and_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Both changed-file listings spend one record and byte allowance before language selection.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "source_enumeration_git_rejects_malformed_listing",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Native Git path records must be nonempty, relative, and NUL-terminated before language selection.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "changed_mode_keeps_findings_related_to_a_changed_file",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -4447,6 +4461,24 @@
     },
     "src/typescript/project_resolution/tests.rs": {
       "tests": [
+        {
+          "name": "source_enumeration_project_shares_rootless_boundary_allowance",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: inference of a package root and module candidates uses one probe allowance. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "source_enumeration_project_charges_misses_and_preserves_the_memo",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: module suffix candidates consume probe allowance. Semantic residue: source_enumeration_ruby_counts_missing_candidates_across_files.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
+          "name": "source_enumeration_project_charges_absent_metadata_candidates",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: tsconfig and package manifest probes share the module candidate allowance. Semantic residue: none.",
+          "behaviorClass": "language-specific-api"
+        },
         {
           "name": "jsonc_preserves_comment_text_in_strings_and_removes_trailing_commas",
           "requiredStatus": "language-inapplicable",

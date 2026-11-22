@@ -1,6 +1,7 @@
 use super::ast::is_relative_module;
 use crate::resource_limits::{
-    read_utf8, WorkBudget, MAX_CONFIG_INPUT_BYTES, MAX_MEMOIZED_RESOLUTION_BYTES,
+    charge_dependency_probe, dependency_file_exists, read_utf8, WorkBudget, MAX_CONFIG_INPUT_BYTES,
+    MAX_DEPENDENCY_CANDIDATE_PROBES, MAX_MEMOIZED_RESOLUTION_BYTES,
     MAX_PROJECT_CONFIG_EXTENDS_DEPTH, MAX_PROJECT_METADATA_BYTES, MAX_PROJECT_METADATA_FILES,
     MAX_PROJECT_MODULE_MAPPINGS, MAX_WORKSPACE_SCAN_ENTRIES,
 };
@@ -118,6 +119,7 @@ pub(super) struct ProjectResolution {
     metadata_files: WorkBudget,
     metadata_bytes: WorkBudget,
     mappings: WorkBudget,
+    candidate_probes: WorkBudget,
 }
 
 impl Default for ProjectResolution {
@@ -136,6 +138,7 @@ impl Default for ProjectResolution {
             metadata_files: WorkBudget::new(MAX_PROJECT_METADATA_FILES),
             metadata_bytes: WorkBudget::new(MAX_PROJECT_METADATA_BYTES),
             mappings: WorkBudget::new(MAX_PROJECT_MODULE_MAPPINGS),
+            candidate_probes: WorkBudget::new(MAX_DEPENDENCY_CANDIDATE_PROBES),
         }
     }
 }
@@ -147,6 +150,22 @@ impl ProjectResolution {
             root: root.canonicalize().ok(),
             ..Self::default()
         }
+    }
+
+    /// Returns the configured root or finds the nearest package without exceeding the probe allowance.
+    pub(super) fn boundary_for(&mut self, importer: &Path) -> Result<Option<PathBuf>> {
+        if let Some(root) = &self.root {
+            return Ok(Some(root.clone()));
+        }
+        let Some(parent) = importer.parent().and_then(|path| path.canonicalize().ok()) else {
+            return Ok(None);
+        };
+        for ancestor in parent.ancestors() {
+            if dependency_file_exists(&ancestor.join("package.json"), &mut self.candidate_probes)? {
+                return Ok(Some(ancestor.to_owned()));
+            }
+        }
+        Ok(Some(parent))
     }
 
     /// Resolves relative paths, package imports, TypeScript path aliases, and workspace packages within the analysis boundary.
@@ -169,8 +188,7 @@ impl ProjectResolution {
             return Ok(cached.clone());
         }
         let resolved = self.resolve_uncached(importer, specifier, fallback_boundary)?;
-        // Past the limit a repeat is resolved again: same answer, more `realpath` calls. Replaying
-        // a success charges nothing either way, because every load behind it is cached.
+        // Cache hits spend no probe allowance. Once the memo is full, new entries resolve again.
         let entry_bytes = directory.as_os_str().len()
             + specifier.len()
             + resolved.as_ref().map_or(0, |path| path.as_os_str().len());
@@ -265,7 +283,7 @@ impl ProjectResolution {
             }
             for name in ["tsconfig.json", "jsconfig.json"] {
                 let candidate = ancestor.join(name);
-                if candidate.is_file() {
+                if dependency_file_exists(&candidate, &mut self.candidate_probes)? {
                     selected =
                         Some(self.canonical_contained(&candidate, root, "project config")?);
                     break;
@@ -369,7 +387,11 @@ impl ProjectResolution {
                 )
             })?;
             let candidate = path.parent().unwrap_or(root).join(base_url);
-            effective.base_url = Some(canonicalize_existing_ancestor(&candidate, root)?);
+            effective.base_url = Some(canonicalize_existing_ancestor(
+                &candidate,
+                root,
+                &mut self.candidate_probes,
+            )?);
         }
         if let Some(paths) = options.get("paths") {
             let paths = paths.as_object().with_context(|| {
@@ -428,7 +450,7 @@ impl ProjectResolution {
         if is_relative_module(extends) {
             let base = config.parent().unwrap_or(root).join(extends);
             for candidate in config_base_candidates(&base) {
-                if candidate.is_file() {
+                if dependency_file_exists(&candidate, &mut self.candidate_probes)? {
                     return self
                         .canonical_contained(&candidate, root, "project config extends target")
                         .map(Some);
@@ -487,7 +509,7 @@ impl ProjectResolution {
             candidates.extend(config_base_candidates(&package.root.join(subpath)));
         }
         for candidate in candidates {
-            if candidate.is_file() {
+            if dependency_file_exists(&candidate, &mut self.candidate_probes)? {
                 let base =
                     self.canonical_contained(&candidate, root, "project config extends target")?;
                 // Checked on the canonical path, so a symlink cannot lead out of the package or into
@@ -651,7 +673,7 @@ impl ProjectResolution {
                 break;
             }
             let manifest = ancestor.join("package.json");
-            if manifest.is_file() {
+            if dependency_file_exists(&manifest, &mut self.candidate_probes)? {
                 return self.load_package(ancestor, root).map(Some);
             }
             if ancestor == root {
@@ -680,11 +702,12 @@ impl ProjectResolution {
     /// Walks `root` for directories matching the root manifest's workspace patterns and loads each
     /// package, refusing duplicate names and scans past `MAX_WORKSPACE_SCAN_ENTRIES`.
     fn scan_workspaces(&mut self, root: &Path) -> Result<BTreeMap<String, PackageInfo>> {
-        let root_package = if root.join("package.json").is_file() {
-            Some(self.load_package(root, root)?)
-        } else {
-            None
-        };
+        let root_package =
+            if dependency_file_exists(&root.join("package.json"), &mut self.candidate_probes)? {
+                Some(self.load_package(root, root)?)
+            } else {
+                None
+            };
         let mut packages = BTreeMap::new();
         if let Some(package) = root_package.as_ref() {
             if let Some(name) = package.name.as_ref() {
@@ -725,7 +748,10 @@ impl ProjectResolution {
             if relative.as_os_str().is_empty() || !globs.is_match(relative) {
                 continue;
             }
-            if !entry.path().join("package.json").is_file() {
+            if !dependency_file_exists(
+                &entry.path().join("package.json"),
+                &mut self.candidate_probes,
+            )? {
                 continue;
             }
             let package_root = self.canonical_contained(entry.path(), root, "workspace package")?;
@@ -796,7 +822,7 @@ impl ProjectResolution {
     }
 
     /// Tries supported exact, extension-substituted, suffixed, and index paths, rejecting canonical targets outside the container.
-    fn resolve_path(&self, base: &Path, container: &Path) -> Result<Option<PathBuf>> {
+    fn resolve_path(&mut self, base: &Path, container: &Path) -> Result<Option<PathBuf>> {
         let mut candidates = vec![base.to_owned()];
         if let Some(substitutions) = extension_substitutions(base) {
             candidates.extend(substitutions);
@@ -808,7 +834,9 @@ impl ProjectResolution {
             candidates.push(base.join(format!("index{suffix}")));
         }
         for candidate in candidates {
-            if ecmascript_language(&candidate).is_none() || !candidate.is_file() {
+            if ecmascript_language(&candidate).is_none()
+                || !dependency_file_exists(&candidate, &mut self.candidate_probes)?
+            {
                 continue;
             }
             let canonical = candidate.canonicalize().with_context(|| {
@@ -1191,10 +1219,18 @@ fn extension_substitutions(path: &Path) -> Option<Vec<PathBuf>> {
 }
 
 /// Canonicalizes the existing prefix of a config path within the root and restores its missing trailing components.
-fn canonicalize_existing_ancestor(path: &Path, root: &Path) -> Result<PathBuf> {
+fn canonicalize_existing_ancestor(
+    path: &Path,
+    root: &Path,
+    probes: &mut WorkBudget,
+) -> Result<PathBuf> {
     let mut existing = path;
     let mut tail = Vec::new();
-    while !existing.exists() {
+    loop {
+        charge_dependency_probe(probes)?;
+        if existing.exists() {
+            break;
+        }
         let Some(name) = existing.file_name() else {
             bail!(
                 "project config path {} has no existing ancestor",

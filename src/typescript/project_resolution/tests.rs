@@ -612,7 +612,9 @@ fn resolver_covers_relative_fallback_package_main_subpaths_and_missing_targets()
 fn canonical_paths_and_mapping_limits_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
-    let nested = canonicalize_existing_ancestor(&root.join("missing/deeper"), &root).unwrap();
+    let mut probes = WorkBudget::new(MAX_DEPENDENCY_CANDIDATE_PROBES);
+    let nested =
+        canonicalize_existing_ancestor(&root.join("missing/deeper"), &root, &mut probes).unwrap();
     assert_eq!(nested, root.join("missing/deeper"));
 
     // A refused charge takes nothing, so the exact remainder still fits.
@@ -628,7 +630,15 @@ fn canonical_paths_and_mapping_limits_fail_closed() {
     assert!(resolver.charge_mappings(1).is_err());
 
     let outside = tempfile::tempdir().unwrap();
-    assert!(canonicalize_existing_ancestor(outside.path(), &root).is_err());
+    let refusal = canonicalize_existing_ancestor(outside.path(), &root, &mut probes).unwrap_err();
+    assert_eq!(
+        refusal.to_string(),
+        format!(
+            "project config path {} resolves outside the analysis root {}",
+            outside.path().display(),
+            root.display()
+        )
+    );
     assert!(resolver
         .nearest_project_config(&outside.path().join("steps.ts"), &root)
         .is_err());
@@ -1759,4 +1769,106 @@ fn resolutions_without_a_root_are_not_memoized() {
         resolver.resolve(&importer, "./a", &root.join("y")),
         Ok(Some(_))
     ));
+}
+
+/// Missing module candidates consume the allowance, while known memoized outcomes can be replayed.
+#[test]
+fn source_enumeration_project_charges_misses_and_preserves_the_memo() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let importer = root.join("steps.ts");
+    let target = root.join("present.ts");
+    fs::write(&target, "export const value = 1;").unwrap();
+    let mut resolver = ProjectResolution::for_root(&root);
+    resolver.candidate_probes = WorkBudget::new(2 * MODULE_SUFFIXES.len() + 1);
+    assert_eq!(
+        resolver.resolve(&importer, "./missing", &root).unwrap(),
+        None
+    );
+    assert_eq!(
+        resolver.resolve(&importer, "./present", &root).unwrap(),
+        Some(target.clone())
+    );
+    let refusal = resolver.resolve(&importer, "./other", &root).unwrap_err();
+    assert_eq!(
+        refusal.to_string(),
+        "dependency resolution exceeds the 17-candidate probe limit"
+    );
+    assert!(!resolver
+        .resolved
+        .get(&root)
+        .unwrap()
+        .contains_key("./other"));
+    assert_eq!(
+        resolver.resolve(&importer, "./missing", &root).unwrap(),
+        None
+    );
+    assert_eq!(
+        resolver.resolve(&importer, "./present", &root).unwrap(),
+        Some(target)
+    );
+}
+
+/// Looking for project metadata consumes the same candidate allowance as looking for modules.
+#[test]
+fn source_enumeration_project_charges_absent_metadata_candidates() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let importer = root.join("steps.ts");
+    for (limit, expected) in [
+        (4, Ok(None)),
+        (
+            1,
+            Err("dependency resolution exceeds the 1-candidate probe limit"),
+        ),
+    ] {
+        let mut resolver = ProjectResolution::for_root(&root);
+        resolver.candidate_probes = WorkBudget::new(limit);
+        let actual = resolver.resolve(&importer, "@local/steps", &root);
+        assert_eq!(
+            actual.map_err(|error| error.to_string()),
+            expected.map_err(str::to_owned)
+        );
+    }
+}
+
+/// Inferring a package boundary spends the same allowance as resolving the import itself.
+#[test]
+fn source_enumeration_project_shares_rootless_boundary_allowance() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let source = root.join("steps");
+    let importer = source.join("definitions.ts");
+    let target = source.join("provider.ts");
+    fs::create_dir(&source).unwrap();
+    fs::write(root.join("package.json"), "{}").unwrap();
+    fs::write(&target, "export const value = 1;").unwrap();
+
+    for (limit, expected) in [
+        (3, Ok(Some(target.clone()))),
+        (
+            2,
+            Err("dependency resolution exceeds the 2-candidate probe limit"),
+        ),
+    ] {
+        let mut resolver = ProjectResolution {
+            candidate_probes: WorkBudget::new(limit),
+            ..ProjectResolution::default()
+        };
+        let boundary = resolver.boundary_for(&importer).unwrap().unwrap();
+        assert_eq!(boundary, root);
+        let actual = resolver.resolve(&importer, "./provider", &boundary);
+        assert_eq!(
+            actual.map_err(|error| error.to_string()),
+            expected.map_err(str::to_owned)
+        );
+    }
+    let mut resolver = ProjectResolution {
+        candidate_probes: WorkBudget::new(1),
+        ..ProjectResolution::default()
+    };
+    assert_eq!(
+        resolver.boundary_for(&importer).unwrap_err().to_string(),
+        "dependency resolution exceeds the 1-candidate probe limit"
+    );
 }
