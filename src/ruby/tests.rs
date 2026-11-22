@@ -707,7 +707,6 @@ fn receiver_registration_follows_the_value_of_every_argument_kind() {
         ("singleton_method", "def self.m2; end", "", "011"),
         ("nil", "nil", "", "001"),
         ("false", "false", "", "001"),
-        ("test_pattern", "1 in String", "", "001"),
         ("true", "true", "", "000"),
         ("integer", "1", "", "000"),
         ("unary", "-1", "", "000"),
@@ -765,6 +764,18 @@ fn receiver_registration_follows_the_value_of_every_argument_kind() {
         // `match_pattern` is reachable only in parentheses (bare `1 => q` is a hash pair) and is a
         // void value expression Ruby rejects as an argument; it stays unknown.
         ("parenthesized_statements", "(1 => q)", "", "111"),
+        // `in` is a void value expression Ruby rejects bare as an argument. In parentheses it is
+        // `true` (no registration) or `false` (the block registers in the second position).
+        ("test_pattern", "1 in String", "", "001"),
+        ("parenthesized_statements", "(1 in String)", "", "001"),
+        ("parenthesized_statements", "(1 in Integer)", "", "001"),
+        ("assignment", "y = (1 in Integer)", "", "001"),
+        (
+            "parenthesized_statements",
+            "(x = 0; 1 in Integer)",
+            "",
+            "001",
+        ),
     ];
     for (kind, expression, tail, expected) in rows {
         let (first, parsed) = receiver_call(expression, true, tail);

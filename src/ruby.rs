@@ -720,6 +720,8 @@ fn argument_value(node: Node<'_>, source: &str) -> ArgumentValue {
         "simple_symbol" | "delimited_symbol" | "lambda" | "method" | "singleton_method" => {
             ArgumentValue::Handler
         }
+        // `x in pattern` (`test_pattern`) is `true` or `false`. Neither is a pattern or a handler,
+        // and only `false` leaves the block as the handler, so the union is the `Falsy` class.
         "nil" | "false" | "test_pattern" => ArgumentValue::Falsy,
         "true" | "integer" | "float" | "rational" | "complex" | "array" | "string_array"
         | "symbol_array" | "hash" | "range" => ArgumentValue::Other,
