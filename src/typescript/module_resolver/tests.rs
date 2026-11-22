@@ -52,6 +52,13 @@ fn project_resolution_supports_relative_modules_and_rejects_escapes() {
         .contains("outside package or analysis root"));
 }
 
+/// Sets up the canonical project boundary and fresh state for an export graph fixture.
+fn export_graph_session(root: &Path) -> (PathBuf, ProjectResolution, ResolutionState) {
+    let boundary = root.canonicalize().unwrap();
+    let project = ProjectResolution::for_root(root);
+    (boundary, project, ResolutionState::default())
+}
+
 /// Verify diamond re-export graphs resolve registrations once per module at each visited depth.
 #[test]
 fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
@@ -80,9 +87,7 @@ fn branching_diamond_reexports_are_memoized_by_path_and_remaining_depth() {
         fs::write(directory.path().join(format!("b{layer}.ts")), &contents).unwrap();
     }
 
-    let boundary = project_boundary(&importer).unwrap();
-    let mut project = ProjectResolution::for_root(directory.path());
-    let mut state = ResolutionState::default();
+    let (boundary, mut project, mut state) = export_graph_session(directory.path());
     let resolved =
         resolve_exports(&importer, "./root", &boundary, &mut project, &mut state, 0).unwrap();
 
@@ -364,9 +369,7 @@ fn cycles_do_not_poison_context_dependent_export_results() {
     .unwrap();
     fs::write(directory.path().join("b.ts"), "export * from './a';\n").unwrap();
 
-    let boundary = project_boundary(&importer).unwrap();
-    let mut project = ProjectResolution::for_root(directory.path());
-    let mut state = ResolutionState::default();
+    let (boundary, mut project, mut state) = export_graph_session(directory.path());
     let from_a = resolve_exports(&importer, "./a", &boundary, &mut project, &mut state, 0).unwrap();
     let from_b = resolve_exports(&importer, "./b", &boundary, &mut project, &mut state, 0).unwrap();
 
@@ -438,9 +441,7 @@ fn aggregate_module_graph_limits_fail_closed() {
     );
 
     // The last state below the limit is admitted; the state at the limit is refused.
-    let boundary = project_boundary(&importer).unwrap();
-    let mut project = ProjectResolution::for_root(directory.path());
-    let mut resolution_state = ResolutionState::default();
+    let (boundary, mut project, mut resolution_state) = export_graph_session(directory.path());
     resolution_state
         .resolutions_started
         .charge(MAX_REGISTRATION_RESOLUTION_STATES - 1);
@@ -570,9 +571,7 @@ fn modules_without_a_supported_grammar_contribute_no_exports() {
         "export { Given } from '@cucumber/cucumber';\n",
     )
     .unwrap();
-    let boundary = directory.path().canonicalize().unwrap();
-    let mut project = ProjectResolution::for_root(directory.path());
-    let mut state = ResolutionState::default();
+    let (boundary, mut project, mut state) = export_graph_session(directory.path());
 
     let resolved =
         resolve_active_exports(&declarations, &boundary, &mut project, &mut state, 0).unwrap();
@@ -649,7 +648,9 @@ fn project_boundary_falls_back_to_the_importer_directory_without_a_manifest() {
     );
 
     assert_eq!(
-        project_boundary(&canonical.join("steps.ts")),
+        ProjectResolution::default()
+            .boundary_for(&canonical.join("steps.ts"))
+            .unwrap(),
         Some(canonical)
     );
 }

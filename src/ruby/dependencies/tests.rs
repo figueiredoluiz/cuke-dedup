@@ -2,6 +2,16 @@ use super::*;
 
 /// Resolves the given selected files under `root` against an injected `(modules, bytes)` budget.
 fn resolve_with(root: &Path, selected: &[&str], budget: (usize, usize)) -> DiscoveredFiles {
+    resolve_with_probes(root, selected, budget, MAX_DEPENDENCY_CANDIDATE_PROBES)
+}
+
+/// Resolves selected files with an independent allowance for candidate probes.
+fn resolve_with_probes(
+    root: &Path,
+    selected: &[&str],
+    budget: (usize, usize),
+    candidate_limit: usize,
+) -> DiscoveredFiles {
     let config = Config::load(root, Default::default()).unwrap();
     let mut files = DiscoveredFiles {
         definitions: selected
@@ -13,7 +23,14 @@ fn resolve_with(root: &Path, selected: &[&str], budget: (usize, usize)) -> Disco
             .collect(),
         ..DiscoveredFiles::default()
     };
-    resolve_graph(&config, &ExcludeSet::default(), &mut files, budget).unwrap();
+    resolve_graph(
+        &config,
+        &ExcludeSet::default(),
+        &mut files,
+        budget,
+        candidate_limit,
+    )
+    .unwrap();
     files
 }
 
@@ -195,13 +212,20 @@ fn a_native_candidate_in_any_base_shadows_the_ruby_fallback() {
     std::fs::create_dir_all(&second).unwrap();
     std::fs::write(second.join("x.so.rb"), "X = 1\n").unwrap();
     let bases = [first.clone(), second.clone()];
-    assert_eq!(request_target(&bases, "x.so"), Some(second.join("x.so.rb")));
+    let mut probes = WorkBudget::new(MAX_DEPENDENCY_CANDIDATE_PROBES);
+    assert_eq!(
+        request_target(&bases, "x.so", &mut probes).unwrap(),
+        Some(second.join("x.so.rb"))
+    );
     std::fs::write(first.join("x.bundle"), "not a library\n").unwrap();
-    assert_eq!(request_target(&bases, "x.so"), None);
+    assert_eq!(request_target(&bases, "x.so", &mut probes).unwrap(), None);
     // A non-native request ignores native files entirely.
     std::fs::write(second.join("y.v2.rb"), "Y = 1\n").unwrap();
     std::fs::write(first.join("y.bundle"), "not a library\n").unwrap();
-    assert_eq!(request_target(&bases, "y.v2"), Some(second.join("y.v2.rb")));
+    assert_eq!(
+        request_target(&bases, "y.v2", &mut probes).unwrap(),
+        Some(second.join("y.v2.rb"))
+    );
 }
 
 /// A skipped Ruby file leaves the skipped list exactly when the graph admits a load of it:
@@ -244,7 +268,14 @@ fn admitted_loads_remove_files_from_the_skipped_list() {
     };
     // Three dependency-only files fit: `a`, `k` (through the load path) and `c` (loaded by
     // `a`); `g` is the fourth and is refused.
-    resolve_graph(&config, &ExcludeSet::default(), &mut files, (3, usize::MAX)).unwrap();
+    resolve_graph(
+        &config,
+        &ExcludeSet::default(),
+        &mut files,
+        (3, usize::MAX),
+        MAX_DEPENDENCY_CANDIDATE_PROBES,
+    )
+    .unwrap();
     let skipped: Vec<_> = files
         .skipped_definitions
         .iter()
@@ -303,4 +334,100 @@ fn limits_are_worded_like_the_documentation() {
     assert_eq!(byte_limit(64 << 20), "64 MiB");
     assert_eq!(byte_limit(15), "15-byte");
     assert_eq!(byte_limit((1 << 20) + 1), "1,048,577-byte");
+}
+
+/// Misses in an earlier Ruby source consume the same probe allowance as later sources.
+#[test]
+fn source_enumeration_ruby_counts_missing_candidates_across_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    std::fs::write(
+        root.join("first.rb"),
+        "require_relative 'present'\nrequire_relative 'missing'\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("second.rb"), "require_relative 'later'\n").unwrap();
+    for file in ["present.rb", "later.rb"] {
+        std::fs::write(root.join(file), "# local dependency\n").unwrap();
+    }
+    for (limit, complete) in [(3, true), (2, false)] {
+        let files = resolve_with_probes(&root, &["first.rb", "second.rb"], (4, 1024), limit);
+        let targets: Vec<_> = files
+            .dependencies
+            .iter()
+            .map(|edge| edge.target.clone())
+            .collect();
+        if complete {
+            assert_eq!(targets, [root.join("present.rb"), root.join("later.rb")]);
+            assert!(files.dependency_gaps.is_empty());
+        } else {
+            assert_eq!(targets, [root.join("present.rb")]);
+            let gap = files.dependency_gaps.first().unwrap();
+            assert_eq!(files.dependency_gaps.len(), 1);
+            assert_eq!(gap.location.path, root.join("second.rb"));
+            assert_eq!(
+                gap.reason,
+                "dependency resolution exceeds the 2-candidate probe limit"
+            );
+        }
+    }
+}
+
+/// Native-suffix probing consumes allowance before the Ruby source fallback is tried.
+#[test]
+fn source_enumeration_ruby_native_probe_precedes_source_fallback() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    let fallback = root.join("example.so.rb");
+    std::fs::write(&fallback, "# source fallback\n").unwrap();
+    for (limit, expected) in [
+        (5, Ok(Some(fallback.clone()))),
+        (
+            4,
+            Err("dependency resolution exceeds the 4-candidate probe limit"),
+        ),
+    ] {
+        let mut probes = WorkBudget::new(limit);
+        let actual = request_target(std::slice::from_ref(&root), "example.so", &mut probes);
+        assert_eq!(
+            actual.map_err(|error| error.to_string()),
+            expected.map_err(str::to_owned)
+        );
+    }
+}
+
+/// Exhausting the alias probe allowance refuses the configured assertion providers as a whole.
+#[test]
+fn source_enumeration_ruby_bounds_configured_assertion_aliases() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    let provider = root.join("provider.rb");
+    std::fs::write(&provider, "# configured provider\n").unwrap();
+    let names = ["provider".to_owned(), "missing".to_owned()];
+    use crate::ruby::{RubySession, RUBY, RUBY_ADAPTER};
+    use crate::source_adapter::{
+        SourceAdapter, SourceExtractionSession, UncertaintyCause, UncertaintyScope,
+    };
+
+    let available = ["provider", "missing", provider.to_str().unwrap()];
+    for (probe_limit, aliases, expected_message) in [
+        (2, available.as_slice(), None),
+        (1, &[][..], Some("Ruby assertion-provider provenance is incomplete: dependency resolution exceeds the 1-candidate probe limit")),
+    ] {
+        let mut session = SourceExtractionSession::default();
+        let state = session.state::<RubySession>().unwrap();
+        *state = RubySession::with_assertion_probe_limit(Some(&root), &names, probe_limit);
+        assert_eq!(state.assertion_modules, aliases);
+        let finalized = RUBY_ADAPTER.finalize_session(&mut session).unwrap();
+        if let Some(message) = expected_message {
+            let [notice] = finalized.uncertainties.as_slice() else {
+                panic!("expected one assertion-provider notice, got {:?}", finalized.uncertainties);
+            };
+            assert_eq!(notice.scope, UncertaintyScope::Registry(RUBY));
+            assert_eq!(notice.cause, UncertaintyCause::Source);
+            assert_eq!(notice.message, message);
+        } else {
+            assert!(finalized.uncertainties.is_empty());
+        }
+    }
 }

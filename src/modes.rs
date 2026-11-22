@@ -2,21 +2,34 @@
 
 use crate::config::canonical_platform_path;
 use crate::model::{stable_fingerprint_parts, Finding, Suppression};
-use crate::resource_limits::{read_utf8, MAX_BASELINE_INPUT_BYTES};
+use crate::resource_limits::{
+    read_utf8, MAX_BASELINE_INPUT_BYTES, MAX_CHANGED_PATH_BYTES, MAX_CHANGED_PATH_RECORDS,
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 // Snapshotting is additional disk work, separate from the analyzer's per-source read limits.
 const MAX_BASELINE_CHECKOUT_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Returns tracked changes since `base` plus untracked files beneath `root`.
 pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
+    git_changed_files_with_limits(root, base, MAX_CHANGED_PATH_RECORDS, MAX_CHANGED_PATH_BYTES)
+}
+
+/// Runs both native listings under one allowance, returning a set only if both succeed.
+fn git_changed_files_with_limits(
+    root: &Path,
+    base: &str,
+    records: usize,
+    bytes: usize,
+) -> Result<BTreeSet<PathBuf>> {
+    let mut budget = ChangedPathBudget { records, bytes };
     let git = ChangedGit::new(root)?;
     git.ensure_trackable(root)?;
     let base_oid = resolve_commit(git.metadata_command(root), base)?;
@@ -37,17 +50,17 @@ pub fn git_changed_files(root: &Path, base: &str) -> Result<BTreeSet<PathBuf>> {
             "--",
         ],
         &format!("git diff against `{base}` failed"),
+        root,
+        &mut budget,
     )?;
     let untracked = git_paths(
         git.worktree_command(root),
         &["ls-files", "--others", "--exclude-standard", "-z", "--"],
         "git untracked-file discovery failed",
+        root,
+        &mut budget,
     )?;
-    Ok(tracked
-        .into_iter()
-        .chain(untracked)
-        .map(|path| root.join(path))
-        .collect())
+    Ok(tracked.into_iter().chain(untracked).collect())
 }
 
 /// Removes caller Git settings, including the repository environment exported to hooks.
@@ -536,28 +549,104 @@ pub fn ensure_changed_root_is_trackable(root: &Path) -> Result<()> {
     ChangedGit::new(root)?.ensure_trackable(root)
 }
 
-/// Runs a Git path query and decodes its NUL-delimited output.
-fn git_paths(mut git: Command, arguments: &[&str], failure: &str) -> Result<Vec<PathBuf>> {
-    let bytes = checked_git_output(git.args(arguments), failure)?;
-    if bytes.is_empty() {
-        return Ok(Vec::new());
+/// Counts every Git record and byte of its absolute path before collection.
+struct ChangedPathBudget {
+    records: usize,
+    bytes: usize,
+}
+
+/// Reads one listing, draining bounded diagnostics independently and reaping a stopped child.
+fn git_paths(
+    mut git: Command,
+    arguments: &[&str],
+    failure: &str,
+    root: &Path,
+    budget: &mut ChangedPathBudget,
+) -> Result<Vec<PathBuf>> {
+    let mut child = git
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| failure.to_owned())?;
+    let result = (|| {
+        let stdout = child.stdout.take().context("missing Git stdout")?;
+        let stderr = child.stderr.take().context("missing Git stderr")?;
+        let diagnostics =
+            std::thread::Builder::new().spawn(move || read_git_diagnostics(stderr))?;
+        let paths = read_git_paths(BufReader::new(stdout), root, budget);
+        if paths.is_err() {
+            let _ = child.kill();
+        }
+        let status = child.wait().with_context(|| failure.to_owned())?;
+        let stderr = diagnostics
+            .join()
+            .ok()
+            .context("Git diagnostic reader failed")??;
+        let paths = paths?;
+        if !status.success() {
+            bail!("{failure}: {}", String::from_utf8_lossy(&stderr).trim());
+        }
+        Ok(paths)
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    bytes
-        .strip_suffix(b"\0")
-        .context("invalid Git path listing")?
-        .split(|byte| *byte == b'\0')
-        .map(|bytes| {
-            let path = path_from_git_bytes(bytes)?;
-            if path.as_os_str().is_empty()
-                || !path
-                    .components()
-                    .all(|part| matches!(part, std::path::Component::Normal(_)))
-            {
-                bail!("invalid relative path in Git listing");
-            }
-            Ok(path)
-        })
-        .collect()
+    result
+}
+
+/// Keeps only the first 8 KiB of Git diagnostics while draining the pipe.
+fn read_git_diagnostics(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut prefix = Vec::new();
+    reader.by_ref().take(8 * 1024).read_to_end(&mut prefix)?;
+    std::io::copy(&mut reader, &mut std::io::sink())?;
+    Ok(prefix)
+}
+
+/// Streams NUL-delimited paths and refuses an over-limit record before decoding or retaining it.
+fn read_git_paths(
+    mut reader: impl BufRead,
+    root: &Path,
+    budget: &mut ChangedPathBudget,
+) -> Result<Vec<PathBuf>> {
+    let root_prefix = root.join("x").as_os_str().len() - 1;
+    let mut paths = Vec::new();
+    let mut record = Vec::new();
+    loop {
+        record.clear();
+        let max_record = if budget.records == 0 {
+            1
+        } else {
+            budget.bytes.saturating_sub(root_prefix).saturating_add(1)
+        };
+        let read = reader
+            .by_ref()
+            .take(max_record as u64)
+            .read_until(0, &mut record)?;
+        if read == 0 {
+            return Ok(paths);
+        }
+        let cost = root_prefix.saturating_add(read);
+        if budget.records == 0 || cost > budget.bytes {
+            bail!("Git changed-path listing exceeds the record or byte limit");
+        }
+        budget.records -= 1;
+        budget.bytes -= cost;
+        let bytes = record
+            .strip_suffix(b"\0")
+            .context("invalid Git path listing")?;
+        let path = path_from_git_bytes(bytes)?;
+        if path.as_os_str().is_empty()
+            || !path
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            bail!("invalid relative path in Git listing");
+        }
+        paths.push(root.join(path));
+    }
 }
 
 /// Converts a raw Git path to a `PathBuf` byte for byte; never fails on Unix.

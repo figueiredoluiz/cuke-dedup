@@ -71,6 +71,8 @@ Global git excludes remain exempt from containment regardless of their configure
 | Selected feature and definition source | 512 MiB per run |
 | Primary discovery glob evaluations | 64,000,000 per run |
 | Workspace discovery entries | 100,000 |
+| Changed-file listings | 100,000 path records / 16 MiB total |
+| Static dependency candidate probes | 1,000,000 per Ruby load walk or JS/TS resolver |
 | Content-classification prefix per discovered source | 64 KiB |
 | Imported registration modules | 1,024 modules / 64 MiB total |
 | Ruby files reached only through `require`/`require_relative` | 1,024 files / 64 MiB total |
@@ -87,6 +89,8 @@ from metadata before any file is read. Exceeding any primary discovery limit sto
 exit code 2 and writes no report; exclude generated or vendored directories or narrow the
 `features` and `definitions` globs.
 
+Changed-file mode counts both Git listings together, including repeated names and the full retained paths. Exceeding either limit stops the command with exit code 2 before reporting.
+
 Resolution confines imports and package targets to canonical analysis or package roots and shares
 cached work between importing files. A registration module, package manifest, importer's nearest
 project configuration or workspace scan that fails is reported again to each later importer
@@ -95,12 +99,13 @@ module path/depth state is charged only when an import resolves to a module whos
 cached at that depth. A failed module's exports are never cached, so each import of it charges a
 new state, and once the module limit is reached it reports that limit. A read error is not kept, and a failed base configuration reached
 through `extends` is loaded again from each configuration that extends it. Reaching the memoized
-module resolutions limit costs only time: later imports resolve again, and analysis stays complete.
+module resolutions limit makes later imports resolve again. Those replays consume the same candidate allowance as new resolutions. Candidate probes count misses and include static project and package metadata lookups. A refused probe marks resolution incomplete while completed resolutions remain valid.
 
 Selected Ruby definition files are not charged against the Ruby load limit. A load that would
 exceed it is not followed, and later new loads are refused too: analysis is marked incomplete at
 each refused load, the message names the limit, and Ruby unused-definition findings are withheld.
 A selected Ruby file that cannot be read loses only its own loads; extraction reports the file.
+Ruby counts native-library candidates and missing Ruby files before following a load. Exhaustion stops further probing, preserves known edges, and makes usage analysis incomplete. Configured assertion-provider aliases use a separate allowance and lose provenance if that allowance is exhausted.
 
 Ruby provider and assertion proofs read every selected and loaded Ruby file. Above their limit the proofs are
 unavailable: registrations that depend on them are untrusted across the suite and the warning names

@@ -182,7 +182,6 @@ pub(super) struct RegistrationOutcome {
 
 #[derive(Default)]
 pub(super) struct RegistrationResolver {
-    boundary: Option<PathBuf>,
     project: ProjectResolution,
     state: ResolutionState,
 }
@@ -191,7 +190,6 @@ impl RegistrationResolver {
     /// Creates a resolver with a canonical analysis boundary when the root exists.
     pub(super) fn for_root(root: &Path) -> Self {
         Self {
-            boundary: root.canonicalize().ok(),
             project: ProjectResolution::for_root(root),
             state: ResolutionState::default(),
         }
@@ -203,44 +201,37 @@ impl RegistrationResolver {
         importer: &Path,
         specifier: &str,
     ) -> Result<RegistrationOutcome> {
-        let boundary = self.boundary.clone().or_else(|| project_boundary(importer));
-        let Some(boundary) = boundary else {
-            return Ok(RegistrationOutcome::default());
-        };
-        match resolve_exports(
-            importer,
-            specifier,
-            &boundary,
-            &mut self.project,
-            &mut self.state,
-            0,
-        ) {
-            Ok(resolved) => {
-                let reason = resolved.reason();
-                Ok(RegistrationOutcome {
-                    resolution: resolved.exports.map(|exports| RegistrationResolution {
-                        module_path: self
-                            .project
-                            .resolve(importer, specifier, &boundary)
-                            .ok()
-                            .flatten(),
-                        exports,
-                        framework: resolved.framework,
-                    }),
-                    reason,
-                })
-            }
+        let outcome: Result<RegistrationOutcome> = (|| {
+            let Some(boundary) = self.project.boundary_for(importer)? else {
+                return Ok(RegistrationOutcome::default());
+            };
+            let Some(path) = self.project.resolve(importer, specifier, &boundary)? else {
+                return Ok(RegistrationOutcome::default());
+            };
+            let resolved =
+                resolve_path_exports(&path, &boundary, &mut self.project, &mut self.state, 0)?;
+            let reason = resolved.reason();
+            Ok(RegistrationOutcome {
+                resolution: resolved.exports.map(|exports| RegistrationResolution {
+                    module_path: Some(path),
+                    exports,
+                    framework: resolved.framework,
+                }),
+                reason,
+            })
+        })();
+        match outcome {
             // A module the filesystem refused to hand over is an operational failure, exactly as
             // it is for a definition source: the analyzer could not read input it was told to
             // read, and silently continuing would understate the corpus. Everything else here
             // means "this specifier is not statically resolvable" — outside the analysis root, a
             // malformed or cyclic project config, or a resolution resource limit — which bounds
             // recall without making any surviving finding wrong, so it degrades to a warning.
-            Err(error) if is_io_failure(&error) => Err(error),
-            Err(error) => Ok(RegistrationOutcome {
+            Err(error) if !is_io_failure(&error) => Ok(RegistrationOutcome {
                 resolution: None,
                 reason: Some(format!("{error:#}")),
             }),
+            result => result,
         }
     }
 }
@@ -264,16 +255,27 @@ fn resolve_exports(
         }
         Err(error) => return Err(error),
     };
-    if state.active.contains(&path) {
+    resolve_path_exports(&path, boundary, project, state, depth)
+}
+
+/// Reads exports for the already-resolved path, avoiding a second filesystem lookup.
+fn resolve_path_exports(
+    path: &Path,
+    boundary: &Path,
+    project: &mut ProjectResolution,
+    state: &mut ResolutionState,
+    depth: usize,
+) -> Result<ResolvedExports> {
+    if state.active.contains(path) {
         return Ok(ResolvedExports {
             cacheable: false,
             ..ResolvedExports::empty()
         });
     }
-    if at_limit {
-        return Ok(ResolvedExports::cutoff(Some(path)));
+    if depth >= MAX_REEXPORT_DEPTH {
+        return Ok(ResolvedExports::cutoff(Some(path.to_owned())));
     }
-    let cache_key = (path.clone(), MAX_REEXPORT_DEPTH - depth);
+    let cache_key = (path.to_owned(), MAX_REEXPORT_DEPTH - depth);
     if let Some(resolved) = state.exports.get(&cache_key) {
         if resolved
             .depth_cutoff
@@ -283,12 +285,12 @@ fn resolve_exports(
             return Ok(resolved.clone());
         }
     }
-    state.active.insert(path.clone());
-    let resolved = resolve_active_exports(&path, boundary, project, state, depth);
+    state.active.insert(path.to_owned());
+    let resolved = resolve_active_exports(path, boundary, project, state, depth);
     // Resolution failures are converted to source-local diagnostics by the caller. Always clear
     // the active-path marker before propagating one, or a later independent import is mistaken
     // for a cycle and silently loses registrations.
-    state.active.remove(&path);
+    state.active.remove(path);
     let resolved = resolved?;
     if resolved.cacheable {
         state.exports.insert(cache_key, resolved.clone());
@@ -1145,18 +1147,6 @@ fn is_directly_exported_variable(declarator: Node<'_>) -> bool {
         .parent()
         .and_then(|declaration| declaration.parent())
         .is_some_and(|parent| parent.kind() == "export_statement")
-}
-
-/// Finds the nearest canonical package ancestor, falling back to the importer directory or `None` if unavailable.
-fn project_boundary(importer: &Path) -> Option<PathBuf> {
-    let parent = importer.parent()?;
-    let parent = parent.canonicalize().ok()?;
-    for ancestor in parent.ancestors() {
-        if ancestor.join("package.json").is_file() {
-            return Some(ancestor.to_owned());
-        }
-    }
-    Some(parent)
 }
 
 /// Parses a supported source language, returning `None` when language selection, grammar setup, or parsing fails.

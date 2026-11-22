@@ -344,7 +344,19 @@ fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
             "{revision}"
         );
     }
-    let failed_query = git_paths(
+    let query = |command, arguments: &[&str], context: &str| {
+        git_paths(
+            command,
+            arguments,
+            context,
+            directory.path(),
+            &mut ChangedPathBudget {
+                records: 4,
+                bytes: 1024,
+            },
+        )
+    };
+    let failed_query = query(
         git.worktree_command(directory.path()),
         &["not-a-command"],
         "expected failure",
@@ -353,6 +365,21 @@ fn changed_mode_validates_revisions_repositories_and_ignored_roots() {
     let message = failed_query.to_string();
     assert!(message.starts_with("expected failure: "), "{message}");
     assert!(message.contains("not-a-command"), "{message}");
+
+    let failed_start = query(
+        Command::new(directory.path().join("missing-git")),
+        &[],
+        "cannot start Git listing",
+    )
+    .unwrap_err();
+    assert_eq!(failed_start.to_string(), "cannot start Git listing");
+    assert_eq!(
+        failed_start
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
 
     let ignored = directory.path().join("ignored");
     fs::create_dir(&ignored).unwrap();
@@ -659,4 +686,64 @@ fn oversized_baseline_update_preserves_the_original_file() {
     assert!(update_baseline(&mut [], &path).is_err());
     assert_eq!(fs::metadata(&path).unwrap().len(), before);
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+/// Changed mode either returns both listings or fails at the combined record or byte boundary.
+#[test]
+fn source_enumeration_git_shares_records_and_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let tracked = root.join("tracked.ts");
+    let untracked = root.join("new file.ts");
+    fs::write(&tracked, "initial").unwrap();
+    initialize_repository(&root);
+    fs::write(&tracked, "changed").unwrap();
+    fs::write(&untracked, "new").unwrap();
+    let bytes = tracked.as_os_str().len() + untracked.as_os_str().len() + 2;
+    for (records, bytes, accepted) in [(2, bytes, true), (1, bytes, false), (2, bytes - 1, false)] {
+        let result = git_changed_files_with_limits(&root, "HEAD", records, bytes);
+        if accepted {
+            assert_eq!(
+                result.unwrap(),
+                BTreeSet::from([tracked.clone(), untracked.clone()])
+            );
+        } else {
+            let message = result.unwrap_err().to_string();
+            assert_eq!(
+                message,
+                "Git changed-path listing exceeds the record or byte limit"
+            );
+        }
+    }
+}
+
+/// Only empty and fully terminated relative paths are valid native Git listings.
+#[test]
+fn source_enumeration_git_rejects_malformed_listing() {
+    for (data, expected) in [
+        (b"".as_slice(), Ok(Vec::new())),
+        (
+            b"filename\n.ts\0".as_slice(),
+            Ok(vec![PathBuf::from("filename\n.ts")]),
+        ),
+        (b"unfinished".as_slice(), Err("invalid Git path listing")),
+        (
+            b"\0".as_slice(),
+            Err("invalid relative path in Git listing"),
+        ),
+        (
+            b"../other\0".as_slice(),
+            Err("invalid relative path in Git listing"),
+        ),
+    ] {
+        let mut budget = ChangedPathBudget {
+            records: 2,
+            bytes: 256,
+        };
+        let result = read_git_paths(std::io::Cursor::new(data), Path::new(""), &mut budget);
+        assert_eq!(
+            result.map_err(|error| error.to_string()),
+            expected.map_err(str::to_owned)
+        );
+    }
 }
