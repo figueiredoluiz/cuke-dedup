@@ -765,16 +765,16 @@ fn receiver_registration_follows_the_value_of_every_argument_kind() {
         // void value expression Ruby rejects as an argument; it stays unknown.
         ("parenthesized_statements", "(1 => q)", "", "111"),
         // `in` is a void value expression Ruby rejects bare as an argument. In parentheses it is
-        // `true` or `false`, decided by a pattern whose constants runtime can redefine.
-        ("test_pattern", "1 in String", "", "111"),
-        ("parenthesized_statements", "(1 in String)", "", "111"),
-        ("parenthesized_statements", "(1 in Integer)", "", "111"),
-        ("assignment", "y = (1 in Integer)", "", "111"),
+        // `true` (no registration) or `false` (the block registers in the second position).
+        ("test_pattern", "1 in String", "", "001"),
+        ("parenthesized_statements", "(1 in String)", "", "001"),
+        ("parenthesized_statements", "(1 in Integer)", "", "001"),
+        ("assignment", "y = (1 in Integer)", "", "001"),
         (
             "parenthesized_statements",
             "(x = 0; 1 in Integer)",
             "",
-            "111",
+            "001",
         ),
     ];
     for (kind, expression, tail, expected) in rows {
